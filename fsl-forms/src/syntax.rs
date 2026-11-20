@@ -483,6 +483,9 @@ pub enum DeclaredClauseKind {
     Precondition,
     /// A function body, an operation body, or a `decreases` measure.
     Body,
+    /// A probabilistic `reward` expression, owned by its operation member
+    /// (FSpec FR-322, FR-640).
+    Reward,
 }
 
 impl From<DeclaredClauseKind> for ClauseKind {
@@ -490,7 +493,10 @@ impl From<DeclaredClauseKind> for ClauseKind {
         match kind {
             DeclaredClauseKind::Invariant => Self::Invariant,
             DeclaredClauseKind::Precondition => Self::Precondition,
-            DeclaredClauseKind::Body => Self::Body,
+            // A reward expression is pure over the operation's parameters:
+            // it is checked like a body, which refuses a dispatched call a
+            // precondition context admits (TC-196 D06-D08).
+            DeclaredClauseKind::Body | DeclaredClauseKind::Reward => Self::Body,
         }
     }
 }
@@ -3359,6 +3365,8 @@ pub struct ProtocolNodeDeclaration {
     pub kind: ProtocolNodeKind,
     /// The declared name and its span.
     pub name: DeclaredName,
+    /// The construct's complete source span.
+    pub span: Span,
     /// The innermost named control enclosing this declaration; `None` at
     /// the top level.
     pub scope: Option<ScopeId>,
@@ -3372,6 +3380,8 @@ pub struct ProtocolNodeDeclaration {
     /// The role an `attempt`, `event` or `commit` is written `by`; `None`
     /// for every other kind.
     pub role: Option<DeclaredName>,
+    /// Whether this control was introduced by the `observe` prefix.
+    pub observe_only: bool,
 }
 
 /// A binder's syntactic role (FR-113 "Refusals": a record binder, a
@@ -3451,6 +3461,8 @@ pub struct RoleForm {
     /// The population, maximum and lifetime of a replicated `each` role;
     /// `None` for a static `on` role (FR-308 `RoleForm::Replicated`).
     pub replicated: Option<ReplicatedRoleForm>,
+    /// Whether this role was introduced by the `observe` prefix.
+    pub observe_only: bool,
     /// The span of the whole member, `;` included.
     pub span: Span,
 }
@@ -3734,6 +3746,9 @@ pub struct AttemptForm {
     /// The `ordering o` memory order with the span of its text, when
     /// written (FR-220).
     pub ordering: Option<Spanned<crate::protocol_control::AccessOrdering>>,
+    /// True when this operation reference belongs to a side-effect-free
+    /// `recommend` control rather than an `attempt`.
+    pub recommendation: bool,
 }
 
 /// `protocol Name using p over (params) activation { ... run Control
@@ -5254,9 +5269,32 @@ pub struct VerificationPlanForm {
     pub name: DeclaredName,
     /// The selected profile alias.
     pub profile: UsingAlias,
+    /// The plan's checks, in source order.
+    pub steps: Vec<VerificationStepForm>,
     /// The complete source spelling retained for later stages.
     pub source: String,
     /// The declaration's source span.
+    pub span: Span,
+}
+
+/// One named verification step in a [`VerificationPlanForm`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerificationStepForm {
+    /// The step's authored name.
+    pub name: DeclaredName,
+    /// The claim name.
+    pub claim: NameForm,
+    /// The evidence method name.
+    pub method: NameForm,
+    /// The verification domain name.
+    pub domain: NameForm,
+    /// Names of prerequisite steps, in source order.
+    pub depends: Vec<DeclaredName>,
+    /// Optional finite method bound.
+    pub bound: Option<String>,
+    /// The bound literal's span, when `bound` is present.
+    pub bound_span: Option<Span>,
+    /// The step's source span.
     pub span: Span,
 }
 

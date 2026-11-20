@@ -35,6 +35,10 @@ the search that found the element.
 - A `WitnessEnvelope<StateClauseCounterexample>` (FR-070, FR-122) whose
   payload gains `witness: Option<SeparatingWitnessRecord>` (FR-265's
   record), present exactly when the producing run's basis was decisive.
+  This is a producer obligation; a producer outside FSL obtains the record
+  from FR-269's public derivation entry. Replay tolerates one breach of
+  it, a payload that omits a comparison record (FR-269 "Replay tolerates an
+  absent comparison record"); the obligation otherwise stands.
   The envelope itself is unchanged (FR-070-AC-5).
 - FR-098's request, byte provision and limits.
 
@@ -61,9 +65,16 @@ the search that found the element.
     passes, then the executor SHALL settle the agreement:
     `reproduced-with-evaluated-witness` on the `Witness` arm,
     `reproduced-without-witness` on the `Input` arm.
-  - If the two records differ or only one is present, then the executor SHALL
-    settle `inconclusive` with `DisagreementCause::Witness` carrying the
-    payload's record and the re-derived one, each as given or absent.
+  - If the payload carries no record and the re-derived record is a
+    comparison record, then the executor SHALL run the separation check
+    below on the re-derived record and, when it passes, SHALL settle the
+    agreement holding the re-derived record, as FR-269 "Replay tolerates an
+    absent comparison record" decides. If the check fails, the
+    `Witness` cause holds `given` absent and `derived` the re-derived record.
+  - Otherwise, if the two records differ or only one is present, then the
+    executor SHALL settle `inconclusive` with `DisagreementCause::Witness`
+    carrying the payload's record and the re-derived one, each as given or
+    absent.
 - The executor SHALL run the separation check over the admitted
   observation, charged to the request's evaluation meter, in these steps:
   1. resolve the record's deciding quantifier in the recompiled package and
@@ -109,7 +120,7 @@ the search that found the element.
 | FR-268-AC-1 | Over FR-265's `witness` unit, an envelope for `AllBelow` over `high` whose payload carries FR-265-AC-1's record settles `reproduced-with-evaluated-witness` on the `Witness` arm and holds that record; the same payload on the `Input` arm settles `reproduced-without-witness`. An envelope for `NestedAll` over `high` carrying FR-265-AC-4's record, and one for `FilteredAll` carrying FR-265-AC-5's, each settle `reproduced-with-evaluated-witness`. | Test (TC-743) |
 | FR-268-AC-2 | Re-derivation mismatch: the `AllBelow` over `high` envelope whose record names the equal element 600 at index 2, after the stop, one whose record names the `forall` of `GuardedAll`, and one with no record each settle `inconclusive`, `Witness`, holding the payload's record (or its absence) and the re-derived one (or its absence). | Test (TC-743) |
 | FR-268-AC-3 | Separation check, called on its own over the admitted `high` observation and `AllBelow`: FR-265-AC-1's record passes; a record whose deciding quantifier names a node outside the clause's claim, one whose index is 3 (past the domain's end), one whose value path names another member, one whose deciding element is 700 at index 1, and one naming 0 at index 0 (whose body is `true`) each fail, naming the failing step (1, 3, 3, 3 and 4 respectively), each as the `DisagreementCause::Witness` step FR-269 carries. Over variants of `AllBelow` whose domain expression evaluates `undefined` on `high`, whose body evaluates `undefined` for `mid`, and whose domain evaluation is refused (the domain `ints(sequence[0, z(self.versionNumber)])` calls `function z using v(x: Integer): Int[0, 0] pure { count<Int[0, 0]>(m in ints(sequence[x]): m > 0) }`, in a package checked under `CheckMode::Kernel`; the `count` sits in the function body, outside the declared clause, so `Kernel` leaves its range to S6a (FR-766), while the invariant itself has no unproved obligation, `z`'s result being typed `Int[0, 0]` by its signature, and under `CheckMode::Linked` FR-766 refuses the count at check in `z`'s body), the check fails at step 2 with `UndefinedEvaluation`, at step 4 with `UndefinedEvaluation`, and at step 2 with the refusal record, respectively; with the evaluation meter set one unit below step 2's need it settles `NoValue`. | Test (TC-743) |
-| FR-268-AC-4 | The FR-122 envelope for `ParentOrder` over absent-parent, whose walk ends at a call, carries no record and settles as FR-122-AC-1 states, with no FSpec FR-351 record on the result; the envelopes for `VersionUnchanged` over changed-version and `ParentOrder` over violating-parent carry FR-266-AC-2's comparison records and settle `reproduced-with-evaluated-witness` on the `Witness` arm. An `AllBelow` envelope whose encoded record exceeds the envelope's reader bound refuses at decode under FR-070-AC-7. Replaying the FR-268-AC-1 `Witness`-arm envelope twice gives equal results. | Test (TC-743) |
+| FR-268-AC-4 | The FR-122 envelope for `ParentOrder` over absent-parent, whose walk ends at a call, carries no record and settles as FR-122-AC-1 states, with no FSpec FR-351 record on the result; the envelopes for `VersionAdvances` over changed-version and `ParentOrder` over violating-parent carry FR-266-AC-2's comparison records and settle `reproduced-with-evaluated-witness` on the `Witness` arm. An `AllBelow` envelope whose encoded record exceeds the envelope's reader bound refuses at decode under FR-070-AC-7. Replaying the FR-268-AC-1 `Witness`-arm envelope twice gives equal results. | Test (TC-743) |
 | FR-268-AC-5 | Over FR-265's `witness` unit, an envelope for `MatchesParent` over `high` carrying FR-265-AC-11's comparison record settles `reproduced-with-evaluated-witness` on the `Witness` arm, never `inconclusive`; the separation check called on its own passes that record, and fails a record whose deciding comparison names a node outside the claim or whose `decision_path` omits the `implies` (step 1), one whose operands are `[600, 1]` (step 3), and one whose deciding element is `true` (step 4), each naming the step. | Test (TC-2981) |
 
 ## Dependencies

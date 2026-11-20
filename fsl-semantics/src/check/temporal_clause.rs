@@ -139,6 +139,50 @@ pub struct TemporalDeclaration {
     pub span: Span,
 }
 
+impl TemporalDeclaration {
+    /// Whether any condition, capture or guard the clause writes holds an
+    /// IEEE literal, which selects the IEEE profile like a function body's.
+    pub(super) fn has_ieee_literal(&self) -> bool {
+        let form = &self.form;
+        let guard = match &form.activation {
+            fsl_forms::ActivationForm::Origin => false,
+            fsl_forms::ActivationForm::Each { when, .. } => when
+                .as_ref()
+                .is_some_and(|guard| guard.expression.contains_ieee_literal()),
+        };
+        guard
+            || form
+                .captures
+                .iter()
+                .any(|capture| capture.value.expression.contains_ieee_literal())
+            || nodes_have_ieee_literal(form.formula.nodes())
+    }
+}
+
+/// Whether any atom of a temporal formula's nodes holds an IEEE literal.
+pub(super) fn nodes_have_ieee_literal(nodes: &[fsl_forms::TemporalNodeForm]) -> bool {
+    nodes.iter().any(|node| match node {
+        fsl_forms::TemporalNodeForm::Holds { condition, .. } => {
+            condition.expression.contains_ieee_literal()
+        }
+        fsl_forms::TemporalNodeForm::AggregateAtom(atom) => {
+            atom.term
+                .value
+                .as_ref()
+                .is_some_and(|value| value.expression.contains_ieee_literal())
+                || atom
+                    .term
+                    .filter
+                    .as_ref()
+                    .is_some_and(|filter| filter.expression.contains_ieee_literal())
+                || atom.threshold.expression.contains_ieee_literal()
+        }
+        fsl_forms::TemporalNodeForm::Constant { .. } | fsl_forms::TemporalNodeForm::Operator(_) => {
+            false
+        }
+    })
+}
+
 /// What [`TemporalTraceFamily::check`] reads of its unit (ADR-012 §2
 /// `Declarations`): the type scope, the unit's temporal profile selections
 /// and the source its regions resolve in.
@@ -2526,11 +2570,8 @@ pub enum PackageFormulaNode {
 pub struct PackageClauseForm {
     /// The clause's declared name, from its `temporal_clause_names` row.
     pub name: String,
-    /// The clause's source span: the region of its `claim` source-map entry,
-    /// its declared name. The package carries no region of the whole
-    /// declaration (FR-531 "What the bytes do not carry"), so this is the one
-    /// field of the package form that differs from the source form's, which
-    /// spans the declaration; it lies within it and orders clauses alike.
+    /// The clause's source span: the whole declaration, from its name
+    /// row's `declaration_region` (FSpec FR-322 "Clause declaration regions").
     pub span: Span,
     /// The clause's temporal profile, from its profile law.
     pub profile: TemporalProfile,
@@ -2566,21 +2607,15 @@ pub enum PackageClauseRefusal {
     /// The parameter types do not classify within the position limit.
     #[error("the clause's parameter domains do not classify")]
     Domains,
+    /// The package form's predicates do not fit its state-graph form.
+    #[error("the package state-graph predicates do not fit the claim form")]
+    Shape,
     /// The clause's clock binding key is not a node key.
     #[error("the clause's clock binding is not keyed")]
     ClockBinding,
 }
 
 impl CheckedTemporalClause {
-    /// The clause with `span` as its source span: the source form of a clause
-    /// read with the span its package form carries ([`PackageClauseForm::span`]),
-    /// so the two forms compare field for field.
-    #[must_use]
-    pub fn with_span(mut self, span: Span) -> Self {
-        self.span = span;
-        self
-    }
-
     /// FR-940: the model-check form of a temporal clause a checked package
     /// carries, rebuilt from `form` as S3 builds it from source: the same
     /// operators, formula, claim, property form and clock binding, so the

@@ -1,0 +1,38 @@
+{
+  "populations": [
+    {
+      "identity": "ix://test/orders/corpus_switches",
+      "displayName": "corpus_switches",
+      "kind": {
+        "module": "test/orders",
+        "name": "population"
+      },
+      "members": [
+        "ix://test/orders/Switch"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://test/orders/corpus_switches",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://test/orders/corpus_switches"
+          ]
+        }
+      }
+    }
+  ],
+  "construct": {
+    "kind": {
+      "module": "test/orders",
+      "name": "population"
+    },
+    "moduleVersion": "1.0.0",
+    "construct": {
+      "identity": "none",
+      "shape": "record",
+      "members": {},
+      "meaning": "filament.meaning.model.population/v1"
+    }
+  }
+}

@@ -18,7 +18,7 @@ use filament_contract_model::{
     CheckedKeyOrdinal, CheckedNodeId, CheckedOccurrence, CheckedProtocolLocation,
     CheckedProtocolLocationOrigin, CheckedProtocolSemanticLocation,
 };
-use filament_exact::NodeKey;
+use filament_exact::{NodeKey, PathSegment};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -30,10 +30,10 @@ use fsl_semantics::check::{
 use super::{checked_occurrence, EmitRefusal};
 
 /// The largest integer a JSON number carries exactly.
-const MAX_SAFE: u64 = 9_007_199_254_740_991;
+pub(super) const MAX_SAFE: u64 = 9_007_199_254_740_991;
 
 /// One row before its `term_ordinal` is assigned.
-pub(super) struct PendingRow {
+pub(super) struct PendingRow<L = CheckedProtocolLocation> {
     application: CheckedNodeId,
     occurrence: CheckedOccurrence,
     /// The origin `name`, which orders the origins of one group.
@@ -41,7 +41,7 @@ pub(super) struct PendingRow {
     /// The visit's place in the emitter's walk of every slot, which orders
     /// the rows of one origin by visit.
     visit: usize,
-    location: CheckedProtocolLocation,
+    location: L,
 }
 
 /// Every `protocol_locations` row of the emitted protocols, in the
@@ -75,7 +75,15 @@ pub(super) fn checked_protocol_locations(
     for body in slots {
         slot_rows(graph, body, &applications, emitted_node_ids, &mut pending)?;
     }
-    Ok(ordered(pending))
+    Ok(ordered(
+        pending,
+        |application, occurrence, term_ordinal, location| CheckedProtocolSemanticLocation {
+            application,
+            occurrence,
+            term_ordinal,
+            location,
+        },
+    ))
 }
 
 /// The rows of one slot's walk, appended to `pending` in visit order.
@@ -86,13 +94,42 @@ pub(super) fn slot_rows(
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     pending: &mut Vec<PendingRow>,
 ) -> Result<(), EmitRefusal> {
-    let positions = walk(body);
+    term_rows(
+        graph,
+        body.root(),
+        applications,
+        emitted_node_ids,
+        pending,
+        &|location, _, _| wire_location(location),
+        false,
+    )
+}
+
+/// The rows of the walk from `root`, appended to `pending` in visit order,
+/// each located by `wire`. `deref_by_record` keys the `deref` of every
+/// attribute the checker recorded one for, not only of a derefed one.
+pub(super) fn term_rows<L>(
+    graph: &CheckedGraph,
+    root: CheckedNode<'_>,
+    applications: &HashMap<&Location, Vec<(NodeKey, filament_exact::Origin)>>,
+    emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    pending: &mut Vec<PendingRow<L>>,
+    wire: &dyn Fn(&Location, &CheckedNodeId, &CheckedOccurrence) -> Option<(String, L)>,
+    deref_by_record: bool,
+) -> Result<(), EmitRefusal> {
+    let positions = walk(root);
     // The application each position names, so a position below it at
     // the same location (an implicit coercion's operand) names another.
     let mut claimed: Vec<Option<&NodeKey>> = Vec::with_capacity(positions.len());
     let mut visits: HashMap<(&Location, &NodeKey), usize> = HashMap::new();
+    let mut siblings: Vec<Vec<&NodeKey>> = vec![Vec::new(); positions.len()];
     for &(node, parent) in &positions {
         let at = node.location();
+        let under = parent.and_then(|index| {
+            let (ancestor, _) = positions.get(index)?;
+            let claim = claimed.get(index).copied().flatten()?;
+            (ancestor.location() == at).then_some((claim, siblings[index].as_slice()))
+        });
         let mut taken = Vec::new();
         let mut above = parent;
         while let Some(index) = above {
@@ -105,11 +142,19 @@ pub(super) fn slot_rows(
             taken.extend(claimed.get(index).copied().flatten());
             above = next;
         }
+        // A literal and a `Local` read lower to no application of their own.
         let application = match applications.get(at) {
-            Some(candidates) => term_application(graph, candidates, &taken)?,
-            None => None,
+            Some(candidates)
+                if !matches!(node.kind(), NodeKind::Literal(_) | NodeKind::Local(_)) =>
+            {
+                term_application(graph, candidates, &taken, under)?
+            }
+            _ => None,
         };
         claimed.push(application);
+        if let (Some(parent), Some(application)) = (parent, application) {
+            siblings[parent].push(application);
+        }
         if !is_term_kind(node) {
             continue;
         }
@@ -125,33 +170,60 @@ pub(super) fn slot_rows(
             }
             continue;
         };
-        // The `j`th visit of one position takes the `j`th occurrence
-        // recorded there; a position recorded once keeps that one.
-        let recorded: Vec<&filament_exact::Origin> = applications
-            .get(at)
-            .into_iter()
-            .flatten()
-            .filter(|(key, _)| key == application)
-            .map(|(_, origin)| origin)
-            .collect();
-        let seen = visits.entry((at, application)).or_default();
-        let origin = recorded
-            .get(*seen)
-            .or_else(|| recorded.last())
-            .copied()
-            .ok_or_else(|| refusal(application))?;
-        *seen += 1;
-        let (origin_name, location) = wire_location(at).ok_or_else(|| refusal(application))?;
-        pending.push(PendingRow {
-            application: emitted_node_ids
+        // An attribute read through `deref` lowers two terms at its one
+        // position, the `project` and the `deref` it reads; each is keyed.
+        // A function body is read from the wire, whose walk visits every
+        // `deref` node it reaches, and a clause function's `self` read lowers
+        // one for an attribute the checker does not flag as derefed; so for a
+        // body the recorded `deref` applications decide, not the flag.
+        let mut claimed_here = vec![application];
+        let derefs = match node.kind() {
+            NodeKind::Attribute { derefed, .. } => *derefed || deref_by_record,
+            _ => false,
+        };
+        if derefs {
+            claimed_here.extend(
+                applications
+                    .get(at)
+                    .into_iter()
+                    .flatten()
+                    .map(|(key, _)| key)
+                    .filter(|key| is_deref_application(key) && !taken.contains(key))
+                    .collect::<std::collections::BTreeSet<_>>(),
+            );
+        }
+        for application in claimed_here {
+            // The `j`th visit of one position takes the `j`th occurrence
+            // recorded there; a position recorded once keeps that one.
+            let recorded: Vec<&filament_exact::Origin> = applications
+                .get(at)
+                .into_iter()
+                .flatten()
+                .filter(|(key, _)| key == application)
+                .map(|(_, origin)| origin)
+                .collect();
+            let seen = visits.entry((at, application)).or_default();
+            let origin = recorded
+                .get(*seen)
+                .or_else(|| recorded.last())
+                .copied()
+                .ok_or_else(|| refusal(application))?;
+            *seen += 1;
+            let row_application = emitted_node_ids
                 .get(application)
                 .cloned()
-                .ok_or_else(|| refusal(application))?,
-            occurrence: checked_occurrence(origin).ok_or_else(|| refusal(application))?,
-            origin_name,
-            visit: pending.len(),
-            location,
-        });
+                .ok_or_else(|| refusal(application))?;
+            let occurrence = checked_occurrence(origin).ok_or_else(|| refusal(application))?;
+            let (origin_name, location) =
+                wire(at, &row_application, &occurrence).ok_or_else(|| refusal(application))?;
+            pending.push(PendingRow {
+                application: row_application,
+                occurrence,
+                origin_name,
+                visit: pending.len(),
+                location,
+            });
+        }
     }
     Ok(())
 }
@@ -165,8 +237,12 @@ fn refusal(application: &NodeKey) -> EmitRefusal {
 /// Number each group's rows from zero across its origins, the origins in
 /// origin order and one origin's rows in visit order, then order every row
 /// by (application, occurrence, `term_ordinal`).
-fn ordered(pending: Vec<PendingRow>) -> Vec<CheckedProtocolSemanticLocation> {
-    let mut groups: BTreeMap<(CheckedNodeId, CheckedOccurrence), Vec<PendingRow>> = BTreeMap::new();
+pub(super) fn ordered<L, R>(
+    pending: Vec<PendingRow<L>>,
+    build: impl Fn(CheckedNodeId, CheckedOccurrence, u64, L) -> R,
+) -> Vec<R> {
+    let mut groups: BTreeMap<(CheckedNodeId, CheckedOccurrence), Vec<PendingRow<L>>> =
+        BTreeMap::new();
     for row in pending {
         groups
             .entry((row.application.clone(), row.occurrence.clone()))
@@ -182,12 +258,7 @@ fn ordered(pending: Vec<PendingRow>) -> Vec<CheckedProtocolSemanticLocation> {
                 .then(left.visit.cmp(&right.visit))
         });
         rows.extend(group.into_iter().zip(0_u64..).map(|(row, term_ordinal)| {
-            CheckedProtocolSemanticLocation {
-                application: row.application,
-                occurrence: row.occurrence,
-                term_ordinal,
-                location: row.location,
-            }
+            build(row.application, row.occurrence, term_ordinal, row.location)
         }));
     }
     rows
@@ -243,12 +314,12 @@ pub(crate) fn slot_bodies(protocol: &CheckedProtocol) -> Vec<&CheckedBody> {
     bodies
 }
 
-/// The positions of `body` in pre-order, children in operand order, a node
+/// The positions below `root` in pre-order, children in operand order, a node
 /// reached through two parents once per parent, each with the index of its
 /// parent position.
-fn walk(body: &CheckedBody) -> Vec<(CheckedNode<'_>, Option<usize>)> {
+fn walk(root: CheckedNode<'_>) -> Vec<(CheckedNode<'_>, Option<usize>)> {
     let mut visited = Vec::new();
-    let mut stack = vec![(body.root(), None)];
+    let mut stack = vec![(root, None)];
     while let Some((node, parent)) = stack.pop() {
         let index = visited.len();
         visited.push((node, parent));
@@ -296,7 +367,7 @@ fn always_application(node: CheckedNode<'_>) -> bool {
 
 /// Each `expression` occurrence of an application node located under one of
 /// `origins`, by location, ascending by node and then ordinal.
-fn applications_at<'g>(
+pub(super) fn applications_at<'g>(
     graph: &'g CheckedGraph,
     origins: &HashSet<&Origin>,
 ) -> HashMap<&'g Location, Vec<(NodeKey, filament_exact::Origin)>> {
@@ -321,6 +392,36 @@ fn applications_at<'g>(
     at
 }
 
+/// Every expression node reachable from the operands of `key`, through
+/// nodes at other locations too: a lowering that joins its parts through a
+/// binding node (an IEEE ordering binds its operands once) reaches them
+/// only that way.
+fn reachable_operands(graph: &CheckedGraph, key: &NodeKey) -> HashSet<NodeKey> {
+    let mut reached: HashSet<NodeKey> = HashSet::new();
+    let mut pending: Vec<NodeKey> = vec![key.clone()];
+    while let Some(key) = pending.pop() {
+        let Some(node) = graph.semantic_graph().node(key) else {
+            continue;
+        };
+        // A call's callee is a function node whose body is its own walk.
+        if node.node_tag() != NodeTag::Expression {
+            continue;
+        }
+        for leaf in node.body().leaves() {
+            let LeafTerm::Reference { target } = leaf else {
+                continue;
+            };
+            let Some(target) = target.admitted() else {
+                continue;
+            };
+            if reached.insert(target.clone()) {
+                pending.push(target.clone());
+            }
+        }
+    }
+    reached
+}
+
 /// The application a position names: of the applications lowered at its
 /// location and not `taken` by an enclosing position at the same location,
 /// the one no other of them takes as an operand. An attribute read lowers a
@@ -330,6 +431,7 @@ fn term_application<'c>(
     graph: &CheckedGraph,
     candidates: &'c [(NodeKey, filament_exact::Origin)],
     taken: &[&NodeKey],
+    under: Option<(&NodeKey, &[&NodeKey])>,
 ) -> Result<Option<&'c NodeKey>, EmitRefusal> {
     let mut keys: Vec<&NodeKey> = Vec::new();
     for (key, _) in candidates {
@@ -337,16 +439,57 @@ fn term_application<'c>(
             keys.push(key);
         }
     }
-    let operands: HashSet<&NodeKey> = keys
+    // One application at the position is the position's own; only several
+    // need ordering by reach, which walks their operands.
+    if let [only] = keys[..] {
+        return Ok(Some(only));
+    }
+    // A recursive call reaches its own application again: only another
+    // application at the position makes one an operand.
+    let reach: Vec<HashSet<NodeKey>> = keys
         .iter()
-        .filter_map(|key| graph.semantic_graph().node((*key).clone()))
-        .flat_map(|node| node.body().leaves())
-        .filter_map(|leaf| match leaf {
-            LeafTerm::Reference { target } => target.admitted(),
-            LeafTerm::Literal { .. } | LeafTerm::DependencyReference { .. } => None,
-        })
+        .map(|key| reachable_operands(graph, key))
         .collect();
-    let mut outer = keys.iter().filter(|key| !operands.contains(**key));
+    let outermost: Vec<&&NodeKey> = keys
+        .iter()
+        .enumerate()
+        .filter(|(index, key)| {
+            !reach
+                .iter()
+                .enumerate()
+                .any(|(other, operands)| other != *index && operands.contains(**key))
+        })
+        .map(|(_, key)| key)
+        .collect();
+    if let [first, _, ..] = outermost[..] {
+        // Sibling parts of one lowering (an IEEE ordering's two halves) are
+        // outermost together; the parent's application reads them in the
+        // order the checked tree holds its children.
+        let named = under.and_then(|(parent, earlier)| {
+            let operands = graph
+                .semantic_graph()
+                .node(parent.clone())?
+                .body()
+                .leaves()
+                .into_iter()
+                .filter_map(|leaf| match leaf {
+                    LeafTerm::Reference { target } => target.admitted(),
+                    LeafTerm::Literal { .. } | LeafTerm::DependencyReference { .. } => None,
+                })
+                .collect::<Vec<_>>();
+            operands
+                .into_iter()
+                .find(|operand| {
+                    !earlier.contains(operand) && outermost.iter().any(|key| ***key == **operand)
+                })
+                .and_then(|operand| outermost.iter().find(|key| ****key == *operand).copied())
+        });
+        return match named {
+            Some(key) => Ok(Some(key)),
+            None => Err(refusal(first)),
+        };
+    }
+    let mut outer = outermost.into_iter();
     match (outer.next(), outer.next()) {
         (Some(key), None) => Ok(Some(key)),
         (None, None) if keys.is_empty() => Ok(None),
@@ -357,6 +500,22 @@ fn term_application<'c>(
             .first()
             .map_or(EmitRefusal::SourceMapInvariant, |key| refusal(key))),
     }
+}
+
+/// The child-index path of `location` as the wire carries it.
+pub(super) fn wire_path(location: &Location) -> Option<Vec<CheckedKeyOrdinal>> {
+    location
+        .path()
+        .into_iter()
+        .map(|index| {
+            let index = u64::try_from(index).ok()?;
+            Some(if index <= MAX_SAFE {
+                CheckedKeyOrdinal::Safe(index)
+            } else {
+                CheckedKeyOrdinal::BeyondSafe(index.to_string().into())
+            })
+        })
+        .collect()
 }
 
 /// The checker's `Location` of a term as the wire carries it, with the
@@ -373,20 +532,18 @@ fn wire_location(location: &Location) -> Option<(String, CheckedProtocolLocation
         | Origin::ProtocolAttempt { .. }
         | Origin::ModelOperationClause { .. } => return None,
     };
-    let path = location
-        .path()
-        .into_iter()
-        .map(|index| {
-            let index = u64::try_from(index).ok()?;
-            Some(if index <= MAX_SAFE {
-                CheckedKeyOrdinal::Safe(index)
-            } else {
-                CheckedKeyOrdinal::BeyondSafe(index.to_string().into())
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
+    let path = wire_path(location)?;
     let origin = CheckedProtocolLocationOrigin::TypeDeclaration {
         name: name.as_str().into(),
     };
     Some((name, CheckedProtocolLocation { origin, path }))
+}
+
+/// Whether `key` is the key of a `deref` application node.
+#[ix_trace_rs::string_edge]
+fn is_deref_application(key: &NodeKey) -> bool {
+    matches!(
+        key.path().as_slice(),
+        [PathSegment::Text(form), PathSegment::Text(kind), ..] if form == "expression" && kind == "deref"
+    )
 }

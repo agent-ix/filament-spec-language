@@ -69,13 +69,13 @@ FR-121-AC-32 to FR-121-AC-36.
    `Config::ConfigVersion::nope`.
 6. Build the two-operation unit: the step 3 domain package with `probe`
    added, the step 3 invariants, a precondition `AttemptPre` on
-   `attemptUpdate`, then `VersionUnchanged`, then a postcondition
+   `attemptUpdate`, then `VersionAdvances`, then a postcondition
    `ProbeUnchanged` on `probe`, and the function `sameIdentity`. Select
    `attemptUpdate` and `probe`.
 7. Build the same unit with no `AttemptPre` and no `ProbeUnchanged`, and
    select `Config::ConfigVersion::probe`.
 8. Over the step 6 unit, select the clauses `ParentOrder`, `NoCycle`,
-   `AttemptPre`, `VersionUnchanged`, `Absent` and `sameIdentity`. Compare
+   `AttemptPre`, `VersionAdvances`, `Absent` and `sameIdentity`. Compare
    the answers with the graph's `state_clause` nodes of each kind, with the
    step 6 `attemptUpdate` answer, and with `claim` occurrence keys built
    through the facade.
@@ -180,7 +180,7 @@ Tag the tests `#[trace("TC-516", "FR-121-AC-n")]`.
   never a bare `QualifiedName`.
 - Step 3: `package_id`, `anchor` and `frame` equal the compiled ones;
   `frame_occurrence` is the frame node's `generated` occurrence at ordinal
-  0; `clauses` holds exactly `VersionUnchanged`, at the postcondition node
+  0; `clauses` holds exactly `VersionAdvances`, at the postcondition node
   and its `claim` occurrence at ordinal 0. `ParentOrder` and `NoCycle` are
   absent.
 - Step 4: with the dependency input, the parameter is `x` and the replay
@@ -189,12 +189,12 @@ Tag the tests `#[trace("TC-516", "FR-121-AC-n")]`.
 - Step 5: each refuses `CallSiteRefusal::UnknownOperation`, pairing the
   given `OperationName` with the compiled package's own `package_id`.
 - Step 6: `attemptUpdate`'s clauses are exactly `AttemptPre`, then
-  `VersionUnchanged`; `probe`'s are exactly `ProbeUnchanged`, at a
+  `VersionAdvances`; `probe`'s are exactly `ProbeUnchanged`, at a
   different frame node.
 - Step 7: `call_site` refuses `CallSiteRefusal::UnknownOperation`, pairing
   the `OperationName` with the compiled package's own `package_id`.
 - Step 8: the invariants' answers are the two invariant nodes,
-  `AttemptPre`'s the precondition node, `VersionUnchanged`'s a
+  `AttemptPre`'s the precondition node, `VersionAdvances`'s a
   postcondition node equal to the `attemptUpdate` answer's entry, each at
   its `claim` occurrence at ordinal 0 and with the compiled `package_id`;
   `Absent` and `sameIdentity` each refuse `CallSiteRefusal::UnknownClause`

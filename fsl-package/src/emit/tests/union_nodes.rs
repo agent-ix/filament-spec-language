@@ -348,7 +348,11 @@ fn a_function_naming_an_omitted_node_is_omitted_and_the_other_is_written() {
     declarations.enums = vec![foreign];
     declarations.functions = vec![area, keep];
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the two functions check");
     let package = CheckedPackage::link(graph);
     let emission = emit_checked(&package)
@@ -448,4 +452,346 @@ fn a_function_naming_an_omitted_node_is_omitted_and_the_other_is_written() {
         "{refusal:?}"
     );
     assert_eq!(refusal.code(), Code::UnsupportedProjection);
+}
+
+const READING: &str = "union Reading { Raw(Integer), Wide(Int[0, 2000]), Tiny(Int[0, 9]) }\n";
+
+/// The node `reference` names.
+fn node_named<'w>(wire: &'w Value, reference: &Value) -> &'w Value {
+    nodes(wire)
+        .iter()
+        .find(|node| node["node_id"] == *reference)
+        .expect("the reference names a node")
+}
+
+/// The type node the union declares for the payload of `member`.
+fn declared_payload<'w>(wire: &'w Value, member: &str) -> &'w Value {
+    let [union] = of_form(wire, "union")[..] else {
+        panic!("one union node")
+    };
+    let declared = union["body"]["members"]
+        .as_array()
+        .expect("union members")
+        .iter()
+        .find(|binding| binding["name"] == member)
+        .expect("the member is declared");
+    &declared["value"]["members"][0]["target"]
+}
+
+/// IR's strict-reader verdict on the package envelope `wire`: the refusal's
+/// code, cause and the node it is located at, `None` when it admits.
+fn strict_verdict(wire: &Value) -> Option<(String, Option<String>, String)> {
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    match filament_contract_model::read_checked_package(
+        &jcs(wire),
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        &evidence,
+    ) {
+        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(_) => None,
+        filament_contract_model::CheckedPackageDispatchResult::Refused(refusal) => Some((
+            format!("{:?}", refusal.code),
+            refusal.cause.map(|cause| format!("{cause:?}")),
+            refusal.loci[0]
+                .path
+                .as_ref()
+                .map_or(String::new(), |path| path.as_str().to_owned()),
+        )),
+        other => panic!("not a V2 verdict: {other:?}"),
+    }
+}
+
+/// `key` with every occurrence of `from` replaced by `to` among its operands.
+fn substituted(key: &NodeKey, from: &NodeKey, to: &NodeKey) -> NodeKey {
+    if key == from {
+        return to.clone();
+    }
+    let path = key
+        .path()
+        .into_iter()
+        .map(|segment| match segment {
+            PathSegment::Node(operand) => PathSegment::Node(substituted(&operand, from, to)),
+            text => text,
+        })
+        .collect();
+    NodeKey::new(key.package(), path, key.ordinal()).expect("a well-formed key")
+}
+
+/// Whether `value` holds a node id that names one of `keys`.
+fn names_one_of(value: &Value, graph: &WireGraph, keys: &BTreeSet<NodeKey>) -> bool {
+    match value {
+        Value::Object(members)
+            if members.contains_key("package") && members.contains_key("path") =>
+        {
+            graph.key_of_value(value).is_ok_and(|key| {
+                keys.contains(&key)
+                    || key.path().iter().any(|segment| {
+                        matches!(segment, PathSegment::Node(operand) if keys.contains(operand))
+                    })
+            })
+        }
+        Value::Object(members) => members
+            .values()
+            .any(|member| names_one_of(member, graph, keys)),
+        Value::Array(items) => items.iter().any(|item| names_one_of(item, graph, keys)),
+        _ => false,
+    }
+}
+
+/// The wire form of `key` in a graph whose nodes, in order, are `order`.
+fn wire_id_in(key: &NodeKey, order: &BTreeMap<NodeKey, usize>) -> Value {
+    let path: Vec<Value> = key
+        .path()
+        .into_iter()
+        .map(|segment| match segment {
+            PathSegment::Text(text) => json!(text),
+            PathSegment::Node(operand) => json!({"node": order[&operand]}),
+        })
+        .collect();
+    json!({"ordinal": key.ordinal(), "package": key.package(), "path": path})
+}
+
+/// `value` with every node id it holds re-derived through `renamed` and
+/// `order`.
+fn reidentified(
+    value: &mut Value,
+    graph: &WireGraph,
+    renamed: &dyn Fn(&NodeKey) -> NodeKey,
+    order: &BTreeMap<NodeKey, usize>,
+) {
+    match value {
+        Value::Object(members)
+            if members.contains_key("package") && members.contains_key("path") =>
+        {
+            let key = graph
+                .key_of_value(&Value::Object(members.clone()))
+                .expect("a node id");
+            *value = wire_id_in(&renamed(&key), order);
+        }
+        Value::Object(members) => members
+            .values_mut()
+            .for_each(|member| reidentified(member, graph, renamed, order)),
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| reidentified(item, graph, renamed, order)),
+        _ => {}
+    }
+}
+
+/// `wire` with the nodes at `dropped` removed, every id naming one of them
+/// replaced by the id of `replacement` (when given), and every node's
+/// identity and `dependencies` re-derived: a well-formed package the emitter
+/// did not write.
+fn edited(wire: &Value, dropped: &[usize], replacement: Option<(usize, usize)>) -> Value {
+    let graph = WireGraph::of_package_value(wire).expect("a structural graph");
+    let keys = graph.keys().to_vec();
+    let gone: BTreeSet<NodeKey> = dropped.iter().map(|at| keys[*at].clone()).collect();
+    let renamed = |key: &NodeKey| match replacement {
+        Some((from, to)) => substituted(key, &keys[from], &keys[to]),
+        None => key.clone(),
+    };
+    let mut kept: Vec<(NodeKey, Value)> = nodes(wire)
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| !dropped.contains(at))
+        .map(|(at, node)| (renamed(&keys[at]), node.clone()))
+        .collect();
+    kept.sort_by(|left, right| left.0.cmp(&right.0));
+    let order: BTreeMap<NodeKey, usize> = kept
+        .iter()
+        .enumerate()
+        .map(|(at, (key, _))| (key.clone(), at))
+        .collect();
+    let mut rewritten = wire.clone();
+    // Every member other than the graph drops the rows that name a removed
+    // node and re-derives the ids of the rest.
+    if let Value::Object(members) = &mut rewritten {
+        for (name, member) in members.iter_mut() {
+            if name == "semantic_graph" {
+                continue;
+            }
+            if let Value::Array(items) = member {
+                items.retain(|item| !names_one_of(item, &graph, &gone));
+            } else if let Value::Object(tables) = member {
+                for table in tables.values_mut() {
+                    if let Value::Array(items) = table {
+                        items.retain(|item| !names_one_of(item, &graph, &gone));
+                    }
+                }
+            }
+            reidentified(member, &graph, &renamed, &order);
+        }
+    }
+    let mut graph_nodes = Vec::new();
+    for (_, mut node) in kept {
+        let positions: Vec<usize> = node["dependencies"]
+            .as_array()
+            .expect("dependencies")
+            .iter()
+            .map(|dependency| {
+                order[&renamed(&graph.key_of_value(dependency).expect("a dependency"))]
+            })
+            .collect();
+        reidentified(&mut node, &graph, &renamed, &order);
+        let moved: Vec<Value> = node["dependencies"].as_array().unwrap().clone();
+        let mut keyed: Vec<(usize, Value)> = positions.into_iter().zip(moved).collect();
+        keyed.sort_by_key(|(at, _)| *at);
+        keyed.dedup_by_key(|(at, _)| *at);
+        node["dependencies"] = Value::Array(
+            keyed
+                .into_iter()
+                .map(|(_, dependency)| dependency)
+                .collect(),
+        );
+        graph_nodes.push(node);
+    }
+    rewritten["semantic_graph"]["nodes"] = Value::Array(graph_nodes);
+    rewritten
+}
+
+/// The `(member, payload node)` of every `union_value` node of `wire`.
+fn constructions(wire: &Value) -> Vec<(String, &Value)> {
+    of_form(wire, "union_value")
+        .into_iter()
+        .map(|value| {
+            let binding = &value["body"]["members"][0];
+            let member = binding["name"].as_str().expect("a member name").to_owned();
+            let payload = &binding["value"]["members"];
+            assert_eq!(payload.as_array().map(Vec::len), Some(1), "{member}");
+            (member, node_named(wire, &payload[0]["target"]))
+        })
+        .collect()
+}
+
+/// FR-317-AC-7 (TC-3134): a union-member construction widens a bounded
+/// integer payload argument by the exact conversion a function-call argument
+/// gets, an `Integer` argument and a literal take none, and each payload term
+/// has the member's declared payload type node.
+#[trace("TC-3134", "FR-317-AC-7")]
+#[test]
+fn a_union_payload_argument_takes_the_exact_conversion_a_call_argument_takes() {
+    let emission = emitted(&format!(
+        "{READING}function g using v(a: Integer): Boolean pure {{ true }}\n\
+         function call using v(x: Int[0, 1000]): Boolean pure {{ g(x) }}\n\
+         function raw using v(x: Int[0, 1000]): Reading pure {{ Reading::Raw(x) }}\n\
+         function wide using v(x: Int[0, 1000]): Reading pure {{ Reading::Wide(x) }}\n\
+         function plain using v(n: Integer): Reading pure {{ Reading::Raw(n) }}\n\
+         function literal using v(): Reading pure {{ Reading::Raw(7) }}\n"
+    ));
+    assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    verified_exports(&emission);
+
+    let built = constructions(&wire);
+    let forms_of = |member: &str| {
+        let mut forms: Vec<&str> = built
+            .iter()
+            .filter(|(name, _)| name == member)
+            .map(|(_, payload)| payload["semantic_form"].as_str().expect("a form"))
+            .collect();
+        forms.sort_unstable();
+        forms
+    };
+    assert_eq!(forms_of("Raw"), ["conversion", "literal", "parameter"]);
+    assert_eq!(forms_of("Wide"), ["conversion"]);
+
+    // Every payload term has the member's declared payload type node.
+    for (member, payload) in &built {
+        assert_eq!(
+            payload["semantic_type"],
+            *declared_payload(&wire, member),
+            "{member}: {payload}"
+        );
+    }
+
+    // The conversion of `x` to `Integer` is the node `g(x)` gives its
+    // argument.
+    let converted = |member: &str| {
+        built
+            .iter()
+            .find(|(name, payload)| name == member && payload["semantic_form"] == "conversion")
+            .map(|(_, payload)| *payload)
+            .expect("a converted payload")
+    };
+    let raw = converted("Raw");
+    assert_eq!(
+        raw["body"]["operation"]["identity"],
+        "filament.op.numeric.convert"
+    );
+    let call = of_form(&wire, "call")
+        .into_iter()
+        .find(|node| node["body"]["arguments"].as_array().map(Vec::len) == Some(2))
+        .expect("the call g(x)");
+    assert_eq!(call["body"]["arguments"][1]["target"], raw["node_id"]);
+    assert_eq!(
+        converted("Wide")["body"]["operation"]["identity"],
+        "filament.op.numeric.convert"
+    );
+}
+
+/// FR-317-AC-7 (TC-3134): the checked package edited by hand so that the
+/// `Raw(x)` payload term is `x` itself, typed `Int[0, 1000]` at the `Integer`
+/// member, with the conversion node removed and every identity and
+/// `dependencies` list re-derived, is admitted with the construction left
+/// out and refused `ill_typed`/`type-mismatch` at the `union_value` node with
+/// it.
+#[trace("TC-3134", "FR-317-AC-7")]
+#[test]
+fn a_payload_argument_left_unconverted_is_refused_by_the_strict_reader() {
+    let emission = emitted(&format!(
+        "{READING}function raw using v(x: Int[0, 1000]): Reading pure {{ Reading::Raw(x) }}\n\
+         function keep using v(): Boolean pure {{ true }}\n"
+    ));
+    let wire = wire(&emission);
+    assert_eq!(
+        strict_verdict(&wire),
+        None,
+        "the emitted package is admitted"
+    );
+    assert_eq!(
+        strict_verdict(&edited(&wire, &[], None)),
+        None,
+        "re-deriving every identity changes nothing"
+    );
+
+    let position = |form: &str| {
+        nodes(&wire)
+            .iter()
+            .position(|node| node["semantic_form"] == form)
+            .unwrap_or_else(|| panic!("a {form} node"))
+    };
+    let [conversion, value, parameter] = ["conversion", "union_value", "parameter"].map(position);
+    let function = nodes(&wire)
+        .iter()
+        .position(|node| node["declaration"] == json!({"qualified_name": ["raw"]}))
+        .expect("the raw function");
+
+    // With the construction left out: the function, its construction, the
+    // conversion and the parameter are removed.
+    let without = edited(&wire, &[function, value, conversion, parameter], None);
+    assert_eq!(
+        strict_verdict(&without),
+        None,
+        "strict wire, graph and identity admission pass without the construction"
+    );
+
+    // With it, the payload term being `x`.
+    let unconverted = edited(&wire, &[conversion], Some((conversion, parameter)));
+    let verdict = strict_verdict(&unconverted).expect("the reader refuses the unconverted payload");
+    let at = unconverted["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|node| node["semantic_form"] == "union_value")
+        .expect("the construction remains");
+    assert_eq!(verdict.0, "IllTyped", "{verdict:?}");
+    assert_eq!(verdict.1.as_deref(), Some("TypeMismatch"), "{verdict:?}");
+    assert!(
+        verdict
+            .2
+            .starts_with(&format!("/semantic_graph/nodes/{at}")),
+        "{verdict:?}"
+    );
 }

@@ -32,7 +32,11 @@ fn outcome(profiles: &str, body: &str) -> Result<(), String> {
         Vec::new(),
     )
     .map_err(|refusal| format!("{refusal:?}"))?
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
     .map(|_| ())
     .map_err(|refusals| format!("{refusals:?}"))
 }

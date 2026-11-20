@@ -51,7 +51,11 @@ fn rooted(selected: usize) -> Rooted {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     let package = CheckedPackage::link(graph);
     let base = emit_checked(&package).expect("the package emits");
@@ -204,6 +208,7 @@ fn row(declaration: &CheckedNodeId, occurrence: u64) -> TemporalBinding {
         clock: ClockConfiguration::EventPosition {
             sequence_authority: "authority".into(),
         },
+        trace: None,
     }
 }
 

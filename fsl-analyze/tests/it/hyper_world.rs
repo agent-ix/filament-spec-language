@@ -143,7 +143,7 @@ pub(crate) fn key(suffix: &str) -> DeclarationKey {
 }
 
 /// The declaration `suffix` of the second model.
-fn other_key(suffix: &str) -> DeclarationKey {
+pub(crate) fn other_key(suffix: &str) -> DeclarationKey {
     DeclarationKey {
         package: OTHER.to_owned(),
         node: format!("ix://{OTHER}/{suffix}"),
@@ -288,7 +288,7 @@ pub(crate) fn unit_text(other: Option<&[u8]>, vault: Vault, reset: bool, body: &
 }
 
 /// The unit text with extra function declarations before the model contracts.
-fn unit_text_with_functions(
+pub(crate) fn unit_text_with_functions(
     other: Option<&[u8]>,
     vault: Vault,
     reset: bool,
@@ -314,7 +314,7 @@ fn unit_text_with_functions(
 
 /// The vault again under another package identity: the second model of a
 /// clause over two aliases.
-fn other_document(document: &[u8]) -> Vec<u8> {
+pub(crate) fn other_document(document: &[u8]) -> Vec<u8> {
     String::from_utf8(document.to_vec())
         .expect("the document is UTF-8")
         .replace(PACKAGE, OTHER)
@@ -716,7 +716,11 @@ impl World {
             };
         let base = unit_text_with_functions(other, vault, reset, function, &ieee_package_clause);
         let graph = declarations(&documents, &base)
-            .check(mode, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{base}: the unit checks: {refusals:?}"));
         let package = CheckedPackage::link(graph);
         let text =

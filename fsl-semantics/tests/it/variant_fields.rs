@@ -234,7 +234,11 @@ fn a_variant_case_with_a_resolving_payload_is_admitted() {
         .expect("Account.choice");
     assert_eq!(choice.value_type(), &ValueType::Composite(composite.key()));
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("the package's union payload type checks");
 }
 
@@ -483,7 +487,11 @@ fn a_second_alias_names_the_same_variant_record_and_object_types() {
         .all(|declared| !declared.name().starts_with("Cfg::")));
     let tier = enum_of(&declarations, "Config", "Tier");
     let checked = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     let signature = |name: &str| {
         let callable = checked
@@ -599,7 +607,11 @@ fn two_units_name_the_same_variant_record_and_object_types_through_their_own_ali
     );
     let tier = enum_of(&declarations, "Config", "Tier");
     let checked = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("both units check: {refusals:?}"));
     let callable = |name: &str| {
         checked
@@ -642,7 +654,11 @@ fn a_variant_case_through_another_units_alias_refuses_missing_name() {
     };
     units("Cfg::Tier::Gold")
         .unwrap_or_else(|refusal| panic!("b's own alias assembles: {refusal:?}"))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("b's own alias checks: {refusals:?}"));
     let codes: Vec<String> = match units("Config::Tier::Gold") {
         Err(refusal) => refusal
@@ -651,7 +667,11 @@ fn a_variant_case_through_another_units_alias_refuses_missing_name() {
             .map(|error| error.cause.catalog_code().to_string())
             .collect(),
         Ok(declarations) => declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect_err("b binds no Config")
             .iter()
             .filter_map(|refusal| refusal.cause.catalog_code())
@@ -686,7 +706,11 @@ fn checked() -> Checked {
         .map(|declared| ValueType::Composite(declared.key()))
         .expect("Settings is declared");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     Checked {
         graph,
@@ -1017,6 +1041,66 @@ fn undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_m
     assert_eq!(source_case.cause.cause(), Some("missing-name"));
 }
 
+/// TC-3051 (FR-317-AC-6): an unknown member of a source enum or ordered enum
+/// refuses `type-mismatch` naming the type and the member, like an undeclared
+/// model variant case; a qualifier that names no type stays `missing-name`.
+#[trace("TC-3051", "FR-317-AC-6")]
+#[test]
+#[ignore = "QSL-2170: a qualified unknown member of a source enum refusing type-mismatch is not implemented yet"]
+fn an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant_case() {
+    let refusals = check_refusals(
+        "enum Status { Open, Closed }\n\
+         ordered enum Level { Low, Mid, High }\n\
+         function source_case using v(): Boolean pure { Status::Pending = Status::Open }\n\
+         function ordered_case using v(): Level pure { Level::Top }\n\
+         function model_case using v(): Config::Tier pure { Config::Tier::Lost }\n\
+         function no_type using v(): Boolean pure { Nope::Open = Status::Open }",
+    );
+    assert_eq!(
+        refusals.len(),
+        4,
+        "one refusal per unknown member, none for its comparison: {refusals:?}"
+    );
+
+    for (owner, case) in [("Status", "Pending"), ("Level", "Top"), ("Tier", "Lost")] {
+        let refusal = refusals
+            .iter()
+            .find(|refusal| {
+                matches!(
+                    &refusal.cause,
+                    CheckCause::UndeclaredVariantCase { owner: found, case: written }
+                        if found == owner && written == case
+                )
+            })
+            .unwrap_or_else(|| panic!("`{owner}::{case}` refuses naming both: {refusals:?}"));
+        assert_eq!(refusal.cause.code(), fsl_foundation::Code::IllTyped);
+        assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
+    }
+    assert!(
+        !refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            CheckCause::MissingQualifiedName(name)
+                if name.name == "Status::Pending" || name.name == "Level::Top"
+        )),
+        "{refusals:?}"
+    );
+
+    let no_type = refusals
+        .iter()
+        .find(|refusal| {
+            matches!(
+                &refusal.cause,
+                CheckCause::MissingQualifiedName(name) if name.name == "Nope::Open"
+            )
+        })
+        .expect("a qualifier that names no type remains a missing name");
+    assert_eq!(
+        no_type.cause.code(),
+        fsl_foundation::Code::MissingDeclaration
+    );
+    assert_eq!(no_type.cause.cause(), Some("missing-name"));
+}
+
 /// TC-1007 step 6 (FR-360-AC-5): a variant type name in a type position that
 /// resolves to no variant type refuses at the assembler as `missing-name`.
 #[trace("TC-1007", "FR-360-AC-5")]
@@ -1106,7 +1190,11 @@ fn replay_over(document: serde_json::Value) -> Replay {
     let declarations = declarations_of(&document, "Config", "").0;
     let graph = declarations_of(&document, "Config", "")
         .0
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     Replay {
         declarations,
@@ -1493,7 +1581,11 @@ fn a_defect_in_a_nested_variant_value_is_refused_at_its_path() {
 /// The refusals `declarations` is checked with.
 fn check_refusals(declarations: &str) -> Vec<CheckRefusal> {
     assemble_as("Config", declarations)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map(|_| Vec::new())
         .unwrap_or_else(|refusals| refusals)
 }
@@ -2007,7 +2099,11 @@ fn odd_document() -> Value {
 fn odd_refusals(declarations: &str) -> Vec<CheckRefusal> {
     declarations_of(&odd_document(), "Config", declarations)
         .0
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map(|_| Vec::new())
         .unwrap_or_else(|refusals| refusals)
 }
@@ -2257,7 +2353,11 @@ fn describe_refusals(clause: &str) -> Vec<CheckRefusal> {
         &format!("post D using v on Config::Account::describe {{ {clause} }}"),
     );
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map(|_| Vec::new())
         .unwrap_or_else(|refusals| refusals)
 }

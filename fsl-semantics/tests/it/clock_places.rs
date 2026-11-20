@@ -6,8 +6,8 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, NodeRef, NodeTag, PlaceStep,
-    SlotRef,
+    BindingValue, BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, MemberTerm, NodeRef,
+    NodeTag, PlaceStep, SlotRef,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -80,9 +80,7 @@ const DENSE: &str = "time Config dense unit ms;\n";
 /// data reads and writes; `self.u = self.t` refuses
 /// `clock-read-outside-constraint` at `self.t`, and a `Timer` literal in a
 /// `let` refuses `clock-write` at the literal. The checked `Timer` record
-/// lists `n` only. The three objects' clocks are `fsl-eval`'s. Not
-/// covered: the tuple field `p: (Clock, Int)`, which a package cannot
-/// declare (STD-493 item 16).
+/// lists `n` only. The three objects' clocks are `fsl-eval`'s.
 #[trace("TC-685")]
 #[test]
 fn a_package_record_holds_its_clock_as_a_place_of_its_object() {
@@ -2210,6 +2208,75 @@ fn an_option_clock_reads_its_presence_bit() {
     }
 }
 
+/// In a population binder, the presence read's owner is the visited
+/// `Reference<Call>` itself. Keep the binder term as the second operand of
+/// the clock place's `presence_read`; lowering an object dereference here
+/// would give each place two encodings.
+#[trace(
+    "TC-685",
+    "FR-829-AC-3",
+    "FR-1040-AC-4",
+    "FSpec-FR-322-AC-455"
+)]
+#[test]
+fn a_population_clock_presence_read_uses_the_visited_reference() {
+    let document = option_clock_document();
+    let graph = check(
+        &document,
+        &format!(
+            "{UNITS}{DENSE}time invariant PopulationPresence when {{ \
+             exists(c in Config::calls : present(c.v)) }} {{ self.x <= 1 ms }}\n"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("population presence read checks: {refusals:?}"));
+    let semantic_graph = graph.semantic_graph();
+    let reads: Vec<_> = semantic_graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.option.present" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    let [read] = reads.as_slice() else {
+        panic!("one population presence_read: {reads:?}");
+    };
+    let [
+        MemberTerm::Leaf(LeafTerm::Reference { target: place }),
+        MemberTerm::Leaf(LeafTerm::Reference { target: owner }),
+    ] = read.arguments.as_slice()
+    else {
+        panic!("presence_read has the template then the owner term: {read:?}");
+    };
+    let place = semantic_graph
+        .node(place.admitted().expect("place template is admitted").clone())
+        .expect("place template node exists");
+    assert_eq!(place.semantic_form(), "clock_place");
+    let owner = semantic_graph
+        .node(owner.admitted().expect("owner term is admitted").clone())
+        .expect("owner node exists");
+    assert_eq!(owner.node_tag(), NodeTag::Value);
+    assert_eq!(owner.semantic_form(), "parameter");
+    let BodyTerm::Aggregate(owner_body) = owner.body() else {
+        panic!("the owner parameter carries its binder name");
+    };
+    let Some(MemberTerm::Binding(name)) = owner_body.members.first() else {
+        panic!("the owner parameter begins with a name binding");
+    };
+    assert_eq!(name.name, "name");
+    let BindingValue::Leaf(LeafTerm::Literal {
+        value: LiteralValue::Text(owner_name),
+        ..
+    }) = &name.value
+    else {
+        panic!("the owner parameter's name is text");
+    };
+    assert_eq!(owner_name, "c");
+}
+
 /// The STD-493 ruling on FR-230 "Presence bit" (TC-685): `absent` is an
 /// option literal typed by the `Option<T>` its context expects. It checks
 /// as an equality operand on either side of an `Option<Integer>` and as a
@@ -2939,7 +3006,8 @@ fn a_reference_to_clock_is_refused_in_every_type_position() {
                 declarations
                     .check(
                         CheckMode::Linked,
-                        filament_semantic_value::checking::CheckingLimits::default()
+                        filament_semantic_value::checking::CheckingLimits::default(),
+                        &crate::reward_evaluator::ZeroRewardEvaluator
                     )
                     .expect_err("Reference<Clock> is refused")
             ),
@@ -3083,11 +3151,8 @@ fn clock_tuple_and_union_document() -> Vec<u8> {
         serde_json::from_slice(&rpc_document_with(&["x"], false)).expect("JSON");
     let (slot, phase) = (package("Slot"), package("Phase"));
     let origin = |identity: &str| {
-        json!({"generated": {
-            "generatorIdentity": identity,
-            "generatorVersion": "1.0.0",
-            "inputIdentities": [identity],
-        }})
+        json!({"source": {"sourceIdentity": identity, "path": "clock-members.fspec",
+            "startLine": 1, "startColumn": 1}})
     };
     let types = document["types"].as_array_mut().expect("types");
     types.push(wire_type(
@@ -3154,14 +3219,14 @@ fn clock_tuple_and_union_document() -> Vec<u8> {
 #[trace("FSpec-TC-1361", "FSpec-FR-415-AC-28")]
 #[trace("FSpec-TC-1361", "FSpec-FR-322-AC-399")]
 #[test]
-#[ignore = "QSL-2251: Clock tuple positions and union case payloads as clock places not implemented yet"]
 fn a_clock_tuple_position_and_union_case_are_clock_places() {
     let document = clock_tuple_and_union_document();
     let body = format!(
         "{UNITS}{DENSE}\
          pre Armed using v on Config::Call::bump {{ present(self.p.Armed) and value(self.p.Armed) >= 1 ms }}\n\
          pre Slotted using v on Config::Call::reply {{ self.s[0] >= 2 ms }}\n\
-         post Arm using v on Config::Call::bump {{ self.p = Phase::Armed(0 ms) }}\n"
+         pre Data using v on Config::Call::reply {{ self.s[1] >= 0 }}\n\
+         post Arm using v on Config::Call::bump {{ self.p = Config::Phase::Armed(0 ms) }}\n"
     );
     let graph = check(&document, &body).expect("clock tuple and union places check");
     let model = timed(&graph);
@@ -3169,8 +3234,9 @@ fn a_clock_tuple_position_and_union_case_are_clock_places() {
         .clock_fields()
         .map(|(_, field)| field.name().to_owned())
         .collect();
-    assert!(names.iter().any(|name| name == "s"), "{names:?}");
-    assert!(names.iter().any(|name| name == "p"), "{names:?}");
+    assert!(names.iter().any(|name| name == "s.0"), "{names:?}");
+    assert!(names.iter().any(|name| name == "p.Armed"), "{names:?}");
+    assert!(model.clock_fields().all(|(_, field)| !field.presence_bit()));
     assert_eq!(
         model
             .resets()
@@ -3197,5 +3263,70 @@ fn a_clock_tuple_position_and_union_case_are_clock_places() {
             Code::InvalidTimedModel,
             Some("clock-read-outside-constraint")
         )]
+    );
+    assert_eq!(
+        presence("invariant Same using v on Config::Call at current { self.s = self.s }\n"),
+        [(
+            Code::InvalidTimedModel,
+            Some("clock-read-outside-constraint")
+        )]
+    );
+}
+
+/// FR-056-AC-64: a value type bound by `target` to
+/// `ix://filament/native/Clock` is an alias of the clock type, so a field
+/// typed by it is a clock place and its `max` constraint bounds that place.
+#[trace("TC-3031", "FR-056-AC-64")]
+#[test]
+#[ignore = "QSL-2176: a value type bound to Clock by target is not admitted as a clock alias yet"]
+fn a_value_type_bound_to_clock_by_target_types_a_clock_place() {
+    let document = timer_document(|document: &mut Value| {
+        let watch = package("Watch");
+        let constraint = json!({
+            "identity": format!("{watch}/constraints/max"),
+            "keyword": "max",
+            "operands": {"value": 5},
+            "appliesTo": watch.clone(),
+            "diagnosticCode": "clock.max",
+            "origin": {"generated": {
+                "generatorIdentity": watch.clone(),
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [watch.clone()],
+            }},
+        });
+        let types = document["types"].as_array_mut().expect("types");
+        types.push(wire_type(
+            &watch,
+            "clock_value_type",
+            json!({"target": "ix://filament/native/Clock", "constraints": [constraint]}),
+        ));
+        types[1]["fields"]
+            .as_array_mut()
+            .expect("Call fields")
+            .push(field("w", &watch));
+        document["constructs"]
+            .as_array_mut()
+            .expect("constructs")
+            .push(wire_construct(
+                "clock_value_type",
+                meaning::VALUE_TYPE,
+                json!({}),
+            ));
+    });
+    let graph = check(&document, &format!("{UNITS}{DENSE}"))
+        .unwrap_or_else(|refusals| panic!("a clock-bound value type checks: {refusals:?}"));
+    let model = timed(&graph);
+    let w = model
+        .clocks()
+        .iter()
+        .find(|clock| clock.name() == "w")
+        .unwrap_or_else(|| panic!("w's place: {:?}", model.clocks()));
+    assert!(
+        model.invariants().iter().any(|invariant| invariant
+            .bounds()
+            .iter()
+            .any(|bound| model.clock(bound.clock()).map(|c| c.name()) == Some(w.name()))),
+        "Watch's max bounds w: {:?}",
+        model.invariants()
     );
 }

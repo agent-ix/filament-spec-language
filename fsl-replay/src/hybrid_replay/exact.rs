@@ -4,7 +4,7 @@
 //! instant that makes a reproduced trace a `formula` or an
 //! `undefined-evaluation` counterexample.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::Rational;
 use fsl_semantics::check::{
@@ -12,12 +12,14 @@ use fsl_semantics::check::{
     HybridFormula, HybridInterval, LogicOp,
 };
 
-use super::eval::{cells, eval, Constant, Env, Ev};
+use super::eval::{cells, cells_of, eval, Bi, Cell, Constant, Env, Ev, Evaluate};
 use super::expand::{result_kind, Exp, Expander, ResultKind};
 use super::flow::Flow;
 use super::interval::Tri;
 use super::poly::{Poly, RatFunc};
+use super::poly2::{projection, Poly2};
 use super::real::ExactReal;
+use super::section::Section;
 use super::signal::{Piece, Signal, Span, Timeline, Window};
 use super::trace::{before_pointer, jump_pointer, loop_pointer, state_pointer, zero};
 use super::{
@@ -25,6 +27,10 @@ use super::{
     HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal, HybridTrace, JsonPointer,
     UndefinedCause, UndefinedInstant,
 };
+
+mod activation;
+
+use activation::Obligations;
 
 /// One state of a point trace: its time and point.
 #[derive(Clone, Debug)]
@@ -44,6 +50,7 @@ struct PointTrace {
     states: Vec<(usize, Point)>,
     befores: Vec<Point>,
     transitions: Vec<usize>,
+    end: Option<Point>,
 }
 
 impl PointTrace {
@@ -78,10 +85,15 @@ impl PointTrace {
             ));
             transitions.push(usize::try_from(jump.transition).ok()?);
         }
+        let end = match &trace.end {
+            Some(end) => Some(point(&end.time, &end.enclosure)?),
+            None => None,
+        };
         Some(Self {
             states,
             befores,
             transitions,
+            end,
         })
     }
 }
@@ -373,40 +385,13 @@ struct Claim<'c> {
     atoms: Vec<Exp>,
     guard: Option<Exp>,
     captures: Vec<Exp>,
+    /// Set for an `on each` claim under `model-time` whose obligations read
+    /// the activation position's state, decided obligation by obligation.
+    each: Option<Obligations>,
 }
 
 fn substitute(exp: &Exp, posts: &[Option<Exp>]) -> Exp {
-    let map = |e: &Exp| Box::new(substitute(e, posts));
-    match exp {
-        Exp::Variable(i) => posts
-            .get(*i)
-            .cloned()
-            .flatten()
-            .unwrap_or_else(|| exp.clone()),
-        Exp::Activation(_)
-        | Exp::Capture(_)
-        | Exp::Parameter(_)
-        | Exp::Number(_)
-        | Exp::Boolean(_)
-        | Exp::Recursive(_) => exp.clone(),
-        Exp::Negate(a) => Exp::Negate(map(a)),
-        Exp::Not(a) => Exp::Not(map(a)),
-        Exp::Arithmetic(op, a, b, locus) => Exp::Arithmetic(*op, map(a), map(b), locus.clone()),
-        Exp::Compare(op, a, b) => Exp::Compare(*op, map(a), map(b)),
-        Exp::Logic(op, a, b) => Exp::Logic(*op, map(a), map(b)),
-        Exp::Conditional(a, b, c) => Exp::Conditional(map(a), map(b), map(c)),
-        Exp::Ranged {
-            value,
-            range,
-            role,
-            locus,
-        } => Exp::Ranged {
-            value: map(value),
-            range: range.clone(),
-            role: *role,
-            locus: locus.clone(),
-        },
-    }
+    exp.map_variables(&|i| posts.get(i).cloned().flatten())
 }
 
 fn rational_of(value: &RatFunc) -> Option<Rational> {
@@ -487,7 +472,7 @@ impl Replay<'_, '_, '_> {
                         .get_or_insert((invariant.clone(), ExpressionSite::Invariant { mode }));
                 }
                 (Ev::Number(_), _) | (_, Ev::Number(_)) => {
-                    return Err(ExactGap::IllKindedTerm.into())
+                    return Err(ExactGap::IllKindedTerm.into());
                 }
             }
         }
@@ -508,7 +493,12 @@ impl Replay<'_, '_, '_> {
     /// time.
     fn dwell(&self, k: usize) -> (Rational, Rational, Vec<Poly>) {
         let (mode, state) = self.state(k);
-        let before = &self.points.befores[k];
+        let before = self
+            .points
+            .befores
+            .get(k)
+            .or(self.points.end.as_ref())
+            .unwrap_or_else(|| unreachable!("a replayed dwell has an endpoint"));
         let flow = self
             .flows
             .get(mode)
@@ -527,7 +517,12 @@ impl Replay<'_, '_, '_> {
         if high < low {
             return Ok(false);
         }
-        let before = &self.points.befores[k];
+        let before = self
+            .points
+            .befores
+            .get(k)
+            .or(self.points.end.as_ref())
+            .unwrap_or_else(|| unreachable!("a replayed dwell has an endpoint"));
         if solution
             .iter()
             .zip(&before.values)
@@ -715,6 +710,15 @@ impl Replay<'_, '_, '_> {
                 segments.push(self.step_segment(n, count(n)));
                 return Ok((segments, count(n + 1).into()));
             }
+            if self.points.end.is_some() {
+                segments.push(self.dwell_segment(n, &zero()));
+                let end = self
+                    .points
+                    .end
+                    .as_ref()
+                    .unwrap_or_else(|| unreachable!("the end branch has an endpoint"));
+                return Ok((segments, end.time.clone().into()));
+            }
             let (_, last) = self.state(n);
             let at: ExactReal = last.time.clone().into();
             segments.push(ClaimSegment {
@@ -805,8 +809,12 @@ impl Claim<'_> {
         &self,
         segments: &[ClaimSegment],
         tail: ExactReal,
+        meter: &mut HybridReplayMeter,
         records: &mut Records,
     ) -> Result<Tri, HybridReplayRefusal> {
+        if let Some(obligations) = &self.each {
+            return self.each_time(obligations, segments, &tail, meter, records);
+        }
         let timeline = Timeline {
             spans: segments.iter().map(|s| s.span.clone()).collect(),
             tail: Some(tail),
@@ -815,11 +823,7 @@ impl Claim<'_> {
             HybridActivation::Each { .. } if self.claim.clock == HybridClock::ModelSteps => {
                 let mut claim = Tri::True;
                 for (j, segment) in segments.iter().enumerate() {
-                    let activation: Vec<Rational> = segment
-                        .values
-                        .iter()
-                        .map(|p| p.as_constant().unwrap_or_else(zero))
-                        .collect();
+                    let activation = segment.values.clone();
                     let Some(captures) = self.captures(segment, &activation, records)? else {
                         continue;
                     };
@@ -848,7 +852,20 @@ impl Claim<'_> {
                 let Some(first) = segments.first() else {
                     return Ok(Tri::Unknown);
                 };
-                let Some(captures) = self.captures(first, &[], records)? else {
+                // The captures read the state at the first position, not
+                // the dwell's solution.
+                let here = match first.span.low.as_rational() {
+                    Some(at) => ClaimSegment {
+                        values: first
+                            .values
+                            .iter()
+                            .map(|p| Poly::constant(p.eval(at)))
+                            .collect(),
+                        ..first.clone()
+                    },
+                    None => first.clone(),
+                };
+                let Some(captures) = self.captures(&here, &[], records)? else {
                     return Ok(Tri::Unknown);
                 };
                 let signal = self.formula_signal(&timeline, segments, &captures, &[], records)?;
@@ -862,7 +879,7 @@ impl Claim<'_> {
     fn captures(
         &self,
         segment: &ClaimSegment,
-        activation: &[Rational],
+        activation: &[Poly],
         records: &mut Records,
     ) -> Result<Option<Vec<Constant>>, HybridReplayRefusal> {
         let mut values = Vec::with_capacity(self.captures.len());
@@ -881,7 +898,7 @@ impl Claim<'_> {
             match eval(exp, &env, at, &mut Vec::new())? {
                 Ev::Boolean(value) => values.push(Constant::Boolean(value)),
                 Ev::Number(value) => {
-                    let value = rational_of(&value).ok_or(ExactGap::ActivationState)?;
+                    let value = rational_of(&value).ok_or(ExactGap::IllKindedTerm)?;
                     let inside = match self
                         .claim
                         .captures
@@ -931,7 +948,7 @@ impl Claim<'_> {
         exp: &Exp,
         segment: &ClaimSegment,
         captures: &[Constant],
-        activation: &[Rational],
+        activation: &[Poly],
         records: &mut Records,
         site: ExpressionSite,
     ) -> Result<Tri, HybridReplayRefusal> {
@@ -967,23 +984,37 @@ impl Claim<'_> {
         timeline: &Timeline,
         segments: &[ClaimSegment],
         captures: &[Constant],
-        activation: &[Rational],
+        activation: &[Poly],
         records: &mut Records,
     ) -> Result<Signal, HybridReplayRefusal> {
-        let mut atoms: Vec<Signal> = vec![Vec::with_capacity(segments.len()); self.atoms.len()];
-        for segment in segments {
+        self.formula_signal_over(timeline, segments, records, &mut |segment| {
             let env = Env {
                 variables: &segment.values,
                 captures,
                 activation,
             };
-            let cells = cells(
+            cells(
                 &self.atoms,
                 &env,
                 &segment.span.low,
                 &segment.span.high,
                 segment.span.high_closed,
-            )?;
+            )
+        })
+    }
+
+    /// The formula's signal over the claim's positions, the cells of each
+    /// segment over which every atom takes one value given by `cells_of`.
+    fn formula_signal_over(
+        &self,
+        timeline: &Timeline,
+        segments: &[ClaimSegment],
+        records: &mut Records,
+        provider: &mut dyn FnMut(&ClaimSegment) -> Result<Vec<Cell>, HybridReplayRefusal>,
+    ) -> Result<Signal, HybridReplayRefusal> {
+        let mut atoms: Vec<Signal> = vec![Vec::with_capacity(segments.len()); self.atoms.len()];
+        for segment in segments {
+            let cells = provider(segment)?;
             for signal in &mut atoms {
                 signal.push(Vec::with_capacity(cells.len()));
             }
@@ -1029,7 +1060,7 @@ impl Claim<'_> {
 
     /// Under `model-time`, the `on each` guard is the formula's last atom.
     fn guard_atom(&self) -> Option<usize> {
-        (self.claim.clock == HybridClock::ModelTime && self.guard.is_some())
+        (self.claim.clock == HybridClock::ModelTime && self.each.is_none() && self.guard.is_some())
             .then(|| self.atoms.len() - 1)
     }
 }
@@ -1081,6 +1112,210 @@ fn signal_of(formula: &Formula, atoms: &[Signal], timeline: &Timeline) -> Signal
     }
 }
 
+/// One transition's enabledness at an instant of a dwell (FSpec FR-193
+/// "Resets": the guard holds and some state after the jump satisfies the
+/// reset and the target mode's invariant).
+enum Enablement {
+    /// Every reset determines its variable: the guard and the target
+    /// invariant over the reset values.
+    Direct(Exp),
+    /// A reset leaves variables free.
+    Quantified(Quantified),
+}
+
+/// A transition whose reset leaves variables free. A free variable `x` is
+/// read in the target invariant and the reset's relations as the post-jump
+/// `Variable(x)`, and in the reset's values as the pre-jump
+/// `Activation(x)`.
+struct Quantified {
+    guard: Exp,
+    /// The conjuncts of the post-jump condition that read no free variable.
+    fixed: Vec<Exp>,
+    /// Each free variable and the conjuncts that read it.
+    free: Vec<(usize, Exp)>,
+}
+
+/// The conjuncts of `exp`, a tree of `and`.
+fn conjuncts(exp: Exp, out: &mut Vec<Exp>) {
+    match exp {
+        Exp::Logic(LogicOp::And, a, b) => {
+            conjuncts(*a, out);
+            conjuncts(*b, out);
+        }
+        other => out.push(other),
+    }
+}
+
+impl Replay<'_, '_, '_> {
+    /// Transition `transition` of mode `source`, as an enablement.
+    fn enablement(
+        &mut self,
+        source: usize,
+        transition: usize,
+    ) -> Result<Enablement, HybridReplayRefusal> {
+        let model = self.model;
+        let declared = &model.modes[source].transitions[transition];
+        let guard = self.expander.term(&declared.guard, self.meter)?;
+        let target = self
+            .expander
+            .term(&model.modes[declared.target.get()].invariant, self.meter)?;
+        let mut resets = Vec::with_capacity(declared.resets.len());
+        for reset in &declared.resets {
+            resets.push((
+                reset.variable.get(),
+                reset.relation,
+                self.expander.term(&reset.value, self.meter)?,
+            ));
+        }
+        let free: BTreeSet<usize> = resets
+            .iter()
+            .filter(|(_, relation, _)| *relation != CompareOp::Eq)
+            .map(|(variable, ..)| *variable)
+            .collect();
+        let mut posts: Vec<Option<Exp>> = vec![None; model.variables.len()];
+        let before =
+            |exp: &Exp| exp.map_variables(&|i| free.contains(&i).then(|| Exp::Activation(i)));
+        let mut relations = Vec::new();
+        for (variable, relation, value) in resets {
+            if relation == CompareOp::Eq {
+                posts[variable] = Some(before(&value));
+            } else {
+                relations.push(Exp::Compare(
+                    relation,
+                    Box::new(Exp::Variable(variable)),
+                    Box::new(before(&value)),
+                ));
+            }
+        }
+        let target = substitute(&target, &posts);
+        if free.is_empty() {
+            return Ok(Enablement::Direct(Exp::Logic(
+                LogicOp::And,
+                Box::new(guard),
+                Box::new(target),
+            )));
+        }
+        let mut all = relations;
+        conjuncts(target, &mut all);
+        let mut fixed = Vec::new();
+        let mut grouped: BTreeMap<usize, Vec<Exp>> = BTreeMap::new();
+        for conjunct in all {
+            let reads: Vec<usize> = free
+                .iter()
+                .copied()
+                .filter(|&i| conjunct.reads_variable(i))
+                .collect();
+            match reads.as_slice() {
+                [] => fixed.push(conjunct),
+                [only] => grouped.entry(*only).or_default().push(conjunct),
+                _ => {
+                    return Err(ExactGap::CoupledReset {
+                        mode: source,
+                        transition,
+                    }
+                    .into());
+                }
+            }
+        }
+        let free = grouped
+            .into_iter()
+            .filter_map(|(variable, parts)| {
+                parts
+                    .into_iter()
+                    .reduce(|a, b| Exp::Logic(LogicOp::And, Box::new(a), Box::new(b)))
+                    .map(|body| (variable, body))
+            })
+            .collect();
+        Ok(Enablement::Quantified(Quantified { guard, fixed, free }))
+    }
+}
+
+/// The enablements of one dwell's transitions, evaluated along it.
+struct Enabled<'a> {
+    enablements: &'a [Enablement],
+    solution: &'a [Poly],
+    meter: &'a mut HybridReplayMeter,
+}
+
+impl Enabled<'_> {
+    fn holds(
+        exp: &Exp,
+        env: &Env<'_>,
+        at: &ExactReal,
+        decisions: &mut Vec<Poly>,
+    ) -> Result<bool, ExactGap> {
+        Ok(matches!(eval(exp, env, at, decisions)?, Ev::Boolean(true)))
+    }
+
+    /// Whether `quantified` is enabled at `at`: its guard and every fixed
+    /// conjunct hold and each free variable has a real value satisfying the
+    /// conjuncts that read it, decided by quantifier elimination at the
+    /// section `t = at` and read at every instant by the roots of the
+    /// elimination's projection.
+    fn quantified(
+        &mut self,
+        quantified: &Quantified,
+        at: &ExactReal,
+        decisions: &mut Vec<Poly>,
+    ) -> Result<bool, HybridReplayRefusal> {
+        let env = Env {
+            variables: self.solution,
+            captures: &[],
+            activation: self.solution,
+        };
+        if !Self::holds(&quantified.guard, &env, at, decisions)? {
+            return Ok(false);
+        }
+        for fixed in &quantified.fixed {
+            if !Self::holds(fixed, &env, at, decisions)? {
+                return Ok(false);
+            }
+        }
+        let before: Vec<Poly2> = self.solution.iter().cloned().map(Poly2::constant).collect();
+        let section = Section::new(at, &mut *self.meter);
+        for (free, body) in &quantified.free {
+            let mut after = before.clone();
+            after[*free] = Poly2::variable();
+            let env = Env::<Bi> {
+                variables: &after,
+                captures: &[],
+                activation: &before,
+            };
+            let (satisfied, read) = section.exists(body, &env)?;
+            decisions.extend(projection(&read, &mut |work| section.charge_by(work))?);
+            if !satisfied {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+impl Evaluate for Enabled<'_> {
+    fn at(&mut self, at: &ExactReal) -> Result<(Vec<Ev>, Vec<Poly>), HybridReplayRefusal> {
+        let mut decisions = Vec::new();
+        let mut values = Vec::with_capacity(self.enablements.len());
+        for enablement in self.enablements {
+            let enabled = match enablement {
+                Enablement::Direct(exp) => {
+                    let env = Env {
+                        variables: self.solution,
+                        captures: &[],
+                        activation: &[],
+                    };
+                    Self::holds(exp, &env, at, &mut decisions)?
+                }
+                Enablement::Quantified(quantified) => {
+                    self.meter.charge()?;
+                    self.quantified(quantified, at, &mut decisions)?
+                }
+            };
+            values.push(Ev::Boolean(enabled));
+        }
+        Ok((values, decisions))
+    }
+}
+
 /// Whether a lasso's periodic behaviour satisfies the claim's fairness set
 /// (FSpec FR-193 "Fairness").
 fn fair(
@@ -1089,7 +1324,6 @@ fn fair(
     loop_to: usize,
 ) -> Result<bool, HybridReplayRefusal> {
     let n = replay.points.befores.len();
-    let model = replay.model;
     let taken: Vec<(usize, usize)> = (loop_to..n)
         .map(|j| (replay.state(j).0, replay.points.transitions[j]))
         .collect();
@@ -1118,43 +1352,21 @@ fn fair(
             let mut disabled_somewhere = false;
             for k in loop_to..n {
                 let mode = replay.state(k).0;
-                let mut exps = Vec::new();
+                let mut enablements = Vec::new();
                 for &(source, t) in group.iter().filter(|(source, _)| *source == mode) {
-                    let transition = &model.modes[source].transitions[t];
-                    let mut posts: Vec<Option<Exp>> = vec![None; model.variables.len()];
-                    for reset in &transition.resets {
-                        if reset.relation != CompareOp::Eq {
-                            return Err(ExactGap::NondeterministicReset {
-                                mode: source,
-                                transition: t,
-                            }
-                            .into());
-                        }
-                        posts[reset.variable.get()] =
-                            Some(replay.expander.term(&reset.value, replay.meter)?);
-                    }
-                    let guard = replay.expander.term(&transition.guard, replay.meter)?;
-                    let target = replay.expander.term(
-                        &model.modes[transition.target.get()].invariant,
-                        replay.meter,
-                    )?;
-                    exps.push(Exp::Logic(
-                        LogicOp::And,
-                        Box::new(guard),
-                        Box::new(substitute(&target, &posts)),
-                    ));
+                    enablements.push(replay.enablement(source, t)?);
                 }
-                if exps.is_empty() {
+                if enablements.is_empty() {
                     disabled_somewhere = true;
                     continue;
                 }
                 let (low, high, solution) = replay.dwell(k);
-                let env = Env {
-                    variables: &solution,
-                    captures: &[],
-                    activation: &[],
+                let mut enabled = Enabled {
+                    enablements: &enablements,
+                    solution: &solution,
+                    meter: &mut *replay.meter,
                 };
-                for cell in cells(&exps, &env, &low.into(), &high.into(), true)? {
+                for cell in cells_of(&mut enabled, &low.into(), &high.into(), true)? {
                     let any = cell.values.iter().any(|v| matches!(v, Ev::Boolean(true)));
                     enabled_somewhere |= any;
                     disabled_somewhere |= !any;
@@ -1189,7 +1401,10 @@ pub(super) fn replay(
     let lasso = trace.loop_to.and_then(|l| usize::try_from(l).ok());
     // Every mode the trace dwells in has a polynomial flow.
     let mut flows = BTreeMap::new();
-    for k in 0..n {
+    for k in 0..=n {
+        if k == n && points.end.is_none() {
+            continue;
+        }
         meter.charge()?;
         let mode = points.states[k].0;
         if flows.contains_key(&mode) {
@@ -1261,13 +1476,14 @@ pub(super) fn replay(
     let mut atoms = converter.atoms;
     let time_each = matches!(claim.activation, HybridActivation::Each { .. })
         && claim.clock == HybridClock::ModelTime;
-    if time_each {
+    // One obligation at every instant, each with its own captured values
+    // when it reads its activation position's state.
+    let by_state = time_each && (!captures.is_empty() || atoms.iter().any(Exp::reads_activation));
+    if time_each && !by_state {
         // Under `model-time`, one obligation at every instant: the claim is
-        // `always (g implies body)`, read when no obligation reads its own
+        // `always (g implies body)` when no obligation reads its own
         // activation state.
-        if !captures.is_empty() || atoms.iter().any(Exp::reads_activation) {
-            return Err(ExactGap::ActivationState.into());
-        }
+        let body_formula = formula.clone();
         let body = match &guard {
             Some(guard) => {
                 atoms.push(guard.activation_as_current());
@@ -1281,7 +1497,9 @@ pub(super) fn replay(
         };
         let mut always = window(None);
         if let Some(period) = &period {
-            always.upper = Some(period.onset.add(&period.period));
+            // The prefix and `1 + ceil(R / P)` periods, `R` the formula's
+            // past reach: later obligations agree with earlier ones.
+            always.upper = Some(activation::decided_until(&body_formula, period, meter)?);
         }
         formula = Formula::Unary {
             window: always,
@@ -1321,6 +1539,12 @@ pub(super) fn replay(
             return not_reproduced(jump_pointer(k), ExactCheck::Jump);
         }
     }
+    if replay.points.end.is_some() {
+        replay.meter.charge()?;
+        if !replay.dwell_holds(n)? {
+            return not_reproduced(JsonPointer::root().key("end"), ExactCheck::Loop);
+        }
+    }
     // Check 4.
     if let Some(loop_to) = lasso {
         let (last_mode, last) = replay.state(n).clone();
@@ -1333,10 +1557,24 @@ pub(super) fn replay(
         }
     }
     // Check 5 and the decisive instant.
+    let each = if by_state {
+        Some(Obligations {
+            until: match &period {
+                Some(period) => Some(activation::decided_until(&formula, period, replay.meter)?),
+                None => None,
+            },
+        })
+    } else {
+        None
+    };
     let horizon_clock = match (&claim.activation, claim.clock) {
         (HybridActivation::Each { .. }, HybridClock::ModelSteps) => {
             Rational::from_integer(n.into())
         }
+        (HybridActivation::Each { .. }, HybridClock::ModelTime) => each
+            .as_ref()
+            .and_then(|each| each.until.clone())
+            .unwrap_or_else(zero),
         _ => zero(),
     };
     let horizon = horizon_clock.add(&reach(&formula));
@@ -1347,9 +1585,10 @@ pub(super) fn replay(
         atoms,
         guard,
         captures,
+        each,
     };
     let mut records = std::mem::take(&mut replay.records);
-    let value = claim_reading.value(&segments, tail, &mut records)?;
+    let value = claim_reading.value(&segments, tail, &mut *replay.meter, &mut records)?;
     let reproduced = |kind| {
         Ok(ExactReplay::Reproduced(Box::new(HybridCounterexample {
             kind,
@@ -1360,6 +1599,7 @@ pub(super) fn replay(
         at: Box::new(UndefinedInstant {
             state: record.state,
             time: record.time,
+            time_interval: None,
             locus: record.locus,
         }),
         cause: record.cause,
@@ -1382,7 +1622,8 @@ pub(super) fn replay(
             };
             let (kept, tail) =
                 cut_segments(&segments, &cut, claim.clock == HybridClock::ModelSteps);
-            let before = claim_reading.value(&kept, tail, &mut Records::default())?;
+            let before =
+                claim_reading.value(&kept, tail, &mut *replay.meter, &mut Records::default())?;
             if before == Tri::False {
                 reproduced(HybridCounterexampleKind::Formula)
             } else {

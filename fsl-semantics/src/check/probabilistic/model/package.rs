@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FSL FR-740: the checked random parameters and workloads read back from a
+//! FSL FR-740: the checked random parameters, workloads and delays read back from a
 //! package's `probabilistic` nodes.
 //!
 //! A package carries a declaration's identity, its values and its weights;
@@ -22,8 +22,10 @@ use filament_exact::{
 use filament_checked::node::CheckedLiteral;
 
 use super::{
-    CheckedProbabilisticModel, ProbabilisticOperation, RandomParameter, SupportValue, Workload,
+    CheckedProbabilisticModel, Delay, DelayDistribution, ProbabilisticOperation, RandomParameter,
+    ReadReward, SupportValue, Workload,
 };
+use crate::check::DelayFault;
 use crate::model::operation::{OperationLookup, OperationTable};
 use crate::model::state::StateModel;
 
@@ -90,14 +92,66 @@ pub struct PackageWorkload {
     pub weights: Vec<PackageWeight>,
 }
 
-/// The random parameters and workloads of a package, as its nodes spell
-/// them, in the package's node order.
+/// The distribution of a package's `delay_distribution` node, with its times
+/// as magnitudes in the unit of the model's time source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PackageDelayFamily {
+    /// `uniform`.
+    Uniform,
+    /// `uniform_interval`.
+    UniformInterval {
+        /// The lower end.
+        lower: Rational,
+        /// The upper end.
+        upper: Rational,
+    },
+    /// `exponential`.
+    Exponential {
+        /// The rate.
+        rate: Rational,
+    },
+    /// `discrete`: each delay with its weight, in declared order.
+    Discrete(Vec<(Rational, Rational)>),
+}
+
+/// A `delay_distribution` node of a package.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageDelay {
+    /// The `model` object type node that declares the operation.
+    pub declaring: NodeKey,
+    /// The operation's name.
+    pub operation: String,
+    /// The distribution.
+    pub family: PackageDelayFamily,
+}
+
+/// A `reward` node of a package.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageReward {
+    /// The `model` object type node that declares the operation.
+    pub declaring: NodeKey,
+    /// The operation's name.
+    pub operation: String,
+    /// The reward's name.
+    pub name: String,
+    /// The integer or quantity type node of the reward.
+    pub value_type: NodeKey,
+    /// The clause function node the reward's expression lowered to.
+    pub function: NodeKey,
+}
+
+/// The random parameters, workloads, delays and rewards of a package, as its
+/// nodes spell them, in the package's node order.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PackageProbabilistic {
     /// Every `random_parameter` node.
     pub random_parameters: Vec<PackageRandomParameter>,
     /// Every `workload` node.
     pub workloads: Vec<PackageWorkload>,
+    /// Every `delay_distribution` node.
+    pub delays: Vec<PackageDelay>,
+    /// Every `reward` node.
+    pub rewards: Vec<PackageReward>,
 }
 
 /// Why a package's probabilistic nodes do not rebuild S3's records.
@@ -125,6 +179,24 @@ pub enum PackageProbabilisticRefusal {
         /// The parameter.
         parameter: String,
     },
+    /// A delay breaks FR-253: a `uniform_interval` outside `0 <= a <= b`, a
+    /// negative or repeated `discrete` delay, or a rate or weight that is not
+    /// positive.
+    #[error("the delay of `{operation}` breaks FR-253: {fault:?}")]
+    InvalidDelay {
+        /// The operation.
+        operation: String,
+        /// The rule it breaks.
+        fault: DelayFault,
+    },
+    /// Two rewards of one name on one operation.
+    #[error("operation `{operation}` has two rewards named `{reward}`")]
+    DuplicateReward {
+        /// The operation.
+        operation: String,
+        /// The reward.
+        reward: String,
+    },
     /// A package's weights sum to zero.
     #[error("the weights of `{operation}({parameter})` sum to zero")]
     ZeroSum {
@@ -136,7 +208,7 @@ pub enum PackageProbabilisticRefusal {
 }
 
 impl StateModel {
-    /// FSL FR-740: the random parameters and workloads `read` spells, as S3
+    /// FSL FR-740: the random parameters, workloads and delays `read` spells, as S3
     /// records them, joined to the selected domain packages' views and to
     /// `operations`, the operation table of the same packages
     /// ([`Self::operation_table`]).
@@ -166,6 +238,54 @@ impl StateModel {
                 .push(self.workload(operations, declared, workload)?);
             declared += 1;
         }
+        for delay in &read.delays {
+            let (operation, _) = self.operation(operations, &delay.declaring, &delay.operation)?;
+            if let Some(fault) = delay_fault(&delay.family) {
+                return Err(PackageProbabilisticRefusal::InvalidDelay {
+                    operation: delay.operation.clone(),
+                    fault,
+                });
+            }
+            model.delays.push(Delay {
+                declared,
+                operation,
+                distribution: match &delay.family {
+                    PackageDelayFamily::Uniform => DelayDistribution::Uniform,
+                    PackageDelayFamily::UniformInterval { lower, upper } => {
+                        DelayDistribution::UniformRange {
+                            a: lower.clone(),
+                            b: upper.clone(),
+                        }
+                    }
+                    PackageDelayFamily::Exponential { rate } => {
+                        DelayDistribution::Exponential { rate: rate.clone() }
+                    }
+                    PackageDelayFamily::Discrete(rows) => DelayDistribution::Discrete(rows.clone()),
+                },
+            });
+            declared += 1;
+        }
+        for reward in &read.rewards {
+            let (operation, declaration) =
+                self.operation(operations, &reward.declaring, &reward.operation)?;
+            if model.read_rewards.iter().any(|earlier| {
+                earlier.operation.key == operation.key && earlier.name == reward.name
+            }) {
+                return Err(PackageProbabilisticRefusal::DuplicateReward {
+                    operation: reward.operation.clone(),
+                    reward: reward.name.clone(),
+                });
+            }
+            model.read_rewards.push(ReadReward {
+                declared,
+                name: reward.name.clone(),
+                operation,
+                parameters: declaration.parameters().to_vec(),
+                value_type: reward.value_type.clone(),
+                function: reward.function.clone(),
+            });
+            declared += 1;
+        }
         Ok(model)
     }
 
@@ -184,14 +304,14 @@ impl StateModel {
     > {
         self.views
             .iter()
-            .filter(|view| !view.is_source())
             .find_map(|view| {
                 view.view
                     .type_identities()
                     .iter()
                     .find_map(|(key, effective)| {
-                        (crate::model::key::object_type_node_key(key).ok().as_ref() == Some(node))
-                            .then_some((view, key, effective))
+                        (crate::model::key::declaring_node_key(key, node.package()).as_ref()
+                            == Some(node))
+                        .then_some((view, key, effective))
                     })
             })
             .ok_or_else(|| PackageProbabilisticRefusal::UnknownModel(node.clone()))
@@ -320,6 +440,36 @@ impl StateModel {
             model_key,
             weights,
         })
+    }
+}
+
+/// The FR-253 rule `family` breaks, if any: the checks S3 makes of a written
+/// distribution, repeated on the read-back so a package from another producer
+/// rebuilds no record S3 could not have checked.
+fn delay_fault(family: &PackageDelayFamily) -> Option<DelayFault> {
+    let positive = |value: &Rational| !value.is_zero() && !value.numerator().is_negative();
+    match family {
+        PackageDelayFamily::Uniform => None,
+        PackageDelayFamily::UniformInterval { lower, upper } => (lower.numerator().is_negative()
+            || upper.sub(lower).numerator().is_negative())
+        .then_some(DelayFault::UniformRange),
+        PackageDelayFamily::Exponential { rate } => {
+            (!positive(rate)).then_some(DelayFault::NonPositiveRate)
+        }
+        PackageDelayFamily::Discrete(rows) => {
+            for (at, (delay, weight)) in rows.iter().enumerate() {
+                if delay.numerator().is_negative() {
+                    return Some(DelayFault::NegativeDelay);
+                }
+                if rows[..at].iter().any(|(earlier, _)| earlier == delay) {
+                    return Some(DelayFault::RepeatedDelay);
+                }
+                if !positive(weight) {
+                    return Some(DelayFault::NonPositiveWeight);
+                }
+            }
+            None
+        }
     }
 }
 

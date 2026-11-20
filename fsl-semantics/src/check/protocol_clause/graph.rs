@@ -321,6 +321,7 @@ pub(super) fn compile(
             name: declaration.name.name.clone(),
             path,
             children: children.into_iter().map(ProtocolNodeId).collect(),
+            observe_only: declaration.observe_only,
         });
     }
     for control in &controls {

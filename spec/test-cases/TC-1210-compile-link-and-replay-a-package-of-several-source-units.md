@@ -81,4 +81,4 @@ Tag the tests `#[trace("TC-1210", "FR-480-AC-n")]`, and step 9 `#[trace("TC-1210
   rebinding operation.
 - Step 9: the FR-278 bytes, equal for both arrays, exit 0;
   `unknown_edition` at the second unit's edition literal, naming its file;
-  `invalid-request`; an intake refusal naming `dependent_bytes`.
+  `invalid-request`; an intake stop that settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, naming `dependent_bytes`.

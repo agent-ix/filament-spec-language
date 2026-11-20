@@ -1,0 +1,28 @@
+[package]
+name = "fsl-hybrid-reference"
+version = "0.1.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "ADR-011 §6.1 layer H: the first-party reference hybrid provider (FR-1019)."
+
+# ADR-011 §6.1 layer H may depend on the layer-6 `fsl-replay` that defines
+# `HybridProvider` (FR-750), on `fsl-semantics` for the checked hybrid model
+# and on `filament-exact` for exact rationals and cancellation. It does not
+# depend on `fsl-analyze`, which depends on it.
+[dependencies]
+filament-exact = { workspace = true }
+fsl-foundation = { path = "../fsl-foundation" }
+fsl-replay = { path = "../fsl-replay" }
+fsl-semantics = { path = "../fsl-semantics" }
+
+[dev-dependencies]
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "deny"

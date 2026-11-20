@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+predicate positive using v(n: Integer): Boolean { n>0 }
+function f using v(): Boolean pure { positive(3) }

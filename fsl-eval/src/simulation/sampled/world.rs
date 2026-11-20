@@ -239,16 +239,34 @@ impl World {
 
     /// Add checked fixture profiles in the unit's declaration header.
     pub(crate) fn with_profiles(model: &Model, profiles: &[(&str, &str)]) -> Self {
-        Self::checked(model, profiles, &[])
+        Self::checked(model, profiles, &[], &crate::value::S6aRewardEvaluator)
     }
 
     /// `model` whose operations `queries` names, as (operation, result type
     /// reference), each return that type: a query when its frame is empty.
     pub(crate) fn with_queries(model: &Model, queries: &[(&str, &str)]) -> Self {
-        Self::checked(model, &[], queries)
+        Self::checked(model, &[], queries, &crate::value::S6aRewardEvaluator)
     }
 
-    fn checked(model: &Model, profiles: &[(&str, &str)], queries: &[(&str, &str)]) -> Self {
+    /// `model` checked with S3's reward-sign check answered by a zero
+    /// evaluator (FR-185), so a negative finite reward reaches model
+    /// admission, where FR-187 refuses it. S3's own refusal is covered in
+    /// fsl-semantics and fsl-analyze.
+    pub(crate) fn with_s3_reward_signs_unchecked(model: &Model) -> Self {
+        Self::checked(
+            model,
+            &[],
+            &[],
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+    }
+
+    fn checked(
+        model: &Model,
+        profiles: &[(&str, &str)],
+        queries: &[(&str, &str)],
+        evaluator: &dyn fsl_semantics::check::RewardEvaluator,
+    ) -> Self {
         let profiles = profiles
             .iter()
             .map(|(name, identity)| format!("profile {name} = \"{identity}\";\n"))
@@ -292,7 +310,7 @@ impl World {
             .link_dispatch(ModelNormalizationLimits::default())
             .unwrap_or_else(|refusals| panic!("the dispatch links: {refusals:#?}"));
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default(), evaluator)
             .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:#?}"));
 
         let header = json!({"identity": model.package});

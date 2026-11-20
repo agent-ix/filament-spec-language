@@ -48,6 +48,12 @@ mod sum_case;
 mod syntax;
 mod synthesis_verify;
 mod task_set;
+
+/// FR-286: the typed refusal pairs produced by forms validation.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("ill_typed", "operator-ineligible"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "expression-form"),
+];
 mod temporal_clause;
 mod terminal_declaration;
 mod time_model;
@@ -118,7 +124,8 @@ pub use syntax::{
     TerminalDeclarationKind, TimeInvariantBoundForm, TimeInvariantForm, TimeSourceForm,
     TimeSourceSyntax, TimedIntervalForm, TimedUpper, TransitionForm, TreeRefusal, TupleForm,
     TypeForm, TypeFormHead, UnionForm, UnionMemberForm, UnitForm, UnitTermForm, UrgentForm,
-    UrgentTarget, UsingAlias, VerificationPlanForm, WeightedDelayForm, WeightedValueForm,
+    UrgentTarget, UsingAlias, VerificationPlanForm, VerificationStepForm, WeightedDelayForm,
+    WeightedValueForm,
     WeightingForm, WorkloadForm, WorkloadWeightForm,
 };
 

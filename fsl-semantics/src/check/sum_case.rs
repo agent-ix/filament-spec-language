@@ -223,9 +223,9 @@ impl<'a> UnionMember<'a> {
             value_type: ValueType::Composite(self.declaration),
             location: location.clone(),
             equality_producer: None,
-            ordering_part: false,
             field_population: None,
             equality_range_context: None,
+            type_argument: None,
         }
     }
 }
@@ -297,10 +297,17 @@ impl<'a> CaseBuilder<'a> {
     }
 
     /// Record the checked arm of a resolved head.
-    pub(crate) fn arm(&mut self, member: usize, binders: Vec<Slot>, body: NodeId) {
+    pub(crate) fn arm(
+        &mut self,
+        member: usize,
+        binders: Vec<Slot>,
+        names: Vec<String>,
+        body: NodeId,
+    ) {
         self.arms.push(CaseArm::<NodeId> {
             member,
             binders,
+            names,
             body,
         });
     }

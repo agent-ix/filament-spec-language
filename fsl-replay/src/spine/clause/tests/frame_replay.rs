@@ -372,6 +372,9 @@ pub(super) fn packet<P: FamilyPayload>(
             ReplaySource::ProtocolAnalysis(_) => {
                 panic!("a counterexample envelope cannot carry a protocol analysis source")
             }
+            ReplaySource::Hybrid(_) => {
+                panic!("a counterexample envelope cannot carry a hybrid source")
+            }
         }),
         family_payload: Some(payload),
     }
@@ -463,6 +466,7 @@ fn witness_arm(result: &FrameReplayResult) -> &crate::WitnessArmResult {
         ReplayResult::ObservedTemporal(arm) => panic!("expected the witness arm, got {arm:?}"),
         ReplayResult::ModelGraph(arm) => panic!("expected the witness arm, got {arm:?}"),
         ReplayResult::ProtocolAnalysis(_) => panic!("a protocol analysis arm"),
+        ReplayResult::Hybrid(_) => panic!("a hybrid arm"),
     }
 }
 
@@ -732,7 +736,7 @@ fn an_envelope_clause_node_other_than_the_frame_refuses_before_recompiling() {
     assert!(
         matches!(
             refusal,
-            ReplayRefusal::Recompile(_)
+            ReplayRefusal::Recompile { .. }
                 | ReplayRefusal::RecompileWithProtocolResults { .. }
         ),
         "{refusal:?}"

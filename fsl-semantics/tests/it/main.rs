@@ -11,6 +11,8 @@
 
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
+#[path = "../support/reward_evaluator.rs"]
+mod reward_evaluator;
 
 // Integration units declare this source package name explicitly. Imported model
 // identities in individual fixtures remain independent of the source package.
@@ -29,6 +31,7 @@ mod child_composite;
 mod clock_places;
 mod collection_index;
 mod complete_value_lock;
+mod decimal_value_types;
 mod diagnostic_messages;
 #[cfg(feature = "test-support")]
 mod dimension_equivalence;
@@ -80,6 +83,7 @@ mod model_systems_resolve;
 mod model_unit_input;
 mod moved_item_paths;
 mod named_population;
+mod narrowing_conversions;
 mod native_literals;
 mod native_scalar_equality;
 mod native_snapshot_values;
@@ -87,6 +91,7 @@ mod null_value;
 mod observation_composites;
 mod operation_bodies;
 mod operation_clauses;
+mod operation_uniqueness;
 mod option_values;
 #[cfg(feature = "test-support")]
 mod population_bound;
@@ -94,6 +99,7 @@ mod probabilistic_declarations;
 mod profile_defaults;
 mod quantities;
 mod rational_value_types;
+mod text_to_number;
 mod readme_first_rule_checks;
 #[cfg(feature = "test-support")]
 mod refinement_class_catalog;
@@ -150,6 +156,7 @@ mod type_decisions;
 mod type_environment_model;
 mod typed_size;
 mod unit_typed_members;
+mod union_payload_widening;
 mod variant_fields;
 mod variant_type;
 

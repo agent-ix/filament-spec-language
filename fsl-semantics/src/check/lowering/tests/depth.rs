@@ -106,7 +106,11 @@ pub(super) fn check_on_small_stack(
                     fsl_foundation::IdentityLimits::default(),
                 )
             }
-            .check(CheckMode::Linked, limits)
+            .check(
+                CheckMode::Linked,
+                limits,
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
         })
         .expect("the check thread spawns")
         .join()

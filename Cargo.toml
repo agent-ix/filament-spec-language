@@ -1,19 +1,20 @@
 [workspace]
-members = [".", "xtask", "tools/arch-lint", "tools/fsl-probability-check", "fsl-walk-grow", "fsl-foundation", "fsl-cst", "fsl-command", "fsl-conformance", "fsl-replay", "fsl-source", "fsl-forms", "fsl-semantics", "fsl-package", "fsl-route", "fsl-eval", "fsl-analyze", "fsl-inspect", "fsl-bench", "fsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer", "tests/fixtures/facade-contract-consumer"]
+members = [".", "xtask", "tools/arch-lint", "tools/fsl-probability-check", "fsl-walk-grow", "fsl-foundation", "fsl-cst", "fsl-command", "fsl-conformance", "fsl-replay", "fsl-source", "fsl-forms", "fsl-semantics", "fsl-package", "fsl-route", "fsl-eval", "fsl-analyze", "fsl-hybrid-reference", "fsl-inspect", "fsl-bench", "fsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer", "tests/fixtures/facade-contract-consumer"]
 resolver = "2"
 # A cargo-fuzz crate with its own workspace; fuzz/Cargo.toml says why.
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", tag = "v0.1.1" }
+filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "1c70322bede555940c518be439e3907a8e4064f1" }
+filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "1c70322bede555940c518be439e3907a8e4064f1" }
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
 quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "v0.3.1", default-features = false }
 # The shared no_std exact-value kernel and the semantic-value leaf above it,
 # each its own repository so IR, RT and CG depend on them without the FSL repo.
-filament-exact = { git = "https://github.com/agent-ix/filament-exact", tag = "v0.3.0", features = ["json-object"] }
-filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", tag = "v0.1.5" }
+filament-exact = { git = "https://github.com/agent-ix/filament-exact", rev = "b26a8e4c592503fccdc4a0e3d2cce23dd8487616", features = ["json-object"] }
+filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", rev = "f5c913bd4fc8880b45e02e3918e02360c530320c" }
 # ADR-011 §6.1 layer W: the shared no_std walker toolkit (ADR-030 D-1 item 2),
 # its own repository so IR, RT and CG depend on it without the FSL repo.
 filament-walk = { git = "https://github.com/agent-ix/filament-walk", tag = "v0.1.1" }
@@ -21,12 +22,14 @@ filament-walk = { git = "https://github.com/agent-ix/filament-walk", tag = "v0.1
 # repository so IR, RT and CG depend on it without the FSL repo. Only
 # `fsl-semantics` requests `construct` in its manifest; Cargo unifies the
 # feature across the workspace build.
-filament-checked = { git = "https://github.com/agent-ix/filament-eval", tag = "v0.1.6" }
+filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "2184793a5764e8ce4fe6ab508388932646673e1c" }
 # ADR-011 §6.1 layer E: the shared evaluation-core interface (FR-262, FR-401),
 # its own repository so RT and CG depend on it without the FSL repo.
-filament-eval = { git = "https://github.com/agent-ix/filament-eval", tag = "v0.1.6" }
+filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "2184793a5764e8ce4fe6ab508388932646673e1c" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", tag = "v0.1.5" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "4c91eff603eb6a764ea5aad573b8600c9f04ef64" }
+# Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
+filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "39b3ebb11525db626a3ba4d3b7693a96aee33d2a" }
 
 [package]
 name = "filament-spec-language"
@@ -203,6 +206,7 @@ opt-level = 3
 # one `fsl-foundation` in the graph, so its canonical types are defined once.
 [patch."https://github.com/agent-ix/filament-spec-language"]
 fsl-foundation = { path = "fsl-foundation" }
+
 
 # Protocol exploration (QSL-1438: the LT-16 litmus test) spends its time in
 # fsl-eval, which compiles at opt-level 3. Its protocol system is generic over

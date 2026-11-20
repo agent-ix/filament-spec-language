@@ -197,6 +197,7 @@ fn assert_reproduced(result: Result<ReplayResult, ReplayRefusal>) -> ReplayResul
         ReplayResult::ObservedTemporal(_) => panic!("composite replay returned a temporal arm"),
         ReplayResult::ModelGraph(_) => panic!("composite replay returned a state-graph arm"),
         ReplayResult::ProtocolAnalysis(_) => panic!("a protocol analysis arm"),
+        ReplayResult::Hybrid(_) => panic!("a hybrid arm"),
     }
     assert_eq!(result.category(), Category::Violation);
     result
@@ -754,7 +755,7 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
         // Step 2: the default limits stop the recompile at a named stage.
         let refused = replay(witness(&fixture, &BTreeMap::new()), raised);
         assert!(
-            matches!(refused, Err(ReplayRefusal::Recompile(_))),
+            matches!(refused, Err(ReplayRefusal::Recompile { .. })),
             "{refused:?}"
         );
         // The raised settings replay, from the witness and from the input.

@@ -14,8 +14,8 @@ use serde::{Serialize, Serializer};
 use std::collections::BTreeSet;
 
 use crate::hybrid_replay::{
-    exact_replay, static_replay, ExactRecord, ExactReplay, HybridCounterexample, HybridReplayMeter,
-    HybridReplayRefusal, HybridTrace, ReplayRecord,
+    exact_replay, static_replay, ExactReal, ExactRecord, ExactReplay, HybridCounterexample,
+    HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal, HybridTrace, ReplayRecord,
 };
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::{
@@ -26,11 +26,20 @@ use crate::result::{DisagreementCause, HybridTraceDisagreement};
 use filament_exact::LimitKind;
 use fsl_semantics::check::{CheckedGraph, CheckedHybridClaim, HybridClock, HybridHorizon};
 
+mod locus;
 mod process_request;
+mod provider;
+pub use locus::{
+    hybrid_counterexample_locus, hybrid_locus_site, hybrid_locus_wire, hybrid_term_at_locus,
+};
 pub use process_request::{
     AdmittedHybridProcessItem, AdmittedHybridProcessRequest, HybridProcessDependencyPackage,
     HybridProcessItem, HybridProcessPackageContext, HybridProcessRequest,
     HybridProcessRequestRefusal,
+};
+pub use provider::{
+    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
+    OptionRefusal, UnsupportedConstruct,
 };
 
 /// The kind of method a provider ran. FSL decides soundness from the kind
@@ -458,12 +467,6 @@ impl HybridSettlement {
         counterexample: HybridCounterexample,
         meter: &mut HybridReplayMeter,
     ) -> Result<Self, HybridReplayRefusal> {
-        if !matches!(
-            counterexample.kind,
-            crate::hybrid_replay::HybridCounterexampleKind::Formula
-        ) {
-            return Err(HybridReplayRefusal::UnsupportedCounterexampleKind);
-        }
         let exhausted = |meter: &HybridReplayMeter| {
             Self::without_counterexample(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::EvaluationMeter {
@@ -473,7 +476,9 @@ impl HybridSettlement {
             }))
         };
         match exact_replay(graph, claim, &counterexample.trace, meter) {
-            Ok(ExactReplay::Reproduced(replayed)) if replayed.kind == counterexample.kind => {
+            Ok(ExactReplay::Reproduced(replayed))
+                if agrees(&counterexample.kind, &replayed.kind) =>
+            {
                 Ok(Self {
                     value: TerminalValue::Refuted,
                     counterexample: Some(counterexample),
@@ -498,6 +503,41 @@ impl HybridSettlement {
             Err(HybridReplayRefusal::ResourceExhausted { .. }) => Ok(exhausted(meter)),
             Err(refusal) => Err(refusal),
         }
+    }
+}
+
+/// FR-750 "Replay refusals": a provider's claimed counterexample kind agrees
+/// with the reproduced one when both are `formula`, or both are
+/// `undefined-evaluation` with equal position, locus and cause and a claimed
+/// time interval that contains the reproduced instant (FSpec FR-364 step 6).
+fn agrees(claimed: &HybridCounterexampleKind, replayed: &HybridCounterexampleKind) -> bool {
+    match (claimed, replayed) {
+        (HybridCounterexampleKind::Formula, HybridCounterexampleKind::Formula) => true,
+        (
+            HybridCounterexampleKind::UndefinedEvaluation {
+                at: claim,
+                cause: claim_cause,
+            },
+            HybridCounterexampleKind::UndefinedEvaluation {
+                at: found,
+                cause: found_cause,
+            },
+        ) => {
+            let (lower, upper) = if let Some(interval) = &claim.time_interval {
+                (&interval.lower, &interval.upper)
+            } else {
+                match &claim.time {
+                    ExactReal::Rational(point) => (point, point),
+                    ExactReal::Root(root) => (root.lower(), root.upper()),
+                }
+            };
+            claim.state == found.state
+                && claim.locus == found.locus
+                && claim_cause == found_cause
+                && ExactReal::Rational(lower.clone()) <= found.time
+                && found.time <= ExactReal::Rational(upper.clone())
+        }
+        _ => false,
     }
 }
 
@@ -573,6 +613,11 @@ impl SolverBudget {
             .ok_or(BudgetRefusal::OutOfDomain(TIME_MEMBER))
     }
 
+    /// The step budget the request sets.
+    pub fn steps(&self) -> Option<u64> {
+        self.steps
+    }
+
     /// The whole-second time budget the request sets.
     pub fn time_seconds(&self) -> Option<u64> {
         self.time_seconds
@@ -585,6 +630,16 @@ impl SolverBudget {
             self.time_seconds.unwrap_or(published_seconds),
             self.steps.unwrap_or(published_steps),
         )
+    }
+
+    /// The budget with each unset member set to the bound the provider's
+    /// descriptor publishes: what a solver runs under.
+    pub fn resolved_budget(&self, published_seconds: u64, published_steps: u64) -> Self {
+        let (seconds, steps) = self.resolved(published_seconds, published_steps);
+        Self {
+            time_seconds: Some(seconds),
+            steps: Some(steps),
+        }
     }
 
     /// The request's `hybrid` member, or `None` when the request sets no
@@ -902,7 +957,11 @@ mod tests {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
         let claim = match graph.hybrid_claims() {
             [claim] => claim.clone(),

@@ -1,0 +1,74 @@
+{
+  "ticket": "QSL-2083",
+  "source_behavior_revision": "c623960d7a7ccfa7f23b841fea3d5e7dc6ff4752",
+  "post_focus_change": "Removed an inapplicable FR-576-AC-4 trace from the single-owner bodyless case; behavior unchanged.",
+  "profile": {
+    "target": "owned worktree target",
+    "jobs": 2,
+    "dev_debug": 0,
+    "test_debug": 0,
+    "incremental": false,
+    "test_threads": 1
+  },
+  "required_skips": [
+    "two_protocols_declaring_one_channel_name_keep_their_queues_apart",
+    "a_recovery_predicate_over_the_recovery_view_is_evaluated"
+  ],
+  "focused_scope": [
+    "fsl-semantics --test it operation_uniqueness: original new cases and exact filters for corrected or strengthened cases",
+    "fsl-package --lib emit::tests::operation_bodies::source_contracts: original new cases and exact filters for corrected or strengthened cases"
+  ],
+  "final_focused_filters": [
+    {
+      "name": "different_frame_scopes_conflict_but_creation_and_deletion_can_share_a_type",
+      "passed": 1,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "name": "a_parameterized_conditional_body_keeps_its_branches_in_order",
+      "passed": 1,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "name": "a_bodyless_void_operation_has_explicit_absence_beside_a_real_body",
+      "passed": 1,
+      "failed": 0,
+      "exit": 0
+    }
+  ],
+  "event_owner_evidence": "Both event-owner refusal assertions completed successfully in the combined owner run before the record-control fixture failed. The isolated event wrapper retains that same accepted branch; no confidence rerun was added.",
+  "strict_pending_owners": [
+    "QSL-2696",
+    "QSL-2697"
+  ],
+  "pending_counted_as_coverage": false,
+  "lint": "Not rerun: accepted unchanged fsl-semantics blocker; package compilation itself reports unchanged reader_protocol_projection unused binders and probabilistic timed_claims_source. No lint pass is claimed.",
+  "independent_review": "PASS SR-1483/SR-1484 at 51b9efb9",
+  "final_component_gate": "PASS: 38 passed, 0 failed, 11 strict ignored across two non-overlapping segments",
+  "original_failures_preserved": true,
+  "review_fix_round_1": {
+    "code_revision": "5fc6b6ce6",
+    "findings": [
+      "Exact conditional parameter target",
+      "Required refusal reordering groups",
+      "Both operation collision participants"
+    ],
+    "reordering": {
+      "passed": 3,
+      "failed": 0,
+      "ignored": 3,
+      "exit": 0
+    },
+    "conditional": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "exit": 0
+    },
+    "known_faults_reexecuted": false,
+    "initial_metadata_assertion_failure_preserved": true,
+    "disposition": "PASS"
+  }
+}

@@ -16,13 +16,16 @@
 //! `CheckedHybridModel` and the checked bodies of the functions its terms
 //! call, by the indices the trace carries. Neither reads source.
 
+mod class;
 mod eval;
 mod exact;
 mod expand;
 mod flow;
 mod interval;
 mod poly;
+mod poly2;
 mod real;
+mod section;
 mod signal;
 mod static_replay;
 mod trace;
@@ -35,6 +38,7 @@ use fsl_semantics::check::{
     CheckedFunctionRef, CheckedGraph, CheckedHybridClaim, CheckedHybridModel, HybridModelIndex,
 };
 
+pub use class::polynomial_class_gap;
 pub use expand::{ExpansionGap, TermLocus};
 pub use fsl_foundation::diagnostic::JsonPointer;
 pub use real::{ExactReal, Root};
@@ -69,6 +73,8 @@ pub enum StaticCheck {
     Jump,
     /// 5: a lasso's last state meets the state it returns to.
     Loop,
+    /// 6: the finite end of the final dwell.
+    End,
 }
 
 impl StaticCheck {
@@ -80,6 +86,7 @@ impl StaticCheck {
             Self::Time => 3,
             Self::Jump => 4,
             Self::Loop => 5,
+            Self::End => 6,
         }
     }
 }
@@ -168,6 +175,53 @@ pub struct HybridCounterexample {
 }
 
 impl HybridCounterexample {
+    /// The counterexample in FSpec FR-331's `hybrid-counterexample` wire form
+    /// over `model`, of either kind (FR-750): kind `formula` writes
+    /// `"formula"`; kind `undefined-evaluation` writes FSpec FR-364's
+    /// envelope `{"type", "where": {"position", "time", "locus"}, "cause"}`.
+    /// `time` is a point interval when the instant is rational and otherwise
+    /// the isolating interval of the instant's root. `locate` spells the
+    /// FSpec FR-331 `Locus` of the term node an [`ExpressionLocus`] names in
+    /// the checked package; it is called for an `undefined-evaluation`
+    /// counterexample only, and the caller that cannot locate the term does
+    /// not write the counterexample.
+    pub fn to_wire(
+        &self,
+        model: &CheckedHybridModel,
+        locate: &dyn Fn(&ExpressionLocus) -> serde_json::Value,
+    ) -> serde_json::Value {
+        let kind = match &self.kind {
+            HybridCounterexampleKind::Formula => serde_json::json!("formula"),
+            HybridCounterexampleKind::UndefinedEvaluation { at, cause } => {
+                let (lower, upper) = if let Some(interval) = &at.time_interval {
+                    (&interval.lower, &interval.upper)
+                } else {
+                    match &at.time {
+                        ExactReal::Rational(point) => (point, point),
+                        ExactReal::Root(root) => (root.lower(), root.upper()),
+                    }
+                };
+                serde_json::json!({
+                    "type": "undefined-evaluation",
+                    "where": {
+                        "position": at.state,
+                        "time": {
+                            "lower": trace::rational_wire(lower),
+                            "upper": trace::rational_wire(upper),
+                        },
+                        "locus": locate(&at.locus),
+                    },
+                    "cause": cause.spelling(),
+                })
+            }
+        };
+        serde_json::json!({
+            "type": "hybrid-counterexample",
+            "kind": kind,
+            "trace": self.trace.to_wire(model),
+        })
+    }
+
     pub(crate) fn measured_bytes(&self) -> usize {
         fn rational(value: &filament_exact::Rational) -> usize {
             value.numerator().to_string().len() + value.denominator().to_string().len()
@@ -192,6 +246,9 @@ impl HybridCounterexample {
                 .sum::<usize>()
             + trace.delta.as_ref().map_or(0, rational)
             + trace.loop_to.map_or(0, |_| 8)
+            + trace.end.as_ref().map_or(0, |end| {
+                interval(&end.time) + end.enclosure.iter().map(interval).sum::<usize>()
+            })
     }
 }
 
@@ -220,6 +277,9 @@ pub struct UndefinedInstant {
     /// value on an open stretch of instants only, this is the stretch's
     /// start, the infimum of those instants.
     pub time: ExactReal,
+    /// The provider's claimed rational interval for this instant, when read
+    /// from the wire. Exact replay retains the claim for parity checks.
+    pub time_interval: Option<ExactInterval>,
     /// The expression.
     pub locus: ExpressionLocus,
 }
@@ -309,18 +369,39 @@ pub enum UndefinedCause {
     },
 }
 
+impl UndefinedCause {
+    /// The FSpec FR-193 catalogued hybrid undefined reason, one-to-one over
+    /// the variants: `division-by-zero`, `outside-parameter-range`,
+    /// `outside-result-range` and `outside-capture-range`.
+    pub const fn spelling(&self) -> &'static str {
+        match self {
+            Self::DivisionByZero => "division-by-zero",
+            Self::OutsideParameterRange { .. } => "outside-parameter-range",
+            Self::OutsideResultRange { .. } => "outside-result-range",
+            Self::OutsideCaptureRange { .. } => "outside-capture-range",
+        }
+    }
+}
+
 /// A claim form exact replay does not decide.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ExactGap {
-    /// An `on each` claim under `model-time` whose body or captures read the
-    /// activation position's state: a continuum of obligations, each with
-    /// its own captured values.
-    #[error("an `on each` claim under model-time reads its activation position's state")]
-    ActivationState,
-    /// A fairness constraint whose enabledness depends on a reset that does
-    /// not determine the state after the jump.
-    #[error("fairness reads the enabledness of a transition with a nondeterministic reset")]
-    NondeterministicReset {
+    /// An `on each` claim under `model-time` whose obligations read the
+    /// activation position's state, where a claim atom has no value over an
+    /// open cell of activation instants at an instant that moves with the
+    /// activation instant along a curve other than `x = tau + c` (`c`
+    /// rational): the infimum of the instant over the cell is a limit of a
+    /// root curve. It is the only remaining trigger. An instant with no value
+    /// that is the same for every activation instant of the cell, rational or
+    /// not, and one that moves along `x = tau + c` (rational or irrational
+    /// cell start), are decided. Remaining work: QSL-2706.
+    #[error("the decisive activation instant of an `on each` claim is not isolated")]
+    ActivationInfimum,
+    /// A fairness constraint reads the enabledness of a transition whose
+    /// reset leaves two or more variables free that the target mode's
+    /// invariant couples in one condition. Remaining work: QSL-2639.
+    #[error("fairness reads a reset whose free variables the target invariant couples")]
+    CoupledReset {
         /// The source mode's position.
         mode: usize,
         /// The transition's position in the mode.
@@ -350,9 +431,6 @@ pub enum HybridReplayRefusal {
     /// Exact replay does not decide this claim form.
     #[error(transparent)]
     Exact(#[from] ExactGap),
-    /// The provider counterexample kind is outside the currently admitted wire arm.
-    #[error("the provider's hybrid counterexample kind is not admitted")]
-    UnsupportedCounterexampleKind,
     /// The caller's accounting work limit denied the next replay step.
     #[error("hybrid replay exhausted the caller's accounting counter {counter:?}")]
     ResourceExhausted {
@@ -380,13 +458,24 @@ impl HybridReplayMeter {
         }
     }
 
+    /// The words of operand a step works on that one work unit pays for.
+    const WORDS_PER_UNIT: u64 = 16;
+
     /// The number of admitted work units.
     pub const fn consumed(&self) -> u64 {
         self.consumed
     }
 
     fn charge(&mut self) -> Result<(), HybridReplayRefusal> {
-        match self.consumed.checked_add(1) {
+        self.charge_by(1)
+    }
+
+    /// Charge one step that works on `weight` words of operand (one per
+    /// coefficient and per 64 bits of the largest), before it is taken: a
+    /// unit per [`Self::WORDS_PER_UNIT`] words, at least one.
+    fn charge_by(&mut self, weight: u64) -> Result<(), HybridReplayRefusal> {
+        let units = weight.div_ceil(Self::WORDS_PER_UNIT).max(1);
+        match self.consumed.checked_add(units) {
             Some(next) if next <= self.work_units => {
                 self.consumed = next;
                 Ok(())
@@ -433,5 +522,20 @@ pub fn exact_replay(
     let model = model_of(graph, claim)?;
     admit(model, trace)?;
     let mut expander = expand::Expander::new(graph);
-    exact::replay(model, claim, &mut expander, trace, meter)
+    match exact::replay(model, claim, &mut expander, trace, meter) {
+        // FR-750 "Replay refusals": a recursive call is not a refusal. Exact
+        // replay returns `NotExact` for it, as for a trace that is not a
+        // point trace or that dwells in a mode without a polynomial flow.
+        //
+        // TEMPORARY (QSL-2706 for `ActivationInfimum`, QSL-2639 for
+        // `CoupledReset`): both are gaps FR-750 deletes, because exact
+        // replay decides those claims (the infimum of a curved instant with
+        // no value; quantifier elimination over several coupled free
+        // variables). Until then they also settle `NotExact`, the only
+        // honest answer short of a verdict.
+        Err(HybridReplayRefusal::Exact(
+            ExactGap::RecursiveCall | ExactGap::ActivationInfimum | ExactGap::CoupledReset { .. },
+        )) => Ok(ExactReplay::NotExact),
+        other => other,
+    }
 }

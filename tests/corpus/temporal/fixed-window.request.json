@@ -1,0 +1,14 @@
+{
+  "format": "native-compile/1",
+  "request": {
+    "models": [],
+    "program": {"source": {
+      "file": "fixed-window.native", "authority": "agent-ix",
+      "identity": "test:temporal-corpus-sampled", "document": "SampledPulse", "formal_revision": 1
+    }},
+    "clocks": {"sensor": {
+      "kind": "fixed_sample", "epoch": {"kind": "integer", "decimal": "10"},
+      "period": {"kind": "integer", "decimal": "2"}, "unit": "ms"
+    }}
+  }
+}

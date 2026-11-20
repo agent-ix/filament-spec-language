@@ -17,6 +17,7 @@ pub(crate) use expression::evaluate_clause_set_with_cancel;
 pub(crate) use expression::evaluate_hyper_holds_with_component_bindings;
 pub use expression::{
     evaluate_model_relation, evaluate_model_relation_transitions, ModelRelationEvaluation,
+    S6aRewardEvaluator,
 };
 
 /// FSpec FR-144 canonical key order of two map keys. Float keys use their
@@ -74,7 +75,12 @@ pub(crate) fn ordered_map_entries(
 pub use expression::bare_evaluate_selected_protocol_slot;
 pub use expression::collection_write::{Provenance, WrittenCollection};
 pub use expression::post_targets::{PostTarget, PostTargets};
-pub(crate) use expression::{bare_post_targets, source_post_targets};
+pub(crate) use expression::{
+    bare_post_targets, evaluate_bare_state_graph_predicate, evaluate_bare_terminal_predicate,
+    package_constraint_reads, package_guard_reads, package_operation_footprint,
+    package_term_reads, ProjectedClause,
+    source_post_targets, StateGraphOver,
+};
 pub(crate) use expression::evaluate_over_admitted_environment;
 pub(crate) use expression::evaluate_state_predicate_with_reference_bindings;
 pub(crate) use expression::evaluate_state_predicate_at_absent_key_with_reference_bindings;
@@ -89,7 +95,8 @@ pub use expression::{
     ProtocolSuppliedValue, ProtocolSupply, QualifiedName, RuntimeValuePath, Separation,
     SeparationStep, StopReport, SuppliedValue, TruncatedOperationLedger, ValueInvariantEvaluation,
     ValueInvariantOutcome, ValueInvariantResult, ValuePathStep, ValuePathSubject, WitnessClaim,
-    admit_arguments, evaluate_activation_guard, evaluate_activation_guard_at_absent_key,
+    admit_arguments, call_checked_package_with_session_limits, evaluate_activation_guard,
+    evaluate_activation_guard_at_absent_key,
     evaluate_capture, evaluate_closed_with_frame, evaluate_history_update, evaluate_join_predicate,
     evaluate_operation_contract, evaluate_protocol_slot, evaluate_refinement_row, evaluate_reward,
     evaluate_state_predicate, evaluate_state_predicate_at_absent_key,

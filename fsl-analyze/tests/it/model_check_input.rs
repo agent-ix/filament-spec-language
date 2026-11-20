@@ -3,9 +3,7 @@
 //! source route from the source package and on the package route once from
 //! a `BarePackage`'s admitted nodes and handoff supply.
 
-use fsl_eval::simulation::model::{
-    ModelCheckInput, ModelSystem, PackageModelInput, PendingPackageForm,
-};
+use fsl_eval::simulation::model::{ModelCheckInput, ModelSystem, PackageModelInput};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -106,34 +104,138 @@ fn the_package_route_input_builds_the_source_route_model_system() {
     assert!(over_bytes.source_package().is_none());
 }
 
-/// FR-940: a package with a state clause and an operation frame refuses the
-/// package-route input at its first such node, naming the form; no input
-/// that leaves the clause out is built.
+/// The class of each state `system` reaches from its initial states, in
+/// breadth-first order.
+fn terminal_classes(
+    system: &ModelSystem<'_>,
+) -> Vec<(Vec<u8>, fsl_eval::simulation::model::TerminalClass)> {
+    let mut queue: std::collections::VecDeque<_> = system.initial().into_iter().collect();
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+    let mut classes = Vec::new();
+    while let Some(state) = queue.pop_front() {
+        let key = system.state_key(&state).expect("a state key").0;
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key.clone());
+        let expansion = system.successors(&state).expect("expands");
+        let class = system
+            .terminal_class(&state, !expansion.successors.is_empty())
+            .expect("the class reads");
+        classes.push((key, class));
+        queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
+    }
+    classes
+}
+
+#[trace("TC-519", "FR-124-AC-5", "FR-124-AC-8", "TC-1076", "FR-391-AC-9")]
+#[test]
+fn terminal_when_population_and_self_classify_equally_on_both_routes() {
+    use fsl_eval::simulation::model::TerminalClass;
+    for (predicate, empty) in [
+        ("self.value = 3", TerminalClass::Intended),
+        (
+            "forall(c in M::counters : c.value = 3)",
+            TerminalClass::Intended,
+        ),
+        (
+            "exists(c in M::counters : c.value = 3)",
+            TerminalClass::Deadlocked,
+        ),
+    ] {
+        for (objects, expected) in [
+            (vec![("a", 3), ("b", 3)], TerminalClass::Intended),
+            (vec![("a", 1), ("b", 2)], TerminalClass::Deadlocked),
+            (vec![], empty),
+        ] {
+            let model = still_document();
+            let body = format!("terminal Done using v on M when {{ {predicate} }};\n");
+            let (package, _) = package_with_clauses(&model, &body, &[]);
+            let mut documents = Documents::new(model);
+            let start = documents.start("start", &objects);
+            let keys: Vec<_> = objects.iter().map(|(key, _)| *key).collect();
+            let source = subject(&package, &documents, vec![start], &keys, UNLIMITED);
+            let handoff = handoff(&package, &documents);
+            let bare = bare(&handoff);
+            let input = PackageModelInput::of(
+                &bare,
+                &documents.packages,
+                ModelNormalizationLimits::default(),
+            )
+            .expect("package input");
+            let mut request = source.simulation.clone();
+            request.input = input.input();
+            for system in [
+                ModelSystem::new(source.simulation).expect("source system"),
+                ModelSystem::new(request).expect("package system"),
+            ] {
+                let states = terminal_classes(&system);
+                assert_eq!(states.len(), 1);
+                assert_eq!(states[0].1, expected, "{predicate}, {objects:?}");
+            }
+        }
+    }
+}
+
+/// FR-411, FR-940, FR-124: a package holding a `terminal` declaration builds
+/// the package-route input, which reads the declaration from its admitted
+/// terminal row and classifies every reachable state as the source route does
+/// for `terminal any`, `terminal when` over `self`, and no declaration.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
-fn a_package_route_input_refuses_a_form_it_does_not_read() {
-    let model = document(false);
-    let (package, _) = package_with_clauses(&model, CONTRACT, &[]);
-    let documents = Documents::new(model);
-    let handoff = handoff(&package, &documents);
-    let bare = bare(&handoff);
-    let Err(PendingPackageForm::Form { form, node }) = PackageModelInput::of(
-        &bare,
-        &documents.packages,
-        ModelNormalizationLimits::default(),
-    ) else {
-        panic!("the Counter contract's clauses are not read on the package route");
-    };
-    assert_eq!(form, fsl_package::UnreadModelForm::State);
-    assert!(
-        handoff
-            .admitted
-            .resolved_graph()
-            .nodes
-            .iter()
-            .any(|admitted| admitted.node_id == node && admitted.node_tag.as_ref() == "state"),
-        "{node:?}"
-    );
+fn a_package_route_input_reads_a_terminal_declaration_as_the_source_does() {
+    use fsl_eval::simulation::model::TerminalClass;
+    for (declaration, expect_intended) in [
+        ("", false),
+        ("terminal Halt using v on M any;\n", true),
+        (
+            "terminal Done using v on M when { self.value = 3 };\n",
+            true,
+        ),
+        (
+            "terminal Done using v on M when { self.value = 2 };\n",
+            false,
+        ),
+    ] {
+        let model = document(false);
+        let body = format!("{CONTRACT}{declaration}");
+        let (package, _) = package_with_clauses(&model, &body, &[]);
+        let mut documents = Documents::new(model);
+        let start = documents.start("start", &[("a", 0)]);
+        let source = subject(&package, &documents, vec![start], &["a"], UNLIMITED);
+        let handoff = handoff(&package, &documents);
+        let bare = bare(&handoff);
+        let input = PackageModelInput::of(
+            &bare,
+            &documents.packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("the package route reads the terminal declaration");
+        let mut request = source.simulation.clone();
+        request.input = input.input();
+        let over_bytes = ModelSystem::new(request).expect("the package route admits");
+        let over_source = ModelSystem::new(source.simulation).expect("the source admits");
+        let (from_bytes, from_source) = (
+            terminal_classes(&over_bytes),
+            terminal_classes(&over_source),
+        );
+        assert_eq!(from_bytes, from_source, "{declaration}");
+        let source_keys = ModelCheckInput::source(&package).terminal_keys();
+        let package_keys = input.input().terminal_keys();
+        assert_eq!(
+            source_keys.mismatch(&package_keys),
+            None,
+            "{declaration}: the declarations join by selection identity"
+        );
+        assert_eq!(source_keys, package_keys, "{declaration}");
+        assert_eq!(
+            from_source
+                .iter()
+                .any(|(_, class)| *class == TerminalClass::Intended),
+            expect_intended,
+            "{declaration}"
+        );
+    }
 }
 
 /// The canonical keys of every state `system` reaches from its initial
@@ -293,7 +395,10 @@ fn the_model_checker_decides_a_package_form_clause_as_its_source_form() {
         let key = node.identity();
         let clause = input
             .temporal_clause(
-                &key,
+                &fsl_foundation::source::provenance::OccurrenceKey::new(
+                    key.clone(),
+                    node.claim().clone(),
+                ),
                 filament_semantic_value::checking::CheckingLimits::default().nodes(),
             )
             .unwrap_or_else(|refusal| panic!("{}: {refusal}", node.clause().name()));
@@ -383,16 +488,7 @@ fn the_model_checker_decides_deadlock_freedom_over_the_package_route_as_over_sou
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
-    use filament_exact::Cancel;
-    use fsl_analyze::analyze::{
-        analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
-        PackageDeadlockSubject, RunInput, TemporalItem,
-    };
-    use fsl_route::request::{DerivedLimits, ItemKind};
-    use serde_json::json;
-
     use crate::model_world::{still_counter, Clause, World, INFINITE};
-
     let world = World::new(
         still_counter(),
         "",
@@ -401,8 +497,46 @@ fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
             activation: "on each (q: M::Counter)",
             formula: "always holds(c.value <= 3)",
         }],
-        &[("c", json!({"value": {"integer": "0"}}))],
+        &[("c", serde_json::json!({"value": {"integer": "0"}}))],
     );
+    let replayed = deadlock_parity(&world, "Refuted");
+    assert!(!replayed.contains("Undefined"), "{replayed}");
+}
+
+/// FR-411, FR-940, FR-128-AC-6: under `terminal when q(3 - self.value) = 0`
+/// (`q` divides 6 by its argument, a Kernel function), the deadlock item is
+/// refuted by an undefined evaluation at the terminal predicate, and the
+/// package route settles it, and replays it through the terminal locus its
+/// admitted node names, as the source route does.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[trace("TC-539", "FR-128-AC-6")]
+#[test]
+fn a_package_route_undefined_terminal_replays_as_the_source_undefined_terminal() {
+    use crate::model_world::{counter, Clause, World, INFINITE};
+    let world = World::with_kernel_functions(
+        counter(),
+        &format!("{CONTRACT}terminal Done using v on M when {{ q(3 - self.value) = 0 }};\n"),
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
+        INFINITE,
+        &[Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 3)",
+        }],
+        &[("c", serde_json::json!({"value": {"integer": "0"}}))],
+    );
+    let replayed = deadlock_parity(&world, "Refuted");
+    assert!(replayed.contains("Undefined"), "{replayed}");
+}
+
+/// The deadlock-freedom item over `world`, settled and replayed on both
+/// routes, which must agree; the source replay's settlement.
+fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
+    use filament_exact::Cancel;
+    use fsl_analyze::analyze::{
+        analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
+        PackageDeadlockSubject, RunInput, TemporalItem,
+    };
+    use fsl_route::request::{DerivedLimits, ItemKind};
     let written = crate::derived_request::written(
         &world.subject(&["c"], UNLIMITED),
         &DerivedLimits::default(),
@@ -458,12 +592,13 @@ fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
     };
     let from_source = settled(source_item());
     assert_eq!(settled(package_item()), from_source);
-    assert!(from_source.contains("Refuted"), "{from_source}");
+    assert!(from_source.contains(settles), "{from_source}");
 
     let outcome = fsl_analyze::model_check::check_model(source_item().request, &Cancel::new())
         .expect("checked");
     let fsl_replay::ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
-        panic!("the still Counter deadlocks: {outcome:?}");
+        assert_eq!(settles, "Proved", "a violation is expected: {outcome:?}");
+        return String::new();
     };
     let source_replay = (source_item().replay)(&counterexample).expect("the source replays");
     let package_replay = (package_item().replay)(&counterexample).expect("the bytes replay");
@@ -476,4 +611,147 @@ fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
         source_replay.terminals.mismatch(&package_replay.terminals),
         None
     );
+    format!("{:?}", source_replay.settlement)
+}
+
+/// The Counter world under `body`, with one clause and one counter at 0.
+fn counter_with(body: &str) -> crate::model_world::World {
+    use crate::model_world::{counter, Clause, World, INFINITE};
+    World::new(
+        counter(),
+        body,
+        INFINITE,
+        &[Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 3)",
+        }],
+        &[("c", serde_json::json!({"value": {"integer": "0"}}))],
+    )
+}
+
+/// FR-411 "Deadlock-freedom verdict join", FR-940: a derived deadlock-freedom
+/// item over the Counter unit with `terminal when { self.value = 3 }` is not
+/// refused `TerminalDeclaration` on the package route: the declarations are
+/// keyed by their model's selection identity on both routes, and the item
+/// settles, and replays, equal on both.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_package_route_deadlock_item_joins_a_terminal_declaration_as_the_source_does() {
+    // With `terminal any` there is no derived item (FR-411), so the item is
+    // written over the `when` declaration; `terminal any` joins by its keys
+    // (the terminal-class parity test above).
+    let world = counter_with(&format!(
+        "{CONTRACT}terminal Done using v on M when {{ self.value = 3 }};\n"
+    ));
+    deadlock_parity(&world, "Proved");
+}
+
+/// FR-411-AC-5 (package route): for a derived deadlock-freedom item written
+/// over the `when` package, an EN-1 run over the package route's no-declaration
+/// package is refused `TerminalDeclaration` (`stale_dependency`/
+/// `content-mismatch`), naming the model's selection identity, the `when`
+/// terminal node key and none; over the `when` package itself the join admits.
+#[trace("TC-1142", "FR-411-AC-5")]
+#[test]
+fn a_package_route_run_over_another_terminal_declaration_is_refused_as_the_source_is() {
+    use fsl_analyze::analyze::{
+        derived_model_item, AnalyzeLimits, PackageDeadlockSubject, TemporalItem,
+    };
+    use fsl_analyze::analyze::DerivedItemMismatch;
+    use fsl_route::request::{DerivedLimits, ItemKind};
+
+    let when = counter_with(&format!(
+        "{CONTRACT}terminal Done using v on M when {{ self.value = 3 }};\n"
+    ));
+    let none = counter_with(CONTRACT);
+    let written = crate::derived_request::written(
+        &when.subject(&["c"], UNLIMITED),
+        &DerivedLimits::default(),
+    );
+    let derived = &written.items()[1];
+    assert_eq!(derived.item_kind(), Some(ItemKind::DeadlockFreedom));
+    let obligation = written.obligation(derived.index()).expect("its obligation");
+    let form = TemporalItem {
+        item_kind: ItemKind::DeadlockFreedom,
+        ..TemporalItem::default()
+    };
+    let join = |world: &crate::model_world::World| {
+        let handoff = world.handoff();
+        let bare = handoff.bare();
+        let input = PackageModelInput::of(
+            &bare,
+            world.binding(&["c"]).packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("the package route reads the unit");
+        let item = PackageDeadlockSubject::new(
+            &input,
+            &handoff.bytes,
+            handoff.supply(),
+            world.binding(&["c"]),
+            AnalyzeLimits::unbounded(),
+            derived.occurrence(),
+            &form,
+        )
+        .model_item();
+        derived_model_item(derived, obligation, item).err()
+    };
+    assert_eq!(join(&when), None, "the written package joins");
+    let when_keys = when.package.graph().terminal_keys();
+    let refused = join(&none);
+    let Some(DerivedItemMismatch::TerminalDeclaration { mismatch, .. }) = refused else {
+        panic!("a run over the no-declaration package is refused: {refused:?}");
+    };
+    assert_eq!(mismatch.model, "test/counter");
+    assert_eq!(mismatch.recompiled, None);
+    assert_eq!(
+        when_keys.mismatch(&none.package.graph().terminal_keys()),
+        Some(mismatch),
+        "the package route names what the source route names"
+    );
+}
+
+/// FR-411, FR-940: the package route finds the `terminal when` declaration
+/// whose predicate is at a locus, as the source route does: the locus of the
+/// source predicate's body names the same model, by selection identity, on
+/// both routes, and a locus of no terminal names none. This is the lookup the
+/// state-graph replay of an undefined terminal predicate resolves its locus
+/// through.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_package_route_finds_the_terminal_whose_predicate_is_at_a_locus() {
+    let model = document(false);
+    let body = format!("{CONTRACT}terminal Done using v on M when {{ self.value = 3 }};\n");
+    let (package, _) = package_with_clauses(&model, &body, &[]);
+    let documents = Documents::new(model);
+    let handoff = handoff(&package, &documents);
+    let bare = bare(&handoff);
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the package route reads the terminal");
+    let terminals = fsl_package::resolve_terminals(&package).expect("the terminals resolve");
+    let [terminal] = terminals.as_slice() else {
+        panic!("one terminal: {terminals:?}");
+    };
+    let fsl_package::PackageTerminalDeclaration::When(predicate) = terminal.declaration else {
+        panic!("a `when` declaration");
+    };
+    let locus = predicate.body().location().clone();
+    let source = ModelCheckInput::source(&package);
+    let over_bytes = input.input();
+    let from_source = source.terminal_at(&locus).expect("resolves");
+    let from_bytes = over_bytes.terminal_at(&locus).expect("resolves");
+    assert_eq!(from_bytes, from_source);
+    let found = from_bytes.expect("the locus names the terminal");
+    assert_eq!(found.identity(), "test/counter");
+    assert_eq!(found.label(), "test/counter", "the package route has no alias");
+    assert_eq!(source.terminal_at(&locus).unwrap().unwrap().label(), "M");
+    let elsewhere = filament_semantic_value::location::ExpressionLocation::root(
+        filament_semantic_value::location::ExpressionOwner::Expression,
+    );
+    assert_eq!(over_bytes.terminal_at(&elsewhere).expect("resolves"), None);
+    assert_eq!(source.terminal_at(&elsewhere).expect("resolves"), None);
 }

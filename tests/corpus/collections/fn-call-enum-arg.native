@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+enum Color { red, blue }
+function same using v(c: Color): Boolean pure { c=Color::red }
+function f using v(): Boolean pure { same(Color::red) }

@@ -125,6 +125,34 @@ impl std::fmt::Debug for TimeUnits {
 }
 
 impl TimeUnits {
+    /// These units with each source-owned dimension and unit owned by the unit of
+    /// `owners` that declares it, where a package has several units.
+    #[must_use]
+    pub(crate) fn owned_by(
+        mut self,
+        owners: &BTreeMap<String, fsl_foundation::source::provenance::RawSourceRef>,
+        package_name: &str,
+    ) -> Self {
+        for node in self.nominal_nodes.values_mut() {
+            let TimeNominalOrigin::Source {
+                owner,
+                qualified_declaration,
+                ..
+            } = &mut node.origin
+            else {
+                continue;
+            };
+            if let Some(declaring) = qualified_declaration
+                .last()
+                .and_then(|name| owners.get(name))
+            {
+                *owner =
+                    OwnerSubject::new(declaring.authority(), declaring.identity(), package_name);
+            }
+        }
+        self
+    }
+
     /// The source-owned declared units retained by this checked unit.
     pub(crate) fn source_units(&self) -> impl Iterator<Item = &TimeNominalNode> {
         self.nominal_nodes.values().filter(|node| {

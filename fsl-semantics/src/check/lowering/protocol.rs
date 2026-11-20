@@ -233,16 +233,7 @@ impl ProtocolInput<'_> {
     /// once, in a fixed order. Empty when the whole graph is written.
     fn unemitted(&self) -> Vec<ProtocolConstruct> {
         let form = self.form;
-        let slots = &self.checked.slots;
         let mut unemitted = Vec::new();
-        if self
-            .checked
-            .channels
-            .iter()
-            .any(|channel| bounded_carries(&channel.carries))
-        {
-            unemitted.push(ProtocolConstruct::ChannelCarriesBounded);
-        }
         let mut kinds: Vec<ProtocolNodeKind> = Vec::new();
         for control in &self.checked.controls.controls {
             // A `branch` and a `case` are held by the `parallel` and the
@@ -267,16 +258,6 @@ impl ProtocolInput<'_> {
             .any(|root| !root.protocol_references().is_empty())
         {
             unemitted.push(ProtocolConstruct::ProtocolReferenceInBody);
-        }
-        if slots.repeats.iter().any(|repeat| repeat.post_test) {
-            unemitted.push(ProtocolConstruct::PostTestRepeat);
-        }
-        if slots
-            .repeats
-            .iter()
-            .any(|repeat| repeat.decisions_read_body && !repeat.post_test)
-        {
-            unemitted.push(ProtocolConstruct::RepeatDecisionReadsBody);
         }
         if self.repeat_steps_through_repeat() {
             unemitted.push(ProtocolConstruct::RepeatStepsThroughRepeat);
@@ -343,14 +324,20 @@ impl ProtocolInput<'_> {
         })
     }
 
-    /// Whether the `run` tree holds an `attempt`, whose node names the
-    /// state clauses and operation anchors written after the functions.
+    /// Whether the `run` tree holds an `attempt` or `recommend`, whose node
+    /// names state clauses and operation anchors written after functions.
     fn has_attempt(&self) -> bool {
         self.checked
             .controls
             .controls
             .iter()
-            .any(|control| control.kind == ProtocolNodeKind::Attempt)
+            .any(|control| {
+                control.kind == ProtocolNodeKind::Attempt
+                    || (control.kind == ProtocolNodeKind::Event
+                        && self.form.attempts.iter().any(|attempt| {
+                            attempt.declaration == control.node.0 && attempt.recommendation
+                        }))
+            })
     }
 
     /// The checked `finish` constraint and its slot names.
@@ -446,37 +433,6 @@ impl ProtocolInput<'_> {
         requirements.sort_unstable();
         requirements.dedup();
         (functions, protocols, requirements)
-    }
-}
-
-/// Whether `carries` lowers to a `bounded_domain` node, which IR's reader
-/// does not admit as a channel's `carries`. An `option` is a `composite_type`
-/// whatever its payload; a quantity is a `scalar_type` and a nominal enum a
-/// `value` node, both of which the reader admits.
-fn bounded_carries(carries: &ValueType) -> bool {
-    match carries {
-        ValueType::Int(_)
-        | ValueType::Rational(_)
-        | ValueType::Decimal(_)
-        | ValueType::Float(_)
-        | ValueType::Text(_) => true,
-        ValueType::Collection(collection) => collection.bound().is_some(),
-        ValueType::Map(map) => map.bound().is_some(),
-        ValueType::Boolean
-        | ValueType::Integer
-        | ValueType::String
-        | ValueType::Uuid
-        | ValueType::Timestamp
-        | ValueType::Bytes
-        | ValueType::JsonObject
-        | ValueType::Reference(_)
-        | ValueType::Composite(_)
-        | ValueType::Option(_)
-        | ValueType::Enum(_)
-        | ValueType::Quantity(_)
-        | ValueType::BoundedQuantity(_)
-        | ValueType::CarriedQuantity(_)
-        | ValueType::Population(_) => false,
     }
 }
 
@@ -652,8 +608,13 @@ impl Lowering<'_> {
         };
         if protocol.has_attempt() {
             if placeholder.is_none() {
-                self.set_protocol_key(index, ProtocolKey::AfterClauses);
+                let placeholder = self.placeholder();
+                self.set_protocol_key(index, ProtocolKey::Keyed(placeholder));
+                if !self.unsettled_protocols.contains(&index) {
+                    self.unsettled_protocols.push(index);
+                }
             }
+            self.deferred_mixed_settlement = true;
             return Ok(Vec::new());
         }
         let Some(requirements) = self.required_temporal_keys(protocol, &location)? else {
@@ -736,11 +697,7 @@ impl Lowering<'_> {
                 Some(ProtocolKey::Keyed(NodeRef::Pending(handle))) => Some(*handle),
                 _ => None,
             };
-            if !matches!(
-                self.protocol_keys.get(source_index),
-                Some(ProtocolKey::AfterClauses)
-            ) && placeholder.is_none()
-            {
+            if placeholder.is_none() {
                 continue;
             }
             let location = protocol.location();
@@ -1319,6 +1276,12 @@ impl Lowering<'_> {
             ];
             if let Some(port) = selected_port {
                 bindings.push(MemberTerm::binding("model_member", port));
+            }
+            if role.observe_only {
+                bindings.push(MemberTerm::bound(
+                    "boundary",
+                    self.text_literal("observe-only", &location)?,
+                ));
             }
             let key = self.protocol_member(
                 &location,
@@ -2278,10 +2241,6 @@ impl Lowering<'_> {
                     loci: vec![location.clone()],
                 },
             )),
-            Some(ProtocolKey::AfterClauses) => Err(not_emitted(
-                ProtocolConstruct::ReferenceToAttemptProtocol,
-                location,
-            )),
             Some(ProtocolKey::Unselected) | None => Err(refuse(
                 location,
                 CheckCause::MissingSelection {
@@ -2530,7 +2489,6 @@ pub(super) enum ProtocolKey {
     Unkeyed,
     /// The protocol holds an `attempt`: its node is written once the state
     /// clauses it lists are ([`Lowering::protocol_nodes_with_attempts`]).
-    AfterClauses,
     /// The profile is selected and the protocol names this construct, the
     /// first of those whose node is not written yet.
     NotEmitted(ProtocolConstruct),
@@ -2600,33 +2558,5 @@ mod requirement_key_tests {
         assert!(matches!(resolved, Ok(None)), "{resolved:?}");
         let resolved = resolve_temporal_requirement_keys([(1, "A")], &keys, &refused, &location());
         assert!(matches!(resolved, Ok(Some(found)) if found == [one.clone()]));
-    }
-}
-
-#[cfg(test)]
-mod bounded_carries_tests {
-    use super::*;
-
-    fn map(bound: Option<(u64, u64)>) -> ValueType {
-        ValueType::Map(std::sync::Arc::new(
-            filament_exact::MapType::new(
-                ValueType::String,
-                ValueType::Boolean,
-                bound.map(|(lower, upper)| {
-                    filament_exact::CardinalityBound::new(lower, upper).expect("a bound")
-                }),
-            )
-            .expect("a leaf key"),
-        ))
-    }
-
-    /// A bounded map lowers to a `bounded_domain` (FR-092-AC-28), which IR's
-    /// reader does not admit as a channel's `carries`; an unbounded map is the
-    /// `map` composite alone.
-    #[ix_trace_rs::trace("FR-092-AC-28", "TC-1021")]
-    #[test]
-    fn a_bounded_map_carries_a_bounded_domain_and_an_unbounded_one_does_not() {
-        assert!(bounded_carries(&map(Some((1, 4)))));
-        assert!(!bounded_carries(&map(None)));
     }
 }

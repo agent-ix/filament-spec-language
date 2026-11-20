@@ -824,7 +824,11 @@ impl Observed {
         .expect("the unit assembles");
         declarations.types = types.clone();
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the package checks");
         let over = ObjectReference::new(
             crate::support::ids::universe_id([0x42]),

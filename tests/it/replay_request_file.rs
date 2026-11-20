@@ -345,7 +345,6 @@ fn a_replay_request_file_replays_a_library_clock_from_the_package() {
 /// each entry the `results` document's row.
 #[test]
 #[trace("TC-2963", "FR-286-AC-21")]
-#[ignore = "QSL-2292: the replay outcome document carries no result member yet"]
 fn a_replay_outcome_carries_and_renders_its_results() {
     let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
     let path = fixture.request_file(&fixture.package);
@@ -355,4 +354,38 @@ fn a_replay_outcome_carries_and_renders_its_results() {
     let document: Value = serde_json::from_slice(&outcome.to_bytes().expect("serializes")).unwrap();
     assert_eq!(document["result"]["kind"], "replayed", "{document}");
     assert_eq!(document["result"]["results"], rows, "{document}");
+}
+
+/// FR-267-AC-27 (TC-3081): a replay package member refusal from
+/// `command::run` is located in the caller's request document.
+#[test]
+#[trace("TC-3081", "FR-267-AC-27")]
+fn a_replay_package_member_refusal_uses_the_request_document_locus() {
+    let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
+    let path = fixture.request_file(&fixture.package);
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let package = &mut request["request"]["package"];
+    package
+        .as_object_mut()
+        .expect("the compiled package is an object")
+        .remove("name");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let error = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .expect_err("a request package without its name refuses");
+    let outcome = error.outcome_document(fsl_replay::Operation::Replay);
+    let document: Value = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
+    let locus = &document["diagnostics"][0]["locus"];
+    assert_eq!(locus["kind"], "document", "{document}");
+    assert_eq!(locus["path"], path.to_string_lossy().as_ref(), "{document}");
+    assert_eq!(locus["pointer"], "/request/package/name", "{document}");
+    assert_eq!(locus["member"], "name", "{document}");
+    assert!(locus["object"].is_null(), "{document}");
+
+    let absent = fixture.directory.path().join("absent-replay.json");
+    let error = fsl_command::command::run(&absent, &crate::negotiation::Fr290)
+        .expect_err("an absent request refuses");
+    let outcome = error.outcome_document(fsl_replay::Operation::Replay);
+    let document: Value = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
+    assert!(document["diagnostics"][0]["locus"].is_null(), "{document}");
 }

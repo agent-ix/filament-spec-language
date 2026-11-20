@@ -286,6 +286,60 @@ fn probabilistic_on_each_names_first_failing_instance() {
     assert_eq!(item, &once()["items"][0], "a rerun names the same instance");
 }
 
+/// FR-741-AC-5 (TC-3062): an `on each` proof carries a `conditional`
+/// certificate, and its refutation names the failing instance in the
+/// counterexample's `instance` member.
+#[ix_trace_rs::trace("TC-3062", "FR-741-AC-5")]
+#[test]
+#[ignore = "QSL-2151: conditional certificates and the counterexample instance member not implemented yet"]
+fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
+    let start = || link_start(&[("m", false), ("n", true)]);
+    let proved = run_from(
+        "on-each-conditional",
+        &on_each("rational(9, 10)"),
+        start(),
+        json!([{"claim": "E"}]),
+    );
+    let item = &proved["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["kind"], "conditional", "{item}");
+    let conditional = &item["certificate"]["document"]["conditional"];
+    assert_eq!(conditional["mode"], "ratio", "{item}");
+    // `m` activates at position 0, so at its initial key the numerator is the
+    // `on origin` value and the denominator 1.
+    let holds_value = |part: &str, value: Value| {
+        conditional[part]["values"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["value"] == value))
+    };
+    assert!(
+        holds_value(
+            "numerator",
+            json!({"numerator": "391", "denominator": "400"})
+        ),
+        "{item}"
+    );
+    assert!(
+        holds_value("denominator", json!({"numerator": "1", "denominator": "1"})),
+        "{item}"
+    );
+
+    let refuted = run_from(
+        "on-each-conditional-refuted",
+        &on_each("rational(99, 100)"),
+        start(),
+        json!([{"claim": "E"}]),
+    );
+    let item = &refuted["items"][0];
+    assert_eq!(label(item), "refuted", "{item}");
+    let counterexample = &item["counterexample"];
+    assert_eq!(counterexample["binding"], Value::Null, "{item}");
+    assert!(
+        counterexample["instance"].to_string().contains("\"m\""),
+        "{item}"
+    );
+}
+
 /// `Every`: delivery under every scheduler at `9/10` (FR-876's use case).
 const EVERY: &str =
     "probabilistic Every using inf on M over (m: M::Msg) under every scheduler on origin \

@@ -86,7 +86,8 @@ Tag the tests `#[trace("TC-521", "FR-126-AC-n")]`.
   each bound instance; `Violated` with an
   empty stem and the three-step loop `(0,0) -upd(b)-> (0,1) -upd(b)-> (0,2)
   -upd(b)-> (0,0)` bound to `a`; `Violated` with
-  the loop `(0,0) -upd(a)-> (0,0) -upd(b)-> (0,0)`.
+  the loop `(0,0) -upd(a)-> (0,0) -upd(b)-> (0,0)`, each step returning
+  `false`.
 - Step 2: `Violated` with a five-step prefix bound to `a`, on which `va` is never 2;
   `Holds{Exhaustive}`; `Holds{Exhaustive}`; `Violated` with the prefix
   `0 -inc-> 1`.

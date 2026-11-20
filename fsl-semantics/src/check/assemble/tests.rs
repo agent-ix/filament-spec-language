@@ -6,8 +6,8 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use filament_exact::{
-    CardinalityBound, CollectionKind, CollectionType, EffectiveId, IeeeWidth, Integer,
-    IntegerInterval, Presence, Rational, RoundingMode, ValueType,
+    CardinalityBound, CollectionKind, CollectionType, EffectiveId, Integer, IntegerInterval,
+    Presence, Rational, ValueType,
 };
 use fsl_forms::build_unit;
 use fsl_foundation::diagnostic::Code;
@@ -16,8 +16,8 @@ use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
 use super::{
-    admit_types_with, model_field, model_operation, model_value_type, AssemblyCause, AssemblyError,
-    AssemblyRefusal, TopologyFault, Unmapped,
+    AssemblyCause, AssemblyError, AssemblyRefusal, TopologyFault, Unmapped, admit_types_with,
+    model_field, model_operation, model_value_type,
 };
 use crate::check::{CheckCause, Owner, PackageDeclarations, SourceOwner, TypeFormFault};
 use crate::model::accounting::ModelNormalizationLimits;
@@ -30,7 +30,7 @@ use crate::model::domain_package::{
     TuplePositionRecord, TupleValueTypeRecord, ValueTypeRef, VariantRecord,
 };
 use crate::model::intake::SelectedModel;
-use crate::model::normalize::{normalize, NormalizeOutcome};
+use crate::model::normalize::{NormalizeOutcome, normalize};
 use crate::value::layer::{HeaderLayer, LayerForm};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
@@ -344,6 +344,7 @@ fn unresolved_model_unit_type_names_the_operation_parameter_path() {
                         ordered: false,
                         unique: false,
                     },
+                    presence: filament_exact::Presence::Required,
                 }],
                 result: None,
                 effect: OperationEffect::default(),
@@ -447,7 +448,11 @@ fn the_assembler_resolves_aliases_and_signatures() {
     assert!(parameters.is_empty());
     assert_eq!(result, &int(0, 10));
     package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
 }
 
@@ -536,10 +541,12 @@ fn the_assembler_reports_every_error() {
     );
 
     let (_, found) = errors("type A = B;\ntype B = A;");
-    let [AssemblyError {
+    let [
+        AssemblyError {
         cause: AssemblyCause::AliasCycle { edges },
         ..
-    }] = found.as_slice()
+        },
+    ] = found.as_slice()
     else {
         panic!("one alias cycle, not {found:?}");
     };
@@ -593,7 +600,11 @@ fn records_and_tuples_are_keyed_over_the_units_owner() {
             &[("p".to_owned(), ValueType::Composite(point.clone()))]
         );
         let graph = package
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks");
         let px = graph.function_identity("px").expect("px is checked");
         (point, pair, px)
@@ -727,7 +738,11 @@ fn nested_constructs_of_other_families_refuse_with_their_own_causes() {
         let assembled = assemble_as("a", "u", &text);
         let refusals = assembled
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("check refuses");
         assert!(
             refusals
@@ -794,10 +809,9 @@ fn each_assembler_cause_has_its_catalog_code() {
             "ill_typed/type-mismatch",
         ),
         (
-            AssemblyCause::FloatingType {
-                width: IeeeWidth::Binary32,
-                rounding: RoundingMode::Exact,
-                profile: None,
+            AssemblyCause::UnsupportedModelMember {
+                alias: "M".into(),
+                node: "ix://test/model/member".into(),
             },
             "unknown_required_feature/unsupported-feature",
         ),
@@ -1046,10 +1060,12 @@ fn using_aliases_resolve_to_the_units_profile_selections() {
     );
     match assemble_as("a", "u", &text) {
         Err(refusal) => {
-            let [AssemblyError {
+            let [
+                AssemblyError {
                 cause: AssemblyCause::DuplicateAlias { alias, spans },
                 ..
-            }] = refusal.errors.as_slice()
+                },
+            ] = refusal.errors.as_slice()
             else {
                 panic!("one duplicate-alias error, not {refusal:?}");
             };
@@ -1329,7 +1345,11 @@ fn a_declared_type_resolves_to_its_names_region() {
         (span.start as u64, span.start as u64 + 5)
     );
     let graph = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     assert_eq!(graph.region(&location), Some(region));
 }
@@ -1610,7 +1630,11 @@ fn present_over_a_zero_one_collection_refuses_ill_typed() {
         );
         assemble_as("a", "u", &text)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
     };
     let refusals =
         check("function f using v(x: Sequence<Integer>[0, 1]): Boolean pure { present(x) }")
@@ -1960,11 +1984,20 @@ fn option_type_projects_through_signature_alias_sequence_map_tuple_variant_unit_
         DomainPackageRecord::OperationMember(OperationMemberRecord {
             key: operation_key.clone(),
             owner: DeclarationKey::fixture("model.Holder"),
-            parameters: vec![OperationParameterRecord {
+            parameters: vec![
+                OperationParameterRecord {
                 key: parameter_key,
                 value_type: ValueTypeRef::Package(option_key.clone()),
                 multiplicity: mult(1, Some(1), false, true),
-            }],
+                presence: filament_exact::Presence::Required,
+                },
+                OperationParameterRecord {
+                    key: DeclarationKey::fixture("model.Holder/read/maybe"),
+                    value_type: ValueTypeRef::Native(NativeValueType::Integer),
+                    multiplicity: mult(1, Some(1), false, true),
+                    presence: filament_exact::Presence::Optional,
+                },
+            ],
             result: Some(OperationResult {
                 value_type: ValueTypeRef::Package(option_key.clone()),
                 multiplicity: mult(1, Some(1), false, true),
@@ -2090,8 +2123,14 @@ fn option_type_projects_through_signature_alias_sequence_map_tuple_variant_unit_
         .0;
     assert_eq!(
         declaration.parameters(),
-        &[("value".to_owned(), ValueType::option(ValueType::Integer))]
+        &[
+            ("value".to_owned(), ValueType::option(ValueType::Integer)),
+            ("maybe".to_owned(), ValueType::option(ValueType::Integer)),
+        ]
     );
+    assert_eq!(declaration.required_arity(), 1);
+    assert!(!declaration.parameter_is_optional(0));
+    assert!(declaration.parameter_is_optional(1));
     assert_eq!(
         declaration.result(),
         Some(&ValueType::option(ValueType::Integer))
@@ -2268,9 +2307,11 @@ fn enums_are_admitted_with_nominal_keys_over_the_units_owner() {
 fn enum_types_and_members_check_and_a_case_the_enum_lacks_refuses() {
     let checked = |declarations: &str| {
         let (_, assembled) = assemble(declarations);
-        assembled
-            .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+        assembled.expect("the unit assembles").check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
     };
     let package = assemble(&format!(
         "{STATUS}\
@@ -2287,7 +2328,11 @@ fn enum_types_and_members_check_and_a_case_the_enum_lacks_refuses() {
         .expect("isReady's resolved signature");
     assert_eq!(parameters, &[("s".to_owned(), ValueType::Enum(shape))]);
     package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
 
     let refusals = checked(
@@ -2431,7 +2476,11 @@ fn a_predicate_assembles_as_a_function_of_kind_predicate() {
     assert_eq!(result, &ValueType::Boolean);
     assert_eq!(package.function_selections[&0].alias, "v");
     package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
 
     let (text, found) = errors("predicate Q using w(x: Boolean): Boolean { x }");
@@ -2446,7 +2495,11 @@ fn a_predicate_assembles_as_a_function_of_kind_predicate() {
     let refusals = assemble("predicate R using v(x: Boolean): Boolean { R(x) }")
         .1
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a recursive predicate has no measure");
     assert!(
         refusals.iter().any(|refusal| matches!(
@@ -2468,12 +2521,20 @@ fn predicate_and_enum_nodes_lower_to_their_fr_092_forms() {
     let predicate = assemble("predicate Positive using v(x: Int[0, 9]): Boolean { x > 0 }")
         .1
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     let function = assemble("function Positive using v(x: Int[0, 9]): Boolean pure { x > 0 }")
         .1
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     let node_of = |graph: &crate::check::CheckedGraph| {
         let key = graph
@@ -2510,7 +2571,11 @@ fn predicate_and_enum_nodes_lower_to_their_fr_092_forms() {
     let status = binding(&package, "Status");
     let (declaration_key, member_key) = (status.declaration.key(), status.members[0].member());
     let graph = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     let by_key = |key: &filament_exact::NodeKey| {
         graph
@@ -2797,10 +2862,12 @@ fn name_and_number_errors_are_reported_and_the_topology_does_not_run() {
             ),
         ]
     );
-    assert!(found
+    assert!(
+        found
         .iter()
         .any(|error| error.cause == AssemblyCause::ZeroDenominator
-            && error.span == last(&text, "rational(1, 0)")));
+                && error.span == last(&text, "rational(1, 0)"))
+    );
 
     // Without those three, the topology runs and reports the first defect
     // alone: `Length`'s turn, before `Area`'s `Width` and the `P`/`Q` cycle.
@@ -3422,7 +3489,11 @@ fn a_quantity_type_form_resolves_to_its_unit_and_refuses_a_non_unit_name() {
         "ms is the derived unit, not the root s"
     );
     package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
 
     for name in ["Time", "nothing"] {
@@ -3463,7 +3534,11 @@ fn a_quantity_argument_of_another_unit_is_a_type_mismatch() {
     let package = assembled.expect("the unit assembles");
     let regions = assemble(&source).1.expect("the unit assembles");
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a Quantity<s> argument is not a Quantity<ms>");
     let argument = last(&text, "3 s");
     let located = |refusal: &crate::check::CheckRefusal| {
@@ -3493,7 +3568,11 @@ fn a_quantity_result_checks_and_a_converted_result_of_another_unit_is_a_mismatch
     assemble(&returning("d"))
         .1
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("returning d checks");
 
     let source = returning("convert<Quantity<s>>(d)");
@@ -3501,7 +3580,11 @@ fn a_quantity_result_checks_and_a_converted_result_of_another_unit_is_a_mismatch
     let package = assembled.expect("the unit assembles");
     let regions = assemble(&source).1.expect("the unit assembles");
     let refusals = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a Quantity<s> result is not a Quantity<ms>");
     let returned = last(&text, "convert<Quantity<s>>(d)");
     let [refusal] = refusals.as_slice() else {
@@ -3535,7 +3618,11 @@ fn quantity_refusals(declarations: &str, limits: CheckingLimits, at: &str) -> Ve
     let regions = package.regions();
     let span = last(&text, at);
     package
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("the quantity literal refuses")
         .iter()
         .map(|refusal| {
@@ -3572,7 +3659,11 @@ fn admitted_quantity_literals_check() {
         assemble(&source)
             .1
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{body}: {refusals:?}"));
     }
 }
@@ -3664,10 +3755,11 @@ fn quantity_literal_refusals_carry_their_codes_and_locations() {
 fn only_a_nonzero_quantity_literal_divisor_proves_a_quantity_division_defined() {
     let check = |body: &str| {
         let source = format!("{TIME_UNITS}{QUANTITY_F}{body}");
-        assemble(&source)
-            .1
-            .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+        assemble(&source).1.expect("the unit assembles").check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
     };
     for divisor in [
         "3 ms",
@@ -3725,7 +3817,11 @@ fn quantity_literal_refusals_name_the_name_and_the_limit() {
         let mut refusals = assemble(&source)
             .1
             .expect("the unit assembles")
-            .check(CheckMode::Linked, limits)
+            .check(
+                CheckMode::Linked,
+                limits,
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("the quantity literal refuses");
         assert_eq!(refusals.len(), 1, "{declarations}: {refusals:?}");
         refusals.remove(0).cause
@@ -3811,7 +3907,11 @@ fn a_unit_and_a_record_share_a_name_and_two_units_do_not() {
         .1
         .expect("a unit and a record named ms assemble");
     package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("Quantity<ms> means the unit and ms the record");
 
     let (text, found) = errors(
@@ -4483,7 +4583,11 @@ fn one_package_identity_assembles_under_two_aliases() {
     assert_eq!(models[0].alias, "Config");
     assert_eq!(models[1].alias, "History");
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the unit with two aliases checks");
 }
 
@@ -4507,7 +4611,11 @@ fn model_population_projection_is_unique_across_package_aliases() {
         Vec::new(),
     )
     .expect("the population is projected once for this package identity")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("the Config alias invariant checks");
     assert_eq!(checked.state_clauses().len(), 1);
     assert_eq!(checked.state_clauses()[0].name(), "ConfigNonNegative");
@@ -4533,7 +4641,11 @@ fn check_two_aliases(declarations: &str) -> crate::check::CheckedGraph {
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("{declarations}: assembles: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("{declarations}: checks: {refusals:?}"))
 }
 
@@ -4626,7 +4738,11 @@ fn a_second_alias_projects_no_package_fact_twice() {
             Vec::new(),
         )
         .expect("assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("checks")
     };
     let once = check_with("model Config = \"example/config-version\";\n");
@@ -4803,7 +4919,11 @@ fn two_units_name_one_package_through_their_own_aliases() {
         ),
     ])
     .unwrap_or_else(|refusal| panic!("both units assemble: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("both units check: {refusals:?}"));
     let parameters = |name: &str| -> Vec<ValueType> {
         checked
@@ -4875,7 +4995,11 @@ fn two_units_selecting_one_package_under_one_alias_both_name_its_types() {
     ] {
         let checked = assemble_model_units(&units)
             .unwrap_or_else(|refusal| panic!("both units' M::ConfigVersion resolve: {refusal:?}"))
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("both units check: {refusals:?}"));
         let fa = first_parameter(&checked, "fa");
         assert!(matches!(&fa, ValueType::Reference(_)), "{fa:?}");
@@ -4911,7 +5035,11 @@ fn one_alias_two_units_bind_to_two_packages_names_each_units_own_package() {
         ),
     ])
     .unwrap_or_else(|refusal| panic!("each unit's N::ConfigVersion resolves: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("both units check: {refusals:?}"));
     let a = first_parameter(&checked, "fa");
     let b = first_parameter(&checked, "fb");
@@ -4951,7 +5079,11 @@ fn one_first_alias_of_two_packages_names_each_units_own_package() {
         ),
     ])
     .unwrap_or_else(|refusal| panic!("each unit's N::ConfigVersion resolves: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("both units check: {refusals:?}"));
     let a = first_parameter(&checked, "fa");
     let b = first_parameter(&checked, "fb");
@@ -5012,6 +5144,7 @@ fn a_terminal_on_a_shared_alias_is_on_its_own_units_package() {
     };
     let alternate = admitted_model(&declarations, "example/alternate-config-version");
     let original = admitted_model(&declarations, "example/config-version");
+    let context = context.as_ref().expect("self has an object type");
     assert!(
         alternate.population_objects().contains(context),
         "{context:?}"
@@ -5021,7 +5154,11 @@ fn a_terminal_on_a_shared_alias_is_on_its_own_units_package() {
         "{context:?}"
     );
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("b's terminal checks: {refusals:?}"));
 }
 
@@ -5058,7 +5195,11 @@ fn a_population_bound_on_a_shared_alias_bounds_its_own_units_package() {
     );
     assert_eq!(bounds("example/config-version"), []);
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("b's bound checks: {refusals:?}"));
 }
 
@@ -5091,7 +5232,11 @@ fn a_whole_model_role_on_a_shared_alias_selects_its_own_units_package() {
     )
     .unwrap_or_else(|refusal| panic!("both protocols assemble: {refusal:?}"))
     .with_unwritten_protocols()
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("both protocols check: {refusals:?}"));
     let selection = |name: &str| {
         let protocol = checked
@@ -5145,7 +5290,11 @@ fn a_unit_reaches_no_package_through_another_units_alias() {
                 .map(|error| error.cause.catalog_code().to_string())
                 .collect(),
             Ok(declarations) => declarations
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &crate::check::test_support::ZeroRewardEvaluator,
+                )
                 .err()
                 .unwrap_or_else(|| panic!("b binds no M: {declaration}"))
                 .iter()
@@ -5186,7 +5335,11 @@ fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
             &Cancel::new(),
         )
         .expect("the aggregate namespace resolves Point")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the cross-unit function checks")
     };
     let first = assemble(vec![
@@ -5347,7 +5500,11 @@ fn aggregate_dimension_equivalence_keeps_its_declaring_source_owner() {
         );
     }
     let checked = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     let node = checked
         .semantic_graph()
@@ -5478,7 +5635,11 @@ fn compound_quantity_types_keep_exact_canonical_identity_and_held_unit_metadata(
     let carried = &package.resolved_signatures.get(6).unwrap().0[0].1;
     assert!(matches!(carried, ValueType::CarriedQuantity(_)));
     let checked = package
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("compound types check and key");
     assert_eq!(
         first_parameter(&checked, "u25"),
@@ -5494,7 +5655,9 @@ fn compound_quantity_types_keep_exact_canonical_identity_and_held_unit_metadata(
 #[test]
 fn compound_quantity_type_unknown_units_refuse_at_the_factor_even_at_zero_power() {
     for spelling in ["kg*ghost^2", "ghost^0", "Mass^0"] {
-        let source = format!("{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<{spelling}>): Boolean pure {{ true }}");
+        let source = format!(
+            "{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<{spelling}>): Boolean pure {{ true }}"
+        );
         let (text, found) = errors(&source);
         let [error] = found.as_slice() else {
             panic!("one missing factor: {found:?}")
@@ -5523,7 +5686,9 @@ fn compound_quantity_type_exponents_obey_i128_without_narrowing() {
         i128::MAX.to_string(),
         "18446744073709551616".to_owned(),
     ] {
-        let source = format!("{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<m^{exponent}>): Quantity<m^{exponent}> pure {{ q }}");
+        let source = format!(
+            "{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<m^{exponent}>): Quantity<m^{exponent}> pure {{ q }}"
+        );
         let package = assemble(&source).1.expect("i128 exponent assembles");
         let ValueType::Quantity(id) = &package.resolved_signatures.get(0).unwrap().0[0].1 else {
             panic!("quantity")
@@ -5535,14 +5700,20 @@ fn compound_quantity_type_exponents_obey_i128_without_narrowing() {
         };
         assert_eq!(unit.terms().next().unwrap().1.to_string(), exponent);
         package
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("wide exponent checks");
     }
     for exponent in [
         "170141183460469231731687303715884105728",
         "-170141183460469231731687303715884105729",
     ] {
-        let source = format!("{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<m^{exponent}>): Boolean pure {{ true }}");
+        let source = format!(
+            "{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<m^{exponent}>): Boolean pure {{ true }}"
+        );
         let (_, found) = errors(&source);
         assert!(
             matches!(&found[0].cause, AssemblyCause::IllFormedBounds(TypeFormFault::IntegerOutsideI128(outside)) if outside.site == crate::check::IntegerSite::UnitExponent && outside.value == exponent)
@@ -5695,6 +5866,6 @@ fn a_package_map_type_assembles_with_its_declared_key_and_bound() {
     );
     assert!(matches!(
         project("model.ByFloat"),
-        Err(Unmapped::Float(IeeeWidth::Binary32))
+        Err(Unmapped::Unsupported)
     ));
 }

@@ -44,6 +44,7 @@ pub(crate) mod tests;
 mod timed_model;
 
 pub use clause_root::{clause_roots, resolve_clause_root, ClauseRoot, ClauseRootUnresolved};
+pub(crate) use hybrid::float_rounding_type;
 pub use hybrid::{read_hybrids, HybridRead, HybridReadError, ReadHybridClaim, ReadHybridModel};
 pub use hyper_root::{hyper_roots, resolve_hyper_root, HyperRoot, HyperRootUnresolved};
 pub use schedulability_root::{
@@ -403,6 +404,8 @@ pub enum V2ReadRefusal {
         expected: LibraryName,
         /// The name carried by the admitted wire.
         actual: Box<str>,
+        /// The FR-001 artifact locus of the package name that disagreed.
+        locus: Box<Locus>,
     },
     /// An admitted wire's `source_map` did not convert into the package
     /// source map (ADR-013 O-12). IR's reader has already validated the
@@ -578,17 +581,14 @@ impl V2ReadRefusal {
     }
 
     /// Where in the artifact the refusal was raised (FR-096). `None` for an
-    /// IR refusal at no value, and for the refusals this reader raises
-    /// against the caller's selected package name or its own re-encoding, which name no
-    /// position in the bytes.
+    /// IR refusal at no value and for structural/source-map refusals raised
+    /// after the native artifact read.
     pub fn locus(&self) -> Option<&Locus> {
         match self {
             Self::UnsupportedVersion { locus, .. } => Some(locus),
             Self::Envelope { locus, .. } => locus.as_deref(),
-            Self::Structural(_)
-            | Self::IdentityMismatch { .. }
-            | Self::SourceMap(_)
-            | Self::Fault(_) => None,
+            Self::IdentityMismatch { locus, .. } => Some(locus),
+            Self::Structural(_) | Self::SourceMap(_) | Self::Fault(_) => None,
         }
     }
 
@@ -701,16 +701,21 @@ const fn limit_setting(kind: CheckedPackageLimit) -> Setting {
 const IR_POINTER_FAULT: InternalFault = InternalFault::new("I2", "ir-pointer-is-rfc-6901");
 
 /// The loci named by a supplied artifact's reader refusals.
-struct Artifact;
+struct Artifact {
+    identity: RawSourceRef,
+}
 
 impl Artifact {
-    fn of(_bytes: &[u8]) -> Self {
-        Self
+    fn new(identity: RawSourceRef) -> Self {
+        Self { identity }
     }
 
     /// `Locus::Artifact` at `pointer`.
     fn at(&self, pointer: JsonPointer) -> Locus {
-        Locus::Artifact { pointer }
+        Locus::Artifact {
+            identity: self.identity.clone(),
+            pointer,
+        }
     }
 
     /// `Locus::Artifact` at the pointer IR reported, or `None` when IR
@@ -799,9 +804,10 @@ fn refused(refusal: V2ReadRefusal) -> V2ReadOutcome {
 /// `evidence` supplies selected domain package documents, admitted
 /// dependency packages and supported features. The caller supplies the
 /// package's expected library name from its manifest or import declaration.
-pub(crate) fn read_checked_package_v2(
+pub(crate) fn read_checked_package_v2_at(
     bytes: &[u8],
     identity: LibraryName,
+    artifact_identity: RawSourceRef,
     limits: V2ReadLimits,
     evidence: &CheckedPackageEvidence,
 ) -> V2ReadOutcome {
@@ -819,6 +825,10 @@ pub(crate) fn read_checked_package_v2(
                 return refused(V2ReadRefusal::IdentityMismatch {
                     expected: identity,
                     actual: package.name().into(),
+                    locus: Box::new(Locus::Artifact {
+                        identity: artifact_identity,
+                        pointer: "/name".parse().expect("static pointer is valid"),
+                    }),
                 });
             }
             let timed_models = match CheckedTimedModel::from_admitted(&package) {
@@ -870,7 +880,7 @@ pub(crate) fn read_checked_package_v2(
             }
         }
         CheckedPackageDispatchResult::Refused(refusal) => {
-            let artifact = Artifact::of(bytes);
+            let artifact = Artifact::new(artifact_identity);
             let locus =
                 match artifact.at_ir(refusal.loci.first().and_then(|locus| locus.path.as_ref())) {
                     Ok(locus) => locus.map(Box::new),
@@ -899,13 +909,36 @@ pub(crate) fn read_checked_package_v2(
             limit,
             consumed,
             path,
-        }) => match Artifact::of(bytes).at_ir(path.as_ref()) {
+        }) => match Artifact::new(artifact_identity).at_ir(path.as_ref()) {
             Ok(locus) => Err(StageFailure::Limit(
                 LimitExceeded::new(limit_setting(kind), limit, u128::from(consumed)).at(locus),
             )),
             Err(fault) => refused(V2ReadRefusal::Fault(fault)),
         },
     }
+}
+
+/// Test-only convenience for fixtures whose bytes have no FR-001 caller
+/// binding. Production reads must use [`read_checked_package_v2_at`].
+#[cfg(test)]
+pub(crate) fn read_checked_package_v2(
+    bytes: &[u8],
+    identity: LibraryName,
+    limits: V2ReadLimits,
+    evidence: &CheckedPackageEvidence,
+) -> V2ReadOutcome {
+    read_checked_package_v2_at(
+        bytes,
+        identity,
+        fixture_artifact_identity(),
+        limits,
+        evidence,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_artifact_identity() -> RawSourceRef {
+    RawSourceRef::new("fsl-package-test", "fixture").expect("static identity is valid")
 }
 
 /// Why [`read_import_view`] built no import view (ADR-015 D-1 step 6).
@@ -1413,6 +1446,7 @@ impl AdmittedPackageRead<'_> {
                     root,
                     origin: origin.to_owned(),
                     binders,
+                    level_offset: 0,
                 });
             }
         }
@@ -1540,9 +1574,10 @@ impl ClosureReader<'_> {
                 })?;
         }
         self.supply(package, &mut evidence)?;
-        read_checked_package_v2(
+        read_checked_package_v2_at(
             emission.package.bytes(),
             identity.clone(),
+            package.graph().source().clone(),
             self.limits,
             &evidence,
         )

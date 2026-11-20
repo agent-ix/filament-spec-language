@@ -20,6 +20,7 @@ fsl-replay = { path = "../fsl-replay" }
 fsl-eval = { path = "../fsl-eval" }
 filament-eval = { workspace = true }
 fsl-semantics = { path = "../fsl-semantics" }
+filament-checked = { workspace = true }
 fsl-analyze = { path = "../fsl-analyze" }
 fsl-inspect = { path = "../fsl-inspect" }
 fsl-route = { path = "../fsl-route" }
@@ -38,12 +39,12 @@ thiserror = "2.0.20"
 # ADR-011, FR-931: the temporal correspondence stage is this crate's
 # only; no other FSL crate names the TL crates. Both dependencies use the
 # `tl-syntax` v0.4.0 tag, so they name one `Formula` type.
-tl-mltl = { git = "https://github.com/agent-ix/tl-mltl", tag = "v0.4.1" }
+tl-mltl = { git = "https://github.com/agent-ix/tl-mltl", rev = "d8457736d431b1401802e81581d43a715a227549", features = ["infinite-trace"] }
 tl-syntax = { git = "https://github.com/agent-ix/tl-syntax.git", tag = "v0.4.0", default-features = false, features = ["alloc", "serde"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
-filament-checked = { workspace = true, features = ["test-support"] }
+jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 
 [[test]]
 name = "it"

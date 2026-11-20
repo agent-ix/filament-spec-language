@@ -22,12 +22,12 @@ use filament_exact::ScalarLimits;
 
 use crate::bounds::{BoundExceeded, ReplayLimits};
 use crate::identity::{DeclaredDomain, ProfileSelection, TracePosition};
-use fsl_package::ObligationIdentity;
 use crate::model_check::state_graph::GraphEvidenceEnvelope;
 use crate::target::{ReplayTarget, ReplayTargetMembers, TargetMember, TargetSelectionRefusal};
 use fsl_foundation::bound::{DomainKey, FiniteBound};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::BackendId;
+use fsl_package::ObligationIdentity;
 
 mod value;
 mod value_text;
@@ -428,7 +428,8 @@ pub struct CanonicalAssignment {
 /// FR-071: the request's `source` arm. `Witness` derives replay input from its
 /// transcript; `Input` is replayed from its own stored canonical
 /// assignments (a corpus counterexample), and settles
-/// `reproduced-without-witness`, never backend evidence (FR-072).
+/// `reproduced-without-witness`, never backend evidence (FR-072). `Hybrid`
+/// carries the FR-331 counterexample for a `state_clause` target.
 #[derive(Clone, Eq, PartialEq)]
 pub enum ReplaySource {
     /// Replay derives its input from a backend transcript.
@@ -440,6 +441,9 @@ pub enum ReplaySource {
     /// An observed temporal counterexample, whose envelope carries its
     /// counterexample payload and checked-item identity (FR-331).
     ObservedTemporal(Box<ObservedTemporalEnvelope>),
+    /// A hybrid counterexample replayed through its `state_clause` target
+    /// (FSpec FR-323, FR-193).
+    Hybrid(Box<crate::HybridCounterexample>),
     /// State-graph evidence replayed by FR-170. Its claim identity is carried
     /// by the graph envelope, so it has no generic replay target.
     ModelGraph(Box<GraphEvidenceEnvelope>),
@@ -452,12 +456,14 @@ impl ReplaySource {
     /// This source's measured encoded size: a witness transcript's length,
     /// or per assignment a 32-byte node id plus its value, which is 8 bytes
     /// for a Boolean, 16 for an i128 integer and the byte length of the escaped witness value
-    /// text for any other (FR-070), or the nested temporal envelope's size.
+    /// text for any other (FR-070), or the nested temporal/hybrid envelope's
+    /// size.
     pub(crate) fn measured_bytes(&self) -> usize {
         match self {
             Self::Witness(witness) => witness.transcript().len(),
             Self::Input(assignments) => measured_assignments(assignments),
             Self::ObservedTemporal(envelope) => envelope.measured_bytes(),
+            Self::Hybrid(counterexample) => counterexample.measured_bytes(),
             Self::ModelGraph(envelope) => envelope.measured_bytes(),
             Self::ProtocolAnalysis(evidence) => evidence.measured_bytes(),
         }
@@ -542,6 +548,11 @@ impl fmt::Debug for ReplaySource {
                 .debug_struct("ObservedTemporal")
                 .field("envelope", envelope)
                 .finish(),
+            Self::Hybrid(counterexample) => f
+                .debug_struct("Hybrid")
+                .field("states", &(counterexample.trace.jumps.len() + 1))
+                .field("has_loop", &counterexample.trace.loop_to.is_some())
+                .finish(),
             Self::ModelGraph(envelope) => f
                 .debug_struct("ModelGraph")
                 .field("envelope", envelope)
@@ -589,6 +600,7 @@ pub(crate) use derivation::decisive_stop;
 pub(crate) use derivation::derive_separating_witness;
 #[cfg(test)]
 pub(crate) use derivation::Derived;
+pub use derivation::{derive_state_clause_witness, DerivationRefusal};
 
 /// FR-070/ADR-013 O-25: the typed counterexample/witness envelope, generic
 /// over its family-owned payload `P` (the extension point FR-070-AC-5

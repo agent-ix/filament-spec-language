@@ -5,8 +5,8 @@ use super::{PackageMemberCause, ReplayRequestRefusal};
 use crate::identity::SourceRefWire;
 use filament_contract_model::CheckedRefinementInternal;
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageIncomplete, CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
+    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageIncomplete,
+    CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2, read_checked_package,
 };
 use quire_canonical::{Document, Node, NodeRef, ReadError};
 
@@ -114,12 +114,126 @@ impl ReplayPackage {
                 members.entry(name.to_owned()).or_insert(clock);
             }
         }
-        crate::spine::RequestClocks::new(members).map_err(|invalid| {
-            field_refusal(
-                &format!("{ROWS}/{}", invalid.clock),
-                PackageMemberCause::WrongKind,
-            )
+
+        // FR-640-AC-11: a dependency's clock selection belongs to the
+        // proving package's lock, not to its program `temporal_bindings`.
+        // The dependency rows take precedence if the same role is also used
+        // by the program; replay uses one configuration per role across the
+        // checked closure.
+        const DEPENDENCY_ROWS: &str = "/package/lock/dependency_clock_selections";
+        let mut dependency_members = std::collections::BTreeMap::new();
+        if let Some(lock) = member(self.document.root(), "lock") {
+            if let Some(rows) = member(lock, "dependency_clock_selections") {
+                for (index, row) in array(rows, DEPENDENCY_ROWS)?.enumerate() {
+                    let pointer = format!("{DEPENDENCY_ROWS}/{index}");
+                    let name = string(
+                        required(row, "clock_name", &pointer)?,
+                        &format!("{pointer}/clock_name"),
+                    )?;
+                    let clock_at = format!("{pointer}/clock");
+                    let clock =
+                        serde_json::from_value(json_value(required(row, "clock", &pointer)?))
+                            .map_err(|_| field_refusal(&clock_at, PackageMemberCause::WrongKind))?;
+                    dependency_members.insert(name.to_owned(), clock);
+                }
+            }
+        }
+        let Some(lock) = member(self.document.root(), "lock") else {
+            return crate::spine::RequestClocks::new(members).map_err(|invalid| {
+                field_refusal(
+                    &format!("{ROWS}/{}", invalid.clock),
+                    PackageMemberCause::WrongKind,
+                )
+            });
+        };
+        let Some(source_rows) = member(lock, "sources") else {
+            return crate::spine::RequestClocks::new(members).map_err(|invalid| {
+                field_refusal(
+                    &format!("{ROWS}/{}", invalid.clock),
+                    PackageMemberCause::WrongKind,
+                )
+            });
+        };
+        let source_rows = array(source_rows, "/package/lock/sources")?;
+        let source = source_rows
+            .into_iter()
+            .next()
+            .ok_or_else(|| field_refusal("/package/lock/sources", PackageMemberCause::Missing))?;
+        let authority = string(
+            required(source, "authority", "/package/lock/sources/0")?,
+            "/package/lock/sources/0/authority",
+        )?
+        .to_owned();
+        let identity = string(
+            required(source, "identity", "/package/lock/sources/0")?,
+            "/package/lock/sources/0/identity",
+        )?
+        .to_owned();
+        crate::spine::RequestClocks::for_replay((authority, identity), members, dependency_members)
+            .map_err(|invalid| {
+                field_refusal(
+                    &format!("{ROWS}/{}", invalid.clock),
+                    PackageMemberCause::WrongKind,
+                )
+            })
+    }
+
+    pub(crate) fn dependency_clock_pointer(
+        &self,
+        clock_name: &str,
+        cause: fsl_package::ClockSelectionCause,
+    ) -> Option<String> {
+        use fsl_package::ClockSelectionCause;
+        const ROOT: &str = "/package/lock/dependency_clock_selections";
+        if cause == ClockSelectionCause::MissingClockSelection {
+            return Some(ROOT.to_owned());
+        }
+        let rows = member(self.document.root(), "lock")
+            .and_then(|lock| member(lock, "dependency_clock_selections"))?;
+        let rows = match rows.node() {
+            Node::Array(rows) => rows,
+            _ => return None,
+        };
+        rows.into_iter().enumerate().find_map(|(index, row)| {
+            let name = match member(row, "clock_name")?.node() {
+                Node::String(name) => name,
+                _ => return None,
+            };
+            (name == clock_name).then(|| match cause {
+                ClockSelectionCause::ClockKindMismatch => {
+                    format!("{ROOT}/{index}/clock/kind")
+                }
+                ClockSelectionCause::UnusedClockSelection => format!("{ROOT}/{index}"),
+                _ => ROOT.to_owned(),
+            })
         })
+    }
+
+    pub(crate) fn is_program_source(
+        &self,
+        source: &fsl_foundation::source::provenance::RawSourceRef,
+    ) -> bool {
+        let Some(lock) = member(self.document.root(), "lock") else {
+            return true;
+        };
+        let Some(rows) = member(lock, "sources") else {
+            return true;
+        };
+        let Ok(rows) = array(rows, "/package/lock/sources") else {
+            return true;
+        };
+        let Some(first) = rows.into_iter().next() else {
+            return true;
+        };
+        let authority = member(first, "authority").and_then(|node| match node.node() {
+            Node::String(value) => Some(value),
+            _ => None,
+        });
+        let identity = member(first, "identity").and_then(|node| match node.node() {
+            Node::String(value) => Some(value),
+            _ => None,
+        });
+        authority == Some(source.authority()) && identity == Some(source.identity())
     }
 
     /// FR-098-AC-34: every `function` node of a package document, in node
@@ -356,7 +470,7 @@ impl ReplayPackageAdmissionRefusal {
                 _ => {
                     return Self::Catalog {
                         refusal: Box::new(refusal),
-                    }
+                    };
                 }
             },
         };

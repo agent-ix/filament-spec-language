@@ -57,8 +57,9 @@ pub enum UndefinedLocus {
     /// A `pre` or `post` clause of an application's contract conjunction,
     /// by its name.
     Contract(String),
-    /// The `terminal when` predicate declared for the model alias.
-    Terminal(String),
+    /// The `terminal when` predicate declared for the model, compared by its
+    /// selection identity.
+    Terminal(fsl_eval::simulation::model::TerminalModel),
     /// The request's state constraint (ADR-021 SC-2), by its clause name.
     Constraint(String),
     /// An invariant item's letter (FR-951): its `invariant` state clause,

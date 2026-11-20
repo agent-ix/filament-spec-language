@@ -162,9 +162,39 @@ member is the same as the source route gives.
 - A present `equality.json` that `ReadEqualityRows::read` refuses SHALL
   refuse the request `invalid_package`, cause `refused-file`, naming
   `equality.json` and retaining the `EqualityFileRefusal` variant
-  (`Malformed`, `Format` or `Unjoined`) and its first row. An absent
-  `equality.json` is not a refusal: the supply carries no equality rows,
-  and a protocol-slot call that needs them refuses as FR-533 states.
+  (`Malformed`, `Format` or `Unjoined`) and its first row.
+- An absent `equality.json` SHALL be admitted, with a supply that carries
+  no equality rows, only when the admitted package holds no equality
+  application: its `checked_term_data` is absent or its
+  `equality_decisions` array is empty (FSpec FR-322).
+- When the admitted package holds an equality application, an absent
+  `equality.json` SHALL refuse the whole request at the request stage,
+  `invalid_package`, cause `missing-file`, naming `equality.json`, exit 20,
+  `items` empty and no engine run, as an absent `identities.json` does.
+
+  The equality rows are the producer's witness for every `=`, `==` and `!=`
+  application (FR-533 "Equality slots"). That includes the `=` of a pre- or
+  postcondition, which the package form of a state clause reads into the
+  model-check input (FR-940 "Package forms of the source-checked
+  evaluators"). The bare route derives no witness from the package and
+  guesses no decision, so without the file it cannot build the state form
+  of any operation whose state clauses hold an equality. Settling the items
+  anyway would give a verdict the source route does not give. The source
+  route always holds the rows of its own emission. The refusal is made once
+  for the request, not per item, because the model-check input of every item
+  over a subject reads all of that subject's state clauses. If it were made
+  per item, which items settle would depend on which items happen to be
+  requested, not on the package. FR-517 writes `equality.json` into every
+  handoff directory, with empty lists when the unit holds no equality
+  application. A complete handoff is therefore never refused, and the
+  equality with the source route holds over every directory the writer
+  produces. The bytes-only library entry keeps FR-531's per-call rule: a
+  `BareSupply` whose `equality` is `None` is refused only by a slot call that
+  reaches an equality application (FR-533). A `native-run/1` request that
+  selects a package file rather than a directory names its witness file in
+  the `package` member's `equality` (FR-1039); that file is admitted by the
+  same `ReadEqualityRows::read`, and without it a package that holds an
+  equality application refuses with this code and exit.
 - A denied native join charge SHALL refuse the request
   `stage_limit_exceeded`, naming its setting `i2.work_units` or
   `i2.native_join_storage` (FR-531 "The native join budget"), exit 20,
@@ -265,10 +295,12 @@ The Counter fixture is FR-620's.
 | FR-850-AC-3 | AC-1's handoff directory whose `checked-package.json` holds `{}`, one holding a `filament.checked-package/v1` document, one holding AC-1's bytes with one source-map entry removed, and one that is not JSON each refuse the whole request at the request stage with code `invalid_package`, the reader's cause and pointer, exit 20, `items` empty, and no engine runs. | Test (TC-2410) |
 | FR-850-AC-4 | AC-1's package request with `program` also present, with a `libraries` entry, and with `integer_division` `floor` each refuse `invalid-request` at the request stage naming that member, exit 20; with `models` empty it refuses `missing_import`/`missing-selection` naming `test/counter`; with an extra `models` entry the package does not record it refuses `invalid_package`/`conflicting-definition` naming that entry. | Test (TC-2410) |
 | FR-850-AC-5 | AC-1's package request with the item `{"claim": "Missing"}` settles that item `invalid-request` with `invalid_capability`/`unknown-claim` naming `Missing`, as the source route does. | Test (TC-2410) |
-| FR-850-AC-6 | AC-1's handoff directory with `identities.json` removed refuses the whole request at the request stage, `invalid_package`, cause `missing-file`, naming `identities.json`, exit 20, `items` empty and no engine run; with `identities.json` replaced by `{}` it refuses `invalid_package`, `malformed-file`, naming `identities.json`; with its `format` changed it refuses `invalid_package`, `unknown-format`; with `equality.json` removed the request analyzes as AC-1 states; with `equality.json` replaced by `not json` it refuses `invalid_package`, `refused-file`, naming `equality.json`; a `package` `{"directory": "absent"}` refuses `invalid_package`, `missing-file`, naming the path. | Test (TC-2966) |
+| FR-850-AC-6 | AC-1's handoff directory with `identities.json` removed refuses the whole request at the request stage, `invalid_package`, cause `missing-file`, naming `identities.json`, exit 20, `items` empty and no engine run; with `identities.json` replaced by `{}` it refuses `invalid_package`, `malformed-file`, naming `identities.json`; with its `format` changed it refuses `invalid_package`, `unknown-format`; with `equality.json` removed it refuses as AC-10 states; with `equality.json` replaced by `not json` it refuses `invalid_package`, `refused-file`, naming `equality.json`; a `package` `{"directory": "absent"}` refuses `invalid_package`, `missing-file`, naming the path. | Test (TC-2966) |
 | FR-850-AC-7 | Over the handoff directory of FR-940-AC-4's Counter unit, a `package` request with the items `{"claim": "NotAboveThree"}` (an invariant state clause) and `{"claim": "ReachThree"}` (a `possible` state-graph claim) resolves each through its `claim_names` row and settles it with the source route's record; `{"claim": "Missing"}` settles `invalid-request` `unknown-claim`; the same directory whose `checked-package.json` has the `NotAboveThree` row removed refuses `invalid_package`/`invalid-value` at `/claim_names`, and one with two rows of one `qualified_name` refuses `ambiguous_declaration`/`ambiguous-name`, each before any engine runs. | Test (TC-2967) |
 | FR-850-AC-8 | For every temporal clause and every state clause of FR-940-AC-4's Counter handoff, the clause the package route builds from the admitted bytes equals the source route's checked clause in every member, `span` included, and its `span` equals the `declaration_region` of the clause's name row; a handoff whose `checked-package.json` has one name row's `declaration_region` removed refuses the whole request `invalid_package` at the request stage naming that member, exit 20, before any engine runs. | Test (TC-2983) |
 | FR-850-AC-9 | Over the handoff directory of the untimed Counter unit that imports its model as `M`, the `package` request with the items `{"claim": "Bounded"}` and `{"claim": "test/counter", "temporal": {"item_kind": "deadlock-freedom"}}` settles both with the records the source request with the same items gives; the same `package` request with the second item's `claim` `M` settles `Bounded` with the same record and settles that item `invalid-request` with `invalid_capability`/`model-alias`, naming `M` and `test/counter`, with no `not-yet-implemented` diagnostic and no item `unsupported`, while the source request with `M` settles it as with `test/counter`; the handoff directory of the same untimed unit importing its model as `N` holds a `checked-package.json` byte-equal to the `M` unit's. | Test (TC-2987) |
+| FR-850-AC-10 | AC-1's Counter package holds the integer `=` application of the `Inc` postcondition (`self.value - pre(self.value) = 1`) in `checked_term_data.equality_decisions`. With `equality.json` removed from its handoff directory, the request with the item `{"claim": "Bounded"}` refuses the whole request at the request stage, `invalid_package`, cause `missing-file`, naming `equality.json`, exit 20, `items` empty and no engine run. With `equality.json` present, the same request settles `Bounded` `proved` with the record the source request gives. The handoff directory of the Counter unit whose `Inc` postcondition is written `self.value > pre(self.value)` holds no equality application (`checked_term_data` absent or `equality_decisions` empty); with its `equality.json` removed, the same request settles `Bounded` with the record the source request over that unit gives, exit 0. | Test (TC-3025) |
+| FR-850-AC-11 | FR-1033-AC-1's `SB` unit is compiled by a `native-compile/1` request carrying the `handoff` member into its handoff directory, and FR-1033-AC-2's racing variant into its own. A `package` request over each directory, with `models` the `test/litmus` domain package document the package selects (FR-850 "Inputs") and the same `subject.protocol`, `memory` `[{"parallel": "SB::Both", "model": "tso"}]` and items as the source request, gives item records equal to the source route's: `NoBothZero` `refuted` with the same counterexample (both pending stores), replay target and `replay.reproduced` `true`, and over the variant the item `{"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}` `refuted` with the same `Race` counterexample naming both writes, each echoing the same `temporal.subject` and effective model; with no `memory`, `NoBothZero` settles `proved` on both routes. No package-route record is `unsupported` and no request refuses for carrying `memory`. | Test (TC-3050) |
 
 ## Dependencies
 

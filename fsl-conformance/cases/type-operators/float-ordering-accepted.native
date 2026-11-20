@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F32 = Float32[nearest-even];
+type F64 = Float64[nearest-even];
+function order32 using v(a: F32,b: F32): Boolean pure { a<b or a>=b }
+function order64 using v(a: F64,b: F64): Boolean pure { a<b or a>=b }

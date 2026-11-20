@@ -39,14 +39,14 @@ use fsl_forms::{
 };
 use fsl_foundation::Span;
 
-use super::check::{bind_parameters, NamedScope, Scope, StateContext, Typer};
+use super::check::{NamedScope, Scope, StateContext, Typer, bind_parameters};
 use super::facts::Definedness;
 use super::ir::CheckedBody;
-use super::lowering::{protocol_location, ProtocolSite};
+use super::lowering::{ProtocolSite, protocol_location};
 use super::observation::Observations;
 use super::protocol_clause::{CheckedProtocol, ProtocolNodeId};
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{population_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
+use super::state_clause::{ClauseDeclarations, ClauseOperation, PopulationDomain, population_of};
 use super::type_form::resolve_form;
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
@@ -1214,7 +1214,25 @@ impl Checker<'_, '_> {
             location: site.location.as_ref().unwrap_or(self.input.location),
             ..*self.input
         };
-        let typed = type_named_body(form, &site.bound, goal, &declarations, None, &mut nodes, cx);
+        // Keep population names available to the stage checker even where
+        // model-state reads are barred. That lets the later stage rule
+        // report `operator-ineligible` at the read instead of a misleading
+        // missing-population error. `bars_model_state` below still refuses
+        // those reads before they can enter the checked protocol.
+        let named = Some(NamedScope::of(
+            self.input.models,
+            self.input.scope,
+            self.input.unit,
+        ));
+        let typed = type_named_body(
+            form,
+            &site.bound,
+            goal,
+            &declarations,
+            named,
+            &mut nodes,
+            cx,
+        );
         self.nodes = nodes;
         let (body, slot_names, formed_units) = match typed {
             Ok(named) => named,

@@ -522,7 +522,7 @@ impl<'e, 'g, 'b> IntervalEvaluator<'e, 'g, 'b> {
                                 in_recursive_body,
                             });
                         }
-                        Exp::Conditional(c, a, b) => {
+                        Exp::Conditional(c, a, b, _) => {
                             work.push(Work::Conditional {
                                 yes: a,
                                 no: b,

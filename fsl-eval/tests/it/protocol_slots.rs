@@ -17,6 +17,7 @@ use ix_trace_rs::trace;
 const MODEL: &[u8] = include_bytes!("../../../tests/fixtures/spine-model.semantic-ir.json");
 
 mod acceptance;
+mod behavior_boundaries;
 
 fn protocol_value(value: SuppliedValue) -> fsl_eval::value::ProtocolSuppliedValue {
     value.into()
@@ -84,7 +85,11 @@ fn package_from_source(source: &str) -> CheckedPackage {
             Vec::new(),
         )
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("the package checks"),
     )
 }
@@ -146,7 +151,11 @@ fn compensation_package() -> CheckedPackage {
             Vec::new(),
         )
         .expect("the compensation unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("the compensation unit checks"),
     )
 }

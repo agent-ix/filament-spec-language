@@ -148,6 +148,37 @@ impl<'p> BarePackage<'p> {
         Some((declaration, members.as_slice()))
     }
 
+    /// The identity of the model selection whose population has `object` as a
+    /// member type: the selection that owns the type, which a declaration of
+    /// the model is named by on the package route (FR-940). `Ok(None)` when no
+    /// selected population ranges over it.
+    ///
+    /// # Errors
+    ///
+    /// An internal fault when populations of two selections range over it: the
+    /// package records no alias to say which selection the declaration is on,
+    /// and a type is declared by one package, so no admitted package does this.
+    pub fn selection_of_object(
+        &self,
+        object: &EffectiveId,
+    ) -> Result<Option<&str>, filament_semantic_value::catalog::InternalFault> {
+        let Ok(populations) = self.populations.as_ref() else {
+            return Ok(None);
+        };
+        let mut owners = populations
+            .values()
+            .filter(|(_, members)| members.contains(object))
+            .map(|(declaration, _)| declaration.package.as_str());
+        let first = owners.next();
+        if owners.any(|owner| Some(owner) != first) {
+            return Err(filament_semantic_value::catalog::InternalFault::new(
+                "FR-940",
+                "terminal-object-in-two-selections",
+            ));
+        }
+        Ok(first)
+    }
+
     /// The selected object declarations, or `Err` when their projection or
     /// the catalog was refused (FR-533 "Observation admission", step 3).
     pub(crate) fn object_declarations(
@@ -460,6 +491,13 @@ impl<'p> BarePackage<'p> {
         self.package
     }
 
+    /// The structural node key of the package node `node` (FR-322
+    /// "Operand index segments"); `None` for a node the package does not
+    /// hold or whose key does not rebuild.
+    pub fn node_key(&self, node: &CheckedNodeId) -> Option<NodeKey> {
+        wire_graph(self.package).ok()?.key(node).ok()
+    }
+
     /// The supply, when one was given.
     pub fn supply(&self) -> Option<&BareSupply<'p>> {
         self.supply.as_ref()
@@ -637,6 +675,68 @@ struct SourcePopulationJson {
 struct SourceObjectOperationJson {
     identity: String,
     query: bool,
+    clock_parameters: Vec<String>,
+    parameters: Vec<SourceObjectParameterJson>,
+}
+
+/// One member entry of an operation's parameters: a data entry has a
+/// `type_node`, a clock entry a `member_type` and its collection layers.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SourceObjectParameterJson {
+    name: String,
+    optional: bool,
+    type_node: Option<CheckedNodeId>,
+    member_type: Option<String>,
+    collections: Vec<ClockCollectionLayerJson>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ClockCollectionLayerJson {
+    kind: String,
+    minimum: String,
+    maximum: String,
+}
+
+impl SourceObjectParameterJson {
+    fn of(member: &filament_contract_model::SelectedSourceObjectMember) -> Self {
+        Self {
+            name: member.name.to_string(),
+            optional: member.optional,
+            type_node: member.type_node.clone(),
+            member_type: member.member_type.as_deref().map(str::to_owned),
+            collections: member
+                .collections
+                .iter()
+                .map(|layer| ClockCollectionLayerJson {
+                    kind: layer.kind.to_string(),
+                    minimum: layer.minimum.to_string(),
+                    maximum: layer.maximum.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    fn member(self) -> filament_contract_model::SelectedSourceObjectMember {
+        filament_contract_model::SelectedSourceObjectMember {
+            name: self.name.into(),
+            optional: self.optional,
+            type_node: self.type_node,
+            member_type: self.member_type.map(Into::into),
+            collections: self
+                .collections
+                .into_iter()
+                .map(
+                    |layer| filament_contract_model::SelectedClockCollectionLayer {
+                        kind: layer.kind.into(),
+                        minimum: layer.minimum.into(),
+                        maximum: layer.maximum.into(),
+                    },
+                )
+                .collect(),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -677,7 +777,7 @@ impl SourceObjectJson {
                         Presence::Required => SourceObjectPresenceJson::Required,
                         Presence::Optional => SourceObjectPresenceJson::Optional,
                     },
-                    type_node: member.type_node.clone(),
+                    type_node: member.type_node.clone().ok_or_else(malformed)?,
                     value_type: OriginalValueType::of(&facts.value_type)
                         .map_err(|_| malformed())?,
                 })
@@ -703,13 +803,28 @@ impl SourceObjectJson {
                     symmetric: population.symmetric,
                 })
                 .collect(),
-            operations: operations
-                .iter()
-                .map(|operation| SourceObjectOperationJson {
-                    identity: operation.identity.to_string(),
-                    query: operation.query,
-                })
-                .collect(),
+            operations: if row.operations.len() == operations.len() {
+                row.operations
+                    .iter()
+                    .zip(operations)
+                    .map(|(held, operation)| SourceObjectOperationJson {
+                        identity: operation.identity.to_string(),
+                        query: operation.query,
+                        clock_parameters: held
+                            .clock_parameters
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                        parameters: held
+                            .parameters
+                            .iter()
+                            .map(SourceObjectParameterJson::of)
+                            .collect(),
+                    })
+                    .collect()
+            } else {
+                return Err(malformed());
+            },
         })
     }
 
@@ -734,11 +849,11 @@ impl SourceObjectJson {
                 SourceObjectPresenceJson::Optional => Presence::Optional,
             };
             let value_type = member.value_type.value().map_err(|_| malformed())?;
-            members.push(filament_contract_model::SelectedSourceObjectMember {
-                name: member.admitted_name.clone().into(),
-                type_node: member.type_node,
-                optional: presence == Presence::Optional,
-            });
+            members.push(filament_contract_model::SelectedSourceObjectMember::data(
+                member.admitted_name.clone(),
+                member.type_node,
+                presence == Presence::Optional,
+            ));
             facts.push(crate::emit::SourceObjectMemberFacts {
                 original_member_identity: member.original_member_identity.into(),
                 admitted_name: member.admitted_name.into(),
@@ -746,6 +861,26 @@ impl SourceObjectJson {
                 value_type,
             });
         }
+        let row_operations = self
+            .operations
+            .iter()
+            .map(
+                |operation| filament_contract_model::SelectedSourceObjectOperation {
+                    identity: operation.identity.as_str().into(),
+                    query: operation.query,
+                    clock_parameters: operation
+                        .clock_parameters
+                        .iter()
+                        .map(|name| name.as_str().into())
+                        .collect(),
+                    parameters: operation
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.clone().member())
+                        .collect(),
+                },
+            )
+            .collect();
         Ok((
             SelectedSourceObjectRow {
                 structural_node: self.structural_node,
@@ -765,6 +900,7 @@ impl SourceObjectJson {
                         },
                     )
                     .collect(),
+                operations: row_operations,
             },
             facts,
             self.operations

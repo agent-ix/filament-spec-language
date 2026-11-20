@@ -15,7 +15,8 @@ pub use budget::{BudgetDenial, BudgetOwner, DeniedCharge};
 pub use locus::{InvalidJsonPointer, JsonPointer, Locus, UnresolvedLocus};
 pub use stage::{LimitExceeded, LimitKind, StageFailure, StageWork, Staged, Stopped};
 
-use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, Category};
+pub use filament_semantic_value::catalog::CatalogCode;
+use filament_semantic_value::catalog::{CatalogCoded, Category};
 
 /// Native processing phase; successful syntax does not imply later execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -331,15 +332,15 @@ impl Code {
     }
 
     /// This code's ADR-013 O-16 category, on FSpec FR-301's single-code
-    /// ladder: `runtime_invariant` (an internal fault, ADR-013 T-4) is an
-    /// internal failure; then unsupported before incomplete before invalid
+    /// ladder: `runtime_invariant` (an internal fault, ADR-013 T-4) and
+    /// `output-failure` are internal failures; then unsupported before incomplete before invalid
     /// or refused input. Exit codes come from a category
     /// ([`Category::exit_code`], FR-285), and this is the code-to-category
     /// map an exit derived from a `Code` uses. It is not [`category_of`],
     /// the refusal-record map, which gives `Refusal` for the unsupported
     /// and incomplete codes this ladder separates.
     pub fn category(self) -> Category {
-        if self == Self::RuntimeInvariant {
+        if matches!(self, Self::RuntimeInvariant | Self::OutputFailure) {
             Category::InternalFailure
         } else if self.is_unsupported() {
             Category::Unsupported
@@ -978,8 +979,8 @@ mod foundation_tests {
     use alloc::{string::ToString, vec, vec::Vec};
 
     use super::{
-        category_of, resource_exhausted, Code, Phase, Source, SourceIdentity, Span, SyntaxLimit,
-        CATALOG_CATEGORIES,
+        CATALOG_CATEGORIES, Code, Phase, Source, SourceIdentity, Span, SyntaxLimit, category_of,
+        resource_exhausted,
     };
     use filament_semantic_value::catalog::{CatalogCode, Category, InternalFault};
     use ix_trace_rs::trace;

@@ -40,6 +40,7 @@ fn call(function: &str, arguments: Vec<CallArgument>) -> Call {
         accounting: default_accounting(1_000_000),
         supplied: Default::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
     }
 }
 
@@ -265,6 +266,7 @@ fn tc_792_source_compiled_lookup_driver_preserves_present_and_absent_paths() {
                 accounting: default_accounting(1_000_000),
                 supplied: Default::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
             },
             &objects,
             &Cancel::new(),
@@ -321,6 +323,7 @@ fn tc_792_source_driver_admits_unused_parameters_before_body_evaluation() {
             accounting: default_accounting(1_000_000),
             supplied: Default::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         },
         &objects,
         &Cancel::new(),
@@ -360,6 +363,7 @@ fn tc_792_source_driver_binding_precedence_precedes_value_admission() {
             accounting: default_accounting(1_000_000),
             supplied: Default::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         },
         &objects,
         &Cancel::new(),
@@ -406,6 +410,7 @@ fn tc_792_source_driver_cancellation_returns_no_lookup_result() {
             accounting: default_accounting(1_000_000),
             supplied: Default::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         },
         &objects,
         &cancel,
@@ -439,6 +444,7 @@ fn tc_792_typed_call_contract_is_not_an_integer_only_facade() {
         accounting: default_accounting(1_000_000),
         supplied: Default::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
     };
     let result = run(
         source(),
@@ -1438,6 +1444,7 @@ fn evaluation(outcome: FamilyOutcome<Value>) -> filament_eval::Evaluation {
         location: Some(fixture_f_location()),
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     }
 }
 
@@ -1772,7 +1779,7 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
                 && fault.kernel_cause() == Some(cause)));
     }
 
-    // Kernel undefined: each of the five reasons.
+    // Kernel undefined: each of the seven reasons.
     for (reason, spelling) in [
         (Undefined::DivisionByZero, "division-by-zero"),
         (Undefined::IeeeNotFinite, "ieee-not-finite"),
@@ -1780,9 +1787,10 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
         (Undefined::NoneValue, "none-value"),
         (Undefined::NoElement, "no-element"),
         (Undefined::SumOutOfDomain, "sum-out-of-domain"),
+        (Undefined::MalformedNumber, "malformed-number"),
     ] {
         match convert(FamilyOutcome::Evaluated(Outcome::Undefined(reason))).unwrap() {
-            CallOutcome::Undefined { reason } => assert_eq!(reason, spelling),
+            CallOutcome::Undefined { reason, .. } => assert_eq!(reason, spelling),
             other => panic!("{other:?}"),
         }
     }
@@ -1951,7 +1959,9 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
     ] {
         let undefined = FamilyResult::Undefined(Box::new(StubUndefined(reason)));
         match convert(FamilyOutcome::FamilyEvaluated(undefined)).unwrap() {
-            CallOutcome::Undefined { reason: rendered } => {
+            CallOutcome::Undefined {
+                reason: rendered, ..
+            } => {
                 assert_eq!(rendered, reason.as_str());
             }
             other => panic!("{other:?}"),
@@ -1989,6 +1999,9 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
 fn tc_786_sum_over_pos_is_sum_out_of_domain_exit_10_or_completes_exit_0() {
     use filament_exact::{CardinalityBound, CollectionType, Integer, IntegerInterval, Meter};
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use filament_semantic_value::declaration::{
+        CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
+    };
     use fsl_eval::value::CheckedPackageEvaluation;
     use fsl_forms::Expression;
     use fsl_semantics::check::PackageDeclarations;
@@ -2003,8 +2016,25 @@ fn tc_786_sum_over_pos_is_sum_out_of_domain_exit_10_or_completes_exit_0() {
         fsl_foundation::IdentityLimits::default(),
     );
     declarations.aliases = vec![("Pos".to_owned(), pos.clone())];
+    declarations.types = TypeEnvironment::new(
+        [CompositeDeclaration::new(
+            crate::fixture_node(1),
+            "PosHolder",
+            CompositeShape::Record(vec![FieldDeclaration::new(
+                "value",
+                pos.clone(),
+                filament_exact::Presence::Required,
+            )]),
+        )],
+        [],
+    )
+    .expect("the Pos holder type is valid");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let package = CheckedPackage::link(graph);
 
@@ -2080,7 +2110,7 @@ fn tc_786_sum_over_pos_is_sum_out_of_domain_exit_10_or_completes_exit_0() {
         let outcome = convert_outcome(evaluation, package.graph(), &[]).unwrap();
         assert_eq!(outcome.category().exit_code(), 10, "{elements:?}");
         match outcome {
-            CallOutcome::Undefined { reason } => assert_eq!(reason, "sum-out-of-domain"),
+            CallOutcome::Undefined { reason, .. } => assert_eq!(reason, "sum-out-of-domain"),
             other => panic!("{elements:?}: {other:?}"),
         }
     }
@@ -2329,6 +2359,7 @@ fn run_admission_spends_one_cumulative_budget_and_denies_before_the_call() {
     let with = |admission: u64| Call {
         supplied: SuppliedLimits::default().with_admission_work_units(admission),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         ..call("lesser", vec![arg("x", 1), arg("y", 2)])
     };
     let outcome = run_fixture(SUPPLIED_UNIT, &with(2)).expect("two visits admit");

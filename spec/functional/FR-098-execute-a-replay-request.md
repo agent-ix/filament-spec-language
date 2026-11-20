@@ -198,6 +198,27 @@ list.
   and pointer tell this refusal apart from FSpec FR-323's refusal of a
   request carrying two targets (`invalid-value`). A frame or a state-clause
   target replays through its own entry (FR-116, FR-122).
+- When a decoded request's `state_clause` target resolves to a hybrid claim,
+  the executor SHALL replay the request's `HybridCounterexample` by FR-450
+  against the recompiled claim and its hybrid model, and write FSpec
+  FR-323's `hybrid` row (FR-750); the function-only target refusal above
+  does not apply to it. The request's counterexample is caller input, so a
+  trace FSpec FR-193 "Hybrid trace" refuses SHALL refuse the request as
+  `ReplayRefusal::HybridTrace(TraceRefusal)`,
+  `invalid_runtime_input`/`invalid-value` at the member's pointer within the
+  request's counterexample, and write no row; every other hybrid replay
+  refusal settles by FR-750 "Replay refusals".
+- The executor SHALL read a hybrid request's `/replay/certificate` (FSpec
+  FR-323), the FSpec FR-652 `validated-witness` of an item refuted through
+  it, and pass it to FR-450 with the counterexample, so a trace exact
+  replay cannot decide is settled by FR-751's witness check: an accepted
+  witness writes the `hybrid` row `reproduced-with-validated-witness`, a
+  rejected or absent one the `inconclusive` row with the `not-exact`
+  disagreement. It SHALL refuse a `certificate` on a request whose target
+  is not a hybrid claim `invalid_runtime_input`/`unknown-member` at
+  `/replay/certificate`, and one whose `type` is not `validated-witness`
+  `invalid_runtime_input`/`invalid-value` at `/replay/certificate/type`,
+  both after decode and before recompile, writing no row.
 - When a decoded request carries the observed temporal counterexample arm
   with a `state_clause` target, the executor SHALL dispatch it through
   `fsl_replay::replay` to [FR-331](FR-331-replay-a-temporal-counterexample-over-an-observed-trace.md)

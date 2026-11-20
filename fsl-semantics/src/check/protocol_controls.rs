@@ -988,7 +988,11 @@ mod tests {
 
     fn refusals(declarations: &str) -> (String, Vec<CheckRefusal>) {
         let (text, assembled) = assemble(declarations);
-        match assembled.check(CheckMode::Linked, CheckingLimits::default()) {
+        match assembled.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        ) {
             Err(refusals) => (text, refusals),
             Ok(_) => panic!("{declarations}: checking refuses"),
         }
@@ -997,7 +1001,11 @@ mod tests {
     fn checks(declarations: &str) -> CheckedGraph {
         let (_, assembled) = assemble(declarations);
         assembled
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}"))
     }
 

@@ -51,6 +51,8 @@ use crate::litmus::{
 };
 use crate::model_settle::{envelope_at, request};
 
+mod replay_boundary_cases;
+
 /// The request entry selecting `model` for `parallel`.
 pub(crate) fn select(parallel: &str, model: MemoryModelName) -> MemorySelection {
     MemorySelection {

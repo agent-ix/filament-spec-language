@@ -242,7 +242,10 @@ members of `ExactProbLimits.model`; its other four `ModelCheckLimits`
 members (`witness_samples`, `max_walk_steps`, `max_witness_set`,
 `max_relation_tuples`) bound nothing EN-5 does and take no `exact_prob.*`
 row. `explore.states` and
-`explore.transitions` raise FR-101's exploration and simulation only.
+`explore.transitions` raise FR-101's exploration, simulation (FR-634) and
+the reachability exploration of model-based testing (FR-752) only, and
+`simulation.max_steps` raises the trace positions of a simulation item and
+of one model-based test trace (FR-752 "Entry").
 
 Each engine row's value is a positive count (FSpec backend-provider
 `PositiveCount`), except `model_check.witness_samples` and
@@ -270,6 +273,7 @@ its row (FR-315 "Size limits").
 | `model_check.max_store_buffer` | `max_store_buffer` | EN-1 weak memory | `ModelCheckRequest` max_store_buffer | 4 entries | FR-225 |
 | `model_check.max_messages` | `max_messages` | EN-1 weak memory and protocol channels: the live messages per location after garbage collection under `ra`, and each channel's occupancy, counted per channel | `ModelCheckRequest` max_messages | 4 messages | FR-225 |
 | `expansion.max_candidates` | `max_candidates` | model-subject expansion | `ExpansionLimits` max_candidates | none: the caller sets it; a clause-run request sets it from its `model` trace's `max_candidates`, 1000000 candidates when absent (FR-641) | FR-120 |
+| `simulation.max_steps` | `max_steps` | simulation and model-based test traces | `SimulationLimits` max_steps; a `simulation` item's `max_steps` | 16777216 steps | FR-634, FR-752 |
 | `exact_prob.max_states` | `max_states` | EN-5 product | `ExactProbLimits.model.limits` max_states | 10000000 states | FR-203 |
 | `exact_prob.max_transitions` | `max_transitions` | EN-5 product | `ExactProbLimits.model.limits` max_transitions | 100000000 transitions | FR-203 |
 | `exact_prob.max_automaton_states` | `max_automaton_states` | EN-5 product | `ExactProbLimits.model` max_automaton_states | 1048576 states | FR-203 |

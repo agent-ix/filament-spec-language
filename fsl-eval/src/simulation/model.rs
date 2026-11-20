@@ -26,12 +26,31 @@ mod footprints;
 mod frames;
 mod input;
 pub use input::{
-    ModelCheckInput, ModelEvaluator, PackageModelInput, PendingClauseForm, PendingPackageForm,
-    StateClauseEntry,
+    BodyReads, ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration,
+    PackageModelInput, PendingClauseForm, PendingPackageForm, StateClauseEntry, TerminalWhen,
+};
+mod operation_coverage;
+pub use operation_coverage::{
+    ModelOperation, ModelOperationCase, ModelOperationCoverage, ModelOperationCoverageEntry,
+    ModelOperationCoverageLimit, ModelOperationCoverageLimits, ModelOperationCoverageReason,
+    ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
+    ModelOperationCoverageSummaryStatus, model_operation_coverage,
+};
+mod model_based_test;
+pub use model_based_test::{
+    ModelBasedCaseProvenance, ModelBasedCounterexample, ModelBasedCoverage,
+    ModelBasedPartitionCoverage, ModelBasedProvenance, ModelBasedRunLimits,
+    ModelBasedSizeBoundedRoot, ModelBasedTestCause, ModelBasedTestChecks, ModelBasedTestCounts,
+    ModelBasedTestDefect, ModelBasedTestDiscardCount, ModelBasedTestDiscardReason,
+    ModelBasedTestError, ModelBasedTestEvidence, ModelBasedTestRecord, ModelBasedTestRefusal,
+    ModelBasedTestRequest, ModelBasedTestResult, ModelBasedTestSubject, ModelBasedValueBoundCut,
+    ModelBasedValueBoundCuts, NativeAdmission, RootAdmission, run_model_based_state_invariant,
+    run_model_based_state_invariant_with_value_bits, run_model_based_test,
+    run_model_based_test_with_system, run_model_based_test_with_value_bits,
 };
 mod key_budget;
 mod letters;
-pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
+pub use behaviours::{BehaviourState, BehavioursEnd, model_behaviours};
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 pub(crate) mod probabilistic;
 mod reference_bindings;
@@ -53,9 +72,9 @@ use filament_exact::{
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::model_transition::ModelTransition;
+use fsl_foundation::IdentityLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
-use fsl_foundation::IdentityLimits;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::OperationKey;
 use fsl_semantics::family::ClassifyFailure;
@@ -71,16 +90,16 @@ use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
 use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
-use crate::simulation::explore::{explore_request, Exploration, Limits, TransitionSystem};
+use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
-use crate::simulation::order::{expand, sorted_initial, Expanded};
+use crate::simulation::order::{Expanded, expand, sorted_initial};
 use crate::simulation::protocol::WeakAccessShape;
 use crate::simulation::reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
 };
-use crate::simulation::sample::{sample_request, sample_request_until, SampleRequest};
-use crate::simulation::trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
+use crate::simulation::sample::{SampleRequest, sample_request, sample_request_until};
+use crate::simulation::trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};
 use crate::value::QualifiedName;
 
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
@@ -89,35 +108,35 @@ pub use contract::{
     ContractClause, ContractClauseKind, DeclaredStates, DeclaredStatesRefusal, OperationCases,
     OperationStep, PreconditionCase, UndecidedContract,
 };
-pub(crate) use contracts::{verdict, Verdict};
+pub(crate) use contracts::{Verdict, verdict};
 use encode::declaration_text;
 pub use encode::{
-    canonical_json, declaration_identity_text, encode_reference, reference_canonical_text,
-    typed_value_json, value_json, ModelKey,
+    ModelKey, canonical_json, declaration_identity_text, encode_reference,
+    reference_canonical_text, typed_value_json, value_json,
 };
 pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{
-    operation_identity_text, AbstractApplication, Judged, Judgement, Rejection, ResolvedStep,
+    AbstractApplication, Judged, Judgement, Rejection, ResolvedStep, operation_identity_text,
 };
 pub(crate) use reference_bindings::{ReferenceBinding, ReferenceBindings};
 mod hyper_letters;
 pub use hyper_letters::CheckedHyperLetters;
 pub use letters::{ClauseLetters, DecisiveObservation, LettersRefusal};
 pub use probabilistic::{
-    same_rewards, same_values, Action, Draw, NotMarkov, ScheduledIdentity, TransitionId,
-    UndecidedSuccessor, Unsteppable, WeightedStep,
+    Action, Draw, NotMarkov, ScheduledIdentity, TransitionId, UndecidedSuccessor, Unsteppable,
+    WeightedStep, same_rewards, same_values,
 };
 pub use refine::{RowReading, StateObservation};
 pub use state_predicate::PredicateReading;
 pub(crate) use symbolic::{ParameterValues, ResultValues, SymbolicOperation, SymbolicSubject};
-pub use terminal::TerminalClass;
+pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::{
-    replay_timed_sample, sample_timed, sample_timed_race, BehaviourLetters, BehaviourReading,
-    ClockPlace, ClockValuation, DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint,
-    ScheduledWindow, TimeLock, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw,
-    TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleReplay,
-    TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop, TimedSubjectRefusal,
-    TimedSystem, TimedTerminalClass, DEFAULT_MAX_CLOCKS,
+    BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS,
+    DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint, ScheduledWindow, TimeLock,
+    TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop,
+    TimedSample, TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice,
+    TimedSite, TimedState, TimedStop, TimedSubjectRefusal, TimedSystem, TimedTerminalClass,
+    replay_timed_sample, sample_timed, sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
 
@@ -436,6 +455,8 @@ pub struct ModelTrace {
     pub trace: Trace<ModelTransition, ModelFinding>,
     /// One effect per step, derived by replaying the trace.
     pub effects: Vec<StepEffect>,
+    /// A partition invocation that was checked but deliberately not applied.
+    pub attempted: Option<ModelTransition>,
     /// Boundary partitions for finite integer domains, in declaration order.
     pub boundary_partitions: Vec<ModelBoundaryPartition>,
 }
@@ -443,6 +464,24 @@ pub struct ModelTrace {
 /// Which edge of a finite integer domain a generated partition represents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModelBoundaryKind {
+    /// The empty text value when the declared minimum length is zero.
+    TextEmpty,
+    /// The shortest, least-content text at the declared minimum length.
+    TextLowerEndpoint,
+    /// The least text of length one when that length is admitted.
+    TextSingleton,
+    /// The longest, least-content text at the declared maximum length.
+    TextUpperEndpoint,
+    /// A normalization witness retained by the declared text profile.
+    TextNormalization,
+    /// The least value of a size-bounded domain.
+    SizeLeast,
+    /// A size-one value in the pinned size order.
+    SizeUnit,
+    /// The least member of a size-bounded domain in canonical value order.
+    SizeExtremeLow,
+    /// The greatest member of a size-bounded domain in canonical value order.
+    SizeExtremeHigh,
     /// The representable value immediately below the inclusive lower bound.
     LowerRefusal,
     /// The inclusive lower bound.
@@ -466,6 +505,55 @@ pub struct ModelBoundaryPartition {
     pub kind: ModelBoundaryKind,
     /// The generated endpoint or adjacent refusal value.
     pub value: Integer,
+    /// The generated text value for a Text partition; `value` then records
+    /// its selected-profile length.
+    pub text_value: Option<String>,
+    /// The comparison and length profile for a Text partition.
+    pub text_profile: Option<filament_exact::TextProfile>,
+    /// How this partition was accounted for in a completed model-based run.
+    pub status: Option<ModelPartitionStatus>,
+}
+
+/// The case-level disposition of one generated root partition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelPartitionStatus {
+    /// An evaluated passing or failing case held this value at the root.
+    Covered {
+        /// The first zero-based generated case that covered the partition.
+        first_case: u64,
+    },
+    /// Native admission refused the partition value as required.
+    Refused {
+        /// The zero-based generated case whose admission refused the value.
+        first_case: u64,
+    },
+    /// No case could establish coverage for this partition.
+    Uncovered {
+        /// The reason coverage could not be established.
+        reason: ModelPartitionUncoveredReason,
+        /// The limits that bounded the reachability claim.
+        bounds: Vec<String>,
+    },
+}
+
+/// Why a model-based run could not generate or evaluate a root partition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelPartitionUncoveredReason {
+    /// No enabled state accepts the operation argument in the bounded graph.
+    PreconditionFalse,
+    /// Reachability proved no state contains the field value.
+    Unreachable,
+    /// No state within the requested bound contains the field value.
+    UnreachableWithinBound,
+    /// A state exists, but the partition did not receive a generated case.
+    NotGenerated,
+    /// Reachability stopped at the named exploration limit.
+    Undetermined {
+        /// The FR-461 limit that stopped exploration.
+        limit: String,
+        /// The value charged against that limit.
+        value: u128,
+    },
 }
 
 /// Why [`sample_model`] returned no trace.
@@ -549,6 +637,11 @@ pub struct ModelSystem<'a> {
     /// The map-key names of the run's state keys: see
     /// [`encode::KeyNames`].
     key_names: encode::KeyNames,
+    /// The active FR-190 size bound, zero when no size-bounded roots are
+    /// admitted for this system call.
+    max_value_bits: std::sync::atomic::AtomicU8,
+    /// FR-752: value-bound cuts observed while building this run's successors.
+    value_bound_cuts: std::sync::Mutex<Vec<ModelBasedValueBoundCut>>,
     /// The canonical writer of this system's keys, with the identities it
     /// has already encoded.
     canonical: encode::Canonicalizer,
@@ -560,6 +653,7 @@ pub struct ModelSystem<'a> {
     /// Each record's slots in declaration order, for its enumerated domain
     /// (FR-120, FR-215).
     pub(crate) record_orders: domain::RecordOrders,
+    tuple_positions: BTreeMap<filament_exact::NodeKey, Vec<Option<usize>>>,
     /// The element-count members of the pure-clock collections (FR-230
     /// "Initial element count"): each object type holding one, the member,
     /// and the collection's `min` and `max` (`None` with no declared
@@ -615,7 +709,7 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// The package's `terminal` declarations (FR-411).
-    pub(crate) fn terminals(&self) -> &[fsl_package::PackageTerminal<'a>] {
+    pub(crate) fn terminals(&self) -> &[input::ModelTerminal<'a>] {
         self.input.terminals.as_deref().unwrap_or_default()
     }
 
@@ -678,16 +772,13 @@ impl<'a> ModelSystem<'a> {
         if infeasible {
             return Some(domain::Domain::Listed(Vec::new()));
         }
-        domain::Domain::of(
-            &field.value_type,
-            references,
-            self.types,
-            &self.record_orders,
-        )
+        self.value_domain(&field.value_type, references)
     }
 
     pub(crate) fn typing(&self) -> encode::Typing<'_> {
-        self.value_typing()
+        encode::Typing::with_variants(self.types, self.input.variant_types)
+            .with_enums(self.input.enums)
+            .with_tuple_positions(&self.tuple_positions)
             .with_clock_members(&self.clock_counts, &self.clock_bits)
             .with_names(&self.key_names)
             .with_state_fields(&self.fields)
@@ -709,6 +800,39 @@ impl<'a> ModelSystem<'a> {
     pub fn new(request: ModelSimulationRequest<'a>) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
         Self::over(request, selections, None)
+    }
+
+    /// [`Self::new`] over the `model_selections` rows the subject reads: those
+    /// of the identities its universes cover (FR-124-AC-12). Only the derived
+    /// deadlock-freedom item reads a subject this way: it classifies the
+    /// terminal states of the identities the subject reads and no other. When
+    /// the universes cover every selection or none, this is [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn new_over_read_identities(
+        request: ModelSimulationRequest<'a>,
+    ) -> Result<Self, AdmissionFailure> {
+        use fsl_semantics::model::observation::ModelSelections;
+
+        let covered: BTreeSet<&str> = request
+            .universes
+            .iter()
+            .map(|universe| universe.population.package.as_str())
+            .collect();
+        let read: Vec<_> = request
+            .input
+            .model_selections
+            .iter()
+            .filter(|selection| covered.contains(selection.identity.as_str()))
+            .cloned()
+            .collect();
+        if read.is_empty() || read.len() == request.input.model_selections.len() {
+            return Self::new(request);
+        }
+        let sources = request.input.source_packages;
+        Self::over(request, ModelSelections::new(&read, sources), None)
     }
 
     /// [`Self::new`] with the caller's cancellation shared by qualified
@@ -903,8 +1027,10 @@ impl<'a> ModelSystem<'a> {
         let mut counts: Vec<ClockCount> = Vec::new();
         for timed in input.timed_models {
             for clock in timed.clocks() {
-                let [fsl_semantics::check::PlaceStep::Field(name), fsl_semantics::check::PlaceStep::Slot(shape)] =
-                    clock.path()
+                let [
+                    fsl_semantics::check::PlaceStep::Field(name),
+                    fsl_semantics::check::PlaceStep::Slot(shape),
+                ] = clock.path()
                 else {
                     continue;
                 };
@@ -1020,6 +1146,7 @@ impl<'a> ModelSystem<'a> {
         }
 
         let record_orders = domain::record_orders(types, &model.record_orders());
+        let tuple_positions = model.tuple_data_positions();
         let mut member_bounds = model.member_bounds();
         member_bounds.sort_by(|left, right| left.constraint.cmp(&right.constraint));
         // A field's bounds, read on each state; a parameter's and a result's
@@ -1058,10 +1185,13 @@ impl<'a> ModelSystem<'a> {
             declaring: std::sync::Mutex::default(),
             applied: application::AppliedMemo::default(),
             key_names: encode::KeyNames::default(),
+            max_value_bits: std::sync::atomic::AtomicU8::new(0),
+            value_bound_cuts: std::sync::Mutex::new(Vec::new()),
             canonical: encode::Canonicalizer::default(),
             probabilistic,
             member_bounds,
             record_orders,
+            tuple_positions,
             clock_counts: counts,
             clock_bits: bits,
             bounded: std::sync::OnceLock::new(),
@@ -1320,31 +1450,109 @@ impl<'a> ModelSystem<'a> {
             .collect()
     }
 
+    /// The active FR-190 bounded domain for one value type. Without a
+    /// `max_value_bits` request, this is the ordinary FR-120 finite domain.
+    pub(in crate::simulation::model) fn value_domain(
+        &self,
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+    ) -> Option<domain::Domain> {
+        let bits = match self
+            .max_value_bits
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            0 => None,
+            bits => Some(bits),
+        };
+        domain::Domain::of_bounded(value_type, objects, self.types, &self.record_orders, bits)
+    }
+
+    pub(super) fn reset_value_bound_cuts(&self) {
+        if let Ok(mut cuts) = self.value_bound_cuts.lock() {
+            cuts.clear();
+        }
+    }
+
+    pub(super) fn record_value_bound_cut(&self, operation: &str, state: &str) {
+        let entry = ModelBasedValueBoundCut {
+            operation: operation.to_owned(),
+            state: state.to_owned(),
+        };
+        if let Ok(mut cuts) = self.value_bound_cuts.lock() {
+            if !cuts.contains(&entry) {
+                cuts.push(entry);
+            }
+        }
+    }
+
+    pub(super) fn value_bound_cuts(&self) -> Vec<ModelBasedValueBoundCut> {
+        self.value_bound_cuts
+            .lock()
+            .map(|cuts| cuts.clone())
+            .unwrap_or_default()
+    }
+
     /// Generate inclusive endpoints and adjacent refusal values for every
     /// finite integer field and parameter domain, in declaration order.
     pub fn boundary_partitions(&self) -> Vec<ModelBoundaryPartition> {
         let mut partitions = Vec::new();
         let one = Integer::one();
-        for (node, path, value_type) in self.rooted_domains() {
-            if path.first() == Some(&2) {
-                continue;
-            }
-            let ValueType::Int(domain) = &value_type else {
-                continue;
+        let mut roots = self.rooted_domains();
+        roots.retain(|(_, path, _)| path.first() != Some(&2));
+        roots.sort_by(|(left_node, left_path, _), (right_node, right_path, _)| {
+            let rank = |path: &[u32]| match path.first() {
+                None => 0_u8,
+                Some(0) => 1,
+                Some(1) => 2,
+                Some(_) => 3,
             };
-            for (kind, value) in [
-                (ModelBoundaryKind::LowerRefusal, domain.lower().sub(&one)),
-                (ModelBoundaryKind::LowerEndpoint, domain.lower().clone()),
-                (ModelBoundaryKind::UpperEndpoint, domain.upper().clone()),
-                (ModelBoundaryKind::UpperRefusal, domain.upper().add(&one)),
-            ] {
-                partitions.push(ModelBoundaryPartition {
-                    node: node.clone(),
-                    path: path.clone(),
-                    domain: domain.clone(),
-                    kind,
-                    value,
-                });
+            rank(left_path)
+                .cmp(&rank(right_path))
+                .then_with(|| format!("{left_node:?}").cmp(&format!("{right_node:?}")))
+                .then_with(|| left_path.cmp(right_path))
+        });
+        for (node, path, value_type) in roots {
+            match &value_type {
+                ValueType::Int(domain) => {
+                    for (kind, value) in [
+                        (ModelBoundaryKind::LowerRefusal, domain.lower().sub(&one)),
+                        (ModelBoundaryKind::LowerEndpoint, domain.lower().clone()),
+                        (ModelBoundaryKind::UpperEndpoint, domain.upper().clone()),
+                        (ModelBoundaryKind::UpperRefusal, domain.upper().add(&one)),
+                    ] {
+                        partitions.push(ModelBoundaryPartition {
+                            node: node.clone(),
+                            path: path.clone(),
+                            domain: domain.clone(),
+                            kind,
+                            value,
+                            text_value: None,
+                            text_profile: None,
+                            status: None,
+                        });
+                    }
+                }
+                ValueType::Text(text_type) => {
+                    let domain = IntegerInterval::new(
+                        Integer::from(text_type.min()),
+                        Integer::from(text_type.max()),
+                    )
+                    .expect("a checked text type has ordered bounds");
+                    for (kind, length, text) in text_boundary_specs(text_type) {
+                        let value = Integer::from(length);
+                        partitions.push(ModelBoundaryPartition {
+                            node: node.clone(),
+                            path: path.clone(),
+                            domain: domain.clone(),
+                            kind,
+                            value,
+                            text_value: Some(text),
+                            text_profile: Some(text_type.profile()),
+                            status: None,
+                        });
+                    }
+                }
+                _ => {}
             }
         }
         partitions
@@ -1360,6 +1568,9 @@ impl<'a> ModelSystem<'a> {
                 return;
             };
             let value_type = root_classification_type(value_type);
+            let size_bits = self
+                .max_value_bits
+                .load(std::sync::atomic::Ordering::Relaxed);
             let bounded = if matches!(&value_type, ValueType::Population(_))
                 || domain::enumerable(&value_type)
             {
@@ -1368,8 +1579,20 @@ impl<'a> ModelSystem<'a> {
                 // A finite enum, record or tuple (STD-508), its extent
                 // read whole.
                 ValueType::Boolean
+            } else if matches!(&value_type, ValueType::Integer) && size_bits > 0 {
+                let extent = Integer::one()
+                    .shifted_left(u64::from(size_bits))
+                    .sub(&Integer::one());
+                let interval = filament_exact::IntegerInterval::new(
+                    extent.mul(&Integer::from(-1_i64)),
+                    extent,
+                );
+                match interval {
+                    Ok(interval) => ValueType::Int(interval),
+                    Err(_) => ValueType::Integer,
+                }
             } else {
-                ValueType::Integer
+                value_type
             };
             roots.push((node, base, bounded));
         };
@@ -1721,6 +1944,77 @@ impl<'a> ModelSystem<'a> {
     }
 }
 
+fn text_nul_value(length: u64) -> String {
+    let count = usize::try_from(length).expect("text boundary length fits this platform");
+    let mut value = String::new();
+    value
+        .try_reserve_exact(count)
+        .expect("text boundary length can be allocated");
+    value.extend(std::iter::repeat_n('\0', count));
+    value
+}
+
+fn text_boundary_specs(
+    text_type: &filament_exact::TextType,
+) -> Vec<(ModelBoundaryKind, u64, String)> {
+    let min = text_type.min();
+    let max = text_type.max();
+    let mut boundaries = Vec::new();
+    if min == 0 {
+        boundaries.push((ModelBoundaryKind::TextEmpty, 0));
+    } else {
+        boundaries.push((ModelBoundaryKind::TextLowerEndpoint, min));
+    }
+    if min <= 1 && 1 <= max {
+        boundaries.push((ModelBoundaryKind::TextSingleton, 1));
+    }
+    boundaries.push((ModelBoundaryKind::TextUpperEndpoint, max));
+    if min > 0 {
+        boundaries.push((ModelBoundaryKind::LowerRefusal, min - 1));
+    }
+    if let Some(outside) = max.checked_add(1) {
+        boundaries.push((ModelBoundaryKind::UpperRefusal, outside));
+    }
+    boundaries
+        .into_iter()
+        .map(|(kind, length)| (kind, length, text_nul_value(length)))
+        .chain(text_normalization_specs(text_type))
+        .collect()
+}
+
+fn text_normalization_specs(
+    text_type: &filament_exact::TextType,
+) -> Vec<(ModelBoundaryKind, u64, String)> {
+    const WITNESSES: [&str; 8] = [
+        "\u{00e9}",
+        "e\u{0301}",
+        "d\u{0307}\u{0323}",
+        "d\u{0323}\u{0307}",
+        "\u{ac00}",
+        "\u{1100}\u{1161}",
+        "\u{212b}",
+        "\u{fb01}",
+    ];
+    let profile = text_type.profile();
+    let mut seen = std::collections::BTreeSet::new();
+    WITNESSES
+        .into_iter()
+        .filter_map(|spelling| {
+            let retained = profile
+                .normalization()
+                .map(|form| form.apply(spelling).collect::<String>())
+                .unwrap_or_else(|| spelling.to_owned());
+            let length = profile.length(&retained);
+            if !(text_type.min()..=text_type.max()).contains(&length)
+                || !seen.insert(retained.clone())
+            {
+                return None;
+            }
+            Some((ModelBoundaryKind::TextNormalization, length, retained))
+        })
+        .collect()
+}
+
 /// The classify_extent input for a rooted quantity: quantity domains are
 /// integral before the classifier decides whether the root is bounded.
 pub(crate) fn root_classification_type(value_type: &ValueType) -> ValueType {
@@ -1809,6 +2103,54 @@ impl TransitionSystem for ModelSystem<'_> {
     }
 }
 
+/// A model view used to generate a claim's cases without enforcing the claim
+/// itself as a precondition or postcondition of the transition relation.
+pub(super) struct ModelRunView<'s, 'a> {
+    system: &'s ModelSystem<'a>,
+    omitted_clause: Option<NodeKey>,
+}
+
+impl<'s, 'a> ModelRunView<'s, 'a> {
+    pub(super) fn new(system: &'s ModelSystem<'a>, omitted_clause: Option<NodeKey>) -> Self {
+        Self {
+            system,
+            omitted_clause,
+        }
+    }
+
+    pub(super) fn transition_key(
+        &self,
+        transition: &ModelTransition,
+    ) -> Result<Vec<u8>, crate::simulation::EncodingRefusal> {
+        self.system.transition_key(transition)
+    }
+}
+
+impl TransitionSystem for ModelRunView<'_, '_> {
+    type State = ModelSimState;
+    type TransitionId = ModelTransition;
+    type Key = ModelKey;
+    type Finding = ModelFinding;
+
+    fn initial(&self) -> Vec<Self::State> {
+        self.system.initial.clone()
+    }
+
+    fn key(&self, state: &Self::State) -> Self::Key {
+        self.system.key(state)
+    }
+
+    fn successors(
+        &self,
+        state: &Self::State,
+    ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop> {
+        match &self.omitted_clause {
+            Some(clause) => walk::expand_state_omitting_clause(self.system, state, clause),
+            None => self.system.successors(state),
+        }
+    }
+}
+
 /// The identity limits `explore_model` and `sample_model` encode under.
 fn identity_limits() -> IdentityLimits {
     IdentityLimits::default()
@@ -1883,13 +2225,34 @@ pub fn sample_model(
     trace: u64,
     max_steps: usize,
 ) -> Result<ModelTrace, ModelSampleError> {
+    sample_model_with_omitted_clause(
+        system,
+        position_limit,
+        sampler,
+        seed,
+        trace,
+        max_steps,
+        None,
+    )
+}
+
+pub(super) fn sample_model_with_omitted_clause(
+    system: &ModelSystem<'_>,
+    position_limit: u64,
+    sampler: &DefinitionRef,
+    seed: u64,
+    trace: u64,
+    max_steps: usize,
+    omitted_clause: Option<NodeKey>,
+) -> Result<ModelTrace, ModelSampleError> {
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
         .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
         .collect();
+    let view = ModelRunView::new(system, omitted_clause.clone());
     let trace = sample_request(
-        system,
+        &view,
         &roots,
         system.types,
         position_limit,
@@ -1899,12 +2262,13 @@ pub fn sample_model(
         max_steps,
         identity_limits(),
     )?;
-    replay(system, &trace, identity_limits()).map_err(ModelSampleError::Replay)?;
-    let effects = effects_of(system, &trace)?;
+    replay(&view, &trace, identity_limits()).map_err(ModelSampleError::Replay)?;
+    let effects = effects_of_with_omitted_clause(system, &trace, omitted_clause.as_ref())?;
     let boundary_partitions = system.boundary_partitions();
     Ok(ModelTrace {
         trace,
         effects,
+        attempted: None,
         boundary_partitions,
     })
 }
@@ -1927,9 +2291,19 @@ pub fn sample_model(
 pub fn shrink_model_trace(
     system: &ModelSystem<'_>,
     trace: &ModelTrace,
+    fails: impl FnMut(&ModelTrace) -> bool,
+) -> Result<ModelTrace, ModelShrinkError> {
+    shrink_model_trace_with_omitted_clause(system, trace, None, fails)
+}
+
+pub(super) fn shrink_model_trace_with_omitted_clause(
+    system: &ModelSystem<'_>,
+    trace: &ModelTrace,
+    omitted_clause: Option<NodeKey>,
     mut fails: impl FnMut(&ModelTrace) -> bool,
 ) -> Result<ModelTrace, ModelShrinkError> {
-    replay(system, &trace.trace, identity_limits()).map_err(|error| match error {
+    let view = ModelRunView::new(system, omitted_clause.clone());
+    replay(&view, &trace.trace, identity_limits()).map_err(|error| match error {
         ReplayError::KeyEncoding(refusal) => {
             ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
         }
@@ -1946,6 +2320,7 @@ pub fn shrink_model_trace(
             &smallest.trace.initial,
             &smallest.trace.steps,
             smallest.trace.provenance.as_ref(),
+            omitted_clause.as_ref(),
         )?
         .ok_or(ModelShrinkError::NotCounterexample)?;
         let mut accepted = None;
@@ -1960,6 +2335,7 @@ pub fn shrink_model_trace(
                 &replayed.trace.initial,
                 &steps,
                 replayed.trace.provenance.as_ref(),
+                omitted_clause.as_ref(),
             )?
             else {
                 continue;
@@ -1978,13 +2354,13 @@ pub fn shrink_model_trace(
         // operation and receiver at each position. Invocation order is the
         // canonical transition-identity byte order used by simulation.
         for (index, current) in replayed.trace.steps.iter().enumerate() {
-            let current_key = system
+            let current_key = view
                 .transition_key(&current.transition)
                 .map_err(|refusal| {
                     ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
                 })?;
             let expansion =
-                expand(system, &states[index], identity_limits()).map_err(|refusal| {
+                expand(&view, &states[index], identity_limits()).map_err(|refusal| {
                     ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
                 })?;
             let Expanded::Successors { successors, .. } = expansion else {
@@ -1998,7 +2374,7 @@ pub fn shrink_model_trace(
                 {
                     continue;
                 }
-                let key = system.transition_key(&transition).map_err(|refusal| {
+                let key = view.transition_key(&transition).map_err(|refusal| {
                     ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
                 })?;
                 let is_closer = match predecessor.as_ref() {
@@ -2023,6 +2399,7 @@ pub fn shrink_model_trace(
                 &replayed.trace.initial,
                 &steps,
                 replayed.trace.provenance.as_ref(),
+                omitted_clause.as_ref(),
             )?
             else {
                 continue;
@@ -2048,8 +2425,10 @@ fn rebuild_model_trace(
     initial_key: &crate::simulation::StateKey,
     requested: &[Step<ModelTransition>],
     provenance: Option<&SampleProvenance>,
+    omitted_clause: Option<&NodeKey>,
 ) -> Result<Option<(ModelTrace, Vec<ModelSimState>)>, ModelShrinkError> {
-    let mut current = sorted_initial(system, identity_limits())
+    let view = ModelRunView::new(system, omitted_clause.cloned());
+    let mut current = sorted_initial(&view, identity_limits())
         .map_err(|refusal| ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal)))?
         .into_iter()
         .find(|initial| initial.key == *initial_key)
@@ -2067,7 +2446,7 @@ fn rebuild_model_trace(
     let mut stopped = None;
 
     for index in 0..=requested.len() {
-        let (successors, at_state) = match expand(system, &current, identity_limits())
+        let (successors, at_state) = match expand(&view, &current, identity_limits())
             .map_err(|refusal| ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal)))?
         {
             Expanded::Successors {
@@ -2128,21 +2507,24 @@ fn rebuild_model_trace(
         findings,
         provenance,
     };
-    replay(system, &trace, identity_limits()).map_err(|error| match error {
+    replay(&view, &trace, identity_limits()).map_err(|error| match error {
         ReplayError::KeyEncoding(refusal) => {
             ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
         }
         other => ModelShrinkError::Replay(other),
     })?;
-    let effects = effects_of(system, &trace).map_err(|error| match error {
-        ModelSampleError::NotSimulated(cause) => ModelShrinkError::NotSimulated(cause),
-        ModelSampleError::Replay(cause) => ModelShrinkError::Replay(cause),
-    })?;
+    let effects = effects_of_with_omitted_clause(system, &trace, omitted_clause).map_err(
+        |error| match error {
+            ModelSampleError::NotSimulated(cause) => ModelShrinkError::NotSimulated(cause),
+            ModelSampleError::Replay(cause) => ModelShrinkError::Replay(cause),
+        },
+    )?;
     let boundary_partitions = system.boundary_partitions();
     Ok(Some((
         ModelTrace {
             trace,
             effects,
+            attempted: None,
             boundary_partitions,
         },
         states,
@@ -2230,7 +2612,7 @@ pub fn sample_model_runs(
     meter: &mut filament_exact::Meter,
     mut poll: impl FnMut() -> bool,
 ) -> Result<SampledDraw, NotSimulated> {
-    use filament_exact::{length_amount, Charge, ChargePoint};
+    use filament_exact::{Charge, ChargePoint, length_amount};
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
@@ -2433,13 +2815,15 @@ pub fn sample_model_walk(
     clippy::result_large_err,
     reason = "FR-120 pins ModelSampleError::Replay(ReplayError<ModelTransition>)"
 )]
-fn effects_of(
+fn effects_of_with_omitted_clause(
     system: &ModelSystem<'_>,
     trace: &Trace<ModelTransition, ModelFinding>,
+    omitted_clause: Option<&NodeKey>,
 ) -> Result<Vec<StepEffect>, ModelSampleError> {
+    let view = ModelRunView::new(system, omitted_clause.cloned());
     let identity = identity_limits();
     let encoding = |error| ModelSampleError::NotSimulated(NotSimulated::KeyEncoding(error));
-    let mut current = sorted_initial(system, identity)
+    let mut current = sorted_initial(&view, identity)
         .map_err(encoding)?
         .into_iter()
         .find(|item| item.key == trace.initial)
@@ -2456,7 +2840,7 @@ fn effects_of(
             })
         };
         let Expanded::Successors { successors, .. } =
-            expand(system, &current, identity).map_err(encoding)?
+            expand(&view, &current, identity).map_err(encoding)?
         else {
             return Err(missing());
         };
@@ -2621,5 +3005,110 @@ mod tests {
         assert_eq!(EXHAUSTED.cause(), "insufficient-next-charge");
         assert_eq!(BROKEN.code(), "runtime_invariant");
         assert_eq!(BROKEN.cause(), "established-invariant-broken");
+    }
+
+    /// W75 section 3.3 orders Text partitions before refusal lengths.
+    #[trace("TC-2102", "FR-752-AC-7")]
+    #[test]
+    fn text_boundary_partitions_follow_length_then_content_order() {
+        let text_type = filament_exact::TextType::new(0, 2, filament_exact::TextProfile::Nfc)
+            .expect("ordered Text bounds");
+        let actual: Vec<_> = text_boundary_specs(&text_type)
+            .into_iter()
+            .map(|(kind, length, text)| (kind, length, text))
+            .collect();
+        assert_eq!(
+            actual,
+            [
+                (ModelBoundaryKind::TextEmpty, 0, String::new()),
+                (ModelBoundaryKind::TextSingleton, 1, "\0".to_owned()),
+                (ModelBoundaryKind::TextUpperEndpoint, 2, "\0\0".to_owned()),
+                (ModelBoundaryKind::UpperRefusal, 3, "\0\0\0".to_owned()),
+                (ModelBoundaryKind::TextNormalization, 1, "\u{e9}".to_owned(),),
+                (
+                    ModelBoundaryKind::TextNormalization,
+                    2,
+                    "\u{1e0d}\u{307}".to_owned(),
+                ),
+                (
+                    ModelBoundaryKind::TextNormalization,
+                    1,
+                    "\u{ac00}".to_owned(),
+                ),
+                (ModelBoundaryKind::TextNormalization, 1, "\u{c5}".to_owned(),),
+                (
+                    ModelBoundaryKind::TextNormalization,
+                    1,
+                    "\u{fb01}".to_owned(),
+                ),
+            ]
+        );
+    }
+
+    /// FR-190-AC-19: witness spellings are retained under each profile,
+    /// duplicate equivalence-class representatives are emitted once.
+    #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-19")]
+    #[test]
+    fn text_normalization_partitions_follow_profile_retention() {
+        let actual = |profile, max| {
+            let text_type =
+                filament_exact::TextType::new(0, max, profile).expect("ordered Text bounds");
+            text_normalization_specs(&text_type)
+                .into_iter()
+                .map(|(_, _, text)| text)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            actual(filament_exact::TextProfile::UnicodeScalars, 4),
+            [
+                "\u{e9}",
+                "e\u{301}",
+                "d\u{307}\u{323}",
+                "d\u{323}\u{307}",
+                "\u{ac00}",
+                "\u{1100}\u{1161}",
+                "\u{212b}",
+                "\u{fb01}",
+            ]
+        );
+        assert_eq!(
+            actual(filament_exact::TextProfile::BinaryUtf8, 4),
+            ["\u{e9}", "e\u{301}", "\u{ac00}", "\u{212b}", "\u{fb01}"]
+        );
+        assert_eq!(
+            actual(filament_exact::TextProfile::Nfc, 4),
+            [
+                "\u{e9}",
+                "\u{1e0d}\u{307}",
+                "\u{ac00}",
+                "\u{c5}",
+                "\u{fb01}",
+            ]
+        );
+        assert_eq!(
+            actual(filament_exact::TextProfile::Nfd, 4),
+            [
+                "e\u{301}",
+                "d\u{323}\u{307}",
+                "\u{1100}\u{1161}",
+                "A\u{30a}",
+                "\u{fb01}",
+            ]
+        );
+        assert_eq!(
+            actual(filament_exact::TextProfile::Nfkc, 4),
+            ["\u{e9}", "\u{1e0d}\u{307}", "\u{ac00}", "\u{c5}", "fi"]
+        );
+        assert_eq!(
+            actual(filament_exact::TextProfile::Nfkd, 4),
+            [
+                "e\u{301}",
+                "d\u{323}\u{307}",
+                "\u{1100}\u{1161}",
+                "A\u{30a}",
+                "fi"
+            ]
+        );
+        assert_eq!(actual(filament_exact::TextProfile::Nfd, 1), ["\u{fb01}"]);
     }
 }

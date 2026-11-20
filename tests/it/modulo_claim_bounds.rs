@@ -132,7 +132,11 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
     let graph =
         PackageDeclarations::assemble(source_ref, "fixture".to_owned(), unit, models, Vec::new())
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the unit checks");
     let items = items_from_requirements(graph.requirements(), &Registry::new(), None);
     for (index, expected) in [(19, interval(0, 10)), (20, ValueType::Integer)] {
@@ -367,6 +371,7 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             accounting: default_accounting(1_000_000),
             supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
         };
         let run = run_with_replay_context(
             SourceIdentity::new("agent-ix", "test:modulo-claim-bounds"),

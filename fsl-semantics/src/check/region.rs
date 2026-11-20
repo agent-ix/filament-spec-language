@@ -114,13 +114,22 @@ struct DeclaredSpans<'a> {
     synthesized: &'a BTreeMap<usize, Span>,
 }
 
-/// The declaration name of a `dimension <name>` or `unit <name>` type
-/// declaration origin, `None` for any other origin name.
+/// The `probabilistic N` declaration an `N`th probabilistic declaration's site
+/// name begins with.
+fn probabilistic_declaration_name(origin: &str) -> Option<&str> {
+    let rest = origin.strip_prefix("probabilistic ")?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    (digits > 0).then(|| &origin[.."probabilistic ".len() + digits])
+}
+
+/// The declaration name of a `dimension <name>`, `unit <name>` or
+/// `probabilistic <N>` site origin, `None` for any other origin name.
 #[ix_trace_rs::string_edge]
 fn nominal_declaration_name(origin: &str) -> Option<&str> {
     origin
         .strip_prefix("dimension ")
         .or_else(|| origin.strip_prefix("unit "))
+        .or_else(|| probabilistic_declaration_name(origin))
 }
 
 /// The region `location` names, given each function's and each state
@@ -340,11 +349,12 @@ impl DeclarationRegions {
     /// order (FSpec FR-272's `related`): both workloads of a repeated
     /// workload name (FR-185); none for every other refusal.
     pub fn related_regions(&self, refusal: &CheckRefusal) -> Vec<SourceRegion> {
-        let CheckCause::Probabilistic(cause) = &refusal.cause else {
-            return Vec::new();
+        let related = match &refusal.cause {
+            CheckCause::Probabilistic(cause) => cause.related().to_vec(),
+            CheckCause::StateGraph(cause) => cause.related(),
+            _ => return Vec::new(),
         };
-        cause
-            .related()
+        related
             .iter()
             .filter_map(|span| region(&self.source, self.embedding.as_deref(), *span))
             .collect()
@@ -825,7 +835,11 @@ mod tests {
         assert!(text(&declaration).ends_with("c + d }"));
 
         let checked = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the unit checks");
         for (location, expected) in &cases {
             let region = checked
@@ -877,7 +891,11 @@ mod tests {
         assert_eq!(declarations.declaration_region(1), None);
 
         let checked = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the unit checks");
         for location in &unresolved {
             assert_eq!(checked.region(location), None, "{location:?}");
@@ -953,7 +971,11 @@ mod tests {
         let standalone = unit();
         let regions = declarations.regions();
         let checked = for_check
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the unit checks");
         let cases = [
             (body(&[]), "if a then b else c + d"),
@@ -1197,7 +1219,11 @@ mod tests {
             let unit = unit();
             let regions = unit.regions();
             let refusals = unit
-                .check(CheckMode::Linked, limits)
+                .check(
+                    CheckMode::Linked,
+                    limits,
+                    &crate::check::test_support::ZeroRewardEvaluator,
+                )
                 .expect_err("the limit stops checking");
             let [refusal] = refusals.as_slice() else {
                 panic!("one refusal, got {refusals:?}");
@@ -1231,6 +1257,7 @@ mod tests {
             let Err(refusals) = unit.check(
                 CheckMode::Linked,
                 CheckingLimits::default().with_work_budget(budget),
+                &crate::check::test_support::ZeroRewardEvaluator,
             ) else {
                 continue;
             };
@@ -1267,6 +1294,7 @@ mod tests {
                 .check(
                     CheckMode::Linked,
                     CheckingLimits::default().with_work_budget(budget),
+                    &crate::check::test_support::ZeroRewardEvaluator,
                 )
                 .expect_err("lowering spends past the budget");
             let [refusal] = refusals.as_slice() else {
@@ -1356,7 +1384,11 @@ mod tests {
         // isolation too, but Typer's package-wide counter, seeded at g1's
         // final 3, crosses 4 on g2's second node.
         let refusals = declarations
-            .check(CheckMode::Linked, CheckingLimits::new(g1_count + 1))
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::new(g1_count + 1),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("g2's Typer walk crosses the package-wide node bound");
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal, got {refusals:?}");

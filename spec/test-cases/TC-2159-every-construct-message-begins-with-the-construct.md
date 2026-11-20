@@ -10,17 +10,29 @@ relationships:
 
 ## Description
 
-Every construct message begins with the construct.
+An unrepresented-construct refusal for the `declaration` row carries its
+payload, its text cut at 120 bytes, and a message that begins with the row's
+sentence. No source reaches the row, so the test builds the cause directly.
 
 Scope: FR-763-AC-5.
 
 ## Test Procedure
 
-For each construct kind source reaches (every kind but `declaration`), run the `parse` operation over a unit holding it and read the message; repeat with an index selection `xs[0 + .. + 0]` whose source text is 200 bytes. Test: `tests/it/forms_refusal_cause.rs` `every_construct_message_begins_with_the_construct`.
+1. Build the `FormsCause::UnrepresentedConstruct` refusal for the
+   `declaration` row over the text `unclaimed` and over a 200-byte text.
+   Test: `fsl-forms/src/dispatch.rs`
+   `an_unrepresented_declaration_construct_carries_its_payload_and_cut_text`.
+2. Render the compile refusal that holds the cause, with and without an owning
+   declaration. Test: `fsl-replay/src/spine/forms_message_tests.rs`
+   `a_declaration_construct_message_begins_with_the_construct_and_names_its_owner`.
 
-Tag the tests `#[trace("TC-2159", "FR-763-AC-5")]`.
+Tag the tests `#[trace("FR-763-AC-5")]`.
 
 ## Expected Results
 
-- Each message begins with its row's sentence filled from `text`.
-- The 200-byte construct's `text` is at most 123 bytes and ends with `...`; no `text` is empty.
+- The catalog code is `unsupported_construct`; the construct spelling is
+  `declaration`; `declaration` and `profile` are `null` when no owner is set.
+- The 200-byte construct's `text` is at most 123 bytes and ends with `...`;
+  the short text is kept whole.
+- The message is `` `unclaimed` declarations are not supported yet ``, followed
+  by ` (declaration Owner)` when the owner is set.

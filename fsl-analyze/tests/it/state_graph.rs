@@ -32,10 +32,14 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
-    config_version, config_world, config_world_over, detour_world, fork_world, game_world,
-    job_world, job_world_with_claims, ladder_world, por_reachestwo_world, Field, Model, Operation,
-    World, CAN_STILL_WIN, DIVIDES, REACHES_THREE, REACHES_TWO,
+    config_kernel_world, config_kernel_world_over, config_version, config_world, config_world_over,
+    detour_world, fork_world, game_world, job_world, job_world_with_claims, ladder_world,
+    por_reachestwo_world, Field, Model, Operation, World, CAN_STILL_WIN, DIVIDES, REACHES_THREE,
+    REACHES_TWO,
 };
+
+#[path = "state_graph/replay_contracts.rs"]
+mod replay_contracts;
 
 pub(crate) const AB: &[&str] = &["a", "b"];
 
@@ -163,11 +167,11 @@ fn partial_order_reduction_filters_claims_before_shared_exploration() {
     let job = job_world_with_claims(
         false,
         false,
-        "possible CanFinish using v over (j: M::Job) { j.done = 1 }\n",
+        "possible ReachesDone using v over (j: M::Job) { j.done = 1 }\n",
     );
     let mut request = job.request(
         &["j"],
-        vec![job.item("InOneWay"), job.item("CanFinish")],
+        vec![job.item("InOneWay"), job.item("ReachesDone")],
         no_samples(),
     );
     request.reductions.partial_order = true;
@@ -960,15 +964,15 @@ fn a_horizon_and_a_state_limit_leave_their_nodes_open() {
     assert_eq!(result.graph.open.len(), 2);
 }
 
-/// FR-167-AC-2: a guard with no value where `versionNumber` is 2 leaves that
-/// node open, `UndecidedSuccessor`, and every other reachable node is still
-/// expanded and closed.
+/// FR-167-AC-2: a postcondition with no value at candidate `versionNumber`
+/// 2 leaves its predecessor open, `UndecidedSuccessor`, and every other
+/// reachable node is still expanded and closed.
 #[trace("TC-592", "FR-167-AC-2")]
 #[test]
 fn an_undecided_contract_conjunction_leaves_only_its_node_open() {
-    let guard = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
-                 2 div (2 - self.versionNumber) >= 1 }\n";
-    let world = config_world_over(guard, REACHES_TWO, &["a"], &[vec![0]]);
+    let guard = "post Guard using v on Config::ConfigVersion::attemptUpdate { \
+                 quotient(2 - self.versionNumber) >= 1 }\n";
+    let world = config_kernel_world_over(guard, REACHES_TWO, &["a"], &[vec![0]]);
     let result = run(world.request(&["a"], vec![world.item("ReachesTwo")], no_samples()));
     assert_eq!(result.graph.end, RunEnd::Completed);
     let (states, _) = reachable(&world, &["a"]);
@@ -979,7 +983,7 @@ fn an_undecided_contract_conjunction_leaves_only_its_node_open() {
         .iter()
         .map(|node| world.value(&states[&node.key], "a", "versionNumber"))
         .collect();
-    assert_eq!(versions, vec![0, 1, 2]);
+    assert_eq!(versions, vec![0, 1]);
     assert_eq!(
         result
             .graph
@@ -987,7 +991,7 @@ fn an_undecided_contract_conjunction_leaves_only_its_node_open() {
             .iter()
             .map(|(node, cause)| (node.index(), *cause))
             .collect::<Vec<_>>(),
-        vec![(2, OpenCause::UndecidedSuccessor)]
+        vec![(1, OpenCause::UndecidedSuccessor)]
     );
 }
 
@@ -1246,7 +1250,7 @@ fn an_overflowing_trace_index_and_a_cancellation_stop_before_any_walk() {
 #[trace("TC-613", "FR-168-AC-7")]
 #[test]
 fn a_sampled_witness_never_hides_an_undefined_target() {
-    let world = config_world(&format!("{REACHES_TWO}{DIVIDES}"), &[(0, 0)]);
+    let world = config_kernel_world(&format!("{REACHES_TWO}{DIVIDES}"), &[(0, 0)]);
     let result = run(world.request(AB, vec![world.item("Divides")], ModelCheckLimits::default()));
     let instance = &result.items[0][0];
     let [Some(sampled)] = instance.sampled.as_slice() else {
@@ -1707,7 +1711,7 @@ fn a_trap_counts_past_a_horizon_and_an_unreached_target_does_not() {
 #[trace("TC-612", "FR-168-AC-5")]
 #[test]
 fn an_undefined_target_refutes_in_place_of_a_witness() {
-    let world = config_world(DIVIDES, &[(0, 0)]);
+    let world = config_kernel_world(DIVIDES, &[(0, 0)]);
     let result = run(world.request(AB, vec![world.item("Divides")], no_samples()));
     let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
         panic!("undefined: {:?}", result.items[0][0].outcome);

@@ -165,7 +165,11 @@ fn a_channel_emits_only_its_declared_connection_reference() {
         Vec::new(),
     )
     .expect("I1 admits the model")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -649,6 +653,127 @@ fn the_event_controls_emit_their_layouts_in_source_order() {
     assert_eq!(ordering["value"], "seq_cst");
 }
 
+/// FR-218-AC-15: a checked `related by` clause survives S4 as one ordered
+/// relationship record with both checked ends linked into the package.
+#[trace("FR-218-AC-15")]
+#[test]
+fn a_related_clause_carries_its_relationship_and_both_ends_into_the_package() {
+    use filament_checked::key::DeclarationKey;
+    use fsl_foundation::Span;
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::domain_package::{
+        DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, ObjectTypeRecord,
+        RelationshipDirection, RelationshipEnd, RelationshipRecord,
+    };
+    use fsl_semantics::model::intake::SelectedModel;
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+
+    let key = |name: &str| DeclarationKey {
+        package: "test/related".to_owned(),
+        node: format!("ix://test/related/{name}"),
+    };
+    let one = Multiplicity {
+        lower: 1,
+        upper: Some(1),
+        ordered: false,
+        unique: true,
+    };
+    let model = DomainPackage::new(
+        DomainPackageRef {
+            identity: "test/related".to_owned(),
+        },
+        vec![
+            DomainPackageRecord::ObjectType(ObjectTypeRecord {
+                key: key("Node"),
+                interface_features: None,
+                abstract_type: false,
+                supertypes: Vec::new(),
+            }),
+            DomainPackageRecord::Relationship(RelationshipRecord {
+                key: key("owns"),
+                declared_at: None,
+                source: RelationshipEnd {
+                    type_identity: key("Node"),
+                    role: None,
+                    multiplicity: Some(one),
+                },
+                target: RelationshipEnd {
+                    type_identity: key("Node"),
+                    role: None,
+                    multiplicity: Some(one),
+                },
+                direction: RelationshipDirection::SourceToTarget,
+            }),
+        ],
+    );
+    let NormalizeOutcome::Completed(view) =
+        normalize(&model, ModelNormalizationLimits::UNLIMITED)
+    else {
+        panic!("the related-by model normalizes");
+    };
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
+        profile p = \"filament.protocol.finite-global/v1\";\n\
+        model M = \"test/related\";\n\
+        protocol Flow using p over (input: M::Node) on origin {\n\
+        role Buyer on M::Node;\n\
+        relationship Owns = M::owns;\n\
+        run sequence Main { event Done by Buyer as (done: M::Node) \
+        related by Owns (done, input) { true }; }\n\
+        finish End as (outcome: Boolean) { true };\n\
+        }";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:related-by-package"),
+        "protocol.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the source");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let graph = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        vec![SelectedModel {
+            alias: "M".to_owned(),
+            span: Span { start: 0, end: 0 },
+            view,
+            operation_clauses: Vec::new(),
+            type_invariants: Vec::new(),
+        }],
+        Vec::new(),
+    )
+    .expect("I1 admits the model")
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let event = run_control(&wire, "Done");
+    let related = argument(
+        event,
+        &["role", "compensation", "binder", "related", "constraint"],
+        "related",
+    );
+    let [record] = related["members"].as_array().unwrap().as_slice() else {
+        panic!("one related-by record: {related}");
+    };
+    let relationship = target(&wire, member(record, "relationship"));
+    let held_relationships = clause_argument(clause(&wire), "relationships")["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|term| target(&wire, term))
+        .filter(|held| held["node_id"] == relationship["node_id"])
+        .count();
+    assert_eq!(held_relationships, 1, "the exact relationship is carried");
+    assert_eq!(member(record, "from")["term"], "reference");
+    assert_eq!(member(record, "to")["term"], "reference");
+}
+
 /// FR-383-AC-10, FR-383-AC-9 (FSpec FR-464 "Binders"): a control's binder
 /// level is the size of its entry set; each control is declared at the path
 /// of its holder followed by its own name; `check` and `fence` introduce no
@@ -864,7 +989,11 @@ fn admitted_config(declarations: &str) -> Value {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{unit}\n{refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -1146,7 +1275,11 @@ fn an_attempt_ordering_outside_a_parallel_is_refused_so_the_group_is_empty() {
     );
     let refusals = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("an ordering on a local attempt is refused");
     let text = format!("{refusals:?}");
     assert!(
@@ -1419,15 +1552,7 @@ fn choices_and_repeats_nest_in_each_other_and_read_back() {
     );
 }
 
-/// A post-test `repeat`, whose guard reads a binder its body declares, has
-/// no FR-466 node form (the guard reads the repeat's entry only), as does a
-/// repeat whose `visible` entry, invariant or variant reads a body binder; a
-/// guard that refers to a protocol directly is not written yet either;
-/// FSpec #481 (STD-539) settles these as non-encodings. A repeat that steps
-/// only through a nested repeat has a node form (FR-464 "Nested `repeat`
-/// rule") but is withheld until IR's reader decides that rule (IR-1100).
-/// Each refuses the protocol `unsupported_construct`/`not-yet-implemented`
-/// naming the construct.
+/// A guard that refers to a protocol directly is not written yet.
 #[trace("FR-092-AC-18", "TC-1021")]
 #[test]
 fn decisions_without_a_node_form_are_not_written() {
@@ -1435,62 +1560,6 @@ fn decisions_without_a_node_form_are_not_written() {
     use super::protocol_reference::not_emitted;
     use fsl_semantics::check::ProtocolConstruct;
     let cases = [
-        (
-            ProtocolConstruct::PostTestRepeat,
-            "STD-539",
-            deciding(
-                "sequence Main { repeat Loop by Seller visible (got.ok) while { not got.ok } \
-                 sequence Body { send Placed via Ch as (placed: Ack) { true }; \
-                 receive Got via Ch of Placed as (got: Ack) { true }; } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatDecisionReadsBody,
-            "STD-539",
-            deciding(
-                "sequence Main { repeat Loop by Seller visible (got.ok) while { true } \
-                 sequence Body { send Placed via Ch as (placed: Ack) { true }; \
-                 receive Got via Ch of Placed as (got: Ack) { true }; } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatDecisionReadsBody,
-            "STD-539",
-            deciding(
-                "sequence Main { repeat Loop by Seller visible () invariant { got.ok } \
-                 variant { 1 } while { true } sequence Body { send Placed via Ch as (placed: Ack) { true }; \
-                 receive Got via Ch of Placed as (got: Ack) { true }; } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatDecisionReadsBody,
-            "STD-539",
-            deciding(
-                "sequence Main { repeat Loop by Seller visible () invariant { true } \
-                 variant { if got.ok then 1 else 0 } while { true } sequence Body { send Placed via Ch as (placed: Ack) { true }; \
-                 receive Got via Ch of Placed as (got: Ack) { true }; } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatStepsThroughRepeat,
-            "IR-1100",
-            flow(
-                "sequence Main { repeat Loop by Buyer visible () while { true } \
-                 choice Pick by Buyer visible () { \
-                 case a when { true } sequence A { event Ea by Buyer as (ea: Boolean) { true }; } \
-                 case b when { false } repeat Inner by Buyer visible () while { true } \
-                 sequence S { event Eb by Buyer as (eb: Boolean) { true }; } } }",
-            ),
-        ),
-        (
-            ProtocolConstruct::RepeatStepsThroughRepeat,
-            "IR-1100",
-            flow(
-                "sequence Main { repeat Loop by Buyer visible () while { true } \
-                 repeat Inner by Buyer visible () while { true } \
-                 sequence Step { event Tick by Buyer as (tick: Boolean) { true }; } }",
-            ),
-        ),
         (
             ProtocolConstruct::ProtocolReferenceInBody,
             "QSL-1121g",
@@ -1566,7 +1635,11 @@ fn activation_capture_self_and_foreign_reads_are_refused_by_the_reader() {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let graph = assemble_with_models(tc1070::SOURCE.as_bytes(), &packages)
         .expect("E assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("E checks");
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("E emits");
     assert!(emission.omitted.is_empty());
@@ -1671,7 +1744,11 @@ fn each_position_of_an_application_has_its_own_occurrence_in_document_order() {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let graph = assemble_with_models(tc1070::SOURCE.as_bytes(), &packages)
         .expect("E assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("E checks");
     let site = |name: &str, path: &[usize]| {
         Location::at(
@@ -1736,7 +1813,11 @@ fn e_c_shared_constraint_has_occurrence_zero_at_tried_and_one_at_picked() {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let graph = assemble_with_models(E_C_TRIED_PICKED.as_bytes(), &packages)
         .expect("E-C fragment assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("E-C fragment checks");
     let body = |attempt: &str| {
         Location::at(
@@ -1757,16 +1838,28 @@ fn e_c_shared_constraint_has_occurrence_zero_at_tried_and_one_at_picked() {
 /// is written and read back.
 #[test]
 #[trace("TC-2502", "FR-880-AC-8", "FSpec-FR-729-AC-1")]
-#[ignore = "QSL-2424: the pinned contract reader has no repeat.test=post schema"]
 fn a_post_test_repeat_is_written() {
     let post_test = emitted(&deciding(
-        "sequence Main { repeat Loop by Seller visible (got.ok) while { not got.ok } \
+        "sequence Main { repeat Loop by Seller visible (got.ok) invariant { got.ok } \
+         variant { if got.ok then 1 else 0 } while { not got.ok } \
          sequence Body { send Placed via Ch as (placed: Ack) { true }; \
          receive Got via Ch of Placed as (got: Ack) { true }; } }",
     ));
     let repeat = run_control(&post_test.wire, "Loop");
-    assert!(
-        repeat.to_string().contains("\"post\""),
+    let members = [
+        "owner",
+        "visible",
+        "maximum",
+        "proof",
+        "guard",
+        "body",
+        "exhausted",
+        "test",
+    ];
+    assert_eq!(names(repeat), members);
+    assert_eq!(
+        argument(repeat, &members, "test")["value"],
+        "post",
         "the repeat carries test post: {repeat}"
     );
 }
@@ -1826,7 +1919,6 @@ fn a_self_referring_protocol_is_written_as_one_recursion_group() {
 /// FSpec FR-729 back-edge reads, and the package is admitted.
 #[test]
 #[trace("TC-2502", "FR-880-AC-9", "FSpec-FR-729-AC-5")]
-#[ignore = "QSL-2424: the pinned contract reader refuses repeat back-edge reads"]
 fn a_pre_test_decision_that_reads_its_body_is_written() {
     for run in [
         "sequence Main { repeat Loop by Seller visible (got.ok) while { true } \
@@ -1839,9 +1931,10 @@ fn a_pre_test_decision_that_reads_its_body_is_written() {
     ] {
         let lowered = emitted(&deciding(run));
         let repeat = run_control(&lowered.wire, "Loop");
-        assert!(
-            !repeat.to_string().contains("\"post\""),
-            "a pre-test repeat carries no test member: {repeat}"
-        );
+        assert_eq!(names(repeat), REPEAT, "a pre-test repeat has no test member");
+        let visible = argument(repeat, &REPEAT, "visible");
+        if let Some(entry) = visible["members"].as_array().and_then(|members| members.first()) {
+            assert_eq!(target(&lowered.wire, entry)["node_tag"], "expression");
+        }
     }
 }

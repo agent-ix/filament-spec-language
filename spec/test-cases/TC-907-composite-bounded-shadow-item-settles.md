@@ -89,7 +89,7 @@ each request carries an `obligation_identity` that the replay carries unchanged.
     under the default and settles when the limit is raised.
 13. Replay a falsified request with the replay target replaced by
     `frame_operation` (`Config::ConfigVersion`, `attemptUpdate`), and by
-    `state_clause` (`VersionUnchanged`).
+    `state_clause` (`VersionAdvances`).
 
 Tag each test `#[trace("TC-907", "FR-358-AC-N")]` for the criterion it
 backs.

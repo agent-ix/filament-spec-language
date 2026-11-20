@@ -98,8 +98,8 @@ pub enum Error {
     /// The producer refused the source.
     #[error("{}", without_limit_hint(.0))]
     Producer(Box<ReplayRefusal>),
-    /// A temporal clock selection names no `temporal` clause of the unit.
-    #[error("clock selection {clause:?} names no temporal clause of the unit")]
+    /// A temporal clock selection names no temporal or hyper clause of the unit.
+    #[error("clock selection {clause:?} names no temporal or hyper clause, or compensation template, of the unit")]
     UnknownClause {
         /// The selected clause name.
         clause: String,
@@ -422,7 +422,10 @@ fn formal_identity(path: &Path) -> Result<filament_contract_model::SourceIdentit
 /// The refusal a failed stage becomes.
 fn refusal(failure: spine::FrontEndFailure) -> Error {
     Error::Producer(Box::new(match spine::refusal_or_fault(failure) {
-        Ok(refusal) => ReplayRefusal::Recompile(refusal),
+        Ok(refusal) => ReplayRefusal::Recompile {
+            refusal,
+            pointer: None,
+        },
         Err(fault) => ReplayRefusal::Fault(fault),
     }))
 }
@@ -627,20 +630,49 @@ pub(crate) fn clock_selections(
             .find(|node| node.clause().name() == selection.clause)
         {
             Some(node) => node.clause().span(),
-            // A `compensate` template reads a clock too and is selected by its
-            // template name.
+            // A hyper clause is selected by its clause name (FR-488 "Clause
+            // names and clock bindings"); a `compensate` template reads a
+            // clock too and is selected by its template name.
             None => checked
                 .package()
                 .graph()
-                .protocols()
+                .hyper_clauses()
                 .iter()
-                .flat_map(|protocol| &protocol.obligations.compensations)
-                .find(|template| template.name == selection.clause)
-                .map(|template| template.span)
+                .find(|hyper| hyper.name() == selection.clause)
+                .map(|hyper| hyper.span())
+                .or_else(|| {
+                    checked
+                        .package()
+                        .graph()
+                        .protocols()
+                        .iter()
+                        .flat_map(|protocol| &protocol.obligations.compensations)
+                        .find(|template| template.name == selection.clause)
+                        .map(|template| template.span)
+                })
                 .ok_or_else(|| Error::UnknownClause {
                     clause: selection.clause.clone(),
                 })?,
         };
+        // One request clock cannot serve traces over different models
+        // (FR-640, FR-763): the emitter does not derive one per trace.
+        if let Some(hyper) = checked
+            .package()
+            .graph()
+            .hyper_clauses()
+            .iter()
+            .find(|hyper| hyper.name() == selection.clause)
+        {
+            let mut aliases = Vec::new();
+            for quantifier in hyper.quantifiers() {
+                if !aliases.contains(&&quantifier.alias) {
+                    aliases.push(&quantifier.alias);
+                }
+            }
+            if aliases.len() > 1 {
+                return Err(per_trace_clocks(checked, &selection.clause, span));
+            }
+        }
         joined.push(fsl_package::TemporalClockSelection::new(
             checked.source().reference().clone(),
             span,
@@ -648,6 +680,26 @@ pub(crate) fn clock_selections(
         ));
     }
     Ok(joined)
+}
+
+/// The implementation-gap refusal of a hyper clause whose quantified traces
+/// range over more than one model.
+fn per_trace_clocks(checked: &CheckedUnit, clause: &str, span: fsl_foundation::Span) -> Error {
+    let region = fsl_foundation::source::provenance::SourceRegion::new(
+        checked.source().reference().clone(),
+        span.start as u64,
+        span.end as u64,
+    )
+    .ok();
+    Error::Producer(Box::new(ReplayRefusal::Recompile {
+        refusal: Box::new(spine::CompileRefusal::Emit(
+            fsl_package::EmitRefusal::PerTraceClockConfigurations {
+                declaration: clause.to_owned(),
+            },
+            region,
+        )),
+        pointer: None,
+    }))
 }
 
 /// Emit the `filament.checked-package/v2` bytes of `request`'s source through

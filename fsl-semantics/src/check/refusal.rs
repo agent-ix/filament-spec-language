@@ -25,6 +25,16 @@ use fsl_foundation::Span;
 /// has no expression tree for a path to walk.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ProtocolAnchorCause {
+    /// FR-218 observe-only boundaries: this action changes shared state,
+    /// queues, or compensation registrations behind an observe-only mark.
+    ObserveOnlyAction {
+        /// The offending action's catalog name.
+        action: &'static str,
+        /// The innermost observing control or role name.
+        boundary: String,
+        /// The complete action declaration.
+        span: Span,
+    },
     /// FR-113 "Refusals": no scope declares the anchor's first segment, or
     /// a later segment names nothing its previous target declares.
     Missing {
@@ -896,15 +906,6 @@ pub enum JoinFault {
 /// `IllTyped` like any other name.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ProtocolReferenceCause {
-    /// A second reference to a target already referred to in the unit: the
-    /// carrier is keyed by its body alone and IR admits one `expression`
-    /// occurrence per carrier, so two references to one target cannot both
-    /// be written. `unsupported_construct`/`expression-form`, at the second
-    /// reference.
-    Repeated {
-        /// The first reference to the same target.
-        first: Location,
-    },
     /// A protocol, or a reference to it, that names a construct whose
     /// FR-464, FR-465 or FR-466 node FSL does not write yet, while a protocol
     /// profile is selected: the protocol would otherwise be written without
@@ -948,12 +949,6 @@ pub enum ProtocolConstruct {
     /// cannot name a relationship yet, so the clause `relationships` set is
     /// unproved against IR's reader: QSL-1141.
     Relationships,
-    /// A `channel` that carries a bounded scalar or collection
-    /// (`Int[a, b]`, `Text`, `Decimal`, `Rational`, `Float`, a bounded
-    /// `Sequence`/`Set`/`Bag`; FR-465 "Channel"). Each lowers to a
-    /// `bounded_domain` node, which IR's reader
-    /// does not admit as `carries`: QSL-1137.
-    ChannelCarriesBounded,
     /// A FIFO `channel` whose key type IR's reader does not take as
     /// equality-stable (FR-465 "Channel"): the key's type is, or contains
     /// through an option, a collection or a record field, a bounded domain,
@@ -990,7 +985,6 @@ impl ProtocolConstruct {
             Self::Control(_) => "QSL-1126",
             Self::ReferenceCycle => "QSL-844",
             Self::ReferenceToAttemptProtocol | Self::ProtocolReferenceInBody => "QSL-1121g",
-            Self::ChannelCarriesBounded => "QSL-1137",
             Self::Relationships => "QSL-1141",
             Self::ChannelKeyNotEqualityStable => "QSL-1142",
             Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",
@@ -1000,33 +994,21 @@ impl ProtocolConstruct {
 }
 
 impl ProtocolReferenceCause {
-    /// The first reference to the same target, for a repeated reference.
-    pub fn first(&self) -> Option<&Location> {
-        match self {
-            Self::Repeated { first } => Some(first),
-            Self::NotEmitted { .. } => None,
-        }
-    }
-
     /// The construct no node is written for, for a protocol that names one.
     pub fn construct(&self) -> Option<ProtocolConstruct> {
         match self {
-            Self::Repeated { .. } => None,
             Self::NotEmitted { construct } => Some(*construct),
         }
     }
 
     /// This cause's catalog code.
     pub fn code(&self) -> Code {
-        match self {
-            Self::Repeated { .. } | Self::NotEmitted { .. } => Code::UnsupportedConstruct,
-        }
+        Code::UnsupportedConstruct
     }
 
     /// This cause's catalog tag.
     pub fn tag(&self) -> &'static str {
         match self {
-            Self::Repeated { .. } => "expression-form",
             Self::NotEmitted { .. } => "not-yet-implemented",
         }
     }
@@ -1154,7 +1136,8 @@ impl ProtocolAnchorCause {
     /// `Location`'s path).
     pub fn span(&self) -> Span {
         match self {
-            Self::Missing { span, .. }
+            Self::ObserveOnlyAction { span, .. }
+            | Self::Missing { span, .. }
             | Self::Ambiguous { span, .. }
             | Self::WrongKind { span, .. }
             | Self::ChannelMismatch { span, .. }
@@ -1238,7 +1221,8 @@ impl ProtocolAnchorCause {
             Self::WrongProfileKind { .. } => Code::UnknownProfile,
             Self::RefusedDependency { .. } => Code::MissingDeclaration,
             Self::Ambiguous { .. } | Self::Shadow { .. } => Code::AmbiguousDeclaration,
-            Self::WrongKind { .. }
+            Self::ObserveOnlyAction { .. }
+            | Self::WrongKind { .. }
             | Self::ChannelMismatch { .. }
             | Self::CarriesMismatch { .. }
             | Self::ChannelDeliveryRange { .. }
@@ -1313,7 +1297,8 @@ impl ProtocolAnchorCause {
             | Self::RoleMax { .. } => "type-mismatch",
             Self::JoinFunctionType { .. } => "type-mismatch",
             Self::AttemptBinderRead { .. } => "type-mismatch",
-            Self::KeyModelState { .. }
+            Self::ObserveOnlyAction { .. }
+            | Self::KeyModelState { .. }
             | Self::KeyEquality { .. }
             | Self::SlotModelState { .. }
             | Self::AccessOrdering { .. }
@@ -2500,6 +2485,17 @@ pub enum StateGraphCause {
         /// The constraint's span.
         span: Span,
     },
+    /// The claim's name is an earlier claim-bearing declaration's: a claim
+    /// name names one declaration (FR-940 "Claim names"). Located at the later
+    /// name, naming both.
+    AmbiguousName {
+        /// The shared name.
+        name: String,
+        /// The earlier declaration's name span.
+        earlier: Span,
+        /// The later declaration's name span.
+        span: Span,
+    },
     /// The state clause checker refused a predicate, as it refuses an
     /// invariant body.
     Predicate {
@@ -2516,12 +2512,10 @@ pub enum StateGraphCause {
 /// Which predicate of a state-graph claim a refusal is about.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PredicateRole {
-    /// `possible`'s and `always possible`'s `P`.
+    /// `possible`'s, `always possible`'s and `unique path`'s end predicate (FSpec FR-475 slot `target`).
     Target,
     /// `always possible`'s `Q` and `unique path`'s `X`.
     From,
-    /// `unique path`'s `Y`.
-    To,
 }
 
 impl StateGraphCause {
@@ -2532,7 +2526,16 @@ impl StateGraphCause {
             | Self::ReadsBeyondState { span }
             | Self::TemporalOperator { span }
             | Self::Fairness { span }
+            | Self::AmbiguousName { span, .. }
             | Self::Predicate { span, .. } => Some(*span),
+        }
+    }
+
+    /// The spans of the declarations the refusal relates, in source order.
+    pub fn related(&self) -> Vec<Span> {
+        match self {
+            Self::AmbiguousName { earlier, span, .. } => vec![*earlier, *span],
+            _ => Vec::new(),
         }
     }
 
@@ -2543,6 +2546,7 @@ impl StateGraphCause {
             Self::ReadsBeyondState { .. }
             | Self::TemporalOperator { .. }
             | Self::Fairness { .. } => Code::UnsupportedConstruct,
+            Self::AmbiguousName { .. } => Code::AmbiguousDeclaration,
             Self::Predicate { cause, .. } => cause.code(),
         }
     }
@@ -2554,6 +2558,7 @@ impl StateGraphCause {
             Self::ReadsBeyondState { .. }
             | Self::TemporalOperator { .. }
             | Self::Fairness { .. } => Some("expression-form"),
+            Self::AmbiguousName { .. } => Some("ambiguous-name"),
             Self::Predicate { cause, .. } => cause.cause(),
         }
     }
@@ -2770,6 +2775,9 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::I2WorkUnits
             | Setting::I2NativeJoinStorage
             | Setting::EmitOutputBytes
+            | Setting::ExportOutputBytes
+            | Setting::ExportNodes
+            | Setting::ExportWorkUnits
             | Setting::ExploreStates
             | Setting::ExploreTransitions
             | Setting::ModelCheckMaxStates
@@ -2891,6 +2899,10 @@ pub enum CheckCause {
     /// declaration, or a quantity literal reached a position no checker
     /// reads yet.
     Probabilistic(Box<super::probabilistic::ProbabilisticCause>),
+    /// An undefined or refused reward evaluation returned by S6a's
+    /// `RewardEvaluator` port (FR-185). The evaluator's catalog pair and
+    /// structured fields are preserved at the reward's source span.
+    RewardEvaluation(Box<super::RewardEvaluationFailure>),
     /// A `terminal when` predicate's checking refused (FR-124), with the
     /// declaration it is about.
     Terminal(Box<super::terminal::TerminalRefusal>),
@@ -2958,6 +2970,8 @@ pub enum CheckCause {
     },
     /// `refused { code: ill_typed }` with its FR-272 cause.
     IllTyped(IllTypedCause),
+    /// FR-986: `null` outside a record field value is never a value.
+    NullExpression,
     /// An undeclared case of a declared variant type, still classified as
     /// `ill_typed` / `type-mismatch` by FR-360-AC-5.
     UndeclaredVariantCase {
@@ -3166,6 +3180,27 @@ pub enum CheckCause {
         /// Every dispatch edge in the component, ascending by caller then
         /// callee source-declaration order (FR-151's own listing order).
         edges: Vec<(String, String)>,
+    },
+    /// A verification plan repeats a step name (FSL FR-753, FSpec FR-192).
+    DuplicateVerificationStep {
+        /// The repeated step name.
+        name: String,
+        /// The first step's name span.
+        first: Span,
+        /// The repeated step's name span.
+        second: Span,
+    },
+    /// A verification method's explicitly written bound is zero.
+    VerificationPlanBoundZero {
+        /// The zero literal's span.
+        span: Span,
+    },
+    /// A known method does not apply to the referenced claim family.
+    VerificationPlanInapplicableMethod {
+        /// The method's authored name.
+        method: String,
+        /// The method's source span.
+        span: Span,
     },
     /// `invalid_package` / `invalid-value`: a supplied [`super::DispatchTable`]
     /// or [`super::DispatchOperation`] is malformed — an out-of-range table
@@ -3647,6 +3682,13 @@ impl CheckCause {
                 )),
             },
             Self::DispatchLink(cause) => Some(cause.catalog),
+            Self::RewardEvaluation(failure) => Some(failure.catalog),
+            Self::VerificationPlanInapplicableMethod { .. } => {
+                Some(filament_semantic_value::catalog::CatalogCode::new(
+                    "invalid_capability",
+                    "inapplicable-kind",
+                ))
+            }
             _ => Some(filament_semantic_value::catalog::CatalogCode::new(
                 self.code().as_str(),
                 self.cause()?,
@@ -3684,12 +3726,14 @@ impl CheckCause {
             Self::Abstraction(cause) => cause.code(),
             Self::Extension(cause) => cause.code(),
             Self::Probabilistic(cause) => cause.code(),
+            Self::RewardEvaluation(failure) => failure.diagnostic_code,
             Self::ModelConformance(failure) => failure.code,
             Self::ModelIncomplete(_) => Code::ResourceExhausted,
             Self::TypeAdmission { code, .. } => *code,
             Self::EmptyPackage { .. } => Code::MissingDeclaration,
             Self::TypeCheckAllocation(_) | Self::TypeCheckCapacity(_) => Code::ResourceExhausted,
             Self::IllTyped(_)
+            | Self::NullExpression
             | Self::UndeclaredVariantCase { .. }
             | Self::OperandTypeMismatch { .. }
             | Self::IdentityObservingForm(_)
@@ -3724,6 +3768,9 @@ impl CheckCause {
             | Self::InvalidDispatchDeclaration(_)
             | Self::NodePreimage(_)
             | Self::EmptyReferenceLiteralKey { .. } => Code::InvalidPackage,
+            Self::DuplicateVerificationStep { .. } => Code::ConflictingDeclaration,
+            Self::VerificationPlanBoundZero { .. } => Code::InvalidModelBinding,
+            Self::VerificationPlanInapplicableMethod { .. } => Code::InvalidModelBinding,
             Self::UnrepresentableBound => Code::UnrepresentableConstraint,
             Self::MissingSelection { .. } => Code::MissingDeclaration,
             Self::UnsupportedFeature { .. } => Code::UnknownRequiredFeature,
@@ -3769,6 +3816,7 @@ impl CheckCause {
             Self::Abstraction(cause) => Some(cause.cause()),
             Self::Extension(cause) => Some(cause.cause()),
             Self::Probabilistic(cause) => Some(cause.tag()),
+            Self::RewardEvaluation(failure) => Some(failure.catalog.cause()),
             Self::ModelConformance(failure) => Some(failure.cause.as_str()),
             // The model ceilings are the caller's budget (FR-255), so a denied
             // charge is an insufficient next charge, never a stage limit.
@@ -3778,6 +3826,7 @@ impl CheckCause {
             Self::TypeCheckAllocation(_) => Some("allocation-failed"),
             Self::TypeCheckCapacity(_) => Some("reservation-size-overflow"),
             Self::IllTyped(cause) => cause.tag(),
+            Self::NullExpression => Some("type-mismatch"),
             Self::UndeclaredVariantCase { .. } => Some("type-mismatch"),
             Self::OperandTypeMismatch { .. } => Some("type-mismatch"),
             Self::WrongSnapshot(cause) => Some(cause.as_str()),
@@ -3815,6 +3864,9 @@ impl CheckCause {
             Self::SumCase(cause) => Some(cause.tag()),
             Self::ResourceExhausted(cause) => Some(cause.kind.setting().kind().catalog_cause()),
             Self::DefinitionCycle { .. } => Some("definition-cycle"),
+            Self::DuplicateVerificationStep { .. } => Some("duplicate-declaration"),
+            Self::VerificationPlanBoundZero { .. } => Some("malformed-declaration"),
+            Self::VerificationPlanInapplicableMethod { .. } => Some("inapplicable-kind"),
             Self::InvalidDispatchDeclaration(_) => Some("invalid-value"),
             Self::EmptyReferenceLiteralKey { .. } => Some("invalid-value"),
             Self::MissingSelection { .. } => Some("missing-selection"),

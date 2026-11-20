@@ -59,7 +59,7 @@ pub(in crate::check) fn check_releases(
     model: &mut CheckedTaskSets,
 ) -> Vec<TemporalCause> {
     let mut causes = Vec::new();
-    for declaration in declarations {
+    for (position, declaration) in declarations.iter().enumerate() {
         let TaskSetDeclaration::Release(form) = declaration else {
             continue;
         };
@@ -94,22 +94,23 @@ pub(in crate::check) fn check_releases(
                 }
             }
         }
-        let operation = match input.operation(&form.operation, None) {
-            Ok((operation, _)) => operation,
-            Err(fault) => {
-                causes.push(match fault {
-                    Unresolved::Missing => TemporalCause::UnresolvedReleaseOperation {
-                        name: form.operation.name.clone(),
-                        span: form.operation.span,
-                    },
-                    Unresolved::Ambiguous => TemporalCause::AmbiguousReleaseOperation {
-                        name: form.operation.name.clone(),
-                        span: form.operation.span,
-                    },
-                });
-                continue;
-            }
-        };
+        let operation =
+            match input.operation(&form.operation, None, input.seen_by_task_set(position)) {
+                Ok((operation, _)) => operation,
+                Err(fault) => {
+                    causes.push(match fault {
+                        Unresolved::Missing => TemporalCause::UnresolvedReleaseOperation {
+                            name: form.operation.name.clone(),
+                            span: form.operation.span,
+                        },
+                        Unresolved::Ambiguous => TemporalCause::AmbiguousReleaseOperation {
+                            name: form.operation.name.clone(),
+                            span: form.operation.span,
+                        },
+                    });
+                    continue;
+                }
+            };
         if !resolved {
             continue;
         }

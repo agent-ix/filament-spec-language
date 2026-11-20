@@ -33,7 +33,11 @@ fn arithmetic_type_mismatch_retains_operator_and_operand_types() {
     )
     .expect("the assembler accepts the declaration");
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("Integer + String is not admitted");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_eq!(

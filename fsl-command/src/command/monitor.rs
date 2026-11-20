@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use filament_exact::Cancel;
+use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::document::{Negotiate, RegistryEntry, SettledRun};
 use fsl_analyze::analyze::Engine;
 use fsl_analyze::monitor::{
@@ -29,9 +30,8 @@ use serde_json::{json, Value};
 
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, request_integer_division,
-    require_complete_edition, wire, FileCounts, NativeResult, Result, RunCause, RunError,
-    RunLimits, RunResult,
+    check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
+    wire, FileCounts, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 /// The format of one event.
@@ -40,6 +40,12 @@ pub const EVENT_FORMAT: &str = "filament.monitor-event/1";
 pub const SUMMARY_FORMAT: &str = "filament.monitor-summary/1";
 /// The format of the batch result.
 pub const RUN_FORMAT: &str = "filament.monitor-run/1";
+/// FR-644's published draft 2020-12 schema for `filament.monitor-event/1`.
+pub const MONITOR_EVENT_SCHEMA_1: &str =
+    include_str!("../../schemas/filament-monitor-event-1.schema.json");
+/// FR-644's published draft 2020-12 schema for `filament.monitor-summary/1`.
+pub const MONITOR_SUMMARY_SCHEMA_1: &str =
+    include_str!("../../schemas/filament-monitor-summary-1.schema.json");
 
 /// One `filament.monitor-event/1` object.
 #[derive(Clone, Debug)]
@@ -52,11 +58,20 @@ impl MonitorEvent {
     pub fn as_value(&self) -> &Value {
         &self.value
     }
+
+    /// The event's canonical RFC 8785 bytes.
+    pub fn to_bytes(
+        &self,
+    ) -> std::result::Result<Vec<u8>, fsl_foundation::canonical_json::CanonicalJsonError> {
+        fsl_foundation::canonical_json::encode(&self.value)
+    }
 }
 
 impl std::fmt::Display for MonitorEvent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.value.fmt(formatter)
+        let bytes = self.to_bytes().map_err(|_| std::fmt::Error)?;
+        let text = core::str::from_utf8(&bytes).map_err(|_| std::fmt::Error)?;
+        formatter.write_str(text)
     }
 }
 
@@ -95,6 +110,13 @@ impl MonitorSummary {
     /// The summary as its JSON object.
     pub fn as_value(&self) -> &Value {
         &self.value
+    }
+
+    /// The summary's canonical RFC 8785 bytes.
+    pub fn to_bytes(
+        &self,
+    ) -> std::result::Result<Vec<u8>, fsl_foundation::canonical_json::CanonicalJsonError> {
+        fsl_foundation::canonical_json::encode(&self.value)
     }
 }
 
@@ -215,15 +237,89 @@ fn refusal_event(record: usize, position: Option<u64>, member: &str, reason: &st
     })
 }
 
-/// FR-285's code of the most severe category, in the order 30, 20, 10, 11,
-/// 21, 22, then 0.
+#[cfg(test)]
+mod schema_tests {
+    use ix_trace_rs::trace;
+    use serde_json::Value;
+
+    use super::*;
+
+    /// FR-644-AC-12 (TC-3115): the request-refusal event is written by the
+    /// stream's event builder and matches its golden canonical line.
+    #[trace("TC-3115", "FR-644-AC-12")]
+    #[test]
+    fn request_refusal_event_matches_its_golden_and_schema() {
+        let value = refusal_event(0, None, "unknown", "unknown record member");
+        let event = MonitorEvent {
+            value: value.clone(),
+        };
+        let bytes = event.to_bytes().expect("the event is canonical JSON");
+        assert_eq!(
+            bytes,
+            include_bytes!("../../tests/fixtures/monitor-golden/FR-644-AC-2.jsonl")
+                .strip_suffix(b"\n")
+                .expect("golden line ends in newline")
+        );
+        let schema_value: Value =
+            serde_json::from_str(MONITOR_EVENT_SCHEMA_1).expect("schema JSON is valid");
+        let compiled = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .compile(&schema_value)
+            .expect("event schema compiles");
+        assert!(compiled.is_valid(&value));
+        let mut malformed = value.clone();
+        malformed["disposition"].as_object_mut().unwrap().remove("member");
+        assert!(!compiled.is_valid(&malformed));
+        let mut wrong_locus = value;
+        wrong_locus["clause"] = json!("E");
+        assert!(!compiled.is_valid(&wrong_locus));
+    }
+
+    /// FR-644-AC-12 (TC-3115): the summary wrapper writes the canonical
+    /// bytes held by the monitor golden corpus.
+    #[trace("TC-3115", "FR-644-AC-12")]
+    #[test]
+    fn summary_matches_its_golden_and_schema() {
+        let value = json!({
+            "format": SUMMARY_FORMAT,
+            "clauses": [],
+            "records": 0,
+            "refused": 0,
+            "ledger": null,
+        });
+        let summary = MonitorSummary {
+            value,
+            outcome: fsl_replay::OutcomeDocument::new(
+                fsl_replay::Operation::Monitor,
+                Some(fsl_replay::OutcomeStage::S6a),
+                Category::Success,
+            ),
+            exit_code: 0,
+        };
+        let bytes = summary.to_bytes().expect("the summary is canonical JSON");
+        assert_eq!(
+            bytes,
+            include_bytes!("../../tests/fixtures/monitor-golden/summary-empty.jsonl")
+                .strip_suffix(b"\n")
+                .expect("golden line ends in newline")
+        );
+        let schema_value: Value =
+            serde_json::from_str(MONITOR_SUMMARY_SCHEMA_1).expect("schema JSON is valid");
+        let compiled = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .compile(&schema_value)
+            .expect("summary schema compiles");
+        let parsed: Value = serde_json::from_slice(&bytes).expect("summary JSON");
+        assert!(compiled.is_valid(&parsed));
+        let mut extra = parsed;
+        extra["ledger_extra"] = json!([]);
+        assert!(!compiled.is_valid(&extra));
+    }
+}
+
+/// The code of the most severe category according to the shared catalog.
 fn severity_exit(codes: impl Iterator<Item = u8>) -> u8 {
-    const ORDER: [u8; 6] = [30, 20, 10, 11, 21, 22];
-    codes
-        .filter_map(|code| ORDER.iter().position(|ranked| *ranked == code))
-        .min()
-        .and_then(|rank| ORDER.get(rank).copied())
-        .unwrap_or(0)
+    Category::most_severe(codes).unwrap_or(0)
 }
 
 /// One record of the stream, read.
@@ -537,7 +633,7 @@ fn drive(
         dependent_bytes,
     )?;
     let program = intake.source(&request.program.source, "program.source")?;
-    require_complete_edition(program.source())?;
+    require_native_header(program.source())?;
     let compile = wire::CompileRequest {
         models: std::mem::take(&mut request.models),
         program: wire::CompileProgram {
@@ -550,6 +646,7 @@ fn drive(
         clocks: std::mem::take(&mut request.clocks),
         output: None,
         handoff: None,
+        integer_division: None,
         check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
     let program_source = program.source().clone();
@@ -989,4 +1086,19 @@ fn chained<T>(outer: &Cancel, work: impl FnOnce(&Cancel) -> T) -> T {
         let _ = done.send(());
         value
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::severity_exit;
+    use ix_trace_rs::trace;
+
+    #[trace("TC-769", "FR-285-AC-2")]
+    #[test]
+    fn monitor_exit_uses_the_catalog_severity_order() {
+        for (codes, expected) in [([10, 22], 22), ([20, 21], 20)] {
+            assert_eq!(severity_exit(codes.into_iter()), expected);
+            assert_eq!(severity_exit(codes.into_iter().rev()), expected);
+        }
+    }
 }

@@ -12,7 +12,7 @@ Integration, P1: exercise request and file failures, the intake
 limits and path resolution through `command` in process with `1-draft`
 requests, without substituting compiler or execution logic.
 
-Scope: FR-026-AC-3 to FR-026-AC-5.
+Scope: FR-026-AC-3 to FR-026-AC-5 and FR-026-AC-7.
 
 ## Test Procedure
 
@@ -26,6 +26,10 @@ Scope: FR-026-AC-3 to FR-026-AC-5.
 3. Store a request outside the working directory whose file selections are
    relative, absolute and parent-relative, and call `command` with its path
    from two different process working directories.
+4. Call it with a request padded with trailing JSON whitespace to exactly
+   `request_bytes` bytes and with one more byte; with dependent files totalling
+   exactly `dependent_bytes` and with `dependent_bytes` one lower; and with a
+   request selecting 65 files.
 
 Capture the process streams around every call. Tag the tests
 `#[trace("TC-104", "FR-026-AC-n")]` with the AC each backs.
@@ -35,8 +39,13 @@ Capture the process streams around every call. Tag the tests
 - Step 1: each refuses at its actual stage with its catalogued code and the
   available source details, with no result document and exit code 20; every
   envelope is `native-run-result/2` and validates.
-- Step 2: each refusal names the setting and its configured value; the
+- Step 2: each over-limit outcome names the setting and its configured value; the
   raised requests run; the fresh request succeeds.
 - Step 3: both calls return equal outcomes; each file selection resolves
   against the request's directory, or as written when absolute.
+- Step 4: each request at its limit runs, exit code 0; each over-limit
+  request settles `incomplete`, exit code 22, with one `resource_exhausted`
+  diagnostic naming the setting (`request_bytes`, `dependent_bytes` or the
+  selected-file count) and its configured value, never category `refusal` or
+  exit code 20.
 - No call writes a byte to stdout or stderr.

@@ -1418,6 +1418,14 @@ pub(crate) fn origin_locus(origin: &Value) -> (Option<String>, Option<LocatedSpa
 #[ix_trace_rs::string_edge]
 fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<ModelRefusal>> {
     let verdict = agent_ix_semantic_ir::decide(&document.bundle);
+    let conflicting_members: Vec<_> = verdict
+        .diagnostics
+        .iter()
+        .filter(|located| located.severity == agent_ix_semantic_ir::diag::Severity::Error)
+        .filter_map(|located| {
+            duplicate_member_identity_refusal(document, located).map(|refusal| (located, refusal))
+        })
+        .collect();
     let mut namespace_forms = std::collections::BTreeSet::new();
     let refusals: Vec<ModelRefusal> = verdict
         .diagnostics
@@ -1457,16 +1465,37 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         // normalization can report the ordered FSL loci.
         .filter(|located| !process_subtype_generalization_schema_diagnostic(document, located))
         .filter_map(|located| {
-            if let Some(refusal) = clock_variant_payload_refusal(document, located) {
+            // Other reader diagnostics on this conflicting member are detail
+            // of its one refusal, even if the reader reports them first.
+            if let Some((identity, refusal)) = conflicting_members.iter().find(|(identity, _)| {
+                identity.pointer.rsplit_once('/').map(|(member, _)| member)
+                    == located.pointer.rsplit_once('/').map(|(member, _)| member)
+            }) {
+                if located.code != agent_ix_semantic_ir::rules::DUPLICATE_IDENTITY {
+                    return None;
+                }
+                let mut refusal = refusal.clone();
+                for detail in verdict.diagnostics.iter().filter(|detail| {
+                    detail.severity == agent_ix_semantic_ir::diag::Severity::Error
+                        && detail.code != agent_ix_semantic_ir::rules::DUPLICATE_IDENTITY
+                        && detail.pointer.rsplit_once('/').map(|(member, _)| member)
+                            == identity.pointer.rsplit_once('/').map(|(member, _)| member)
+                }) {
+                    refusal.detail.push_str(&format!(
+                        "\nagent-ix-semantic-ir refused this document at {} ({}) on {} ({}): {}",
+                        semantic_member_path(&detail.pointer),
+                        detail.pointer,
+                        detail.owner,
+                        detail.code,
+                        detail.message
+                    ));
+                }
                 return Some(refusal);
             }
             if let Some(refusal) = missing_option_inner_schema_refusal(document, located) {
                 return Some(refusal);
             }
             if let Some(refusal) = option_presence_refusal(document, located) {
-                return Some(refusal);
-            }
-            if let Some(refusal) = duplicate_member_identity_refusal(document, located) {
                 return Some(refusal);
             }
             if let Some(refusal) = business_generalization_refusal(document, located) {
@@ -1509,53 +1538,6 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
     } else {
         Err(refusals)
     }
-}
-
-/// FSpec FR-154-AC-25 classifies a `Clock` variant payload as an unsupported
-/// payload, although the FCD reader reports `INVALID_CLOCK_MEMBER`. Project
-/// that reader diagnostic to FSL's `unsupported_construct` outcome at the
-/// variant payload locus instead of exposing the generic malformed mapping.
-#[ix_trace_rs::string_edge]
-fn clock_variant_payload_refusal(
-    document: &PackageDocument,
-    located: &agent_ix_semantic_ir::diag::Located,
-) -> Option<ModelRefusal> {
-    if located.code != "agent-ix.semantic-ir.INVALID_CLOCK_MEMBER" {
-        return None;
-    }
-    let pointer = located
-        .pointer
-        .strip_prefix("/ir")
-        .unwrap_or(&located.pointer);
-    let mut segments = pointer.strip_prefix('/')?.split('/');
-    if segments.next()? != "types" {
-        return None;
-    }
-    let type_index = segments.next()?.parse::<usize>().ok()?;
-    if segments.next()? != "variants" {
-        return None;
-    }
-    let variant_index = segments.next()?.parse::<usize>().ok()?;
-    if segments.next()? != "payloadType" || segments.next().is_some() {
-        return None;
-    }
-    let case = document
-        .tree
-        .get("types")?
-        .as_array()?
-        .get(type_index)?
-        .get("variants")?
-        .as_array()?
-        .get(variant_index)?;
-    if case.get("payloadType")?.as_str()? != "ix://filament/native/Clock" {
-        return None;
-    }
-    Some(unsupported_member(
-        case,
-        &format!("$.types[{type_index}].variants[{variant_index}]"),
-        MemberPath::new(MemberRoot::Variant).name("payloadType"),
-        format!("{}:payloadType", meaning::VARIANT_TYPE),
-    ))
 }
 
 /// The semantic-IR schema reports a missing required Option `inner` at the
@@ -1984,8 +1966,8 @@ fn duplicate_member_identity_refusal(
             member: Some(path),
         },
         detail: format!(
-            "{source_member} ({}) on {owner_identity}: duplicate {member} identity {member_identity:?}",
-            located.pointer
+            "{source_member} ({}) on {owner_identity} ({}): duplicate {member} identity {member_identity:?}",
+            located.pointer, located.code
         ),
     })
 }
@@ -2724,10 +2706,21 @@ fn read_operation_parameter(
     // A `Clock` parameter is a place (FR-230 "Operation parameters").
     let value_type = read_value_type_ref(package, &ctx, type_ref, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
+    let presence = match ctx.str_field("presence")? {
+        "required" => Presence::Required,
+        "optional" => Presence::Optional,
+        other => {
+            return Err(ctx.malformed_in(
+                "presence",
+                format!("{other:?} is not required/optional, the only presences this reader recognizes"),
+            ))
+        }
+    };
     Ok(OperationParameterRecord {
         key: declaration_key(package, node),
         value_type,
         multiplicity,
+        presence,
     })
 }
 
@@ -4873,7 +4866,7 @@ pub(super) fn read_tuple_value_type(
             }
         };
         let supported = match &value_type {
-            ValueTypeRef::Clock => false,
+            ValueTypeRef::Clock => true,
             ValueTypeRef::Package(_)
                 if names_unbounded_rational(&value_type, unbounded_rationals) =>
             {
@@ -4934,16 +4927,15 @@ fn names_unbounded_rational(
     matches!(value_type, ValueTypeRef::Package(key) if unbounded_rationals.contains(&key.node))
 }
 
-/// Whether `payload_type` resolves to an admitted model or native value type.
-/// `Clock` is not admitted as a union payload (FSpec FR-154-AC-25); tuple
-/// positions have their separate FR-322 admission rule. A unit is a location,
+/// Whether `payload_type` resolves to an admitted model or native value type
+/// or a clock place. A unit is a location,
 /// and an unresolved or non-value package meaning is not a union payload type.
 fn variant_payload_is_value_type(
     payload_type: &ValueTypeRef,
     type_meanings: &HashMap<&str, &str>,
 ) -> bool {
     match payload_type {
-        ValueTypeRef::Clock => false,
+        ValueTypeRef::Clock => true,
         ValueTypeRef::Unit(_) => false,
         ValueTypeRef::Native(_) => true,
         ValueTypeRef::Resolved(_) => false,
@@ -7139,6 +7131,7 @@ mod tests {
             })
             .expect("the option-typed operation is read");
         assert_eq!(operation.parameters.len(), 1);
+        assert_eq!(operation.parameters[0].presence, Presence::Required);
         assert_eq!(
             operation.parameters[0].value_type,
             ValueTypeRef::Package(declaration_key(
@@ -7153,6 +7146,94 @@ mod tests {
                 "ix://acme/optionals/OptInt",
             )))
         );
+    }
+
+    #[trace("FR-056-AC-65", "FSpec-FR-154-AC-40")]
+    #[test]
+    fn operation_parameter_presence_is_required_and_rejects_unknown_values() {
+        let mut document = option_wire_document(Some(serde_json::json!(
+            "ix://filament/native/Integer"
+        )));
+        document["types"][1]["operations"][0]["params"][0]["typeRef"] =
+            serde_json::json!("ix://filament/native/Integer");
+        document["types"][1]["operations"][0]["params"][0]["presence"] =
+            serde_json::json!("optional");
+        let records = read_unvalidated(
+            "acme/optionals",
+            &parse_document(document.to_string().as_bytes()),
+        )
+        .expect("optional presence is read from the operation parameter");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            DomainPackageRecord::OperationMember(operation)
+                if operation.parameters[0].presence == Presence::Optional
+        )));
+
+        let mut optional_option =
+            option_wire_document(Some(serde_json::json!("ix://filament/native/Integer")));
+        optional_option["types"][1]["operations"][0]["params"][0]["presence"] =
+            serde_json::json!("optional");
+        let refusals = read_records(
+            "acme/optionals",
+            &parse_document(optional_option.to_string().as_bytes()),
+        )
+        .expect_err("optional presence cannot wrap an Option<T> parameter twice");
+        assert!(refusals.iter().any(|refusal| {
+            refusal.code == Code::InvalidModelBinding
+                && matches!(
+                    &refusal.cause,
+                    ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
+                        if node == "ix://acme/optionals/Holder/read/value"
+                            && *member == MemberPath::type_definition()
+                                .name("operations")
+                                .index(0)
+                                .name("params")
+                                .index(0)
+                                .name("presence")
+                )
+        }), "{refusals:?}");
+
+        let required_option = option_wire_document(Some(serde_json::json!(
+            "ix://filament/native/Integer"
+        )));
+        let records = read_records(
+            "acme/optionals",
+            &parse_document(required_option.to_string().as_bytes()),
+        )
+        .expect("a required Option<T> parameter is admitted");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            DomainPackageRecord::OperationMember(operation)
+                if operation.parameters.len() == 1
+                    && operation.parameters[0].presence == Presence::Required
+                    && operation.parameters[0].value_type
+                        == ValueTypeRef::Package(declaration_key(
+                            "acme/optionals",
+                            "ix://acme/optionals/OptInt",
+                        ))
+        )), "{records:?}");
+
+        for invalid_presence in [serde_json::Value::Null, serde_json::json!("sometimes")] {
+            let mut invalid = option_wire_document(Some(serde_json::json!(
+                "ix://filament/native/Integer"
+            )));
+            invalid["types"][1]["operations"][0]["params"][0]["typeRef"] =
+                serde_json::json!("ix://filament/native/Integer");
+            invalid["types"][1]["operations"][0]["params"][0]["presence"] =
+                invalid_presence;
+            let refusals = read_unvalidated(
+                "acme/optionals",
+                &parse_document(invalid.to_string().as_bytes()),
+            )
+            .expect_err("unknown parameter presence refuses");
+            assert!(matches!(
+                &refusals[0].cause,
+                ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+                    if *member == MemberPath::from_document_location(
+                        "$.types[1].operations[0].params[0]",
+                    ).name("presence")
+            ));
+        }
     }
 
     #[trace("FSpec-FR-154-AC-41")]

@@ -147,6 +147,7 @@ fn composite() -> Emission {
                 clock: ClockConfiguration::EventPosition {
                     sequence_authority: "authority".into(),
                 },
+                trace: None,
             },
         )],
         declarations: Vec::new(),
@@ -165,6 +166,7 @@ fn composite() -> Emission {
             clock: ClockConfiguration::EventPosition {
                 sequence_authority: "authority".into(),
             },
+            trace: None,
         }],
     };
     base
@@ -557,7 +559,11 @@ fn the_writers_renames_reach_the_rows_it_carries() {
     );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     let package = CheckedPackage::link(graph);
     let mut emission = emit_checked(&package).expect("the package emits");

@@ -65,7 +65,11 @@ fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<(Code, Option<
         }
     };
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map_err(|refusals| {
             refusals
                 .iter()
@@ -82,7 +86,11 @@ fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<(Code, Option<
 fn check_refusals(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     let declarations = admit_and_assemble_with_body(document, body)
         .unwrap_or_else(|refusal| panic!("assembly refused: {refusal:?}"));
-    declarations.check(CheckMode::Linked, CheckingLimits::default())
+    declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
 }
 
 /// Like [`check`], but keeps every assembly-stage refusal's raw
@@ -426,7 +434,11 @@ fn a_complete_function_does_not_enable_integer_operators_in_a_state_only_clause(
     assert_eq!(declarations.state_clauses.len(), 1);
     declarations.state_clauses[0].selection.identity = "filament.state.finite/v1".to_owned();
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("the state-only clause refuses");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_eq!(refusals[0].cause.code(), Code::UnsupportedConstruct);
@@ -1582,7 +1594,11 @@ fn run_frame_clause_labeled(
     let declarations = admit_and_assemble_with_body(&document, FRAME_CLAUSES)
         .unwrap_or_else(|refusal| panic!("assembly refused: {refusal:?}"));
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("check refused: {refusals:?}"));
     let clause = graph
         .state_clause(input.clause_name)
@@ -2952,7 +2968,11 @@ fn run_tc465_with_clauses_under(
     let declarations = admit_and_assemble_with_body(input.document, input.clauses)
         .unwrap_or_else(|refusal| panic!("assembly refused: {refusal:?}"));
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("check refused: {refusals:?}"));
     let clause = graph
         .state_clause(input.clause_name)
@@ -4347,7 +4367,11 @@ fn a_field_reference_to_an_admitted_subtype_object_admits() {
         .expect("a Sub object admits into a Reference<ConfigVersion> field");
     let graph = admit_and_assemble_with_body(&document, TC465_CLAUSES)
         .expect("the package assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("the package checks");
     let types = graph.scope().types();
     let current = observations.current.expect("one current observation");
@@ -5489,7 +5513,11 @@ fn tc465_check_frame(
     let declarations = admit_and_assemble_with_body(document, TC465_CLAUSES)
         .unwrap_or_else(|refusal| panic!("assembly refused: {refusal:?}"));
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("check refused: {refusals:?}"));
     let selection = graph
         .resolve_operation(
@@ -5908,6 +5936,58 @@ const CAN_AFFORD: &str = "pre CanAfford using v on Config::ConfigVersion::withdr
     { amount <= self.versionNumber }\n";
 const DEBITED: &str = "post Debited using v on Config::ConfigVersion::withdraw \
     { self.versionNumber = pre(self.versionNumber) - amount }\n";
+
+/// Literal-key membership on an immutable operation parameter survives the
+/// precondition-to-postcondition transfer.
+#[trace("TC-3063", "FR-680-AC-8")]
+#[trace("TC-1416", "FR-577-AC-1")]
+#[test]
+fn a_literal_map_key_precondition_proves_the_postcondition_lookup() {
+    use crate::model_operations::{operation_parameter, wire_type, PACKAGE_IDENTITY};
+
+    let map_identity = format!("ix://{PACKAGE_IDENTITY}/IntegerMap");
+    let mut map = wire_type(
+        &map_identity,
+        "unused",
+        json!({
+            "keys": "ix://filament/native/Integer",
+            "values": "ix://filament/native/Integer",
+            "bound": {"lower": 0, "upper": 3},
+        }),
+    );
+    map["kind"] = json!("map");
+    let document = config_version_document(
+        operation(
+            "lookup",
+            json!([operation_parameter("lookup", "m", &map_identity)]),
+            Some("ix://filament/native/Integer"),
+            empty_frame(),
+        ),
+        vec![],
+        vec![map],
+        json!([]),
+    );
+    let pre = "pre HasKey using v on Config::ConfigVersion::lookup { contains(m,1) }\n";
+    let post = "post Lookup using v on Config::ConfigVersion::lookup { m[1] = m[1] }\n";
+    check(&document, &format!("{pre}{post}"))
+        .expect("the operation precondition proves both postcondition lookups present");
+    let second_pre = "pre HasOtherKey using v on Config::ConfigVersion::lookup { contains(m,2) }\n";
+    let both_post = "post LookupBoth using v on Config::ConfigVersion::lookup { m[1] = m[2] }\n";
+    for preconditions in [format!("{pre}{second_pre}"), format!("{second_pre}{pre}")] {
+        check(&document, &format!("{preconditions}{both_post}"))
+            .expect("conjoining preconditions retains both literal-key membership facts");
+    }
+    assert_eq!(
+        check(&document, post).err(),
+        Some(vec![(Code::UndefinedExpression, Some("unproved-presence"))]),
+        "the lookup requires the precondition's matching literal-key fact",
+    );
+    assert_eq!(
+        check(&document, &format!("{pre}{}", post.replace("m[1]", "m[2]"))).err(),
+        Some(vec![(Code::UndefinedExpression, Some("unproved-presence"))]),
+        "the transferred fact proves only its matching literal key",
+    );
+}
 
 #[trace("TC-1416", "FR-577-AC-1")]
 #[trace("TC-1416", "FR-577-AC-2")]

@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+union Node { Leaf(Integer), Branch(Sequence<Node>[0,3]) }
+function f using v(): Node pure { Node::Leaf(1) }

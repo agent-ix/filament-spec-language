@@ -14,6 +14,7 @@ relationships:
   - { target: ix://agent-ix/tl-syntax/FR-013, type: depends_on }
   - { target: ix://agent-ix/tl-syntax/FR-014, type: depends_on }
   - { target: ix://agent-ix/tl-mltl/FR-018, type: depends_on }
+  - { target: ix://agent-ix/tl-mltl/FR-031, type: depends_on }
   - { target: ix://agent-ix/filament-mltl/FR-001, type: depends_on }
   - { target: ix://agent-ix/filament-mltl/FR-003, type: depends_on }
   - { target: ix://agent-ix/filament-contract-ir/FR-350, type: references }
@@ -44,7 +45,8 @@ or correspondence record has been emitted. Contract IR owns that construction
 and the result join. Neither FSL nor Contract IR owns the TL or native evaluator.
 
 The disposition SHALL be a total function of three inputs and nothing else:
-the declaration's selected profile, the operator kinds reachable from its root,
+the declaration's selected profile, the operator kinds reachable from its root with the shape of each interval
+(closed, `[a,*]` or interval-less),
 and the surrounding-execution closure named in the request. The first two come
 from the admitted declaration; the third comes from the request, because the
 support table keys on it. It SHALL NOT consult a backend capability report, an
@@ -90,7 +92,7 @@ through either version.
 ## Inputs
 
 An admitted temporal declaration with its selected profile identity and
-reachable temporal operator kinds; the requested surrounding-execution closure;
+reachable temporal operator kinds and interval shapes; the requested surrounding-execution closure;
 and, for a strict `/2` package, the package's authenticated temporal binding.
 Decision-scope closure remains a separate axis under FSL FR-043-AC-10 and SHALL
 NOT be substituted for surrounding-execution closure.
@@ -114,16 +116,17 @@ FSpec FR-095. The admitted temporal profiles are
 `filament.temporal.fixed-sample.false-extension/v1`,
 `filament.temporal.timestamped-event.finite-window/v1` and
 `filament.temporal.infinite-trace/v1`. The rows are evaluated in order, and the
-first three are mutually exclusive with the last five, so the table is total
+first three are mutually exclusive with the last six, so the table is total
 over those four profiles. The timed profile `filament.temporal.timed/v1`, which
 FSL FR-234 admits at check, has no row: a declaration under it is `Unsupported`
 naming a timed-profile dimension, and FSL FR-527 states that classification:
 
 | Native request | TL target | Disposition |
 | --- | --- | --- |
-| `filament.temporal.infinite-trace/v1` | none | Unsupported on the infinite-trace dimension; there is no bounded TL formula to generate, and FSpec FR-161 analyzes the request natively |
+| `filament.temporal.infinite-trace/v1`, other than the infinite-trace bounded-past row below | none | Unsupported on the infinite-trace dimension; there is no TL formula of that shape to generate, and FSpec FR-161 analyzes the request natively |
 | Timestamped-event finite window | none | Unsupported on the finite-window dimension; no index conversion is inferred, and this subsumes the source table's separate finite-window-against-index-profile row |
 | Both a bounded past and a bounded future operator reachable from the root | none | Unsupported on the mixed-direction dimension; no TL profile evaluates both directions in one formula |
+| `filament.temporal.infinite-trace/v1`, at least one past operator reachable, every reachable temporal operator a past operator (`once`, `historically`, `since`, `triggered`) with a closed interval `[a, b]`, and no future operator | `mltl.infinite-trace/v1`, with formula `tl-syntax.formula-unbounded/v1` and trace `tl-syntax.lasso-trace/v1` | Supported over a lasso trace, subject to every bridge premise; the surrounding-execution closure does not select the row, because an infinite trace never closes (FSpec FR-090) |
 | Event-position or fixed-sample false-extension, at least one bounded past operator reachable and no future operator | `mltl.origin-complete-history/v1`, with formula `tl-syntax.formula/v2` and catalog `tl-syntax.past-operators/v1` | Supported, subject to every bridge premise, an origin-complete history among them |
 | Event-position false-extension, at least one bounded future operator reachable and no past operator, complete surrounding execution | `mltl.closed-trace/v1` | Supported, subject to every outstanding bridge premise |
 | Event-position false-extension, at least one bounded future operator reachable and no past operator, open surrounding execution | `mltl.online-prefix/v1` | Supported, subject to every outstanding bridge premise |
@@ -131,13 +134,28 @@ naming a timed-profile dimension, and FSL FR-527 states that classification:
 | Either false-extension profile, no bounded temporal operator reachable at all | the same two targets, selected by surrounding-execution closure | Supported; a formula with no bounded operator imposes no additional TL obligation |
 
 The first three rows accumulate: a declaration matching more than one SHALL
-return every matched dimension. The last five are mutually exclusive, so every declaration under the four
+return every matched dimension. The last six are mutually exclusive, so every declaration under the four
 profiles matches exactly one row and each row is reachable by some declaration.
 
 The bounded-past operator set is exactly the one defined by FSpec FR-092. The
 past-only row covers each member of that set; FSpec FR-092 defines strong
 previous as `once[1,1]`. A request reaching any bounded past operator and any
 bounded future operator matches the mixed-direction row.
+
+The infinite-trace bounded-past row covers every closed-interval past operator
+of FSpec FR-092 under `filament.temporal.infinite-trace/v1`. Its target is
+`tl-mltl`'s infinite-trace evaluator, which evaluates an unbounded-edition
+formula over an exact lasso and reads a closed past interval whose offset
+reaches before position 0 as FSpec FR-092 "Positions before the origin"
+requires: every atom false there, constants unchanged, the offset never
+skipped. The row relies on that reading, which `tl-mltl` adopted in tl-mltl
+#186; an infinite-trace evaluator that clips the window at the origin is not
+this target. An infinite-trace clause that reaches a future operator, an
+interval-less or `[a,*]` past operator, or no temporal operator at all matches
+the first row and stays unsupported on the infinite-trace dimension (with the
+mixed-direction dimension too when it also reaches a past and a future
+operator), because the row's correspondence is stated only for the closed
+past fragment and FSpec FR-161 analyzes the rest natively.
 
 The classifier SHALL name every unmatched dimension on an unsupported result,
 rather than a single summary cause.
@@ -170,6 +188,7 @@ encode. Naming them is not discharging them.
 | FR-045-AC-4 | An unsupported result names every unmatched dimension rather than one summary cause, including a declaration unmatched on two dimensions. | Test (TC-125, TC-1279) |
 | FR-045-AC-5 | A supported classification names its exact TL target and every outstanding bridge premise, and does not claim correspondence; equal formula bytes under different selected profiles do not receive the same classification. | Test (TC-125, TC-1279) |
 | FR-045-AC-6 | A strict `/2` classification equals the `/1` disposition and retained native subject under both surrounding-execution closures, and additionally retains the authenticated package identity, declaration, definition identity, namespaced revision and exact definition-artifact identity; a `/1` classification retains no authenticated selection; a `/2` request for an out-of-package or non-temporal declaration, a temporal declaration without a binding, or a binding that selects another definition is refused (the latter strict-reader defects are inspected as unreachable re-checks). | Test (TC-125, TC-1279); Inspection |
+| FR-045-AC-7 | Under `filament.temporal.infinite-trace/v1`, each of `once[1,1]`, `historically[0,2]`, `since[0,2]` and `triggered[1,2]` alone, and `once[0,2] holds(p) and historically[1,1] not holds(q)`, returns `Supported` with target `mltl.infinite-trace/v1` under both surrounding-execution closures; `once holds(p)`, `once[1,*] holds(p)`, `eventually[0,2] holds(p)`, `holds(p)` and `once[0,1] eventually[0,1] holds(p)` each return `Unsupported` naming the infinite-trace dimension, the last also naming the mixed-direction dimension; `once[1,1] holds(p)` under the event-position false-extension profile still returns `mltl.origin-complete-history/v1`. | Test (TC-3022) |
 
 ## Dependencies
 

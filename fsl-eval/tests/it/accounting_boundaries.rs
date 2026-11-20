@@ -123,6 +123,7 @@ fn package_of(declarations: &str) -> CheckedPackage {
                     .with_nodes(1 << 30)
                     .with_input_bytes(1 << 30)
                     .with_work_budget(1 << 40),
+                &fsl_eval::value::S6aRewardEvaluator,
             )
             .expect("the unit checks"),
     )

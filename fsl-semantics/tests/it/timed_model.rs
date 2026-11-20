@@ -17,6 +17,8 @@ use fsl_semantics::model::intake::meaning;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
+mod behavior_boundaries;
+
 use crate::model_operations::{
     admit_and_assemble_with_profiles, config_unit_with_profiles, operation,
     version_number_value_type, wire_construct, wire_envelope, wire_field, wire_type,
@@ -166,6 +168,7 @@ pub(super) fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<Che
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
 }
 
@@ -367,6 +370,7 @@ fn check_with_other(body: &str) -> (String, Result<CheckedGraph, Vec<CheckRefusa
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
     );
     (unit, checked)
 }
@@ -1226,6 +1230,7 @@ fn a_clock_reading_call_elsewhere_reads_a_clock_outside_a_constraint() {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
             )
             .expect_err("the call is refused");
         let [refusal] = refusals.as_slice() else {
@@ -1289,6 +1294,7 @@ fn a_place_selected_by_a_clock_or_a_recursive_expansion_refuses() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("a recursive declaration needs a measure");
     let [refusal] = refusals.as_slice() else {
@@ -1395,6 +1401,7 @@ fn a_later_units_timed_predicate_names_types_through_its_own_alias() {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
     )
     .unwrap_or_else(|refusals| panic!("b's Config::Call resolves through b: {refusals:?}"));
     let model = timed(&graph);
@@ -1482,6 +1489,7 @@ fn a_clock_reading_parameter_names_its_own_units_package() {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
     )
     .unwrap_or_else(|refusals| panic!("b's o.x is a clock of b's package: {refusals:?}"));
     // QSL-1650: b's `time Config` times b's package, whose `x` is a clock,
@@ -1517,6 +1525,7 @@ fn check_units(
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
 }
 
@@ -1683,6 +1692,7 @@ fn a_measured_recursive_clock_reading_unfolds() {
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default()
                     .with_work_budget(budget),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
             )
     };
     let (mut low, mut high) = (0_u64, 1_u64 << 32);

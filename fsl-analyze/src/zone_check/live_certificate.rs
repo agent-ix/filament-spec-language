@@ -20,7 +20,7 @@ use filament_exact::{Integer, Rational};
 use fsl_eval::fairness::{Analysis, Outcome};
 use fsl_replay::{
     AcceptanceSet, CertEdge, CertNode, ComponentReason, Components, DivergenceWitness,
-    DivergentTarget, LuBounds, ProductMark, SilentMove,
+    DivergentTarget, LuBounds, NonZeno, ProductMark, SilentMove,
 };
 use num_bigint::BigInt;
 
@@ -34,6 +34,14 @@ impl Run<'_, '_, '_> {
     /// The certificate of a liveness `Holds` over `proofs`, each
     /// instance's product with no fair accepting cycle.
     pub(super) fn live_certificate(&mut self, proofs: Vec<InstanceProof>) -> Result<Proof, Halt> {
+        let non_zeno = if proofs
+            .iter()
+            .any(|proof| has_accepting_cycle_without_divergence(proof))
+        {
+            NonZeno::Assumed
+        } else {
+            NonZeno::NotRequired
+        };
         let total: usize = proofs
             .iter()
             .map(|proof| proof.product.vertices.len())
@@ -104,8 +112,10 @@ impl Run<'_, '_, '_> {
             edges,
             initials,
             components: Some(components),
+            non_zeno: Some(non_zeno),
             divergence: None,
             admitted,
+            state_graph: None,
         })
     }
 
@@ -373,6 +383,33 @@ impl Run<'_, '_, '_> {
         }
         Err(ZoneCheckRefusal::Fault("admitted-witness").into())
     }
+}
+
+/// Whether this instance has a fair accepting cycle when the divergence
+/// acceptance set is omitted, but the position set remains required.
+fn has_accepting_cycle_without_divergence(proof: &InstanceProof) -> bool {
+    fn contains(analyses: &[Analysis], proof: &InstanceProof) -> bool {
+        analyses.iter().any(|analysis| match analysis.outcome() {
+            Outcome::MissingAcceptance { set } if *set == proof.automaton_sets => {
+                analysis.vertices().iter().any(|vertex| {
+                    proof
+                        .product
+                        .vertices
+                        .get(vertex.index())
+                        .is_some_and(|state| state.positioned)
+                })
+            }
+            Outcome::UnfairStrong { sub, .. } | Outcome::UnfairVisibility { sub, .. } => {
+                contains(sub, proof)
+            }
+            Outcome::Trivial
+            | Outcome::MissingAcceptance { .. }
+            | Outcome::UnfairWeak { .. }
+            | Outcome::Fair => false,
+        })
+    }
+
+    contains(&proof.analyses, proof)
 }
 
 /// A shortest path of product edges from `start` to `end` inside their

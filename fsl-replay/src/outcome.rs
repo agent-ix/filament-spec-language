@@ -24,14 +24,16 @@
 //! non-proof evaluation outcome such as `execute`.
 
 mod counterexample;
+pub mod hint;
 pub use counterexample::{
-    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
-    temporal_wire, CounterexampleWireError, ProtocolWire,
+    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
 use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
+use filament_semantic_value::location::ExpressionLocation;
 use fsl_cst::format::FormatRefusal;
 use fsl_foundation::diagnostic::{Code, Locus, StageFailure, Staged, Stopped};
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
@@ -83,6 +85,9 @@ impl From<&FormatRefusal> for FormatOutcomeRefusal {
 
 /// The document's `format` member.
 pub const OUTCOME_FORMAT: &str = "filament-outcome/1";
+/// FR-286's published draft 2020-12 schema for `filament-outcome/1`.
+pub const OUTCOME_SCHEMA_1: &str =
+    include_str!("../schemas/filament-outcome-1.schema.json");
 
 /// The library operation that produced the document (ADR-029 LC-1).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -118,6 +123,8 @@ pub enum Operation {
     Inspect,
     /// `render`.
     Render,
+    /// `export`.
+    Export,
 }
 
 /// An ADR-011 stage, the last one an operation reached.
@@ -372,6 +379,15 @@ enum CauseLimit {
     Bytes(u64),
 }
 
+/// The FR-867 `where` member: a legacy textual position or a checked
+/// expression location with its declaration and child path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+enum ItemWhere {
+    Text(String),
+    Expression(serde_json::Value),
+}
+
 /// The diagnostic a disposition-settled item carries: its catalog code and
 /// cause, and its `detail` keyed by FR-272 payload names (FSpec FR-331).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -388,13 +404,15 @@ pub struct ItemCause {
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<&'static str>,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
-    at: Option<String>,
+    at: Option<ItemWhere>,
     /// A `timed-form-shape` cause's claim: its checked-package
     /// `{declaration, occurrence}` (FR-498).
     #[serde(skip_serializing_if = "Option::is_none")]
     locus: Option<ItemLocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cause: Option<String>,
     /// A refusal's action-oriented explanation, when the source provides one.
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
@@ -658,6 +676,7 @@ impl ItemCause {
             at: None,
             locus: None,
             code: None,
+            cause: None,
             message: None,
             parity: None,
             depth: None,
@@ -706,8 +725,18 @@ impl ItemCause {
     /// is refuted, category violation (FR-281, FR-283).
     pub fn undefined_evaluation(at: impl Into<String>, cause: impl Into<String>) -> Self {
         Self {
-            at: Some(at.into()),
-            code: Some(cause.into()),
+            at: Some(ItemWhere::Text(at.into())),
+            cause: Some(cause.into()),
+            ..Self::kind("undefined-evaluation")
+        }
+    }
+
+    fn undefined_evaluation_at(location: &ExpressionLocation, cause: impl Into<String>) -> Self {
+        Self {
+            at: Some(ItemWhere::Expression(
+                crate::result::expression_location_json(location),
+            )),
+            cause: Some(cause.into()),
             ..Self::kind("undefined-evaluation")
         }
     }
@@ -900,8 +929,13 @@ pub struct OutcomeItem {
     /// The state-graph search horizon, a method parameter.
     #[serde(skip_serializing_if = "Option::is_none")]
     max_depth: Option<Option<u64>>,
-    /// The state-graph phase-0 seed actually used.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The state-graph phase-0 seed actually used, written as FSpec FR-331's
+    /// `U64String` (a decimal string), so every `u64` seed stays exact under
+    /// RFC 8785 (FR-286 "Numbers").
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_u64_string"
+    )]
     seed: Option<u64>,
     /// The number of state-graph witness walks per initial state.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -930,6 +964,10 @@ pub struct OutcomeItem {
     /// witnesses (FR-628).
     #[serde(skip_serializing_if = "Option::is_none")]
     evidence: Option<serde_json::Value>,
+    /// A state-graph item's checker-accepted certificate document, carried
+    /// internally to the FR-286 item writer and nested under `certificate`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    certificate_document: Option<serde_json::Value>,
     /// The values an insufficient-data window held.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -1146,7 +1184,7 @@ impl OutcomeItem {
                         item.predicate = Some(predicate.clone());
                     }
                     UnavailabilityCause::StrictClockConstraint { span } => {
-                        item.at = Some(format!("{}..{}", span.start, span.end));
+                        item.at = Some(ItemWhere::Text(format!("{}..{}", span.start, span.end)));
                     }
                     UnavailabilityCause::DelayDistribution { operation } => {
                         item.operation = Some(operation.clone());
@@ -1156,7 +1194,9 @@ impl OutcomeItem {
                     }
                     UnavailabilityCause::TimedFormShape { span, claim } => match claim {
                         Some(claim) => item.locus = Some(ItemLocus::Claim(WireLocus::of(claim))),
-                        None => item.at = Some(format!("{}..{}", span.start, span.end)),
+                        None => {
+                            item.at = Some(ItemWhere::Text(format!("{}..{}", span.start, span.end)))
+                        }
                     },
                     UnavailabilityCause::ValueCheck { reason, .. } => {
                         item.refusal = Some(reason.as_str());
@@ -1164,7 +1204,12 @@ impl OutcomeItem {
                     UnavailabilityCause::ContractCheck { reason, .. } => {
                         item.refusal = Some(reason.as_str());
                     }
-                    UnavailabilityCause::ProtocolAnalysis(_) => {}
+                    UnavailabilityCause::ProtocolAnalysis(unsupported) => {
+                        item.at = crate::protocol_analysis::node_text(&unsupported.node)
+                            .ok()
+                            .map(ItemWhere::Text);
+                        item.message.clone_from(&unsupported.detail);
+                    }
                     UnavailabilityCause::SolverAbsent
                     | UnavailabilityCause::HybridProviderAbsent
                     | UnavailabilityCause::BackendAbsent
@@ -1300,6 +1345,7 @@ impl OutcomeItem {
             decisive: None,
             witness: None,
             evidence: None,
+            certificate_document: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1382,6 +1428,13 @@ impl OutcomeItem {
         self
     }
 
+    /// Attach the accepted state-graph certificate's public document.
+    #[must_use]
+    pub fn with_graph_certificate_document(mut self, document: Option<serde_json::Value>) -> Self {
+        self.certificate_document = document;
+        self
+    }
+
     /// The item whose claim evaluated to an undefined value at `at` for
     /// `cause`: refuted, category violation, never labelled `undefined`.
     pub fn undefined_evaluation(
@@ -1411,6 +1464,7 @@ impl OutcomeItem {
             decisive: None,
             witness: None,
             evidence: None,
+            certificate_document: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1460,15 +1514,16 @@ impl OutcomeItem {
             request_index: request_index.get(),
             result: Some(result),
             label: result,
-            diagnostic: None,
+            diagnostic: clause_run_diagnostic(report),
             cause: ItemCauseMember::Present {
-                cause: clause_run_cause(report).map(Box::new),
+                cause: clause_run_cause(report, clause).map(Box::new),
             },
             position: record.position,
             counterexample: record.counterexample,
             decisive: record.decisive,
             witness: record.witness,
             evidence: None,
+            certificate_document: None,
             count: record.count,
             min_count: record.min_count,
             basis: None,
@@ -1513,7 +1568,29 @@ impl OutcomeItem {
 /// column of FR-286 "Monitor documents from clause runs". A success, a
 /// violated clause, a pending run and a clause with insufficient data
 /// (`insufficient-data`) carry the spelling the table gives them.
-fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
+fn clause_run_diagnostic(report: &ClauseRunReport) -> Option<ItemDiagnostic> {
+    let mut detail = serde_json::Map::new();
+    let (code, cause) = match &report.disposition {
+        ClauseDisposition::NotAPredicate { name, actual, .. } => {
+            detail.insert("function".to_owned(), serde_json::json!(name));
+            detail.insert("expected".to_owned(), serde_json::json!("Boolean"));
+            detail.insert("actual".to_owned(), serde_json::json!(actual));
+            ("ill_typed", "type-mismatch")
+        }
+        ClauseDisposition::MissingName { name } => {
+            detail.insert("name".to_owned(), serde_json::json!(name));
+            ("missing_declaration", "missing-name")
+        }
+        _ => return None,
+    };
+    Some(ItemDiagnostic {
+        code,
+        cause,
+        detail,
+    })
+}
+
+fn clause_run_cause(report: &ClauseRunReport, clause: &str) -> Option<ItemCause> {
     let catalog = |code: &'static str, cause: &'static str| ItemCause {
         code: Some(code.to_owned()),
         ..ItemCause::kind(cause)
@@ -1540,7 +1617,7 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 cause.reason(),
             )),
             TemporalVerdict::Indeterminate { at, reason } => Some(ItemCause {
-                at: Some(format!("position {at}")),
+                at: Some(ItemWhere::Text(format!("position {at}"))),
                 kind: None,
                 reason: Some(ReasonWire::from(reason)),
                 ..ItemCause::kind("")
@@ -1557,7 +1634,7 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 ..ItemCause::kind("cancelled")
             }),
             TemporalVerdict::ActivationIncomplete { at, .. } => Some(ItemCause {
-                at: Some(format!("position {at}")),
+                at: Some(ItemWhere::Text(format!("position {at}"))),
                 ..ItemCause::kind("activation-incomplete")
             }),
             TemporalVerdict::WindowLimitReached {
@@ -1642,10 +1719,12 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 .map(ItemLocus::Outcome),
             ..ItemCause::kind("")
         }),
-        ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => Some(ItemCause {
-            code: Some((*reason).to_owned()),
-            ..ItemCause::kind("undefined-evaluation")
-        }),
+        ClauseDisposition::Evaluate(CallOutcome::Undefined { reason, location }) => {
+            Some(location.as_ref().map_or_else(
+                || ItemCause::undefined_evaluation(clause, *reason),
+                |location| ItemCause::undefined_evaluation_at(location, *reason),
+            ))
+        }
         ClauseDisposition::Compile(refusal) if has_timed_trace_subject_refusal(refusal) => {
             classify_clause_run(report)
                 .classification
@@ -1741,8 +1820,19 @@ pub enum OutcomeLocus {
     },
     /// An artifact and a JSON pointer into it.
     Artifact {
+        /// The FR-001 identity of the artifact.
+        identity: RawSourceRef,
         /// The RFC 6901 pointer into the artifact.
         pointer: String,
+    },
+    /// A position in an input named by the caller, not an FR-001 artifact.
+    Input {
+        /// The operand exactly as the caller wrote it.
+        operand: String,
+        /// The member file relative to a directory operand, when present.
+        member: Option<String>,
+        /// The RFC 6901 pointer into the input, when present.
+        pointer: Option<String>,
     },
     /// A refusal located in a snapshot or invocation document.
     Document {
@@ -1759,6 +1849,7 @@ pub enum OutcomeLocus {
     },
 }
 
+/// The population and snapshot object key named by a document locus.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DocumentObjectLocus {
     /// The model population.
@@ -1772,9 +1863,6 @@ pub(crate) fn snapshot_admission_locus(
     document: &fsl_semantics::model::observation::DocumentRef,
     path: Option<&str>,
 ) -> Option<OutcomeLocus> {
-    if !matches!(record.catalog.cause(), "missing-member" | "unknown-member") {
-        return None;
-    }
     use filament_semantic_value::admission::PathStep;
     let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
         match step {
@@ -1812,6 +1900,14 @@ pub(crate) fn snapshot_admission_locus(
     })
 }
 
+fn pointer_member(pointer: &str) -> Option<String> {
+    let token = pointer.rsplit('/').next()?;
+    if token.is_empty() && pointer.is_empty() {
+        return None;
+    }
+    Some(token.replace("~1", "/").replace("~0", "~"))
+}
+
 impl From<&Locus> for OutcomeLocus {
     fn from(locus: &Locus) -> Self {
         match locus {
@@ -1823,8 +1919,18 @@ impl From<&Locus> for OutcomeLocus {
             Locus::Occurrence(location) => Self::Occurrence {
                 occurrence: OccurrenceKey::from(location).to_string(),
             },
-            Locus::Artifact { pointer } => Self::Artifact {
+            Locus::Artifact { identity, pointer } => Self::Artifact {
+                identity: identity.clone(),
                 pointer: pointer.to_string(),
+            },
+            Locus::Input {
+                operand,
+                member,
+                pointer,
+            } => Self::Input {
+                operand: operand.clone(),
+                member: member.clone(),
+                pointer: pointer.as_ref().map(ToString::to_string),
             },
         }
     }
@@ -1836,24 +1942,36 @@ impl From<&Locus> for OutcomeLocus {
 pub struct OutcomeDiagnostic {
     cause: Option<Box<str>>,
     code: String,
-    locus: Option<OutcomeLocus>,
-    message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     construct: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     declaration: Option<String>,
+    /// FR-286 "Diagnostic details": `null`, or the closed object that locates
+    /// the refusal inside the request and the call.
+    details: Option<serde_json::Map<String, serde_json::Value>>,
+    /// FR-286's catalog hint for the diagnostic's code and cause.
     #[serde(skip_serializing_if = "Option::is_none")]
-    profile: Option<String>,
+    hint: Option<&'static str>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_source_label"
     )]
     label: Option<SourceLabel>,
-    /// FR-286 "Diagnostic details": `null`, or the closed object that locates
-    /// the refusal inside the request and the call.
-    details: Option<serde_json::Map<String, serde_json::Value>>,
+    locus: Option<OutcomeLocus>,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+}
+
+/// FSpec FR-331's `U64String`: an unsigned 64-bit integer as its canonical
+/// decimal string.
+fn serialize_u64_string<S>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    value.map(|value| value.to_string()).serialize(serializer)
 }
 
 fn serialize_source_label<S>(label: &Option<SourceLabel>, serializer: S) -> Result<S::Ok, S::Error>
@@ -1872,16 +1990,19 @@ impl OutcomeDiagnostic {
         locus: Option<OutcomeLocus>,
         message: impl Into<String>,
     ) -> Self {
+        let code = code.into();
+        let hint = Code::from_code(&code).and_then(|code| hint::hint_for(code, cause));
         Self {
             cause: cause.map(Into::into),
-            code: code.into(),
+            code,
+            construct: None,
+            declaration: None,
+            hint,
+            label: None,
             locus,
             message: message.into(),
-            construct: None,
-            text: None,
-            declaration: None,
             profile: None,
-            label: None,
+            text: None,
             details: None,
         }
     }
@@ -2068,6 +2189,26 @@ pub enum ExecuteResult {
 enum OutcomeResult {
     Execute(ExecuteResult),
     Parsed(ParsedOutcome),
+    Exported(ExportedOutcome),
+    Replayed(ReplayedOutcome),
+    #[cfg(feature = "test-support")]
+    Raw(serde_json::Value),
+}
+
+/// FR-286 "Export outcomes": the `exported` result holding the FSpec FR-817
+/// export outcome document as the run outcome's `export` member carries it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ExportedOutcome {
+    kind: &'static str,
+    export: serde_json::Value,
+}
+
+/// A replay outcome's `replayed` result: each entry is the row of the FSpec
+/// FR-323 `results` document, unchanged and in row order (FR-286).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ReplayedOutcome {
+    kind: &'static str,
+    results: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2206,7 +2347,7 @@ impl Serialize for OutcomeDocument {
 /// Why a document could not be written.
 #[derive(Debug, thiserror::Error)]
 #[error("the outcome document could not be encoded: {0}")]
-pub struct OutcomeWriteError(#[from] serde_json::Error);
+pub struct OutcomeWriteError(#[from] fsl_foundation::canonical_json::CanonicalJsonError);
 
 impl OutcomeDocument {
     /// This document with `last_stage` (FR-286): the greatest stage it entered.
@@ -2297,6 +2438,17 @@ impl OutcomeDocument {
             self.native_fences = None;
         }
         self.items = items;
+        self
+    }
+
+    /// This `export` document carrying FSpec FR-817's outcome `export` as its
+    /// `exported` result (FR-286 "Export outcomes").
+    #[must_use]
+    pub fn with_export(mut self, export: serde_json::Value) -> Self {
+        self.result = Some(OutcomeResult::Exported(ExportedOutcome {
+            kind: "exported",
+            export,
+        }));
         self
     }
 
@@ -2535,46 +2687,111 @@ impl OutcomeDocument {
     /// or the refusal's category and diagnostic.
     pub fn from_replay(result: &Result<ReplayResult, ReplayRefusal>) -> Self {
         match result {
-            Ok(ReplayResult::Witness(arm)) => {
-                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
+            Ok(arm) => {
+                let row = arm
+                    .to_function_json()
+                    .and_then(|row| serde_json::from_str(&row).map_err(Into::into));
+                Self::from_replay_row(arm, 0, row)
             }
-            Ok(ReplayResult::Input(arm)) => {
-                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
+            Err(refusal) => Self::from_replay_refusal(refusal),
+        }
+    }
+
+    /// A successful replay outcome document with its already encoded result
+    /// row. Callers that need the row in a separate result document can encode
+    /// it once and pass the parsed value here.
+    pub fn from_replay_with_row(result: &ReplayResult, row: serde_json::Value) -> Self {
+        Self::from_replay_row(result, 0, Ok(row))
+    }
+
+    /// An FR-286 internal-failure outcome when one FR-323 result row failed
+    /// to serialize. The row position identifies which row could not be
+    /// written; no partial replay result is retained.
+    pub fn from_replay_output_failure(
+        row_position: usize,
+        error: &crate::result::CauseCodecError,
+    ) -> Self {
+        replay_row_output_failure(row_position, error)
+    }
+
+    /// Supply a raw result solely to exercise malformed outcome handling in
+    /// downstream test targets.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn with_raw_result_for_test(mut self, result: serde_json::Value) -> Self {
+        self.result = Some(OutcomeResult::Raw(result));
+        self
+    }
+
+    /// The document of a refused replay.
+    pub fn from_replay_refusal(refusal: &ReplayRefusal) -> Self {
+        Self::from_replay_refusal_at(refusal, None)
+    }
+
+    /// The document of a refused replay, with the caller's request path when known.
+    pub fn from_replay_refusal_at(refusal: &ReplayRefusal, request_path: Option<&str>) -> Self {
+        Self::from_replay_refusal_with_context(refusal, request_path, None)
+    }
+
+    /// The document of a refused replay with its request path and package binding.
+    pub fn from_replay_refusal_with_context(
+        refusal: &ReplayRefusal,
+        request_path: Option<&str>,
+        artifact_identity: Option<&fsl_foundation::source::provenance::RawSourceRef>,
+    ) -> Self {
+        let locus = match refusal {
+            ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { .. })
+            | ReplayRefusal::PackageSources(_)
+            | ReplayRefusal::DependencySources { .. }
+            | ReplayRefusal::DependencySelections(_)
+            | ReplayRefusal::RefinementInternals { .. } => refusal
+                .pointer()
+                .map(|pointer| request_document_locus(&pointer, request_path)),
+            ReplayRefusal::Package(_) => artifact_identity
+                .and_then(|identity| refusal.pointer().map(|pointer| (identity, pointer)))
+                .map(|(identity, pointer)| OutcomeLocus::Artifact {
+                    identity: identity.clone(),
+                    pointer: package_artifact_pointer(&pointer),
+                }),
+            ReplayRefusal::PackageWithIdentity { identity, .. } => {
+                identity.as_ref().and_then(|identity| {
+                    refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
+                        identity: identity.clone(),
+                        pointer: package_artifact_pointer(&pointer),
+                    })
+                })
             }
-            Ok(ReplayResult::ObservedTemporal(arm)) => {
-                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
+            _ => None,
+        };
+        Self::new(
+            Operation::Replay,
+            replay_stage(refusal),
+            refusal.code().category(),
+        )
+        .with_diagnostics(vec![OutcomeDiagnostic::new(
+            refusal.cause(),
+            refusal.code().as_str(),
+            locus,
+            refusal.to_string(),
+        )])
+    }
+
+    fn from_replay_row(
+        arm: &ReplayResult,
+        row_position: usize,
+        row: Result<serde_json::Value, crate::result::CauseCodecError>,
+    ) -> Self {
+        match row {
+            Ok(row) => {
+                let mut document =
+                    Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category());
+                document.result = Some(OutcomeResult::Replayed(ReplayedOutcome {
+                    kind: "replayed",
+                    results: vec![row],
+                }));
+                document
             }
-            Ok(ReplayResult::ProtocolAnalysis(arm)) => {
-                Self::new(Operation::Replay, Some(OutcomeStage::S8), arm.category())
-            }
-            Ok(ReplayResult::ModelGraph(arm)) => Self::new(
-                Operation::Replay,
-                Some(OutcomeStage::S8),
-                ReplayResult::ModelGraph(arm.clone()).category(),
-            ),
-            Err(refusal) => Self::new(
-                Operation::Replay,
-                replay_stage(refusal),
-                refusal.code().category(),
-            )
-            .with_diagnostics(vec![OutcomeDiagnostic::new(
-                refusal.cause(),
-                refusal.code().as_str(),
-                match refusal {
-                    ReplayRefusal::Package(_)
-                    | ReplayRefusal::RefinementInternals { .. }
-                    | ReplayRefusal::PackageSources(_)
-                    | ReplayRefusal::DependencySources { .. }
-                    | ReplayRefusal::DependencySelections(_)
-                    | ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember {
-                        ..
-                    }) => refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
-                        pointer: pointer.into_owned(),
-                    }),
-                    _ => None,
-                },
-                refusal.to_string(),
-            )]),
+            Err(error) => replay_row_output_failure(row_position, &error),
         }
     }
 
@@ -2597,7 +2814,7 @@ impl OutcomeDocument {
                     value: ResultValue(value.form()),
                 }));
             }
-            CallOutcome::Undefined { reason } => {
+            CallOutcome::Undefined { reason, .. } => {
                 document.result = Some(OutcomeResult::Execute(ExecuteResult::Undefined { reason }));
             }
             CallOutcome::Incomplete(incomplete) => {
@@ -2745,16 +2962,52 @@ impl OutcomeDocument {
 
     /// The document's bytes: the same document gives the same bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, OutcomeWriteError> {
-        Ok(serde_json::to_vec(self)?)
+        Ok(fsl_foundation::canonical_json::encode(self)?)
+    }
+}
+
+fn request_document_locus(pointer: &str, request_path: Option<&str>) -> OutcomeLocus {
+    let pointer = match request_path {
+        Some(_) => format!("/request{pointer}"),
+        None => pointer.to_owned(),
+    };
+    OutcomeLocus::Document {
+        document: None,
+        path: request_path.map(str::to_owned),
+        member: pointer_member(&pointer),
+        pointer,
+        object: None,
+    }
+}
+
+fn package_artifact_pointer(pointer: &str) -> String {
+    match pointer.strip_prefix("/package") {
+        Some("") => String::new(),
+        Some(remainder) if remainder.starts_with('/') => remainder.to_owned(),
+        _ => pointer.to_owned(),
     }
 }
 
 /// The last stage a replay refusal reached: a recompile refusal's own spine
 /// stage, S8 for every other refusal (the replay itself refused), and none
 /// for a fault, whose stage is untyped.
+fn replay_row_output_failure(
+    row_position: usize,
+    error: &crate::result::CauseCodecError,
+) -> OutcomeDocument {
+    OutcomeDocument::new(Operation::Replay, None, Category::InternalFailure).with_diagnostics(vec![
+        OutcomeDiagnostic::new(
+            Some("output-failure"),
+            Code::OutputFailure.as_str(),
+            None,
+            format!("replay result row at position {row_position} did not serialize: {error}"),
+        ),
+    ])
+}
+
 fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
     match refusal {
-        ReplayRefusal::Recompile(refusal) => Some(refusal.stage().into()),
+        ReplayRefusal::Recompile { refusal, .. } => Some(refusal.stage().into()),
         ReplayRefusal::RecompileWithProtocolResults { refusal, .. }
         | ReplayRefusal::RefinementInternals { refusal, .. } => Some(refusal.stage().into()),
         ReplayRefusal::Fault(_)
@@ -2763,6 +3016,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::Admission(AdmissionFailure::Fault(_)) => None,
         ReplayRefusal::Request(_)
         | ReplayRefusal::Package(_)
+        | ReplayRefusal::PackageWithIdentity { .. }
         | ReplayRefusal::PackageEvidence(_)
         | ReplayRefusal::DomainPackages(_)
         | ReplayRefusal::LimitAboveReader(_)
@@ -2810,6 +3064,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::Cancelled(_)
         | ReplayRefusal::NativePayload { .. }
         | ReplayRefusal::ModelTrace(_)
+        | ReplayRefusal::HybridTrace(_)
         | ReplayRefusal::UnfairLasso { .. }
         | ReplayRefusal::MissingFairnessPremise { .. }
         | ReplayRefusal::ObservedTemporalMismatch { .. }
@@ -2840,6 +3095,29 @@ mod tests {
     use super::*;
     use crate::identity::QualifiedName;
 
+    /// FR-286-AC-28: each diagnostic constructor attaches the exact catalog hint.
+    #[trace("TC-3112", "FR-286-AC-28")]
+    #[test]
+    fn outcome_diagnostic_construction_looks_up_hints_by_exact_pair() {
+        let typed = OutcomeDiagnostic::new(
+            Some("type-mismatch"),
+            Code::IllTyped.as_str(),
+            None,
+            "types differ",
+        );
+        assert_eq!(
+            typed.hint,
+            hint::hint_for(Code::IllTyped, Some("type-mismatch"))
+        );
+
+        let io = OutcomeDiagnostic::new(None, Code::IoError.as_str(), None, "cannot read file");
+        assert_eq!(io.hint, hint::hint_for(Code::IoError, None));
+
+        let generic =
+            OutcomeDiagnostic::new(None, Code::InvalidRequest.as_str(), None, "invalid request");
+        assert_eq!(generic.hint, None);
+    }
+
     /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
     #[trace("TC-931", "FR-255-AC-3")]
     #[test]
@@ -2854,9 +3132,14 @@ mod tests {
         assert!(run_message.contains("--limit s1.tokens"), "{run_message}");
         assert!(!run_message.contains("stage_limits"), "{run_message}");
 
-        let replay_refusal = ReplayRefusal::Recompile(Box::new(CompileRefusal::Limit(
-            LimitExceeded::new(Setting::S1Tokens, 3, 4),
-        )));
+        let replay_refusal = ReplayRefusal::Recompile {
+            refusal: Box::new(CompileRefusal::Limit(LimitExceeded::new(
+                Setting::S1Tokens,
+                3,
+                4,
+            ))),
+            pointer: None,
+        };
         let replay = OutcomeDocument::from_replay(&Err(replay_refusal));
         let replay_message = replay.diagnostics()[0].message();
         assert!(replay_message.contains("stage_limits"), "{replay_message}");
@@ -3027,6 +3310,124 @@ mod tests {
 
     fn text_of(document: &OutcomeDocument) -> String {
         String::from_utf8(document.to_bytes().expect("encodes")).expect("is UTF-8")
+    }
+
+    fn clause_document(disposition: ClauseDisposition) -> Value {
+        let report = ClauseRunReport {
+            disposition,
+            usage: Default::default(),
+            basis: crate::proof_result::SettlementBasis::Unavailable,
+            witness: None,
+            state_clause_counterexample: None,
+            frame_field_values: None,
+            consequent_source_events: Default::default(),
+            ledger: None,
+            finite_window: None,
+            counterexample: None,
+            decisive: None,
+            authenticated_temporal_selection: None,
+            refused_at: None,
+        };
+        let document =
+            OutcomeDocument::from_clause_runs(Some(OutcomeStage::S6c), [("claim", &report)])
+                .expect("refusal and undefined dispositions settle as items");
+        json_of(&document)
+    }
+
+    /// FR-867-AC-3: an undefined function claim carries its retained
+    /// expression location in `where` and its evaluator reason in `cause`.
+    #[trace("TC-2951", "FR-867-AC-3", "FR-286-AC-13")]
+    #[test]
+    fn undefined_claim_item_serializes_location_and_cause() {
+        use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
+
+        let location = ExpressionLocation::root(ExpressionOwner::Body {
+            function: "claim".to_owned(),
+            index: 0,
+        });
+        let document = clause_document(ClauseDisposition::Evaluate(CallOutcome::Undefined {
+            reason: "division-by-zero",
+            location: Some(location),
+        }));
+        assert_eq!(
+            document["items"][0]["cause"],
+            json!({
+                "kind": "undefined-evaluation",
+                "where": {
+                    "declaration": {"kind": "body", "function": "claim", "index": 0},
+                    "path": [],
+                },
+                "cause": "division-by-zero",
+            })
+        );
+    }
+
+    /// FR-867-AC-4: an integer function claim emits its type-mismatch detail.
+    #[trace("TC-2951", "FR-867-AC-4", "FR-286-AC-13")]
+    #[test]
+    fn integer_claim_item_serializes_diagnostic_detail() {
+        let document = clause_document(ClauseDisposition::NotAPredicate {
+            name: "integerClaim".to_owned(),
+            actual: "Integer".to_owned(),
+            result_type_locus: None,
+        });
+        assert_eq!(
+            document["items"][0]["cause"],
+            json!({"kind": "type-mismatch", "code": "ill_typed"})
+        );
+        assert_eq!(
+            document["items"][0]["diagnostic"],
+            json!({
+                "code": "ill_typed",
+                "cause": "type-mismatch",
+                "detail": {
+                    "function": "integerClaim",
+                    "expected": "Boolean",
+                    "actual": "Integer",
+                },
+            })
+        );
+    }
+
+    /// FR-867-AC-4: a bounded integer function claim preserves its declared
+    /// result type in its detail.
+    #[trace("TC-2951", "FR-867-AC-4", "FR-286-AC-13")]
+    #[test]
+    fn bounded_claim_item_serializes_diagnostic_detail() {
+        let document = clause_document(ClauseDisposition::NotAPredicate {
+            name: "boundedClaim".to_owned(),
+            actual: "Int[0, 3]".to_owned(),
+            result_type_locus: None,
+        });
+        assert_eq!(
+            document["items"][0]["cause"],
+            json!({"kind": "type-mismatch", "code": "ill_typed"})
+        );
+        assert_eq!(
+            document["items"][0]["diagnostic"]["detail"]["actual"],
+            "Int[0, 3]"
+        );
+    }
+
+    /// FR-867-AC-4: an unknown function claim emits missing-name detail.
+    #[trace("TC-2951", "FR-867-AC-4", "FR-286-AC-13")]
+    #[test]
+    fn unknown_claim_item_serializes_diagnostic_detail() {
+        let document = clause_document(ClauseDisposition::MissingName {
+            name: "missingClaim".to_owned(),
+        });
+        assert_eq!(
+            document["items"][0]["cause"],
+            json!({"kind": "missing-name", "code": "missing_declaration"})
+        );
+        assert_eq!(
+            document["items"][0]["diagnostic"],
+            json!({
+                "code": "missing_declaration",
+                "cause": "missing-name",
+                "detail": {"name": "missingClaim"},
+            })
+        );
     }
 
     fn record(index: usize, value: TerminalValue) -> OutcomeItem {
@@ -3876,7 +4277,7 @@ mod tests {
                         "cause": {
                             "kind": "undefined-evaluation",
                             "where": "position 1",
-                            "code": "division-by-zero",
+                            "cause": "division-by-zero",
                         },
                         "category": "violation",
                     }],
@@ -3888,6 +4289,7 @@ mod tests {
         }
         let execute = OutcomeDocument::from_call(&CallOutcome::Undefined {
             reason: "sum-out-of-domain",
+            location: None,
         });
         assert_eq!(
             json_of(&execute),
@@ -3925,6 +4327,7 @@ mod tests {
                 accounting,
                 supplied: Default::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
             };
             let outcome = run(
                 SourceIdentity::new("agent-ix", "test:outcome"),
@@ -3968,6 +4371,7 @@ mod tests {
             accounting: default_accounting(1_000_000),
             supplied: Default::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
+            live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         };
         let outcome = run(
             SourceIdentity::new("agent-ix", "test:outcome"),
@@ -4178,6 +4582,42 @@ mod tests {
         );
     }
 
+    /// FR-095-AC-7 (TC-422): caller-named input loci preserve operand text
+    /// and always write nullable `member` and `pointer` members.
+    #[trace("TC-422", "FR-095-AC-7")]
+    #[test]
+    fn input_loci_preserve_operand_and_nullable_members_on_the_wire() {
+        let first = OutcomeLocus::from(&Locus::Input {
+            operand: "./out/handoff".to_owned(),
+            member: Some("selection.json".to_owned()),
+            pointer: None,
+        });
+        assert_eq!(
+            serde_json::to_value(first).expect("input locus serializes"),
+            json!({
+                "kind": "input",
+                "member": "selection.json",
+                "operand": "./out/handoff",
+                "pointer": null
+            })
+        );
+
+        let second = OutcomeLocus::from(&Locus::Input {
+            operand: "pkg.json".to_owned(),
+            member: None,
+            pointer: Some("/lock".parse().expect("valid pointer")),
+        });
+        assert_eq!(
+            serde_json::to_value(second).expect("input locus serializes"),
+            json!({
+                "kind": "input",
+                "member": null,
+                "operand": "pkg.json",
+                "pointer": "/lock"
+            })
+        );
+    }
+
     /// A replay outcome is its arm's category at S8, or its refusal's.
     #[trace("TC-770", "FR-286-AC-3")]
     #[test]
@@ -4204,6 +4644,12 @@ mod tests {
             Vec::new(),
             charges,
         );
+        let row: Value = serde_json::from_str(
+            &ReplayResult::Input(arm.clone())
+                .to_function_json()
+                .expect("a row"),
+        )
+        .expect("the row is JSON");
         assert_eq!(
             json_of(&OutcomeDocument::from_replay(&Ok(ReplayResult::Input(arm)))),
             json!({
@@ -4214,7 +4660,7 @@ mod tests {
                 "items": [],
                 "diagnostics": [],
                 "artifacts": [],
-                "result": null,
+                "result": {"kind": "replayed", "results": [row]},
             })
         );
         let unknown = ReplayRefusal::UnknownFunction {
@@ -4231,6 +4677,43 @@ mod tests {
         assert_eq!(document["category"], "internal-failure");
         assert_eq!(document["last_stage"], Value::Null);
         assert_eq!(document["diagnostics"][0]["code"], "runtime_invariant");
+    }
+
+    /// FSpec FR-286-AC-21: a refused replay outcome has no result row.
+    #[trace("TC-2963", "FR-286-AC-21")]
+    #[test]
+    fn a_refused_replay_outcome_has_null_result() {
+        let refusal = ReplayRefusal::Request(crate::ReplayRequestRefusal::MissingReplayTarget);
+        let document = json_of(&OutcomeDocument::from_replay(&Err(refusal)));
+        assert_eq!(document["operation"], "replay");
+        assert_eq!(document["result"], Value::Null);
+    }
+
+    /// An unwriteable replay row is an internal failure with no reached stage; its one
+    /// output-failure diagnostic names the failed row, and the result is null.
+    #[test]
+    fn replay_row_encoding_failure_is_an_unstaged_output_failure_without_partial_result() {
+        let result =
+            ReplayResult::ProtocolAnalysis(crate::protocol_analysis::ProtocolReplayResult {
+                settlement: crate::protocol_analysis::ProtocolReplaySettlement::Reproduced,
+            });
+        let document = json_of(&OutcomeDocument::from_replay_row(
+            &result,
+            2,
+            Err(crate::result::CauseCodecError::Empty("result row")),
+        ));
+        assert_eq!(document["category"], "internal-failure");
+        assert_eq!(document["last_stage"], Value::Null);
+        assert_eq!(document["result"], Value::Null);
+        assert_eq!(document["diagnostics"][0]["code"], "output-failure");
+        assert_eq!(document["diagnostics"][0]["cause"], "output-failure");
+        assert!(
+            document["diagnostics"][0]["message"]
+                .as_str()
+                .expect("diagnostic message")
+                .contains("row at position 2"),
+            "{document}"
+        );
     }
 
     fn run_source(
@@ -4255,6 +4738,7 @@ mod tests {
                 accounting: default_accounting(1_000_000),
                 supplied: Default::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
             },
             &ObjectEnvironment::default(),
             cancel,
@@ -4290,6 +4774,7 @@ mod tests {
         // Undefined: the call's undefined result.
         let undefined = Ok(CallOutcome::Undefined {
             reason: "division-by-zero",
+            location: None,
         });
         let document = json_of(&OutcomeDocument::from_run(&undefined));
         assert_eq!(document["category"], "undefined");

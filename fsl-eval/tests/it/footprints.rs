@@ -243,7 +243,11 @@ fn subject(document: Vec<u8>, clauses: &[&str]) -> Subject {
     )
     .expect("the unit assembles");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     Subject {
         package: CheckedPackage::link(graph),
@@ -1078,7 +1082,9 @@ fn a_reference_literal_in_a_clause_reads_related_population_membership() {
     assert!(created.reads.contains(&any_membership_location("cells")));
     assert!(created.reads.contains(&any_membership_location("spares")));
     assert!(created.enabling.contains(&any_membership_location("cells")));
-    assert!(created.enabling.contains(&any_membership_location("spares")));
+    assert!(created
+        .enabling
+        .contains(&any_membership_location("spares")));
     let fixed = footprint_on(&system, "Gate", "literalFixed", &receiver);
     assert!(!fixed.reads.contains(&any_membership_location("cells")));
     assert!(!fixed.reads.contains(&any_membership_location("spares")));

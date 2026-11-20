@@ -140,7 +140,11 @@ fn check_body(result: TypeForm, body: Expression) -> Result<CheckedGraph, Vec<Ch
             fsl_foundation::IdentityLimits::default(),
         )
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 /// A `let`, `count`, `sum`, query or `fold` binder read after the form's

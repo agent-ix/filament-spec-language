@@ -83,7 +83,7 @@ protocol Flow using p over (view: M::Workflow) on origin {
     run sequence Main {
         check Gate using v { true };
         attempt Tried by Service on M::Workflow::apply contracts [BeforeApply,AfterApply]
-            as (attempted: M::Notice) { attempted.ready };
+            as (attempted: Boolean) { attempted };
         effect Applied of Tried as (applied: M::Workflow) { L::Ready(applied.ready) };
         event Recovered by Service for Full as (recoveryEvent: M::Notice) { recoveryEvent.ready };
         commit Committed by Service as (committed: M::Notice) { committed.ready };

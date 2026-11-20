@@ -10,6 +10,8 @@
 //! `ModelSystem`. Liveness items under a reduction, partial-order reduction
 //! (`crate::partial_order`) and the obligation identity are not covered here.
 
+mod completion_boundaries;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::Cancel;
@@ -148,6 +150,37 @@ fn run(
     world
         .run(clause, atoms, reductions, None, ModelCheckLimits::default())
         .expect("checked")
+}
+
+/// Constraints and partial-order reduction already produce concrete paths:
+/// neither may rewrite the witness while settling it through subject replay.
+#[trace("FR-161-AC-4")]
+#[test]
+fn concrete_constraint_and_partial_order_refutations_keep_the_unreduced_witness() {
+    let world = count(&[infinite("always holds(x.v <= 0)")]);
+    let atoms = || vec![atom(|v| Some(v <= 0))];
+    let plain = run(&world, Some(0), atoms(), Reductions::default());
+    let expected = violation(&plain);
+    assert_eq!(expected.prefix.len(), 1);
+    assert_eq!(
+        world
+            .positions(expected)
+            .last()
+            .map(|state| value(state, "a")),
+        Some(1)
+    );
+    for selection in [constraint("Low"), partial_order()] {
+        let outcome = run(&world, Some(0), atoms(), selection);
+        assert_eq!(
+            violation(&outcome),
+            expected,
+            "a concrete path must not be rebuilt"
+        );
+        let record = world.settle_clause(0, atoms(), &outcome);
+        assert_eq!(record.value, TerminalValue::Refuted);
+        assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
+        assert_eq!(record.counterexample.as_ref(), Some(expected));
+    }
 }
 
 fn settled(outcome: &ModelCheckOutcome) -> ReductionCause {

@@ -123,6 +123,10 @@ fn operation_role(identity: &str) -> OperationRole {
         OperationRole::Narrow
     } else if IEEE_RELATIONS.contains(&identity) {
         OperationRole::Other
+    } else if identity.starts_with("filament.op.text.to_") {
+        // FR-478 text conversion is runtime partial: malformed text is
+        // undefined, so it carries no value-validity body obligation.
+        OperationRole::Other
     } else if SCALAR_FAMILIES
         .iter()
         .any(|family| identity.starts_with(family))
@@ -174,6 +178,11 @@ impl SiteGuard {
 enum SiteBound {
     /// The target range of the narrow that directly wraps the application.
     Narrowed(IntegerInterval),
+    /// An authored conversion has its own location, outside the scalar's span.
+    ExplicitNarrowed {
+        value_type: ValueType,
+        location: Location,
+    },
     /// The application's own result type.
     Own(ValueType),
 }
@@ -198,6 +207,7 @@ impl ClaimSite {
     pub fn result_bound(&self) -> ValueType {
         match &self.bound {
             SiteBound::Narrowed(interval) => ValueType::Int(interval.clone()),
+            SiteBound::ExplicitNarrowed { value_type, .. } => value_type.clone(),
             SiteBound::Own(value_type) => value_type.clone(),
         }
     }
@@ -483,11 +493,16 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::QuantityNegate(..)
         | NodeKind::QuantityPower(..)
         | NodeKind::ConvertDecimal(..)
-        | NodeKind::ConvertText(..)
         | NodeKind::Order(..)
         | NodeKind::IeeeToRational(..) => true,
         NodeKind::ConvertScalar(target, operand) => {
-            scalar_conversion_target(target, node.at(*operand).value_type()).is_some()
+            let source = node.at(*operand).value_type();
+            scalar_conversion_target(target, source).is_some_and(|target| {
+                !matches!(
+                    super::numeric_conversion::classify(source, target),
+                    Some(super::numeric_conversion::Class::RangeNarrowing)
+                )
+            })
         }
         NodeKind::Equality(_, _, left, _) => scalar_equality(node.at(*left).value_type()),
         // A Text size lowers to `filament.op.text.size`, a scalar application;
@@ -521,6 +536,7 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::Record { .. }
         | NodeKind::Collection { .. }
         | NodeKind::ConvertCollection { .. }
+        | NodeKind::ConvertText(..)
         | NodeKind::Query { .. }
         | NodeKind::Flatten(_)
         | NodeKind::Fold { .. }
@@ -860,7 +876,21 @@ impl<'n> ClaimsWalk<'n, '_> {
                     NodeKind::Coerce(operand, interval)
                         if coerce_node_builds_narrow(parent.node.at(*operand), interval) =>
                     {
-                        Some(interval)
+                        Some(SiteBound::Narrowed(interval.clone()))
+                    }
+                    NodeKind::ConvertScalar(_, operand)
+                        if matches!(
+                            super::numeric_conversion::classify(
+                                parent.node.at(*operand).value_type(),
+                                parent.node.value_type()
+                            ),
+                            Some(super::numeric_conversion::Class::RangeNarrowing)
+                        ) =>
+                    {
+                        Some(SiteBound::ExplicitNarrowed {
+                            value_type: parent.node.value_type().clone(),
+                            location: parent.node.location().clone(),
+                        })
                     }
                     _ => None,
                 });
@@ -969,7 +999,7 @@ impl Classify<'_> {
     fn claim(
         &self,
         node: CheckedNode<'_>,
-        narrow: Option<&IntegerInterval>,
+        narrow: Option<SiteBound>,
         guard: Option<usize>,
         reads: &BTreeSet<BinderSite>,
         operand_objects: &BTreeSet<EffectiveId>,
@@ -1009,10 +1039,7 @@ impl Classify<'_> {
                 .ok_or_else(|| fault("domain-root-classified"))?;
             domains.insert((root.clone(), path), kind);
         }
-        let bound = match narrow {
-            Some(interval) => SiteBound::Narrowed(interval.clone()),
-            None => SiteBound::Own(node.value_type().clone()),
-        };
+        let bound = narrow.unwrap_or_else(|| SiteBound::Own(node.value_type().clone()));
         Ok(ValueClaim {
             site: ClaimSite {
                 location: node.location().clone(),
@@ -1116,8 +1143,15 @@ pub(crate) fn key_claims(
         let (Some((key, origin)), None) = (applications.next(), applications.next()) else {
             return Err(unkeyable());
         };
-        let (bound_type, conversion_context) = if matches!(site.bound, SiteBound::Narrowed(_)) {
-            let (narrow, narrow_origin) = unique_direct_narrow(here, key.clone(), graph)?;
+        let narrow_candidates = match &site.bound {
+            SiteBound::Narrowed(_) => Some(here),
+            SiteBound::ExplicitNarrowed { location, .. } => {
+                Some(at.get(location).map_or(&[][..], Vec::as_slice))
+            }
+            SiteBound::Own(_) => None,
+        };
+        let (bound_type, conversion_context) = if let Some(candidates) = narrow_candidates {
+            let (narrow, narrow_origin) = unique_direct_narrow(candidates, key.clone(), graph)?;
             (
                 graph
                     .node(narrow.clone())

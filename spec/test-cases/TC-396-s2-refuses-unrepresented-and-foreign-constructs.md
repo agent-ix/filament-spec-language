@@ -5,14 +5,15 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-763
+    type: verifies
 ---
 # TC-396: S2 refuses unrepresented constructs, and the check stage refuses another family's construct with that family's cause
 
 ## Description
 
-Verify two things. S2 refuses the whole unit, and never yields a partial
-form, for a construct with no `Expression` variant (ADR-011 §2.3 E2). And
-S2 builds the `forms`-core variant for `deref`, `pre` and `allInstances`
+Verify that S2 builds the admitted index, typed-size, option and qualified
+reachability forms. It also builds the `forms`-core variant for `deref`, `pre` and `allInstances`
 nested in a function body, which the check stage then refuses with the
 owning family's catalogued cause.
 
@@ -29,7 +30,8 @@ Every fixture unit below starts with the complete-V1 header
 alias is `v`.
 
 1. For each body below, build an admissible unit whose one function body is
-   that construct, and run S2: `xs[0]`; `none`; `reaches(a, b, M::R)`.
+   that construct, and run S2: `xs[0]`; `size<Int[0, 1]>(c)`; `none`;
+   `reaches(a, b, M::R)`.
 2. Run S2 on `a div b`, `a rem b`, `a mod b` and
    `if true then 1 else a mod b`, each under a state-only declaration
    without `filament.value.complete/v1`; pass the resulting forms to check.
@@ -45,8 +47,14 @@ Tag the test `#[trace("FR-091-AC-7", "FR-091-AC-8", "FR-091-AC-39")]`.
 
 ## Expected Results
 
-- Every step-1 case refuses with cause `UnrepresentedConstruct`, names the
-  construct's CST production and exact span, and returns no parsed unit.
+- In step 1, `xs[0]` builds as `Index` with its operand, index and exact
+  span (FR-680); `size<Int[0, 1]>(c)` builds as `Size` with its operand,
+  result type and exact span (FR-981). Test:
+  `value_forms::formerly_unrepresented_value_constructs_build_with_their_spans`.
+  `none` builds as `Absent` (FR-091-AC-76). `reaches(a, b, M::R)` builds
+  as `Reaches` with both operands and the entire edge name and span;
+  S2 does not resolve `M::R`. The latter admission is asserted by
+  `value_forms::a_qualified_edge_in_a_function_builds_with_its_name_and_span`.
 - Step 2 returns parsed forms with distinct operators and original spans.
   Check then refuses each with located `unsupported_construct`, including
   the dead branch's `mod`; it never returns `UnrepresentedConstruct` at S2.

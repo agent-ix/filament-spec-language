@@ -437,6 +437,7 @@ fn run_execute(
         accounting,
         supplied: Default::default(),
         prepare: PrepareLimits::default(),
+        session: Default::default(),
     };
     *typed = Some(ExecuteResult(std::sync::Arc::new(execute(
         checked.package(),
@@ -462,6 +463,7 @@ fn run_execute(
         accounting,
         supplied: Default::default(),
         backend: choice,
+        live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
     };
     let result = run_with_backends(
         SourceIdentity::new(parameters.source_authority, parameters.source_identity),

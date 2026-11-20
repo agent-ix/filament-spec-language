@@ -32,6 +32,11 @@ mod command_harness;
 mod compile_command;
 mod no_binary;
 mod parse_operation;
+#[cfg(feature = "checked-handoff")]
+mod probability_source_routes;
+#[cfg(feature = "checked-handoff")]
+mod protocol_source_routes;
+mod refinement_source_routes;
 mod source_corpus;
 
 #[cfg(feature = "checked-handoff")]
@@ -41,12 +46,18 @@ pub(crate) mod negotiation;
 #[path = "../support/mod.rs"]
 pub(crate) mod support;
 
+#[path = "../../fsl-semantics/tests/support/reward_evaluator.rs"]
+mod reward_evaluator;
+
 mod abstraction_relation_inert;
 mod architecture_fixture_spine;
 mod call_replay_context_items;
 mod call_requirements_items;
 mod check_imports;
 mod checked_clause_kind_unique;
+mod checked_package_state_core;
+#[cfg(feature = "checked-handoff")]
+mod checker_value_boundaries;
 mod clock_derivation;
 mod clock_reach;
 mod clock_selection;
@@ -57,6 +68,7 @@ mod composition_planner;
 mod config_version_spine;
 mod control_node_lowered_type;
 mod diagnostic_golden;
+mod error_producer_inputs;
 mod dimension_node_v2;
 mod dispatch_emission;
 mod division_law_editor;
@@ -67,9 +79,15 @@ mod emit_readback_agreement;
 mod evaluate_reads_no_display_strings;
 mod evidence_ledger_file;
 mod exact_decimals;
+mod export_rulings;
+mod export_state_lowering;
+mod export_surface;
+mod export_temporal_lowering;
 mod extension_forms;
 mod extension_s1_parse;
 mod family_outcome_layering;
+mod forms_package_contracts;
+mod first_rule_readme;
 mod formal_source;
 mod formatter_identity;
 mod forms_refusal_cause;
@@ -78,8 +96,8 @@ mod guarantee_planner;
 mod half_open_watermark;
 mod observation_model_header;
 mod outcome_diagnostic_details;
+mod package_run_route;
 mod plan_export_surface;
-mod export_rulings;
 mod planner_chain;
 mod port_role_identity;
 mod producer_unit_identity;
@@ -108,7 +126,9 @@ mod compound_quantity_types;
 mod fairness_item_path;
 mod hybrid_request_items;
 mod layer_crate_reexports;
+mod lifecycle_boundaries;
 mod limit_name_patterns;
+mod lowering_intake_boundaries;
 #[cfg(feature = "checked-handoff")]
 mod mapping_support;
 mod mapping_support_occurrences;
@@ -141,6 +161,7 @@ mod spine_deletion_boundaries;
 mod spine_retained_criteria;
 mod spine_run;
 mod standard_pin;
+mod synthesis_request;
 mod synthesis_verify_check;
 mod temporal_capture_run;
 mod temporal_negotiation;

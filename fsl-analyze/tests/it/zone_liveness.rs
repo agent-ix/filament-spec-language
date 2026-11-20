@@ -5,7 +5,10 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{ZoneCheckLimits, ZoneCheckOutcome, ZoneUndecided};
-use fsl_replay::{CounterexampleKind, TemporalCounterexample};
+use fsl_replay::{
+    AcceptanceSet, CertificateLocus, CertificateRejection, CertificateRule, ComponentReason,
+    CounterexampleKind, TemporalCounterexample,
+};
 use ix_trace_rs::trace;
 
 use crate::timed_world::{document, world, World, DENSE};
@@ -464,4 +467,139 @@ fn a_drifting_violation_has_no_periodic_counterexample() {
         ),
         "{outcome:?}"
     );
+}
+
+/// FR-235-AC-7's settled record of `world`'s claim, through the core
+/// checker and FR-237's replay, in its `Debug` spelling.
+fn settled_non_zeno(world: &World) -> String {
+    let outcome = decide(world);
+    let record = fsl_analyze::zone_check::settle_zone_check(
+        fsl_analyze::zone_check::ZoneItem::Outcome(&outcome),
+        &Cancel::new(),
+        |certificate| {
+            crate::zone_search::check(
+                world,
+                certificate,
+                fsl_replay::CertificateCheckLimits::default(),
+            )
+        },
+        |payload| {
+            replay(world, payload).map(|settlement| fsl_replay::ModelTraceReplayResult {
+                settlement,
+                hints: Vec::new(),
+                terminals: Default::default(),
+            })
+        },
+    );
+    format!("{record:?}")
+}
+
+/// FR-235-AC-7: every record EN-6 settles on its liveness product states
+/// what the verdict owes to the non-Zeno premise, and a TT-1 record does
+/// not.
+#[trace("TC-3021", "FR-235-AC-7")]
+#[trace("FSpec-TC-2041", "FSpec-FR-416-AC-10")]
+#[test]
+fn a_liveness_record_states_its_non_zeno_premise() {
+    let cases = [
+        (response(4, ""), "non_zeno: Some(NotRequired)"),
+        (rpc_reply_loop(), "non_zeno: Some(Assumed)"),
+        (rpc_echo(), "non_zeno: Some(Checked)"),
+        (
+            windowed(
+                &["x"],
+                &[("ping", &[])],
+                "time invariant Stall when { true } { self.x <= 1 ms }\n",
+                "always eventually holds(true)",
+            ),
+            "non_zeno: Some(Refuted)",
+        ),
+        (crate::zone_search::rpc(4), "non_zeno: None"),
+        (crate::zone_search::ticker(false), "non_zeno: None"),
+    ];
+    for (world, expected) in cases {
+        let record = settled_non_zeno(&world);
+        assert!(record.contains(expected), "{expected}: {record}");
+    }
+}
+
+/// FR-245-AC-10: a liveness-product proof's certificate states its
+/// `non_zeno`, and the core checker accepts the value it recomputes. The
+/// swapped, removed and unexpected values are rejected `NonZenoMismatch`
+/// at `CertificateMember{non_zeno}`; that half needs the certificate field
+/// this stub names.
+#[trace("TC-3021", "FR-245-AC-10")]
+#[trace("FSpec-TC-2041", "FSpec-FR-418-AC-15")]
+#[test]
+fn a_liveness_certificate_states_its_non_zeno() {
+    for (world, expected, wrong) in [
+        (
+            response(4, ""),
+            fsl_replay::NonZeno::NotRequired,
+            fsl_replay::NonZeno::Assumed,
+        ),
+        (
+            rpc_reply_loop(),
+            fsl_replay::NonZeno::Assumed,
+            fsl_replay::NonZeno::NotRequired,
+        ),
+    ] {
+        let ZoneCheckOutcome::Holds { certificate, .. } = decide(&world) else {
+            panic!("a proof");
+        };
+        let stated = format!("{certificate:?}");
+        assert!(
+            stated.contains(&format!("non_zeno: Some({expected:?})")),
+            "{stated}"
+        );
+        let verdict = crate::zone_search::check(
+            &world,
+            &certificate,
+            fsl_replay::CertificateCheckLimits::default(),
+        )
+        .expect("the check runs");
+        assert_eq!(
+            verdict,
+            fsl_replay::ZoneCertificateVerdict::Accepted,
+            "{verdict:?}"
+        );
+        for non_zeno in [None, Some(wrong)] {
+            let mut tampered = certificate.clone();
+            tampered.non_zeno = non_zeno;
+            assert_eq!(
+                crate::zone_search::check(
+                    &world,
+                    &tampered,
+                    fsl_replay::CertificateCheckLimits::default(),
+                )
+                .expect("the check runs"),
+                fsl_replay::ZoneCertificateVerdict::Rejected(CertificateRejection {
+                    rule: CertificateRule::NonZenoMismatch,
+                    at: CertificateLocus::NonZenoMember,
+                }),
+            );
+        }
+        if expected == fsl_replay::NonZeno::NotRequired {
+            let mut forged = certificate.clone();
+            forged.non_zeno = Some(fsl_replay::NonZeno::Assumed);
+            forged
+                .components
+                .as_mut()
+                .expect("a liveness component list")
+                .reasons[0] = ComponentReason::Lacks(AcceptanceSet::Divergence);
+            assert_eq!(
+                crate::zone_search::check(
+                    &world,
+                    &forged,
+                    fsl_replay::CertificateCheckLimits::default(),
+                )
+                .expect("the check runs"),
+                fsl_replay::ZoneCertificateVerdict::Rejected(CertificateRejection {
+                    rule: CertificateRule::NonZenoMismatch,
+                    at: CertificateLocus::NonZenoMember,
+                }),
+                "a divergence-missing acyclic component is not an accepting cycle",
+            );
+        }
+    }
 }

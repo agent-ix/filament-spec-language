@@ -25,6 +25,8 @@ use std::sync::{Arc, OnceLock};
 
 use crate::prob_world::{self, World};
 
+mod certificate_boundary_cases;
+
 /// `Link` delivers within two attempts: the least delivery probability over
 /// every scheduler is 24/25 (send_b twice), the greatest 99/100.
 const CLAIMS: &str =
@@ -47,6 +49,54 @@ fn settle(
     let mut records = analyze_items(&engines, vec![item], &Cancel::new());
     assert_eq!(records.len(), 1);
     records.remove(0)
+}
+
+/// Equality at the exact reachability threshold proves with the checked
+/// EN-5 basis; increasing only that threshold refutes instead of certifying.
+#[trace("FR-290-AC-1")]
+#[test]
+fn exact_threshold_equality_is_certified_but_a_stricter_threshold_is_refuted() {
+    let claims =
+        "probabilistic AtBound using inf on M over (m: M::Msg) under every scheduler on origin \
+        { probability >= 0.96 [ eventually holds(m.delivered) ] }\n\
+        probabilistic AboveBound using inf on M over (m: M::Msg) under every scheduler on origin \
+        { probability >= 0.9601 [ eventually holds(m.delivered) ] }\n";
+    let world = World::new(&prob_world::link(claims));
+    let at = settle(&world, "AtBound", ModelCheckLimits::default());
+    let terminal = at.terminal().expect("the admitted claim settles");
+    assert_eq!(terminal.backend().map(|id| id.as_str()), Some("en-5"));
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        certification: Certification::Certified,
+    } = terminal.value()
+    else {
+        panic!(
+            "the exact inclusive bound must prove: {:?}",
+            terminal.value()
+        );
+    };
+    assert_eq!(value.value(), &ratio(24, 25));
+    assert_eq!(
+        at.exact_probabilistic
+            .as_ref()
+            .expect("checked evidence")
+            .value,
+        ratio(24, 25)
+    );
+
+    let above = settle(&world, "AboveBound", ModelCheckLimits::default());
+    assert_eq!(
+        above.terminal().expect("a terminal record").value(),
+        &TerminalValue::Refuted
+    );
+    assert!(
+        above.exact_probabilistic.is_none(),
+        "a refutation is not a certified proof"
+    );
+    assert!(
+        above.probabilistic_counterexample.is_some(),
+        "the strict bound needs replayed evidence"
+    );
 }
 
 #[trace("TC-762", "FR-281-AC-1")]

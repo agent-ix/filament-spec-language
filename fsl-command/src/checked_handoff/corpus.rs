@@ -978,7 +978,6 @@ mod tests {
                 document_pointer: None,
                 extension_detail: None,
                 protocol_detail: None,
-                terminal_duplicate: None,
             })
         }
 

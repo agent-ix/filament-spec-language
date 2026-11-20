@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_eval::{FamilyOutcome, FamilyResult};
+use filament_eval::{FamilyOutcome, FamilyResult, SessionLimits};
 use filament_exact::{
     Cancel, CancelCause, Incomplete, Integer, Outcome, Refusal, ScalarLimits, Undefined, Value,
     ValueType,
@@ -50,6 +50,10 @@ use fsl_foundation::SourceIdentity;
 
 /// FR-100: the default `work_units` limit when a request omits it.
 pub const DEFAULT_WORK_UNITS: u64 = 1_000_000;
+
+/// NFR-130, FR-255: the default `evaluation.live_occurrences` limit when a
+/// request omits it.
+pub const DEFAULT_LIVE_OCCURRENCES: u64 = 1_048_576;
 
 /// FR-100's default `work_units` with every other accounting counter at
 /// `u64::MAX`.
@@ -138,6 +142,10 @@ pub struct Call {
     /// clock-bearing declarations by clock name; empty when the request
     /// supplied none.
     pub clocks: super::RequestClocks,
+    /// NFR-130: the call's `evaluation.live_occurrences` limit, the frames
+    /// in progress and their bound argument values the evaluation may hold at
+    /// once. It is not an accounting counter.
+    pub live_occurrences: u64,
 }
 
 impl Call {
@@ -158,6 +166,7 @@ impl Call {
             supplied,
             backend: filament_eval::ExecutionBackendChoice::default(),
             clocks: super::RequestClocks::default(),
+            live_occurrences: DEFAULT_LIVE_OCCURRENCES,
         }
     }
 }
@@ -255,6 +264,8 @@ pub enum CallOutcome {
     Undefined {
         /// The reason's tabled spelling.
         reason: &'static str,
+        /// The expression location retained by the evaluator, when present.
+        location: Option<Location>,
     },
     /// `Outcome::Incomplete(i)`: `incomplete`, exit 22.
     Incomplete(CallIncomplete),
@@ -273,11 +284,15 @@ pub struct CallIncomplete {
 }
 
 impl CallIncomplete {
-    /// The `Call::accounting` field that raises this bound: the exhausted
-    /// counter's `filament.value.accounting/v1` member name, which is no setting
-    /// name (see [`Self::setting`]).
+    /// The limit field reported for this incomplete call. Scalar accounting
+    /// limits retain their counter name; the session limit reports its
+    /// qualified setting name.
     pub fn limits_field(&self) -> &'static str {
-        self.record.limit_kind.as_str()
+        if self.record.limit_kind == filament_exact::LimitKind::LiveOccurrences {
+            self.setting_name()
+        } else {
+            self.record.limit_kind.as_str()
+        }
     }
 
     /// The setting that raises this bound at every entry point (FR-255
@@ -1013,6 +1028,10 @@ pub(crate) fn run_compiled(
             accounting: call.accounting,
             supplied: call.supplied,
             prepare: *prepare,
+            session: SessionLimits {
+                live_occurrences: call.live_occurrences,
+                held: 0,
+            },
         },
         cancel,
     )
@@ -1063,12 +1082,6 @@ fn bind_snapshot_populations(
     parameters: &[(String, ValueType)],
     call: &Call,
 ) -> Result<ObjectEnvironment, Box<RunRefusal>> {
-    use fsl_semantics::model::dispatch::GeneralizationClosure;
-    use fsl_semantics::model::domain_package::DomainPackageRecord;
-    use fsl_semantics::model::population::{
-        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember,
-    };
     let mut environment = objects.clone();
     for (position, (name, value_type)) in parameters.iter().enumerate() {
         let ValueType::Population(maximum) = value_type else {
@@ -1083,59 +1096,78 @@ fn bind_snapshot_populations(
         else {
             continue;
         };
-        let Some(members) = objects.population_members(named) else {
-            continue;
-        };
-        let wrong = || Box::new(RunRefusal::WrongValueKind { position });
-        let Some((model, key)) = models.iter().find_map(|model| {
-            model
-                .view
-                .domain_package()
-                .records
-                .iter()
-                .find_map(|record| match record {
-                    DomainPackageRecord::Population(population) if population.key.node == named => {
-                        Some((model, population.key.clone()))
-                    }
-                    _ => None,
-                })
-        }) else {
-            continue;
-        };
-        let documents = members
-            .iter()
-            .map(|member| {
-                model
-                    .view
-                    .type_identities()
-                    .iter()
-                    .find(|(_, identity)| *identity == member.object_type())
-                    .map(|(declaration, _)| PopulationMember {
-                        object: member.object().as_str().to_owned(),
-                        type_identity: declaration.clone(),
-                        field_values: Vec::new(),
-                    })
-            })
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(wrong)?;
-        let document = PopulationDocument {
-            model_identity: model.view.model_selection().identity.clone(),
-            members: documents,
-        };
-        let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
-        let AdmissionOutcome::Admitted(binding) = admit_binding(
-            &model.view,
-            &document,
-            &key,
-            GeneralizationClosure::Closed,
-            *maximum,
-            &mut meter,
-        ) else {
-            return Err(wrong());
-        };
-        environment = environment.with_population(binding).map_err(|_| wrong())?;
+        environment = bind_snapshot_population(environment, models, named, *maximum, position)?;
     }
     Ok(environment)
+}
+
+/// Binds one named population from an already admitted snapshot, preserving
+/// the declared maximum of its parameter.
+pub(super) fn bind_snapshot_population(
+    objects: ObjectEnvironment,
+    models: &[fsl_semantics::model::intake::SelectedModel],
+    named: &str,
+    maximum: Option<u64>,
+    position: usize,
+) -> Result<ObjectEnvironment, Box<RunRefusal>> {
+    use fsl_semantics::model::dispatch::GeneralizationClosure;
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    use fsl_semantics::model::population::{
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
+    };
+
+    let Some(members) = objects.population_members(named) else {
+        return Ok(objects);
+    };
+    let wrong = || Box::new(RunRefusal::WrongValueKind { position });
+    let Some((model, key)) = models.iter().find_map(|model| {
+        model
+            .view
+            .domain_package()
+            .records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::Population(population) if population.key.node == named => {
+                    Some((model, population.key.clone()))
+                }
+                _ => None,
+            })
+    }) else {
+        return Ok(objects);
+    };
+    let documents = members
+        .iter()
+        .map(|member| {
+            model
+                .view
+                .type_identities()
+                .iter()
+                .find(|(_, identity)| *identity == member.object_type())
+                .map(|(declaration, _)| PopulationMember {
+                    object: member.object().as_str().to_owned(),
+                    type_identity: declaration.clone(),
+                    field_values: Vec::new(),
+                })
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(wrong)?;
+    let document = PopulationDocument {
+        model_identity: model.view.model_selection().identity.clone(),
+        members: documents,
+    };
+    let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
+    let AdmissionOutcome::Admitted(binding) = admit_binding(
+        &model.view,
+        &document,
+        &key,
+        GeneralizationClosure::Closed,
+        maximum,
+        &mut meter,
+    ) else {
+        return Err(wrong());
+    };
+    objects.with_population(binding).map_err(|_| wrong())
 }
 
 /// FR-650 "Arguments": the object world of the call's snapshot, admitted
@@ -1680,6 +1712,7 @@ pub(crate) fn kernel_undefined_reason(reason: Undefined) -> &'static str {
         Undefined::NoneValue => "none-value",
         Undefined::NoElement => "no-element",
         Undefined::SumOutOfDomain => "sum-out-of-domain",
+        Undefined::MalformedNumber => "malformed-number",
     }
 }
 
@@ -1765,7 +1798,18 @@ pub(crate) fn convert_outcome(
     graph: &CheckedGraph,
     sources: &[Source],
 ) -> Result<CallOutcome, Box<RunRefusal>> {
-    let record = fsl_eval::value::refusal_record(&evaluation, |location| graph.region(location));
+    convert_outcome_resolving(evaluation, |location| graph.region(location), sources)
+}
+
+/// [`convert_outcome`] with `resolve` mapping a location to its source region:
+/// a checked graph's region, or none for a package read from its bytes.
+#[deny(clippy::wildcard_enum_match_arm)]
+pub(crate) fn convert_outcome_resolving(
+    evaluation: filament_eval::Evaluation,
+    resolve: impl Fn(&Location) -> Option<fsl_foundation::source::provenance::SourceRegion>,
+    sources: &[Source],
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    let record = fsl_eval::value::refusal_record(&evaluation, resolve);
     let filament_eval::Evaluation {
         outcome, location, ..
     } = evaluation;
@@ -1796,6 +1840,7 @@ pub(crate) fn convert_outcome(
         )?)),
         FamilyOutcome::Evaluated(Outcome::Undefined(reason)) => Ok(CallOutcome::Undefined {
             reason: kernel_undefined_reason(reason),
+            location,
         }),
         FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
             Ok(CallOutcome::Incomplete(CallIncomplete {
@@ -1815,6 +1860,7 @@ pub(crate) fn convert_outcome(
         FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => {
             Ok(CallOutcome::Undefined {
                 reason: cause.undefined_record().reason.as_str(),
+                location,
             })
         }
         // FR-063: no arm for the probe variant under `--cfg seam_probe`

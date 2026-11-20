@@ -109,7 +109,11 @@ fn fixture(delivery: &str, capacity: u64, overflow: &str, run: &str) -> Fixture 
             Vec::new(),
         )
         .expect("unit assembled")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("protocol checks: {refusals:?}")),
     );
 

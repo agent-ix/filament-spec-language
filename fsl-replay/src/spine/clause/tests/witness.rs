@@ -144,6 +144,25 @@ fn witness_unit() -> Unit {
     unit_for(witness_unit_text(), config_version_domain_document())
 }
 
+fn tc_3121_unit_text() -> String {
+    witness_unit_text()
+        .lines()
+        .filter(|line| {
+            !line.starts_with("invariant ")
+                || line.starts_with("invariant AllBelow ")
+                || line.starts_with("invariant NotAllBelow ")
+                || line.starts_with("invariant RefusedDomain ")
+                || line.starts_with("invariant MatchesParent ")
+                || line.starts_with("invariant AtLeastParent ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn tc_3121_unit() -> Unit {
+    unit_for(tc_3121_unit_text(), config_version_domain_document())
+}
+
 fn comparison_witness_unit_text() -> String {
     let unit = witness_unit_text()
         .lines()
@@ -1641,7 +1660,9 @@ fn tc_741_corpus_and_function_reports_carry_their_basis() {
         |request: ClauseRunRequest, basis, parent_version, child_version| {
             let report = run_clause(request).expect("a well-formed request always reports");
             assert_eq!(report.basis, basis);
-            let record = report.witness.expect("the decisive report has a witness record");
+            let record = report
+                .witness
+                .expect("the decisive report has a witness record");
             assert_eq!(record.deciding_comparison, Some(comparison.clone()));
             let operands = record.operands.as_ref().expect("comparison operands");
             assert!(crate::result::same_element(
@@ -1677,11 +1698,19 @@ fn tc_741_corpus_and_function_reports_carry_their_basis() {
         |report: crate::spine::ClauseRunReport, basis, truth, post_version, pre_version| {
             assert_eq!(report.basis, basis);
             assert_eq!(report.disposition.truth(), Some(truth));
-            let record = report.witness.expect("the decisive report has a witness record");
+            let record = report
+                .witness
+                .expect("the decisive report has a witness record");
             assert_eq!(record.deciding_comparison, Some(version_comparison.clone()));
             let operands = record.operands.as_ref().expect("comparison operands");
-            assert!(crate::result::same_element(&operands[0], &integer(post_version)));
-            assert!(crate::result::same_element(&operands[1], &integer(pre_version)));
+            assert!(crate::result::same_element(
+                &operands[0],
+                &integer(post_version)
+            ));
+            assert!(crate::result::same_element(
+                &operands[1],
+                &integer(pre_version)
+            ));
             assert_eq!(record.decision_path, Some(vec![version_comparison.clone()]));
         };
     assert_version_unchanged_record(
@@ -1849,6 +1878,275 @@ fn replay_with(
     )
 }
 
+/// FR-269-AC-6/9: the public entry returns the clause run's canonical record
+/// without reading the payload record, and replay settles an absent comparison
+/// record by checking the derived record itself.
+#[trace("TC-3121", "FR-269-AC-6", "FR-269-AC-9")]
+#[test]
+fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
+    let unit = tc_3121_unit();
+    let (wire, envelope) = replay_case(
+        &unit,
+        "MatchesParent",
+        Snapshot::High,
+        "mid",
+        None,
+        witness_source(),
+    );
+    let envelope = envelope.expect("the envelope reconstructs");
+    let derive = || {
+        crate::derive_state_clause_witness(
+            wire.clone(),
+            &envelope,
+            crate::ReplayLimits::default(),
+        )
+        .expect("the public derivation completes")
+        .expect("MatchesParent has a decisive comparison")
+    };
+    let record = derive();
+    let repeated = derive();
+    assert_eq!(record, repeated);
+
+    let report = run("MatchesParent", Snapshot::High, "mid");
+    let native_record = report
+        .witness
+        .as_ref()
+        .expect("the clause run carries its decisive comparison");
+    assert_eq!(&record, native_record);
+    let native_bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let native: serde_json::Value = serde_json::from_slice(&native_bytes).unwrap();
+    let encoded = |record: &SeparatingWitnessRecord| {
+        let wire = crate::result::RecordWire::of(record).unwrap();
+        let value = serde_json::to_value(wire).unwrap();
+        quire_canonical::to_vec(&value, quire_canonical::Limits::new(u64::MAX)).unwrap()
+    };
+    let native_witness = quire_canonical::to_vec(
+        &native["witness"],
+        quire_canonical::Limits::new(u64::MAX),
+    )
+    .unwrap();
+    assert_eq!(encoded(&record), native_witness);
+    assert_eq!(encoded(&record), encoded(&repeated));
+
+    let replay = replay_state_clause(
+        wire.clone(),
+        &envelope,
+        crate::ReplayLimits::default(),
+    )
+    .unwrap();
+    let replay_record = witness_arm(&replay)
+        .record()
+        .expect("the absent comparison record settles with the derived record");
+    assert_eq!(replay_record, &record);
+    assert_eq!(encoded(replay_record), native_witness);
+
+    let (input_wire, input_envelope) = replay_case(
+        &unit,
+        "MatchesParent",
+        Snapshot::High,
+        "mid",
+        None,
+        input_source(),
+    );
+    let input_envelope = input_envelope.expect("the input envelope reconstructs");
+    let ReplayResult::Input(input) = replay_state_clause(
+        input_wire,
+        &input_envelope,
+        crate::ReplayLimits::default(),
+    )
+    .unwrap()
+    .result()
+    .clone()
+    else {
+        panic!("the input arm stays an input result");
+    };
+    assert_eq!(
+        input.settlement(),
+        InputSettlement::ReproducedWithoutWitness
+    );
+}
+
+/// FR-269-AC-9: absent quantifier records and a different comparison record
+/// remain mismatches; only an absent comparison record is settled by replay.
+#[trace("TC-3121", "FR-269-AC-9")]
+#[test]
+fn tc_3121_absent_quantifier_and_different_comparison_records_still_mismatch() {
+    let unit = tc_3121_unit();
+    let (wire, envelope) = replay_case(
+        &unit,
+        "AllBelow",
+        Snapshot::High,
+        "mid",
+        None,
+        witness_source(),
+    );
+    let envelope = envelope.expect("the envelope reconstructs");
+    let replay = replay_state_clause(
+        wire,
+        &envelope,
+        crate::ReplayLimits::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        witness_arm(&replay).disagreement(),
+        Some(DisagreementCause::Witness {
+            given: None,
+            failure: WitnessFailure::Mismatch,
+            ..
+        })
+    ));
+
+    let mut different = derive(&unit, "MatchesParent", Snapshot::High, "mid")
+        .expect("MatchesParent derives a comparison")
+        .record
+        .expect("the comparison is decisive");
+    different.operands = Some([integer(600), integer(1)]);
+    let (wire, envelope) = replay_case(
+        &unit,
+        "MatchesParent",
+        Snapshot::High,
+        "mid",
+        Some(different),
+        witness_source(),
+    );
+    let envelope = envelope.expect("the envelope reconstructs");
+    let replay = replay_state_clause(
+        wire,
+        &envelope,
+        crate::ReplayLimits::default(),
+    )
+    .unwrap();
+    let DisagreementCause::Witness {
+        given: Some(given),
+        derived: Some(derived),
+        failure: WitnessFailure::Mismatch,
+        ..
+    } = witness_arm(&replay).disagreement().expect("the records differ")
+    else {
+        panic!("the two-sided mismatch keeps both records");
+    };
+    let [Value::Integer(given_left), Value::Integer(given_right)] = given
+        .operands
+        .as_ref()
+        .expect("the supplied comparison record has operands")
+    else {
+        panic!("the supplied record has integer operands");
+    };
+    assert_eq!(given_left.to_string(), "600");
+    assert_eq!(given_right.to_string(), "1");
+    let [Value::Integer(derived_left), Value::Integer(derived_right)] = derived
+        .operands
+        .as_ref()
+        .expect("the derived comparison record has operands")
+    else {
+        panic!("the derived record has integer operands");
+    };
+    assert_eq!(derived_left.to_string(), "600");
+    assert_eq!(derived_right.to_string(), "0");
+}
+
+/// FR-269-AC-7: a clause that holds is a typed NotRefuted refusal.
+#[trace("TC-3121", "FR-269-AC-7")]
+#[test]
+fn tc_3121_public_derivation_refusals_keep_catalog_metadata() {
+    let unit = tc_3121_unit();
+    let (wire, envelope) = replay_case(
+        &unit,
+        "AtLeastParent",
+        Snapshot::High,
+        "mid",
+        None,
+        witness_source(),
+    );
+    let envelope = envelope.expect("the envelope reconstructs");
+    let refusal = crate::derive_state_clause_witness(
+        wire,
+        &envelope,
+        crate::ReplayLimits::default(),
+    )
+    .expect_err("AtLeastParent holds over the high snapshot");
+    assert_eq!(refusal.code(), crate::Code::InvalidRuntimeInput.as_str());
+    assert_eq!(refusal.cause(), Some("invalid-value"));
+    assert_eq!(
+        refusal.pointer().as_deref(),
+        Some("/family_payload/observation")
+    );
+}
+
+/// FR-269-AC-7: evaluation refusals and an exhausted meter retain their
+/// catalog codes, causes and observation pointer at the public entry.
+#[trace("TC-3121", "FR-269-AC-7")]
+#[test]
+fn tc_3121_public_derivation_refused_and_exhausted_cases_keep_metadata() {
+    let unit = tc_3121_unit();
+    let (wire, envelope) = replay_case(
+        &unit,
+        "RefusedDomain",
+        Snapshot::High,
+        "mid",
+        None,
+        witness_source(),
+    );
+    let refused = crate::derive_state_clause_witness(
+        wire,
+        &envelope.expect("the refusal envelope reconstructs"),
+        crate::ReplayLimits::default(),
+    )
+    .expect_err("the RefusedDomain expression refuses during evaluation");
+    assert!(matches!(refused, crate::DerivationRefusal::Refused(_)));
+    assert_eq!(refused.code(), "integer_out_of_domain", "{refused:?}");
+    assert_eq!(refused.cause(), Some("outside-domain"), "{refused:?}");
+    assert_eq!(
+        refused.pointer().as_deref(),
+        Some("/family_payload/observation")
+    );
+
+    let (mut wire, envelope) = replay_case(
+        &unit,
+        "MatchesParent",
+        Snapshot::High,
+        "mid",
+        None,
+        witness_source(),
+    );
+    wire.accounting_limits = default_accounting(0);
+    let exhausted = crate::derive_state_clause_witness(
+        wire,
+        &envelope.expect("the exhausted envelope reconstructs"),
+        crate::ReplayLimits::default(),
+    )
+    .expect_err("the zero accounting budget exhausts evaluation");
+    assert!(matches!(exhausted, crate::DerivationRefusal::Exhausted));
+    assert_eq!(exhausted.code(), crate::Code::ResourceExhausted.as_str());
+    assert_eq!(exhausted.cause(), Some("insufficient-next-charge"));
+    assert_eq!(
+        exhausted.pointer().as_deref(),
+        Some("/family_payload/observation")
+    );
+}
+
+/// FR-269-AC-6/9: the no-parent case has a false, closed-scope basis and
+/// therefore returns `Ok(None)`.
+#[trace("TC-3121", "FR-269-AC-6", "FR-269-AC-9")]
+#[test]
+fn tc_3121_no_parent_closed_scope_returns_none() {
+    let unit = tc_3121_unit();
+    let (wire, envelope) = replay_case(
+        &unit,
+        "NotAllBelow",
+        Snapshot::Low,
+        "root",
+        None,
+        witness_source(),
+    );
+    let result = crate::derive_state_clause_witness(
+        wire,
+        &envelope.expect("the no-parent envelope reconstructs"),
+        crate::ReplayLimits::default(),
+    );
+    assert!(result.unwrap().is_none());
+}
+
 fn input_source() -> ReplaySource {
     ReplaySource::Input(Vec::new())
 }
@@ -1860,6 +2158,7 @@ fn witness_arm(result: &StateClauseReplayResult) -> &crate::WitnessArmResult {
         ReplayResult::ObservedTemporal(arm) => panic!("expected the witness arm, got {arm:?}"),
         ReplayResult::ModelGraph(arm) => panic!("expected the witness arm, got {arm:?}"),
         ReplayResult::ProtocolAnalysis(_) => panic!("a protocol analysis arm"),
+        ReplayResult::Hybrid(_) => panic!("a hybrid arm"),
     }
 }
 
@@ -2128,6 +2427,7 @@ fn tc_744_an_undefined_step_maps_to_undefined_evaluation() {
         location: Some(at.clone()),
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     };
     let reason = stopped_reason(
         evaluation,
@@ -2689,6 +2989,7 @@ fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
         )
         .expect("the unit table checks");
     (

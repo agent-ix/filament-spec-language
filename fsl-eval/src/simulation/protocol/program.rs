@@ -14,6 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use filament_checked::key::DeclarationKey;
 use filament_exact::{EffectiveId, NodeKey, ValueType};
 use fsl_semantics::check::{
     AccessOrdering, CaptureOwner, ChannelDelivery, ChannelOverflow, CheckedActivation, CheckedBody,
@@ -44,6 +45,17 @@ pub(super) struct Attempt<'a> {
     pub(super) constraint: Option<&'a CheckedBody>,
     /// The binder's slot when the operation's result is a value of the
     /// binder's type: the attempt binds its result (ADR-027 ST-1).
+    pub(super) binds: Option<usize>,
+}
+
+/// One checked recommendation's operation call and optional result filter.
+pub(super) struct Recommendation<'a> {
+    pub(super) role: String,
+    pub(super) declaring: EffectiveId,
+    pub(super) operation: String,
+    pub(super) receiver: EffectiveId,
+    pub(super) contracts: std::sync::Arc<BTreeSet<NodeKey>>,
+    pub(super) constraint: Option<&'a CheckedBody>,
     pub(super) binds: Option<usize>,
 }
 
@@ -80,6 +92,12 @@ pub(super) struct Record<'a> {
     pub(super) constraint: Option<&'a CheckedBody>,
     pub(super) slot: usize,
     pub(super) record_type: ValueType,
+}
+
+/// One checked `related by` premise of an event step (FR-731).
+pub(super) struct Related<'a> {
+    pub(super) relationship: DeclarationKey,
+    pub(super) ends: [&'a CheckedBody; 2],
 }
 
 /// One `send` or `receive` (ADR-027 ST-3, ST-4): its record, its channel
@@ -262,6 +280,7 @@ pub(super) struct Program<'a> {
     pub(super) root: ProtocolNodeId,
     pub(super) controls: BTreeMap<ProtocolNodeId, Control>,
     pub(super) attempts: BTreeMap<ProtocolNodeId, Attempt<'a>>,
+    pub(super) recommendations: BTreeMap<ProtocolNodeId, Recommendation<'a>>,
     pub(super) joins: BTreeMap<ProtocolNodeId, Join>,
     pub(super) loops: BTreeMap<ProtocolNodeId, Loop<'a>>,
     /// Each `choice`'s cases, each with its guard, in authored order.
@@ -273,6 +292,8 @@ pub(super) struct Program<'a> {
     pub(super) fences: BTreeMap<ProtocolNodeId, AccessOrdering>,
     /// Each `effect`, domain `event` and `commit` node's record.
     pub(super) events: BTreeMap<ProtocolNodeId, Record<'a>>,
+    /// Each event step's relationship premises, in source order.
+    pub(super) related: BTreeMap<ProtocolNodeId, Vec<Related<'a>>>,
     pub(super) messages: BTreeMap<ProtocolNodeId, Message<'a>>,
     pub(super) channels: Vec<Channel<'a>>,
     pub(super) finish: Finish<'a>,
@@ -601,6 +622,31 @@ impl<'a> Program<'a> {
             );
         }
 
+        let mut recommendations = BTreeMap::new();
+        for recommendation in &protocol.recommendations {
+            let node = ProtocolNodeId(recommendation.declaration);
+            let binder = binder_of.get(&node).copied();
+            let binds = binder.filter(|slot| {
+                protocol.slots.binders.get(*slot).is_some_and(|binder| {
+                    recommendation.operation.declaration.result() == Some(&binder.value_type)
+                })
+            });
+            recommendations.insert(
+                node,
+                Recommendation {
+                    role: recommendation.role.clone(),
+                    declaring: recommendation.operation.declaring.clone(),
+                    operation: recommendation.operation.declaration.name().to_owned(),
+                    receiver: recommendation.receiver.clone(),
+                    contracts: std::sync::Arc::new(
+                        recommendation.contracts.iter().cloned().collect(),
+                    ),
+                    constraint: body_of(node),
+                    binds,
+                },
+            );
+        }
+
         let mut joins = BTreeMap::new();
         for parallel in &protocol.parallels {
             let control = controls
@@ -731,6 +777,17 @@ impl<'a> Program<'a> {
                 _ => {}
             }
         }
+        let mut related = BTreeMap::<ProtocolNodeId, Vec<Related<'a>>>::new();
+        for clause in &protocol.slots.related {
+            let relationship = protocol
+                .relationships
+                .get(clause.relationship)
+                .ok_or_else(|| ProtocolRefusal::fault("a-related-clause-has-a-relationship"))?;
+            related.entry(clause.node).or_default().push(Related {
+                relationship: relationship.key.clone(),
+                ends: [&clause.ends[0], &clause.ends[1]],
+            });
+        }
 
         let mut channels = Vec::with_capacity(protocol.channels.len());
         for channel in &protocol.channels {
@@ -838,6 +895,7 @@ impl<'a> Program<'a> {
             root,
             controls,
             attempts,
+            recommendations,
             joins,
             loops,
             choices,
@@ -850,6 +908,7 @@ impl<'a> Program<'a> {
                 .map(|fence| (fence.node, fence.ordering))
                 .collect(),
             events,
+            related,
             messages,
             channels,
             finish,

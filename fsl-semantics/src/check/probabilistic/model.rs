@@ -15,7 +15,7 @@
 use filament_checked::node::{CheckedLiteral, NodeKind};
 use std::collections::BTreeMap;
 
-use filament_exact::{EffectiveId, Identifier, Rational, Value, ValueType};
+use filament_exact::{EffectiveId, Identifier, NodeKey, Rational, Value, ValueType};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
@@ -45,8 +45,9 @@ use filament_checked::key::DeclarationKey;
 
 mod package;
 pub use package::{
-    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
-    PackageSupport, PackageWeight, PackageWorkload,
+    PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
+    PackageProbabilisticRefusal, PackageRandomParameter, PackageReward, PackageSupport,
+    PackageWeight, PackageWorkload,
 };
 
 /// An operation a random parameter, a reward or a workload weight names,
@@ -206,9 +207,82 @@ pub struct Reward {
     parameters: Vec<(String, ValueType)>,
     body: CheckedBody,
     slots: usize,
+    /// The name each evaluation slot was bound under, parameters first.
+    slot_names: Vec<String>,
+    /// The clause function node the reward lowers to, set once lowering
+    /// has written it; `None` for a reward on an object type a package has
+    /// no `model` node for.
+    function: Option<NodeKey>,
+    /// The operand that names the expression in the reward node's identity
+    /// (FSpec FR-640-AC-3): the key of the expression node the function body
+    /// names, which is keyed by the expression's content, or the text of a
+    /// literal body, which has no node. Set with [`Self::function`].
+    expression_operand: Option<filament_exact::PathSegment>,
+    /// The node of the object type that declares the operation: a `model`
+    /// node, or a source object type's own node. Set with [`Self::function`].
+    declaring_node: Option<NodeKey>,
+    /// The mode the function is checked under. A declared clause function
+    /// that is not an operation `body` is checked `Linked` (FR-952), which
+    /// the reader's owner join requires of a `reward` function (FR-094, FR-770).
+    function_mode: Option<filament_semantic_value::checking::CheckMode>,
 }
 
 impl Reward {
+    /// The location of the declaration, whose region is the declaration's
+    /// label span.
+    pub fn declaration_location(&self) -> Location {
+        site_location(self.declared, Site::Declaration)
+    }
+
+    /// The source location of the reward expression.
+    pub fn evaluation_location(&self) -> Location {
+        site_location(self.declared, Site::Reward)
+    }
+
+    /// The node of the clause function the expression lowers to (FSpec
+    /// FR-640), once lowered.
+    pub fn function(&self) -> Option<&NodeKey> {
+        self.function.as_ref()
+    }
+
+    /// The operand that carries the expression's content in the reward's
+    /// identity, once lowered: it is the key of an already content-keyed
+    /// node (or a literal's text), so its size does not depend on how deep
+    /// the expression nests and no source position enters it.
+    pub fn expression_operand(&self) -> Option<&filament_exact::PathSegment> {
+        self.expression_operand.as_ref()
+    }
+
+    /// The node of the object type that declares the reward's operation,
+    /// once lowered.
+    pub fn declaring_node(&self) -> Option<&NodeKey> {
+        self.declaring_node.as_ref()
+    }
+
+    /// Record the function node the expression lowered to and the operand
+    /// that names its content.
+    pub(crate) fn set_function(&mut self, lowered: Option<crate::check::lowering::LoweredReward>) {
+        let (declaring, function, operand) = match lowered {
+            Some(lowered) => (
+                Some(lowered.declaring),
+                Some(lowered.function),
+                Some(lowered.operand),
+            ),
+            None => (None, None, None),
+        };
+        self.declaring_node = declaring;
+        self.function_mode = function
+            .as_ref()
+            .map(|_| filament_semantic_value::checking::CheckMode::Linked);
+        self.function = function;
+        self.expression_operand = operand;
+    }
+
+    /// The name each evaluation slot was bound under.
+    pub fn slot_names(&self) -> &[String] {
+        &self.slot_names
+    }
+
     /// The reward's declared name.
     pub fn name(&self) -> &str {
         &self.name
@@ -240,6 +314,28 @@ impl Reward {
     pub fn slots(&self) -> usize {
         self.slots
     }
+}
+
+/// A reward read back from a package's `reward` node (FSpec FR-640): its
+/// identity, the operation's parameters and the nodes of its value type and
+/// clause function. A package spells the expression as the function's nodes,
+/// which evaluators read through the package's own projection, so the record
+/// holds no checked expression.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReadReward {
+    /// The node's position among the model's declarations, as
+    /// [`RandomParameter`]'s source order.
+    pub declared: usize,
+    /// The reward's name.
+    pub name: String,
+    /// The operation the reward is declared on.
+    pub operation: ProbabilisticOperation,
+    /// The operation's parameters in declared order, each with its type.
+    pub parameters: Vec<(String, ValueType)>,
+    /// The integer or quantity type node of the reward.
+    pub value_type: NodeKey,
+    /// The clause function node of the reward's expression.
+    pub function: NodeKey,
 }
 
 /// A delay distribution (FR-253 "Outputs"): exact, in the unit of the model's
@@ -277,6 +373,12 @@ pub struct Delay {
 }
 
 impl Delay {
+    /// The location of the declaration, whose region is the declaration's
+    /// label span.
+    pub fn declaration_location(&self) -> Location {
+        site_location(self.declared, Site::Declaration)
+    }
+
     /// The operation the delay is declared on.
     pub fn operation(&self) -> &ProbabilisticOperation {
         &self.operation
@@ -294,6 +396,7 @@ impl Delay {
 pub struct CheckedProbabilisticModel {
     random_parameters: Vec<RandomParameter>,
     pub(super) rewards: Vec<Reward>,
+    pub(super) read_rewards: Vec<ReadReward>,
     workloads: Vec<Workload>,
     delays: Vec<Delay>,
     pub(super) claims: Vec<CheckedProbabilisticClaim>,
@@ -366,46 +469,31 @@ impl CheckedProbabilisticModel {
     pub fn is_empty(&self) -> bool {
         self.random_parameters.is_empty()
             && self.rewards.is_empty()
+            && self.read_rewards.is_empty()
             && self.workloads.is_empty()
             && self.delays.is_empty()
             && self.claims.is_empty()
     }
 
-    /// The first checked declaration in source order that S4 has no node
-    /// for, with its feature: what S4 names when it refuses the package
-    /// (FR-185 "Package emission"). A claim, a random parameter and a
-    /// workload are emitted as nodes (FR-498, FR-740), so they are never
-    /// named. A reward and a delay are named by their declared names.
-    pub fn first_declaration(&self) -> Option<(ProbabilisticFeature, String)> {
-        self.first_declaration_details()
-            .map(|(_, feature, name)| (feature, name))
+    /// The mode the reward function `function` was checked under.
+    pub fn reward_function_check_mode(
+        &self,
+        function: &NodeKey,
+    ) -> Option<filament_semantic_value::checking::CheckMode> {
+        self.rewards
+            .iter()
+            .find(|reward| reward.function.as_ref() == Some(function))
+            .and_then(|reward| reward.function_mode)
     }
 
-    /// The source location of [`Self::first_declaration`], when its
-    /// declaration has a recorded source span.
-    pub fn first_declaration_location(&self) -> Option<Location> {
-        self.first_declaration_details()
-            .map(|(declared, _, _)| site_location(declared, Site::Declaration))
+    /// The rewards a package read rebuilt, in package order.
+    pub fn read_rewards(&self) -> &[ReadReward] {
+        &self.read_rewards
     }
 
-    fn first_declaration_details(&self) -> Option<(usize, ProbabilisticFeature, String)> {
-        let rewards = self.rewards.iter().map(|reward| {
-            (
-                reward.declared,
-                ProbabilisticFeature::Reward,
-                reward.name.clone(),
-            )
-        });
-        let delays = self.delays.iter().map(|delay| {
-            (
-                delay.declared,
-                ProbabilisticFeature::Delay,
-                delay.operation.name.clone(),
-            )
-        });
-        rewards
-            .chain(delays)
-            .min_by_key(|(declared, _, _)| *declared)
+    /// Every reward, to record the node its function lowered to.
+    pub(crate) fn rewards_mut(&mut self) -> &mut [Reward] {
+        &mut self.rewards
     }
 }
 
@@ -655,8 +743,18 @@ pub(crate) struct ProbabilisticInput<'a> {
     /// Every header profile selection of the unit.
     pub(crate) profiles: &'a [fsl_foundation::selection::ProfileSelection],
     pub(crate) limits: CheckingLimits,
+    /// The source unit each declaration of the unit was written in, by its
+    /// position: a source object type is visible only in the unit that declares
+    /// it (FR-569).
+    pub(crate) declaration_owners: &'a [Option<fsl_foundation::source::provenance::RawSourceRef>],
+    /// The source unit each task-set declaration was written in, by its position.
+    pub(crate) task_set_owners: &'a [Option<fsl_foundation::source::provenance::RawSourceRef>],
     pub(crate) cancel: &'a filament_exact::Cancel,
 }
+
+/// The source unit a name is resolved in, `None` when it has none.
+#[derive(Clone, Copy)]
+pub(crate) struct Seen<'o>(Option<&'o fsl_foundation::source::provenance::RawSourceRef>);
 
 /// Why an operation name resolves to no single operation.
 pub(crate) enum Unresolved {
@@ -665,6 +763,35 @@ pub(crate) enum Unresolved {
 }
 
 impl<'a> ProbabilisticInput<'a> {
+    /// The source unit task-set declaration `declaration` was written in.
+    pub(crate) fn seen_by_task_set(&self, declaration: usize) -> Seen<'_> {
+        Seen(
+            self.task_set_owners
+                .get(declaration)
+                .and_then(Option::as_ref),
+        )
+    }
+
+    /// The source unit probabilistic declaration `declaration` was written in.
+    pub(crate) fn seen_by(&self, declaration: usize) -> Seen<'_> {
+        Seen(
+            self.declaration_owners
+                .get(declaration)
+                .and_then(Option::as_ref),
+        )
+    }
+
+    /// Whether the source object type `key` is visible to `seen`: a source model is
+    /// seen only by the unit that declares it (FR-569). Every other key, and a call
+    /// that names no unit, is visible.
+    fn visible(&self, seen: Seen<'_>, key: &DeclarationKey) -> bool {
+        let Seen(owner) = seen;
+        self.models
+            .iter()
+            .filter(|model| model.declares(key))
+            .all(|model| model.visible_in(owner))
+    }
+
     /// The time source of the model of `alias` on the package `package`:
     /// two units may bind one alias to two packages (FR-480 "Selections and
     /// imports"), so the alias alone does not name the model.
@@ -682,6 +809,7 @@ impl<'a> ProbabilisticInput<'a> {
         &self,
         written: &NameForm,
         model: Option<&str>,
+        seen: Seen<'_>,
     ) -> Result<(ProbabilisticOperation, &'a OperationDeclaration), Unresolved> {
         let segments: Vec<&str> = written.name.split("::").collect();
         let (alias, object, operation) = match segments[..] {
@@ -697,7 +825,10 @@ impl<'a> ProbabilisticInput<'a> {
                 alias.is_none_or(|alias| candidate.as_str() == alias)
                     && model.is_none_or(|model| candidate.as_str() == model)
             })
-            .filter_map(|(candidate, objects)| Some((candidate, objects.get(&object)?)))
+            .filter_map(|(candidate, objects)| {
+                let key = objects.get(&object)?;
+                self.visible(seen, key).then_some((candidate, key))
+            })
             .collect();
         let (alias, key) = match candidates[..] {
             [] => return Err(Unresolved::Missing),
@@ -745,13 +876,83 @@ impl<'a> ProbabilisticInput<'a> {
         ))
     }
 
+    /// FR-185 "Workloads": what the `on` name of a workload names, resolved as
+    /// FR-230 resolves a time member: first as a model alias of the unit and,
+    /// failing that, as an object type of the unit's own source model, whose
+    /// operations alone the workload then weighs. The model alias and the
+    /// source object type, when one is named.
+    fn workload_target(
+        &self,
+        written: &str,
+        declaration: usize,
+    ) -> Option<(String, Option<DeclarationKey>)> {
+        if self.model_objects.contains_key(written) {
+            return Some((written.to_owned(), None));
+        }
+        let object = Identifier::new(written).ok()?;
+        let key = self
+            .model_objects
+            .get(super::super::source_model::ALIAS)?
+            .get(&object)?;
+        if !self.visible(self.seen_by(declaration), key) {
+            return None;
+        }
+        Some((
+            super::super::source_model::ALIAS.to_owned(),
+            Some(key.clone()),
+        ))
+    }
+
     /// Every operation of the model `alias`, each with its spelling
     /// `Type::op`, in object type then declaration order.
-    fn model_operations(&self, alias: &str) -> Vec<(EffectiveId, &'a str, String)> {
+    fn model_operations(
+        &self,
+        alias: &str,
+        only: Option<&DeclarationKey>,
+    ) -> Vec<(EffectiveId, &'a str, String)> {
         let Some(objects) = self.model_objects.get(alias) else {
             return Vec::new();
         };
         let mut operations = Vec::new();
+        if let Some(only) = only {
+            // A source-object workload weighs the type's effective view: each
+            // operation it declares or inherits, an ancestor's redefined
+            // operation hidden by the type's own. A name several unrelated
+            // ancestors declare keeps every nearest declaration, as the type's
+            // instances carry each (FR-104 refuses only a written `Type::op`
+            // that names several).
+            let Some(of) = self.object_types.get(only) else {
+                return operations;
+            };
+            let types = self.scope.types();
+            let reachable: Vec<(&Identifier, &EffectiveId)> = objects
+                .iter()
+                .filter_map(|(artifact, key)| Some((artifact, self.object_types.get(key)?)))
+                .filter(|(_, declaring)| types.conforms(of.clone(), (*declaring).clone()))
+                .collect();
+            for (artifact, declaring) in &reachable {
+                for operation in self.scope.operations().declared_by((*declaring).clone()) {
+                    let hidden = reachable.iter().any(|(_, other)| {
+                        other != declaring
+                            && types.conforms((*other).clone(), (*declaring).clone())
+                            && self
+                                .scope
+                                .operations()
+                                .declared_by((*other).clone())
+                                .iter()
+                                .any(|redefined| redefined.name() == operation.name())
+                    });
+                    if !hidden {
+                        operations.push((
+                            (*declaring).clone(),
+                            operation.name(),
+                            format!("{}::{}", artifact.as_str(), operation.name()),
+                        ));
+                    }
+                }
+            }
+            return operations;
+        }
         for (artifact, key) in objects {
             let Some(declaring) = self.object_types.get(key).cloned() else {
                 continue;
@@ -772,16 +973,17 @@ impl<'a> ProbabilisticInput<'a> {
     /// names as its model (FSpec FR-640). When several types qualify, the one
     /// conforming to the fewest of the model's types, then the first in key
     /// order. `None` when the model's operations share no such type.
-    fn workload_model(&self, alias: &str) -> Option<DeclarationKey> {
+    fn workload_model(&self, alias: &str, only: Option<&DeclarationKey>) -> Option<DeclarationKey> {
         let objects = self.model_objects.get(alias)?;
         let types = self.scope.types();
         let declaring: Vec<EffectiveId> = self
-            .model_operations(alias)
+            .model_operations(alias, only)
             .into_iter()
             .map(|(declaring, _, _)| declaring)
             .collect();
         let identities: Vec<(&DeclarationKey, EffectiveId)> = objects
             .values()
+            .filter(|key| only.is_none_or(|only| only == *key))
             .filter_map(|key| Some((key, self.object_types.get(key)?.clone())))
             .collect();
         identities
@@ -960,10 +1162,14 @@ impl Pass<'_, '_> {
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
     ) {
-        let (operation, declaration) = match self.input.operation(&form.operation, None) {
-            Ok(resolved) => resolved,
-            Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
-        };
+        let (operation, declaration) =
+            match self
+                .input
+                .operation(&form.operation, None, self.input.seen_by(index))
+            {
+                Ok(resolved) => resolved,
+                Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
+            };
         let parameter = form.parameter.name.as_str();
         let Some((position, (_, value_type))) = declaration
             .parameters()
@@ -1119,13 +1325,17 @@ impl Pass<'_, '_> {
         nodes: &mut u64,
     ) {
         let reads = super::reward(form);
-        let (operation, declaration) = match self.input.operation(&form.operation, None) {
-            Ok(resolved) => resolved,
-            Err(fault) => {
-                self.refusals.extend(reads.into_iter().map(refusal));
-                return self.refuse(unresolved(fault, &form.operation));
-            }
-        };
+        let (operation, declaration) =
+            match self
+                .input
+                .operation(&form.operation, None, self.input.seen_by(index))
+            {
+                Ok(resolved) => resolved,
+                Err(fault) => {
+                    self.refusals.extend(reads.into_iter().map(refusal));
+                    return self.refuse(unresolved(fault, &form.operation));
+                }
+            };
         let name = form.name.name.as_str();
         let declared = (operation.key.clone(), name.to_owned());
         if self.rewards.contains(&declared) {
@@ -1144,7 +1354,7 @@ impl Pass<'_, '_> {
         let parameters = declaration.parameters().to_vec();
         let location = site_location(index, Site::Reward);
         match self.typed_reward(form, &parameters, &location, cx, nodes) {
-            Ok((body, slots)) => {
+            Ok((body, slots, slot_names)) => {
                 let typed = body.root().value_type();
                 // A `BoundedQuantity` reward type is a conservative refusal:
                 // no source form builds the type yet (QSL-1155), and the
@@ -1166,6 +1376,11 @@ impl Pass<'_, '_> {
                     parameters,
                     body,
                     slots,
+                    slot_names,
+                    function: None,
+                    expression_operand: None,
+                    declaring_node: None,
+                    function_mode: None,
                 });
             }
             Err(refusal) => self.refusals.push(refusal),
@@ -1181,27 +1396,32 @@ impl Pass<'_, '_> {
         location: &Location,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-    ) -> Result<(CheckedBody, usize), CheckRefusal> {
+    ) -> Result<(CheckedBody, usize, Vec<String>), CheckRefusal> {
         let mut typer = self.input.typer(nodes, cx);
         bind_parameters(&mut typer, parameters, location)?;
         let body = typer.infer(&form.expression.expression, None, location)?;
         let slots = typer.slots();
+        let slot_names = typer.slot_names().to_vec();
         Definedness::new(
             parameters.len(),
             self.input.dispatch_tables,
             &self.input.scope.dispatch_operations,
         )
         .check(body.root())?;
-        Ok((body, slots))
+        Ok((body, slots, slot_names))
     }
 
     /// FR-253: a `delay` declaration, admitted on an operation of a `time
     /// dense` model only, with an exact distribution in the model's unit.
     fn delay(&mut self, index: usize, form: &DelayForm) {
-        let (operation, _) = match self.input.operation(&form.operation, None) {
-            Ok(resolved) => resolved,
-            Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
-        };
+        let (operation, _) =
+            match self
+                .input
+                .operation(&form.operation, None, self.input.seen_by(index))
+            {
+                Ok(resolved) => resolved,
+                Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
+            };
         let name = form.operation.name.as_str();
         let Some(source) = self
             .input
@@ -1335,13 +1555,17 @@ impl Pass<'_, '_> {
             });
         }
         self.workloads.push((workload.to_owned(), form.name.span));
-        if !self.input.model_objects.contains_key(model) {
+        let Some((alias, only)) = self.input.workload_target(model, index) else {
             return self.refuse(ProbabilisticCause::UnresolvedModel {
                 workload: workload.to_owned(),
                 model: model.to_owned(),
                 span: form.model.span,
             });
-        }
+        };
+        let model = alias.as_str();
+        let weighable = only
+            .as_ref()
+            .map(|only| self.input.model_operations(model, Some(only)));
         let mut refusals: Vec<CheckRefusal> = Vec::new();
         let mut weighted: Vec<DeclarationKey> = Vec::new();
         let mut weights: Vec<(ProbabilisticOperation, Rational)> = Vec::new();
@@ -1356,9 +1580,21 @@ impl Pass<'_, '_> {
                     operation: written.operation.name.clone(),
                 },
             );
-            let operation = match self.input.operation(&written.operation, Some(model)) {
-                Ok((operation, _)) => operation,
-                Err(Unresolved::Missing) => {
+            let operation = match self.input.operation(
+                &written.operation,
+                Some(model),
+                self.input.seen_by(index),
+            ) {
+                Ok((operation, _))
+                    if weighable.as_ref().is_none_or(|weighable| {
+                        weighable.iter().any(|(declaring, name, _)| {
+                            *declaring == operation.declaring && *name == operation.name.as_str()
+                        })
+                    }) =>
+                {
+                    operation
+                }
+                Ok(_) | Err(Unresolved::Missing) => {
                     refusals.extend(weight.err());
                     refusals.push(refusal(ProbabilisticCause::UnknownOperation {
                         workload: workload.to_owned(),
@@ -1388,10 +1624,10 @@ impl Pass<'_, '_> {
                 Err(refused) => refusals.push(refused),
             }
         }
-        for (declaring, name, spelled) in self.input.model_operations(model) {
+        for (declaring, name, spelled) in self.input.model_operations(model, only.as_ref()) {
             let covered = form.weights.iter().any(|written| {
                 self.input
-                    .operation(&written.operation, Some(model))
+                    .operation(&written.operation, Some(model), self.input.seen_by(index))
                     .is_ok_and(|(operation, _)| {
                         operation.declaring == declaring && operation.name.as_str() == name
                     })
@@ -1412,7 +1648,7 @@ impl Pass<'_, '_> {
             declared: index,
             name: workload.to_owned(),
             model: model.to_owned(),
-            model_key: self.input.workload_model(model),
+            model_key: self.input.workload_model(model, only.as_ref()),
             weights,
         });
     }

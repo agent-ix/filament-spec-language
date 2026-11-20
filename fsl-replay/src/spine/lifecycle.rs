@@ -88,6 +88,7 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::semantic_node::IdentityRefusal;
 use fsl_cst::Limits as SourceLimits;
+use fsl_eval::value::S6aRewardEvaluator;
 use fsl_forms::{parse_clause_text, FormsRefusal, ParsedUnit};
 use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, StageWork, Staged};
 use fsl_foundation::selection::ImportSelection;
@@ -4224,22 +4225,25 @@ impl<'a> Resolution<'a> {
             }
         })
         .map_err(|refusal| {
-            Box::new(CompileRefusal::Assembly {
-                // A type-environment stage limit names no declaration,
-                // so it has no region (FR-082, FR-096).
-                region: refusal
-                    .errors
-                    .first()
-                    .filter(|error| {
-                        !matches!(
-                            error.cause,
-                            AssemblyCause::TypeLimit(_) | AssemblyCause::DecimalScaleLimit(_)
-                        )
-                    })
-                    .and_then(|error| {
+            // A type-environment stage limit names no declaration (FR-082, FR-096).
+            let regions: Vec<_> = refusal
+                .errors
+                .iter()
+                .map(|error| {
+                    if matches!(
+                        error.cause,
+                        AssemblyCause::TypeLimit(_) | AssemblyCause::DecimalScaleLimit(_)
+                    ) {
+                        None
+                    } else {
                         let source = assembly_error_source(error, &source_units).unwrap_or(&raw);
                         region(source, error.span)
-                    }),
+                    }
+                })
+                .collect();
+            Box::new(CompileRefusal::Assembly {
+                region: regions.first().cloned().flatten(),
+                regions,
                 refusal,
             })
         })?;
@@ -4252,7 +4256,7 @@ impl<'a> Resolution<'a> {
         for source in &source_units {
             selected = fsl_semantics::check::resolve_integer_division(
                 &source.unit().selections().profiles,
-                selected.map(|law| (law, "caller selection")),
+                selected.map(|law| (law, "integer_division selection")),
             )
             .map_err(|refusal| {
                 Box::new(CompileRefusal::Profile {
@@ -4319,10 +4323,16 @@ impl<'a> Resolution<'a> {
                 declarations.check_with_protocol_continuation_and_cancel(
                     self.check_mode,
                     limits.checking,
+                    &S6aRewardEvaluator,
                     cancel,
                 )
             } else {
-                declarations.check_with_cancel(self.check_mode, limits.checking, cancel)
+                declarations.check_with_cancel(
+                    self.check_mode,
+                    limits.checking,
+                    &S6aRewardEvaluator,
+                    cancel,
+                )
             }
         })
         .map_err(|refusals| {

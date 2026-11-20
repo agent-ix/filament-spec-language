@@ -62,6 +62,7 @@ fn dense_ms() -> ModelTimeSource {
     ModelTimeSource {
         model: "Config".to_owned(),
         span: fsl_foundation::Span { start: 0, end: 1 },
+        declared_in: None,
         // The model node of `Config`'s state object, which names the timed
         // model's package.
         model_node: fsl_semantics::model::key::object_type_node_key(
@@ -562,6 +563,7 @@ fn a_checked_timed_clause_reaches_package_check() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("FR-370 carries the checked timed interval through S4");
 }

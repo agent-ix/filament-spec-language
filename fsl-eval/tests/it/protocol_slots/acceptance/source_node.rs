@@ -39,7 +39,11 @@ fn source_node_fixture() -> CheckedPackage {
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("E-S checks: {:?}", pending.report(refusals))),
     )
 }

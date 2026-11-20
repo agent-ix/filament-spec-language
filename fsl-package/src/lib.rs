@@ -18,16 +18,27 @@
 // `filament-contract-model` and are behind `std`.
 extern crate alloc;
 
+/// FR-286: the typed refusal pairs produced by package admission and emission.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_wire", "unsupported-wire"),
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_model_binding", "wrong-model-selection"),
+];
+
 #[cfg(feature = "std")]
 mod analysis_view;
 #[cfg(feature = "std")]
-pub use analysis_view::{AnalysisView, DependencyClosure};
+pub use analysis_view::{AnalysisView, ClaimOccurrence, DependencyClosure};
 #[cfg(feature = "std")]
 pub use model_input_form::UnreadModelForm;
 #[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
 mod bare_slot;
+#[cfg(feature = "std")]
+mod bare_state_graph;
+#[cfg(feature = "std")]
+mod bare_terminal;
 #[cfg(feature = "std")]
 mod bare_term;
 #[cfg(feature = "std")]
@@ -72,6 +83,8 @@ mod protocol_selection;
 #[cfg(feature = "std")]
 pub mod protocol_view;
 #[cfg(feature = "std")]
+pub mod verification_plan;
+#[cfg(feature = "std")]
 mod reader_protocol_projection;
 mod wire_form;
 
@@ -83,8 +96,14 @@ pub use bare::{
 #[cfg(feature = "std")]
 pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
 #[cfg(feature = "std")]
+#[cfg(feature = "std")]
+pub use bare_state_graph::BareStatePredicate;
+#[cfg(feature = "std")]
+pub use bare_terminal::{BareTerminal, BareTerminalDeclaration, BareTerminalPredicate};
+#[cfg(feature = "std")]
 pub use bare_term::{
-    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause, ClauseBinder,
+    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause,
+    BareStateClauseDeclaration, ClauseBinder,
 };
 #[cfg(feature = "std")]
 pub use bare_world::BareWorld;
@@ -114,18 +133,19 @@ pub use emit::write_operand_slots;
 #[cfg(feature = "std")]
 pub use emit::{
     checked_occurrence, clock_configuration_invalid_field, clock_kind,
-    declaration_less_function_id, emit_checked, emit_checked_with_cancel,
+    declaration_less_function_id, emit_checked, emit_checked_with_cancel, hyper_clock_name,
+    hyper_wrapper,
     emit_checked_with_protocol_results,
     emit_checked_with_protocol_results_and_temporal_selections_and_cancel,
     emit_checked_with_temporal_selections, emit_checked_with_temporal_selections_and_cancel,
     emit_dependency_with_temporal_selections_and_cancel, emit_monitor_plan_over, emit_package,
     emit_package_with_temporal_selections, emit_timed_models, is_model_binding_name,
-    profile_clock_kind, ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal,
-    Emission, EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode, ProtocolEmission,
-    ProtocolEmissionAggregate, ProtocolEmissionResult, SelectedSourceCollectionRow,
-    SelectedSourceRecordMemberRow, SelectedSourceRecordRow, SourceObjectMemberFacts,
-    SourceObjectOperationFacts, TemporalBindingRows, TemporalClauseRef, TemporalClockSelection,
-    TemporalRows, TimedOrderFault,
+    profile_clock_kind, ClockSelectionCause, ClockSelectionDeclaration,
+    ClockSelectionRefusal, Emission, EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode,
+    ProtocolEmission, ProtocolEmissionAggregate, ProtocolEmissionResult,
+    SelectedSourceCollectionRow, SelectedSourceRecordMemberRow, SelectedSourceRecordRow,
+    SourceObjectMemberFacts, SourceObjectOperationFacts, TemporalBindingRows, TemporalClauseRef,
+    TemporalClockSelection, TemporalRows, TimedOrderFault,
 };
 #[cfg(feature = "std")]
 pub use equality_file::{
@@ -155,6 +175,14 @@ pub use protocol_occurrence_key::{
     OccurrenceKeyError, ProtocolOccurrenceKey, WorkflowInstanceIdentity,
 };
 pub use protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
+#[cfg(feature = "std")]
+pub use verification_plan::{
+    emit_verification_plans, read_verification_plan, VerificationPlan, VerificationPlanEdge,
+    VerificationPlanClaim, VerificationPlanDeclarationKey, VerificationPlanIdentity,
+    VerificationPlanMethod, VerificationPlanNode, VerificationPlanNodeIdentity,
+    VerificationPlanPathSegment, VerificationPlanRefusal, VerificationPlanSource,
+    VerificationPlanSourceLocation, VERIFICATION_PLAN_FORMAT,
+};
 #[cfg(feature = "std")]
 pub use reader_protocol_projection::{
     MissingLocation, ReaderProtocolFunction, ReaderProtocolParameter, ReaderProtocolProjection,

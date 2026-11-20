@@ -213,7 +213,11 @@ pub fn enum_members(functions: usize, binding: &EnumBinding) -> PackageDeclarati
 
 /// Check `declarations` at the default checking limits (NFR-011).
 pub fn check(declarations: PackageDeclarations) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-    declarations.check(CheckMode::Linked, CheckingLimits::default())
+    declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
 }
 
 /// Check and S4-link an N-function call chain for the evaluator benchmark.

@@ -215,6 +215,45 @@ fn static_subject_after_recompile(wire: ReplayRequestWire) -> crate::spine::Stat
     checked
 }
 
+/// FR-750-AC-12 (runtime-invariant rows): impossible checked-package faults
+/// stay internal failures, with the invariant selected by their refusal row.
+#[trace("TC-3037", "FR-750-AC-12")]
+#[test]
+fn hybrid_runtime_invariant_rows_map_to_exit_30() {
+    use crate::hybrid_replay::{ExactGap, ExpansionGap, HybridReplayRefusal};
+    use fsl_semantics::check::{CheckedFunctionRef, HybridModelIndex};
+
+    let cases = [
+        (
+            HybridReplayRefusal::UnknownModel(HybridModelIndex::new(3)),
+            "hybrid-claim-model",
+        ),
+        (
+            HybridReplayRefusal::Expansion(ExpansionGap::UnreachableFunction(
+                CheckedFunctionRef::new(2),
+            )),
+            "hybrid-call-expansion",
+        ),
+        (
+            HybridReplayRefusal::Exact(ExactGap::IllKindedTerm),
+            "hybrid-term-kind",
+        ),
+    ];
+    for (hybrid, invariant) in cases {
+        let replay: Result<crate::ReplayResult, ReplayRefusal> =
+            Err(hybrid_runtime_refusal(hybrid));
+        let Err(error) = replay else {
+            panic!("a checked-package fault returns no replay row");
+        };
+        assert_eq!(error.code(), Code::RuntimeInvariant);
+        assert_eq!(error.code().category().exit_code(), 30);
+        let ReplayRefusal::Fault(fault) = error else {
+            panic!("a checked-package fault maps to an internal failure");
+        };
+        assert_eq!(fault.invariant(), invariant);
+    }
+}
+
 #[trace("FR-510-AC-2", "TC-1305")]
 #[test]
 fn static_subject_is_stable_across_replay_runtime_variants() {
@@ -663,7 +702,7 @@ fn tc_444_a_domain_package_comes_from_the_byte_provision() {
     );
 
     let refused = replay(wire(), ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refusal.stage(), SpineStage::Intake);
@@ -944,7 +983,7 @@ fn tc_444_stage_limits_bound_the_recompile() {
     let mut tight = small(7);
     tight.stage_limits.insert("s1.input_bytes".to_owned(), 16);
     let refused = replay(tight, ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refusal.stage(), SpineStage::Source);
@@ -953,7 +992,7 @@ fn tc_444_stage_limits_bound_the_recompile() {
     let mut no_work = small(7);
     no_work.stage_limits.insert("s3.work_units".to_owned(), 0);
     let refused = replay(no_work, ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refusal.stage(), SpineStage::Check);
@@ -973,7 +1012,7 @@ fn tc_444_a_blank_label_refuses_at_the_source_stage() {
     });
     blank.byte_provision[0].0 = "   ".to_owned();
     let refused = replay(blank, ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refusal.stage(), SpineStage::Source);
@@ -1434,7 +1473,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     assert!(
         matches!(
             replayed,
-            ReplayRefusal::Recompile(_) | ReplayRefusal::RecompileWithProtocolResults { .. }
+            ReplayRefusal::Recompile { .. } | ReplayRefusal::RecompileWithProtocolResults { .. }
         ),
         "{replayed:?}"
     );
@@ -1507,7 +1546,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     )
     .expect_err("test/units does not parse");
     assert!(
-        matches!(replayed, ReplayRefusal::Recompile(_)),
+        matches!(replayed, ReplayRefusal::Recompile { .. }),
         "{replayed:?}"
     );
     assert_eq!(refusal.code(), replayed.code());
@@ -1606,7 +1645,7 @@ fn tc_444_dependency_entries_refuse_by_the_d4_rules() {
     // The entry removed: the import has no supplied library.
     let refused = replay(importing.request(Vec::new(), &[]), ReplayLimits::default())
         .expect_err("test/units is not supplied");
-    let ReplayRefusal::Recompile(refusal) = &refused else {
+    let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
     assert_eq!(refused.code(), Code::MissingImport);
@@ -1757,7 +1796,11 @@ fn an_out_of_type_stored_value_refuses_where_the_equality_fault_once_reached_rep
     )];
     let package = fsl_package::CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap(),
     );
     let expression = package
@@ -1926,7 +1969,11 @@ fn actual_empty_admitted_identity_fault_propagates_from_package_into_replay_fail
     )];
     let package = fsl_package::CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap(),
     );
     let expression = package
@@ -2045,7 +2092,11 @@ fn actual_public_package_comparator_fault_keeps_the_nested_cause_in_replay() {
     )];
     let package = fsl_package::CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap(),
     );
     let expression = package

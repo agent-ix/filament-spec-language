@@ -65,9 +65,35 @@ mod id_text;
 mod identity;
 mod limits;
 mod model_check;
+pub use model_check::digital_state_graph::{
+    explore_digital_state_graph, DigitalGraphEdge, DigitalGraphLimit, DigitalStateGraph,
+};
 mod monitor_plan;
 mod object_environment;
-mod outcome;
+pub mod outcome;
+
+/// FR-286: the typed refusal pairs produced by replay and its spine.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("cancelled", "caller-cancelled"),
+    fsl_foundation::diagnostic::CatalogCode::new("foreign_reference", "foreign-universe"),
+    fsl_foundation::diagnostic::CatalogCode::new("ill_typed", "type-mismatch"),
+    fsl_foundation::diagnostic::CatalogCode::new("integer_out_of_domain", "outside-domain"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "not-statistical"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "absent-key"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "wrong-role-mapping"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "missing-member"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "unknown-member"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "invalid-value"),
+    fsl_foundation::diagnostic::CatalogCode::new("missing_declaration", "missing-name"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "max-automaton-states"),
+    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "expression-form"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_projection", "not-markov"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "input-bytes-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "work-budget-exceeded"),
+];
 pub mod planner;
 mod probability_certificate;
 mod product_action;
@@ -130,6 +156,7 @@ pub use certificate::closed_form::outcome::{
 };
 pub use certificate::closed_form::recompute::{recompute, ClosedFormCheck, ClosedFormDisagreement};
 pub use certificate::closed_form::settle::settle;
+pub use certificate::closed_form::check::{check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult};
 pub use certificate::closed_form::task_set::{
     Arrival, Criticality, ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task, TaskSet,
     TaskSetRefusal, TimeMember, Wcet,
@@ -155,9 +182,9 @@ pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
     check_zone_certificate, AcceptanceSet, CertEdge, CertNode, CertificateCheckLimits,
     CertificateItem, CertifiedItem, CheckerFault, ComponentReason, Components, DivergenceWitness,
-    DivergentTarget, FairnessMember, ItemIdentity, ProductMark, RefinementIdentity, RefinementPart,
-    SilentMove, ZoneCertificate, ZoneCertificateRefusal, ZoneCertificateRequest,
-    ZoneCertificateVerdict,
+    DivergentTarget, FairnessMember, ItemIdentity, NonZeno, ProductMark, RefinementIdentity, RefinementPart,
+    SilentMove, StateGraphCertificateForm, StateGraphPart, ZoneCertificate, ZoneCertificateRefusal,
+    ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -197,15 +224,16 @@ pub use execute::{
     ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{
-    settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
+    hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
     BoundDimension, BudgetRefusal, ClaimHorizon, HybridProcessDependencyPackage, HybridProcessItem,
     HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal,
-    HybridSettlement, NegativeHorizon, SolverBudget, SolverCoverage, SolverHorizon, SolverMethod,
-    SolverOutcome, SolverResult, SolverStop,
+    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSettlement, HybridSolveRequest,
+    HybridVerdict, NegativeHorizon, OptionRefusal, SolverBudget, SolverCoverage, SolverHorizon, SolverMethod,
+    SolverOutcome, SolverResult, SolverStop, UnsupportedConstruct,
 };
 pub use hybrid_replay::{
     admit as admit_hybrid_trace, exact_replay, static_replay, ExactCheck, ExactGap, ExactInterval,
-    ExactReal, ExactRecord, ExactReplay, ExpansionGap, ExpressionLocus, ExpressionSite,
+    polynomial_class_gap, ExactReal, ExactRecord, ExactReplay, ExpansionGap, ExpressionLocus, ExpressionSite,
     HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal,
     HybridTrace, JsonPointer, ReplayRecord, Root, StaticCheck, StaticReplay, TermLocus,
     TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState, UndefinedCause, UndefinedInstant,
@@ -222,7 +250,7 @@ pub use model_check::counterexample::{
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
 pub use model_check::graph_replay::{
-    replay_model_graph, replay_model_graph_with_cancel,
+    replay_model_graph, replay_model_graph_from_package, replay_model_graph_with_cancel,
     replay_model_graph_with_cancel_and_temporal_selections,
     replay_model_graph_with_temporal_selections,
 };
@@ -251,7 +279,7 @@ pub use model_check::identity::{
     node_occurrence, ClauseIdentity, ClauseRootRefusal, HyperIdentity, StateGraphIdentity,
 };
 pub use model_check::item::{
-    Instance, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
+    Instance, InvariantClause, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
 };
 pub use model_check::limits::{
     meter_bound, ExactProbLimit, ExactProbLimits, ModelCheckLimit, ModelCheckLimits, ReachedLimit,
@@ -412,7 +440,8 @@ pub use product_action::{
 pub use proof_result::{
     read_backend_provider_envelope, read_first_party_solver_basis, read_plugin_assignments,
     read_plugin_basis, read_plugin_cause_kind, read_plugin_certification,
-    read_plugin_hybrid_counterexample, read_plugin_inconclusive_cause,
+    read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
+    read_plugin_inconclusive_cause,
     read_plugin_inconclusive_cause_over, AppliedReduction, BackendProviderSource, BoundsMethod,
     Certification, DeclineCode, EmptyEnvelopeSet, ExactBinding, ExactEntry, ExactOrBounds,
     ExactRational, Extremum, FslOnlyCause, IncompleteCause, InconclusiveCause, InstanceBound,
@@ -503,7 +532,8 @@ pub use request::{
 };
 pub use result::{
     read_bounded, runtime_value_path_json, CauseCodecError, DecidingElement, DisagreementCause,
-    EvaluatedValue, HybridTraceDisagreement, InputArmResult, InputSettlement,
+    EvaluatedValue, HybridReplayRecord, HybridReplayResult, HybridReplaySettlement,
+    HybridTraceDisagreement, InputArmResult, InputSettlement,
     ObservedTemporalParity, ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult,
     SeparatingWitnessRecord, SeparationReason, SeparationRefusal, TemporalDecisive, Verdict,
     WitnessArmResult, WitnessCheck, WitnessFailure, WitnessSettlement,
@@ -533,6 +563,7 @@ pub use witness::{
     QuantityMagnitude, ReplaySource, ValueTextError, Witness, WitnessBinding, WitnessEnvelope,
     WitnessField, WitnessPacket, WitnessRefusal, WitnessSlot, WitnessValue, WitnessValueType,
 };
+pub use witness::{derive_state_clause_witness, DerivationRefusal};
 pub use witness_entry_name::witness_entry_name;
 // FR-116: the FR-106 document, object and FR-115 frame witness types a
 // frame counterexample and its replay result carry, re-exported so CG can

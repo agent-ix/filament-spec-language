@@ -348,7 +348,7 @@ fn a_timed_clause_cannot_hold_an_aggregate_atom() {
     let PlanRootRefusal::FrontEnd(front) = refusal else {
         panic!("a front-end refusal");
     };
-    let fsl_replay::ReplayRefusal::Recompile(compile) = *front else {
+    let fsl_replay::ReplayRefusal::Recompile { refusal: compile, .. } = *front else {
         panic!("a recompile refusal");
     };
     let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = *compile else {

@@ -22,6 +22,7 @@ relationships:
   - { target: ix://agent-ix/filament-specification/FR-272, type: depends_on }
   - { target: ix://agent-ix/filament-core-data/FR-142, type: depends_on }
   - { target: ix://agent-ix/filament-core-data/FR-143, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-140, type: depends_on }
   - { target: ix://agent-ix/filament-core-data/FR-144, type: depends_on }
 ---
 # FR-056: Admit domain packages as Quire model declarations
@@ -190,6 +191,36 @@ If `agent-ix-semantic-ir` refuses the selected bytes, then the compiler SHALL en
 intake with no declaration and SHALL retain every reader diagnostic with its IR
 node, artifact id and span.
 
+The compiler SHALL keep the refusals of one intake as one ordered list, the
+**intake order**: for a document the reader refuses, one refusal for each
+retained reader diagnostic in the order the reader reports them; for a
+document the reader admits, the compiler's own intake refusals in FR-154's
+declaration refusal order (node order, and within one node FR-154's table
+order). The two never mix, because a reader refusal ends intake before any
+intake check runs. A reader diagnostic is the refusal
+`invalid_model_binding`/`malformed-declaration`, except that a
+`DUPLICATE_IDENTITY` diagnostic is `invalid_model_binding`/`conflicting-binding`
+(FR-512). A further reader diagnostic on the member a `DUPLICATE_IDENTITY`
+covers, such as `DUPLICATE_PARAM`, is reader detail of that refusal and not a
+refusal of its own (FR-056-AC-19): it is not a list entry, and its text is a
+further line of that refusal's message.
+
+Every report built from the list SHALL carry each entry: FR-286's outcome
+document writes each kept refusal as its own entry of `diagnostics`, in
+intake order, and the refusal's human message joins the entries' messages one
+per line in the same order, as a source refusal's message joins its source
+diagnostics. Each entry's `locus` is the region of the unit's `model`
+declaration that selected the package, the one source position a package
+refusal has, and its message names the reader diagnostic code or the intake
+check, the IR node identity and the JSON pointer into the package document,
+so entries on different members differ by their message; its `details` is
+`null` (FR-286 "Diagnostic details"). No rendering of an intake or assembly
+refusal SHALL keep only the first entry and count the rest (", and N more"),
+because an author who fixes the first violation should not have to recompile
+to learn of the second, and a tool reading the document should see every
+violation. The list needs no cut marker: its length is bounded by the package
+document, which intake reads under its byte limit.
+
 The complete domain-model vocabulary is not limited to the native type
 spellings of FSL source grammar. The compiler SHALL retain the distinct native
 types `UUID`, `Integer`, `String`, `Boolean` and `Timestamp` required by FSpec
@@ -200,6 +231,61 @@ does not satisfy an event's `Timestamp` occurrence-field requirement under
 [FR-208](ix://agent-ix/filament-specification/FR-208).
 The compiler SHALL NOT replace `UUID`, `String` or `Timestamp` with a local
 alias or a Boolean stand-in.
+
+### Value types bound to a native by `target`
+
+A value type (FSpec FR-208 `filament.meaning.model.value-type/v1`) binds its
+native either by `scalar` and constraints (the Integer, Text, Rational and
+Decimal value types below) or by a `target` naming `ix://filament/native/<Name>`. A
+value type bound by `target` is that native under its own name, exactly as an
+alias whose `target` is the native is (FSpec FR-154): for every `<Name>` of
+FSpec FR-154's native set, a field, an operation parameter, an operation
+result, a tuple position, a variant case payload, a sequence `items`, a map
+`keys` or `values`, an option `inner` and a `reference` `target` typed by the
+value type SHALL have the type, the admission and the refusals that the same
+position typed `ix://filament/native/<Name>` has. In particular:
+
+- `Boolean`, `Integer`, `String`, `UUID`, `Timestamp`, `Bytes` and
+  `JsonObject` give the native type of FSpec FR-322 "Model-owned members", and
+  `Float32` and `Float64` give the strict `exact` float type of "Float model
+  members" below. The value type and its native are one type: a value of one
+  fills a slot of the other and the two compare under the native's equality.
+- `Text`, `Rational` and `Decimal` give no checked type: the member is
+  admitted and every use of it refuses `ill_typed`/`operator-ineligible`, as
+  for a member typed by the bare native (FR-056-AC-43), naming the member's
+  node and typed member path. Bounds and a profile come only from the
+  `scalar`-and-constraints form, so a `target` adds none. A Decimal is typed
+  only through a filament-core-data decimal policy ("Decimal value types"
+  below). filament-core-data FR-144 admits that policy on a field, an
+  operation parameter, a type of kind `alias` or a value type whose `scalar`
+  is `decimal`, never on a `target`-bound value type. Its decimal walk also
+  does not pass through a `target`-bound value type. So a `target`-bound
+  Decimal value type stays without a type, and an alias of
+  `ix://filament/native/Decimal` carrying a policy is the typed spelling.
+- `Clock` makes the value type an alias of the clock type. It builds no type
+  declaration and holds no data value. A member typed by it is a clock member
+  with FSpec FR-154's clock member shape and FR-230's clock place semantics
+  (presence `optional` is a guarded `Option<Clock>` place, a multiplicity
+  other than `[1, 1]` a clock collection), a tuple position or variant payload
+  typed by it is a clock position or clock payload (FR-056-AC-25), a
+  `reference` whose `target` is it is `Reference<Clock>`, and an option
+  `inner` or a map `keys` naming it refuses as one naming
+  `ix://filament/native/Clock` does (FSpec FR-154-AC-40, FSpec FR-154 "Map
+  types"). A `max` or `min` constraint whose `appliesTo` is the value type is
+  a clock constraint on that type (FR-230 "Clock constraints on a type"):
+  `max` bounds every clock place the value type types and `min` refuses
+  `invalid_timed_model`/`time-invariant-shape`. Any other constraint keyword
+  on it refuses `invalid_model_binding`/`malformed-declaration` at the
+  constraint.
+
+Apart from the clock constraints above, a value type bound by `target` carries
+no constraint. The reason for the
+rule: a model has two spellings of a named native, the alias and the
+`target`-bound value type, and the same native SHALL NOT get two meanings from
+them. A clock-bound value type is admitted as a clock
+alias rather than refused because timed models already declare clock places
+through an alias of `Clock` (FR-230-AC-16), and refusing the second spelling
+would refuse a model the first one checks.
 
 ### K2 canonical native String, UUID and Timestamp payloads
 
@@ -733,6 +819,22 @@ makes an empty collection legal, and an `optional` presence wraps the
 multiplicity's own value type in `Option`. A `redefines` names the redefined
 field by its owner and name.
 
+An operation parameter carries presence as a field does. Each
+`Operation.params[i]` entry has the semantic IR field shape, and intake reads
+its required `presence` member under FSpec FR-154 "Operation parameter
+presence": `required` and `optional` map one to one to the admitted
+parameter's presence, and any other value refuses
+`invalid_model_binding`/`malformed-declaration` at the operation node, path
+`Operation.params[i].presence`, naming the value. The type environment gives an
+`optional` parameter `Option<X>`, `X` the type its `typeRef` and multiplicity
+give, so `present(p)` checks and `value(p)` carries the presence obligation
+inside the operation's clauses and body; a `required` parameter is `X`. A
+parameter of option value type with presence `optional` and multiplicity
+`[1, 1]` is the refused `Option<Option<..>>`, at
+`Operation.params[i].presence`. The model states presence on every parameter,
+so intake never drops it: a call may omit only an `optional` parameter (FSpec
+FR-151 "Dispatch rules"), and an invocation likewise (FR-106 check 10).
+
 A `typeRef` under `ix://filament/native/` names a domain native value type,
 including K2's natives above and the FSpec shared-grammar spellings
 `Boolean`, `Integer`, `Rational`, `Decimal`, `Float32`, `Float64` and `Text`.
@@ -807,23 +909,31 @@ compares two Text values under the profile of their declared type and builds
 none. A String never enters a Text slot and a Text never enters a String slot.
 
 A field, operation parameter or operation result whose `typeRef` is
-`ix://filament/native/Text`, `ix://filament/native/Rational` or
-`ix://filament/native/Decimal` names a native that exists, and a `typeRef`
+`ix://filament/native/Text` or `ix://filament/native/Rational` names a native
+that exists, and a `typeRef`
 carries no parameters (FSpec FR-154). Intake SHALL admit it as it admits any
 other native name, and neither intake nor the assembler raises a refusal for
 it at the member or at the unit's `model` declaration. Such a member has no
 checked type: its declared type is outside FSpec FR-322 "Model-owned members"
 step 4's declared-type table, because `Text` needs the bounds and profile of
 `Text[min, max; profile]`, which only a Text value type of the package
-supplies, and `Rational` and `Decimal` need the bounds their FSL type forms
-carry, which no `typeRef` and no semantic-IR constraint carries. This holds at
+supplies, and `Rational` needs the bounds its FSL type form
+carries, which no `typeRef` and no semantic-IR constraint carries. This holds at
 every multiplicity: a collection-valued field over one of these natives has no
 element type and so no collection type, and an `optional` presence gives no
-`Option` type. Admitting these three `typeRef`s depends on the semantic-IR
-validator's native vocabulary naming `Text`, `Rational` and `Decimal` (FSpec
+`Option` type. Admitting these two `typeRef`s depends on the semantic-IR
+validator's native vocabulary naming `Text` and `Rational` (FSpec
 FR-208 "Field types"); a validator whose native set lacks one refuses it
 first, as `invalid_model_binding`/`malformed-declaration` at the member, as it
 does an undeclared native name.
+
+A member whose `typeRef` is `ix://filament/native/Decimal` is not such a
+member. Its type is read through the filament-core-data decimal policy on its
+resolution walk, never through the `typeRef` name: the walk carries exactly
+one policy in every document the semantic-IR validator admits, and that
+policy and its bounds give the member the Decimal value type of "Decimal
+value types" below. A walk with no policy never reaches the type environment,
+because the validator refuses it first.
 
 Whether such a member can be used is decided where it is used. Every
 application that resolves to it SHALL refuse `ill_typed`/`operator-ineligible`
@@ -851,11 +961,11 @@ SHALL refuse it `ill_typed`/`operator-ineligible` at its value path
 (`populations[i].objects[j].fields.<name>`, `parameters.<name>` or `result`),
 naming the member as above, before the value is read. An invocation that
 omits such a parameter refuses `invalid_runtime_input`/`missing-member` as for
-any other parameter. In particular an FR-106 Decimal or Text value never
-fills a member typed by bare `ix://filament/native/Decimal` or
-`ix://filament/native/Text`: the slots those values fill are a Text value type
-of the package and an FSL source `Decimal` or `Decimal[lo, hi; smin, smax;
-mode]` type (FR-106 "Decimal value").
+any other parameter. In particular an FR-106 Text value never
+fills a member typed by bare `ix://filament/native/Text`: the slots a Text
+value fills are a Text value type of the package. The slots an FR-106 Decimal
+value fills are a Decimal value type of the package (below) and an FSL source
+`Decimal[lo, hi; smin, smax; mode]` type (FR-106 "Decimal value").
 
 If a `typeRef` names an undeclared native name, then intake SHALL refuse it with
 `invalid_model_binding`/`malformed-declaration` at the member, naming the
@@ -868,7 +978,8 @@ Value sites rules: every `Integer` bound operand (`min`, `max`,
 integer string at every magnitude, never a JSON number; every `Decimal`
 value site is a canonical decimal string within its declared decimal policy,
 never a JSON number. This is an IR encoding rule, not a grant of FSL support
-for Decimal or enumeration semantics. A reader refusal SHALL end intake
+for enumeration semantics; the Decimal semantics FSL gives a decimal subject
+are those of "Decimal value types" below. A reader refusal SHALL end intake
 before any declaration, retaining its diagnostics as stated above.
 
 A scalar type bound to `Integer` gives the value type `Int[lower, upper]`
@@ -896,6 +1007,152 @@ value sites, which remain JSON numbers subject to the number rules above.
 In particular, the generated safe-integer instance-wire number encoding in
 filament-core-data FR-144 is distinct from its integer IR value-site encoding.
 
+### Decimal value types
+
+A **Decimal value type** is the checked type a filament-core-data
+[FR-144](ix://agent-ix/filament-core-data/FR-144) resolution walk that
+reaches decimal gives its subject. The walk starts at a field, an operation
+parameter or result, a tuple position, a variant case payload, a sequence
+`items`, a map `keys` or `values`, an option `inner` or a `reference` target,
+follows its `typeRef` and every alias `target` (never a `target`-bound value
+type), and reaches
+decimal when it ends at a value type whose `scalar` is `decimal` or at
+`ix://filament/native/Decimal`. Every such walk in a document the semantic-IR
+validator admits passes exactly one node carrying the decimal policy
+`decimal: {precision, scale}`. That node is one of:
+
+- a value type whose `scalar` is `decimal` (the form of FSpec's planning
+  fixtures, such as a state-of-charge `Soc`);
+- a type of kind `alias` whose `target` chain ends at
+  `ix://filament/native/Decimal` (the form filament-core-data FR-034-AC-5
+  mints for a constrained Decimal field: an alias carrying the policy and the
+  bounds);
+- the field, operation parameter or operation `returns` itself, whose
+  `typeRef` is `ix://filament/native/Decimal` (the form filament-core-data
+  writes for an unconstrained Decimal field).
+
+No other node carries a policy. filament-core-data's schema closes the member
+lists of a tuple position (`identity`, `typeRef`, `origin`) and of a variant
+case (`identity`, `name`, `payloadType`, `origin`), so a `decimal` member on
+either is the validator's `SCHEMA_VIOLATION`. A position or payload typed
+`ix://filament/native/Decimal` therefore always refuses
+`DECIMAL_POLICY_MISSING`. A Decimal tuple position or variant case payload is
+typed only through its `typeRef` naming a `scalar` `decimal` value type, or an
+alias that carries the policy (or reaches one). The validator's walk follows a
+position's or payload's `typeRef` through aliases to that policy, as it
+follows a field's.
+
+The bounds are every `min`, `max`, `exclusiveMin` and `exclusiveMax`
+constraint that applies to a node of the walk (filament-core-data FR-144
+"Instance wire"), whichever node holds it: the policy-carrying type, an alias
+further along the walk, or the field. A member typed by `Soc` that adds its
+own bound is written as an alias over `Soc` carrying the constraint and no
+policy (a second policy is a conflict), and that alias's bound narrows the
+range like any other. A `target`-bound value type is not on a decimal walk
+and carries no policy, so it gives no Decimal value type (above).
+
+Intake SHALL give the subject the FSpec
+[FR-140](ix://agent-ix/filament-specification/FR-140) type
+`Decimal[lo, hi; s, s; exact]` for policy precision `p` and scale `s`:
+
+1. The scale bounds `smin` and `smax` are both `s`. Under FR-140 membership,
+   `smin = s` lifts every value with at most `s` fraction digits to its
+   coefficient at scale `s`, so `lo` and `hi` bound that coefficient, and
+   `smax = s` refuses a value with more fraction digits. FR-140 also makes
+   `smax` the target scale of a result, so a value computed into the slot is
+   held at the policy's scale.
+2. The mode is `exact`. The decimal policy has no rounding spelling, and
+   FR-140 selects strict `exact` for a wire or semantic form that omits one.
+   A computation that rounds into the slot therefore refuses
+   `inexact_decimal`/`nonzero-discarded-digit`; a unit that needs rounding
+   writes a source `convert` to a `Decimal[..]` type with that mode.
+3. With no bound, `lo` is `-(10^p - 1)` and `hi` is `10^p - 1`. The policy
+   admits values with at most `p - s` integer digits and at most `s` fraction
+   digits, which is exactly the set whose coefficient at scale `s` has at
+   most `p` digits. `p` is at most 38, so both bounds lie in the i128 range.
+4. Each bound narrows its side by an exact shift to scale `s`: `min m` makes
+   `lo` the larger of `lo` and `m × 10^s`; `exclusiveMin e` the larger of
+   `lo` and `e × 10^s + 1`; `max M` makes `hi` the smaller of `hi` and
+   `M × 10^s`; and `exclusiveMax E` the smaller of `hi` and `E × 10^s - 1`.
+   The validator guarantees every bound is a value of the policy
+   (filament-core-data FR-144 "Value sites"), so each shift is an exact
+   integer. Intake never rounds, clamps or widens a bound, and never drops
+   one. Every bound on every node of the walk applies, and on each side the
+   tighter wins, so a `min` and an `exclusiveMin` on one type, or a `max` on
+   the policy type and another on an alias over it, both narrow. A side with
+   no bound keeps the policy's limit from step 3.
+
+So `Soc` with policy `(5, 2)`, `min` `"0"` and `max` `"1"` is
+`Decimal[0, 100; 2, 2; exact]`, and a policy `(4, 1)` with `exclusiveMin`
+`"-1"` and `exclusiveMax` `"1"` is `Decimal[-9, 9; 1, 1; exact]`. An alias
+`Half` over `Soc` carrying `max` `"0.5"` is `Decimal[0, 50; 2, 2; exact]`.
+
+The subject has that type everywhere a checked type is used: in clauses and
+function bodies, in FR-106 snapshot and invocation admission, which admits a
+Decimal value by FR-140 membership by value, and in lowering. It is the same
+type as the source form `Decimal[lo, hi; s, s; exact]` with those numbers.
+In the checked package the subject lowers by FSpec FR-322 step 4's decimal
+subject row (FSpec FR-322-AC-478): its type is the
+`bounded_domain`/`decimal_range` node over the `scalar_type`/`decimal` node with
+coefficient bounds `lo` and `hi`, `scale_min` and `scale_max` `s` and rounding
+`exact`. A source annotation `Decimal[lo, hi; s, s; exact]` of the same numbers
+names that same node, and a model member introduces no node of its own. A tuple
+position and a variant case payload that are decimal subjects are admitted by
+that row, as FSpec FR-322 "Admitted payload and position types" states. Members
+whose walks give equal numbers share one type and one node.
+
+The semantic-IR validator decides the document first. Intake SHALL report
+each of the following validator refusals as
+`invalid_model_binding`/`malformed-declaration` at the node the validator
+names, retaining its diagnostic:
+
+- `agent-ix.semantic-ir.DECIMAL_POLICY_MISSING`: a walk that reaches decimal
+  with no policy, including a bare `ix://filament/native/Decimal` field or
+  an alias of it with no policy. A `target`-bound Decimal value type is not
+  such a walk: the validator admits it and its member has no type (above);
+- `agent-ix.semantic-ir.DECIMAL_POLICY_CONFLICT`: a walk with two policies,
+  such as a field typed `Soc` that adds its own `decimal`;
+- `SCHEMA_VIOLATION`: a `precision` outside `1..=38`, a negative `scale`, or a
+  `scale` above `precision`;
+- a policy on a node whose walk does not reach decimal, such as a
+  `target`-bound value type. filament-core-data FR-144 names this
+  `SCHEMA_VIOLATION`, while its pinned validator reports
+  `DECIMAL_POLICY_CONFLICT` ("a decimal policy applies only to a decimal
+  subject"). The divergence is filament-core-data's, and intake reports
+  whichever diagnostic the validator emits, under the same code and cause;
+- `agent-ix.semantic-ir.INVALID_OPERAND`: a bound that is not a canonical
+  decimal string, or not a value of the policy (`"0.001"` or `"1000"` under
+  `(5, 2)`), or a JSON number. A whole JSON number beyond 2^53 refuses even
+  earlier, with `noncanonical_wire`/`inexact-integer` at its pointer.
+
+The validator's schema also refuses a `unit` member on a value type, a
+`SCHEMA_VIOLATION` at that member. Intake already sets that diagnostic aside
+for a value type whose `scalar` is `rational` so that the Rational reader
+decides it (FR-505). Intake SHALL set it aside the same way for a value type
+whose `scalar` is `decimal`, so that FSL's own refusal below decides a
+decimal `unit`. The Decimal reader then refuses the first defect in this
+order, at the type definition that carries the policy:
+
+1. a `unit` member: `invalid_model_binding`/`malformed-declaration`, naming
+   `unit`, because a unit-bearing exact number is a Rational value type with
+   a `unit` (FR-505);
+2. a constraint keyword other than `min`, `max`, `exclusiveMin` and
+   `exclusiveMax`, in constraint order: `unsupported_construct`/
+   `declaration-form`, naming the keyword. This includes `enumValues`.
+   filament-core-data FR-144 admits `enumValues` on a decimal subject, but
+   FSL refuses it, as it refuses `enumValues` on an Integer scalar type,
+   because a Decimal type form has no enumerated domain;
+3. a keyword given twice on one node, in constraint order (the same keyword
+   on two nodes of the walk is two bounds, the tighter winning):
+   `invalid_model_binding`/`malformed-declaration`, naming the keyword;
+4. `lo > hi` after step 4: `invalid_model_binding`/`malformed-declaration`,
+   naming `constraints` and the two coefficient bounds, because FR-140 makes
+   a Decimal type with `lo > hi` ill formed. `min` `"1.5"` with `max` `"1"`
+   under `(5, 2)` gives `150 > 100` and refuses. So do `exclusiveMin` `"0.99"`
+   and `exclusiveMax` `"1"`, which give `100 > 99`.
+
+No refusal admits the type or leaves a partial declaration.
+
 A systems part, port or allocation record is model structure, not a value
 type: the assembler admits it into the selected model view and adds no
 type-environment declaration for it, as FR-103 states, and FR-086 classifies
@@ -903,7 +1160,7 @@ and admits it.
 
 If an admitted package declares a record the type environment does not
 represent (a field whose value type or multiplicity has no kernel type, other than a member
-typed by bare `Text`, `Rational` or `Decimal`, which the paragraph on those
+typed by bare `Text` or `Rational`, which the paragraph on those
 natives above governs), then the
 assembler SHALL refuse it with
 `unknown_required_feature`/`unsupported-feature` at the `model` declaration.
@@ -1020,7 +1277,8 @@ value or substitutes decimal, rational or host floating point (FSpec FR-148).
 | FR-056-AC-16 | A domain package whose scalar type `Wide` is bound to `Integer` with `min` the canonical string `"0"` and `max` the canonical string `"18446744073709551615"` is admitted, and `Wide` resolves to `Int[0, 18446744073709551615]` exactly. With `max` the string `"9223372036854775808"` it resolves to `Int[0, 9223372036854775808]`; with `max` the string `"1000"` it resolves to `Int[0, 1000]`. With `min` the JSON number `0` or `max` the JSON number `1000`, intake refuses `invalid_model_binding`/`malformed-declaration`, retaining the reader's `agent-ix.semantic-ir.INVALID_OPERAND` diagnostic at that operand and admitting no declaration. With `max` the JSON number `18446744073709551615` the read refuses `noncanonical_wire`/`inexact-integer` at that number's pointer; with `max` the string `"170141183460469231731687303715884105728"` (`i128::MAX + 1`) or the noncanonical string `"0018"`, intake refuses `invalid_model_binding`/`malformed-declaration` at the scalar type, naming the constraint and the value. | Test (TC-911) |
 | FR-056-AC-17 | The canonical native controls below admit exactly the stated UUID and Timestamp payloads, retain their distinct native identities and refuse the stated alternatives without normalization. K2's `Instant` resolves to `Timestamp`; changing that binding to `Integer` gives TC-235 M04 run 5's `invalid_model_binding`/`malformed-declaration` at `OrderPlaced`'s `TypeDefinition.occurrenceField`, rather than an admitted substitute. | Test |
 | FR-056-AC-18 | TC-235 M17 run 1 retains `TaxedMoney`'s inherited `amount_minor`, `currency` and invariant `NonNegative`, its own `tax_minor`, and conformance to `Money`: its stated value is admitted at `Order/total` and wherever a parameter or result names `Money`, yet is unequal to the stated `Money` value because their most-specific types differ. M17 runs 2 and 3 retain the exact wrong-meaning and specialization-cycle refusals, including the cycle list, rather than object-reference or Boolean substitutes. | Test |
-| FR-056-AC-19 | Offering K2 bytes that the actual Semantic IR reader refuses retains every reader diagnostic and exposes no declaration, effective view or `normalize.record` charge. No downstream native binding repairs a reader refusal. An intake diagnostic on the same member as a retained reader diagnostic is subsumed by it. A reader `DUPLICATE_IDENTITY` diagnostic is reported as the `invalid_model_binding`/`conflicting-binding` refusal of this requirement, and a further reader diagnostic on the same member, such as `DUPLICATE_PARAM`, is retained beside it as reader detail and is not a second refusal. Once the reader contract admits those inputs, K2's version `1`, unused `population` construct, Timestamp binding and all TC-235 vectors remain unchanged; native payload admission alone does not establish their declaration counts, refusals, normalization or runtime results. | Test |
+| FR-056-AC-19 | Offering K2 bytes that the actual Semantic IR reader refuses retains every reader diagnostic and exposes no declaration, effective view or `normalize.record` charge. No downstream native binding repairs a reader refusal. An intake diagnostic on the same member as a retained reader diagnostic is subsumed by it. A reader `DUPLICATE_IDENTITY` diagnostic is reported as the `invalid_model_binding`/`conflicting-binding` refusal of this requirement, and a further reader diagnostic on the same member, such as `DUPLICATE_PARAM`, is retained beside it as reader detail and is not a second refusal. In the outcome document that detail is a further line of the `conflicting-binding` entry's message and has no `diagnostics` entry of its own (intake order). Once the reader contract admits those inputs, K2's version `1`, unused `population` construct, Timestamp binding and all TC-235 vectors remain unchanged; native payload admission alone does not establish their declaration counts, refusals, normalization or runtime results. | Test |
+| FR-056-AC-73 | A domain package whose bytes the Semantic IR reader refuses with three `DUPLICATE_PARAM` diagnostics, one in each of three operations at `/ir/types/0/operations/k/params/1/name` for `k` 0, 1 and 2, gives a refused outcome document whose `diagnostics` holds exactly three entries, in that reader order, each `invalid_model_binding`/`malformed-declaration` with `details` `null`, each with the locus of the unit's `model` declaration, and each message naming `DUPLICATE_PARAM` and its own pointer, so the three messages differ. The refusal's human message (its `Display`) holds the three messages on three lines in the same order with no ", and N more" suffix. A package whose two operations each repeat one parameter identity under one name gives two `conflicting-binding` entries, each message holding a second line for its `DUPLICATE_PARAM` detail, and no third or fourth entry. An assembly refusal with two errors writes two entries and a two-line message. A package with one reader diagnostic writes one entry and a one-line message. | Test (TC-3044) |
 | FR-056-AC-20 | A selected domain package whose object type `Gauge` has a `[1, 1]` field `reading` typed `ix://filament/native/Float64` is admitted and assembles, and `reading`'s value type is `ValueType::Float` of width binary64 with rounding mode `exact`. The unit admits the IEEE profile with no float form of its own, and a `[0, 3]` field of the same type is a `Set<Float64>[0, 3]`. | Test (TC-405, TC-3004) |
 | FR-056-AC-21 | An admitted package containing record value type `Address { street: Text[0, 64; nfc] }`, object field `Account.address: Address` and a record subtype `PostalAddress` retains one `record` export per record, all effective fields and invariants, and subtype conformance. The type environment gives `Account.address` the record value type, an optional `Address` field `Option<Address>`, and an ordered non-unique `[0, 3]` field `Sequence<Address>[0, 3]`, never `Reference<Address>`; an operation parameter or result naming `Address` has the same value type. | Test |
 | FR-056-AC-22 | A record value type with an identity field or an operation refuses with FR-208's named cause before assembly; an object or record field whose `typeRef` names an event type, state machine, process, persistence interface or namespace refuses `invalid_model_binding`/`malformed-declaration` at intake. A valid finite recursive record field, such as `Node { next?: Node }`, retains its record type and optional edge in the type environment; it is not refused solely because the declaration graph is recursive. | Test |
@@ -1044,7 +1302,7 @@ value or substitutes decimal, rational or host floating point (FSpec FR-148).
 | FR-056-AC-40 | Over `function s using v(x: String): Boolean pure { x = "abc" }`, `x` = `abc` gives `true`, and `ABC`, `abc ` and the empty String give `false`. `"a" = "a"` and `"\u00e9" = "é"` are `true`; `"\u00e9" = "e\u0301"` and `"A" = "a"` are `false`. Over `u: UUID`, `u = UUID("00112233-4455-6677-8899-aabbccddeeff")` is `true` for that value and `u != UUID("00112233-4455-6677-8899-aabbccddeefe")` is `true`. Over `t: Timestamp`, `t = Timestamp(5)` is `true` for `5` and `false` for `6`; `Timestamp(0) = Timestamp(-0)` is `true`, `Timestamp(0) = Timestamp(1)` is `false`, and `Timestamp(-170141183460469231731687303715884105728) = Timestamp(170141183460469231731687303715884105727)` is `false`. A literal compares in a call argument, a `let` binding and a field-read comparison (`x.label = "a"`) by the same rules. The String functions `s` and its `!=` counterpart replay through the real spine (FR-098) with the evaluated value and settlement of the Boolean in the `abc`, `ABC` and empty-text rows; the other rows check and evaluate without replay. | Test (TC-1052) |
 | FR-056-AC-41 | A literal never changes type to fit its slot. `x = "abc"` over `x: Text[0, 8; nfc]`, `u = "00112233-4455-6677-8899-aabbccddeeff"` over `u: UUID`, `x = UUID("00112233-4455-6677-8899-aabbccddeeff")` over `x: String`, `t = 5` over `t: Timestamp`, `n = Timestamp(5)` over `n: Integer`, and `r = "abc"` over `r: Reference<T>` each refuse `ill_typed`/`type-mismatch` at the comparison; the bodies `5` of a function whose result is `Timestamp`, `UUID("00112233-4455-6677-8899-aabbccddeeff")` of one whose result is `String` and `"abc"` of one whose result is `Text[0, 8; nfc]` refuse the same way at the literal. `"abc" < "abd"`, `UUID("00112233-4455-6677-8899-aabbccddeeff") <= UUID("00112233-4455-6677-8899-aabbccddeefe")` and `Timestamp(1) > Timestamp(2)` each refuse `ill_typed`/`operator-ineligible`. | Test (TC-1052) |
 | FR-056-AC-42 | A domain package whose operation parameter has `typeRef` `ix://filament/unit/ms` is admitted by intake with the `typeRef` unresolved; the assembler resolves it to the unit `ms` of a compiling unit that declares `ms`, and refuses it `missing_declaration`/`missing-name` naming `Operation.params[0].typeRef` when the unit declares no `ms`. A `typeRef` of the form `ix://filament/unit/<name>` on a field and on a result behave the same. | Test (TC-147) |
-| FR-056-AC-43 | A domain package whose object type `Note` declares fields `memo` typed `ix://filament/native/Text`, `ratio` typed `ix://filament/native/Rational`, `amount` typed `ix://filament/native/Decimal`, `amounts` typed `ix://filament/native/Decimal` with multiplicity `[0, 3]` and `count` typed `ix://filament/native/Integer`, an operation `scale(by)` whose parameter `by` is typed `ix://filament/native/Rational` and whose result is typed `ix://filament/native/Integer`, and an operation `peek()` whose result is typed `ix://filament/native/Text`, is admitted by intake and by the assembler with no refusal, and a unit selecting it whose clauses name none of these members is admitted. Adding, one at a time: the invariants `self.memo = self.memo`, `self.ratio = self.ratio`, `self.amount = self.amount` and `self.amounts = self.amounts` each refuse `ill_typed`/`operator-ineligible` at the projection naming `Note` and `Field.typeRef`; an invariant comparing a call of `scale` with argument `self.count` to `1` refuses the same at the call naming `scale` and `Operation.params[0].typeRef`, with no refusal for the argument; an invariant comparing a call of `peek()` to itself refuses at the call naming `peek` and `Operation.returns.typeRef`; an operation `touch()` with `modifies memo` and the postcondition `self.memo = pre(self.memo)` refuses at the post-state projection `self.memo` naming `Note` and `Field.typeRef`, while `touch()` with `modifies memo` and no postcondition is admitted. Over the admitted unit, an FR-106 snapshot whose `Note` object supplies `count` and omits `memo`, `ratio`, `amount` and `amounts` is admitted and an invariant over `count` is checked against it; the same snapshot supplying `{"kind": "text", "text": "a"}` for `memo` refuses `ill_typed`/`operator-ineligible` at `fields.memo` naming `Note` and `Field.typeRef`, the value unread, and the same snapshot supplying `{"kind": "decimal", "coefficient": "1", "scale": "0"}` for `amount` refuses the same at `fields.amount`, the value unread. An invocation of `scale` supplying `by` refuses the same at `parameters.by` naming `scale` and `Operation.params[0].typeRef`, one omitting `by` refuses `invalid_runtime_input`/`missing-member`, and an invocation of `peek` with a non-null `result` refuses `ill_typed`/`operator-ineligible` at `result` naming `peek` and `Operation.returns.typeRef`. | Test (TC-897) |
+| FR-056-AC-43 | A domain package whose object type `Note` declares fields `memo` typed `ix://filament/native/Text`, `ratio` typed `ix://filament/native/Rational`, `amount` typed `ix://filament/native/Decimal`, `amounts` typed `ix://filament/native/Decimal` with multiplicity `[0, 3]` (each carrying the field decimal policy `{precision: 5, scale: 2}`, without which the validator refuses them `DECIMAL_POLICY_MISSING`) and `count` typed `ix://filament/native/Integer`, an operation `scale(by)` whose parameter `by` is typed `ix://filament/native/Rational` and whose result is typed `ix://filament/native/Integer`, and an operation `peek()` whose result is typed `ix://filament/native/Text`, is admitted by intake and by the assembler with no refusal, and a unit selecting it whose clauses name none of these members is admitted. Adding, one at a time: the invariants `self.memo = self.memo` and `self.ratio = self.ratio` each refuse `ill_typed`/`operator-ineligible` at the projection naming `Note` and `Field.typeRef`, while `self.amount = self.amount` and `self.amounts = self.amounts` check, because `amount` and the elements of `amounts` are Decimal value types `Decimal[-99999, 99999; 2, 2; exact]` (FR-056-AC-66); an invariant comparing a call of `scale` with argument `self.count` to `1` refuses the same at the call naming `scale` and `Operation.params[0].typeRef`, with no refusal for the argument; an invariant comparing a call of `peek()` to itself refuses at the call naming `peek` and `Operation.returns.typeRef`; an operation `touch()` with `modifies memo` and the postcondition `self.memo = pre(self.memo)` refuses at the post-state projection `self.memo` naming `Note` and `Field.typeRef`, while `touch()` with `modifies memo` and no postcondition is admitted. Over the admitted unit, an FR-106 snapshot whose `Note` object supplies `count`, `amount` `{"kind": "decimal", "coefficient": "1", "scale": "0"}` and an empty `amounts` and omits `memo` and `ratio` is admitted and an invariant over `count` is checked against it; the same snapshot supplying `{"kind": "text", "text": "a"}` for `memo` refuses `ill_typed`/`operator-ineligible` at `fields.memo` naming `Note` and `Field.typeRef`, the value unread. An invocation of `scale` supplying `by` refuses the same at `parameters.by` naming `scale` and `Operation.params[0].typeRef`, one omitting `by` refuses `invalid_runtime_input`/`missing-member`, and an invocation of `peek` with a non-null `result` refuses `ill_typed`/`operator-ineligible` at `result` naming `peek` and `Operation.returns.typeRef`. | Test (TC-897) |
 | FR-056-AC-8 | End to end, the filament-core-data#173 architecture fixture runs bundle → quire-rs → lift → intake seam; its ports resolve with owning part, direction, interface type and multiplicity, a connection between them is admitted under FR-152, and the model linker binds a native package's references to those declarations. | Test (TC-148) |
 | FR-056-AC-44 | A business bundle with model-declaring artifacts `FR-001` and `OP-001`, including the underscore member names and references in TC-145, passes the real FCD bundle-to-lift path and FSL's intake/read path. The admitted declarations retain keys `ix://<package identity>/FR-001` and `ix://<package identity>/OP-001`; field and operation member identities retain their authored names and references resolve to those declarations, with no refusal caused by the artifact ids' spelling. | Test (TC-145) |
 | FR-056-AC-51 | Over `function a1 using v(x: Text[0, 8; nfc]): Boolean pure { x = Text("\u00e9") }` and `function a2 using v(x: Text[0, 8; nfc]): Boolean pure { x = Text("e\u0301") }`, `x` holding U+00E9 gives `true` for both, and `x` holding the empty text gives `false` for both; the two bodies hold the one retained sequence U+00E9. Over `Text[0, 8; unicode-scalars]` the same bodies are `true` for U+00E9 and U+0065 U+0301 respectively and `false` for the other. `function r1 using v(): Text[1, 1; nfc] pure { Text("e\u0301") }` checks (the retained length is one) and returns the text U+00E9; `Text[0, 1; binary-utf8]` with `Text("\u00e9")` refuses `TextLiteralOutsideBounds` (two bytes) and `Text[0, 2; binary-utf8]` admits it. | Test (TC-1052) |
@@ -1059,6 +1317,14 @@ value or substitutes decimal, rational or host floating point (FSpec FR-148).
 | FR-056-AC-60 | Over a model whose `Gauge` has a Float64 field `a` and an operation `flip()` with frame `modifies a` and `post F { self.a = -pre(self.a) }`, the explicit-state checker returns no `RequiresBound`. From initial `a` `3ff0000000000000` (1.0) it reaches exactly the states 1.0 and `bff0000000000000` (-1.0), with one candidate per application. From initial `a` `0000000000000000` (+0) it reaches exactly +0 and `8000000000000000` (-0), two states with distinct keys, and each application has two candidates, because both zeros are `numericEqual` to the solved value (FR-120-AC-34). A simulation run applying `flip()` twice from 1.0 ends at 1.0 with no flag. | Test (TC-3006) |
 | FR-056-AC-61 | Over the AC-60 model, negotiation of an SMT item settles it `unsupported` with `unknown_required_feature`/`unsupported-feature` naming the width `float64`, and admission of the package is unchanged; a direct `encode_smt_query` call refuses `SmtEncodingRefusal` `field-sort` naming the object and `a`, and writes no script. No script holds a `Real` or `Int` constant for `a`. | Test (TC-3006) |
 | FR-056-AC-62 | Exporting the AC-60 model writes `a` through FSpec FR-812's binary floating point mapping, a tagged value with its sign, integer significand and exponent, and its `-` as the generated negation; the invariant `self.a != float64(bits: 0x7ff8000000000001)` exports its constant as `[tag \|-> "nan", bits \|-> "7ff8000000000001"]` (FSpec FR-812-AC-8); the export never holds `a` as a rational or decimal value. | Test (TC-3006) |
+| FR-056-AC-63 | A domain package `test/bound` declaring value types `Flag`, `Count`, `Name`, `Reading` and `Sample`, each with `target` `ix://filament/native/Boolean`, `Integer`, `String`, `Float64` and `Float32` respectively, and an object type `Holder` with one field typed by each, is admitted and assembles with no `UnsupportedModelMember` refusal, and the fields' value types are `Boolean`, `Integer`, `String`, `Float64` (binary64, `exact`) and `Float32` (binary32, `exact`); `self.count = 1` and `self.flag = true` check. Value types `Memo` and `Ratio` with `target` `ix://filament/native/Text` and `Rational`, a value type `Cash` with `target` `ix://filament/native/Decimal` and no policy (FCD admits no policy on it), the alias `Amount` (kind `alias`, `target` `ix://filament/native/Decimal`, carrying the decimal policy `{precision: 5, scale: 2}`, as `Rate` of FR-056-AC-66 does), and fields `memo`, `ratio`, `cash` and `amount` typed by them are admitted with the unit; the clauses `self.memo = self.memo` and `self.cash = self.cash` each refuse `ill_typed`/`operator-ineligible` at the `field` projection, naming `Holder` and `Field.typeRef`, and `amount` has the Decimal value type `Decimal[-99999, 99999; 2, 2; exact]`, so `self.amount = self.amount` checks. With `Amount`'s policy removed, the validator refuses `DECIMAL_POLICY_MISSING` and intake refuses `invalid_model_binding`/`malformed-declaration`. | Test (TC-3031) |
+| FR-056-AC-64 | A timed unit whose domain package declares a value type `Watch` with `target` `ix://filament/native/Clock` and a constraint `max` `5` whose `appliesTo` is `Watch`, and an object type `Call` with a field `w` typed `Watch` and an optional field `v` typed `Watch`, checks under `Dense` to the clock places `Call.w` and `Call.v` (guarded by `v`'s presence) with the time invariant `x <= 5` on each, and raises no `UnsupportedModelMember` or `malformed-declaration` refusal. The same package with `Watch`'s constraint keyword `min` refuses `invalid_timed_model`/`time-invariant-shape`; with keyword `maxLength` it refuses `invalid_model_binding`/`malformed-declaration` at the constraint; and an option value type whose `inner` is `Watch` refuses `invalid_model_binding`/`malformed-declaration` at `TypeDefinition.inner`. | Test (TC-3031) |
+| FR-056-AC-65 | Over FSpec TC-2054's `test/refunds` package, intake admits `Order/note` with `firstApprover` `required` and `secondApprover` `optional`, and the type environment gives `firstApprover` `Reference<R::Staff>` and `secondApprover` `Option<Reference<R::Staff>>`. With `secondApprover`'s `presence` `"maybe"`, `null` or absent, intake refuses `invalid_model_binding`/`malformed-declaration` at `Order/note`, path `Operation.params[1].presence`; with `secondApprover` typed by the option value type `OptStaff` and presence `optional` it refuses the same pair at the same path; with `OptStaff` and presence `required` it admits `secondApprover` as `Option<Reference<R::Staff>>`. | Test (TC-3040) |
+| FR-056-AC-66 | Admitting and assembling the golden package `tests/fixtures/decimal-value-types.semantic-ir.json` gives each member exactly the type `tests/fixtures/decimal-value-types.expected.json` lists, compared as `DecimalType` bounds, scales and mode: `Meter.soc` (`Soc`, `scalar` `decimal`, policy `(5, 2)`, `min` `"0"`, `max` `"1"`) is `Decimal[0, 100; 2, 2; exact]`; `Meter.price` (`(10, 2)`, no bound) is `Decimal[-9999999999, 9999999999; 2, 2; exact]`; `Meter.margin` (`(4, 1)`, `exclusiveMin` `"-1"`, `exclusiveMax` `"1"`) is `Decimal[-9, 9; 1, 1; exact]`; `Meter.tax` (`(3, 3)`, `min` `"0.125"`) is `Decimal[125, 999; 3, 3; exact]`; `Meter.whole` (`(38, 0)`) has bounds of 38 nines on each side at scale `0`; `Meter.fee` (`typeRef` `ix://filament/native/Decimal` with the field policy `(6, 2)`) is `Decimal[-999999, 999999; 2, 2; exact]`; `Meter.rate` (alias `Rate` of `ix://filament/native/Decimal` carrying `(7, 4)`, `min` `"0.0001"`, `max` `"1"`) is `Decimal[1, 10000; 4, 4; exact]`; `Meter.half` (alias `Half` over `Soc` with `max` `"0.5"`) is `Decimal[0, 50; 2, 2; exact]` (FR-056-AC-67); the parameter `adjust.by` (native Decimal, field policy `(5, 2)`) is `Decimal[-99999, 99999; 2, 2; exact]` and the result of `adjust` (`Soc`) is `Decimal[0, 100; 2, 2; exact]`. No member has `smin` different from `smax`, a mode other than `exact`, or no checked type. In the checked package, `Meter.soc`, the result of `adjust` and a source annotation `Decimal[0, 100; 2, 2; exact]` name one `bounded_domain`/`decimal_range` node (FSpec FR-322-AC-478). | Test (TC-3042) |
+| FR-056-AC-67 | Bounds on every node of the walk narrow the range, and on each side the tighter bound wins. In the AC-66 package, `Meter.half` is typed by the alias `Half` over `Soc`, which carries only `max` `"0.5"` and no policy. It is `Decimal[0, 50; 2, 2; exact]`. The bound on `Half` is never dropped, and `Soc`'s `max` `"1"` does not widen it. With `Half`'s `max` replaced, in turn: `"2"` gives `Decimal[0, 100; 2, 2; exact]` (`Soc`'s `max` is tighter); `exclusiveMin` `"0.1"` gives `Decimal[11, 100; 2, 2; exact]`; `min` `"0.6"` gives `Decimal[60, 100; 2, 2; exact]`; `min` `"1.5"` gives `150 > 100` and refuses `invalid_model_binding`/`malformed-declaration`, naming `constraints` and the two coefficient bounds. `Meter.soc` stays `Decimal[0, 100; 2, 2; exact]` in every case. | Test (TC-3042) |
+| FR-056-AC-68 | Over the AC-66 package, the invariants `self.soc >= 0.20`, `self.soc = self.soc`, `self.fee = self.fee` and `self.rate <= 1.0` check (an Integer literal `1` against a Decimal member is `ill_typed`/`type-mismatch`, so the bound is written `1.0`) with no refusal. The FSpec planning fixture `o2-battery-dispatch` model (golden copy `tests/fixtures/o2-battery-dispatch.semantic-ir.json`) (its `Soc` is `scalar` `decimal`, policy `(5, 2)`, `min` `"0"`, `max` `"1"`) is admitted with no `unsupported_construct` refusal naming `scalar=decimal`, and its `SocFloor` invariant `self.soc >= 0.20` checks. | Test (TC-3042) |
+| FR-056-AC-71 | Over the AC-66 package, an FR-106 snapshot whose `Meter` supplies `soc` as `{"kind": "decimal", "coefficient": "50", "scale": "2"}`, `{"coefficient": "5", "scale": "1"}`, `{"coefficient": "1", "scale": "0"}` or `{"coefficient": "0", "scale": "0"}` admits it; `{"coefficient": "101", "scale": "2"}`, `{"coefficient": "-1", "scale": "2"}` and `{"coefficient": "5", "scale": "3"}` (`0.005`, finer than scale `2`) each refuse `invalid_runtime_input`/`invalid-value` at `fields.soc`, naming `Decimal[0, 100; 2, 2; exact]` and the supplied coefficient and scale. `margin` admits `0.9` and refuses `1` and `-1` the same way; `tax` admits `0.125` and refuses `0.124`. | Test (TC-3042) |
+| FR-056-AC-72 | Each single defect of the AC-66 package refuses once, admits no declaration and leaves no partial one. At the validator, reported `invalid_model_binding`/`malformed-declaration` with the validator's diagnostic: `Soc` without `decimal` (`DECIMAL_POLICY_MISSING`); `fee` without its field policy (`DECIMAL_POLICY_MISSING` at `fee`); `soc` adding the field policy `(5, 2)` (`DECIMAL_POLICY_CONFLICT`); an `Amount` value type with `target` `ix://filament/native/Decimal` carrying a policy (the pinned validator's `DECIMAL_POLICY_CONFLICT`, which filament-core-data FR-144 names `SCHEMA_VIOLATION`); `Soc` with `precision` `39`, `precision` `0` or `scale` `3` over `precision` `2` (`SCHEMA_VIOLATION`); `Soc`'s `min` as `"0.001"`, `"1000"`, `"00"` or the JSON number `0` (`INVALID_OPERAND`). At the Decimal reader, at `Soc`, with no validator diagnostic (intake sets aside the schema's `unit` diagnostic on a decimal value type as it does on a Rational one): a `unit` member `invalid_model_binding`/`malformed-declaration` naming `unit`; an `enumValues` constraint `unsupported_construct`/`declaration-form` naming `enumValues`; a second `min` `invalid_model_binding`/`malformed-declaration` naming `min`; `min` `"1.5"` with `max` `"1"` (`150 > 100`), and `Margin` with `exclusiveMin` `"0.9"` and `exclusiveMax` `"1"` (`10 > 9`), each `invalid_model_binding`/`malformed-declaration` naming `constraints` and the two coefficient bounds. With both a `unit` and an `enumValues`, only `unit` is reported. Each added constraint carries an identity of its own, so no row is decided by a duplicate identity. Every row reports its named item, and no `Soc`, `Meter` or other declaration is built. `enumValues` stays an FSL `declaration-form` refusal even though filament-core-data admits it on a decimal subject. | Test (TC-3042) |
 
 ### FR-056-AC-17
 
@@ -1124,6 +1390,8 @@ Use independent fixed expected text, not the encoder's output as its own oracle.
 - IR-704 owns filament-exact's UUID/Timestamp implementation against the canonical
   payload contract above. Reader alignment and FSL/shared-value integration
   remain separate dependencies; accepting this spec does not deliver them.
+- [TC-3042](../test-cases/TC-3042-decimal-value-types-from-the-decimal-policy.md)
+  verifies the Decimal value types read from the filament-core-data decimal policy.
 - [TC-1052](../test-cases/TC-1052-native-string-uuid-and-timestamp-literals.md)
   verifies the String, UUID and Timestamp literals in `=` and `!=` and the explicit `Text("...")` constructor.
 - [TC-1028](../test-cases/TC-1028-unit-equality-on-native-string-uuid-and-timestamp.md)

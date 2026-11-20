@@ -21,8 +21,9 @@ invariant NoCycle using v on Config::ConfigVersion at current {
   not reaches(self, self, parent)
 }
 
-post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {
-  self.versionNumber = pre(self.versionNumber)
+post VersionAdvances using v on Config::ConfigVersion::attemptUpdate {
+  (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)
+  and (not result implies self.versionNumber = pre(self.versionNumber))
 }
 "#;
 
@@ -76,7 +77,11 @@ fn check(source: &str) -> Result<CheckedGraph, Vec<(Code, Option<&'static str>)>
             .collect::<Vec<_>>()
     })?;
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .map_err(|refusals| {
             refusals
                 .iter()
@@ -100,7 +105,7 @@ fn the_readme_first_rule_compiles_against_its_model() {
         [
             ("ParentOrder", StateClauseKind::Invariant),
             ("NoCycle", StateClauseKind::Invariant),
-            ("VersionUnchanged", StateClauseKind::Postcondition),
+            ("VersionAdvances", StateClauseKind::Postcondition),
         ]
     );
 }

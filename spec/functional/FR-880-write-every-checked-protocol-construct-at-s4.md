@@ -40,7 +40,9 @@ written in the form the standard defines for it:
   `event`, `commit` and `fence`.
 - **Relationships.** Each checked relationship member is written into the
   clause's `relationships` set as its model relationship node, once, in
-  ascending node-id order (FSpec FR-464 "Clause body").
+  ascending node-id order (FSpec FR-464 "Clause body"). A relationship whose
+  ends are endpoints is written with ends of the endpoints' interface object
+  types (FR-218 "Relationships"), with or without an admitted Connection.
 - **Protocol references in a protocol body.** A `protocol Name` reference in
   a `check` or `send` constraint, an `each` guard, a `repeat` or `choice`
   guard, a `terminal when` condition, a capture initializer or a `finish`
@@ -57,8 +59,23 @@ written in the form the standard defines for it:
   and a predicate-join function that refers to its own protocol. Every
   member of the component, the closing `protocol_reference` carrier
   included, shares the one `recursion_group`. FR-092 assigns the ordinals,
-  and members are written in ordinal order. A requirement cycle never
+  and members are written in ascending node-id order (path, then ordinal). A requirement cycle never
   reaches S4, because S3 refuses it (FR-218-AC-25).
+- **Cycles through a state clause an attempt lists.** A protocol `P` whose
+  `attempt` lists a state clause `S`, where `S` calls a predicate `f` that
+  holds `protocol P`, forms one cyclic component: `P`, the controls on
+  `P`'s `run` path down to that `attempt` (the `attempt` control's
+  `contracts` reference `S`), `S`, `f` and the closing `protocol_reference`
+  carrier. The whole component is written as
+  one recursion group, every member carrying its `recursion_group`, with
+  FR-092's ordinals, and the members are written in ascending node-id
+  order, FSpec FR-322's componentwise order of `{package, path, ordinal}`,
+  so members with distinct paths are ordered by path and members sharing a
+  path by ordinal. Inside the component this
+  replaces the rule that a protocol's node follows the state clauses its
+  attempts list, which cannot hold on a cycle; outside every cycle that rule
+  is unchanged. A state-clause node is a legal group member (FSpec FR-322);
+  only model declaration nodes never carry a `recursion_group`.
 - **`terminal when` reading `over` under `activation on each`.** The
   condition is written as the `terminal` node. FSpec FR-464's stage table
   lets the `terminal` stage read `over` under either activation.
@@ -106,13 +123,15 @@ FIFO-key-stable (FR-881).
 | FR-880-AC-2 | `relationship Pipe = M::pipe;` over the architecture fixture compiles; the clause's `relationships` set holds `pipe`'s model relationship node once; a second relationship gives two entries in ascending node-id order; the package is admitted. | Test (TC-2500) |
 | FR-880-AC-3 | A protocol `Flow` whose `repeat` guard, `check` constraint, `each` guard, `terminal when`, capture initializer and `finish` constraint each hold `protocol Other` compiles, each reference is one `protocol_reference` carrier targeting `Other`'s clause, and the package is admitted. | Test (TC-2501) |
 | FR-880-AC-4 | A function and a predicate that refer to a protocol with an `attempt` compile. The protocol's node follows the state clauses its attempt lists, the referrers follow the protocol, and the protocol's node key equals the key it has with no referrer. | Test (TC-2501) |
-| FR-880-AC-5 | A protocol whose `repeat` guard holds `protocol Flow` inside `Flow` itself, and a predicate-join function that refers to its own protocol, each compile into one recursion group. Every member of the cyclic component shares that group, members are written in FR-092 ordinal order, and the package is admitted. An acyclic reference in the same unit carries no `recursion_group`. | Test (TC-2501) |
+| FR-880-AC-5 | A protocol whose `repeat` guard holds `protocol Flow` inside `Flow` itself, and a predicate-join function that refers to its own protocol, each compile into one recursion group. Every member of the cyclic component shares that group, members are written in ascending node-id order (path, then FR-092 ordinal), and the package is admitted. An acyclic reference in the same unit carries no `recursion_group`. | Test (TC-2501) |
 | FR-880-AC-6 | `terminal when { present(deref(input).trail) }` under `on each (t: Tick)` compiles, and the `terminal` node's condition reads the `over` binder. | Test (TC-2502) |
 | FR-880-AC-7 | Protocols over `Int[0, 3]`, `Boolean`, a model record `Parts::Handoff`, `Option<Integer>` and `Sequence<Integer>` each compile with no `owner_model` edge. Protocols over `Option<M::Order>` and `Sequence<M::Order>` compile with the edge to `M::Order`. Every package is admitted. | Test (TC-2502) |
 | FR-880-AC-8 | `repeat Loop by Seller visible (got.ok) while { not got.ok }` over a body that binds `got` compiles with `test` `post`. A `repeat` that steps only through a nested `repeat` compiles. Both packages are admitted. A post-test `repeat` whose body has a cycle through no step is still refused at S3 by FR-218's progress rule. | Test (TC-2502) |
 | FR-880-AC-9 | A pre-test `repeat` (guard `true`) whose `visible` entry reads the body binder `got`, and one whose `invariant` and `variant` read it, each compile without a `test` member and are admitted. The `visible` entry is an `expression` node over `got`. No refusal is produced at S3 or S4. | Test (TC-2502) |
 | FR-880-AC-10 | Channels carrying `Int[0, 5]`, `Text[0, 8; nfc]`, a bounded `Decimal`, a bounded `Rational`, `Float64[nearest-even]` and `Sequence<Boolean>[0, 3]` compile with the `bounded_domain` node as `carries`. FIFO channels keyed by `Int[0, 99]`, a model value type `PartId` (a bounded integer), `Quantity<m>`, `Option<Int[0, 5]>`, a record with a bounded field and a model variant compile with their keys. Every package is admitted. | Test (TC-2503) |
 | FR-880-AC-11 | Over a corpus holding one minimal protocol for each construct FR-218 checks, every protocol that S3 admits writes a package, and no refusal of a checked protocol carries `not-yet-implemented`. | Test (TC-2503) |
+| FR-880-AC-12 | Over a model with endpoints `out: Port` and `inp: Port` whose interface type is the object type `Port`, the relationship `pipe(out, inp)` with no admitted Connection and `relationship Pipe = M::pipe;` compile: S3 binds `Pipe`'s ends to `Reference<Port>` and `Reference<Port>`, `connection` is absent, no refusal names `Relationship` or `not-yet-implemented`, and the package is admitted. With the Connection `pipe` admitted, the ends are the same and `connection` names both ports, the direction and `Port` twice. A `related by Pipe (a, b)` clause whose `a` is a `Reference<Other>` refuses `ill_typed`/`type-mismatch` naming `expected` `Reference<Port>`. | Test (TC-3069) |
+| FR-880-AC-13 | A protocol `P` whose `attempt` lists the state clause `S` (a precondition of the attempted operation whose body calls the predicate `f`), with `f` holding `protocol P`, compiles: `P`, its `attempt` control, `S`, `f` and the carrier to `P` share one `recursion_group`, carry FR-092 ordinals, are written in ascending node-id order (path, then ordinal), and the package is admitted by FSL's I2 reader and FSpec FR-322's cycle check. The same unit with `f` not holding `protocol P` writes no `recursion_group` and `P`'s node follows `S`. Removing `S`'s `recursion_group` from the written cyclic package refuses `invalid_semantic_graph` at `S`'s node. No refusal is `not-yet-implemented`. | Test (TC-3069) |
 
 ## Dependencies
 

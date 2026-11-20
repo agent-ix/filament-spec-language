@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile t = "filament.temporal.infinite-trace/v1";
+record Reading { ready: Boolean; }
+temporal WeakUntilKeywords using t over (r: Reading) clock "steps" on origin {
+  holds(r.ready) weak until holds(r.ready)
+}

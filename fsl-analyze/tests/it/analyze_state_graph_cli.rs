@@ -83,7 +83,7 @@ fn sampled_witnesses_repeat_under_one_seed() {
     assert_eq!(evidence, &second.item(0)["record"]["evidence"]);
     assert_eq!(evidence["sampled"][0]["source"]["type"], "sampled");
     assert_eq!(evidence["sampled"][0]["source"]["seed"], "7");
-    assert_eq!(first.item(0)["record"]["seed"], 7);
+    assert_eq!(first.item(0)["record"]["seed"], "7");
     assert_eq!(first.item(0)["record"]["witness_samples"], 3);
     assert_eq!(first.item(0)["request"]["temporal"]["witness_samples"], 3);
 }

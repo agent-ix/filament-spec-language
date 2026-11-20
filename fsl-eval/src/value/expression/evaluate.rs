@@ -13,6 +13,7 @@ use filament_checked::node::{
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use super::causes::{
@@ -21,59 +22,60 @@ use super::causes::{
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
-    ComparisonReport, InvocationBinding, Provenance, RuntimeValuePath, Separation, SeparationStep,
-    StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim, locatable, occurrence_at,
+    locatable, occurrence_at, ComparisonReport, InvocationBinding, Provenance, RuntimeValuePath,
+    Separation, SeparationStep, StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim,
 };
 use super::slot_admission;
 use crate::simulation::model::{ReferenceBinding, ReferenceBindings};
 use filament_checked::key::DeclarationKey;
+use filament_eval::modulo as integer_modulo;
 use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
 use filament_eval::FamilyResult;
-use filament_eval::modulo as integer_modulo;
 use filament_eval::{
-    PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved, StateModelUndefined,
+    LiveContext, PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved,
+    SessionLimits, StateModelUndefined,
 };
 use filament_exact::{
-    ArithmeticOperator, BooleanConnective, IntegerArithmetic, OrderedOperands, OrderingOperator,
-    RationalArithmetic, evaluate_boolean, evaluate_integer_arithmetic,
-    evaluate_rational_arithmetic, order_numbers, retain_boolean,
+    admit_quantity_result, compare_text, BoundedQuantityType, ComparisonOperator,
+    QuantityResultInterval,
 };
+use filament_exact::{
+    compare_ieee, convert_ieee_width, evaluate_ieee, exact_to_ieee, ieee_to_exact, IeeeComparison,
+    IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth,
+};
+use filament_exact::{
+    compare_keys, form, form_grouped, retain_composite, CollectionValue, CompositeValue,
+    FieldValue, ObjectId, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
+};
+use filament_exact::{
+    evaluate_boolean, evaluate_integer_arithmetic, evaluate_rational_arithmetic, order_numbers,
+    retain_boolean, ArithmeticOperator, BooleanConnective, IntegerArithmetic, OrderedOperands,
+    OrderingOperator, RationalArithmetic,
+};
+use filament_exact::{evaluate_decimal, Decimal, DecimalOperation, DecimalType};
 use filament_exact::{
     BoundViolation, CardinalityBound, Charge, ChargePoint, CollectionKind, Incomplete, Integer,
     LimitKind, Meter, PopulationId,
 };
-use filament_exact::{
-    BoundedQuantityType, ComparisonOperator, QuantityResultInterval, admit_quantity_result,
-    compare_text,
-};
-use filament_exact::{
-    CollectionValue, CompositeValue, FieldValue, ObjectId, ObjectReference, OptionValue, Quantity,
-    UnionValue, Value, ValueType, compare_keys, form, form_grouped, retain_composite,
-};
-use filament_exact::{Decimal, DecimalOperation, DecimalType, evaluate_decimal};
 use filament_exact::{DivisionMember, IntegerDomain};
 use filament_exact::{EffectiveId, NodeKey};
 use filament_exact::{FloatType, Rational};
-use filament_exact::{
-    IeeeComparison, IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth, compare_ieee,
-    convert_ieee_width, evaluate_ieee, exact_to_ieee, ieee_to_exact,
-};
 use filament_exact::{Outcome, Refusal, Undefined};
-use filament_semantic_value::catalog::{InternalFault, render_identity};
+use filament_semantic_value::catalog::{render_identity, InternalFault};
 use filament_semantic_value::declaration::{
-    CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment, operand_value,
+    operand_value, CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment,
 };
-use filament_semantic_value::enumeration::{EnumMemberIndex, compare_enum};
+use filament_semantic_value::enumeration::{compare_enum, EnumMemberIndex};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::loss::{LocatedLoss, ValueLoss};
 use filament_semantic_value::quantity::{
-    ConvertedValue, QuantityOperation, QuantityTarget, UnitScope, compare_quantity,
-    convert_quantity, evaluate_quantity_unit,
+    compare_quantity, convert_quantity, evaluate_quantity_unit, ConvertedValue, QuantityOperation,
+    QuantityTarget, UnitScope,
 };
 use filament_semantic_value::relationship_extent::Resolution;
-use filament_semantic_value::stop::{Stop, outcome_from_stop, outcome_into_stop};
-use fsl_foundation::diagnostic::{Locus, RefusalRecord, kernel_refusal_record};
+use filament_semantic_value::stop::{outcome_from_stop, outcome_into_stop, Stop};
+use fsl_foundation::diagnostic::{kernel_refusal_record, Locus, RefusalRecord};
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_semantics::check::{CheckedGraph, DispatchTable, FormedUnits, Operator, Scope, Slot};
 #[cfg(test)]
@@ -82,7 +84,7 @@ use fsl_semantics::model::object_environment::{ObjectEnvironment, ObservedRead};
 use fsl_semantics::model::observation::OutOfRange;
 use fsl_semantics::model::population::PopulationBinding;
 use fsl_semantics::value::divide as integer_divide;
-use fsl_semantics::value::model_query::{ModelQueryHalt, evaluate_all_instances, evaluate_lookup};
+use fsl_semantics::value::model_query::{evaluate_all_instances, evaluate_lookup, ModelQueryHalt};
 use node_source::NodeSource;
 pub(crate) use world::World;
 
@@ -165,8 +167,8 @@ struct LocatedStop {
 }
 
 use crate::value::collections::{
-    self, Absorbed, Flow, Iteration as IterationState, Sequence, Shape, Spec, charge_element,
-    charge_visit, retain_scalar,
+    self, charge_element, charge_visit, retain_scalar, Absorbed, Flow, Iteration as IterationState,
+    Sequence, Shape, Spec,
 };
 use crate::value::composite::{self, construct_record, construct_tuple, present_slots, read_field};
 
@@ -463,6 +465,7 @@ pub(super) fn refused_evaluation(refusal: Refusal) -> Evaluation {
         location: None,
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     }
 }
 
@@ -619,6 +622,14 @@ struct PoppedArguments {
     owners: Vec<Owner>,
 }
 
+/// One live occurrence for the call frame plus all occurrences retained by
+/// the values bound to its parameters, matching `filament_eval::Session`.
+fn frame_occurrences(arguments: &[Value]) -> Integer {
+    arguments
+        .iter()
+        .fold(Integer::one(), |sum, argument| sum.add(&argument.occ()))
+}
+
 /// The binder of each root-frame source slot and the routing of one call's
 /// charge intervals onto them (FR-520-AC-11).
 struct BinderRouting {
@@ -635,11 +646,133 @@ pub(crate) type UnavailableRead = (
     Option<Location>,
 );
 
+/// Where a node is evaluated in a float ordering composition (FR-397
+/// "Ordering parts"): the composition's root, its pair of operand
+/// self-equalities, its tail, the negated equality of its tail, or one of its
+/// three `numeric_equal` parts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Position {
+    Ordering,
+    Parts,
+    Tail,
+    NotPart,
+    Part,
+}
+
+impl Position {
+    fn left(self) -> Option<Self> {
+        match self {
+            Self::Ordering => Some(Self::Parts),
+            Self::Parts => Some(Self::Part),
+            Self::Tail | Self::NotPart | Self::Part => None,
+        }
+    }
+
+    fn right<'a, N: NodeSource<'a>>(self, operand: N) -> Position {
+        match self {
+            Self::Ordering => Self::Tail,
+            Self::Tail if matches!(operand.kind(), NodeKind::Not(_)) => Self::NotPart,
+            Self::Parts | Self::Tail | Self::NotPart | Self::Part => Self::Part,
+        }
+    }
+}
+
+/// Whether an applied node charges the meter: an ordering part decides
+/// without charging (FR-397 "Ordering parts").
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Application {
+    Standalone,
+    OrderingPart,
+}
+
+/// The one local or IEEE literal an ordering operand reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperandRead {
+    Local(Slot),
+    Literal(IeeeValue),
+}
+
+fn operand_read<'a, N: NodeSource<'a>>(node: N) -> Option<OperandRead> {
+    match node.kind() {
+        NodeKind::Local(slot) => Some(OperandRead::Local(*slot)),
+        NodeKind::Literal(literal) => match N::literal(literal) {
+            Value::Float(value) => Some(OperandRead::Literal(*value)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether `node` is `numeric_equal(a, b)` whose operands read `a` and `b`.
+fn numeric_equal_of<'a, N: NodeSource<'a>>(
+    node: N,
+    a: &Option<OperandRead>,
+    b: &Option<OperandRead>,
+) -> bool {
+    let NodeKind::IeeeNumericEquality(left, right) = node.kind() else {
+        return false;
+    };
+    operand_read(node.at(*left)) == *a && operand_read(node.at(*right)) == *b
+}
+
+/// FR-397 "Ordering parts": whether `node` is an ordering composition,
+/// `and(and(ne(x, x), ne(y, y)), and(total(x, y), not(ne(x, y))))` or its
+/// `or(total(x, y), ne(x, y))` tail, with `x` and `y` each one local or
+/// literal read. Read from node kinds, operator identities and operand reads
+/// only, so the source and the package route decide alike.
+fn ordering_composition<'a, N: NodeSource<'a>>(node: N) -> bool {
+    let NodeKind::Connective(Connective::And, _, parts, tail) = node.kind() else {
+        return false;
+    };
+    let (parts, tail) = (node.at(*parts), node.at(*tail));
+    let NodeKind::Connective(Connective::And, _, left, right) = parts.kind() else {
+        return false;
+    };
+    let (left, right) = (parts.at(*left), parts.at(*right));
+    let (NodeKind::IeeeNumericEquality(x, _), NodeKind::IeeeNumericEquality(y, _)) =
+        (left.kind(), right.kind())
+    else {
+        return false;
+    };
+    let x = operand_read(left.at(*x));
+    let y = operand_read(right.at(*y));
+    if x.is_none()
+        || y.is_none()
+        || !numeric_equal_of(left, &x, &x)
+        || !numeric_equal_of(right, &y, &y)
+    {
+        return false;
+    }
+    let NodeKind::Connective(connective, _, total, equal) = tail.kind() else {
+        return false;
+    };
+    let (total, equal) = (tail.at(*total), tail.at(*equal));
+    let NodeKind::IeeeTotalOrder(_, a, b) = total.kind() else {
+        return false;
+    };
+    if operand_read(total.at(*a)) != x || operand_read(total.at(*b)) != y {
+        return false;
+    }
+    match connective {
+        Connective::And => match equal.kind() {
+            NodeKind::Not(inner) => numeric_equal_of(equal.at(*inner), &x, &y),
+            _ => false,
+        },
+        Connective::Or => numeric_equal_of(equal, &x, &y),
+        Connective::Implies => false,
+    }
+}
+
 enum Task<'a, N> {
     Eval(N),
     Apply(N),
+    /// FR-397 "Ordering parts": a `numeric_equal` evaluated as an ordering
+    /// part, which decides without charging.
+    ApplyPart(N),
+    /// Evaluate `N` at a position of an ordering composition.
+    EvalAt(N, Position),
     Branch(N),
-    Short(N),
+    Short(N, Option<Position>),
     /// FR-322: the `case` at this node has evaluated its scrutinee; select
     /// the arm of its active member and evaluate only that arm's body.
     Select(N),
@@ -799,6 +932,18 @@ pub(crate) struct Machine<'a, 'm, N> {
     /// being forwarded as a reference, rather than read by an operation.
     value_guard_provenance: Vec<bool>,
     frames: Vec<Vec<Option<Value>>>,
+    /// Live occurrence charge retained for each call frame while it is on
+    /// the stack; ordinary clause and expression roots retain zero or their
+    /// separately admitted expression-root charge.
+    frame_live_occurrences: Vec<u64>,
+    /// The session's call-frame live-occurrence limit.
+    live_occurrences_limit: u64,
+    /// The current and peak occurrence counts of this machine's call frames.
+    live_occurrences: u64,
+    peak_live_occurrences: u64,
+    /// A scheduler transition context cloned for this synchronous machine.
+    live_context: Option<LiveContext>,
+    peak_live_occurrences_sink: Option<Arc<AtomicU64>>,
     /// Per-slot provenance parallel to `frames`.
     frame_guard_provenance: Vec<Vec<bool>>,
     /// FR-390 source slots whose caller supplied an unavailable value.
@@ -958,6 +1103,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self
     }
 
+    /// Apply the configured live-occurrence bound to calls held in this
+    /// machine's frame stack.
+    pub(crate) fn with_session_limits(mut self, limits: SessionLimits) -> Self {
+        self.live_occurrences_limit = limits.live_occurrences;
+        self
+    }
+
+    /// Enforce the enclosing scheduler's aggregate count for this machine.
+    pub(crate) fn with_live_context(mut self, context: LiveContext) -> Self {
+        self.live_context = Some(context);
+        self
+    }
+
+    pub(crate) fn with_peak_live_occurrences_sink(mut self, sink: Arc<AtomicU64>) -> Self {
+        self.peak_live_occurrences_sink = Some(sink);
+        self
+    }
+
     /// A value-family evaluator that records each completed application and
     /// its result. An occurrence whose operand or operator stopped is absent
     /// from the trace.
@@ -1067,6 +1230,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             values: Vec::new(),
             value_guard_provenance: Vec::new(),
             frames: Vec::new(),
+            frame_live_occurrences: Vec::new(),
+            live_occurrences_limit: SessionLimits::default().live_occurrences,
+            live_occurrences: 0,
+            peak_live_occurrences: 0,
+            live_context: None,
+            peak_live_occurrences_sink: None,
             frame_guard_provenance: Vec::new(),
             unavailable_slots: std::collections::BTreeMap::new(),
             unavailable_read: None,
@@ -1168,16 +1337,21 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// FR-265: retain a completed authored comparison on the claim's own
     /// level, alongside its result and operands.
     fn note_comparison(&mut self, node: N, left: &Value, right: &Value, result: bool) {
-        if !self.on_claim_level() || node.is_ordering_part() {
+        if !self.on_claim_level() {
             return;
         }
         let Some(location) = node.location() else {
             return;
         };
-        let Some(graph) = self.world.graph() else {
-            return;
-        };
-        let Some(comparison) = occurrence_at(graph, location, Some(Operator::Binary)) else {
+        // A source node's occurrence is the one its checked graph records at
+        // the location; a package node carries its `protocol_locations`
+        // row's occurrence.
+        let Some(comparison) = self
+            .world
+            .graph()
+            .and_then(|graph| occurrence_at(graph, location, Some(Operator::Binary)))
+            .or_else(|| node.occurrence())
+        else {
             return;
         };
         if let Some(trail) = self.trail.as_mut() {
@@ -1228,13 +1402,68 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// itself turns into `Err(InternalFault)` rather than an `Outcome`
     /// (FR-096-AC-15).
     pub(crate) fn run(
-        mut self,
+        self,
         root: N,
         slots: usize,
         arguments: Vec<Value>,
     ) -> Result<Evaluation, InternalFault> {
-        self.enter_frame(slots, arguments);
-        self.drive(root)
+        self.run_with_root_frame(root, slots, arguments, false, false)
+    }
+
+    /// Evaluate a call frame whose `function.call` charge was already granted.
+    pub(crate) fn run_call(
+        self,
+        root: N,
+        slots: usize,
+        arguments: Vec<Value>,
+    ) -> Result<Evaluation, InternalFault> {
+        self.run_with_root_frame(root, slots, arguments, true, true)
+    }
+
+    /// Evaluate an expression root, which contributes a live frame to nested
+    /// calls but has no call charge and is not itself tested against the bound.
+    pub(crate) fn run_expression(
+        self,
+        root: N,
+        slots: usize,
+        arguments: Vec<Value>,
+    ) -> Result<Evaluation, InternalFault> {
+        self.run_with_root_frame(root, slots, arguments, true, false)
+    }
+
+    fn run_with_root_frame(
+        mut self,
+        root: N,
+        slots: usize,
+        arguments: Vec<Value>,
+        count_root: bool,
+        enforce_root: bool,
+    ) -> Result<Evaluation, InternalFault> {
+        let root_location = root.location().cloned();
+        // The scheduler already admitted this root frame. Its context starts
+        // with that charge, so the mirrored Machine frame must not charge it
+        // again.
+        let (count_root, enforce_root) = if self.live_context.is_some() {
+            (false, false)
+        } else {
+            (count_root, enforce_root)
+        };
+        if let Err(halt) = self.enter_frame(slots, arguments, count_root, enforce_root) {
+            return match halt {
+                Halt::Stop(stop) => self.stopped(stop, root_location.as_ref()),
+                Halt::Fault(fault) => Err(fault),
+                _ => Err(InternalFault::new(
+                    "S6a",
+                    "call-frame-limit-returned-non-stop",
+                )),
+            };
+        }
+        let mut evaluation = self.drive(root)?;
+        evaluation.peak_live_occurrences = self.live_peak();
+        if let Some(sink) = self.peak_live_occurrences_sink.as_ref() {
+            sink.fetch_max(evaluation.peak_live_occurrences, AtomicOrdering::Relaxed);
+        }
+        Ok(evaluation)
     }
 
     /// [`Self::run`] over a frame given slot by slot: `frame[i]` is local
@@ -1314,7 +1543,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         slots: usize,
         arguments: Vec<Value>,
     ) -> Result<(Evaluation, Trail), InternalFault> {
-        self.enter_frame(slots, arguments);
+        self.enter_frame(slots, arguments, false, false)
+            .map_err(|halt| match halt {
+                Halt::Fault(fault) => fault,
+                _ => InternalFault::new("S6a", "traced-root-frame-unexpected-limit"),
+            })?;
         let evaluation = self.drive(root)?;
         let trail = self
             .trail
@@ -1324,7 +1557,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     }
 
     /// Push the outermost frame: `arguments` in its first slots.
-    fn enter_frame(&mut self, slots: usize, arguments: Vec<Value>) {
+    fn enter_frame(
+        &mut self,
+        slots: usize,
+        arguments: Vec<Value>,
+        count_occurrences: bool,
+        enforce_limit: bool,
+    ) -> Result<(), Halt> {
+        let occurrences = if count_occurrences {
+            frame_occurrences(&arguments)
+        } else {
+            Integer::zero()
+        };
         let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
         frame.resize(slots.max(frame.len()), None);
         let mut provenance = vec![false; frame.len()];
@@ -1333,15 +1577,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 *slot = true;
             }
         }
-        if let Some(owners) = self.owners.as_mut() {
-            owners.push_frame(Vec::new(), frame.len());
-        }
-        self.frames.push(frame);
-        self.frame_guard_provenance.push(provenance);
+        self.push_frame_owned(frame, provenance, Vec::new(), occurrences, enforce_limit)
     }
 
     fn push_frame(&mut self, frame: Vec<Option<Value>>, provenance: Vec<bool>) {
-        self.push_frame_owned(frame, provenance, Vec::new());
+        // Protocol and clause frames are not pure-function call frames.
+        if let Some(tracked) = self.owners.as_mut() {
+            tracked.push_frame(Vec::new(), frame.len());
+        }
+        self.frames.push(frame);
+        self.frame_guard_provenance.push(provenance);
+        self.frame_live_occurrences.push(0);
     }
 
     /// Push a frame whose first slots derive from `owners`, one per argument.
@@ -1350,13 +1596,66 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         frame: Vec<Option<Value>>,
         mut provenance: Vec<bool>,
         owners: Vec<Owner>,
-    ) {
+        next_charge: Integer,
+        enforce_limit: bool,
+    ) -> Result<(), Halt> {
+        let (occurrences, total) = if let Some(context) = self.live_context.as_mut() {
+            if enforce_limit {
+                (context.open(&next_charge)?, self.live_occurrences)
+            } else {
+                (0, self.live_occurrences)
+            }
+        } else {
+            let admitted_occurrences = next_charge.to_u64();
+            let occurrences = admitted_occurrences.unwrap_or(u64::MAX);
+            let total = self.live_occurrences.checked_add(occurrences);
+            if enforce_limit
+                && (admitted_occurrences.is_none()
+                    || total.map_or(true, |total| total > self.live_occurrences_limit))
+            {
+                return Err(Halt::Stop(Stop::Incomplete(Incomplete {
+                    limit_kind: LimitKind::LiveOccurrences,
+                    limit: self.live_occurrences_limit,
+                    consumed: self.live_occurrences,
+                    next_charge,
+                    charge_point: ChargePoint::FunctionCall,
+                })));
+            }
+            (occurrences, total.unwrap_or(u64::MAX))
+        };
         provenance.resize(frame.len(), false);
         if let Some(tracked) = self.owners.as_mut() {
             tracked.push_frame(owners, frame.len());
         }
         self.frames.push(frame);
         self.frame_guard_provenance.push(provenance);
+        self.frame_live_occurrences.push(occurrences);
+        self.live_occurrences = total;
+        self.peak_live_occurrences = self.peak_live_occurrences.max(total);
+        Ok(())
+    }
+
+    fn pop_live_frame(&mut self) -> Result<(), Halt> {
+        let Some(occurrences) = self.frame_live_occurrences.pop() else {
+            return Err(invariant("evaluation-live-occurrence-frame-missing"));
+        };
+        if let Some(context) = self.live_context.as_mut() {
+            if occurrences > 0 {
+                context.close(occurrences);
+            }
+        } else {
+            self.live_occurrences = self
+                .live_occurrences
+                .checked_sub(occurrences)
+                .ok_or_else(|| invariant("evaluation-live-occurrence-count-underflow"))?;
+        }
+        Ok(())
+    }
+
+    fn live_peak(&self) -> u64 {
+        self.live_context
+            .as_ref()
+            .map_or(self.peak_live_occurrences, LiveContext::peak)
     }
 
     /// Evaluate `root` on the current frame to its outcome: the task loop
@@ -1371,7 +1670,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 Task::Eval(node)
                 | Task::Apply(node)
                 | Task::Branch(node)
-                | Task::Short(node)
+                | Task::Short(node, _)
+                | Task::ApplyPart(node)
+                | Task::EvalAt(node, _)
                 | Task::Select(node)
                 | Task::Retain(node, _)
                 | Task::ObserveApplication(node)
@@ -1422,6 +1723,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         location: reported_location.cloned(),
                         losses: Vec::new(),
                         frame_depth: self.frame_depth(),
+                        peak_live_occurrences: 0,
                     }),
                     Halt::Stop(stop) => self.stopped(stop, reported_location),
                     // An imported call site still locates at that call.
@@ -1458,6 +1760,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     location: root.location().cloned(),
                     losses: Vec::new(),
                     frame_depth: self.frame_depth(),
+                    peak_live_occurrences: 0,
                 });
             }
             Err(Halt::Stop(stop)) => return self.stopped(stop, root.location()),
@@ -1473,6 +1776,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             location: None,
             losses: std::mem::take(&mut self.losses),
             frame_depth: 0,
+            peak_live_occurrences: 0,
         })
     }
 
@@ -1498,12 +1802,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             slot,
             source,
             body,
+            ..
         } = quantifier.kind()
         else {
             return Err(fault());
         };
         let (source, body) = (quantifier.at(*source), quantifier.at(*body));
-        self.enter_frame(slots, arguments);
+        self.enter_frame(slots, arguments, false, false)
+            .map_err(|halt| match halt {
+                Halt::Fault(fault) => fault,
+                _ => InternalFault::new("S6a", "separation-root-frame-unexpected-limit"),
+            })?;
         for binding in lets {
             let NodeKind::Let { slot, value, .. } = binding.kind() else {
                 return Err(fault());
@@ -1575,7 +1884,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         stop: Stop,
         location: Option<&Location>,
     ) -> Result<Evaluation, InternalFault> {
-        Self::stopped_at_depth(stop, location, self.frame_depth())
+        let mut evaluation = Self::stopped_at_depth(stop, location, self.frame_depth())?;
+        evaluation.peak_live_occurrences = self.live_peak();
+        Ok(evaluation)
     }
 
     fn stopped_at_depth(
@@ -1595,6 +1906,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             location: location.cloned(),
             losses: Vec::new(),
             frame_depth,
+            peak_live_occurrences: 0,
         })
     }
 
@@ -2105,6 +2417,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         match task {
             Task::Eval(node) => self.eval(node),
             Task::Apply(node) => self.apply(node),
+            Task::ApplyPart(node) => self.apply_ordering_part(node),
+            Task::EvalAt(node, position) => self.eval_at(node, position),
             Task::Branch(node) => {
                 let NodeKind::If {
                     then, otherwise, ..
@@ -2118,7 +2432,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.tasks.push(Task::Eval(node.at(*taken)));
                 Ok(())
             }
-            Task::Short(node) => {
+            Task::Short(node, position) => {
                 let NodeKind::Connective(connective, origin, _, right) = node.kind() else {
                     return Err(invariant("evaluation-connective-node-expected"));
                 };
@@ -2143,7 +2457,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     }
                     None => {
                         self.tasks.push(Task::Retain(node, left_owner));
-                        self.tasks.push(Task::Eval(node.at(*right)));
+                        let right_position =
+                            position.map(|position| position.right(node.at(*right)));
+                        self.push_operand(node.at(*right), right_position);
                     }
                 }
                 Ok(())
@@ -2179,6 +2495,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.frame_guard_provenance
                     .pop()
                     .ok_or_else(|| invariant("evaluation-return-provenance-frame-missing"))?;
+                self.pop_live_frame()?;
                 self.pop_frame_owners()?;
                 Ok(())
             }
@@ -2197,6 +2514,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.frame_guard_provenance
                     .pop()
                     .ok_or_else(|| invariant("evaluation-return-provenance-frame-missing"))?;
+                self.pop_live_frame()?;
                 self.pop_frame_owners()?;
                 if !holds {
                     // ADR-013 O-16, FR-090-AC-11: a `StateModel` family-owned
@@ -2214,10 +2532,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     self.absorb_owner(*owner);
                 }
                 charge_call(self.meter)?;
+                let next_charge = frame_occurrences(&arguments);
                 let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
                 frame.resize(callable.slots.max(frame.len()), None);
                 let provenance = vec![false; frame.len()];
-                self.push_frame_owned(frame, provenance, owners);
+                self.push_frame_owned(frame, provenance, owners, next_charge, true)?;
                 self.tasks.push(Task::ObserveApplication(node));
                 self.tasks.push(Task::Return);
                 self.tasks.push(Task::Eval(callable.body));
@@ -2288,6 +2607,50 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         let provenance = self.slot_has_guard_provenance(slot)?;
         self.push_value(value, provenance);
         Ok(())
+    }
+
+    /// Queue `node`, evaluated at `position` of an ordering composition when
+    /// it has one.
+    fn push_operand(&mut self, node: N, position: Option<Position>) {
+        self.tasks.push(match position {
+            Some(position) => Task::EvalAt(node, position),
+            None => Task::Eval(node),
+        });
+    }
+
+    /// FR-397 "Ordering parts": evaluate `node`, reached along an ordering
+    /// composition's operand edges at `position`.
+    fn eval_at(&mut self, node: N, position: Position) -> Result<(), Halt> {
+        match (position, node.kind()) {
+            (
+                Position::Ordering | Position::Parts | Position::Tail,
+                NodeKind::Connective(_, _, left, _),
+            ) => {
+                self.tasks.push(Task::Short(node, Some(position)));
+                self.push_operand(node.at(*left), position.left());
+                Ok(())
+            }
+            (Position::NotPart, NodeKind::Not(operand)) => {
+                self.tasks.push(Task::Apply(node));
+                self.push_operand(node.at(*operand), Some(Position::Part));
+                Ok(())
+            }
+            (Position::Part, NodeKind::IeeeNumericEquality(left, right)) => {
+                self.tasks.push(Task::ApplyPart(node));
+                self.tasks.push(Task::Eval(node.at(*right)));
+                self.tasks.push(Task::Eval(node.at(*left)));
+                Ok(())
+            }
+            _ => Err(invariant("ordering-composition-position-mismatch")),
+        }
+    }
+
+    fn apply(&mut self, node: N) -> Result<(), Halt> {
+        self.apply_as(node, Application::Standalone)
+    }
+
+    fn apply_ordering_part(&mut self, node: N) -> Result<(), Halt> {
+        self.apply_as(node, Application::OrderingPart)
     }
 
     fn eval(&mut self, node: N) -> Result<(), Halt> {
@@ -2364,7 +2727,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 return Ok(());
             }
             NodeKind::Local(slot) => return self.eval_local(*slot),
-            NodeKind::Let { slot, value, body } => {
+            NodeKind::Let {
+                slot, value, body, ..
+            } => {
                 self.tasks.push(Task::Eval(node.at(*body)));
                 self.tasks.push(Task::Bind(*slot));
                 self.tasks.push(Task::Eval(node.at(*value)));
@@ -2376,8 +2741,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 return Ok(());
             }
             NodeKind::Connective(_, _, left, _) => {
-                self.tasks.push(Task::Short(node));
-                self.tasks.push(Task::Eval(node.at(*left)));
+                let position = ordering_composition(node).then_some(Position::Ordering);
+                self.tasks.push(Task::Short(node, position));
+                self.push_operand(node.at(*left), position.and_then(Position::left));
                 return Ok(());
             }
             NodeKind::Collection { elements, .. } => {
@@ -2461,7 +2827,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// (or expressed as a refutable `let ... else`, which this lint does not
     /// reach) rather than left to this `deny` -- see each site's own note.
     #[deny(clippy::wildcard_enum_match_arm)]
-    fn apply(&mut self, node: N) -> Result<(), Halt> {
+    fn apply_as(&mut self, node: N, application: Application) -> Result<(), Halt> {
         let value = match node.kind() {
             NodeKind::Literal(_)
             | NodeKind::ReferenceLiteral { .. }
@@ -2560,7 +2926,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 charge_element(self.meter)?;
                 retain_scalar(value.clone(), self.meter)?
             }
-            NodeKind::ConvertText(_, _) => return Err(unsupported_construct("text_conversion")),
+            NodeKind::ConvertText(target, _) => {
+                if matches!(target, ValueType::Float(_)) && !self.world.has_ieee_profile() {
+                    return Err(invariant("ieee-profile-unresolved"));
+                }
+                let source = self.pop()?;
+                let (value, loss) = text_conversion::convert(
+                    self.world.types(),
+                    &self.units,
+                    target,
+                    &source,
+                    self.meter,
+                )
+                .map_err(Halt::from)?;
+                if let Some(loss) = loss {
+                    self.record(node, loss)?;
+                }
+                value
+            }
             // FR-322: the payload arguments are evaluated and on the stack in
             // position order; the first stopped one never reaches here. Type
             // checking proved each payload against its position (FR-317), so
@@ -3068,7 +3451,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         "typed-ieee-equality-operands-are-not-floats",
                     )));
                 };
-                if !node.is_ordering_part() {
+                if application == Application::Standalone {
                     // A standalone `=` or `numericEqual` is the one owned
                     // core of FR-148: it charges its operands and result.
                     if !self.world.has_ieee_profile() {
@@ -3078,12 +3461,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         compare_ieee(IeeeComparison::NumericEqual, left, right, self.meter)
                             .map_err(|_| invariant("ieee-operation-rejected"))?,
                     )?;
-                    self.note_comparison(
-                        node,
-                        &Value::Float(left),
-                        &Value::Float(right),
-                        result,
-                    );
+                    self.note_comparison(node, &Value::Float(left), &Value::Float(right), result);
                     Value::Boolean(result)
                 } else {
                     // FR-397 "Evaluate once": the numeric-equality parts of
@@ -3300,13 +3678,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     provenance,
                     owners: argument_owners,
                 } = self.pop_many_forwarded(arguments_len)?;
+                let next_charge = frame_occurrences(&arguments);
                 charge_call(self.meter)?;
                 self.enter_function_case()?;
                 let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
                 frame.resize(callable.slots.max(frame.len()), None);
                 let mut frame_provenance = provenance;
                 frame_provenance.resize(frame.len(), false);
-                self.push_frame_owned(frame, frame_provenance, argument_owners);
+                self.push_frame_owned(frame, frame_provenance, argument_owners, next_charge, true)?;
                 // shared-grammar.md: "self, result and pre(...) are ...
                 // unavailable ... inside a reusable predicate" -- a callee's
                 // own body is never anchored by its caller's `pre(..)`, so
@@ -3347,13 +3726,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     provenance,
                     owners: argument_owners,
                 } = self.pop_many_forwarded(arguments_len)?;
+                let next_charge = frame_occurrences(&arguments);
                 charge_call(self.meter)?;
                 self.enter_function_case()?;
                 let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
                 frame.resize(callable.slots.max(frame.len()), None);
                 let mut frame_provenance = provenance;
                 frame_provenance.resize(frame.len(), false);
-                self.push_frame_owned(frame, frame_provenance, argument_owners);
+                self.push_frame_owned(frame, frame_provenance, argument_owners, next_charge, true)?;
                 let previous = self.enter(PackageContext {
                     world: World::Checked {
                         scope: library.scope(),
@@ -3462,13 +3842,72 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     };
                     Value::Quantity(Quantity::new(magnitude, unit_id))
                 } else {
+                    if matches!(target_type, ValueType::Integer)
+                        && source_type.admits(&value)
+                        && matches!(&value, Value::Rational(value) if !value.is_integer())
+                    {
+                        // Integer has no finite domain to put in an
+                        // IntegerOutOfDomain payload. Preserve the unmet
+                        // conversion obligation in the native refusal.
+                        return Err(Halt::Family(FamilyResult::Refused(Box::new(
+                            super::causes::NonintegralNarrowing,
+                        ))));
+                    }
                     let converted = operand_value(
                         self.world.types(),
                         operand,
                         &value,
                         &self.units,
                         self.meter,
-                    )?;
+                    )
+                    .map_err(|stop| {
+                        // Standalone narrowing can meet an unproved obligation
+                        // in Kernel mode. Equality's target-admission invariant
+                        // is instead the ordinary domain refusal here.
+                        use filament_exact::CheckedInvariantCause;
+                        let numeric_source = matches!(
+                            source_type,
+                            ValueType::Integer
+                                | ValueType::Int(_)
+                                | ValueType::Rational(_)
+                                | ValueType::Decimal(_)
+                        );
+                        let narrowing = numeric_source
+                            && !filament_semantic_value::declaration::admits_equality_conversion(
+                                source_type,
+                                target_type,
+                                &self.units,
+                            );
+                        match (&stop, target_type) {
+                            (
+                                Stop::Refused(Refusal::CheckedInvariant {
+                                    cause:
+                                        CheckedInvariantCause::EqualityOperandTargetNotAdmitted
+                                        | CheckedInvariantCause::EqualityConversionShapeMismatch,
+                                }),
+                                ValueType::Int(target),
+                            ) if narrowing => Stop::Refused(Refusal::IntegerOutOfDomain {
+                                target: Box::new(target.clone()),
+                            }),
+                            (
+                                Stop::Refused(Refusal::CheckedInvariant {
+                                    cause: CheckedInvariantCause::EqualityOperandTargetNotAdmitted,
+                                }),
+                                ValueType::Rational(target),
+                            ) if narrowing => Stop::Refused(Refusal::RationalOutOfDomain {
+                                target: Box::new(target.clone()),
+                            }),
+                            (
+                                Stop::Refused(Refusal::CheckedInvariant {
+                                    cause: CheckedInvariantCause::EqualityOperandTargetNotAdmitted,
+                                }),
+                                ValueType::Decimal(target),
+                            ) if narrowing => Stop::Refused(Refusal::DecimalOutOfDomain {
+                                target: Box::new(target.clone()),
+                            }),
+                            _ => stop,
+                        }
+                    })?;
                     // FSpec FR-322-AC-384: a bounded result checks the exact
                     // converted magnitude against both inclusive endpoints.
                     match (target_type, converted) {
@@ -3692,11 +4131,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             .ok_or_else(|| invariant("evaluation-callable-unresolved"))?
                             .name
                             .to_owned();
+                        let next_charge = frame_occurrences(&full_arguments);
                         let mut frame: Vec<Option<Value>> =
                             full_arguments.clone().into_iter().map(Some).collect();
                         frame.resize(callable.slots.max(frame.len()), None);
                         let provenance = vec![false; frame.len()];
-                        self.push_frame_owned(frame, provenance, full_owners.clone());
+                        self.push_frame_owned(
+                            frame,
+                            provenance,
+                            full_owners.clone(),
+                            next_charge,
+                            true,
+                        )?;
                         self.tasks.push(Task::DispatchGuard(Box::new(DispatchGuard {
                             body_function: candidate.body,
                             arguments: full_arguments,
@@ -3716,11 +4162,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             .callee(self.world.graph(), candidate.body)
                             .ok_or_else(|| invariant("evaluation-callable-unresolved"))?;
                         charge_call(self.meter)?;
+                        let next_charge = frame_occurrences(&full_arguments);
                         let mut frame: Vec<Option<Value>> =
                             full_arguments.into_iter().map(Some).collect();
                         frame.resize(callable.slots.max(frame.len()), None);
                         let provenance = vec![false; frame.len()];
-                        self.push_frame_owned(frame, provenance, full_owners);
+                        self.push_frame_owned(frame, provenance, full_owners, next_charge, true)?;
                         self.tasks.push(Task::ObserveApplication(node));
                         self.tasks.push(Task::Return);
                         self.tasks.push(Task::Eval(callable.body));
@@ -5144,6 +5591,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 mod carried_sum;
 #[cfg(test)]
 mod invariants;
+mod text_conversion;
 
 pub(super) mod node_source;
 pub(super) mod reader_source;
@@ -5158,7 +5606,7 @@ mod union_case;
 
 #[cfg(test)]
 mod tests {
-    use crate::value::composite::{ConstructionSite, construction_fault_identifier};
+    use crate::value::composite::{construction_fault_identifier, ConstructionSite};
     use filament_exact::IntegerInterval;
     use filament_semantic_value::declaration::{
         Component, ConstructionCause, ConstructionRefusal, StorageRequest, StorageUnit,
@@ -5229,10 +5677,10 @@ mod tests {
         DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, ObjectTypeRecord,
         PopulationRecord,
     };
-    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
     use fsl_semantics::model::population::{
-        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
-        PopulationMember, admit_binding,
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
     };
     use ix_trace_rs::trace;
 
@@ -5309,7 +5757,11 @@ mod tests {
             .unwrap();
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .unwrap();
         let package = fsl_package::CheckedPackage::link(graph);
         let field = || Expression::field(Expression::deref(Expression::name("self")), "items");
@@ -5487,8 +5939,8 @@ mod tests {
     /// package and `F`'s checked identity, so a test can call
     /// [`fsl_semantics::check::ValueFunctionFamily::evaluate`] directly -- the S6a
     /// seam itself, bypassing `CheckedPackage::call`'s admission.
-    pub(super) fn population_function_package()
-    -> (fsl_package::CheckedPackage, filament_exact::NodeKey) {
+    pub(super) fn population_function_package(
+    ) -> (fsl_package::CheckedPackage, filament_exact::NodeKey) {
         let domain_package = domain_package("bundle.qsl174-ac10-seam");
         let view = match normalize(&domain_package, ModelNormalizationLimits::UNLIMITED) {
             NormalizeOutcome::Completed(view) => view,
@@ -5540,7 +5992,11 @@ mod tests {
             )];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("F(p: Population<M::A>[3]): Integer = size(allInstances<M::A>(p)) checks cleanly");
         let identity = graph
             .function_identity("F")
@@ -5736,10 +6192,10 @@ mod tests {
         }
 
         let missing_arguments = vec![
-            Value::Population(population_id),
+            Value::Population(population_id.clone()),
             Value::Reference(ObjectReference::new(
-                universe,
-                a,
+                universe.clone(),
+                a.clone(),
                 filament_exact::ObjectId::new("root".to_owned()).expect("non-empty key"),
             )),
         ];
@@ -5760,6 +6216,54 @@ mod tests {
                 assert_eq!(cause.catalog_code().cause(), "absent-key");
             }
             other => panic!("expected the ordinary absent-key result, got {other:?}"),
+        }
+
+        let undefined_expression = graph
+            .check_expression(
+                vec![
+                    ("p".to_owned(), ValueType::Population(Some(3))),
+                    ("r".to_owned(), ValueType::Reference(a.clone())),
+                ],
+                &Expression::lookup(
+                    TypeForm::name("M::A", SPAN),
+                    Expression::name("p".to_owned()),
+                    Expression::name("r".to_owned()),
+                    AbsenceMode::Undefined,
+                ),
+                None,
+                CheckMode::Linked,
+                CheckingLimits::default(),
+            )
+            .expect("lookup<M::A>(p, r) absent Undefined checks under the protocol context");
+        let undefined_arguments = vec![
+            Value::Population(population_id),
+            Value::Reference(ObjectReference::new(
+                universe,
+                a,
+                filament_exact::ObjectId::new("root".to_owned()).expect("non-empty key"),
+            )),
+        ];
+        let mut meter = Meter::new(fsl_semantics::check::SCALAR_LIMITS_UNLIMITED);
+        let undefined = Machine::with_pre(
+            graph.scope(),
+            graph,
+            &objects,
+            None,
+            Some(&reads),
+            &mut meter,
+            graph.dispatch_tables(),
+        )
+        .run(
+            undefined_expression.root(),
+            undefined_expression.slots(),
+            undefined_arguments,
+        )
+        .expect("the absent lookup returns its family result, never an `Err`");
+        match undefined.outcome {
+            FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => {
+                assert_eq!(cause.undefined_record().reason.as_str(), "absent-key");
+            }
+            other => panic!("expected the ordinary absent-key undefined result, got {other:?}"),
         }
     }
 
@@ -5823,7 +6327,11 @@ mod tests {
             declarations.models = vec![model];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("one type with one field checks cleanly");
 
         let expression = graph
@@ -5936,7 +6444,11 @@ mod tests {
             declarations.models = vec![model];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("one type with one field checks cleanly");
 
         let expression = graph
@@ -6049,7 +6561,11 @@ mod tests {
             declarations.types = TypeEnvironment::new([record], []).expect("one record admits");
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("the record checks");
         let package = fsl_package::CheckedPackage::link(graph);
         let objects = ObjectEnvironment::default();
@@ -6066,7 +6582,7 @@ mod tests {
             &[],
         )
         .with_trail(Trail::new(observation.clone(), None));
-        machine.enter_frame(0, Vec::new());
+        assert!(machine.enter_frame(0, Vec::new(), false, false).is_ok());
 
         let items = filament_exact::from_admitted(
             items_type.clone(),
@@ -6137,31 +6653,31 @@ mod tests {
         );
         let optional = ValueType::option(range);
         let outside = FieldValue::Present(Value::Integer(Integer::from(-1_i64)));
-        assert!(
-            CheckedMachine::project(&TypeEnvironment::default(), &outside, true, &optional, true)
-                .is_ok()
-        );
-        assert!(
-            CheckedMachine::project(
-                &TypeEnvironment::default(),
-                &outside,
-                true,
-                &optional,
-                false
-            )
-            .is_err()
-        );
+        assert!(CheckedMachine::project(
+            &TypeEnvironment::default(),
+            &outside,
+            true,
+            &optional,
+            true
+        )
+        .is_ok());
+        assert!(CheckedMachine::project(
+            &TypeEnvironment::default(),
+            &outside,
+            true,
+            &optional,
+            false
+        )
+        .is_err());
         let wrong_kind = FieldValue::Present(Value::Boolean(true));
-        assert!(
-            CheckedMachine::project(
-                &TypeEnvironment::default(),
-                &wrong_kind,
-                true,
-                &optional,
-                false
-            )
-            .is_err()
-        );
+        assert!(CheckedMachine::project(
+            &TypeEnvironment::default(),
+            &wrong_kind,
+            true,
+            &optional,
+            false
+        )
+        .is_err());
     }
     /// FR-106 check 6.5: an equality compares an out-of-type integer by
     /// value only when the operand reads a witnessed slot. Two integers
@@ -6226,7 +6742,7 @@ mod tests {
     fn a_float_ordering_records_no_decision_but_an_authored_connective_does() {
         use filament_exact::{FloatType, IeeeValue, IeeeWidth};
         use fsl_forms::BinaryOperator;
-        use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
+        use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
         let package = fsl_package::CheckedPackage::link(
             {
                 let mut declarations = PackageDeclarations::new(
@@ -6239,7 +6755,11 @@ mod tests {
                 );
                 declarations
             }
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
+            )
             .unwrap(),
         );
         let double = ValueType::Float(FloatType::exact(IeeeWidth::Binary64));
@@ -6335,7 +6855,11 @@ mod tests {
                 "fixture".to_owned(),
                 fsl_foundation::IdentityLimits::default(),
             )
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
+            )
             .unwrap(),
         );
         let decision = |origin| {
@@ -6395,7 +6919,7 @@ mod tests {
     fn absent_optional_and_empty_sequence_edges_have_no_outgoing_edge() {
         use crate::test_ids::{effective_id, universe_id};
         use filament_exact::{
-            CollectionKind, CollectionType, FieldValue, ObjectId, Presence, from_admitted,
+            from_admitted, CollectionKind, CollectionType, FieldValue, ObjectId, Presence,
         };
 
         let target = effective_id("Node");

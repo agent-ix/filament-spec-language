@@ -621,7 +621,7 @@ pub enum AdmittedRefusal {
 impl From<ReplayRefusal> for AdmittedRefusal {
     fn from(refusal: ReplayRefusal) -> Self {
         match refusal {
-            ReplayRefusal::Recompile(refusal) => classify(*refusal),
+            ReplayRefusal::Recompile { refusal, .. } => classify(*refusal),
             ReplayRefusal::RecompileWithProtocolResults { refusal, .. }
             | ReplayRefusal::RefinementInternals { refusal, .. } => classify(*refusal),
             ReplayRefusal::DependencyInput(refusal) => {
@@ -636,6 +636,7 @@ impl From<ReplayRefusal> for AdmittedRefusal {
             // new variant forces a decision.
             ReplayRefusal::Request(_)
             | ReplayRefusal::Package(_)
+            | ReplayRefusal::PackageWithIdentity { .. }
             | ReplayRefusal::PackageEvidence(_)
             | ReplayRefusal::DomainPackages(_)
             | ReplayRefusal::SourceCount(_)
@@ -687,6 +688,7 @@ impl From<ReplayRefusal> for AdmittedRefusal {
             | ReplayRefusal::ForeignReference { .. }
             | ReplayRefusal::ObjectEnvironment(_)
             | ReplayRefusal::ModelTrace(_)
+            | ReplayRefusal::HybridTrace(_)
             | ReplayRefusal::UnfairLasso { .. } => Self::Fault(InternalFault::new(
                 "replay",
                 "compile-refuses-only-compile-refusals",

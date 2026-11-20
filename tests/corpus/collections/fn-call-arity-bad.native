@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function g using v(x: Integer): Integer pure { x }
+function f using v(): Integer pure { g(1,2) }

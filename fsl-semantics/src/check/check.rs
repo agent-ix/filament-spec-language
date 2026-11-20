@@ -48,10 +48,10 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
     RecordSlot, Visit,
 };
-use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
-};
 use fsl_foundation::Span;
+use fsl_foundation::source::node_table::{
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
+};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -72,8 +72,8 @@ use super::refusal::{
     IdentityObserving, KeyFault, Obligation, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
-use crate::value::definition::{admit_ieee_profile, AdmittedIeeeProfile, DefinitionRole};
-use crate::value::enumeration::{mint_variant_id, AdmittedEnumDeclaration};
+use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
+use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_exact::EffectiveId;
@@ -90,8 +90,8 @@ use filament_exact::{Value, ValueType};
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
-    FieldDeclaration, TypeEnvironment,
+    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration, TypeEnvironment,
+    admits_equality_conversion,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -99,8 +99,8 @@ use filament_semantic_value::location::{
 };
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
-    check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
-    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    IdentifiedUnit, QuantityOperation, QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    check_comparable, evaluate_quantity_unit, result_unit,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -590,6 +590,9 @@ pub struct PackageDeclarations {
     /// The `taskset`, `schedulable` and `response` forms S2 built, in source
     /// order, for FSL FR-246's S3 check.
     pub task_set_forms: Vec<super::task_set::TaskSetDeclaration>,
+    /// Source forms for verification plans. They remain outside the checked
+    /// clause graph and are checked at S3 (FR-753).
+    pub verification_plans: Vec<fsl_forms::VerificationPlanForm>,
     /// FR-230, FR-233: the time source of each timed model, which a
     /// `model-time` clause binds (FR-234). The assembler starts this empty;
     /// S3 checks source `time` members into it. A caller that already holds
@@ -863,6 +866,7 @@ impl PackageDeclarations {
             clock_reading: Vec::new(),
             dimension_equivalences: Vec::new(),
             task_set_forms: Vec::new(),
+            verification_plans: Vec::new(),
             time_sources: Vec::new(),
             profile_selections: Vec::new(),
             hyper_clauses: Vec::new(),
@@ -928,6 +932,8 @@ pub struct DispatchOperation {
     pub member: String,
     /// The declared parameter types, in order.
     pub parameters: Vec<ValueType>,
+    /// Minimum number of positional arguments accepted by this signature.
+    pub required_arity: usize,
     /// The declared result type.
     pub result: ValueType,
     /// The declaring model type selected for this operation family.
@@ -956,11 +962,17 @@ pub struct ModelRecords {
     /// holds an empty map.
     renamed: BTreeMap<(filament_exact::NodeKey, filament_exact::NodeKey), BTreeMap<String, String>>,
     events: BTreeSet<filament_exact::NodeKey>,
+    /// Authored tuple positions mapped to data positions; clocks have no data slot.
+    tuple_positions: BTreeMap<filament_exact::NodeKey, Vec<Option<usize>>>,
 }
 
 impl DebugWith for ModelRecords {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
-        let Self { renamed, events } = self;
+        let Self {
+            renamed,
+            events,
+            tuple_positions,
+        } = self;
         f.debug_struct("ModelRecords")
             .field(
                 "renamed",
@@ -975,6 +987,13 @@ impl DebugWith for ModelRecords {
                     .collect::<Vec<_>>(),
             )
             .field("events", &NodeList(events.iter(), table))
+            .field(
+                "tuple_positions",
+                &tuple_positions
+                    .iter()
+                    .map(|(key, positions)| (NodeKeyDebug(key, table), positions))
+                    .collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -1006,12 +1025,21 @@ impl ModelRecords {
         self.events.insert(declaration);
     }
 
+    pub(crate) fn declare_tuple_positions(
+        &mut self,
+        declaration: filament_exact::NodeKey,
+        positions: Vec<Option<usize>>,
+    ) {
+        self.tuple_positions.insert(declaration, positions);
+    }
+
     /// Every entry of `other`.
     pub(crate) fn extend(&mut self, other: ModelRecords) {
         for (key, names) in other.renamed {
             self.renamed.entry(key).or_default().extend(names);
         }
         self.events.extend(other.events);
+        self.tuple_positions.extend(other.tuple_positions);
     }
 
     /// The name under which a value of `declaration` keeps `field`.
@@ -2085,6 +2113,19 @@ impl Scope {
         fields.iter().position(|candidate| candidate.name() == name)
     }
 
+    pub(crate) fn tuple_data_position(
+        &self,
+        declaration: &filament_exact::NodeKey,
+        position: usize,
+    ) -> Option<usize> {
+        self.model_records
+            .tuple_positions
+            .get(declaration)
+            .map_or(Some(position), |positions| {
+                positions.get(position).copied().flatten()
+            })
+    }
+
     /// The package's model object types' declared operations (FR-103).
     pub fn operations(&self) -> &OperationTable {
         &self.operations
@@ -2564,6 +2605,31 @@ fn mismatch(location: &Location) -> CheckRefusal {
     CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch)
 }
 
+fn operand_mismatch(
+    location: &Location,
+    operator: fsl_forms::BinaryOperator,
+    left_type: ValueType,
+    right_type: ValueType,
+) -> CheckRefusal {
+    CheckRefusal {
+        location: location.clone(),
+        cause: CheckCause::OperandTypeMismatch {
+            operator,
+            left_type: Box::new(left_type),
+            right_type: Box::new(right_type),
+        },
+    }
+}
+
+fn ordering_binary_operator(operator: OrderingOperator) -> fsl_forms::BinaryOperator {
+    match operator {
+        OrderingOperator::Less => fsl_forms::BinaryOperator::Less,
+        OrderingOperator::LessOrEqual => fsl_forms::BinaryOperator::LessOrEqual,
+        OrderingOperator::Greater => fsl_forms::BinaryOperator::Greater,
+        OrderingOperator::GreaterOrEqual => fsl_forms::BinaryOperator::GreaterOrEqual,
+    }
+}
+
 /// Whether the steps `path` read the clock place whose steps are `steps`: a
 /// union case is the field read after its union field, and a selector is a
 /// slot step. Each selector's index in `path` comes back, in order.
@@ -2627,9 +2693,9 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType, location: &Location) -> N
         value_type,
         location: location.clone(),
         equality_producer: None,
-        ordering_part: false,
         field_population: None,
         equality_range_context: None,
+        type_argument: None,
     }
 }
 
@@ -2645,9 +2711,9 @@ pub(super) struct AbsentComparison<'e> {
     /// The owner's location.
     pub(super) owner_location: Location,
     /// The place's field.
-    pub(super) field: &'e str,
+    pub(super) field: String,
     /// The union case of the place, when it is one.
-    pub(super) case: Option<&'e str>,
+    pub(super) case: Option<String>,
     /// Whether the comparison requires the place present (`!=`).
     pub(super) present: bool,
 }
@@ -2786,9 +2852,9 @@ impl Typer<'_> {
                         value_type: required.clone(),
                         location,
                         equality_producer: None,
-                        ordering_part: false,
                         field_population: None,
                         equality_range_context: None,
+                        type_argument: None,
                     });
                 }
             }
@@ -2823,9 +2889,9 @@ impl Typer<'_> {
                     value_type: required.clone(),
                     location,
                     equality_producer: None,
-                    ordering_part: false,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 })
             }
             (ValueType::Int(source), ValueType::Int(target))
@@ -2840,9 +2906,9 @@ impl Typer<'_> {
                     value_type: required.clone(),
                     location,
                     equality_producer: None,
-                    ordering_part: false,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 })
             }
             _ => Err(mismatch(&node.location)),
@@ -3137,6 +3203,22 @@ impl<'a> Typer<'a> {
     /// The name each slot was bound under, indexed by slot.
     pub(crate) fn slot_names(&self) -> &[String] {
         &self.slot_names
+    }
+
+    /// The declared name of `slot` (FR-400 "Canonical read projections"). A slot
+    /// bound without a recorded name is an internal fault, never an empty name.
+    pub(crate) fn slot_name(&self, slot: Slot, location: &Location) -> Result<String, CheckRefusal> {
+        self.slot_names.get(slot).cloned().ok_or_else(|| {
+            refuse(
+                location,
+                CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "S3",
+                        "checked-binding-slot-has-a-declared-name",
+                    ),
+                ))),
+            )
+        })
     }
 
     /// Seed this typing pass with the checked graph's retained compound
@@ -3546,7 +3628,7 @@ impl<'a> Typer<'a> {
                 return Err(CheckRefusal::ill_typed(
                     location,
                     IllTypedCause::AmbiguousLiteral,
-                ))
+                ));
             }
             Some(ValueType::Rational(domain)) => domain,
             Some(_) => return Err(mismatch(location)),
@@ -3605,7 +3687,7 @@ impl<'a> Typer<'a> {
                 return Err(CheckRefusal::ill_typed(
                     location,
                     IllTypedCause::AmbiguousLiteral,
-                ))
+                ));
             }
             Some(ValueType::Decimal(domain)) => domain,
             Some(_) => return Err(mismatch(location)),
@@ -3790,17 +3872,64 @@ impl<'a> Typer<'a> {
         {
             return Err(ineligible(location));
         }
+        let mismatch_operator = match operator {
+            EqualityOperator::Equal => fsl_forms::BinaryOperator::Equal,
+            EqualityOperator::NotEqual => fsl_forms::BinaryOperator::NotEqual,
+        };
+        if matches!(&left.node.value_type, ValueType::Float(_))
+            || matches!(&right.node.value_type, ValueType::Float(_))
+        {
+            let same_float_type = matches!(
+                (&left.node.value_type, &right.node.value_type),
+                (ValueType::Float(left), ValueType::Float(right)) if left == right
+            );
+            if !same_float_type
+                || left.conversion_target.is_some()
+                || right.conversion_target.is_some()
+            {
+                return Err(operand_mismatch(
+                    location,
+                    mismatch_operator,
+                    left.node.value_type.clone(),
+                    right.node.value_type.clone(),
+                ));
+            }
+        }
         if let (ValueType::Float(left_type), ValueType::Float(right_type)) =
             (&left.node.value_type, &right.node.value_type)
         {
             if left_type != right_type {
                 return Err(mismatch(location));
             }
-            let equal = node(
+            if left.conversion_target.is_some() || right.conversion_target.is_some() {
+                return Err(mismatch(location));
+            }
+            let operand_type_facts = [(0, &left.source_type), (1, &right.source_type)]
+                .into_iter()
+                .map(
+                    |(operand_position, value_type)| super::ir::EqualityOperandTypeFact {
+                        operand_position,
+                        role: super::ir::EqualityUnitOperandRole::Source,
+                        value_type: value_type.clone(),
+                    },
+                )
+                .collect();
+            let producer = EqualityProducerData {
+                operator,
+                schedule: filament_semantic_value::declaration::EqualitySchedule::Float,
+                authored_operands: [left.authored.clone(), right.authored.clone()],
+                compared_operands: [left.stored.clone(), right.stored.clone()],
+                operand_type_facts,
+                units: UnitTable::default(),
+                unit_type_facts: Vec::new(),
+                enum_members: EnumMemberIndex::default(),
+            };
+            let mut equal = node(
                 NodeKind::IeeeNumericEquality(self.push(left.node), self.push(right.node)),
                 ValueType::Boolean,
                 location,
             );
+            equal.equality_producer = Some(Box::new(producer));
             return Ok(if operator == EqualityOperator::Equal {
                 equal
             } else {
@@ -4032,10 +4161,20 @@ impl<'a> Typer<'a> {
         let (ValueType::Float(left_type), ValueType::Float(right_type)) =
             (&left.value_type, &right.value_type)
         else {
-            return Err(mismatch(location));
+            return Err(operand_mismatch(
+                location,
+                ordering_binary_operator(operator),
+                left.value_type.clone(),
+                right.value_type.clone(),
+            ));
         };
         if left_type != right_type {
-            return Err(mismatch(location));
+            return Err(operand_mismatch(
+                location,
+                ordering_binary_operator(operator),
+                left.value_type.clone(),
+                right.value_type.clone(),
+            ));
         }
         // Each operand is evaluated once and read by every part of the
         // composition: an operand that is not already a slot read or a
@@ -4048,7 +4187,7 @@ impl<'a> Typer<'a> {
             }
             let value_type = operand.value_type.clone();
             let value = this.push(operand);
-            let slot = this.fresh_slot("ieee_operand");
+            let slot = this.fresh_slot("#ieee_operand");
             bindings.push((slot, value));
             this.push(node(NodeKind::Local(slot), value_type, location))
         };
@@ -4060,11 +4199,7 @@ impl<'a> Typer<'a> {
             OrderingOperator::GreaterOrEqual => (right, left, false),
         };
         let boolean = |this: &mut Self, kind| this.push(node(kind, ValueType::Boolean, location));
-        let part = |this: &mut Self, kind| {
-            let mut part = node(kind, ValueType::Boolean, location);
-            part.ordering_part = true;
-            this.push(part)
-        };
+        let part = |this: &mut Self, kind| this.push(node(kind, ValueType::Boolean, location));
         let lesser_ordinary = part(self, NodeKind::IeeeNumericEquality(lesser, lesser));
         let greater_ordinary = part(self, NodeKind::IeeeNumericEquality(greater, greater));
         let both_ordinary = boolean(
@@ -4116,7 +4251,12 @@ impl<'a> Typer<'a> {
         for (slot, value) in bindings.into_iter().rev() {
             let body = self.push(composed);
             composed = node(
-                NodeKind::Let { slot, value, body },
+                NodeKind::Let {
+                    slot,
+                    name: self.slot_name(slot, location)?,
+                    value,
+                    body,
+                },
                 ValueType::Boolean,
                 location,
             );
@@ -4125,11 +4265,12 @@ impl<'a> Typer<'a> {
     }
 
     /// A slot that no source name can read, for a value the checker binds
-    /// itself.
+    /// itself. Its declared name is the fixed text `name`, which begins with
+    /// `#` so no source identifier can take it (FR-397 "Operand binders").
     fn fresh_slot(&mut self, name: &str) -> Slot {
         let slot = self.slots;
         self.slots = self.slots.saturating_add(1);
-        self.slot_names.push(format!("{name}_{slot}"));
+        self.slot_names.push(name.to_owned());
         slot
     }
 
@@ -4202,7 +4343,7 @@ impl<'a> Typer<'a> {
                         return Err(CheckRefusal::ill_typed(
                             location,
                             IllTypedCause::AmbiguousLiteral,
-                        ))
+                        ));
                     }
                 }
             }
@@ -4478,38 +4619,60 @@ impl<'a> Typer<'a> {
     pub(super) fn place_operand<'e>(
         &self,
         operand: fsl_forms::ExprRef<'e>,
-    ) -> Option<(fsl_forms::ExprRef<'e>, &'e str, Option<&'e str>, usize)> {
+    ) -> Option<(fsl_forms::ExprRef<'e>, String, Option<String>, usize)> {
         if self.presence_places.is_empty() {
             return None;
         }
-        let fsl_forms::ExprNode::Field {
-            operand: owner,
-            field,
-            ..
-        } = operand.node()
-        else {
-            return None;
-        };
-        let names = |field: &str, case: Option<&str>| {
-            self.presence_places
-                .iter()
-                .any(|place| !place.slot && place.field == field && place.case.as_deref() == case)
-        };
-        if names(field, None) {
-            return Some((operand.at(*owner), field.as_str(), None, 1));
+        let mut path = Vec::new();
+        let mut owner = operand;
+        loop {
+            match owner.node() {
+                fsl_forms::ExprNode::Field {
+                    operand: before,
+                    field,
+                    ..
+                } => {
+                    path.push(field.clone());
+                    owner = owner.at(*before);
+                }
+                fsl_forms::ExprNode::Index {
+                    operand: before,
+                    index,
+                } => {
+                    let fsl_forms::ExprNode::Integer(position) = owner.at(*index).node() else {
+                        return None;
+                    };
+                    path.push(position.to_u64()?.to_string());
+                    owner = owner.at(*before);
+                }
+                fsl_forms::ExprNode::SelfRef if !path.is_empty() => break,
+                fsl_forms::ExprNode::Name(name)
+                    if !path.is_empty()
+                        && name.segments.len() == 1
+                        && self.local(&name.name).is_some_and(|local| {
+                            matches!(local.value_type, ValueType::Reference(_))
+                        }) =>
+                {
+                    // A population binder is already the visited object
+                    // reference. Preserve it as the presence-read owner;
+                    // do not route it through the ordinary state-field
+                    // lookup, where clock places have no data field.
+                    break;
+                }
+                _ => return None,
+            }
         }
-        let fsl_forms::ExprNode::Field {
-            operand: object,
-            field: union,
-            ..
-        } = operand.at(*owner).node()
-        else {
-            return None;
-        };
-        names(union, Some(field)).then(|| {
-            let owner = operand.at(*owner);
-            (owner.at(*object), union.as_str(), Some(field.as_str()), 2)
-        })
+        path.reverse();
+        let place = self.presence_places.iter().find(|place| {
+            !place.slot
+                && place.path.len() == path.len()
+                && place.path.iter().zip(&path).all(|(step, read)| match step {
+                    super::lowering::PlaceStep::Field(name)
+                    | super::lowering::PlaceStep::Union(name) => name == read,
+                    super::lowering::PlaceStep::Slot(_) => false,
+                })
+        })?;
+        Some((owner, place.field.clone(), place.case.clone(), path.len()))
     }
 
     /// Whether `operand`, the operand of a field read `operand.op`, is
@@ -5179,9 +5342,9 @@ impl<'a> Typer<'a> {
                     value_type: required.clone(),
                     location,
                     equality_producer: None,
-                    ordering_part: false,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 });
             }
             return Ok(typed);
@@ -5334,7 +5497,30 @@ impl<'a> Typer<'a> {
         operand: Node,
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
+        if &operand.value_type == target
+            && matches!(&operand.value_type, ValueType::Text(_) | ValueType::String)
+        {
+            return Ok(operand);
+        }
         match (&operand.value_type, target) {
+            (ValueType::Text(_) | ValueType::String, target)
+                if matches!(
+                    target,
+                    ValueType::Integer
+                        | ValueType::Int(_)
+                        | ValueType::Decimal(_)
+                        | ValueType::Rational(_)
+                        | ValueType::Float(_)
+                        | ValueType::Quantity(_)
+                ) =>
+            {
+                Ok(node(
+                    NodeKind::ConvertText(target.clone(), self.push(operand)),
+                    target.clone(),
+                    location,
+                ))
+            }
+            (ValueType::Text(_) | ValueType::String, _) => Err(ineligible(location)),
             (ValueType::Collection(source), ValueType::Collection(to)) => {
                 if source.element() != to.element() {
                     return Err(mismatch(location));
@@ -5402,14 +5588,29 @@ impl<'a> Typer<'a> {
                     location,
                 ))
             }
-            (ValueType::Rational(_) | ValueType::Decimal(_), ValueType::Decimal(decimal))
-                if !admits_equality_conversion(&operand.value_type, target, &self.units) =>
-            {
-                Ok(node(
-                    NodeKind::ConvertDecimal(self.push(operand), decimal.clone()),
-                    target.clone(),
-                    location,
-                ))
+            (
+                ValueType::Integer
+                | ValueType::Int(_)
+                | ValueType::Rational(_)
+                | ValueType::Decimal(_),
+                ValueType::Integer
+                | ValueType::Int(_)
+                | ValueType::Rational(_)
+                | ValueType::Decimal(_),
+            ) => {
+                use super::numeric_conversion::{classify, Class};
+                let class = classify(&operand.value_type, target).ok_or_else(|| {
+                    CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
+                })?;
+                let kind =
+                    if let (Class::ScaleReduction, ValueType::Decimal(decimal)) = (class, target) {
+                        NodeKind::ConvertDecimal(self.push(operand), decimal.clone())
+                    } else {
+                        let converted =
+                            EqualityOperand::converted(operand.value_type.clone(), target.clone());
+                        NodeKind::ConvertScalar(converted, self.push(operand))
+                    };
+                Ok(node(kind, target.clone(), location))
             }
             (
                 ValueType::Quantity(_) | ValueType::CarriedQuantity(_),
@@ -5604,6 +5805,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit: Visit::Map,
                         slot,
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -5629,6 +5831,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit: Visit::Filter,
                         slot,
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -5646,6 +5849,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit,
                         slot,
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -5718,7 +5922,7 @@ impl<'a> Typer<'a> {
         let source_type = source_type.clone();
         match (form, identity) {
             (Accumulation::Fold, false) | (Accumulation::Reduce, true) => {
-                return Err(mismatch(location))
+                return Err(mismatch(location));
             }
             (Accumulation::Fold, true) | (Accumulation::Reduce, false) => {}
         }

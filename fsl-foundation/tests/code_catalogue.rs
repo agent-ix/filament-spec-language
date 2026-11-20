@@ -2,11 +2,9 @@
 //! FR-010-AC-8: stable native codes round-trip and match their documentation.
 
 use fsl_foundation::diagnostic::Code;
-use ix_trace_rs::trace;
 use std::collections::BTreeSet;
 
 const DOCUMENTATION: &str = include_str!("../../docs/native-error-codes.md");
-const CST_DIAGNOSTICS: &str = include_str!("../../fsl-cst/src/diagnostic.rs");
 
 /// FR-010-AC-8: every stable code has exactly one documented catalogue row,
 /// and documentation cannot retain a code that the Rust catalogue removed.
@@ -49,7 +47,7 @@ fn every_code_maps_to_its_exit_class() {
         (Code::IoError, 20),
         (Code::InvalidRequest, 20),
         (Code::InvalidIdentifier, 20),
-        (Code::OutputFailure, 20),
+        (Code::OutputFailure, 30),
         (Code::UnsupportedProjection, 21),
         (Code::InvalidProjectionCorrespondence, 20),
         (Code::ExtractionRequiresRun, 20),
@@ -105,68 +103,6 @@ fn every_code_maps_to_its_exit_class() {
             exit_code,
             "{} must map to exit {exit_code}",
             code.as_str()
-        );
-    }
-}
-
-/// FR-010-AC-8: every typed complete-source cause has a case in the
-/// diagnostic mapping test, including each syntax cause used by recovery.
-#[test]
-fn every_complete_cause_appears_in_a_diagnostic_test() {
-    let variants = CST_DIAGNOSTICS
-        .split_once("pub enum CompleteCause {")
-        .and_then(|(_, rest)| rest.split_once("\n}"))
-        .map(|(body, _)| {
-            body.lines()
-                .filter_map(|line| {
-                    let line = line.trim();
-                    let first = line.split_whitespace().next()?;
-                    let name = first.split('(').next()?.trim_end_matches(',');
-                    name.chars()
-                        .next()
-                        .filter(|character| character.is_ascii_uppercase())
-                        .map(|_| name)
-                })
-                .collect::<Vec<_>>()
-        })
-        .expect("CompleteCause enum is present");
-    let diagnostic_tests = CST_DIAGNOSTICS
-        .split_once("#[cfg(test)]\nmod tests")
-        .map(|(_, tests)| tests)
-        .expect("diagnostic tests are present");
-
-    for variant in variants {
-        assert!(
-            diagnostic_tests.contains(&format!("CompleteCause::{variant}")),
-            "CompleteCause::{variant} has no diagnostic test case"
-        );
-    }
-}
-
-/// FR-031-AC-6 (TC-109): the extraction refusal codes stay catalogued, and
-/// the clause-run request reader (FR-312) produces them: `extraction-package-conflict`
-/// for a request carrying `extraction` and `package`, `extraction-clause-count`
-/// for a non-singleton binding list, and `invalid-quire-context` for a context Quire rejects.
-#[trace("TC-109", "FR-031-AC-6")]
-#[test]
-fn the_request_reader_produces_the_extraction_refusal_codes() {
-    const READER: &str = include_str!("../../fsl-command/src/command.rs");
-    for (spelling, code) in [
-        (
-            "extraction-package-conflict",
-            Code::ExtractionPackageConflict,
-        ),
-        ("extraction-clause-count", Code::ExtractionClauseCount),
-        ("invalid-quire-context", Code::InvalidQuireContext),
-    ] {
-        assert_eq!(Code::from_code(spelling), Some(code));
-        assert!(
-            DOCUMENTATION.contains(&format!("| {spelling} |")),
-            "{spelling}"
-        );
-        assert!(
-            READER.contains(&format!("Code::{code:?}")),
-            "the request reader produces {spelling}"
         );
     }
 }

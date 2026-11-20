@@ -36,17 +36,19 @@ use filament_exact::{Integer, Meter, Rational};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{Atom, AutomatonError, ClockedEdge, Letter, PositionAutomaton, StateId};
+use fsl_eval::fairness::{analyze, Analysis, Constraint, EdgeLabel, Graph, Identity, Strength};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{GuardedStep, ModelSimState, PlaceConstraint};
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::check::CaptureSite;
 
 use super::{
-    at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule, Checker,
-    CheckerFault, ComponentReason, Components, FairnessMember, ProductMark, SilentMove, Step,
-    Successor,
+    at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule,
+    Checker, CheckerFault, ComponentReason, Components, FairnessMember, Halt, ProductMark,
+    SilentMove, Step, Successor, ZoneCertificateVerdict,
 };
 use crate::certificate::zone::Zone;
+use crate::proof_result::IncompleteCause;
 
 /// A clause decided on the liveness product, as the checker reads it.
 pub(super) struct LiveClaim<'c> {
@@ -663,7 +665,143 @@ impl<O> Checker<'_, '_, O> {
                 }
             }
         }
-        self.reasons(components)
+        self.reasons(components)?;
+        self.non_zeno(components)
+    }
+
+    /// FR-235/FR-245: recompute whether an accepting cycle exists when the
+    /// divergence set is omitted, using the independently checked component
+    /// reasons and their positioned nodes.
+    fn non_zeno(&self, _components: &Components) -> Step<(), O> {
+        let live = self.live()?;
+        let count = self.certificate.nodes.len();
+        let mut transitions = Vec::<ModelTransition>::new();
+        let mut enabled_by_node = vec![Vec::<usize>::new(); count];
+        for (node, enabled) in enabled_by_node.iter_mut().enumerate() {
+            if self.states[node].is_none() {
+                continue;
+            }
+            for step in self
+                .timed
+                .guarded_steps(self.state(node)?)
+                .or_else(undecided)?
+            {
+                let transition = step.transition().clone();
+                let index = match transitions.iter().position(|known| known == &transition) {
+                    Some(index) => index,
+                    None => {
+                        transitions.push(transition);
+                        transitions.len() - 1
+                    }
+                };
+                enabled.push(index);
+            }
+        }
+        let identities: Vec<_> = (0..transitions.len())
+            .map(|index| Identity::new(u64::try_from(index).unwrap_or(u64::MAX)))
+            .collect();
+        let mut graph = Graph::new();
+        let vertices: Vec<_> = enabled_by_node
+            .iter()
+            .map(|enabled| graph.add_vertex(enabled.iter().map(|&index| identities[index])))
+            .collect();
+        for (index, edge) in self.certificate.edges.iter().enumerate() {
+            if self.covers[index].is_none() {
+                continue;
+            }
+            let successor = self.covered(index)?;
+            let label = match &successor.step {
+                Some(step) => {
+                    let identity = transitions
+                        .iter()
+                        .position(|known| known == step.transition())
+                        .and_then(|index| identities.get(index).copied())
+                        .ok_or(fault(CheckerFault::Graph))?;
+                    EdgeLabel::Transition(identity)
+                }
+                None => EdgeLabel::Stutter,
+            };
+            graph
+                .add_edge(vertices[edge.from], vertices[edge.to], label)
+                .map_err(|_| fault(CheckerFault::Graph))?;
+        }
+        let automaton_sets = live.automaton.borrow().acceptance_set_count();
+        for set in 0..automaton_sets {
+            let mut members = Vec::new();
+            for node in 0..count {
+                if self.states[node].is_some()
+                    && self.in_set(node, AcceptanceSet::Automaton(set))?
+                {
+                    members.push(vertices[node]);
+                }
+            }
+            graph
+                .add_acceptance_set(members)
+                .map_err(|_| fault(CheckerFault::Graph))?;
+        }
+        let mut positioned = Vec::new();
+        for node in 0..count {
+            if self.states[node].is_some() && self.in_set(node, AcceptanceSet::Position)? {
+                positioned.push(vertices[node]);
+            }
+        }
+        graph
+            .add_acceptance_set(positioned)
+            .map_err(|_| fault(CheckerFault::Graph))?;
+        let mut constraints = Vec::new();
+        for (index, fairness) in live.fairness.iter().enumerate() {
+            let operation = live
+                .operations
+                .get(index)
+                .ok_or(fault(CheckerFault::Graph))?;
+            let members: Vec<_> = transitions
+                .iter()
+                .enumerate()
+                .filter(|(_, transition)| transition.operation() == operation.as_str())
+                .filter_map(|(index, _)| identities.get(index).copied())
+                .collect();
+            let strength = Strength::from(fairness.kind());
+            match fairness.granularity() {
+                FairnessGranularity::Whole => {
+                    constraints.push(Constraint::new(strength, members));
+                }
+                FairnessGranularity::Each => {
+                    constraints.extend(
+                        members
+                            .into_iter()
+                            .map(|member| Constraint::new(strength, [member])),
+                    );
+                }
+            }
+        }
+        let within: BTreeSet<_> = (0..count)
+            .filter(|&node| self.states[node].is_some())
+            .map(|node| vertices[node])
+            .collect();
+        let analyses = analyze(&graph, &within, &constraints, self.cancel).map_err(|error| {
+            match error {
+                fsl_eval::fairness::FairnessError::Cancelled => match self.cancel.cause() {
+                    Some(source) => Halt::Verdict(ZoneCertificateVerdict::Stopped(
+                        IncompleteCause::Cancelled { source },
+                    )),
+                    None => fault(CheckerFault::CancellationWithoutCause),
+                },
+                _ => fault(CheckerFault::Graph),
+            }
+        })?;
+        let expected = if Analysis::first_fair_in(&analyses).is_some() {
+            Some(crate::certificate::zone_certificate::NonZeno::Assumed)
+        } else {
+            Some(crate::certificate::zone_certificate::NonZeno::NotRequired)
+        };
+        if self.certificate.non_zeno == expected {
+            Ok(())
+        } else {
+            reject(
+                CertificateRule::NonZenoMismatch,
+                CertificateLocus::NonZenoMember,
+            )
+        }
     }
 
     /// Each reason of `components` holds, a strong reason's nested

@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function contains0 using v(a: Sequence<Integer>[0,3]): Boolean pure { contains(a,1) }
+function contains1 using v(a: OrderedSet<Integer>[0,3]): Boolean pure { contains(a,1) }
+function contains2 using v(a: Set<Integer>[0,3]): Boolean pure { contains(a,1) }
+function contains3 using v(a: Bag<Integer>[0,3]): Boolean pure { contains(a,1) }

@@ -11,15 +11,96 @@
 //! conforms to `P`'s `self`. The state graph alone decides; no fairness
 //! constraint is read.
 
-use filament_exact::{Meter, ValueType};
-use fsl_package::PackageTerminalDeclaration;
-use fsl_semantics::check::CheckedTerminalPredicate;
+use std::collections::BTreeSet;
+
+use super::input::{ModelTerminalDeclaration, TerminalWhen};
+use filament_exact::Meter;
 
 use super::contracts::{verdict, Verdict};
 use super::walk::{exhausted, stop, walk_of};
 use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::temporal::UndefinedCause;
+
+/// The model a `terminal` declaration is on, named by its selection
+/// identity and its ordinal among that identity's declarations, the key both
+/// routes compare by (FR-940). The label is the name
+/// a user reads: the source alias on the source route, the identity on the
+/// package route, which records no alias.
+#[derive(Clone, Eq)]
+pub struct TerminalModel {
+    identity: String,
+    ordinal: usize,
+    label: String,
+}
+
+impl TerminalModel {
+    /// The model with selection identity `identity`, shown as `label`.
+    pub fn new(identity: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            identity: identity.into(),
+            ordinal: 0,
+            label: label.into(),
+        }
+    }
+
+    /// A subject with no selection identity, named by `name` alone.
+    pub fn named(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            identity: name.clone(),
+            ordinal: 0,
+            label: name,
+        }
+    }
+
+    /// This declaration as the `ordinal`th of the identity's declarations
+    /// (FR-411): the order of the aliases that select the identity on the
+    /// source route, of the terminal rows on the package route.
+    pub fn with_ordinal(mut self, ordinal: usize) -> Self {
+        self.ordinal = ordinal;
+        self
+    }
+
+    /// The declaration's ordinal among its identity's declarations.
+    pub fn ordinal(&self) -> usize {
+        self.ordinal
+    }
+
+    /// The selection identity, the comparison key.
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    /// The display label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
+impl std::fmt::Debug for TerminalModel {
+    // The label is display only, so a record of either route prints the
+    // identity the routes compare by.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("TerminalModel")
+            .field(&self.identity)
+            .field(&self.ordinal)
+            .finish()
+    }
+}
+
+impl PartialEq for TerminalModel {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity && self.ordinal == other.ordinal
+    }
+}
+
+impl std::hash::Hash for TerminalModel {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.identity.hash(state);
+        self.ordinal.hash(state);
+    }
+}
 
 /// FR-124's classification of one state of a subject.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,8 +114,8 @@ pub enum TerminalClass {
     /// A `terminal when` predicate is undefined at the terminal state, so
     /// the state is neither intended nor deadlocked (ADR-018 UE-6).
     Undefined {
-        /// The model alias whose declaration it is.
-        model: String,
+        /// The model whose declaration it is.
+        model: TerminalModel,
         /// The first undefined evaluation, in object order.
         cause: UndefinedCause,
     },
@@ -42,8 +123,8 @@ pub enum TerminalClass {
     /// none undefined and none true: whether the state is intended is not
     /// known (ADR-018 V-6 `UndecidedSuccessor`).
     Undecided {
-        /// The model alias whose declaration it is.
-        model: String,
+        /// The model whose declaration it is.
+        model: TerminalModel,
     },
 }
 
@@ -57,10 +138,11 @@ enum Reading {
 
 impl ModelSystem<'_> {
     /// FR-124: the class of `state`, whose expansion gave a successor
-    /// exactly when `has_successor`. The package's declarations are read in
-    /// model-alias order: `Any` intends every terminal state; `When(P)`
-    /// intends it when `P` is true. An undefined `P` reads before a later
-    /// declaration is consulted, so the class is a function of the state.
+    /// exactly when `has_successor`. `Any` intends every terminal state;
+    /// `When(P)` intends it when `P` is true. The state is intended when any
+    /// declaration intends it, else undecided when any is refused, else
+    /// undefined when any is, else deadlocked, so the class is a function of
+    /// the state and of no declaration order.
     ///
     /// # Errors
     ///
@@ -76,52 +158,73 @@ impl ModelSystem<'_> {
         if has_successor {
             return Ok(TerminalClass::NotTerminal);
         }
-        for terminal in self.terminals() {
+        // FR-124-AC-12: only the declarations of the identities the subject
+        // reads are consulted, every alias of each; a declaration of another
+        // identity, its `terminal any` included, never is.
+        // FR-124: intended when ANY declaration intends the state; else
+        // undecided when any is refused; else undefined when any is; else
+        // deadlocked. The first refused and first undefined declaration, in
+        // row order, are the ones a report names; the class itself does not
+        // depend on the order.
+        let mut refused = None;
+        let mut undefined = None;
+        let read: BTreeSet<&str> = self
+            .universes
+            .keys()
+            .map(|population| population.package.as_str())
+            .collect();
+        for terminal in self
+            .terminals()
+            .iter()
+            .filter(|terminal| read.contains(terminal.model.identity()))
+        {
             match terminal.declaration {
-                PackageTerminalDeclaration::Any => return Ok(TerminalClass::Intended),
-                PackageTerminalDeclaration::When(predicate) => match self.read(state, predicate)? {
+                ModelTerminalDeclaration::Any => return Ok(TerminalClass::Intended),
+                ModelTerminalDeclaration::When(predicate) => match self.read(state, predicate)? {
                     Reading::True => return Ok(TerminalClass::Intended),
                     Reading::False => {}
                     Reading::Undefined(cause) => {
-                        return Ok(TerminalClass::Undefined {
-                            model: terminal.model.to_owned(),
-                            cause,
-                        })
+                        undefined.get_or_insert((terminal.model.clone(), cause));
                     }
                     Reading::Refused => {
-                        return Ok(TerminalClass::Undecided {
-                            model: terminal.model.to_owned(),
-                        })
+                        refused.get_or_insert_with(|| terminal.model.clone());
                     }
                 },
             }
         }
-        Ok(TerminalClass::Deadlocked)
+        Ok(if let Some(model) = refused {
+            TerminalClass::Undecided { model }
+        } else if let Some((model, cause)) = undefined {
+            TerminalClass::Undefined { model, cause }
+        } else {
+            TerminalClass::Deadlocked
+        })
     }
 
     /// `predicate` at `state`: each conforming object in ascending
-    /// reference order, each with a fresh meter. The first undefined or
-    /// refused object decides; otherwise any `false` object makes it false.
+    /// reference order, each with a fresh meter. A false object outweighs
+    /// undefined objects. A predicate without `self` is read once.
     fn read(
         &self,
         state: &ModelSimState,
-        predicate: &CheckedTerminalPredicate,
+        predicate: TerminalWhen<'_>,
     ) -> Result<Reading, ExpansionStop> {
-        let Some((_, ValueType::Reference(context))) = predicate.parameters().first() else {
-            return Err(stop(BROKEN));
-        };
         let walk = walk_of(self, state, None)?;
-        let mut objects: Vec<_> = walk
-            .rows
-            .iter()
-            .map(|row| row.reference.clone())
-            .filter(|reference| {
-                self.types
-                    .conforms(reference.object_type().clone(), context.clone())
-            })
-            .collect();
+        let mut objects: Vec<_> = if let Some(context) = predicate.context() {
+            walk.rows
+                .iter()
+                .filter(|row| {
+                    self.types
+                        .conforms(row.reference.object_type().clone(), context.clone())
+                })
+                .map(|row| Some(row.reference.clone()))
+                .collect()
+        } else {
+            vec![None]
+        };
         objects.sort();
         let mut holds = true;
+        let mut undefined = None;
         for object in objects {
             let evaluation = self
                 .evaluator()
@@ -137,7 +240,8 @@ impl ModelSystem<'_> {
                 Verdict::False => holds = false,
                 Verdict::Undecided(outcome) => {
                     if let Some(cause) = outcome.undefined_cause() {
-                        return Ok(Reading::Undefined(cause));
+                        undefined.get_or_insert(cause);
+                        continue;
                     }
                     if let ClauseOutcome::Incomplete(incomplete) = outcome {
                         return Err(exhausted(ExpansionLimit::EvaluationMeter(
@@ -148,6 +252,12 @@ impl ModelSystem<'_> {
                 }
             }
         }
-        Ok(if holds { Reading::True } else { Reading::False })
+        Ok(if !holds {
+            Reading::False
+        } else if let Some(cause) = undefined {
+            Reading::Undefined(cause)
+        } else {
+            Reading::True
+        })
     }
 }

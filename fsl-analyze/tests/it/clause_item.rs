@@ -550,7 +550,11 @@ fn a_package_route_refutation_replays_from_the_handoff_as_the_source_refutation(
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("the package route reads every form");
-    let key = world.package.graph().temporal_clauses()[0].identity();
+    let clause = &world.package.graph().temporal_clauses()[0];
+    let key = fsl_foundation::source::provenance::OccurrenceKey::new(
+        clause.identity(),
+        clause.claim().clone(),
+    );
     let subject = fsl_analyze::analyze::PackageClauseSubject::new(
         &input,
         &bytes,
@@ -658,7 +662,11 @@ fn a_pending_package_clause_fact_is_refused_typed_naming_it() {
             }],
             &[("c", json!({"value": {"integer": "0"}}))],
         );
-        let key = world.package.graph().temporal_clauses()[0].identity();
+        let clause = &world.package.graph().temporal_clauses()[0];
+        let key = fsl_foundation::source::provenance::OccurrenceKey::new(
+            clause.identity(),
+            clause.claim().clone(),
+        );
         over_package_route(&world, |input, bytes, supply| {
             let refused = fsl_analyze::analyze::PackageClauseSubject::new(
                 input,

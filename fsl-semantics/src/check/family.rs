@@ -1394,9 +1394,9 @@ impl<'a> Application<'a> {
                 value_type: signature.result.clone(),
                 location: location.clone(),
                 equality_producer: None,
-                ordering_part: false,
                 field_population: None,
                 equality_range_context: None,
+                type_argument: None,
             }),
             Self::Imported {
                 callee,
@@ -1412,9 +1412,9 @@ impl<'a> Application<'a> {
                 value_type: signature.result.clone(),
                 location: location.clone(),
                 equality_producer: None,
-                ordering_part: false,
                 field_population: None,
                 equality_range_context: None,
+                type_argument: None,
             }),
             Self::Tuple { declaration, .. } => Ok(Node {
                 kind: NodeKind::Tuple {
@@ -1424,9 +1424,9 @@ impl<'a> Application<'a> {
                 value_type: ValueType::Composite(declaration),
                 location: location.clone(),
                 equality_producer: None,
-                ordering_part: false,
                 field_population: None,
                 equality_range_context: None,
+                type_argument: None,
             }),
             Self::Ieee { intrinsic, .. } => {
                 // Every operand is a float of the first operand's type;
@@ -1476,9 +1476,9 @@ impl<'a> Application<'a> {
                     },
                     location: location.clone(),
                     equality_producer: None,
-                    ordering_part: false,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 })
             }
         }
@@ -3943,7 +3943,11 @@ pub(crate) mod checking_tests {
                     fsl_foundation::IdentityLimits::default(),
                 )
             }
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the fixture checks")
             .function_identity(name)
             .expect("the fixture declares its function")
@@ -4063,7 +4067,11 @@ pub(crate) mod checking_tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("repeated names are refused");
         let at = |index: usize| {
             BodyLocation::root(BodyOrigin::Body {
@@ -4295,7 +4303,11 @@ mod locus_tests {
         assert_eq!(&text[start..end], "1", "the node whose entry failed");
         let (unit, _) = sum_unit();
         assert!(unit
-            .check(CheckMode::Linked, CheckingLimits::new(5_000))
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::new(5_000),
+                &crate::check::test_support::ZeroRewardEvaluator
+            )
             .is_ok());
     }
 
@@ -4421,7 +4433,11 @@ mod locus_tests {
     ) -> (StageLimitCause, Option<SourceRegion>) {
         let regions = unit.regions();
         let refusals = unit
-            .check(CheckMode::Linked, limits)
+            .check(
+                CheckMode::Linked,
+                limits,
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("the limit stops package checking");
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal, got {refusals:?}");

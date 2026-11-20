@@ -1281,3 +1281,28 @@ fn compile_empty_program_is_invalid_request() {
     let message = failure["message"].as_str().unwrap_or_default();
     assert!(message.contains("program"), "{failure}");
 }
+
+/// FR-027-AC-7: a source declaring another language refuses `unknown_language`
+/// at stage `source` on the declared literal, with no package bytes.
+#[test]
+#[trace("FR-027-AC-7", "TC-435")]
+fn unknown_language_preserves_its_documented_refusal_code() {
+    let program = "language \"ix:another-language\" edition \"1-draft\";\n\
+profile v = \"filament.value.complete/v1\";\n\
+record Parcel { pieces: Int[0, 31]; }\n\
+function Total using v(pieces: Integer): Integer pure { pieces + 2 }\n";
+    let directory = tempfile::tempdir().unwrap();
+    spine_request(directory.path(), program.as_bytes());
+    let output = compile(directory.path());
+    assert_eq!(output.status.code(), Some(20));
+    assert!(output.stdout.is_empty());
+    let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(failure["code"], "unknown_language", "{failure}");
+    assert_eq!(failure["stage"], "source", "{failure}");
+    let literal = program.find("\"ix:another-language\"").unwrap();
+    assert_eq!(failure["details"]["span"]["start"]["byte"], literal);
+    assert_eq!(
+        failure["details"]["span"]["end"]["byte"],
+        literal + "\"ix:another-language\"".len()
+    );
+}

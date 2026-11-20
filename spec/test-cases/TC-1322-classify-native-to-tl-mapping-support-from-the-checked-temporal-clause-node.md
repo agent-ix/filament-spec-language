@@ -19,7 +19,7 @@ Verify FR-527-AC-1 to FR-527-AC-28. The unit **M** holds one clause per row of F
 | 1 | 1 | one clause per FR-045 table row | each row's disposition and TL target |
 | 2 | 2 | a finite-window clause; a clause with a past and a future operator | `Unsupported` naming `FiniteWindow`; `Unsupported` naming `MixedDirection` |
 | 3 | 3 | each of `once`, `historically`, `since`, `triggered` alone under both false-extension profiles | `Supported`, `mltl.origin-complete-history/v1` |
-| 4 | 4 | a finite-window clause with mixed directions; an infinite-trace clause | `FiniteWindow` and `MixedDirection`; `InfiniteTrace` |
+| 4 | 4 | a finite-window clause with mixed directions; infinite-trace clauses `always[0,2] holds(p)`, `once holds(p)`, `holds(p)` and `once[0,1] eventually[0,1] holds(p)`; infinite-trace clauses `once[1,1] not holds(p)` and `historically[0,2] holds(p)`, `Complete` then `Open` | `FiniteWindow` and `MixedDirection`; `InfiniteTrace` for each of the first three, `InfiniteTrace` and `MixedDirection` for the fourth; `Supported`, `mltl.infinite-trace/v1`, under both closures |
 | 5 | 5 | `once[0,1] holds(p)`; `eventually[0,2] holds(q)`; a formula holding both; each with `not`, `and`, `or` and `implies` added | past-only; future-only; mixed-direction; classification unchanged by the connectives |
 | 6 | 6 | `holds(p)` under each false-extension profile, `Complete` then `Open` | closed-trace target; online-prefix target |
 | 7 | 7 | fixed-sample future clause; event-position future clause | `total_sample_valuation` true under both closures; false |

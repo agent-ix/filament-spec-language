@@ -20,6 +20,7 @@
 //! evaluation half over it -- layer 5 depending on layer 3 is the
 //! permitted direction (ADR-011 §6.1).
 
+use filament_eval::{LiveContext, SessionLimits};
 use filament_exact::{is_identifier, NodeKey, Value};
 use filament_semantic_value::catalog::InternalFault;
 
@@ -117,9 +118,15 @@ pub(crate) struct EvaluationEnv<'a> {
     pub(crate) losses: Vec<filament_semantic_value::loss::LocatedLoss>,
     /// The last hook call's S6a frame depth, recorded alongside its location.
     pub(crate) frame_depth: u32,
+    /// The last hook call's peak live-occurrence count.
+    pub(crate) peak_live_occurrences: u64,
     /// Whether the caller already charged this application's `function.call`
     /// (the `filament-eval` scheduler does), so the hook charges nothing.
     pub(crate) call_charged: bool,
+    /// The evaluator session bound mirrored by the S6a machine.
+    pub(crate) session_limits: SessionLimits,
+    /// A transition count inherited from the checked-closure scheduler.
+    pub(crate) live_context: Option<LiveContext>,
 }
 
 impl<'a> EvaluationEnv<'a> {
@@ -137,7 +144,10 @@ impl<'a> EvaluationEnv<'a> {
             location: None,
             losses: Vec::new(),
             frame_depth: 0,
+            peak_live_occurrences: 0,
             call_charged: false,
+            session_limits: SessionLimits::default(),
+            live_context: None,
         }
     }
 
@@ -151,6 +161,36 @@ impl<'a> EvaluationEnv<'a> {
         Self {
             call_charged: true,
             ..Self::new(package, objects, arguments)
+        }
+    }
+
+    /// An environment for a scheduler-charged call with an explicit
+    /// live-occurrence bound.
+    pub(crate) fn charged_with_session_limits(
+        package: &'a super::CheckedPackage,
+        objects: &'a fsl_semantics::model::object_environment::ObjectEnvironment,
+        arguments: Vec<Value>,
+        session_limits: SessionLimits,
+    ) -> Self {
+        Self {
+            call_charged: true,
+            session_limits,
+            ..Self::new(package, objects, arguments)
+        }
+    }
+
+    /// An environment for a scheduler-charged call sharing its transition's
+    /// live-occurrence count with the synchronous FSL machine.
+    pub(crate) fn charged_with_live_context(
+        package: &'a super::CheckedPackage,
+        objects: &'a fsl_semantics::model::object_environment::ObjectEnvironment,
+        arguments: Vec<Value>,
+        session_limits: SessionLimits,
+        live_context: LiveContext,
+    ) -> Self {
+        Self {
+            live_context: Some(live_context),
+            ..Self::charged_with_session_limits(package, objects, arguments, session_limits)
         }
     }
 }
@@ -206,6 +246,7 @@ impl super::s6a::ReferenceEvaluation for ValueFunctionFamily {
         env.location = None;
         env.losses.clear();
         env.frame_depth = 0;
+        env.peak_live_occurrences = 0;
         // FR-090-AC-3 (ADR-013 T-4): `call` always resolves `checked` from
         // this same package's declarations before calling `evaluate`, so a
         // lookup miss here means the two lookups disagreed -- a broken S6a
@@ -242,18 +283,23 @@ impl super::s6a::ReferenceEvaluation for ValueFunctionFamily {
                 filament_exact::Outcome::Incomplete(incomplete),
             ));
         }
-        let evaluation = super::evaluate::Machine::new(
+        let mut machine = super::evaluate::Machine::new(
             env.package.graph().scope(),
             env.package.graph(),
             env.objects,
             meter,
             env.package.graph().dispatch_tables(),
         )
-        .with_formed_units(function.formed_units)
-        .run(function.body, function.slots, arguments)?;
+        .with_session_limits(env.session_limits)
+        .with_formed_units(function.formed_units);
+        if let Some(context) = env.live_context.as_ref() {
+            machine = machine.with_live_context(context.clone());
+        }
+        let evaluation = machine.run_call(function.body, function.slots, arguments)?;
         env.location = evaluation.location;
         env.losses = evaluation.losses;
         env.frame_depth = evaluation.frame_depth;
+        env.peak_live_occurrences = evaluation.peak_live_occurrences;
         match evaluation.outcome {
             filament_eval::FamilyOutcome::Evaluated(outcome) => {
                 Ok(filament_eval::EvalOutcome::Kernel(outcome))
@@ -372,7 +418,11 @@ mod family_contract_tests {
             declarations.functions = vec![form];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("f checks")
         .function_identity("f")
         .expect("f is declared");
@@ -444,7 +494,11 @@ mod family_contract_tests {
             declarations.functions = vec![declaration("f", Expression::boolean(true))];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("one boolean-literal function checks cleanly");
         let identity = graph
             .function_identity("f")
@@ -504,7 +558,11 @@ mod family_contract_tests {
             declarations.functions = vec![declaration("f", Expression::boolean(true))];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("one boolean-literal function checks cleanly, never Incomplete");
         let identity = graph
             .function_identity("f")
@@ -590,7 +648,11 @@ mod family_contract_tests {
             ];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("p / decimal(3, 0) checks cleanly");
         let rounding = graph
             .function_identity("rounding")
@@ -681,7 +743,11 @@ mod family_contract_tests {
             ];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("callee and caller both check cleanly");
         let identity = graph
             .function_identity("caller")

@@ -59,6 +59,12 @@ fn retx_with(
     timed_world::world(&document, PROFILES, &body)
 }
 
+fn retx_with_source_identity(source_identity: &str, claim: &str) -> World {
+    let document = retx_document(&[("send", &["late", "x"])]);
+    let body = retx_body(GUARD, true, "", claim);
+    timed_world::world_with_source_identity(&document, PROFILES, &body, source_identity)
+}
+
 fn retx_document(operations: &[(&str, &[&str])]) -> Vec<u8> {
     let mut document: serde_json::Value =
         serde_json::from_slice(&timed_world::document(&["x"], operations))
@@ -192,15 +198,18 @@ fn zero_delay_cycle_and_form_shape_settle_verdicts() {
     );
 }
 
-/// Two same-named claims in `claims`: each settles over its own product, and
-/// the two claims keep distinct occurrences, so each verdict is reported
-/// against its own `{node, occurrence}`.
-fn assert_each_timed_form_settles_for_its_claim(claims: &str) {
-    let world = retx(GUARD, true, "", claims);
-    let checked = world.package.graph().probabilistic_model().claims();
-    assert_eq!(checked.len(), 2);
+/// Equal-named claims in separate packages each settle over their own product
+/// and keep distinct `{node, occurrence}` identities.
+fn assert_each_timed_form_settles_for_its_claim(first: &str, second: &str) {
+    let worlds = [
+        retx_with_source_identity("fr-239-first", first),
+        retx_with_source_identity("fr-239-second", second),
+    ];
     let mut occurrences = Vec::new();
-    for claim in checked {
+    for world in &worlds {
+        let claims = world.package.graph().probabilistic_model().claims();
+        assert_eq!(claims.len(), 1);
+        let claim = &claims[0];
         let built = build_product(
             ProductRequest {
                 subject: ModelSubject {
@@ -216,9 +225,8 @@ fn assert_each_timed_form_settles_for_its_claim(claims: &str) {
             matches!(built, Ok(ProbBuild::Built(_))),
             "the timed form builds a product: {built:?}"
         );
-        occurrences.push(claim.occurrence().cloned());
+        occurrences.push(claim.occurrence().cloned().expect("package identity"));
     }
-    assert!(occurrences.iter().all(Option::is_some));
     assert_ne!(
         occurrences[0], occurrences[1],
         "each claim keeps its own identity"
@@ -231,11 +239,10 @@ fn assert_each_timed_form_settles_for_its_claim(claims: &str) {
 #[trace("FR-498-AC-3", "TC-1288")]
 #[test]
 fn timed_form_shape_names_the_selected_claim_among_equal_names() {
-    assert_each_timed_form_settles_for_its_claim(&format!(
-        "{}{}",
-        deadline_claim("Same", "under every scheduler", ">= 0.99", "always"),
-        deadline_claim("Same", "under every scheduler", ">= 0.5", "always"),
-    ));
+    assert_each_timed_form_settles_for_its_claim(
+        &deadline_claim("Same", "under every scheduler", ">= 0.99", "always"),
+        &deadline_claim("Same", "under every scheduler", ">= 0.5", "always"),
+    );
 }
 
 /// FR-498-AC-3 (TC-1288 step 3): the same for two same-named elapsed-time
@@ -251,7 +258,7 @@ fn timed_form_shape_names_the_selected_elapsed_claim_among_equal_names() {
              <= {threshold} ms }}\n"
         )
     };
-    assert_each_timed_form_settles_for_its_claim(&format!("{}{}", elapsed("1"), elapsed("2")));
+    assert_each_timed_form_settles_for_its_claim(&elapsed("1"), &elapsed("2"));
 }
 
 /// FR-204-AC-4: unbounded claims over a model with a zero-delay cycle are
@@ -845,7 +852,6 @@ fn a_randomized_mdp_entry_is_bounded_by_the_transition_limit() {
 #[trace("TC-2062", "FR-740-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-2")]
 #[test]
-#[ignore = "QSL-2439: delay declarations emitted as v2 probabilistic nodes not implemented yet"]
 fn discrete_delays_are_emitted_as_delay_distribution_nodes() {
     let world = with_tick(
         "delay M::Call::send ~ discrete { 1 ms: 90, 3 ms: 10 };\n",
@@ -867,6 +873,126 @@ fn discrete_delays_are_emitted_as_delay_distribution_nodes() {
         panic!("one delay_distribution node: {delays:?}");
     };
     assert!(delay["body"].to_string().contains("discrete"), "{delay}");
+}
+
+/// The `time dense` unit of [`with_tick`] with no random parameter, so a delay is
+/// the only probabilistic declaration but the workload.
+fn delay_only_world(delays: &str) -> World {
+    let document = retx_document(&[("send", &["late", "x"]), ("tick", &["retried"])]);
+    let body = format!(
+        "{dense}{TICK}\
+         pre Send using v on M::Call::send {{ not self.late{GUARD} }}\n\
+         post Sent using v on M::Call::send {{ self.late = true and self.x = 0 ms }}\n\
+         time invariant Deadline when {{ not self.late }} {{ self.x <= 2 ms }}\n\
+         {delays}\n\
+         workload Both on M {{ weight Call::send = 1; weight Call::tick = 1; }}\n",
+        dense = timed_world::DENSE,
+    );
+    timed_world::world(&document, PROFILES, &body)
+}
+
+/// The `delay_distribution` nodes of the package `world` emits, as wire JSON.
+fn emitted_delays(world: &World) -> Vec<serde_json::Value> {
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .unwrap_or_else(|refusal| panic!("S4 emits the timed unit: {refusal:?}"));
+    let wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("JSON bytes");
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter(|node| {
+            node["node_tag"] == "probabilistic" && node["semantic_form"] == "delay_distribution"
+        })
+        .cloned()
+        .collect()
+}
+
+/// Each literal under `term`, in order, as its kind and its spelled value.
+fn literals(term: &serde_json::Value, found: &mut Vec<(String, String)>) {
+    if let Some(kind) = term.get("value_kind") {
+        found.push((
+            kind.as_str().expect("a kind").to_owned(),
+            term["value"].as_str().expect("a spelled value").to_owned(),
+        ));
+    }
+    for member in term
+        .get("members")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        literals(member, found);
+    }
+    if let Some(value) = term.get("value").filter(|value| value.is_object()) {
+        literals(value, found);
+    }
+}
+
+/// FR-740-AC-3 (TC-2062), FSpec FR-640-AC-2 (TC-1563): a `time dense` unit
+/// with a delay of each family emits one `probabilistic`/`delay_distribution`
+/// node of that family with the AC's values (`discrete { 1 ms: 90, 3 ms: 10 }`
+/// has the delays 1 and 3 and the weights 90 and 10), with no random
+/// parameter in the unit.
+#[trace("TC-2062", "FR-740-AC-3")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-2")]
+#[test]
+fn each_delay_family_is_emitted_as_a_delay_distribution_node() {
+    for (family, written, expected) in [
+        ("uniform", "uniform", vec![]),
+        (
+            "uniform_interval",
+            "uniform[1 ms, 4 ms]",
+            vec![("quantity", "1"), ("quantity", "4")],
+        ),
+        (
+            "exponential",
+            "exponential(rational(1, 2))",
+            vec![("rational", "1/2")],
+        ),
+        (
+            "discrete",
+            "discrete { 1 ms: 90, 3 ms: 10 }",
+            vec![
+                ("quantity", "1"),
+                ("rational", "90"),
+                ("quantity", "3"),
+                ("rational", "10"),
+            ],
+        ),
+    ] {
+        let delays = emitted_delays(&delay_only_world(&format!(
+            "delay M::Call::send ~ {written};"
+        )));
+        let [delay] = &delays[..] else {
+            panic!("{family}: one delay_distribution node: {delays:?}");
+        };
+        assert!(
+            delay["body"].to_string().contains(&format!("\"{family}\"")),
+            "{delay}"
+        );
+        let mut found = Vec::new();
+        literals(&delay["body"]["members"][3]["value"], &mut found);
+        let found: Vec<(&str, &str)> = found
+            .iter()
+            .map(|(kind, value)| (kind.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(found, expected, "{family}");
+    }
+}
+
+/// FSpec FR-640-AC-3 (TC-1563): a unit with two delays emits the same
+/// `delay_distribution` nodes, byte for byte and in the same order, whichever
+/// order it declares them in.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn reordering_two_delays_changes_no_delay_node() {
+    let send = "delay M::Call::send ~ discrete { 1 ms: 90, 3 ms: 10 };";
+    let tick = "delay M::Call::tick ~ uniform[1 ms, 4 ms];";
+    let forward = emitted_delays(&delay_only_world(&format!("{send}\n{tick}")));
+    let reversed = emitted_delays(&delay_only_world(&format!("{tick}\n{send}")));
+    assert_eq!(forward.len(), 2);
+    assert_eq!(forward, reversed);
 }
 
 /// FSpec FR-420-AC-8 (TC-1561): under a workload that gives `tick` weight 0,

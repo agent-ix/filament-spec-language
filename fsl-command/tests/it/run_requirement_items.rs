@@ -349,7 +349,7 @@ fn publishing_provider(
         },
     )
     .expect("the descriptor advertises the external value arm")
-    .with_options(published.iter().map(|name| (*name).to_owned()));
+    .with_options(published.iter().map(|name| ((*name).to_owned(), "1".to_owned())));
     fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),

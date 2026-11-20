@@ -44,7 +44,11 @@ fn check(declarations: &str) -> Checked {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}"));
     Checked { text, graph }
 }
@@ -1122,9 +1126,9 @@ fn tc_160_a_root_of_an_undeclared_composite_is_a_fault() {
         value_type,
         location: location.clone(),
         equality_producer: None,
-        ordering_part: false,
         field_population: None,
         equality_range_context: None,
+        type_argument: None,
     };
     let mut body = BodyBuilder::default();
     let record = body.push(node(

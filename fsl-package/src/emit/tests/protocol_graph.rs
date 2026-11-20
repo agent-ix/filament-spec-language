@@ -616,7 +616,11 @@ pub(super) fn checked_package(
     } else {
         assembled
     };
-    assembled.check(CheckMode::Linked, CheckingLimits::default())
+    assembled.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 /// FR-092-AC-18, FR-383: every construct whose node is still not written
@@ -646,47 +650,13 @@ fn every_remaining_unwritten_construct_refuses_typed_and_writes_no_clause() {
         )
     };
     let main = "sequence Main { }";
-    let carrying = |carries: &str| {
-        format!(
-            "{SELLER}\n{}",
-            channel(
-                "C",
-                ("Buyer", "Seller"),
-                "unordered",
-                "unknown",
-                "capacity 4 overflow block"
-            )
-            .replace("Boolean", carries)
-        )
-    };
-    let cases = [
-        (
-            C::ProtocolReferenceInBody,
-            "QSL-1121g",
-            vec![C::ProtocolReferenceInBody],
-            false,
-            plain("on origin", "", main, "protocol Flow"),
-        ),
-        (
-            C::ChannelCarriesBounded,
-            "QSL-1137",
-            vec![C::ChannelCarriesBounded],
-            false,
-            plain("on origin", &carrying("Int[0, 5]"), main, "true"),
-        ),
-        (
-            C::ChannelCarriesBounded,
-            "QSL-1137",
-            vec![C::ChannelCarriesBounded],
-            false,
-            plain(
-                "on origin",
-                &carrying("Sequence<Boolean>[0, 3]"),
-                main,
-                "true",
-            ),
-        ),
-    ];
+    let cases = [(
+        C::ProtocolReferenceInBody,
+        "QSL-1121g",
+        vec![C::ProtocolReferenceInBody],
+        false,
+        plain("on origin", "", main, "protocol Flow"),
+    )];
     let clauses = |graph: &fsl_semantics::check::CheckedGraph| {
         graph
             .semantic_graph()
@@ -804,33 +774,15 @@ fn a_channel_carries_every_type_the_reader_admits() {
     }
 }
 
-/// Former producer/reader mismatch cases. FR-880 and FR-881 now require the
-/// bounded carries and stable quantity key to compile; the pinned reader has
-/// not adopted those forms yet.
+/// A quantity FIFO key remains refused until its separate key-stability work
+/// lands (QSL-1142).
 #[test]
-#[ignore = "superseded by FR-880/FR-881; reader 90b90fc7 still rejects the corrected cases"]
-fn a_bounded_carries_and_a_quantity_key_refuse_typed() {
-    let bounded = [
-        "Int[0, 5]",
-        "Text[0, 8; nfc]",
-        "Decimal[-100,100;0,0;nearest-even]",
-        "Rational[-100, 100; 1, 1]",
-        "Float64[nearest-even]",
-        "Sequence<Boolean>[0, 3]",
-    ];
-    let mut cases: Vec<(ProtocolConstruct, String)> = bounded
-        .iter()
-        .map(|carries| {
-            (
-                ProtocolConstruct::ChannelCarriesBounded,
-                carrying_flow(carries, "unordered"),
-            )
-        })
-        .collect();
-    cases.push((
+#[ignore = "blocked: pinned reader has not adopted FR-726 FIFO-key-stable types"]
+fn a_quantity_key_refuses_typed() {
+    let cases = [(
         ProtocolConstruct::ChannelKeyNotEqualityStable,
         carrying_flow("Quantity<m>", "fifo by (m: Quantity<m>) { m }"),
-    ));
+    )];
     for (construct, text) in cases {
         let refusals = checked(&text, false).expect_err(&text);
         assert_eq!(
@@ -849,10 +801,6 @@ fn a_bounded_carries_and_a_quantity_key_refuse_typed() {
             .count();
         assert_eq!(clauses, 0, "{text}");
     }
-    assert_eq!(
-        ProtocolConstruct::ChannelCarriesBounded.tracking(),
-        "QSL-1137"
-    );
     assert_eq!(
         ProtocolConstruct::ChannelKeyNotEqualityStable.tracking(),
         "QSL-1142"
@@ -1038,6 +986,7 @@ fn checked_protocols_with_budget(
         .check_with_protocol_results(
             CheckMode::Linked,
             CheckingLimits::default().with_work_budget(work_budget),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
 }
 
@@ -1102,7 +1051,11 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
             .expect("the test model admits");
         assemble_with_models(unit(protocols).as_bytes(), &packages)
             .expect("the unit assembles")
-            .check_with_protocol_results(CheckMode::Linked, CheckingLimits::default())
+            .check_with_protocol_results(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("unit-level checks succeed")
     };
     let standalone = CheckedPackage::link(check(&good));
@@ -1935,11 +1888,10 @@ fn a_predicate_function_reading_its_protocol_is_admitted() {
 }
 
 /// FR-880-AC-10, FSpec FR-726-AC-1: a channel that carries a bounded scalar
-/// or a bounded collection is written with its `bounded_domain` node as
-/// `carries`, and the package is admitted.
+/// or bounded Sequence, Set or Bag is written with its `bounded_domain` node
+/// as `carries`, and the package is admitted.
 #[test]
 #[trace("TC-2503", "FR-880-AC-10", "FSpec-FR-726-AC-1")]
-#[ignore = "blocked: locked filament-contract-ir reader 90b90fc7 rejects bounded_domain at channel carries"]
 fn a_channel_carrying_a_bounded_type_is_admitted() {
     for carries in [
         "Int[0, 5]",
@@ -1948,11 +1900,19 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
         "Rational[-100, 100; 1, 1]",
         "Float64[nearest-even]",
         "Sequence<Boolean>[0, 3]",
+        "Set<Boolean>[0, 3]",
+        "Bag<Boolean>[0, 3]",
     ] {
         let text = carrying_flow(carries, "unordered");
         let lowered = lower_with(model(), PROFILES, &text);
         assert!(lowered.ir.is_ok(), "{carries}: {:?}", lowered.ir.err());
         assert!(lowered.verified, "{carries}");
+        let channels = set(&lowered.wire, "channels");
+        let [channel] = channels[..] else {
+            panic!("one channel");
+        };
+        let carried = target(&lowered.wire, argument(channel, &CHANNEL, "carries"));
+        assert_eq!(carried["node_tag"], "bounded_domain", "{carries}");
     }
 }
 
@@ -2010,7 +1970,6 @@ fn an_unstable_fifo_key_refuses_at_the_key() {
 /// admitted.
 #[test]
 #[trace("TC-2502", "FR-880-AC-7", "FSpec-FR-727-AC-1")]
-#[ignore = "Blocked by QSL-2220: the strict reader still rejects ownerless protocol clauses as MalformedWire."]
 fn a_non_object_over_is_written() {
     for over in [
         "Int[0, 3]",

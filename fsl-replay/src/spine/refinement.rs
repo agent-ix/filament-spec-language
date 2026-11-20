@@ -240,7 +240,6 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::ImportedTypeName { .. }
         | AssemblyCause::AmbiguousTypeName { .. }
         | AssemblyCause::IllFormedBounds(_)
-        | AssemblyCause::FloatingType { .. }
         | AssemblyCause::AliasCycle { .. }
         | AssemblyCause::UndeclaredAlias { .. }
         | AssemblyCause::DuplicateAlias { .. }
@@ -280,8 +279,7 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::UnsupportedLayerForm { .. }
         | AssemblyCause::UnselectedModelConstruct(_)
         | AssemblyCause::TimedNotChecked(_)
-        | AssemblyCause::SynthesisNotChecked { .. }
-        | AssemblyCause::VerificationPlanNotChecked { .. } => None,
+        | AssemblyCause::SynthesisNotChecked { .. } => None,
     }
 }
 
@@ -358,6 +356,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::AmbiguousMember(_)
         | CheckCause::AmbiguousQualified(_)
         | CheckCause::UnsupportedNavigation(_)
+        | CheckCause::NullExpression
         | CheckCause::NonBooleanRoot
         | CheckCause::UnitMismatch
         | CheckCause::IntegerOutsideI128(_)
@@ -371,6 +370,9 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::ReservedIntrinsicConflict(_)
         | CheckCause::UnrepresentableBound
         | CheckCause::DefinitionCycle { .. }
+        | CheckCause::DuplicateVerificationStep { .. }
+        | CheckCause::VerificationPlanBoundZero { .. }
+        | CheckCause::VerificationPlanInapplicableMethod { .. }
         | CheckCause::InvalidDispatchDeclaration(_)
         | CheckCause::MissingSelection { .. }
         | CheckCause::UnsupportedFeature { .. }
@@ -385,6 +387,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::Extension(_)
         | CheckCause::RefinementNotEmitted { .. }
         | CheckCause::Probabilistic(_)
+        | CheckCause::RewardEvaluation(_)
         | CheckCause::TimedNotChecked { .. }
         | CheckCause::Temporal(_)
         | CheckCause::Hyper(_)
@@ -633,7 +636,7 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
             Classification::new(Refused, causes)
         }
         // An undefined evaluation settles refuted.
-        CallOutcome::Undefined { reason } => Classification::new(
+        CallOutcome::Undefined { reason, .. } => Classification::new(
             Refused,
             vec![RefusalCause::new(Code::UndefinedExpression, Some(reason))],
         ),

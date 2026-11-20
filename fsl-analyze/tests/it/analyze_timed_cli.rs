@@ -4,6 +4,17 @@
 //! deadlock-freedom and time-lock-freedom items, budgets, and the exact
 //! rational delays of a refutation.
 
+use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
+use filament_exact::{Cancel, Meter, Undefined};
+use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
+use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
+use fsl_eval::simulation::model::{ModelSimState, TimedSystem};
+use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
+use fsl_replay::{CounterexampleKind, ModelCheckOutcome};
+use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -20,12 +31,21 @@ fn settles(interval: &str) -> String {
 }
 
 fn run(name: &str, unit: &str, items: Value) -> (crate::analyze_cli_support::Run, Vec<Value>) {
+    run_with_snapshots(name, unit, &[rpc_snapshot()], items)
+}
+
+fn run_with_snapshots(
+    name: &str,
+    unit: &str,
+    snapshots: &[Vec<u8>],
+    items: Value,
+) -> (crate::analyze_cli_support::Run, Vec<Value>) {
     let ws = Workspace::new(name);
     let run = analyze(&request_over(
         &ws,
         unit,
         &crate::zone_search::rpc_document(),
-        &[rpc_snapshot()],
+        snapshots,
         json!({"items": items}),
     ));
     let items = run.document()["items"]
@@ -242,11 +262,11 @@ fn max_clocks_is_read_on_a_timed_subject_and_unrouted_on_an_untimed_one() {
     assert_eq!(untimed.item(0)["record"]["result"], "unsupported");
 }
 
-/// A state-graph claim over a timed subject settles `unsupported`: EN-6
-/// lists no state-graph form and EN-1 reads no clocks (QSL-2305).
-#[trace("TC-1588", "FR-628-AC-1")]
+/// FR-852: a state-graph claim over a timed subject routes to EN-6 and
+/// proves with a certified zone graph and an exact-delay witness.
+#[trace("TC-2412", "FR-852")]
 #[test]
-fn a_state_graph_claim_over_a_timed_subject_is_unsupported() {
+fn a_state_graph_claim_over_a_timed_subject_proves_on_zones() {
     let (run, items) = run(
         "timed-state-graph",
         &rpc_unit(
@@ -256,14 +276,37 @@ fn a_state_graph_claim_over_a_timed_subject_is_unsupported() {
         json!([{"claim": "Reaches"}]),
     );
     let item = &items[0];
-    assert_eq!(label(item), "unsupported", "{item}");
-    assert!(
-        item["record"]["diagnostic"]["detail"]["reason"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("QSL-2305")),
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    assert_eq!(item["record"]["basis"]["type"], "zone-certified", "{item}");
+    assert_eq!(item["record"]["certification"], "certified", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(item["certificate"]["checker"], "zone-certificate", "{item}");
+    assert_eq!(
+        item["certificate"]["document"]["state_graph"]["form"], "possible",
         "{item}"
     );
-    assert_eq!(run.exit, 21);
+    let evidence = &item["record"]["evidence"];
+    assert_eq!(evidence["arm"], "witness", "{item}");
+    assert_eq!(
+        evidence["paths"].as_array().map(Vec::len),
+        Some(1),
+        "{item}"
+    );
+    let steps = evidence["paths"][0]["path"]["steps"]
+        .as_array()
+        .expect("a concrete witness path");
+    assert_eq!(steps.len(), 1, "{item}");
+    assert_eq!(
+        steps[0]["transition"]["operation"]["node"], "ix://test/timed/Call/send",
+        "{item}"
+    );
+    assert_eq!(
+        steps[0]["delay"],
+        json!({"numerator": "0", "denominator": "1"}),
+        "{item}"
+    );
+    assert_eq!(run.exit, 0);
 }
 
 /// An item carrying a member no route reads (`witness_samples` on a clause)
@@ -346,6 +389,22 @@ fn digital_clocks_settle_mitl_claims_as_zones_do() {
     );
     assert_eq!(label(&items[0]), "proved", "{}", items[0]);
     assert_eq!(items[0]["record"]["backend"], "en-1", "{}", items[0]);
+    let exploration = &items[0]["exploration"];
+    assert_eq!(exploration["automaton_states"], "3", "{}", items[0]);
+    assert!(
+        exploration["states"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > exploration["automaton_states"]
+                .as_str()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+        "automaton states count distinct claim states, not product states: {}",
+        items[0]
+    );
     assert_eq!(
         items[0]["record"]["basis"]["type"], "exhaustive",
         "{}",
@@ -364,6 +423,209 @@ fn digital_clocks_settle_mitl_claims_as_zones_do() {
     assert_eq!(items[2]["record"]["backend"], "en-6", "{}", items[2]);
     assert_eq!(label(&items[3]), "refuted", "{}", items[3]);
     assert_eq!(run.exit, 10);
+}
+
+/// FR-126's EN-1 statistics report the greatest automaton-state count of one
+/// binding, even when different bindings reach disjoint claim states.
+#[trace("TC-1592", "FR-632-AC-2")]
+#[test]
+fn digital_automaton_states_are_the_maximum_per_binding() {
+    let body = format!(
+        "{}\
+         pre Idle using v on M::Call::idle {{ self.phase = 0 and self.phase = 1 }}\n\
+         temporal BindingStates using tt over (c: M::Call) on origin \
+         {{ always holds(c.phase = 0) }}\n",
+        crate::timed_world::DENSE,
+    );
+    let world = crate::timed_world::world_over(
+        &crate::timed_world::document(&[], &[("idle", &[])]),
+        crate::zone_search::TIMED,
+        &body,
+        &["a", "z"],
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed model");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let inner = system.clause_letters(node).expect("clause letters");
+    let letters = DifferentBindingAtoms {
+        inner: &inner,
+        reads: RefCell::new(BTreeMap::new()),
+    };
+    let request = DigitalRequest {
+        subject: &timed,
+        clause: node.clause(),
+        letters: &letters,
+        limits: DigitalLimits {
+            max_states: u64::MAX,
+            max_transitions: u64::MAX,
+            max_automaton_states: u64::MAX,
+        },
+    };
+    let outcome = check_digital(&request, &Cancel::new()).expect("digital route accepts");
+    let ModelCheckOutcome::Violated { stats, .. } = outcome.outcome else {
+        panic!("the false binding refutes: {outcome:?}");
+    };
+    assert_eq!(
+        letters.reads.borrow().keys().cloned().collect::<Vec<_>>(),
+        ["a", "z"]
+    );
+    assert_eq!(stats.automaton_states, 1);
+}
+
+/// Per-binding atoms put the two instances in disjoint one-state regions of
+/// the same claim automaton.
+struct DifferentBindingAtoms<'a> {
+    inner: &'a dyn ModelLetters,
+    reads: RefCell<BTreeMap<String, u64>>,
+}
+
+impl ModelLetters for DifferentBindingAtoms<'_> {
+    fn atom(
+        &self,
+        _atom: FormulaNodeId,
+        instance: &ModelInstance,
+        _state: &ModelSimState,
+        _meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        *self
+            .reads
+            .borrow_mut()
+            .entry(instance.key.clone())
+            .or_default() += 1;
+        Ok(if instance.key == "a" {
+            AtomReading::True
+        } else {
+            AtomReading::False
+        })
+    }
+
+    fn activation(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        self.inner.activation(instance, state, meter)
+    }
+
+    fn captures(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<CaptureReading, AtomStop> {
+        self.inner.captures(instance, state, meter)
+    }
+
+    fn reads(&self, atom: FormulaNodeId) -> crate::units::Reads {
+        self.inner.reads(atom)
+    }
+
+    fn activation_reads(&self) -> crate::units::Reads {
+        self.inner.activation_reads()
+    }
+}
+
+/// A test letter seam that returns `Undefined` on the second activation read:
+/// the initial position is defined and the quiescent idle-tail read is not.
+struct UndefinedOnIdleActivation<'a> {
+    inner: &'a dyn ModelLetters,
+    activation_reads: Cell<u8>,
+}
+
+impl ModelLetters for UndefinedOnIdleActivation<'_> {
+    fn atom(
+        &self,
+        atom: FormulaNodeId,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        self.inner.atom(atom, instance, state, meter)
+    }
+
+    fn activation(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        let reads = self.activation_reads.get();
+        self.activation_reads.set(reads.saturating_add(1));
+        if reads == 0 {
+            self.inner.activation(instance, state, meter)
+        } else {
+            Ok(AtomReading::Undefined(UndefinedCause::Kernel(
+                Undefined::DivisionByZero,
+            )))
+        }
+    }
+
+    fn captures(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<CaptureReading, AtomStop> {
+        self.inner.captures(instance, state, meter)
+    }
+
+    fn reads(&self, atom: FormulaNodeId) -> crate::units::Reads {
+        self.inner.reads(atom)
+    }
+
+    fn activation_reads(&self) -> crate::units::Reads {
+        self.inner.activation_reads()
+    }
+}
+
+/// FR-126's idle-tail expansion treats an undefined letter as an
+/// `UndefinedEvaluation` violation, preserving the site's locus and cause.
+#[trace("TC-1592", "FR-632-AC-2")]
+#[test]
+fn digital_idle_tail_undefined_reading_is_a_violation() {
+    let body = format!(
+        "{}\
+         pre SendIdle using v on M::Call::send {{ self.phase = 0 and self.phase = 1 }}\n\
+         temporal IdleTailUndefined using tt over (c: M::Call) on each (x: M::Call) when (true) \
+         {{ always holds(true) }}\n",
+        crate::timed_world::DENSE,
+    );
+    let world = crate::timed_world::world(
+        &crate::zone_search::rpc_document(),
+        crate::zone_search::TIMED,
+        &body,
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed model");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("clause letters");
+    let letters = UndefinedOnIdleActivation {
+        inner: &letters,
+        activation_reads: Cell::new(0),
+    };
+    let request = DigitalRequest {
+        subject: &timed,
+        clause: node.clause(),
+        letters: &letters,
+        limits: DigitalLimits {
+            max_states: u64::MAX,
+            max_transitions: u64::MAX,
+            max_automaton_states: u64::MAX,
+        },
+    };
+    let outcome = check_digital(&request, &Cancel::new()).expect("digital route accepts");
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome.outcome else {
+        panic!("the idle-tail read is a violation: {outcome:?}");
+    };
+    let CounterexampleKind::UndefinedEvaluation(undefined) = &counterexample.kind else {
+        panic!("the counterexample names the undefined evaluation: {counterexample:?}");
+    };
+    assert_eq!(undefined.site.locus, fsl_replay::UndefinedLocus::Activation);
+    assert_eq!(
+        undefined.cause,
+        UndefinedCause::Kernel(Undefined::DivisionByZero)
+    );
 }
 
 /// QSL-2129: an item naming `options.method` `zones` negotiates to EN-6 and
@@ -401,4 +663,31 @@ fn a_digital_clock_state_budget_is_incomplete() {
     );
     assert_eq!(items[0]["record"]["backend"], "en-1", "{}", items[0]);
     assert_eq!(run.exit, 22);
+}
+
+/// FR-235-AC-8: the zone and digital-clock routes write the same FSpec
+/// FR-416 `non_zeno` member for FR-632-AC-2's MITL claims.
+#[trace("TC-3021", "FR-235-AC-8")]
+#[test]
+fn both_timed_routes_state_the_non_zeno_premise() {
+    let unit = rpc_unit(
+        4,
+        &format!(
+            "{}{}",
+            settles("[0 ms, 3 ms]").replace("Settles", "Within"),
+            settles("[0 ms, 2 ms]").replace("Settles", "Early")
+        ),
+    );
+    let digital = json!({"method": "digital-clocks"});
+    let (_, items) = run(
+        "timed-non-zeno",
+        &unit,
+        json!([{"claim": "Within"}, {"claim": "Within", "options": digital.clone()},
+            {"claim": "Early"}, {"claim": "Early", "options": digital}]),
+    );
+    let zone = &items[0]["record"]["non_zeno"];
+    assert!(zone == "not-required" || zone == "assumed", "{}", items[0]);
+    assert_eq!(&items[1]["record"]["non_zeno"], zone, "{}", items[1]);
+    assert_eq!(items[2]["record"]["non_zeno"], "checked", "{}", items[2]);
+    assert_eq!(items[3]["record"]["non_zeno"], "checked", "{}", items[3]);
 }

@@ -20,6 +20,17 @@ use fsl_semantics::check::{RequirementRecord, SemanticNode};
 
 extern crate alloc;
 
+/// FR-286: the typed refusal pairs produced by inspection.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("inspection_refused", "unknown-node"),
+    fsl_foundation::diagnostic::CatalogCode::new("inspection_refused", "unknown-occurrence"),
+    fsl_foundation::diagnostic::CatalogCode::new("inspection_refused", "source-correspondence-unresolved"),
+    fsl_foundation::diagnostic::CatalogCode::new("inspection_refused", "incompatible-selection"),
+    fsl_foundation::diagnostic::CatalogCode::new("inspection_refused", "unavailable-retained-content"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_quire_context", "unsupported-render-form"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "input-bytes-exceeded"),
+];
+
 /// The inspection operation's cumulative materialized-entry limit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InspectLimits {
@@ -429,7 +440,11 @@ pub(crate) mod tests {
             Vec::new(),
         )
         .expect("the fixture assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("the fixture checks");
         let package = fsl_package::CheckedPackage::link(graph);
         let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::new(1 << 32))

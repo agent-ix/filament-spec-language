@@ -212,7 +212,11 @@ fn check_connection_protocol(text: &str) -> Result<CheckedGraph, Vec<CheckRefusa
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 /// FR-897-AC-1 (TC-2533): a channel over an admitted systems Connection
@@ -375,7 +379,11 @@ fn check(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 fn checks(text: &str) -> CheckedGraph {
@@ -585,7 +593,6 @@ fn unwritten(text: &str) -> Vec<ProtocolConstruct> {
         .map(|refusal| match &refusal.cause {
             CheckCause::ProtocolReference(cause) => match cause.as_ref() {
                 ProtocolReferenceCause::NotEmitted { construct } => *construct,
-                ProtocolReferenceCause::Repeated { .. } => panic!("{refusal:?}"),
             },
             other => panic!("{text}: only NotEmitted refusals, got {other:?}"),
         })

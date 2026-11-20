@@ -899,9 +899,11 @@ impl ItemSelection {
     }
 
     /// [`Self::unrouted`] without the witness sampling members, which a
-    /// state-graph claim reads (FR-628).
+    /// state-graph claim reads (FR-628). Its backend options are negotiated
+    /// against the candidates' published values, as for other temporal
+    /// claims (FR-243).
     fn unrouted_beyond_sampling(&self) -> bool {
-        self.unrouted_members(false)
+        self.unrouted_members(true)
     }
 
     fn unrouted_members(&self, options_negotiated: bool) -> bool {
@@ -1088,6 +1090,13 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .iter()
             .map(|clause| (clause.clause().name().to_owned(), clause.identity())),
     );
+    // FR-750: a checked hybrid claim is a claim by its declared name.
+    names.extend(
+        graph
+            .hybrid_claim_sites()
+            .iter()
+            .map(|site| (site.name.clone(), site.identity.clone())),
+    );
     // FR-625: an `invariant` state clause is a claim by its declared name.
     names.extend(
         graph
@@ -1166,6 +1175,16 @@ fn claim_occurrence(
         return Some(OccurrenceKey::new(
             clause.identity(),
             clause.claim().clone(),
+        ));
+    }
+    if let Some(site) = graph
+        .hybrid_claim_sites()
+        .iter()
+        .find(|site| &site.identity == node)
+    {
+        return Some(OccurrenceKey::new(
+            site.identity.clone(),
+            site.claim.clone(),
         ));
     }
     if let Some(clause) = graph
@@ -1470,7 +1489,17 @@ fn resolve_one(
     });
     let named = selection.backend.as_deref().map(BackendId::new);
     let records = requirement_items(package, registry, named.as_ref());
-    let Some(claim) = claim_occurrence(package, &records, &node) else {
+    // FR-940 "Claim occurrence ordinals": an authored temporal clause is its
+    // own `claim` occurrence of a node structurally equal clauses share, so
+    // the name keys the whole occurrence, never the node's first.
+    let Some(claim) = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|clause| clause.clause().name() == name)
+        .map(|clause| OccurrenceKey::new(clause.identity(), clause.claim().clone()))
+        .or_else(|| claim_occurrence(package, &records, &node))
+    else {
         return unknown_claim(index, name);
     };
     // A record keys the declaration, or the value clause a `Boolean`
@@ -1590,7 +1619,7 @@ fn resolve_one(
     );
     let candidates = if let Some(claim) = state_graph {
         registry.restrict_to_state_graph_form(
-            registry.restrict_to_timing(candidates, timed(package)),
+            registry.restrict_to_options_and_timing(candidates, &backend_options, timed(package)),
             fsl_route::StateGraphFormKind::of(claim.form()),
         )
     } else if kind == Capability::TemporalSatisfaction {
@@ -1721,39 +1750,42 @@ fn resolve_one(
         None
     };
     if let Some(claim) = state_graph {
-        if timed(package) {
-            // EN-6 lists no state-graph form and EN-1 reads no clocks, so a
-            // timed subject has no state-graph route yet (QSL-2305).
-            let mut detail = Map::new();
-            detail.insert("kind".to_owned(), json!(kind.to_wire()));
-            detail.insert(
-                "reason".to_owned(),
-                json!("a state-graph claim over a timed subject has no route (QSL-2305)"),
-            );
-            return ResolvedItem::Settled {
-                claim_name: Some(name.to_owned()),
-                record: Box::new(TerminalRecord::disposition_unsupported(
-                    index,
-                    fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
-                    detail,
-                )),
-            };
-        }
         if let Some(refused) = sampling_refusal(index, name, claim, &temporal) {
             return refused;
         }
     }
     let protocol_bound =
         protocol.is_some() || (kind == Capability::GlobalConformance && protocol_claim);
-    let form = (kind == Capability::TemporalSatisfaction
-        || kind == Capability::GlobalConformance
-        || protocol_analysis_kind)
-        .then(|| {
-            let mut form = temporal_item(package, &claim, &temporal);
-            form.pending_reductions.clone_from(&selection.reductions);
-            form.protocol = protocol.clone();
-            ItemForm::Temporal(form)
-        });
+    let hybrid_claim = kind == Capability::TemporalSatisfaction
+        && package
+            .graph()
+            .hybrid_claim_sites()
+            .iter()
+            .any(|site| &site.identity == claim.node() && &site.claim == claim.origin());
+    let hybrid_limits = match selection.hybrid.as_ref().filter(|_| hybrid_claim) {
+        Some(member) => match fsl_replay::SolverBudget::read_hybrid(member) {
+            Ok(limits) => limits,
+            Err(_) => return invalid_member_cause(index, name, "hybrid", "invalid-value"),
+        },
+        None => fsl_replay::SolverBudget::default(),
+    };
+    let form = if hybrid_claim {
+        Some(ItemForm::Hybrid(super::HybridItem {
+            proof_bounds: Vec::new(),
+            limits: hybrid_limits,
+            options: backend_options.clone(),
+        }))
+    } else {
+        (kind == Capability::TemporalSatisfaction
+            || kind == Capability::GlobalConformance
+            || protocol_analysis_kind)
+            .then(|| {
+                let mut form = temporal_item(package, &claim, &temporal);
+                form.pending_reductions.clone_from(&selection.reductions);
+                form.protocol = protocol.clone();
+                ItemForm::Temporal(form)
+            })
+    };
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -1793,6 +1825,13 @@ fn resolve_one(
         candidates,
         unrouted: if state_graph.is_some() {
             selection.unrouted_beyond_sampling()
+        } else if hybrid_claim {
+            // The `hybrid` member is read by the hybrid item itself.
+            ItemSelection {
+                hybrid: None,
+                ..selection.clone()
+            }
+            .unrouted_routing_options(true)
         } else {
             selection.unrouted_routing_options(kind == Capability::TemporalSatisfaction)
         } || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
@@ -2829,6 +2868,13 @@ pub struct SettledRun {
     pub exit_code: u8,
 }
 
+impl SettledRun {
+    /// The canonical RFC 8785 bytes of the FR-621 document.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, fsl_foundation::canonical_json::CanonicalJsonError> {
+        fsl_foundation::canonical_json::encode(&self.document)
+    }
+}
+
 /// Negotiate `run`'s items with `negotiate`, run them under `cancel`
 /// (sending each external provider its one request after every item is
 /// negotiated, FR-950) and settle each as one record: the one settlement
@@ -3350,7 +3396,8 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value>
         | super::Counterexample::Probabilistic(_)
         | super::Counterexample::Contract(_)
         | super::Counterexample::StateGraph(_)
-        | super::Counterexample::GlobalConformance(_) => json!({"state_clause": qualified}),
+        | super::Counterexample::GlobalConformance(_)
+        | super::Counterexample::Hybrid(_) => json!({"state_clause": qualified}),
         super::Counterexample::ScheduleMiss(_) => return None,
     })
 }
@@ -3374,6 +3421,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     let index = record.remove("request_index").unwrap_or(Value::Null);
     let category = record.remove("category").unwrap_or(Value::Null);
     let counterexample = record.remove("counterexample");
+    let certificate_document = record.remove("certificate_document");
     let mut item = Map::new();
     item.insert("request_index".to_owned(), index);
     item.insert(
@@ -3382,15 +3430,24 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     );
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
-    if let (Some(checker), Some(identity), Some("proved")) = (
+    if let (Some(checker), Some(identity), Some(result)) = (
         detail.as_ref().and_then(|detail| detail.checker),
         identity,
         record.get("result").and_then(Value::as_str),
     ) {
-        item.insert(
-            "certificate".to_owned(),
-            json!({"identity": identity, "checker": checker.as_str(), "accepted": true}),
-        );
+        if matches!(result, "proved" | "refuted") {
+            let mut certificate = json!({
+                "identity": identity,
+                "checker": checker.as_str(),
+                "accepted": result == "proved"
+            });
+            if let Some(document) = certificate_document {
+                if let Some(certificate) = certificate.as_object_mut() {
+                    certificate.insert("document".to_owned(), document);
+                }
+            }
+            item.insert("certificate".to_owned(), certificate);
+        }
     }
     let mut spelled = None;
     if let Some(mut counterexample) = counterexample {
@@ -3427,6 +3484,9 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
                 "automaton_states": stats.automaton_states.to_string(),
             }),
         );
+    }
+    if let Some(non_zeno) = detail.as_ref().and_then(|detail| detail.non_zeno) {
+        record.insert("non_zeno".to_owned(), json!(non_zeno.as_str()));
     }
     // FSpec FR-439: the record states the memory budget the run used and
     // whether it reached it.

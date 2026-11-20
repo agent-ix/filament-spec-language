@@ -7,9 +7,9 @@ use std::fmt;
 
 use filament_contract_model::{
     CheckedNodeId, CheckedNodeKind, CheckedPackageReadLimits, CheckedPackageV2, CheckedTerm,
-    ClockConfiguration, ExecutionPoint, ProtocolForm, TemporalForm,
+    ClaimForm, ClockConfiguration, ExecutionPoint, ProtocolForm, TemporalForm,
 };
-use fsl_semantics::check::Activation;
+use fsl_semantics::check::{Activation, TemporalProfile};
 use serde::{Deserialize, Serialize};
 
 use super::{Error, SELECTION_FORMAT};
@@ -152,6 +152,26 @@ struct CompensationRow {
     binding: Option<BindingRow>,
 }
 
+/// One quantifier of a hyper clause and the `TemporalBinding` row its trace
+/// is expected to have (FR-488 "Clause names and clock bindings").
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TraceRow {
+    trace: String,
+    binding: Option<BindingRow>,
+}
+
+/// One hyper clause: its `hyperproperty` node, the `claim` occurrence of that
+/// node it is, and one expected row per quantifier in quantifier order.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HyperRow {
+    node: CheckedNodeId,
+    name: String,
+    occurrence: u64,
+    traces: Vec<TraceRow>,
+}
+
 /// The selection sidecar: what a consumer expects of the package beside it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -160,6 +180,8 @@ pub struct Selection {
     package: PackageRows,
     clauses: Vec<ClauseRow>,
     compensations: Vec<CompensationRow>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hypers: Vec<HyperRow>,
 }
 
 /// The axis along which a package departs from its sidecar.
@@ -421,8 +443,77 @@ impl Selection {
                 });
             }
         }
+        let mut hyper_rows = Vec::new();
+        let mut hyper_nodes = std::collections::BTreeSet::new();
+        let mut hyper_wrappers = std::collections::BTreeSet::new();
+        for hyper in graph.hyper_clauses() {
+            let occurrence = hyper
+                .assembled_occurrence()
+                .ok_or_else(|| Error::Unnameable {
+                    what: format!("hyperproperty node of {}", hyper.name()),
+                })?;
+            hyper_nodes.insert(occurrence.node().clone());
+            hyper_wrappers.insert(
+                fsl_package::hyper_wrapper(graph, occurrence.node()).map_err(|_| {
+                    Error::Unnameable {
+                        what: format!("body wrapper of {}", hyper.name()),
+                    }
+                })?,
+            );
+            let clocked = matches!(
+                hyper.profile(),
+                TemporalProfile::EventPositionFalseExtension
+                    | TemporalProfile::FixedSampleFalseExtension
+                    | TemporalProfile::TimestampedEventFiniteWindow
+            );
+            let selected = request
+                .temporal_selections
+                .iter()
+                .find(|selection| clocked && selection.clause == hyper.name());
+            let binding = selected
+                .map(|selection| {
+                    fsl_package::hyper_clock_name(graph, occurrence.node())
+                        .map(|clock_name| BindingRow {
+                            clock_name: text(clock_name),
+                            clock: selection.clock.clone(),
+                        })
+                        .ok_or_else(|| Error::Unnameable {
+                            what: format!("clock of {}", hyper.name()),
+                        })
+                })
+                .transpose()?;
+            hyper_rows.push(HyperRow {
+                node: id(occurrence.node(), "hyperproperty id")?,
+                name: text(hyper.name()),
+                occurrence: occurrence.origin().ordinal(),
+                traces: hyper
+                    .quantifiers()
+                    .iter()
+                    .map(|quantifier| TraceRow {
+                        trace: text(&quantifier.variable),
+                        binding: binding.clone(),
+                    })
+                    .collect(),
+            });
+        }
         let mut node_counts = BTreeMap::new();
-        node_counts.insert(text("temporal/temporal_clause"), clauses.len() as u64);
+        // Structurally equal clauses share one node (FSpec FR-322 "Temporal
+        // clause names"), so the package counts nodes, not declarations. A
+        // hybrid claim and a hyper clause's body wrapper mint the same form
+        // (FR-517 "node counts").
+        let clause_nodes: std::collections::BTreeSet<filament_exact::NodeKey> = clauses
+            .iter()
+            .map(|clause| clause.identity())
+            .chain(
+                graph
+                    .hybrid_claim_sites()
+                    .iter()
+                    .map(|site| site.identity.clone()),
+            )
+            .chain(hyper_wrappers)
+            .collect();
+        node_counts.insert(text("claim/hyperproperty"), hyper_nodes.len() as u64);
+        node_counts.insert(text("temporal/temporal_clause"), clause_nodes.len() as u64);
         let protocol_clauses = graph
             .protocols()
             .iter()
@@ -488,6 +579,7 @@ impl Selection {
             },
             clauses: rows,
             compensations: compensation_rows,
+            hypers: hyper_rows,
         })
     }
 
@@ -534,6 +626,11 @@ impl Selection {
                     .iter()
                     .map(|row| (&row.name, &row.binding)),
             )
+            .chain(
+                self.hypers
+                    .iter()
+                    .filter_map(|row| row.traces.first().map(|first| (&row.name, &first.binding))),
+            )
             .filter_map(|(name, binding)| {
                 binding.as_ref().map(|binding| ClockSelection {
                     clause: name.clone(),
@@ -570,6 +667,9 @@ impl Selection {
         for row in &self.compensations {
             check_binding(&row.node, &row.name, row.binding.as_ref(), package)?;
         }
+        for row in &self.hypers {
+            check_hyper(row, package)?;
+        }
         let rows = package.temporal_bindings().map_or(0, <[_]>::len);
         let expected = self
             .clauses
@@ -577,7 +677,13 @@ impl Selection {
             .map(|row| &row.binding)
             .chain(self.compensations.iter().map(|row| &row.binding))
             .filter(|binding| binding.is_some())
-            .count();
+            .count()
+            + self
+                .hypers
+                .iter()
+                .flat_map(|row| &row.traces)
+                .filter(|row| row.binding.is_some())
+                .count();
         if rows != expected {
             return Err(refusal(SelectionAxis::ClauseBinding, None));
         }
@@ -600,6 +706,7 @@ fn form_counts(package: &CheckedPackageV2) -> BTreeMap<&'static str, u64> {
             CheckedNodeKind::Temporal(TemporalForm::TemporalClause) => "temporal/temporal_clause",
             CheckedNodeKind::Protocol(ProtocolForm::ProtocolClause) => "protocol/protocol_clause",
             CheckedNodeKind::Protocol(ProtocolForm::Compensation) => "protocol/compensation",
+            CheckedNodeKind::Claim(ClaimForm::Hyperproperty) => "claim/hyperproperty",
             _ => continue,
         };
         *counts.entry(form).or_insert(0) += 1;
@@ -740,19 +847,44 @@ fn check_profile(
     Ok(())
 }
 
+/// A hyper clause's rows: one per quantifier, keyed on its `hyperproperty`
+/// node with the quantifier's `trace`.
+fn check_hyper(row: &HyperRow, package: &CheckedPackageV2) -> Result<(), SelectionRefusal> {
+    for expected in &row.traces {
+        let actual = package.temporal_bindings().and_then(|rows| {
+            rows.iter().find(|held| {
+                held.declaration == row.node
+                    && held.occurrence == row.occurrence
+                    && held.trace.as_deref() == Some(expected.trace.as_str())
+            })
+        });
+        compare_binding(&row.name, expected.binding.as_ref(), actual)?;
+    }
+    Ok(())
+}
+
 fn check_binding(
     node: &CheckedNodeId,
     name: &str,
     binding: Option<&BindingRow>,
     package: &CheckedPackageV2,
 ) -> Result<(), SelectionRefusal> {
+    let actual = package
+        .temporal_bindings()
+        .and_then(|rows| rows.iter().find(|row| row.declaration == *node));
+    compare_binding(name, binding, actual)
+}
+
+/// The package's row `actual` against the sidecar's expected `binding`.
+fn compare_binding(
+    name: &str,
+    binding: Option<&BindingRow>,
+    actual: Option<&filament_contract_model::TemporalBinding>,
+) -> Result<(), SelectionRefusal> {
     let refused = |axis| SelectionRefusal {
         axis,
         clause: Some(name.to_owned()),
     };
-    let actual = package
-        .temporal_bindings()
-        .and_then(|rows| rows.iter().find(|row| row.declaration == *node));
     let (Some(expected), Some(actual)) = (binding, actual) else {
         return match (binding, actual) {
             (None, None) => Ok(()),

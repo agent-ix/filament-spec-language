@@ -37,6 +37,7 @@ mod derived_item;
 mod digital_item;
 pub mod document;
 mod exact;
+mod hybrid_item;
 mod invariant_item;
 mod items;
 mod protocol_item;
@@ -86,6 +87,8 @@ pub use clause_item::{
     ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
 };
 pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
+pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
+pub use state_graph_item::PackageStateGraphSubject;
 pub(crate) use derived_item::{derived_target, NoLetters};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
@@ -163,6 +166,9 @@ pub struct Engine {
     /// The external provider an [`Engine::external`] engine decides items
     /// with; absent for the in-process engines.
     provider: Option<std::sync::Arc<dyn ExternalProvider>>,
+    /// The in-process hybrid provider an [`Engine::hybrid`] engine decides
+    /// hybrid items with (FR-750).
+    hybrid: Option<std::sync::Arc<dyn fsl_replay::HybridProvider>>,
 }
 
 impl Engine {
@@ -173,7 +179,61 @@ impl Engine {
             descriptor,
             tool: BackendTool::linked(),
             provider: None,
+            hybrid: None,
         }
+    }
+
+    /// An engine that decides hybrid items with `provider` (FR-750).
+    ///
+    /// # Errors
+    ///
+    /// [`NotHybrid`] when `descriptor`'s `dynamics` lacks `hybrid` or it does
+    /// not advertise `temporal-satisfaction`; no engine is made and
+    /// `provider` is never called.
+    pub fn hybrid(
+        descriptor: BackendDescriptor,
+        provider: Box<dyn fsl_replay::HybridProvider>,
+    ) -> Result<Self, NotHybrid> {
+        let hybrid = descriptor.dynamics().is_some_and(|kinds| {
+            kinds.contains(&fsl_route::DynamicsKind::Hybrid)
+        }) && descriptor
+            .advertises()
+            .any(|(kind, _)| kind == Capability::TemporalSatisfaction);
+        if !hybrid {
+            return Err(NotHybrid {
+                backend: descriptor.id().clone(),
+            });
+        }
+        Ok(Self {
+            descriptor,
+            tool: BackendTool::linked(),
+            provider: None,
+            hybrid: Some(provider.into()),
+        })
+    }
+
+    /// The reference hybrid provider `fsl-hybrid-reference` (FR-1019), which
+    /// `Engines::fsl()` leaves out.
+    ///
+    /// # Errors
+    ///
+    /// Only if the registry's admission rules refuse the provider's own
+    /// descriptor.
+    pub fn hybrid_reference() -> Result<Self, RegistrationRefusal> {
+        let descriptor = hybrid_reference_descriptor()?;
+        Ok(Self {
+            descriptor,
+            tool: BackendTool::linked(),
+            provider: None,
+            hybrid: Some(std::sync::Arc::new(
+                fsl_hybrid_reference::ReferenceProvider,
+            )),
+        })
+    }
+
+    /// The hybrid provider this engine decides items with, if any.
+    pub(crate) fn hybrid_provider(&self) -> Option<&dyn fsl_replay::HybridProvider> {
+        self.hybrid.as_deref()
     }
 
     /// An engine that decides `value-validity` items with `provider`, a
@@ -204,6 +264,7 @@ impl Engine {
         Ok(Self {
             descriptor,
             provider: Some(provider.into()),
+            hybrid: None,
             tool,
         })
     }
@@ -360,6 +421,50 @@ impl Engine {
         modes.sort_by_key(|mode| mode.to_wire());
         modes
     }
+}
+
+/// [`Engine::hybrid`] was given a descriptor that is no hybrid provider's
+/// (FR-750): `invalid_capability`/`invalid-dynamics`.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction")]
+pub struct NotHybrid {
+    /// The backend whose descriptor was refused.
+    pub backend: BackendId,
+}
+
+fn hybrid_reference_descriptor() -> Result<BackendDescriptor, RegistrationRefusal> {
+    use fsl_hybrid_reference::{BACKEND, MAX_SOLVER_STEPS, MAX_SOLVER_TIME, OPTION_DEFAULTS};
+    fsl_route::descriptor_from_manifest_with_dynamics(
+        Candidate::new(BackendId::new(BACKEND)),
+        ProviderOrigin::Linked,
+        [Mode::Bounded, Mode::Unbounded].map(|mode| {
+            (
+                Some(Capability::TemporalSatisfaction.to_wire()),
+                Some(mode.to_wire()),
+            )
+        }),
+        fsl_route::ManifestMembers {
+            domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+            fairness_kinds: Some(fsl_route::FairnessKindsMember::List(&[])),
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+        Some(fsl_route::DynamicsMember::List(&[
+            fsl_route::DynamicsKind::Hybrid.to_wire(),
+        ])),
+        Some(fsl_route::SolverBounds {
+            max_solver_steps: Some(MAX_SOLVER_STEPS),
+            max_solver_time: Some(MAX_SOLVER_TIME),
+        }),
+    )
+    .map(|descriptor| {
+        descriptor.with_options(
+            OPTION_DEFAULTS
+                .iter()
+                .map(|(name, default)| ((*name).to_owned(), (*default).to_owned())),
+        )
+    })
 }
 
 /// `Engines::with` was given an engine whose `BackendId` the set holds
@@ -532,6 +637,8 @@ pub struct ItemDetail {
     pub checker: Option<fsl_replay::CertificateChecker>,
     /// The steps of the supplied trace a `finite-replay` proof replayed.
     pub replayed_steps: Option<u64>,
+    /// FR-235's liveness premise, when established by EN-1 or EN-6.
+    pub non_zeno: Option<fsl_replay::NonZeno>,
     /// The memory bound a weak-memory protocol run used and whether it was
     /// reached (FSpec FR-439, FR-225); `None` under `sc` and for a model
     /// subject.
@@ -566,8 +673,12 @@ impl ItemDetail {
                 .or_else(|| record.state_graph.as_ref().map(|graph| graph.exploration)),
             checker: model
                 .and_then(|model| model.checker)
+                .or_else(|| record.state_graph.as_ref().and_then(|graph| graph.checker))
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
             replayed_steps: record.replayed_steps,
+            non_zeno: record
+                .non_zeno
+                .or_else(|| record.zone_check.as_deref().and_then(|zone| zone.non_zeno)),
             memory_bound: protocol.and_then(|protocol| protocol.memory_bound),
             finite_replay: record.finite_replay.clone(),
         }
@@ -583,6 +694,10 @@ pub enum AnalyzeRefusal {
     /// Source bytes named by the package were not provided.
     #[error("the analyze source provision did not admit: {0}")]
     Provision(ProvisionRefusal),
+    /// The strict reader refused the package the run compiled: the reader's
+    /// own code, cause and pointer, never an internal failure.
+    #[error("the package the run compiled is not admitted: {}", .0.label())]
+    Package(fsl_package::PackageAdmissionRefusal),
 }
 
 /// The deadline stated by the frontend, which owns its timer.
@@ -653,6 +768,8 @@ pub enum Counterexample {
     /// An EN-7 closed-form miss in FSpec FR-419's `schedulability-miss`
     /// spelling, typed and not replayed.
     ScheduleMiss(Box<serde_json::Value>),
+    /// A hybrid provider's trace, reproduced by exact replay (FR-450).
+    Hybrid(Box<fsl_replay::HybridCounterexample>),
 }
 
 /// What a state-graph engine run reports for one item (FR-628): the record of
@@ -668,6 +785,10 @@ pub struct GraphReport {
     /// A proved record's witnesses in FSpec FR-393's spelling, with the
     /// sampled ones.
     pub evidence: Option<serde_json::Value>,
+    /// The accepted timed state-graph certificate's FR-712 document.
+    pub certificate_document: Option<serde_json::Value>,
+    /// The checker that accepted a timed state-graph proof.
+    pub checker: Option<fsl_replay::CertificateChecker>,
 }
 
 /// A reproduced counterexample with its FR-286 spelling, written where the
@@ -697,6 +818,26 @@ impl AnalyzeRefusal {
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
                     .with_last_stage(Some(OutcomeStage::S4))
+            }
+            Self::Package(refusal) => {
+                let mut diagnostic = OutcomeDiagnostic::new(
+                    refusal.cause.as_deref(),
+                    refusal.code.as_str(),
+                    None,
+                    self.to_string(),
+                );
+                if let Some(pointer) = &refusal.pointer {
+                    diagnostic = diagnostic.with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(pointer.clone()),
+                    )])));
+                }
+                OutcomeDocument::new(
+                    Operation::Analyze,
+                    Some(OutcomeStage::S4),
+                    refusal.code.category(),
+                )
+                .with_diagnostics(vec![diagnostic])
             }
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
@@ -920,7 +1061,8 @@ pub fn analyze_item(
     if let Some(Counterexample::StateGraph(graph)) = found.map(|found| &found.counterexample) {
         return Ok(
             OutcomeItem::from_state_graph(record.request_index(), &graph.record)
-                .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone()),
+                .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone())
+                .with_graph_certificate_document(graph.certificate_document.clone()),
         );
     }
     let wire = found.map(|found| found.wire.clone()).transpose()?;
@@ -951,6 +1093,18 @@ impl Engines {
                 Engine::schedulability()?,
             ],
         })
+    }
+
+    /// [`Engines::fsl`] with the reference hybrid provider added (FR-1019).
+    ///
+    /// # Errors
+    ///
+    /// Only if the registry's admission rules refuse an engine's own
+    /// manifest.
+    pub fn fsl_with_reference_hybrid() -> Result<Self, RegistrationRefusal> {
+        let mut engines = Self::fsl()?;
+        engines.engines.push(Engine::hybrid_reference()?);
+        Ok(engines)
     }
 
     /// These engines under the run's provider `options` (FR-964): the
@@ -1002,6 +1156,23 @@ impl Engines {
     pub(crate) fn get(&self, backend: &BackendId) -> Option<&Engine> {
         self.engines.iter().find(|engine| engine.id() == backend)
     }
+
+    /// Whether any registered engine is a candidate for a hybrid item
+    /// (FR-075): it advertises `temporal-satisfaction` and its `dynamics`
+    /// holds `hybrid`. FR-750 reserves `HybridProviderAbsent` for the case
+    /// where none is.
+    fn has_hybrid_candidate(&self) -> bool {
+        self.engines.iter().any(|engine| {
+            engine
+                .descriptor()
+                .dynamics()
+                .is_some_and(|kinds| kinds.contains(&fsl_route::DynamicsKind::Hybrid))
+                && engine
+                    .descriptor()
+                    .advertises()
+                    .any(|(kind, _)| kind == Capability::TemporalSatisfaction)
+        })
+    }
 }
 
 /// What a diagnostic's FR-272 payload names.
@@ -1042,6 +1213,18 @@ pub enum Payload {
         /// The claim's declaration family, absent for an unknown claim node.
         family: Option<DeclarationFamily>,
     },
+    /// A published option whose value the provider refused (FSpec FR-779-AC-2):
+    /// the item, the backend, the option and the value as the item wrote it.
+    OptionValue {
+        /// The request item's index.
+        request_index: RequestIndex,
+        /// The provider that refused the value.
+        backend: BackendId,
+        /// The option's name.
+        option: String,
+        /// The refused value.
+        value: String,
+    },
     /// A provider item whose checked package could not be emitted, so no
     /// request was sent (FSpec FR-331-AC-33): the kind and the backend.
     NotEmitted {
@@ -1077,6 +1260,17 @@ impl Payload {
                     "modes",
                     Value::Array(modes.iter().map(|mode| json!(mode.to_wire())).collect()),
                 ),
+            ],
+            Self::OptionValue {
+                request_index,
+                backend,
+                option,
+                value,
+            } => vec![
+                ("request_index", json!(request_index.get())),
+                ("backend", json!(backend.as_str())),
+                ("option", json!(option)),
+                ("value", json!(value)),
             ],
             Self::NotEmitted { kind, backend } => vec![
                 ("kind", json!(kind.to_wire())),
@@ -1168,7 +1362,11 @@ pub(crate) enum EngineReport {
     Model(Box<ModelCheckRecord>),
     /// EN-1's record over an authored clause, with the object the clause's
     /// `over` parameter is bound to in its counterexample.
-    Clause(Box<ModelCheckRecord>, Option<ObjectReference>),
+    Clause(
+        Box<ModelCheckRecord>,
+        Option<ObjectReference>,
+        Option<fsl_replay::NonZeno>,
+    ),
     /// EN-1's record over a refinement (FR-630), with the counterexample's
     /// per-position abstract images and FR-146 step records.
     Refinement(Box<ModelCheckRecord>, Option<serde_json::Value>),
@@ -1202,6 +1400,8 @@ pub(crate) enum EngineReport {
     FiniteReplay(Box<crate::protocol_analysis::FiniteReplayReport>),
     /// FR-896's result with the typed FR-990 item output.
     GlobalConformance(Box<crate::protocol_analysis::conformance::ConformanceReport>),
+    /// A hybrid provider's answer, settled by FR-250 and FR-450.
+    Hybrid(Box<hybrid_item::HybridReport>),
     /// The engine refused the item, and its settlement map gives the refusal
     /// no terminal record.
     Refused(Refusal),
@@ -1223,6 +1423,15 @@ pub(crate) enum Refusal {
     RequiresBound,
     /// EN-4 `NotStatistical`: `invalid-request` with `not-statistical`.
     NotStatistical,
+    /// A published option's value outside its domain (FSpec FR-779-AC-2):
+    /// `invalid-request` with `invalid-option-value`, naming the option and
+    /// the value.
+    InvalidOptionValue {
+        /// The option's name.
+        option: String,
+        /// The refused value.
+        value: String,
+    },
     /// `incomplete`: the request's subject exhausted a resource bound before
     /// the engine ran.
     Incomplete(fsl_replay::IncompleteCause),
@@ -1230,6 +1439,13 @@ pub(crate) enum Refusal {
     Unsupported(CatalogCode),
     /// `failed` with the refusal's diagnostic.
     Failed(CatalogCode),
+    /// `failed` with the refusal's diagnostic and its detail (FR-750
+    /// "Replay refusals": the invariant a checked package broke).
+    FailedWithDetail(CatalogCode, serde_json::Map<String, serde_json::Value>),
+    /// FR-750: `unsupported`, `unsupported_construct`/`expression-form`, the
+    /// detail of a hybrid provider's construct outside its class, which the
+    /// record completes with the backend.
+    UnsupportedConstruct(serde_json::Map<String, serde_json::Value>),
     /// `unsupported` `unsupported-requested-capability`: the package of a
     /// provider item could not be emitted, so no request was sent (FSpec
     /// FR-331-AC-33).
@@ -1268,6 +1484,10 @@ pub struct AnalyzeItem<'a> {
     /// The claim the item is read at, the locus of a counterexample that
     /// names an undefined evaluation.
     claim: Option<OccurrenceKey>,
+    /// Whether the item is a hybrid item (FR-750), which settles
+    /// `HybridProviderAbsent` or `tool-unavailable` where other items settle
+    /// by their disposition.
+    hybrid: bool,
 }
 
 impl<'a> AnalyzeItem<'a> {
@@ -1319,6 +1539,7 @@ impl<'a> AnalyzeItem<'a> {
             work: Some(ItemWork::Provider(Box::new(work))),
             required: false,
             claim: None,
+            hybrid: false,
         }
     }
 
@@ -1342,6 +1563,7 @@ impl<'a> AnalyzeItem<'a> {
             work: Some(ItemWork::Engine(Box::new(move |cancel, _| work(cancel)))),
             required: false,
             claim: None,
+            hybrid: false,
         }
     }
 
@@ -1365,6 +1587,7 @@ impl<'a> AnalyzeItem<'a> {
             work: Some(ItemWork::Engine(Box::new(work))),
             required: false,
             claim: None,
+            hybrid: false,
         }
     }
 
@@ -1386,6 +1609,7 @@ impl<'a> AnalyzeItem<'a> {
             work: None,
             required: false,
             claim: None,
+            hybrid: false,
         }
     }
 
@@ -1450,6 +1674,13 @@ impl<'a> AnalyzeItem<'a> {
         }
     }
 
+    /// This item marked a hybrid item (FR-750).
+    #[must_use]
+    pub(crate) fn hybrid(mut self) -> Self {
+        self.hybrid = true;
+        self
+    }
+
     /// This item with the disposition the caller's negotiation settled it
     /// (FR-281 "Negotiated items") and, for `Unsupported` and
     /// `InvalidRequest`, its diagnostic.
@@ -1477,6 +1708,9 @@ pub struct AnalyzeRecord {
     pub claim: Option<OccurrenceKey>,
     /// The item's settlement.
     pub settlement: Settlement,
+    /// FR-235's digital-clock non-Zeno premise, when EN-1's SCC phase
+    /// established one.
+    pub non_zeno: Option<fsl_replay::NonZeno>,
     /// EN-1's full record, carrying the counterexample of a `refuted` item.
     pub model_check: Option<Box<ModelCheckRecord>>,
     /// EN-1's full record over a protocol subject, carrying the
@@ -1520,6 +1754,9 @@ pub struct AnalyzeRecord {
     /// EN-7 item (FSL FR-621): recomputed by the closed-form check, so it has
     /// no replay.
     pub schedule_miss: Option<Box<serde_json::Value>>,
+    /// The replayed hybrid counterexample of a `refuted` hybrid item
+    /// (FR-750), with its FR-286 spelling.
+    pub hybrid_counterexample: Option<Spelled<fsl_replay::HybridCounterexample>>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1543,6 +1780,7 @@ impl AnalyzeRecord {
             request_index,
             claim: None,
             settlement,
+            non_zeno: None,
             model_check: None,
             protocol_check: None,
             zone_check: None,
@@ -1560,6 +1798,7 @@ impl AnalyzeRecord {
             protocol_conformance_counterexample: None,
             closed_form: None,
             schedule_miss: None,
+            hybrid_counterexample: None,
             state_graph: None,
         }
     }
@@ -1627,6 +1866,9 @@ impl AnalyzeRecord {
                 "counterexample": (**found).clone(),
             })));
         }
+        if let Some(found) = &self.hybrid_counterexample {
+            return Some(found.wire.clone());
+        }
         self.probabilistic_counterexample
             .as_ref()
             .map(|found| found.wire.clone())
@@ -1674,6 +1916,9 @@ impl AnalyzeRecord {
         }
         if let Some(found) = self.schedule_miss.take() {
             return Some(Counterexample::ScheduleMiss(found));
+        }
+        if let Some(found) = self.hybrid_counterexample.take() {
+            return Some(Counterexample::Hybrid(found.found));
         }
         self.probabilistic_counterexample
             .take()
@@ -1789,7 +2034,8 @@ impl Counterexample {
             | Self::Contract(_)
             | Self::StateGraph(_)
             | Self::GlobalConformance(_)
-            | Self::ScheduleMiss(_) => None,
+            | Self::ScheduleMiss(_)
+            | Self::Hybrid(_) => None,
         }
     }
 }
@@ -2009,6 +2255,7 @@ fn run(
         work,
         required: _,
         claim,
+        hybrid,
     } = item;
     let record = |settlement| AnalyzeRecord::of(index, settlement);
     let disposed = |kind, diagnostic| {
@@ -2028,6 +2275,24 @@ fn run(
             },
         };
         return disposed(DispositionKind::InvalidRequest, Some(diagnostic));
+    }
+    if hybrid {
+        match &disposition {
+            Disposition::Unsupported if !engines.has_hybrid_candidate() => {
+                return record(terminal(TerminalRecord::hybrid_provider_absent(index)));
+            }
+            Disposition::Supported(candidate)
+                if engines
+                    .get(candidate.id())
+                    .is_none_or(|engine| engine.hybrid_provider().is_none()) =>
+            {
+                return record(terminal(TerminalRecord::hybrid_tool_unavailable(
+                    index,
+                    candidate.id().clone(),
+                )));
+            }
+            _ => {}
+        }
     }
     let candidate = match disposition {
         Disposition::Supported(candidate) => candidate,
@@ -2198,9 +2463,10 @@ fn settle(
             ),
             Some(model),
         ),
-        EngineReport::Clause(model, over) => {
+        EngineReport::Clause(model, over, non_zeno) => {
             let mut settled = settle(index, kind, engine, EngineReport::Model(model));
             settled.over_reference = over;
+            settled.non_zeno = non_zeno;
             settled
         }
         EngineReport::Refinement(model, steps) => {
@@ -2371,6 +2637,23 @@ fn settle(
                 ..AnalyzeRecord::of(index, settlement)
             }
         }
+        EngineReport::Hybrid(report) => {
+            let hybrid_item::HybridReport {
+                value,
+                counterexample,
+                wire,
+            } = *report;
+            // A refuted value without its replayed counterexample is an
+            // engine fault, never a verdict.
+            let settlement = terminal(
+                TerminalRecord::of_hybrid(index, backend.clone(), value, counterexample.as_deref())
+                    .unwrap_or_else(|_| TerminalRecord::failed(index, backend)),
+            );
+            AnalyzeRecord {
+                hybrid_counterexample: counterexample.map(|found| Spelled { found, wire }),
+                ..AnalyzeRecord::of(index, settlement)
+            }
+        }
         EngineReport::StateGraph(graph) => {
             let settlement = terminal(TerminalRecord::of_state_graph(
                 index,
@@ -2423,6 +2706,21 @@ fn settle(
             terminal(TerminalRecord::failed_with(index, backend, code)),
             None,
         ),
+        EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
+            terminal(TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail)),
+            None,
+        ),
+        EngineReport::Refused(Refusal::UnsupportedConstruct(mut detail)) => {
+            // FSpec FR-272: the provider whose class excludes the construct
+            // stands where the profile would.
+            detail.insert("backend".to_owned(), backend.as_str().into());
+            record(
+                terminal(TerminalRecord::hybrid_unsupported_construct(
+                    index, backend, detail,
+                )),
+                None,
+            )
+        }
         EngineReport::Refused(Refusal::Unsupported(code)) => {
             disposed(DispositionKind::Unsupported, Diagnostic::new(code), backend)
         }
@@ -2439,6 +2737,19 @@ fn settle(
             };
             disposed(DispositionKind::Unsupported, diagnostic, backend)
         }
+        EngineReport::Refused(Refusal::InvalidOptionValue { option, value }) => disposed(
+            DispositionKind::InvalidRequest,
+            Diagnostic {
+                code: CatalogCode::new("invalid_capability", "invalid-option-value"),
+                payload: Payload::OptionValue {
+                    request_index: index,
+                    backend: backend.clone(),
+                    option,
+                    value,
+                },
+            },
+            backend,
+        ),
         EngineReport::Refused(Refusal::NotStatistical) => disposed(
             DispositionKind::InvalidRequest,
             Diagnostic::new(CatalogCode::new("invalid_capability", "not-statistical")),
@@ -2985,10 +3296,10 @@ mod tests {
         }
     }
 
-    /// FR-489-AC-5: linked registrations are borrowed from the EN-1, EN-4, EN-5
-    /// and EN-6 engines, the two check arms, the protocol analysis engine and
-    /// EN-7,
-    /// and retain each engine's own identity and advertised kinds.
+    /// FR-489-AC-5: linked registrations contain exactly the descriptors
+    /// owned by EN-1, EN-4, EN-5, EN-6, EN-7, value-checker,
+    /// contract-checker and protocol-analysis, with each engine's identity
+    /// and advertised kinds intact.
     #[trace("TC-1272", "FR-489-AC-5")]
     #[test]
     fn linked_engine_registrations_expose_the_owned_descriptors() {
@@ -3012,10 +3323,7 @@ mod tests {
             ]
         );
         let [en1, en4, en5, _en6, value, contract, protocol, en7] = registrations.as_slice() else {
-            panic!(
-                "the linked engine set contains EN-1, EN-4, EN-5, EN-6, the two check arms, \
-                 the protocol analysis engine and EN-7"
-            );
+            panic!("the linked engine set contains the eight FR-489-AC-5 descriptors");
         };
         assert_eq!(
             en7.advertises().collect::<Vec<_>>(),

@@ -182,18 +182,7 @@ impl ClaimItem {
                 .claims()
                 .iter()
                 .any(|checked| checked.occurrence().as_ref() == Some(&claim));
-        let wrong_authored_occurrence = graph
-            .temporal_clauses()
-            .iter()
-            .find(|clause| clause.identity() == *claim.node())
-            .is_some_and(|clause| clause.claim() != claim.origin())
-            || graph
-                .probabilistic_model()
-                .claims()
-                .iter()
-                .filter_map(|checked| checked.occurrence())
-                .find(|checked| checked.node() == claim.node())
-                .is_some_and(|checked| checked != &claim);
+        let wrong_authored_occurrence = names_other_occurrence(graph, &claim);
         if !occurs
             || wrong_authored_occurrence
             || family.is_none_or(|family| !kind.applies_to_declaration(family))
@@ -231,8 +220,16 @@ pub enum ItemForm {
 /// Hybrid item settings kept distinct from temporal and probabilistic forms.
 #[derive(Clone, Debug, Default)]
 pub struct HybridItem {
-    /// The subject's explicit proof-bound substitution.
+    /// The item's proof bounds (FR-750). A hybrid claim's request item names
+    /// no subject to substitute them into (FR-447 writes `domains` for an
+    /// unbounded claim only), so document resolution leaves this empty and
+    /// the provider request does not carry it.
     pub proof_bounds: Vec<fsl_foundation::bound::ProofBound>,
+    /// The item's `hybrid.limits` (FR-750): a member left unset takes the
+    /// serving descriptor's published bound.
+    pub limits: fsl_replay::SolverBudget,
+    /// The item's FSpec FR-331 `options`.
+    pub options: std::collections::BTreeMap<String, String>,
 }
 
 /// Temporal request settings, with no separately supplied model subject.
@@ -405,14 +402,30 @@ pub(crate) fn analyze_bound<'a>(
 > {
     let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
+    // The compiled package is read back through the strict reader once,
+    // before the binding is admitted and before any item runs: a reader
+    // refusal (a domain package the binding leaves out, among them) is this
+    // typed refusal and never a fault of a later step, and the items share
+    // the one read. A package that does not emit has no read, and its items
+    // settle as they do without one.
+    let read = match crate::provider::read_package(package, binding.packages, limits.emit) {
+        Ok(read) => Some(read),
+        Err(crate::provider::NotAdmitted::Refused(refusal)) => {
+            return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
+                refusal,
+            )));
+        }
+        Err(crate::provider::NotAdmitted::Other) => None,
+    };
     let simulation = simulation(input, binding, limits);
     fsl_eval::simulation::model::ModelSystem::new(simulation)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Binding(failure)))?;
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
+    let shared = read.as_ref().map(crate::provider::Shared::of);
     let items = requested
         .iter()
-        .map(|item| work(analysis, binding, provision, item, engines, limits))
+        .map(|item| work(analysis, binding, provision, item, engines, limits, shared))
         .collect::<Vec<_>>();
     let requirements = items
         .iter()
@@ -527,36 +540,32 @@ pub(super) fn simulation<'a>(
 }
 
 fn checked_v2_package(
-    package: &fsl_package::CheckedPackage,
-    binding: &super::SubjectBinding<'_>,
-    limits: &super::AnalyzeLimits,
+    shared: Option<crate::provider::Shared<'_>>,
 ) -> Option<Box<filament_contract_model::CheckedPackageV2>> {
-    let identity = fsl_semantics::library::LibraryName::new(package.graph().package_name()).ok()?;
-    let admitted = fsl_package::read_evaluation_package(
-        package,
-        identity,
-        binding.packages,
-        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
-        limits.emit,
-    )
-    .ok()?;
-    Some(Box::new(admitted.admitted().clone()))
+    shared.map(|shared| Box::new(shared.admitted.clone()))
 }
 
-fn checked_node_named(
+/// The role of `protocol` named `name`. Only a role of that protocol
+/// resolves, so a channel, record or other declaration that shares the
+/// role's name is never taken for it (FR-570).
+fn protocol_role_named(
     package: &filament_contract_model::CheckedPackageV2,
+    protocol: &filament_contract_model::CheckedNodeId,
     name: &str,
 ) -> Option<filament_contract_model::CheckedNodeId> {
-    package
-        .resolved_graph()
-        .nodes
-        .iter()
-        .find(|node| {
-            node.declaration.as_ref().is_some_and(|declaration| {
+    let view = fsl_package::protocol_view::protocol_view(package, protocol).ok()?;
+    view.roles().iter().find_map(|id| {
+        package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| &node.node_id == *id)
+            .and_then(|node| node.declaration.as_ref())
+            .filter(|declaration| {
                 declaration.qualified_name.last().map(|segment| &**segment) == Some(name)
             })
-        })
-        .map(|node| node.node_id.clone())
+            .map(|_| (*id).clone())
+    })
 }
 
 fn protocol_analysis_work<'a>(
@@ -564,6 +573,7 @@ fn protocol_analysis_work<'a>(
     binding: &super::SubjectBinding<'a>,
     item: &super::ClaimItem,
     limits: &super::AnalyzeLimits,
+    shared: Option<crate::provider::Shared<'a>>,
 ) -> super::AnalyzeItem<'a> {
     let Some(selection) = item.options.protocol_analysis.as_ref() else {
         return super::AnalyzeItem::unadapted(
@@ -586,7 +596,7 @@ fn protocol_analysis_work<'a>(
             Some(fsl_semantics::check::DeclarationFamily::Protocol),
         );
     };
-    let Some(v2) = checked_v2_package(analysis.package, binding, limits) else {
+    let Some(v2) = checked_v2_package(shared) else {
         return super::AnalyzeItem::unadapted(
             item.request_index,
             item.kind,
@@ -635,7 +645,8 @@ fn protocol_analysis_work<'a>(
         // Route an unresolved name through the adapter's existing
         // `UnknownRole` invalid-value settlement. The protocol node is a
         // valid checked identity that cannot be one of its roles.
-        let role = checked_node_named(&v2, role_name).unwrap_or_else(|| protocol_node.clone());
+        let role = protocol_role_named(&v2, &protocol_node, role_name)
+            .unwrap_or_else(|| protocol_node.clone());
         let request = crate::protocol_analysis::ProjectionRequest {
             protocol: protocol_node,
             definition_key,
@@ -700,6 +711,7 @@ fn work<'a>(
     negotiated: &'a NegotiatedItem,
     engines: &super::Engines,
     limits: &super::AnalyzeLimits,
+    shared: Option<crate::provider::Shared<'a>>,
 ) -> super::AnalyzeItem<'a> {
     let (package, input) = (analysis.package, &analysis.model);
     use super::AnalyzeItem;
@@ -713,20 +725,7 @@ fn work<'a>(
     } else {
         crate::claim_family::claim_family(package, temporal_kind, &item.claim)
     };
-    let wrong_occurrence = package
-        .graph()
-        .temporal_clauses()
-        .iter()
-        .find(|clause| clause.identity() == *item.claim.node())
-        .is_some_and(|clause| clause.claim() != item.claim.origin())
-        || package
-            .graph()
-            .probabilistic_model()
-            .claims()
-            .iter()
-            .filter_map(|claim| claim.occurrence())
-            .find(|claim| claim.node() == item.claim.node())
-            .is_some_and(|claim| claim != &item.claim);
+    let wrong_occurrence = names_other_occurrence(package.graph(), &item.claim);
     let family = if wrong_occurrence { None } else { family };
     let absent = || AnalyzeItem::unadapted(item.request_index, item.kind, family);
     // FR-243: an item naming `options.method` `digital-clocks` negotiated to
@@ -743,7 +742,7 @@ fn work<'a>(
                 Capability::LocalProjection | Capability::Realizability
             ) =>
         {
-            protocol_analysis_work(analysis, binding, item, limits)
+            protocol_analysis_work(analysis, binding, item, limits, shared)
         }
         Some(ItemForm::Temporal(_form)) if item.kind == Capability::GlobalConformance => {
             if _form.item_kind == ItemKind::DeadlockFreedom {
@@ -833,6 +832,7 @@ fn work<'a>(
                 &item.claim,
                 item.request_index,
                 form,
+                digital.then_some(crate::model_check::manifest::METHOD_DIGITAL_CLOCKS),
             )
             .unwrap_or_else(absent)
         }
@@ -946,6 +946,22 @@ fn work<'a>(
                 Err(_) => absent(),
             }
         }
+        Some(ItemForm::Hybrid(form)) if item.kind == Capability::TemporalSatisfaction => {
+            super::hybrid_item::hybrid_item(
+                package,
+                item.request_index,
+                &item.claim,
+                form,
+                limits.accounting.work_units,
+                limits.deadline,
+                super::hybrid_item::Spelling {
+                    packages: binding.packages,
+                    emit: limits.emit,
+                    shared,
+                },
+            )
+            .unwrap_or_else(absent)
+        }
         Some(ItemForm::Probabilistic(form))
             if item.kind == Capability::ProbabilisticSatisfaction =>
         {
@@ -1028,7 +1044,7 @@ fn work<'a>(
                     item.backend.as_ref(),
                 )
                 .map(|routed| routed.with_options(item.options.backend_options.clone()));
-                crate::provider::provider_item(
+                crate::provider::provider_item_over(
                     item.request_index,
                     backend.id(),
                     crate::provider::ProviderItemInput {
@@ -1039,6 +1055,7 @@ fn work<'a>(
                         emit: limits.emit,
                         selection,
                     },
+                    shared,
                 )
             } else {
                 let selection = selection.map(|target| crate::value_check::ValueRequest {
@@ -1136,7 +1153,11 @@ fn work<'a>(
             Some(crate::protocol_analysis::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) if super::document::is_state_graph(package, &item.claim) => {
-            Some(crate::model_check::manifest::BACKEND_ID)
+            Some(if super::document::timed(package) && !digital {
+                crate::zone_check::manifest::BACKEND_ID
+            } else {
+                crate::model_check::manifest::BACKEND_ID
+            })
         }
         Some(ItemForm::Temporal(form))
             if digital
@@ -1185,6 +1206,9 @@ fn work<'a>(
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
     };
+    if matches!(&item.form, Some(ItemForm::Hybrid(_))) {
+        built = built.hybrid();
+    }
     built.required(item.options.required).disposed(
         negotiated.disposition.clone(),
         negotiated.diagnostic.clone(),
@@ -1210,4 +1234,31 @@ mod tests {
         let entries: Vec<_> = provision.entries().collect();
         assert_eq!(entries, vec![("a", "a", &b"a"[..]), ("b", "z", &b"z"[..])]);
     }
+}
+
+/// FR-940 "Claim occurrence ordinals": whether `claim` names a node an
+/// authored temporal clause or probabilistic claim declares, at an
+/// occurrence none of that node's declarations owns. Structurally equal
+/// declarations share one node, so the whole key (node, `claim`, ordinal)
+/// is matched against every declaration of the node, never the first.
+fn names_other_occurrence(
+    graph: &fsl_semantics::check::CheckedGraph,
+    claim: &OccurrenceKey,
+) -> bool {
+    let temporal = || {
+        graph
+            .temporal_clauses()
+            .iter()
+            .filter(|clause| clause.identity() == *claim.node())
+    };
+    let probabilistic = || {
+        graph
+            .probabilistic_model()
+            .claims()
+            .iter()
+            .filter_map(|checked| checked.occurrence())
+            .filter(|checked| checked.node() == claim.node())
+    };
+    (temporal().next().is_some() && !temporal().any(|clause| clause.claim() == claim.origin()))
+        || (probabilistic().next().is_some() && !probabilistic().any(|checked| checked == claim))
 }

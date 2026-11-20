@@ -38,7 +38,7 @@ use crate::execute::{
 use crate::identity::QualifiedName;
 use fsl_package::{ModelIdentity, ObligationIdentity};
 use crate::spine::{self, CompileRefusal, DependencyInput, DependencyInputRefusal, OperationName};
-use crate::FrameOperation;
+use crate::{FrameOperation, SourceRegion};
 
 /// What [`call_site`] can locate in the compiled package, and what it
 /// answers for each:
@@ -320,6 +320,10 @@ pub enum CallSiteRefusal {
         code: Code,
         /// The compile refusal's rendered message.
         message: String,
+        /// The region the spine's `CompileRefusal` names for its first
+        /// refusal (FR-121), or `None` when it names none. A check refusal
+        /// located at an expression spans exactly that expression's bytes.
+        region: Option<SourceRegion>,
     },
     /// A `model` declaration of the unit selects a domain package that the
     /// supplied `packages` do not admit (I1).
@@ -656,6 +660,7 @@ impl From<CompileRefusal> for CallSiteRefusal {
             CompileRefusal::DependencyInput(input) => Self::DependencyInput(input),
             CompileRefusal::UnitList(refusal) => Self::Compile {
                 code,
+                region: refusal.region().cloned(),
                 message: refusal.to_string(),
             },
             CompileRefusal::Import { refusal, .. } => Self::Import {
@@ -682,6 +687,7 @@ impl From<CompileRefusal> for CallSiteRefusal {
             | CompileRefusal::Limit(_)
             | CompileRefusal::Omitted(_)) => Self::Compile {
                 code,
+                region: refusal.region().cloned(),
                 message: refusal.to_string(),
             },
         }

@@ -376,7 +376,11 @@ function fromRush using v(e: M::RushOrderPlaced): Integer pure {{ occurredAt(e) 
     );
     let graph = assemble_with_models(source.as_bytes(), &packages)
         .expect("author unit")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("checked unit");
     let checked = CheckedPackage::link(graph);
     let base = emit_checked(&checked).expect("original emission");

@@ -46,14 +46,17 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::environment_stage::{membership_failure_cause, membership_failure_code};
 
 use crate::bounds::ReplayLimits;
+use crate::hybrid_replay::{
+    exact_replay, static_replay, ExactGap, ExactRecord, ExactReplay, HybridCounterexample,
+    HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal, ReplayRecord, TraceRefusal,
+};
 use crate::identity::{DefinitionSourceRef, ProfileSelection, QualifiedName};
-use fsl_package::ObligationIdentity;
 use crate::limits::CallerLimits;
 use crate::request::StageLimits;
-use crate::request::{ReplayRequest, ReplayRequestRefusal, ReplayRequestWire};
+use crate::request::{ReplayPackage, ReplayRequest, ReplayRequestRefusal, ReplayRequestWire};
 use crate::result::{
-    EvaluatedValue, InputArmResult, ObservedTemporalResult, ReplayResult, Verdict,
-    WitnessArmResult, WitnessCheck,
+    EvaluatedValue, HybridReplayRecord, HybridReplayResult, HybridReplaySettlement, InputArmResult,
+    ObservedTemporalResult, ReplayResult, Verdict, WitnessArmResult, WitnessCheck,
 };
 use crate::spine::{
     self, CompileRefusal, DependencyInput, DependencyInputRefusal, ParseRequest, SpineLimits,
@@ -69,6 +72,7 @@ use filament_exact::Identifier;
 use filament_semantic_value::catalog::Category;
 use fsl_forms::StateClauseKind;
 use fsl_foundation::Setting;
+use fsl_package::ObligationIdentity;
 use fsl_semantics::model::observation::{
     admit_trace_snapshot, population_universe_for, AdmissionFailure, DocumentRef, ObservationForm,
 };
@@ -100,6 +104,7 @@ mod value_parity;
 pub use value_parity::{replay_value_parity, ValueParityReport, ValueParityResult};
 
 mod state_clause;
+pub(crate) use state_clause::prepare_state_clause;
 pub use state_clause::{replay_state_clause, ClauseIdentityMismatch, StateClauseReplayResult};
 #[cfg(test)]
 pub(crate) use state_clause::{separate, settle_separation, stopped_reason, SeparationOutcome};
@@ -143,6 +148,15 @@ pub enum ReplayRefusal {
     /// The complete offered checked package failed native admission after recompilation.
     #[error(transparent)]
     Package(#[from] crate::ReplayPackageAdmissionRefusal),
+    /// The package reader refused bytes and the request supplied the identity
+    /// under which those bytes were selected.
+    #[error("{refusal}")]
+    PackageWithIdentity {
+        /// The native reader refusal.
+        refusal: crate::ReplayPackageAdmissionRefusal,
+        /// The request's package binding, never the package's own claim.
+        identity: Option<fsl_foundation::source::provenance::RawSourceRef>,
+    },
     /// Genuine recompilation evidence could not be assembled by the spine owner.
     #[error(transparent)]
     PackageEvidence(Box<spine::RunRefusal>),
@@ -178,8 +192,14 @@ pub enum ReplayRefusal {
     },
     /// The recompile refused at one spine stage, or reached one of the
     /// stage limits the request carries (`stage_limit_exceeded`).
-    #[error("the recompile refused at stage {stage}: {refusal}", stage = .0.stage().as_str(), refusal = .0)]
-    Recompile(Box<CompileRefusal>),
+    #[error("the recompile refused at stage {stage}: {refusal}", stage = .refusal.stage().as_str(), refusal = .refusal)]
+    Recompile {
+        /// The stage refusal.
+        refusal: Box<CompileRefusal>,
+        /// A wire locus that supersedes the source locus when a dependency
+        /// clock selection row is responsible for the refusal.
+        pointer: Option<String>,
+    },
     /// A compile stage reached an attributable protocol outcome and retained
     /// the ordered declaration results with its primary refusal or limit.
     #[error("the recompile refused at stage {refusal_stage}: {refusal}", refusal_stage = .refusal.stage().as_str(), refusal = .refusal)]
@@ -188,6 +208,8 @@ pub enum ReplayRefusal {
         refusal: Box<CompileRefusal>,
         /// Ordered per-protocol results through the stage that stopped.
         protocol_results: Vec<spine::ProtocolResult>,
+        /// A dependency clock lock-row locus, when it supersedes a source locus.
+        pointer: Option<String>,
     },
     /// QC-1: the request's domain package documents do not form a package
     /// input (an unreadable document, or two for one identity).
@@ -593,6 +615,9 @@ pub enum ReplayRefusal {
         /// The first constraint of the fairness set the loop fails.
         constraint: filament_semantic_value::fairness::FairnessConstraint,
     },
+    /// FR-750: caller-supplied hybrid trace is malformed under FR-193.
+    #[error("invalid_runtime_input/invalid-value at `{}`", .0.pointer)]
+    HybridTrace(#[from] TraceRefusal),
     /// An executor or S6a invariant broke.
     #[error("internal fault in {}: {}", .0.stage(), .0.invariant())]
     Fault(InternalFault),
@@ -606,13 +631,14 @@ impl ReplayRefusal {
         match self {
             Self::Request(refusal) => refusal.code(),
             Self::Package(refusal) => refusal.code(),
+            Self::PackageWithIdentity { refusal, .. } => refusal.code(),
             Self::PackageEvidence(refusal) => refusal.code(),
             Self::LimitAboveReader(_) => Code::InvalidRequest,
             Self::SourceCount(_) => Code::InvalidRequest,
             Self::PackageSources(_) => Code::InvalidPackage,
             Self::DependencySources { .. } => Code::InvalidPackage,
             Self::InvalidPackageName(_) => Code::InvalidRequest,
-            Self::Recompile(refusal) => refusal.code(),
+            Self::Recompile { refusal, .. } => refusal.code(),
             Self::RecompileWithProtocolResults { refusal, .. }
             | Self::RefinementInternals { refusal, .. } => refusal.code(),
             Self::DomainPackages(refusal) => refusal.code,
@@ -669,6 +695,7 @@ impl ReplayRefusal {
             Self::UnsupportedHelper(_) => Code::UnsupportedConstruct,
             Self::Cancelled(_) => Code::Cancelled,
             Self::ModelTrace(refusal) => refusal.code(),
+            Self::HybridTrace(_) => Code::InvalidRuntimeInput,
             Self::Fault(_) => Code::RuntimeInvariant,
         }
     }
@@ -679,8 +706,9 @@ impl ReplayRefusal {
         match self {
             Self::Request(refusal) => refusal.cause(),
             Self::Package(refusal) => refusal.cause(),
+            Self::PackageWithIdentity { refusal, .. } => refusal.cause(),
             Self::PackageEvidence(_) => None,
-            Self::Recompile(refusal) => refusal.cause(),
+            Self::Recompile { refusal, .. } => refusal.cause(),
             Self::RecompileWithProtocolResults { refusal, .. }
             | Self::RefinementInternals { refusal, .. } => refusal.cause(),
             Self::DomainPackages(refusal) => Some(refusal.cause.as_str()),
@@ -715,6 +743,7 @@ impl ReplayRefusal {
             Self::AmbiguousOperation { .. } => Some("ambiguous-name"),
             Self::WrongObservation { .. } => Some("wrong-observation"),
             Self::ModelTrace(refusal) => Some(refusal.cause()),
+            Self::HybridTrace(_) => Some("invalid-value"),
             Self::UnusedObjectEnvironment | Self::UnusedProfileSelections { .. } => {
                 Some("unknown-member")
             }
@@ -764,14 +793,27 @@ impl ReplayRefusal {
     #[ix_trace_rs::string_edge]
     pub fn pointer(&self) -> Option<Cow<'static, str>> {
         match self {
+            Self::Recompile {
+                pointer: Some(pointer),
+                ..
+            } => Some(Cow::Owned(pointer.clone())),
+            Self::Recompile { .. } => None,
+            Self::RecompileWithProtocolResults {
+                pointer: Some(pointer),
+                ..
+            } => Some(Cow::Owned(pointer.clone())),
             Self::Request(refusal) => refusal
                 .pointer()
                 .map(|pointer| Cow::Owned(pointer.to_owned())),
             Self::Package(refusal) => Some(Cow::Owned(refusal.pointer())),
+            Self::PackageWithIdentity { refusal, .. } => {
+                Some(Cow::Owned(refusal.pointer()))
+            }
             Self::RefinementInternals { pointer, .. } => Some(Cow::Owned(pointer.clone())),
             Self::WrongReplayTarget { target, .. } => {
                 Some(Cow::Borrowed(target.member().pointer()))
             }
+            Self::HybridTrace(refusal) => Some(Cow::Owned(refusal.pointer.to_string())),
             Self::WrongObservedTemporalTarget { .. } => {
                 Some(Cow::Borrowed("/replay/observed_counterexample"))
             }
@@ -1264,6 +1306,7 @@ pub fn replay_with_cancel_and_temporal_selections(
         ReplaySource::Witness(_) | ReplaySource::Input(_) => {
             Some(declared_function_target(&request, ReplayEntry::Replay)?)
         }
+        ReplaySource::Hybrid(_) => None,
     };
     let caller = request_limits(
         request.stage_limits(),
@@ -1273,6 +1316,10 @@ pub fn replay_with_cancel_and_temporal_selections(
     let compiled = recompile_with_temporal_selections(&request, &caller, temporal_selections)?;
     if let ReplaySource::ObservedTemporal(_) = request.source() {
         return replay_observed_temporal(request, compiled, caller, cancel);
+    }
+    if let ReplaySource::Hybrid(counterexample) = request.source() {
+        let counterexample = (**counterexample).clone();
+        return replay_hybrid(request, &compiled, &counterexample);
     }
     let (function, owner) = function.ok_or_else(|| {
         ReplayRefusal::Fault(InternalFault::new(
@@ -1422,6 +1469,180 @@ pub fn replay_with_cancel_and_temporal_selections(
     })
 }
 
+/// FR-098's hybrid `state_clause` arm: resolve the claim in the recompiled
+/// graph, admit the caller's trace, then run FR-193 static and exact replay.
+fn replay_hybrid(
+    request: ReplayRequest,
+    compiled: &Recompiled,
+    counterexample: &HybridCounterexample,
+) -> Result<ReplayResult, ReplayRefusal> {
+    let target = request
+        .replay_target()
+        .ok_or(ReplayRefusal::WrongModelGraphEntry)?;
+    let Some(clause) = target.as_state_clause() else {
+        return Err(wrong_target(
+            target,
+            ReplayEntry::ReplayStateClause,
+            TargetMember::StateClause,
+        ));
+    };
+    let graph = compiled.checked.package().graph();
+    let claim_position = match clause.segments() {
+        [name] => graph
+            .hybrid_claim_sites()
+            .iter()
+            .position(|site| site.name == name.as_str()),
+        _ => None,
+    }
+    .ok_or_else(|| ReplayRefusal::UnknownClause {
+        clause: clause.clone(),
+        package: compiled.package.clone(),
+    })?;
+    let claim = graph
+        .hybrid_claims()
+        .get(claim_position)
+        .ok_or_else(|| ReplayRefusal::Fault(InternalFault::new("replay", "hybrid-claim-model")))?;
+    let model = graph
+        .hybrid_models()
+        .get(claim.model.get())
+        .ok_or_else(|| ReplayRefusal::Fault(InternalFault::new("replay", "hybrid-claim-model")))?;
+    crate::hybrid_replay::admit(model, &counterexample.trace)
+        .map_err(ReplayRefusal::HybridTrace)?;
+
+    let work_units = request.accounting_limits().work_units;
+    let mut meter = HybridReplayMeter::new(work_units);
+    let static_outcome = match static_replay(graph, claim, &counterexample.trace, &mut meter) {
+        Ok(outcome) => outcome,
+        Err(HybridReplayRefusal::ResourceExhausted { .. }) => {
+            return Ok(ReplayResult::Hybrid(HybridReplayResult {
+                settlement: HybridReplaySettlement::Incomplete { work_units },
+                counterexample_wire: None,
+            }));
+        }
+        Err(refusal) => return Err(hybrid_runtime_refusal(refusal)),
+    };
+    let exact = match exact_replay(graph, claim, &counterexample.trace, &mut meter) {
+        Ok(exact) => exact,
+        Err(HybridReplayRefusal::ResourceExhausted { .. }) => {
+            return Ok(ReplayResult::Hybrid(HybridReplayResult {
+                settlement: HybridReplaySettlement::Incomplete { work_units },
+                counterexample_wire: None,
+            }));
+        }
+        Err(refusal) => return Err(hybrid_runtime_refusal(refusal)),
+    };
+    let (settlement, counterexample_wire) = match exact {
+        ExactReplay::Reproduced(found) => {
+            let wire = hybrid_counterexample_wire(compiled, graph, claim_position, model, &found)?;
+            (
+                HybridReplaySettlement::Reproduced {
+                    replay: HybridReplayRecord {
+                        static_outcome,
+                        exact_reproduced: true,
+                    },
+                    counterexample: found,
+                },
+                Some(wire),
+            )
+        }
+        ExactReplay::NotReproduced { at, check } => (
+            HybridReplaySettlement::Inconclusive {
+                replay: ReplayRecord {
+                    static_outcome,
+                    exact: Some(ExactRecord::NotReproduced { at, check }),
+                },
+                disagreement: crate::HybridTraceDisagreement::NotReproduced {
+                    counterexample: Box::new(counterexample.clone()),
+                },
+            },
+            Some(hybrid_counterexample_wire(
+                compiled,
+                graph,
+                claim_position,
+                model,
+                counterexample,
+            )?),
+        ),
+        ExactReplay::NotExact => (
+            HybridReplaySettlement::Inconclusive {
+                replay: ReplayRecord {
+                    static_outcome,
+                    exact: Some(ExactRecord::NotExact),
+                },
+                disagreement: crate::HybridTraceDisagreement::NotExact {
+                    counterexample: Box::new(counterexample.clone()),
+                },
+            },
+            Some(hybrid_counterexample_wire(
+                compiled,
+                graph,
+                claim_position,
+                model,
+                counterexample,
+            )?),
+        ),
+    };
+    Ok(ReplayResult::Hybrid(HybridReplayResult {
+        settlement,
+        counterexample_wire,
+    }))
+}
+
+fn hybrid_counterexample_wire(
+    compiled: &Recompiled,
+    graph: &fsl_semantics::check::CheckedGraph,
+    claim: usize,
+    model: &fsl_semantics::check::CheckedHybridModel,
+    counterexample: &HybridCounterexample,
+) -> Result<serde_json::Value, ReplayRefusal> {
+    let locus = match &counterexample.kind {
+        HybridCounterexampleKind::Formula => None,
+        HybridCounterexampleKind::UndefinedEvaluation { at, .. } => {
+            let wire = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
+                compiled.emitted.package().bytes(),
+            )
+            .map_err(|_| {
+                ReplayRefusal::Fault(InternalFault::new(
+                    "replay",
+                    "hybrid-counterexample-wire-graph",
+                ))
+            })?;
+            Some(
+                crate::hybrid_locus_wire(graph, &wire, claim, &at.locus).ok_or_else(|| {
+                    ReplayRefusal::Fault(InternalFault::new(
+                        "replay",
+                        "hybrid-counterexample-locus-is-spellable",
+                    ))
+                })?,
+            )
+        }
+    };
+    Ok(counterexample.to_wire(model, &|_| locus.clone().unwrap_or(serde_json::Value::Null)))
+}
+
+/// FR-750's hybrid replay refusal mapping for checked-package faults.
+fn hybrid_runtime_refusal(refusal: HybridReplayRefusal) -> ReplayRefusal {
+    match refusal {
+        HybridReplayRefusal::Trace(trace) => ReplayRefusal::HybridTrace(trace),
+        HybridReplayRefusal::UnknownModel(_) => {
+            ReplayRefusal::Fault(InternalFault::new("replay", "hybrid-claim-model"))
+        }
+        HybridReplayRefusal::Expansion(_) => {
+            ReplayRefusal::Fault(InternalFault::new("replay", "hybrid-call-expansion"))
+        }
+        HybridReplayRefusal::Exact(ExactGap::IllKindedTerm) => {
+            ReplayRefusal::Fault(InternalFault::new("replay", "hybrid-term-kind"))
+        }
+        HybridReplayRefusal::Exact(_) => {
+            ReplayRefusal::Fault(InternalFault::new("replay", "hybrid-exact-replay"))
+        }
+        HybridReplayRefusal::ResourceExhausted { .. } => ReplayRefusal::Fault(InternalFault::new(
+            "replay",
+            "hybrid-resource-exhaustion-settles-incomplete",
+        )),
+    }
+}
+
 /// The checked call's failure, read as the run's full supplied-phase record
 /// when the run stopped (FR-277), and as the call's own failure otherwise.
 fn after_call_failure(
@@ -1495,6 +1716,9 @@ fn settle(
         }
         ReplaySource::ProtocolAnalysis(_) => {
             unreachable!("protocol analysis requests dispatch before function replay settlement")
+        }
+        ReplaySource::Hybrid(_) => {
+            unreachable!("hybrid requests dispatch before function replay settlement")
         }
     }
 }
@@ -1676,16 +1900,21 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: *refusal,
                 protocol_results: protocol_results.protocol_results,
+                pointer: None,
             }
         }
         fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: Box::new(CompileRefusal::Limit(limit)),
                 protocol_results: protocol_results.protocol_results,
+                pointer: None,
             }
         }
         failure => match spine::refusal_or_fault(failure) {
-            Ok(refusal) => ReplayRefusal::Recompile(refusal),
+            Ok(refusal) => ReplayRefusal::Recompile {
+                refusal,
+                pointer: None,
+            },
             Err(fault) => ReplayRefusal::Fault(fault),
         },
     };
@@ -1883,7 +2112,12 @@ pub(crate) fn recompile_with_temporal_selections(
         check_mode: request.package().check_mode(),
         function_modes: &request.package().function_modes(),
     })
-    .map_err(|failure| locate_refinement_internals(request, failure))?;
+    .map_err(|failure| {
+        locate_dependency_clock_refusal(
+            request.package(),
+            locate_refinement_internals(request, failure),
+        )
+    })?;
     // Rule 6: every entry names a selection of the recompiled closure.
     let selections = compiled.checked.package().dependency_selections();
     for entry in request.dependencies() {
@@ -1901,7 +2135,17 @@ pub(crate) fn recompile_with_temporal_selections(
     )?;
     request
         .package()
-        .admit(&evidence, limits.spine.imports.for_ir())?;
+        .admit(&evidence, limits.spine.imports.for_ir())
+        .map_err(|refusal| ReplayRefusal::PackageWithIdentity {
+            refusal,
+            identity: request.sources().first().and_then(|source| {
+                fsl_foundation::source::provenance::RawSourceRef::new(
+                    source.authority().to_owned(),
+                    source.identity().to_owned(),
+                )
+                .ok()
+            }),
+        })?;
     Ok(compiled)
 }
 
@@ -1909,10 +2153,11 @@ pub(crate) fn recompile_with_temporal_selections(
 /// identifies an explicitly supplied list. Ordinary compile failures stay intact.
 fn locate_refinement_internals(request: &ReplayRequest, failure: ReplayRefusal) -> ReplayRefusal {
     let (refusal, protocol_results) = match failure {
-        ReplayRefusal::Recompile(refusal) => (refusal, None),
+        ReplayRefusal::Recompile { refusal, .. } => (refusal, None),
         ReplayRefusal::RecompileWithProtocolResults {
             refusal,
             protocol_results,
+            ..
         } => (refusal, Some(protocol_results)),
         other => return other,
     };
@@ -1927,8 +2172,71 @@ fn locate_refinement_internals(request: &ReplayRequest, failure: ReplayRefusal) 
             Some(protocol_results) => ReplayRefusal::RecompileWithProtocolResults {
                 refusal,
                 protocol_results,
+                pointer: None,
             },
-            None => ReplayRefusal::Recompile(refusal),
+            None => ReplayRefusal::Recompile {
+                refusal,
+                pointer: None,
+            },
+        },
+    }
+}
+
+fn locate_dependency_clock_refusal(
+    package: &ReplayPackage,
+    failure: ReplayRefusal,
+) -> ReplayRefusal {
+    let (refusal, protocol_results) = match failure {
+        ReplayRefusal::Recompile { refusal, .. } => (refusal, None),
+        ReplayRefusal::RecompileWithProtocolResults {
+            refusal,
+            protocol_results,
+            ..
+        } => (refusal, Some(protocol_results)),
+        other => return other,
+    };
+    let mut current = refusal.as_ref();
+    let mut nested_dependency = false;
+    let mut clock_refusal = None;
+    loop {
+        match current {
+            CompileRefusal::Dependency { refusal, .. } => {
+                nested_dependency = true;
+                current = refusal;
+            }
+            CompileRefusal::Emit(fsl_package::EmitRefusal::ClockSelection(selection), region) => {
+                clock_refusal = Some((selection, region));
+                break;
+            }
+            _ => break,
+        }
+    }
+    let fsl_replay_clock = clock_refusal.and_then(|(selection, region)| {
+        let dependency_locus = nested_dependency
+            || region
+                .as_ref()
+                .is_some_and(|region| !package.is_program_source(region.source()));
+        let unused_dependency_row =
+            selection.cause == fsl_package::ClockSelectionCause::UnusedClockSelection;
+        (dependency_locus || unused_dependency_row)
+            .then(|| package.dependency_clock_pointer(&selection.clock, selection.cause))
+            .flatten()
+    });
+    match fsl_replay_clock {
+        Some(pointer) => ReplayRefusal::Recompile {
+            refusal,
+            pointer: Some(pointer),
+        },
+        None => match protocol_results {
+            Some(protocol_results) => ReplayRefusal::RecompileWithProtocolResults {
+                refusal,
+                protocol_results,
+                pointer: None,
+            },
+            None => ReplayRefusal::Recompile {
+                refusal,
+                pointer: None,
+            },
         },
     }
 }
@@ -2118,16 +2426,21 @@ fn run_spine_units(
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: *refusal,
                 protocol_results: protocol_results.protocol_results,
+                pointer: None,
             }
         }
         fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: Box::new(CompileRefusal::Limit(limit)),
                 protocol_results: protocol_results.protocol_results,
+                pointer: None,
             }
         }
         failure => match spine::refusal_or_fault(failure) {
-            Ok(refusal) => ReplayRefusal::Recompile(refusal),
+            Ok(refusal) => ReplayRefusal::Recompile {
+                refusal,
+                pointer: None,
+            },
             Err(fault) => ReplayRefusal::Fault(fault),
         },
     };
@@ -2139,7 +2452,12 @@ fn run_spine_units(
             bytes,
         })
         .collect::<Vec<_>>();
-    spine::preflight_unit_list(&requests, dependencies).map_err(ReplayRefusal::Recompile)?;
+    spine::preflight_unit_list(&requests, dependencies).map_err(|refusal| {
+        ReplayRefusal::Recompile {
+            refusal,
+            pointer: None,
+        }
+    })?;
     let parsed = requests
         .iter()
         .map(|request| {
@@ -2148,8 +2466,12 @@ fn run_spine_units(
                 .map_err(&refusal)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let admitted =
-        spine::admit_parsed_unit_list(parsed, dependencies).map_err(ReplayRefusal::Recompile)?;
+    let admitted = spine::admit_parsed_unit_list(parsed, dependencies).map_err(|refusal| {
+        ReplayRefusal::Recompile {
+            refusal,
+            pointer: None,
+        }
+    })?;
     let models = spine::select_units(&admitted, packages, limits.model, limits.source, &cancel)
         .map_err(&refusal)?
         .into_value();
@@ -2199,7 +2521,10 @@ fn run_spine_units(
             let units: Vec<_> = admitted.units().iter().collect();
             clocks
                 .package_selections(&checked, &units)
-                .map_err(ReplayRefusal::Recompile)?
+                .map_err(|refusal| ReplayRefusal::Recompile {
+                    refusal,
+                    pointer: None,
+                })?
         }
     };
     let emitted = spine::package_with_temporal_selections(
@@ -2680,6 +3005,12 @@ fn arguments(
             return Err(ReplayRefusal::Fault(InternalFault::new(
                 "replay",
                 "protocol-analysis-source-dispatched-by-protocol-replay",
+            )));
+        }
+        ReplaySource::Hybrid(_) => {
+            return Err(ReplayRefusal::Fault(InternalFault::new(
+                "replay",
+                "hybrid-source-dispatched-by-replay-facade",
             )));
         }
     };

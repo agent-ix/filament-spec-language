@@ -34,7 +34,11 @@ fn world() -> World {
         "fixture".to_owned(),
         fsl_foundation::IdentityLimits::default(),
     )
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
+    )
     .expect("the empty fixture package checks");
     World {
         scope: scope_with(fixture::types(object_type()), Vec::new()),
@@ -135,6 +139,7 @@ impl Nodes {
 fn arm(member: usize, binders: Vec<Slot>, body: NodeId) -> CaseArm<fsl_semantics::check::NodeId> {
     CaseArm::<fsl_semantics::check::NodeId> {
         member,
+        names: binders.iter().map(|slot| format!("b{slot}")).collect(),
         binders,
         body,
     }
@@ -317,6 +322,7 @@ fn small_sum(nodes: &mut Nodes) -> NodeId {
         NodeKind::Query {
             visit: Visit::Sum,
             slot: 3,
+            name: "x".to_owned(),
             source: collection,
             body: element,
         },
@@ -345,6 +351,7 @@ fn family_sum(values: Vec<Value>, element: ValueType, total: ValueType) -> Check
         NodeKind::Query {
             visit: Visit::Sum,
             slot: 3,
+            name: "x".to_owned(),
             source: collection,
             body: summand,
         },
@@ -784,6 +791,7 @@ fn predicates_and_queries_over_a_union_sequence_follow_occurrence_order() {
         nodes.push(
             NodeKind::Let {
                 slot: 0,
+                name: "x".to_owned(),
                 value: shape,
                 body: predicate,
             },
@@ -804,6 +812,7 @@ fn predicates_and_queries_over_a_union_sequence_follow_occurrence_order() {
             NodeKind::Query {
                 visit,
                 slot: 0,
+                name: "x".to_owned(),
                 source,
                 body,
             },

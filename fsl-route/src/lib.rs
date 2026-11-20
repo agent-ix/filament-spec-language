@@ -54,6 +54,12 @@ pub mod declaration;
 pub mod model_request;
 pub mod reductions;
 pub mod request;
+
+/// FR-286: the typed request-refusal pairs produced by routing.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "unknown-member"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "invalid-value"),
+];
 pub mod routing;
 pub mod tie;
 
@@ -282,6 +288,7 @@ pub struct BackendDescriptor {
     max_cases: Option<std::num::NonZeroU64>,
     timed: bool,
     options: BTreeSet<String>,
+    option_defaults: BTreeMap<String, String>,
     option_values: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -410,6 +417,7 @@ pub fn descriptor_from_manifest<'a>(
         state_graph_forms: BTreeSet::new(),
         timed: false,
         options: BTreeSet::new(),
+        option_defaults: BTreeMap::new(),
         option_values: BTreeMap::new(),
     })
 }
@@ -671,6 +679,7 @@ impl BackendDescriptor {
             max_cases: None,
             timed: false,
             options: BTreeSet::new(),
+            option_defaults: BTreeMap::new(),
             option_values: BTreeMap::new(),
         })
     }
@@ -759,6 +768,11 @@ impl BackendDescriptor {
         }
     }
 
+    /// The solver bounds a hybrid descriptor publishes.
+    pub fn solver_bounds(&self) -> Option<SolverBounds> {
+        self.solver_bounds
+    }
+
     /// The descriptor member as supplied; `None` stays absent on the wire.
     pub fn dynamics(&self) -> Option<&BTreeSet<DynamicsKind>> {
         self.dynamics.as_ref()
@@ -839,14 +853,21 @@ impl BackendDescriptor {
         &self.state_graph_forms
     }
 
-    /// Publish the option names this backend's manifest `options` hold
-    /// (FSpec FR-331, FR-779). A descriptor built without this call
-    /// publishes none, so an item naming it with any option settles
-    /// `unknown-option`.
+    /// Publish the options this backend's manifest `options` hold, each a
+    /// name and its default (FSpec FR-331, FR-779). A descriptor built
+    /// without this call publishes none, so an item naming it with any
+    /// option settles `unknown-option`.
     #[must_use]
-    pub fn with_options(mut self, options: impl IntoIterator<Item = String>) -> Self {
-        self.options = options.into_iter().collect();
+    pub fn with_options(mut self, options: impl IntoIterator<Item = (String, String)>) -> Self {
+        self.option_defaults = options.into_iter().collect();
+        self.options = self.option_defaults.keys().cloned().collect();
         self
+    }
+
+    /// The default of each option published through [`Self::with_options`],
+    /// by name.
+    pub fn option_defaults(&self) -> &BTreeMap<String, String> {
+        &self.option_defaults
     }
 
     /// The option names this backend publishes.

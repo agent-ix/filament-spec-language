@@ -3,11 +3,15 @@
 
 mod analyze;
 mod clause;
+mod export;
 mod flow;
 mod items;
-mod monitor;
+pub mod monitor;
 mod output;
 mod output_file;
+mod package_run;
+pub mod plan;
+pub use package_run::PreparedPackageRun;
 mod replay;
 mod requirements;
 mod settle;
@@ -18,8 +22,8 @@ pub use analyze::{
     AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
     analyze_with_providers_and_limits, prepare_analyze,
 };
-pub use flow::{analyze_flow_report, FlowAnalyzeError};
-pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
+pub use flow::{FlowAnalyzeError, analyze_flow_report};
+pub use monitor::{MonitorEvent, MonitorProviders, MonitorSummary, monitor};
 pub use output::NativeResult;
 pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
@@ -589,6 +593,9 @@ pub struct FunctionRunInput {
     pub packages: fsl_semantics::model::intake::PackageInput,
     /// Explicit library dependencies.
     pub dependencies: fsl_replay::spine::DependencyInput,
+    /// Caller-supplied `div` and `rem` law for the source program, when one was
+    /// present in the request (FR-767).
+    pub integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// Function, arguments, accounting and supplied-phase limits.
     pub call: fsl_replay::spine::Call,
 }
@@ -606,6 +613,7 @@ impl PreparedFunctionRun {
             source: data.source.source().clone(),
             packages: data.packages,
             dependencies: data.dependencies,
+            integer_division: data.integer_division,
             call: data.call,
         }
     }
@@ -620,6 +628,9 @@ pub enum PreparedRun {
     /// FR-931: a `tl_lowering` request: the clause's valuation run, the
     /// lowering it asks for, and the program text its atoms are named in.
     TlLowering(Box<PreparedLowering>),
+    /// FR-100, FR-1039: a call over a selected checked package, run from the
+    /// package's own records without compiling source.
+    Package(Box<package_run::PreparedPackageRun>),
 }
 
 /// A typed clause request together with every source admitted to prepare it.
@@ -671,6 +682,7 @@ impl PreparedRun {
             ),
             Self::Clause(request) => request.sources.clone(),
             Self::TlLowering(prepared) => prepared.sources.clone(),
+            Self::Package(prepared) => prepared.sources(),
         }
     }
 }
@@ -679,8 +691,8 @@ impl PreparedRun {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RunCause {
-    /// Local file could not be opened or read.
-    #[error("cannot read {path}: {error}")]
+    /// Local file could not be opened, read or written.
+    #[error("cannot access {path}: {error}")]
     Io {
         /// Actual selected filesystem path.
         path: PathBuf,
@@ -704,10 +716,51 @@ pub enum RunCause {
     )]
     OutputGivenTwice,
     /// FR-810: a file or directory already exists at the output path.
-    #[error("invalid request: output {path} already exists; a compile never overwrites it", path = path.display())]
+    #[error("invalid request: output {path} already exists; FSL never overwrites an existing path", path = path.display())]
     OutputExists {
         /// The existing output path.
         path: PathBuf,
+    },
+    /// FSpec FR-817 / FR-286: the export was made but its file could not be
+    /// written: an output failure after S4.
+    #[error("cannot write the export to {path}: {error}")]
+    ExportOutput {
+        /// The file the export was to create.
+        path: PathBuf,
+        /// Original operating-system error.
+        #[source]
+        error: io::Error,
+    },
+    /// FSpec FR-817: the export mapper failed on a construct it does not lower.
+    #[error("the export mapper does not lower {construct}: {reason}")]
+    ExportMapper {
+        /// The construct the mapper stopped at.
+        construct: String,
+        /// Why it stopped.
+        reason: String,
+    },
+    /// FR-1015: an `export` member the request reader refuses, with its
+    /// FR-805 cause (`missing-member`, `invalid-value`, `wrong-value-kind`,
+    /// `unknown-member`) apart from the message.
+    #[error("invalid export request member {path}: {cause}: {reason}")]
+    ExportRequest {
+        /// The JSON pointer of the member at fault.
+        path: String,
+        /// The FR-805 cause.
+        cause: &'static str,
+        /// Why the member is refused.
+        reason: String,
+    },
+    /// FR-1038: a `verification_plan` member the request reader refuses, with
+    /// its FR-805 cause apart from the message.
+    #[error("invalid verification plan request member {path}: {cause}: {reason}")]
+    PlanRequest {
+        /// The JSON pointer of the member at fault.
+        path: String,
+        /// The FR-805 cause.
+        cause: &'static str,
+        /// Why the member is refused.
+        reason: String,
     },
     /// FR-312: a clause request member cannot form a typed selection.
     #[error("invalid clause request member {member}: {reason}")]
@@ -716,6 +769,13 @@ pub enum RunCause {
         member: String,
         /// Why this member is invalid.
         reason: String,
+    },
+    /// FR-1039: a member whose run builds states over the package's model
+    /// world, selected over a `{file}` package that carries no handoff rows.
+    #[error("invalid clause request member {member}: it needs a package selected as a directory")]
+    RequiresDirectory {
+        /// The wire member that needs the handoff rows.
+        member: String,
     },
     /// Typed output serialization failed.
     #[error("cannot serialize native result: {0}")]
@@ -784,7 +844,7 @@ pub enum RunCause {
     EmptyCompileProgram,
     /// FR-931: `tl_lowering.correspondence` names no TL correspondence.
     #[error(
-        "unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1 and mltl.origin-complete-history/v1"
+        "unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1, mltl.origin-complete-history/v1 and mltl.infinite-trace/v1"
     )]
     TlCorrespondence {
         /// The value given.
@@ -931,8 +991,14 @@ pub enum RunCause {
     #[error("{}", .0.refusal)]
     Replay(Box<replay::ReplayFailure>),
     /// FR-862: the settled replay has no FR-323 per-item result encoding.
-    #[error("cannot serialize replay result: {0}")]
-    ReplayOutput(#[source] fsl_replay::CauseCodecError),
+    #[error("cannot serialize replay result: {error}")]
+    ReplayOutput {
+        /// The codec failure.
+        #[source]
+        error: fsl_replay::CauseCodecError,
+        /// The all-or-nothing outcome document for this failed row.
+        outcome: fsl_replay::OutcomeDocument,
+    },
     /// An item run violated an internal runtime invariant.
     #[error("an items run faulted")]
     ItemsFault,
@@ -1012,10 +1078,15 @@ impl RunCause {
             Self::Io { .. } => Code::IoError,
             Self::Json(_) => Code::InvalidRequest,
             Self::ClauseRequest { .. }
+            | Self::RequiresDirectory { .. }
             | Self::ClocksGivenTwice
             | Self::OutputGivenTwice
             | Self::OutputExists { .. } => Code::InvalidRequest,
-            Self::Output(_) | Self::ClauseOutput(_) => Code::OutputFailure,
+            Self::ExportMapper { .. } => Code::RuntimeInvariant,
+            Self::ExportRequest { .. } | Self::PlanRequest { .. } => Code::InvalidRuntimeInput,
+            Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
+                Code::OutputFailure
+            }
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
             Self::Identifier { .. } => Code::InvalidIdentifier,
@@ -1071,7 +1142,7 @@ impl RunCause {
             Self::ReplayRequest(_) => Code::InvalidRequest,
             Self::ReplayBytes { cause, .. } => cause.code(),
             Self::Replay(failure) => failure.refusal.code(),
-            Self::ReplayOutput(_) => Code::OutputFailure,
+            Self::ReplayOutput { .. } => Code::OutputFailure,
         }
     }
 
@@ -1087,9 +1158,10 @@ impl RunCause {
     /// failure at S6a"); every other cause takes its code's category.
     pub fn category(&self) -> filament_semantic_value::catalog::Category {
         match self {
-            Self::Output(_) | Self::ClauseOutput(_) | Self::TlFault(_) => {
-                filament_semantic_value::catalog::Category::InternalFailure
-            }
+            Self::Output(_)
+            | Self::ClauseOutput(_)
+            | Self::ExportOutput { .. }
+            | Self::TlFault(_) => filament_semantic_value::catalog::Category::InternalFailure,
             Self::SpineRun(refusal) => refusal.category(),
             Self::AnalyzeRefused(refusal) => refusal.document().category(),
             Self::MonitorRefused(refusal) => refusal.document().category(),
@@ -1099,7 +1171,9 @@ impl RunCause {
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
             Self::ReplayBytes { cause, .. } => cause.category(),
             Self::Replay(failure) => failure.outcome.category(),
-            Self::ReplayOutput(_) => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::ReplayOutput { .. } => {
+                filament_semantic_value::catalog::Category::InternalFailure
+            }
             _ => self.code().category(),
         }
     }
@@ -1146,6 +1220,7 @@ impl RunError {
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
             RunCause::Replay(failure) => failure.outcome.clone(),
+            RunCause::ReplayOutput { outcome, .. } => outcome.clone(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
@@ -1179,6 +1254,32 @@ impl RunError {
                 OutcomeDocument::new(operation, None, self.category())
                     .with_diagnostics(vec![projected])
             }
+            RunCause::ExportMapper { .. } | RunCause::ExportOutput { .. } => OutcomeDocument::new(
+                operation,
+                Some(fsl_replay::OutcomeStage::S4),
+                self.category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                matches!(self.cause, RunCause::ExportOutput { .. }).then_some("output-failure"),
+                self.cause.code().as_str(),
+                None,
+                self.outcome_message(),
+            )]),
+            RunCause::ExportRequest { path, cause, .. }
+            | RunCause::PlanRequest { path, cause, .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        Some(*cause),
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(path.clone()),
+                    )]))),
+                ])
+            }
             RunCause::ClauseRequest { member, .. } if member.starts_with("/call/arguments/") => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
@@ -1196,6 +1297,7 @@ impl RunError {
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
+            | RunCause::RequiresDirectory { .. }
             | RunCause::IntegerDivisionLaw { .. }
             | RunCause::TlCorrespondence { .. }
             | RunCause::TlClause { .. }
@@ -1226,7 +1328,6 @@ impl RunError {
             | RunCause::ReplayBytes { .. }
             | RunCause::UnknownRequirementClaim { .. }
             | RunCause::TemporalCorrection(_)
-            | RunCause::ReplayOutput(_)
             | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     match &self.cause {
@@ -1270,15 +1371,24 @@ impl RunError {
                     .with_details(Some(details)),
                 ])
             }
-            RunCause::AnalyzePackage { cause, .. } => {
-                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
-                    OutcomeDiagnostic::new(
-                        cause.as_deref(),
-                        self.cause.code().as_str(),
-                        None,
-                        self.outcome_message(),
-                    ),
-                ])
+            RunCause::AnalyzePackage { cause, pointer, .. } => {
+                let diagnostic = OutcomeDiagnostic::new(
+                    cause.as_deref(),
+                    self.cause.code().as_str(),
+                    None,
+                    self.outcome_message(),
+                );
+                // FR-940-AC-12: a claim-name collision carries the row's path.
+                let diagnostic = match pointer {
+                    Some(pointer) if self.cause.code() == Code::AmbiguousDeclaration => diagnostic
+                        .with_details(Some(serde_json::Map::from_iter([(
+                            "path".to_owned(),
+                            serde_json::Value::String(pointer.clone()),
+                        )]))),
+                    _ => diagnostic,
+                };
+                OutcomeDocument::new(operation, None, self.category())
+                    .with_diagnostics(vec![diagnostic])
             }
             RunCause::AnalyzeNotYetImplemented { .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
@@ -1621,8 +1731,12 @@ fn run_configured(
             monitor::run_bytes(directory, bytes, limits.dependent_bytes, &settle).map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
-            replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
+            replay::run_bytes(directory, path.to_str(), bytes, limits.dependent_bytes).map(Some)
         } else {
+            plan::check_member(bytes)?;
+            if let Some(result) = export::run_bytes(directory, bytes, limits, overrides)? {
+                return Ok(Some(result));
+            }
             if let Some(result) = version_argv(bytes)? {
                 Ok(Some(result))
             } else if let Some(result) = check_argv(directory, bytes)? {
@@ -1873,20 +1987,78 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
 /// Inspect a checked-package handoff and return the command's successful
 /// `inspect` outcome. A refusal retains the handoff reader's typed error.
 pub fn inspect_handoff(directory: &Path) -> fsl_replay::OutcomeDocument {
+    inspect_handoff_with_operand(directory, &directory.to_string_lossy())
+}
+
+/// Inspect a checked-package handoff while retaining the caller's exact
+/// directory operand for refusal loci.
+pub fn inspect_handoff_with_operand(
+    directory: &Path,
+    operand: &str,
+) -> fsl_replay::OutcomeDocument {
     use filament_semantic_value::catalog::Category;
     use fsl_replay::{Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
     match crate::checked_handoff::verify(directory) {
         Ok(_) => OutcomeDocument::new(Operation::Inspect, None, Category::Success),
-        Err(error) => OutcomeDocument::new(Operation::Inspect, None, Category::Refusal)
-            .with_diagnostics(vec![OutcomeDiagnostic::new(
-                None,
-                error.code_name(),
-                Some(OutcomeLocus::Artifact {
-                    pointer: "/".to_owned(),
-                }),
-                error.to_string(),
-            )]),
+        Err(error) => {
+            let (member, pointer) = inspect_handoff_position(directory, &error);
+            let locus = Some(OutcomeLocus::Input {
+                operand: operand.to_owned(),
+                member,
+                pointer,
+            });
+            OutcomeDocument::new(Operation::Inspect, None, Category::Refusal).with_diagnostics(
+                vec![OutcomeDiagnostic::new(
+                    None,
+                    error.code_name(),
+                    locus,
+                    error.to_string(),
+                )],
+            )
+        }
+    }
+}
+
+fn inspect_handoff_position(
+    directory: &Path,
+    error: &crate::checked_handoff::Error,
+) -> (Option<String>, Option<String>) {
+    use crate::checked_handoff::{Error, SelectionReadError};
+
+    match error {
+        Error::ReaderRefused(refusal) => (
+            Some("checked-package.json".to_owned()),
+            refusal
+                .loci
+                .first()
+                .and_then(|locus| locus.path.as_ref())
+                .map(ToString::to_string),
+        ),
+        Error::ReaderIncomplete(_) | Error::ReaderCatalogUnavailable(_) => (
+            Some("checked-package.json".to_owned()),
+            None,
+        ),
+        Error::Read { path, .. } => {
+            let path = Path::new(path);
+            if path == directory {
+                return (None, None);
+            }
+            let member = path
+                .strip_prefix(directory)
+                .ok()
+                .map(|member| member.to_string_lossy().replace('\\', "/"));
+            (member, None)
+        }
+        Error::Label { label } => (Some(label.clone()), None),
+        Error::Sidecar(SelectionReadError::Format(_)) => {
+            (Some("selection.json".to_owned()), Some("/format".to_owned()))
+        }
+        Error::Sidecar(SelectionReadError::Malformed(_)) => {
+            (Some("selection.json".to_owned()), None)
+        }
+        Error::SelectionMismatch(_) => (Some("selection.json".to_owned()), None),
+        _ => (None, None),
     }
 }
 
@@ -1941,18 +2113,19 @@ fn read_clause_run_request_bytes(
     observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<fsl_replay::spine::ClauseRunRequest> {
     let request: wire::Request = request(bytes)?;
+    let program = required_program(&request)?;
     #[cfg(feature = "quire-extraction")]
-    if request.program.extraction.is_some() && request.package.is_some() {
+    if program.extraction.is_some() && request.package.is_some() {
         return Err(RunCause::ExtractionPackageConflict);
     }
     #[cfg(feature = "quire-extraction")]
-    if request.program.extraction.is_some() && request.call.is_some() {
+    if program.extraction.is_some() && request.call.is_some() {
         return Err(RunCause::ExtractionRequiresRun);
     }
     #[cfg(feature = "quire-extraction")]
-    if request.program.extraction.is_some() && request.program.clauses.len() != 1 {
+    if program.extraction.is_some() && program.clauses.len() != 1 {
         return Err(RunCause::ExtractionClauseCount {
-            actual: request.program.clauses.len(),
+            actual: program.clauses.len(),
         });
     }
     let clause = request
@@ -1983,10 +2156,10 @@ fn read_clause_run_request_bytes(
         None => intake(directory, counts)?,
     };
     reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
-    let source = intake.source(&request.program.source, "program.source")?;
+    let source = intake.source(&program.source, "program.source")?;
     #[cfg(feature = "quire-extraction")]
-    if let Some(extraction) = &request.program.extraction {
-        let binding = &request.program.clauses[0];
+    if let Some(extraction) = &program.extraction {
+        let binding = &program.clauses[0];
         let context = fsl_source::clause_context(&binding.package, source.source())
             .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
         let body_identity = fsl_foundation::SourceIdentity::new(
@@ -2015,10 +2188,10 @@ fn read_clause_run_request_bytes(
             observation_override,
         );
     } else {
-        require_complete_edition(source.source())?;
+        require_native_header(source.source())?;
     }
     #[cfg(not(feature = "quire-extraction"))]
-    require_complete_edition(source.source())?;
+    require_native_header(source.source())?;
     clause::read(&mut intake, &request, clause, source, observation_override)
 }
 
@@ -2246,6 +2419,8 @@ fn compile_outcome_inner(
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     let result = with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
+        // FR-767: a malformed or unknown law refuses before any file is read.
+        let integer_division = request_integer_division(request.integer_division.clone())?;
         validate_extension_entries(&request.extensions)?;
         if let Some(handoff) = &request.handoff {
             validate_handoff_request(handoff, request.program.sources.len())?;
@@ -2262,6 +2437,22 @@ fn compile_outcome_inner(
             (Some(member), None) => Some(directory.join(&member.package)),
             (None, supplied) => supplied.map(Path::to_path_buf),
         };
+        if let (Some(handoff), Some(output)) = (&request.handoff, &output) {
+            let handoff_directory = directory.join(&handoff.directory);
+            if resolved_path_for_comparison(output)
+                .zip(resolved_path_for_comparison(&handoff_directory))
+                .is_some_and(|(output, handoff)| output.starts_with(&handoff))
+            {
+                return Err(RunCause::ClauseRequest {
+                    member: "output and handoff".to_owned(),
+                    reason: format!(
+                        "output path {} is inside handoff directory {}",
+                        output.display(),
+                        handoff_directory.display()
+                    ),
+                });
+            }
+        }
         if request.program.extraction {
             return Err(RunCause::ExtractionRequiresRun);
         }
@@ -2291,10 +2482,16 @@ fn compile_outcome_inner(
         let mut sources = Vec::with_capacity(request.program.sources.len());
         for (index, selection) in request.program.sources.iter().enumerate() {
             let source = intake.source(selection, &format!("program.sources[{index}].source"))?;
-            require_complete_edition(source.source())?;
+            require_native_header(source.source())?;
             sources.push(source);
         }
-        let mut outcome = complete(&request, &mut intake, &sources, overrides.limits)?;
+        let mut outcome = complete(
+            &request,
+            &mut intake,
+            &sources,
+            overrides.limits,
+            integer_division,
+        )?;
         outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         if let Some(handoff) = &request.handoff {
             let compiled =
@@ -2329,6 +2526,45 @@ fn compile_outcome_inner(
             error
         })
     }
+}
+
+/// Resolve existing path components before normalizing `..`, so a symlinked
+/// parent keeps the same meaning it will have when the output is opened. The
+/// final output path may not exist yet, so unresolved components remain lexical.
+fn resolved_path_for_comparison(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let mut resolved = if path.is_absolute() {
+        PathBuf::new()
+    } else {
+        std::env::current_dir().ok()?
+    };
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(name) => {
+                let candidate = resolved.join(name);
+                resolved = match std::fs::canonicalize(&candidate) {
+                    Ok(canonical) => canonical,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                        ) =>
+                    {
+                        candidate
+                    }
+                    Err(_) => return None,
+                };
+            }
+        }
+    }
+    Some(resolved)
 }
 
 /// Reject malformed FR-665 handoff selections before opening selected inputs.
@@ -2460,9 +2696,25 @@ fn is_domain_package(model: &wire::Model) -> bool {
     model.format == DOMAIN_PACKAGE_PROFILE
 }
 
-/// Refuse an edition the spine does not admit at the declared token.
+/// Refuse a header language or edition the spine does not admit, at the declared literal.
 #[ix_trace_rs::string_edge]
-fn require_complete_edition(source: &Source) -> Result<()> {
+fn require_native_header(source: &Source) -> Result<()> {
+    if let Some(declared) = fsl_cst::declared_language(source.text()) {
+        if declared.language != "ix:native" {
+            return Err(RunCause::Native(fsl_foundation::diagnostic::error(
+                source,
+                Code::UnknownLanguage,
+                fsl_foundation::Phase::Source,
+                declared.span.start,
+                declared.span.end,
+                format!(
+                    "{} declares language {:?}; this command reads \"ix:native\"",
+                    source.path(),
+                    declared.language
+                ),
+            )));
+        }
+    }
     if let Some(declared) = fsl_cst::declared_edition(source.text()) {
         if declared.edition != fsl_cst::EDITION {
             return Err(RunCause::Native(fsl_foundation::diagnostic::error(
@@ -2497,12 +2749,13 @@ fn complete(
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
     supplied_limits: Option<&fsl_replay::spine::SpineLimits>,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 ) -> Result<CompileOutcome> {
     let limits = supplied_limits.copied().unwrap_or_default();
     if sources.len() == 1 {
-        return complete_single(request, intake, &sources[0], limits);
+        return complete_single(request, intake, &sources[0], limits, integer_division);
     }
-    complete_units(request, intake, sources, limits)
+    complete_units(request, intake, sources, limits, integer_division)
 }
 
 fn complete_single(
@@ -2510,8 +2763,16 @@ fn complete_single(
     intake: &mut Intake<'_>,
     source: &FormalSource,
     limits: fsl_replay::spine::SpineLimits,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, std::slice::from_ref(source), false, limits)
+    complete_sources(
+        request,
+        intake,
+        std::slice::from_ref(source),
+        false,
+        limits,
+        integer_division,
+    )
 }
 
 /// Compile FR-480's ordered program-unit list as one checked package.
@@ -2520,8 +2781,9 @@ fn complete_units(
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
     limits: fsl_replay::spine::SpineLimits,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, sources, true, limits)
+    complete_sources(request, intake, sources, true, limits, integer_division)
 }
 
 /// Shared request, dependency, parsing, and emission pipeline for one source
@@ -2533,6 +2795,7 @@ fn complete_sources(
     sources: &[FormalSource],
     unit_list: bool,
     limits: fsl_replay::spine::SpineLimits,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 ) -> Result<CompileOutcome> {
     check_sources(
         request,
@@ -2540,9 +2803,18 @@ fn complete_sources(
         sources,
         unit_list,
         limits,
+        integer_division,
         None,
-        None,
-        |_intake, checked, selections, points, packages, _, libraries, models, inventory, failure| {
+        |_intake,
+         checked,
+         selections,
+         points,
+         packages,
+         _,
+         libraries,
+         models,
+         inventory,
+         failure| {
             let cancel = filament_exact::Cancel::new();
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
@@ -2610,6 +2882,15 @@ fn handoff_clock_selections(
                         .flat_map(|protocol| &protocol.obligations.compensations)
                         .find(|template| template.span == selection.declaration_span)
                         .map(|template| template.name.clone())
+                })
+                .or_else(|| {
+                    checked
+                        .package()
+                        .graph()
+                        .hyper_clauses()
+                        .iter()
+                        .find(|hyper| hyper.span() == selection.declaration_span)
+                        .map(|hyper| hyper.name().to_owned())
                 })?;
             Some(crate::emit_checked_v2::ClockSelection {
                 clause: name,
@@ -3183,18 +3464,16 @@ fn prepare_run_bytes_with_sources(
     admitted_sources: &mut crate::Sources,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
-    if request.package.is_some() && request.integer_division.is_some() {
-        return Err(RunCause::ClauseRequest {
-            member: "integer_division".to_owned(),
-            reason: "a package already carries its selected integer-division law".to_owned(),
-        });
+    // FR-100, FR-1039: a selected checked package runs from its own records,
+    // refusing every member that would restate them before any file is read.
+    if let Some(package) = &request.package {
+        let prepared = package_run::prepare(directory, &request, package, dependent_bytes);
+        if let Ok(prepared) = &prepared {
+            *admitted_sources = prepared.sources();
+        }
+        return prepared.map(|prepared| PreparedRun::Package(Box::new(prepared)));
     }
-    if request.package.is_some() {
-        return Err(RunCause::ClauseRequest {
-            member: "package".to_owned(),
-            reason: "package-only native-run execution is tracked by QSL-2390".to_owned(),
-        });
-    }
+    let program = required_program(&request)?;
     let integer_division =
         read_integer_division(request.integer_division.as_ref(), "integer_division")?;
     let library_integer_division = request
@@ -3252,8 +3531,8 @@ fn prepare_run_bytes_with_sources(
         reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
         // The program source is read exactly once; its declared edition decides
         // the runner before any model or library source is read (FR-100).
-        let source = intake.source(&request.program.source, "program.source")?;
-        require_complete_edition(source.source())?;
+        let source = intake.source(&program.source, "program.source")?;
+        require_native_header(source.source())?;
         prepare_complete_run(
             &mut intake,
             &request,
@@ -3463,33 +3742,7 @@ fn prepare_complete_run(
                 fsl_replay::spine::CompileRefusal::DependencyInput(refusal),
             )
         })?;
-    // FR-650: a `value` is a JSON integer in the signed 64-bit range or a JSON
-    // object; the run reads it against its parameter's declared type.
-    let wire_arguments = call
-        .arguments
-        .iter()
-        .enumerate()
-        .map(|(index, argument)| {
-            if !(argument.value.is_object() || argument.value.as_i64().is_some()) {
-                return Err(RunCause::ClauseRequest {
-                    member: format!("/call/arguments/{index}/value"),
-                    reason: "expected a JSON integer in the signed 64-bit range or an object"
-                        .to_owned(),
-                });
-            }
-            Ok(fsl_replay::spine::WireArgument {
-                parameter: argument.parameter.clone(),
-                value: argument.value.clone(),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let mut spine_call = fsl_replay::spine::Call::new(
-        call.function.clone(),
-        Vec::new(),
-        call_accounting(&call.accounting),
-        request.limits.supplied.unwrap_or_default(),
-    );
-    spine_call.wire_arguments = wire_arguments;
+    let mut spine_call = read_call(call, request)?;
     if let Some(file) = &call.snapshot {
         let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None).map_err(|error| {
             RunCause::ClauseRequest {
@@ -3549,6 +3802,20 @@ pub fn execute_tl_lowering(
     execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause, sources }))
 }
 
+/// Execute a prepared FR-1039 package call and retain the standard run error
+/// envelope used by the command API.
+///
+/// Request and dependent-file limits are enforced while constructing the
+/// `PreparedPackageRun` through [`prepare_run`] or
+/// [`prepare_run_with_overrides`]; this function executes only that admitted
+/// package.
+pub fn execute_package_run(
+    prepared: PreparedPackageRun,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    let sources = prepared.sources();
+    package_run::execute(prepared).map_err(|cause| Box::new(RunError { cause, sources }))
+}
+
 fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
     let PreparedLowering {
         request,
@@ -3581,7 +3848,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         }
         _ => return output::clause_report(report, &selection),
     };
-    let record = tl::lower(valuation, &source, &lowering).map_err(RunCause::TlFault)?;
+    let record = tl::lower(valuation, &source, &lowering)?;
     Ok(RunResult {
         exit_code: record.exit_code,
         value: NativeResult::lowering_document(tl::document(record.record)),
@@ -3595,6 +3862,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     let prepared = match prepared {
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
+        PreparedRun::Package(prepared) => return package_run::execute(*prepared),
         PreparedRun::Clause(request) => {
             let selection = request.selection.clone();
             let report =
@@ -3733,6 +4001,52 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     Ok(result)
 }
 
+/// FR-100, FR-650: the spine call a request's `call` names, its arguments in
+/// the run value form, before any snapshot is read.
+fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::spine::Call> {
+    // FR-650: a `value` is a JSON integer in the signed 64-bit range or a JSON
+    // object; the run reads it against its parameter's declared type.
+    let wire_arguments = call
+        .arguments
+        .iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            if !(argument.value.is_object() || argument.value.as_i64().is_some()) {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("/call/arguments/{index}/value"),
+                    reason: "expected a JSON integer in the signed 64-bit range or an object"
+                        .to_owned(),
+                });
+            }
+            Ok(fsl_replay::spine::WireArgument {
+                parameter: argument.parameter.clone(),
+                value: argument.value.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut spine_call = fsl_replay::spine::Call::new(
+        call.function.clone(),
+        Vec::new(),
+        call_accounting(&call.accounting),
+        request.limits.supplied.unwrap_or_default(),
+    );
+    spine_call.wire_arguments = wire_arguments;
+    spine_call.live_occurrences = call.evaluation.live_occurrences();
+    Ok(spine_call)
+}
+
+/// FR-100: the request's `program`; a request selecting neither `program`
+/// nor `package` refuses `invalid-request` naming `program`.
+fn required_program(request: &wire::Request) -> Result<&wire::Program> {
+    request
+        .program
+        .as_ref()
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program".to_owned(),
+            reason: "a request selects exactly one of program and package".to_owned(),
+        })
+}
+
 /// The package name a program compiles under: its source identity's
 /// `identity` label.
 fn package_name(identity: &fsl_foundation::source::SourceIdentity) -> String {
@@ -3823,6 +4137,75 @@ mod tests {
             ))),
             sources: crate::Sources::default(),
         }
+    }
+
+    #[test]
+    #[trace("FR-862-AC-3", "TC-2443")]
+    fn replay_row_output_failure_projects_internal_failure_without_partial_result() {
+        let codec = fsl_replay::CauseCodecError::Empty("result row");
+        let error = RunError {
+            cause: RunCause::ReplayOutput {
+                outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(1, &codec),
+                error: codec,
+            },
+            sources: crate::Sources::default(),
+        };
+        let outcome: serde_json::Value = serde_json::from_slice(
+            &error
+                .outcome_document(fsl_replay::Operation::Replay)
+                .to_bytes()
+                .expect("failure outcome JSON"),
+        )
+        .expect("outcome document");
+        assert_eq!(error.category().exit_code(), 30);
+        assert_eq!(outcome["category"], "internal-failure");
+        assert_eq!(outcome["last_stage"], serde_json::Value::Null);
+        assert_eq!(outcome["result"], serde_json::Value::Null);
+        assert_eq!(outcome["diagnostics"][0]["cause"], "output-failure");
+        assert!(
+            outcome["diagnostics"][0]["message"]
+                .as_str()
+                .expect("diagnostic message")
+                .contains("row at position 1"),
+            "{outcome}"
+        );
+        let command = error.value().expect("command error document");
+        assert_eq!(command["stage"], "output");
+        assert_eq!(command["code"], "output-failure");
+    }
+
+    /// A package the strict reader refuses, found on the analyze route, stops
+    /// the run with the reader's own code, cause and pointer and that code's
+    /// exit, never as a runtime invariant (exit 30).
+    #[test]
+    #[trace("FR-286-AC-2")]
+    fn a_refused_analyze_package_keeps_its_own_code_cause_pointer_and_exit() {
+        let error = RunError {
+            cause: RunCause::AnalyzeRefused(Box::new(
+                fsl_analyze::analyze::AnalyzeRefusal::Package(
+                    fsl_package::PackageAdmissionRefusal {
+                        code: Code::InvalidPackage,
+                        cause: Some("invalid-value".to_owned()),
+                        pointer: Some("/claim_names/2".to_owned()),
+                        identity: None,
+                    },
+                ),
+            )),
+            sources: crate::Sources::default(),
+        };
+        let outcome: serde_json::Value = serde_json::from_slice(
+            &error
+                .outcome_document(fsl_replay::Operation::Analyze)
+                .to_bytes()
+                .expect("refusal outcome JSON"),
+        )
+        .expect("outcome document");
+        assert_eq!(error.cause.code(), Code::InvalidPackage);
+        assert_eq!(error.category().exit_code(), 20);
+        let diagnostic = &outcome["diagnostics"][0];
+        assert_eq!(diagnostic["code"], "invalid_package");
+        assert_eq!(diagnostic["cause"], "invalid-value");
+        assert_eq!(diagnostic["details"]["path"], "/claim_names/2");
     }
 
     /// FR-100 "Internal failure at S6a" (FND-013): the `CheckedInvariant`

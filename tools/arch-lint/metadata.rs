@@ -207,6 +207,129 @@ mod tests {
     use ix_trace_rs::trace;
     use serde_json::json;
 
+    fn aliased_backend_dependency(package: &str, source: &str, alias: &str, kind: Value) -> Value {
+        let dependency = json!({
+            "name": alias,
+            "pkg": "dependency 0.1.0",
+            "dep_kinds": [{"kind": kind, "target": "cfg(target_os = \"none\")"}]
+        });
+        json!({
+            "packages": [
+                {"id": "ir 0.1.0", "name": "filament-contract-ir", "source": null},
+                {"id": "rt 0.1.0", "name": "filament-contract-runtime", "source": null},
+                {"id": "cg 0.1.0", "name": "filament-contract-codegen", "source": null},
+                {"id": "dependency 0.1.0", "name": package, "source": source}
+            ],
+            "resolve": {"nodes": [
+                {"id": "ir 0.1.0", "deps": [dependency]},
+                {"id": "rt 0.1.0", "deps": [dependency]},
+                {"id": "cg 0.1.0", "deps": [dependency]},
+                {"id": "dependency 0.1.0", "deps": []}
+            ]}
+        })
+    }
+
+    /// Cargo dependency aliases and target conditions cannot change the
+    /// repository that owns the resolved package.
+    #[trace("FR-356-AC-1")]
+    #[test]
+    fn renamed_target_specific_walker_dependencies_remain_outside_the_fsl_direction_graph() {
+        for kind in [Value::Null, json!("build"), json!("dev")] {
+            let document = aliased_backend_dependency(
+                "filament-walk",
+                "git+https://github.com/agent-ix/filament-walk?tag=v0.1.1",
+                "nested_walker",
+                kind,
+            );
+            let edges = parse_edges(&document).expect("resolved metadata");
+            assert!(
+                edges.is_empty(),
+                "the shared walker adds no FSL edge: {edges:?}"
+            );
+            assert!(crate::graph::check(&edges).is_clean());
+        }
+    }
+
+    /// An FSL dependency renamed to look like the shared walker still names
+    /// its real crate in every backend's FB-05 refusal.
+    #[trace("FR-356-AC-1")]
+    #[test]
+    fn a_walker_alias_cannot_hide_a_target_specific_fsl_dependency() {
+        for (kind, expected_kind) in [
+            (Value::Null, EdgeKind::Normal),
+            (json!("build"), EdgeKind::Normal),
+            (json!("dev"), EdgeKind::Dev),
+        ] {
+            let document = aliased_backend_dependency(
+                "fsl-semantics",
+                "git+https://github.com/agent-ix/filament-spec-language?branch=main",
+                "filament_walk",
+                kind,
+            );
+            let expected: Vec<_> = [Repo::Ir, Repo::Rt, Repo::Cg]
+                .into_iter()
+                .map(|from| Edge {
+                    from,
+                    to: Repo::Fsl,
+                    kind: expected_kind,
+                    via_crate: "fsl-semantics".to_owned(),
+                })
+                .collect();
+            let edges = parse_edges(&document).expect("resolved metadata");
+            assert_eq!(edges, expected);
+            let report = crate::graph::check(&edges);
+            let refused: Vec<_> = report
+                .fb05
+                .into_iter()
+                .map(|finding| finding.edge)
+                .collect();
+            assert_eq!(refused, expected);
+            assert!(report.fb11.is_empty());
+        }
+    }
+
+    /// The normal CG facade exceptions use the resolved package name, not
+    /// the dependency alias; their dev edges remain forbidden.
+    #[trace("FR-356-AC-1")]
+    #[test]
+    fn renamed_facades_keep_only_the_codegen_normal_edge_exception() {
+        for package in ["fsl-replay", "fsl-package"] {
+            for (kind, expected_kind, refused_from) in [
+                (Value::Null, EdgeKind::Normal, vec![Repo::Ir, Repo::Rt]),
+                (
+                    json!("dev"),
+                    EdgeKind::Dev,
+                    vec![Repo::Ir, Repo::Rt, Repo::Cg],
+                ),
+            ] {
+                let document = aliased_backend_dependency(
+                    package,
+                    "git+https://github.com/agent-ix/filament-spec-language?branch=main",
+                    "filament_walk",
+                    kind,
+                );
+                let edges = parse_edges(&document).expect("resolved metadata");
+                let report = crate::graph::check(&edges);
+                let refused: Vec<_> = report
+                    .fb05
+                    .into_iter()
+                    .map(|finding| finding.edge)
+                    .collect();
+                let expected: Vec<_> = refused_from
+                    .into_iter()
+                    .map(|from| Edge {
+                        from,
+                        to: Repo::Fsl,
+                        kind: expected_kind,
+                        via_crate: package.to_owned(),
+                    })
+                    .collect();
+                assert_eq!(refused, expected, "resolved package {package}");
+                assert!(report.fb11.is_empty());
+            }
+        }
+    }
+
     /// tc_arch_lint_metadata_001: a minimal synthetic `cargo metadata`
     /// document with a synthetic IR -> FSL normal edge, the edge the FB-05
     /// check exercises, is parsed into exactly that edge.

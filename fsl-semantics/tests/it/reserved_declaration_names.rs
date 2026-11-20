@@ -36,7 +36,11 @@ fn checks(profile: &str, body: &str) {
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("{text}: assembly: {refusal:?}"))
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
 }
 

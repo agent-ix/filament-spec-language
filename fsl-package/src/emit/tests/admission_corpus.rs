@@ -121,11 +121,19 @@ enum Fixture {
     RandomParameter,
     /// TC-2062: a workload over the ConfigVersion domain package.
     Workload,
+    /// TC-2062: a `discrete` delay on a `time dense` ConfigVersion unit.
+    Delay,
+    /// TC-2062: a reward over the ConfigVersion domain package.
+    Reward,
+    /// FR-093-AC-19: a function over a domain-package object type with
+    /// `Bytes` and `JsonObject` fields, the native scalars no FSL source type
+    /// spells ([`opaque_scalar_unit`]).
+    OpaqueScalars,
 }
 
 impl Fixture {
     /// Every fixture; each must back at least one row.
-    const ALL: [Self; 33] = [
+    const ALL: [Self; 36] = [
         Self::Tc416Functions,
         Self::RecursiveF,
         Self::Tree,
@@ -159,6 +167,9 @@ impl Fixture {
         Self::MapRecord,
         Self::RandomParameter,
         Self::Workload,
+        Self::Delay,
+        Self::Reward,
+        Self::OpaqueScalars,
     ];
 }
 
@@ -458,6 +469,18 @@ impl Fixture {
                 super::probabilistic::workload_package("weight ConfigVersion::attemptUpdate = 1;"),
                 vec![config_version_unit::DOMAIN_PACKAGE.as_bytes()],
             ),
+            Self::Delay => {
+                let (document, package) = super::probabilistic::delay_package(
+                    "delay ConfigVersion::attemptUpdate ~ discrete { 1 ms: 9, 3 ms: 1 };",
+                );
+                Emitted::placed_owned(package, vec![document])
+            }
+            Self::Reward => Emitted::placed(
+                super::probabilistic::reward_package(
+                    "reward cost on ConfigVersion::attemptUpdate = 1;",
+                ),
+                vec![config_version_unit::DOMAIN_PACKAGE.as_bytes()],
+            ),
             Self::ExtentRecords => whole(package_declaring(
                 TypeEnvironment::new(records(), []).expect("FR-143 admits the records"),
             )),
@@ -471,6 +494,13 @@ impl Fixture {
             Self::CyclicEquality => text(CYCLIC_EQUALITY),
             Self::NativeScalars => text(NATIVE_SCALARS),
             Self::UnionNodes => text(UNION_NODES),
+            Self::OpaqueScalars => {
+                let (unit, document) = opaque_scalar_unit();
+                Emitted::placed_owned(
+                    modelled_with_documents(&unit, std::slice::from_ref(&document), Vec::new()),
+                    vec![document],
+                )
+            }
             Self::VariantType => {
                 let document = VARIANT_DOCUMENT.as_slice();
                 let unit = format!(
@@ -572,6 +602,53 @@ fn with_state_machine(base: &[u8], from: &str, package: &str) -> Vec<u8> {
     crate::emit::tests::wire_bytes(&document).expect("the state-machine model serializes")
 }
 
+/// FR-093-AC-19: no FSL source type spells `Bytes` or `JsonObject`, but a
+/// domain package's object type may declare fields of them. A model
+/// declaration node carries no field types, but an expression that reads such
+/// a field has its type, which lowering writes as its bare scalar node. The
+/// spine fixture's object package under `acme/opaque`, its first type given
+/// a `Bytes` and a `JsonObject` field, with a unit whose function binds both
+/// fields.
+fn opaque_scalar_unit() -> (String, Vec<u8>) {
+    let package = "acme/opaque";
+    let base = String::from_utf8(SPINE_MODEL_DOCUMENT.to_vec()).expect("fixture UTF-8");
+    let mut document: serde_json::Value =
+        serde_json::from_str(&base.replace("acme/orders", package))
+            .expect("the spine model document is JSON");
+    let owner = document["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|declared| {
+            declared["fields"]
+                .as_array()
+                .is_some_and(|fields| !fields.is_empty())
+        })
+        .expect("a type with a field");
+    let name = owner["displayName"]
+        .as_str()
+        .expect("a display name")
+        .to_owned();
+    let fields = owner["fields"].as_array_mut().expect("fields");
+    let template = fields[0].clone();
+    for (field, native) in [("payload", "Bytes"), ("metadata", "JsonObject")] {
+        let mut declared = template.clone();
+        let identity = format!("ix://{package}/{name}/{field}");
+        declared["identity"] = json!(identity);
+        declared["name"] = json!(field);
+        declared["typeRef"] = json!(format!("ix://filament/native/{native}"));
+        declared["origin"]["generated"]["inputIdentities"] = json!([identity]);
+        fields.push(declared);
+    }
+    let unit = format!(
+        "{COMPLETE_V1_HEADER}model M = {package:?};\n\
+         function opaque using v(o: M::{name}): Boolean pure {{ let p = deref(o).payload in let m = deref(o).metadata in true }}\n"
+    );
+    let document =
+        crate::emit::tests::wire_bytes(&document).expect("the opaque-scalar model serializes");
+    (unit, document)
+}
+
 /// `unit` assembled against `document`, with `functions` added, checked
 /// and linked.
 fn modelled(
@@ -585,7 +662,11 @@ fn modelled(
     declarations.functions.extend(functions);
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks"),
     )
 }
@@ -602,7 +683,11 @@ fn modelled_with_documents(
     declarations.functions.extend(functions);
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks"),
     )
 }
@@ -643,6 +728,8 @@ fn rows() -> Vec<Row> {
         row(K::ScalarType(S::String), F::NativeScalars),
         row(K::ScalarType(S::Uuid), F::NativeScalars),
         row(K::ScalarType(S::Timestamp), F::NativeScalars),
+        row(K::ScalarType(S::Bytes), F::OpaqueScalars),
+        row(K::ScalarType(S::JsonObject), F::OpaqueScalars),
         row(K::ScalarType(S::Enum), F::OrderedEnum),
         row(K::ScalarType(S::Dimension), F::QuantityAndT),
         row(K::ScalarType(S::Unit), F::QuantityAndT),
@@ -737,6 +824,11 @@ fn rows() -> Vec<Row> {
             F::RandomParameter,
         ),
         row(K::Probabilistic(ProbabilisticForm::Workload), F::Workload),
+        row(
+            K::Probabilistic(ProbabilisticForm::DelayDistribution),
+            F::Delay,
+        ),
+        row(K::Probabilistic(ProbabilisticForm::Reward), F::Reward),
     ]
 }
 
@@ -797,14 +889,6 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
         (
             K::Claim(ClaimForm::ProbabilisticClaim),
             "lowering builds no probabilistic claim node yet",
-        ),
-        (
-            K::Probabilistic(ProbabilisticForm::Reward),
-            "FSL's emitter refuses checked rewards as ProbabilisticModelNotEmitted (QSL-2440)",
-        ),
-        (
-            K::Probabilistic(ProbabilisticForm::DelayDistribution),
-            "FSL's emitter refuses checked delay distributions as ProbabilisticModelNotEmitted (QSL-2439)",
         ),
         (
             K::ScalarType(ScalarTypeForm::CarriedQuantity),
@@ -1011,6 +1095,13 @@ fn every_emitted_node_family_is_admitted() {
         ))
         .or_default()
         .push("not emitted: FSL lowers no dimension-equivalence node".to_owned());
+    // FSL lowers no finite-trace population node.
+    classified
+        .entry(CheckedNodeKind::BoundedDomain(
+            BoundedDomainForm::FiniteTracePopulation,
+        ))
+        .or_default()
+        .push("not emitted: FSL lowers no finite-trace population node".to_owned());
     // IR-1059: the tuple value type is an IR kind FSL's emitter does not write.
     classified
         .entry(CheckedNodeKind::Model(ModelForm::TupleValueType))
@@ -1201,8 +1292,9 @@ fn a_row_empty_refinement_identity_excludes_its_source_region() {
     assert_eq!(first_node["semantic_type"], concrete_root);
     assert_eq!(first_node["body"]["abstract"], abstract_root);
     assert_eq!(first_node["dependencies"], json!([abstract_root]));
-    // FSpec FR-375-AC-20: the typed body writes exactly the nine closed
-    // members, every row array present and empty, and no optional member.
+    // FSpec FR-375-AC-20 and FR-322-AC-200: the typed body writes exactly the
+    // ten closed members (the declared `name` among them), every row array
+    // present and empty, and no optional member.
     let mut members: Vec<&str> = first_node["body"]
         .as_object()
         .expect("an object body")
@@ -1217,6 +1309,7 @@ fn a_row_empty_refinement_identity_excludes_its_source_region() {
             "assume",
             "ensure",
             "histories",
+            "name",
             "objects",
             "populations",
             "profile",
@@ -1516,7 +1609,11 @@ fn package_with_internals(
         declarations = declarations.with_refinement_internals(value);
     }
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{unit}: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -1723,7 +1820,11 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     .expect("dependency assembles");
     let dependency = std::sync::Arc::new(CheckedPackage::link(
         dependency_declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("dependency checks"),
     ));
     let dependency_emission = emit_checked(&dependency).expect("dependency emits");
@@ -1795,7 +1896,11 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         .with_refinement_internals(json!([{"refinement":"R","internal":["Spec::Twice::Done"]}]));
     let root = CheckedPackage::link_with(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("dependency protocol refinement checks"),
         vec![crate::checked::Import {
             identity: library.clone(),
@@ -2018,7 +2123,11 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     )
     .expect("wrong-owner dependency assembles");
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("a dependency protocol over another model is refused");
     assert!(
         refusals.iter().any(|refusal| matches!(
@@ -2061,7 +2170,11 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         )
         .expect("missing-clause dependency assembles");
         let refusals = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect_err("an unknown dependency clause or type refuses");
         assert!(refusals.iter().any(|refusal| matches!(
             &refusal.cause,
@@ -2118,7 +2231,11 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
             Vec::new(),
         )
         .expect("dependency assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("dependency checks"),
     ));
     let dependency_emission = emit_checked(&dependency).expect("dependency emits");
@@ -2178,7 +2295,11 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
             }],
         )
         .expect("root assembles");
-        declarations.check(CheckMode::Linked, CheckingLimits::default())
+        declarations.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
     };
     let graph = check(&unit("node Spec::Twice::a1(self)")).expect("the dependency node row checks");
     let checked = graph.refinements().first().expect("one checked refinement");
@@ -3002,7 +3123,11 @@ fn refused_rows(rows: &str, operations: &[&str]) -> Vec<fsl_semantics::check::Ch
         fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map(|_| ())
         .expect_err("the refinement is not emitted")
         .into_iter()

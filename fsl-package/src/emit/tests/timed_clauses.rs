@@ -46,7 +46,11 @@ fn checked(
     let unit = clocked_unit(body);
     let checked = assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default());
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        );
     (unit, checked)
 }
 
@@ -1076,7 +1080,11 @@ fn a_point_qualified_clock_clause_refuses_at_the_clause() {
         },
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .expect_err("a point-qualified clock clause is not written yet");
     let found = refusals.iter().find_map(|refusal| match &refusal.cause {
         fsl_semantics::check::CheckCause::Temporal(cause) => match &**cause {
@@ -1566,7 +1574,11 @@ fn a_point_bound_clock_clause_names_its_point_anchor() {
         },
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("the point-bound clause checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     let wire = wire(&emission);
@@ -1822,4 +1834,120 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
     );
     read_presence_package(&document, emission.package.bytes(), &wire)
         .unwrap_or_else(|failure| panic!("I2 admits the slot domain: {failure}"));
+}
+
+/// FSpec FR-772-AC-2: each malformed use of the slot-domain node is refused
+/// by the I2 read at its stated locus: a wrong argument count, a first
+/// argument that is not a `clock_place` node, a binder not typed by the
+/// slot domain, the node as a non-quantifier operand
+/// (`quantifier_domain_only`), and a path that embeds a `node_id` object.
+#[trace("FSpec-TC-1862", "FSpec-FR-772-AC-2")]
+#[test]
+#[ignore = "QSL-2144: the presence quantifier's first operand is not written as the slot-domain node yet, so no slot-domain node can be mutated"]
+fn a_malformed_slot_domain_is_refused_at_its_locus() {
+    let document = slot_presence_document();
+    let body = "pre HasElement using v on Config::ConfigVersion::attemptUpdate { \
+                self.x >= 1 ms and forall(e in self.q: present(e)) }\n";
+    let (_, checked) = checked(&document, body);
+    let graph = checked.unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let base = wire(&emission);
+    let index_of = |wire: &Value, identity: &str| {
+        nodes(wire)
+            .iter()
+            .position(|node| node["body"]["operation"]["identity"] == identity)
+            .unwrap_or_else(|| panic!("a {identity} node"))
+    };
+    let domain = index_of(&base, "filament.op.option.slots");
+    let quantifier = index_of(&base, "filament.op.collection.forall");
+    let domain_id = base["semantic_graph"]["nodes"][domain]["node_id"].clone();
+    assert_eq!(
+        base["semantic_graph"]["nodes"][quantifier]["body"]["arguments"][0]["target"],
+        domain_id,
+        "the quantifier's operand 0 is the slot-domain node"
+    );
+    let boolean = base["semantic_graph"]["nodes"][quantifier]["body"]["result_type"].clone();
+    let refused = |mutate: &dyn Fn(&mut Value), cause: &str, locus: &str| {
+        let mut wire = base.clone();
+        mutate(&mut wire);
+        let bytes = crate::emit::tests::wire_bytes(&wire).expect("JSON");
+        let failure = read_presence_package(&document, &bytes, &wire)
+            .expect_err("the malformed slot domain is refused");
+        assert!(failure.contains(cause), "{cause}: {failure}");
+        assert!(failure.contains(locus), "{locus}: {failure}");
+    };
+    let arguments = |wire: &mut Value, node: usize| -> Vec<Value> {
+        wire["semantic_graph"]["nodes"][node]["body"]["arguments"]
+            .as_array()
+            .expect("arguments")
+            .clone()
+    };
+    let set_arguments = |wire: &mut Value, node: usize, values: Vec<Value>| {
+        wire["semantic_graph"]["nodes"][node]["body"]["arguments"] = Value::Array(values);
+    };
+
+    // An extra slot term for a collection directly under a field.
+    refused(
+        &|wire| {
+            let mut values = arguments(wire, domain);
+            values.push(values[1].clone());
+            set_arguments(wire, domain, values);
+        },
+        "operator-ineligible",
+        &format!("/semantic_graph/nodes/{domain}/body/arguments"),
+    );
+    // No owner term.
+    refused(
+        &|wire| {
+            let mut values = arguments(wire, domain);
+            values.remove(1);
+            set_arguments(wire, domain, values);
+        },
+        "operator-ineligible",
+        &format!("/semantic_graph/nodes/{domain}/body/arguments"),
+    );
+    // A first argument that is a scalar_type node, not a clock_place node.
+    refused(
+        &|wire| {
+            wire["semantic_graph"]["nodes"][domain]["body"]["arguments"][0]["target"] =
+                boolean.clone();
+        },
+        "operator-ineligible",
+        &format!("/semantic_graph/nodes/{domain}/body/arguments/0"),
+    );
+    // A binder typed Boolean instead of the slot domain's Integer.
+    refused(
+        &|wire| {
+            let quantified = wire["semantic_graph"]["nodes"][quantifier].to_string();
+            let parameter = nodes(wire)
+                .iter()
+                .position(|node| {
+                    node["semantic_form"] == "parameter"
+                        && quantified.contains(&node["node_id"].to_string())
+                })
+                .expect("the binder parameter the quantifier names");
+            wire["semantic_graph"]["nodes"][parameter]["semantic_type"] = boolean.clone();
+        },
+        "type-mismatch",
+        &format!("/semantic_graph/nodes/{quantifier}"),
+    );
+    // The slot domain as operand 0 of count: quantifier_domain_only.
+    refused(
+        &|wire| {
+            wire["semantic_graph"]["nodes"][quantifier]["body"]["operation"]["identity"] =
+                json!("filament.op.collection.count");
+        },
+        "operator-ineligible",
+        &format!("/semantic_graph/nodes/{quantifier}/body/arguments/0"),
+    );
+    // A path that embeds the clock_place node_id object.
+    refused(
+        &|wire| {
+            let place = wire["semantic_graph"]["nodes"][domain]["body"]["arguments"][0]["target"]
+                .clone();
+            wire["semantic_graph"]["nodes"][domain]["node_id"]["path"][2] = place;
+        },
+        "malformed_wire",
+        &format!("/semantic_graph/nodes/{domain}/node_id/path/2"),
+    );
 }

@@ -158,7 +158,11 @@ fn linked(types: TypeEnvironment, functions: Vec<FunctionDeclaration>) -> Checke
     declarations.ieee_profile = Some(ieee_profile());
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the fixture functions check"),
     )
 }
@@ -230,7 +234,11 @@ fn decimal_sum() -> CheckedPackage {
     )];
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the fixture functions check"),
     )
 }
@@ -504,7 +512,11 @@ fn float_sum() -> Result<CheckedPackage, Vec<CheckRefusal>> {
         ),
     )];
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map(CheckedPackage::link)
 }
 
@@ -529,4 +541,39 @@ fn a_float_sum_is_emitted_and_read_back_by_the_ir_reader() {
         matches!(read_back(&emission), Read::Verified { .. }),
         "IR's v2 reader admits the float sum"
     );
+}
+
+/// FR-390: the package reader types a float parameter from its
+/// `float_rounding` node, and IR's reader admits that node only with a
+/// catalogued rounding mode it binds, so a package whose mode is
+/// uncatalogued or whose binding is missing is refused at admission, before the reader's
+/// named faults (`reader-float-rounding-*`) could be reached.
+#[test]
+fn a_malformed_float_rounding_node_is_refused_at_admission() {
+    let emission = emit(&float_add("nearest-even"));
+    let evidence = read_evidence(&emission);
+    assert!(matches!(
+        read_with(&emission, &evidence),
+        Read::Verified { .. }
+    ));
+    let edits: [(&str, fn(&mut Value)); 2] = [
+        ("an uncatalogued rounding mode", |node| {
+            node["body"]["members"][0]["value"]["value"] = json!("sideways");
+        }),
+        ("a missing rounding binding", |node| {
+            node["body"]["members"] = json!([]);
+        }),
+    ];
+    for (name, edit) in edits {
+        let mut wire = wire(&emission);
+        let node = wire["semantic_graph"]["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|node| node["semantic_form"] == "float_rounding")
+            .expect("the float rounding node is emitted");
+        edit(node);
+        let read = read_v2(&jcs(&wire), library(), V2ReadLimits::fixture(), &evidence);
+        assert!(!matches!(read, Read::Verified { .. }), "{name}: {read:?}");
+    }
 }

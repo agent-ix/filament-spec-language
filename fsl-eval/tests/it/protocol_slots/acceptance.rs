@@ -101,7 +101,11 @@ fn fixture_named(
                 Vec::new(),
             )
             .unwrap()
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("TC-1070's legitimate protocol package checks"),
         ),
         view,

@@ -803,7 +803,11 @@ pub(super) fn map_record_package() -> CheckedPackage {
     declarations.package_name = "pkg".to_owned();
     declarations.types = TypeEnvironment::new([record], []).expect("R is admitted");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }

@@ -28,6 +28,7 @@
 
 use std::collections::BTreeMap;
 
+use filament_checked::key::DeclarationKey;
 use filament_exact::{
     DecimalType, Identifier, IllTypedCause, Integer, IntegerInterval, Meter, NodeKey, Quantity,
     Rational, RationalDomain, RoundingMode, UnitId, Value, ValueType,
@@ -97,6 +98,14 @@ pub enum ProbScheduler {
     Every,
 }
 
+/// A claim's checked scheduler, its fairness set and the declaring type of each
+/// fairness operation.
+type SchedulerCheck = (
+    ProbScheduler,
+    Vec<FairnessConstraint>,
+    Vec<Option<DeclarationKey>>,
+);
+
 /// A probability or measure bound, `>= c` or `<= c`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Bound {
@@ -129,6 +138,8 @@ impl Bound {
 pub struct CheckedPredicate {
     body: CheckedBody,
     slots: usize,
+    /// The name each evaluation slot was bound under.
+    slot_names: Vec<String>,
     /// The predicate's normal form (FR-174), which the claim's normal form
     /// binds.
     normal_form: Vec<u8>,
@@ -144,6 +155,11 @@ impl CheckedPredicate {
     /// local the predicate binds.
     pub fn slots(&self) -> usize {
         self.slots
+    }
+
+    /// The name each evaluation slot was bound under.
+    pub(crate) fn slot_names(&self) -> &[String] {
+        &self.slot_names
     }
 }
 
@@ -175,6 +191,11 @@ impl CheckedTemporalFormula {
     /// The predicate of the `holds` atom at arena index `node`.
     pub fn condition(&self, node: usize) -> Option<&CheckedPredicate> {
         self.conditions.get(&node)
+    }
+
+    /// Every `holds` condition by its formula node's arena index.
+    pub(crate) fn conditions(&self) -> &BTreeMap<usize, CheckedPredicate> {
+        &self.conditions
     }
 }
 
@@ -396,6 +417,10 @@ pub struct CheckedProbabilisticClaim {
     /// The fairness set of a claim `under every scheduler`; empty under a
     /// workload (ADR-024 PM-7).
     pub fairness: Vec<FairnessConstraint>,
+    /// The declaring type of each of [`Self::fairness`]'s operations, in the
+    /// same order: the identity of its `model` node, `None` when the type has
+    /// none (FSpec FR-640 "Probabilistic claim node").
+    pub(crate) fairness_declaring: Vec<Option<DeclarationKey>>,
     /// The activation, including the trigger binder and its checked guard.
     pub activation: ClaimActivation,
     /// The form.
@@ -414,6 +439,12 @@ pub struct CheckedProbabilisticClaim {
     /// The `claim` occurrence of the claim's `claim`/`probabilistic_claim`
     /// node, set when a package is assembled (FR-498 "Outputs").
     pub(crate) occurrence: Option<OccurrenceKey>,
+    /// The nominal node of the subject's model time unit, when the subject
+    /// is timed (FSpec FR-640 rule 7).
+    pub(crate) time_unit: Option<NodeKey>,
+    /// What the claim states, as lowering wrote it into the claim node's
+    /// `form`, `over`, `activation` and `confidence` bindings.
+    pub(crate) statement: Option<super::node_key::Statement>,
 }
 
 /// How a probabilistic claim is instantiated (FR-186).
@@ -422,6 +453,7 @@ pub enum ClaimActivation {
     /// `on origin`: one claim instance at the first position.
     Origin,
     /// `on each`: one instance for every value of the admitted population.
+    #[non_exhaustive]
     Each {
         /// The activation binder's name.
         binder: String,
@@ -431,6 +463,8 @@ pub enum ClaimActivation {
         guard: Option<Box<CheckedBody>>,
         /// The guard's evaluation slot count.
         guard_slots: usize,
+        /// The name each slot of the guard was bound under.
+        guard_slot_names: Vec<String>,
         /// The guard's stable normal-form encoding.
         guard_normal_form: Option<Vec<u8>>,
     },
@@ -483,9 +517,16 @@ impl CheckedProbabilisticClaim {
         .with_evidence(evidence)
     }
 
+    /// What the claim states in its `form`, `over`, `activation` and
+    /// `confidence` bindings, once lowered.
+    #[must_use]
+    pub fn statement(&self) -> Option<&super::node_key::Statement> {
+        self.statement.as_ref()
+    }
+
     /// The location of the whole claim declaration: its `claim`
     /// occurrence's site.
-    pub(crate) fn declaration_location(&self) -> Location {
+    pub fn declaration_location(&self) -> Location {
         site_location(self.declared, Site::Declaration)
     }
 
@@ -745,7 +786,30 @@ impl Pass<'_, '_> {
         }
         let mut refusals = Vec::new();
         match self.resolve_claim(index, form, cx, nodes, &mut refusals) {
-            Some(checked) => self.model.claims.push(checked),
+            Some(checked) => {
+                // FR-940-AC-9: a claim name names one declaration, so a
+                // second probabilistic claim with an earlier one's name is
+                // refused at the second, naming both.
+                if let Some(earlier) = self
+                    .model
+                    .claims
+                    .iter()
+                    .find(|earlier| earlier.name == checked.name)
+                {
+                    self.refusals.push(CheckRefusal {
+                        location: checked.declaration_location(),
+                        cause: CheckCause::AmbiguousName {
+                            name: checked.name.clone(),
+                            loci: vec![
+                                earlier.declaration_location(),
+                                checked.declaration_location(),
+                            ],
+                        },
+                    });
+                    return;
+                }
+                self.model.claims.push(checked);
+            }
             None => self.refusals.extend(refusals),
         }
     }
@@ -773,7 +837,7 @@ impl Pass<'_, '_> {
                 span: form.profile.span,
             }));
         }
-        let scheduler = keep(refusals, self.scheduler(form, &subject));
+        let scheduler = keep(refusals, self.scheduler(index, form, &subject));
         let over = keep(refusals, self.over(form))?;
         let mut claim = ClaimCx {
             index,
@@ -791,7 +855,7 @@ impl Pass<'_, '_> {
         claim.activation = activation.as_ref();
         let confidence = keep(refusals, self.confidence(&claim));
         let body = self.form(&claim, profile.as_ref(), cx, nodes, refusals);
-        let (scheduler, fairness) = scheduler?;
+        let (scheduler, fairness, fairness_declaring) = scheduler?;
         let (profile, form_checked) = (profile?, body?);
         let confidence = confidence?;
         if !refusals.is_empty() {
@@ -808,6 +872,11 @@ impl Pass<'_, '_> {
                 confidence.as_ref(),
             ),
         )?;
+        let time_unit = self
+            .input
+            .time_source(&subject.alias, &subject.package.identity)
+            .and_then(|source| self.input.time_units.target(&source.unit).ok().flatten())
+            .map(|target| target.unit());
         Some(CheckedProbabilisticClaim {
             name: form.name.name.clone(),
             span: form.span,
@@ -815,6 +884,7 @@ impl Pass<'_, '_> {
             profile,
             scheduler,
             fairness,
+            fairness_declaring,
             activation: activation?,
             form: form_checked,
             confidence,
@@ -823,6 +893,8 @@ impl Pass<'_, '_> {
             declared: index,
             content: form.content.clone(),
             occurrence: None,
+            time_unit,
+            statement: None,
         })
     }
 
@@ -875,6 +947,7 @@ impl Pass<'_, '_> {
                 value_type: Box::new(value_type),
                 guard: None,
                 guard_slots: 0,
+                guard_slot_names: Vec::new(),
                 guard_normal_form: None,
             });
         };
@@ -911,6 +984,7 @@ impl Pass<'_, '_> {
             ));
         }
         let slots = typer.slots();
+        let guard_slot_names = typer.slot_names().to_vec();
         let observations = Observations::of(body.root(), Observation::Current, bound.len());
         Definedness::new(
             bound.len(),
@@ -928,6 +1002,7 @@ impl Pass<'_, '_> {
             )),
             guard: Some(Box::new(body)),
             guard_slots: slots,
+            guard_slot_names,
         })
     }
 
@@ -995,9 +1070,10 @@ impl Pass<'_, '_> {
     /// subject's model, or `every scheduler` with its fairness set.
     fn scheduler(
         &self,
+        index: usize,
         form: &ProbabilisticForm,
         subject: &ModelSubjectRef,
-    ) -> Result<(ProbScheduler, Vec<FairnessConstraint>), CheckRefusal> {
+    ) -> Result<SchedulerCheck, CheckRefusal> {
         let claim = form.name.name.clone();
         match &form.scheduler {
             SchedulerForm::Workload(name) => {
@@ -1016,16 +1092,22 @@ impl Pass<'_, '_> {
                         span: name.span,
                     }));
                 }
-                Ok((ProbScheduler::Workload(name.name.clone()), Vec::new()))
+                Ok((
+                    ProbScheduler::Workload(name.name.clone()),
+                    Vec::new(),
+                    Vec::new(),
+                ))
             }
             SchedulerForm::Every { fairness } => {
                 let mut set: Vec<FairnessConstraint> = Vec::new();
+                let mut declaring: Vec<Option<DeclarationKey>> = Vec::new();
                 let mut refused = None;
                 for written in fairness {
-                    match self
-                        .input
-                        .operation(&written.operation, Some(&subject.alias))
-                    {
+                    match self.input.operation(
+                        &written.operation,
+                        Some(&subject.alias),
+                        self.input.seen_by(index),
+                    ) {
                         Ok((operation, _)) => {
                             let constraint = checked_constraint(
                                 written,
@@ -1036,6 +1118,7 @@ impl Pass<'_, '_> {
                             );
                             if !set.contains(&constraint) {
                                 set.push(constraint);
+                                declaring.push(operation.declaring_key().cloned());
                             }
                         }
                         Err(fault) => {
@@ -1048,7 +1131,7 @@ impl Pass<'_, '_> {
                 }
                 match refused {
                     Some(refused) => Err(refused),
-                    None => Ok((ProbScheduler::Every, set)),
+                    None => Ok((ProbScheduler::Every, set, declaring)),
                 }
             }
         }
@@ -1409,6 +1492,30 @@ impl Pass<'_, '_> {
         refusals: &mut Vec<CheckRefusal>,
     ) -> Option<(CheckedTemporalFormula, u64, Option<Rational>)> {
         let mut causes: Vec<TemporalCause> = Vec::new();
+        if timed_reader.is_some() {
+            for (_, node) in formula.iter() {
+                let fsl_forms::TemporalNodeForm::Operator(operator) = node else {
+                    continue;
+                };
+                match &operator.interval {
+                    None => causes.push(TemporalCause::MissingInterval {
+                        span: operator.operator_span,
+                    }),
+                    Some(fsl_forms::OperatorInterval::Timed(interval))
+                        if matches!(&interval.upper, fsl_forms::TimedUpper::Open) =>
+                    {
+                        causes.push(TemporalCause::OpenInterval {
+                            span: interval.span,
+                        })
+                    }
+                    _ => {}
+                }
+            }
+            if !causes.is_empty() {
+                refusals.extend(causes.into_iter().map(temporal_refusal));
+                return None;
+            }
+        }
         let reading = match timed_reader {
             Some(reader) => IntervalReading::Timed(reader),
             None => IntervalReading::Steps { bounded: true },
@@ -1481,13 +1588,20 @@ impl Pass<'_, '_> {
         }
         let before = refusals.len();
         for cause in causes {
+            if !bounded
+                && matches!(
+                    &cause,
+                    TemporalCause::MissingInterval { .. } | TemporalCause::OpenInterval { .. }
+                )
+            {
+                // The infinite-profile refusal above already names the whole
+                // unbounded event; do not add a duplicate interval refusal.
+                continue;
+            }
             refusals.push(match cause {
-                TemporalCause::MissingInterval { span } | TemporalCause::OpenInterval { span } => {
-                    refusal(ProbabilisticCause::UnboundedEvent {
-                        claim: claim.claim().to_owned(),
-                        span,
-                    })
-                }
+                // Bounded and timed profiles own operator-form admission.
+                // Match temporal-clause diagnostics before probabilistic
+                // event boundedness is considered.
                 other => temporal_refusal(other),
             });
         }
@@ -1738,7 +1852,21 @@ impl Pass<'_, '_> {
         horizon: &HorizonForm,
     ) -> Result<(u64, Option<Rational>), CheckRefusal> {
         match horizon {
-            HorizonForm::Steps(steps) => Ok((steps.value, None)),
+            // FSpec FR-640 rule 7.3: a window over a timed subject is a time
+            // quantity, so a step count there has no spelling.
+            HorizonForm::Steps(steps) => {
+                if self
+                    .input
+                    .time_source(&claim.subject.alias, &claim.subject.package.identity)
+                    .is_some()
+                {
+                    return Err(refusal(ProbabilisticCause::TimeTypeMismatch {
+                        claim: claim.claim().to_owned(),
+                        span: steps.span,
+                    }));
+                }
+                Ok((steps.value, None))
+            }
             HorizonForm::Quantity(quantity) => {
                 let source = self
                     .input
@@ -1786,6 +1914,12 @@ impl Pass<'_, '_> {
     ) -> Result<Option<Identifier>, CheckRefusal> {
         weighting
             .map(|weighting| {
+                if weighting.name.name == "delay" {
+                    return Err(refusal(ProbabilisticCause::DelayWeightingUnsupported {
+                        claim: claim.claim().to_owned(),
+                        span: weighting.name.span,
+                    }));
+                }
                 self.reward_named(claim, &weighting.name.name, weighting.name.span)
                     .map(|(name, _)| name)
             })
@@ -1877,6 +2011,7 @@ impl Pass<'_, '_> {
             });
         }
         let slots = typer.slots();
+        let slot_names = typer.slot_names().to_vec();
         let observations = Observations::of(body.root(), Observation::Current, bound.len());
         Definedness::new(
             bound.len(),
@@ -1888,6 +2023,7 @@ impl Pass<'_, '_> {
         Ok(CheckedPredicate {
             body,
             slots,
+            slot_names,
             normal_form: encode_predicate(&expression.expression, claim.binder()),
         })
     }
@@ -2483,7 +2619,11 @@ mod conversion_budget_tests {
     fn units() -> super::super::super::CheckedGraph {
         let text = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\ndimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(2,1) * ms;\n";
         declarations(text)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap()
     }
 
@@ -2526,6 +2666,7 @@ mod conversion_budget_tests {
                 .check(
                     CheckMode::Linked,
                     CheckingLimits::default().with_rational_bits(2),
+                    &crate::check::test_support::ZeroRewardEvaluator,
                 )
                 .expect("the rational conversion ceiling must preserve nonreward Integer checking");
         }

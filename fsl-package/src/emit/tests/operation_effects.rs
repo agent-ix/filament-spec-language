@@ -50,7 +50,11 @@ fn compile(document: &Value, clauses: &str) -> (CheckedPackage, Vec<u8>) {
     let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
     let graph = assemble_with_models(unit(clauses).as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     (CheckedPackage::link(graph), bytes)
 }
@@ -658,6 +662,7 @@ fn wire_without_member(package: &CheckedPackageV2) -> Value {
             checked_term_data: package.checked_term_data(),
             temporal_bindings: package.temporal_bindings(),
             temporal_clause_names: package.temporal_clause_names(),
+            claim_names: package.claim_names(),
             operation_effects: None,
             operation_bodies: package.operation_body_rows(),
             schedulability_claims: (!schedulability_claims.is_empty())

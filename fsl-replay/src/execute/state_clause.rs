@@ -25,9 +25,8 @@ use fsl_semantics::model::observation::{
 };
 
 use super::{
-    ReplayRefusal, check_envelope_target, consumed, domain_packages, recompile, wrong_target,
+    check_envelope_target, consumed, domain_packages, recompile, wrong_target, ReplayRefusal,
 };
-use crate::WitnessEnvelope;
 use crate::bounds::ReplayLimits;
 use crate::identity::DefinitionSourceRef;
 use crate::request::{ReplayRequest, ReplayRequestWire};
@@ -36,11 +35,12 @@ use crate::result::{
     SeparationReason, SeparationRefusal, Verdict, WitnessArmResult, WitnessCheck, WitnessFailure,
 };
 use crate::spine::{
-    CallOutcome, CallRefusal, CallValue, ClauseCheck, ClauseDisposition, CompiledRun,
-    check_clause_admitted, convert_outcome,
+    check_clause_admitted, convert_outcome, CallOutcome, CallRefusal, CallValue, ClauseCheck,
+    ClauseDisposition, CompiledRun,
 };
 use crate::target::{ReplayEntry, TargetMember};
 use crate::witness::{EnvelopeSource, StateClauseCounterexample};
+use crate::WitnessEnvelope;
 use filament_eval::{CallFailure, FamilyOutcome};
 use filament_exact::{Meter, Outcome};
 use filament_semantic_value::catalog::Category;
@@ -94,6 +94,18 @@ pub struct StateClauseReplayResult {
     observation: ClauseSelectionInput,
     documents: Vec<DocumentRef>,
     range_violations: Vec<OutOfRange>,
+}
+
+/// The shared FR-122 state-clause request path through one admitted clause
+/// evaluation. FR-269's public derivation entry consumes the same checked
+/// evaluation and derived record as replay.
+pub(crate) struct PreparedStateClause {
+    pub(crate) target: crate::identity::QualifiedName,
+    pub(crate) source: DefinitionSourceRef,
+    pub(crate) compiled: super::Recompiled,
+    pub(crate) sources: Vec<Source>,
+    pub(crate) selection: ClauseSelection,
+    pub(crate) check: ClauseCheck,
 }
 
 impl StateClauseReplayResult {
@@ -174,111 +186,22 @@ pub fn replay_state_clause(
     envelope: &WitnessEnvelope<StateClauseCounterexample>,
     replay_limits: ReplayLimits,
 ) -> Result<StateClauseReplayResult, ReplayRefusal> {
-    let request = ReplayRequest::decode(wire, replay_limits)?;
-    let Some(replay_target) = request.replay_target() else {
-        return Err(ReplayRefusal::WrongModelGraphEntry);
-    };
-    let Some(target) = replay_target.as_state_clause() else {
-        return Err(wrong_target(
-            replay_target,
-            ReplayEntry::ReplayStateClause,
-            TargetMember::StateClause,
-        ));
-    };
-    check_envelope_target(&request, envelope.replay_target())?;
-    let limits = super::request_limits(
-        request.stage_limits(),
-        request.accounting_limits(),
-        replay_limits,
-    )?;
-    let compiled = recompile(&request, &limits)?;
+    let PreparedStateClause {
+        target,
+        source,
+        compiled,
+        sources,
+        selection,
+        check,
+    } = prepare_state_clause(wire, envelope, replay_limits)?;
     let package_name = compiled.package.clone();
     let payload = envelope.family_payload();
-    let graph = compiled.checked.package().graph();
-    // Complete-V1 declares no qualified names, so only a one-segment name
-    // can resolve (as for a function).
-    let clause = match target.segments() {
-        [name] => graph.state_clause(name.as_str()),
-        _ => None,
-    }
-    .ok_or_else(|| ReplayRefusal::UnknownClause {
-        clause: target.clone(),
-        package: package_name.clone(),
-    })?;
-    check_identities(envelope, clause).map_err(ReplayRefusal::ClauseIdentity)?;
-    let form = payload.observation.form();
-    if form != expected_form(clause.kind()) {
-        return Err(ReplayRefusal::WrongObservation {
-            kind: clause.kind(),
-            form,
-        });
-    }
-
-    // Resolve the selected clause's source through the recompiled package's
-    // own claim occurrence, which remains bound to its declaring unit.
-    let graph = compiled.checked.package().graph();
-    let source_region = graph
-        .occurrences()
-        .find_map(|(node, origin, location)| {
-            (node == clause.identity() && origin == *clause.claim())
-                .then(|| graph.region(location))
-                .flatten()
-        })
-        .ok_or_else(|| {
-            ReplayRefusal::Fault(InternalFault::new(
-                "replay",
-                "checked-clause-claim-has-source-region",
-            ))
-        })?;
-    let source_reference = source_region.source();
-    let source = request
-        .sources()
-        .iter()
-        .find(|source| {
-            source.authority() == source_reference.authority()
-                && source.identity() == source_reference.identity()
-        })
-        .cloned()
-        .ok_or_else(|| {
-            ReplayRefusal::Fault(InternalFault::new(
-                "replay",
-                "checked-clause-source-is-in-package-reference",
-            ))
-        })?;
-    let packages = domain_packages(&request)?;
-    // FR-106 reads every document only from the byte provision, by its
-    // identity labels.
-    let documents = request.byte_provision().snapshots();
-    let mut sources = Vec::with_capacity(1 + compiled.checked.libraries().len());
-    sources.push(compiled.checked.source().clone());
-    sources.extend(compiled.checked.libraries().iter().cloned());
-    let selection = ClauseSelection {
-        name: clause.name().to_owned(),
-        input: payload.observation.clone(),
-    };
-    let run = CompiledRun {
-        packages: &packages,
-        model_limits: limits.spine.model,
-        provisions: Provisions {
-            snapshots: &documents,
-            invocations: &documents,
-        },
-        observation_limits: fsl_semantics::model::observation::ObservationLimits {
-            post_state: PostStateRange::Witness,
-            ..limits.observation
-        },
-        accounting: request.accounting_limits(),
-        package: compiled.checked.package(),
-        package_name: compiled.package.as_str(),
-        sources: &sources,
-        progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
-    };
     let ClauseCheck {
         report,
         documents: read_documents,
         observations,
         mut meter,
-    } = check_clause_admitted(&run, clause, &selection);
+    } = check;
 
     let fault = |invariant| {
         Err(ReplayRefusal::Fault(InternalFault::new(
@@ -431,6 +354,123 @@ pub fn replay_state_clause(
     })
 }
 
+/// FR-122's shared request path through admission and the one state-clause
+/// evaluation used by both replay and FR-269's public witness derivation.
+pub(crate) fn prepare_state_clause(
+    wire: ReplayRequestWire,
+    envelope: &WitnessEnvelope<StateClauseCounterexample>,
+    replay_limits: ReplayLimits,
+) -> Result<PreparedStateClause, ReplayRefusal> {
+    let request = ReplayRequest::decode(wire, replay_limits)?;
+    let Some(replay_target) = request.replay_target() else {
+        return Err(ReplayRefusal::WrongModelGraphEntry);
+    };
+    let Some(target) = replay_target.as_state_clause() else {
+        return Err(wrong_target(
+            replay_target,
+            ReplayEntry::ReplayStateClause,
+            TargetMember::StateClause,
+        ));
+    };
+    check_envelope_target(&request, envelope.replay_target())?;
+    let limits = super::request_limits(
+        request.stage_limits(),
+        request.accounting_limits(),
+        replay_limits,
+    )?;
+    let compiled = recompile(&request, &limits)?;
+    let package_name = compiled.package.clone();
+    let payload = envelope.family_payload();
+    let graph = compiled.checked.package().graph();
+    // Complete-V1 declares no qualified names, so only a one-segment name
+    // can resolve (as for a function).
+    let clause = match target.segments() {
+        [name] => graph.state_clause(name.as_str()),
+        _ => None,
+    }
+    .ok_or_else(|| ReplayRefusal::UnknownClause {
+        clause: target.clone(),
+        package: package_name.clone(),
+    })?;
+    check_identities(envelope, clause).map_err(ReplayRefusal::ClauseIdentity)?;
+    let form = payload.observation.form();
+    if form != expected_form(clause.kind()) {
+        return Err(ReplayRefusal::WrongObservation {
+            kind: clause.kind(),
+            form,
+        });
+    }
+
+    // Resolve the selected clause's source through the recompiled package's
+    // own claim occurrence, which remains bound to its declaring unit.
+    let graph = compiled.checked.package().graph();
+    let source_region = graph
+        .occurrences()
+        .find_map(|(node, origin, location)| {
+            (node == clause.identity() && origin == *clause.claim())
+                .then(|| graph.region(location))
+                .flatten()
+        })
+        .ok_or_else(|| {
+            ReplayRefusal::Fault(InternalFault::new(
+                "replay",
+                "checked-clause-claim-has-source-region",
+            ))
+        })?;
+    let source_reference = source_region.source();
+    let source = request
+        .sources()
+        .iter()
+        .find(|source| {
+            source.authority() == source_reference.authority()
+                && source.identity() == source_reference.identity()
+        })
+        .cloned()
+        .ok_or_else(|| {
+            ReplayRefusal::Fault(InternalFault::new(
+                "replay",
+                "checked-clause-source-is-in-package-reference",
+            ))
+        })?;
+    let packages = domain_packages(&request)?;
+    // FR-106 reads every document only from the byte provision, by its
+    // identity labels.
+    let documents = request.byte_provision().snapshots();
+    let mut sources = Vec::with_capacity(1 + compiled.checked.libraries().len());
+    sources.push(compiled.checked.source().clone());
+    sources.extend(compiled.checked.libraries().iter().cloned());
+    let selection = ClauseSelection {
+        name: clause.name().to_owned(),
+        input: payload.observation.clone(),
+    };
+    let run = CompiledRun {
+        packages: &packages,
+        model_limits: limits.spine.model,
+        provisions: Provisions {
+            snapshots: &documents,
+            invocations: &documents,
+        },
+        observation_limits: fsl_semantics::model::observation::ObservationLimits {
+            post_state: PostStateRange::Witness,
+            ..limits.observation
+        },
+        accounting: request.accounting_limits(),
+        package: compiled.checked.package(),
+        package_name: compiled.package.as_str(),
+        sources: &sources,
+        progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+    };
+    let check = check_clause_admitted(&run, clause, &selection);
+    Ok(PreparedStateClause {
+        target: target.clone(),
+        source,
+        compiled,
+        sources,
+        selection,
+        check,
+    })
+}
+
 /// FR-122: the observation form a counterexample to a clause of `kind`
 /// carries. A violated precondition means the operation never ran, so its
 /// observation is the pre-call state alone.
@@ -482,6 +522,17 @@ fn compare_witness(
 ) -> Result<Option<WitnessCheck>, ReplayRefusal> {
     match (given, derived) {
         (None, None) => Ok(Some(WitnessCheck::Agrees(None))),
+        (None, Some(derived_record)) if derived_record.deciding_comparison.is_some() => {
+            let outcome = separate(
+                package,
+                clause,
+                observations,
+                derived_record,
+                sources,
+                meter,
+            )?;
+            Ok(settle_separation(outcome, derived_record))
+        }
         (Some(given_record), Some(derived_record)) if given_record == derived_record => {
             let outcome = separate(
                 package,
@@ -707,7 +758,7 @@ pub(crate) fn stopped_reason(
         })?;
     Ok(match outcome {
         CallOutcome::Incomplete(_) => None,
-        CallOutcome::Undefined { reason } => Some(SeparationReason::UndefinedEvaluation {
+        CallOutcome::Undefined { reason, .. } => Some(SeparationReason::UndefinedEvaluation {
             expression: location.ok_or_else(|| fault("undefined-evaluation-is-located"))?,
             cause: reason.to_owned(),
         }),

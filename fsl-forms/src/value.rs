@@ -13,7 +13,7 @@
 //! grow with nesting. S2 takes no limit of its own: it builds at most one
 //! node per CST node, so S1's node limit bounds it (FR-257).
 
-use super::dispatch::{Construct, ConstructKind, FormsCause, FormsRefusal};
+use super::dispatch::{Construct, FormsCause, FormsRefusal};
 use super::spans::{DeclarationSpans, ExpressionSpans};
 use super::syntax::{
     AbsenceMode, Accumulation, AliasForm, ArmForm, BinaryOperator, BinderQuery, BuiltinType,
@@ -119,12 +119,15 @@ pub(crate) fn unexpected(node: &CstNode) -> FormsRefusal {
     )
 }
 
-/// The refusal for a construct no `Expression` variant represents.
+/// The refusal for a construct no `Expression` variant represents (FR-763).
+/// No source reaches the cause today: it is the specified S2 refusal for a
+/// construct that has no form yet, held ready and exercised by its unit test.
+#[cfg(test)]
 pub(crate) fn unrepresented(
     cst: &LosslessCst,
     production: Production,
     span: Span,
-    construct: ConstructKind,
+    construct: super::dispatch::ConstructKind,
 ) -> FormsRefusal {
     let text = source_text(cst, span);
     FormsRefusal::at(
@@ -139,6 +142,9 @@ pub(crate) fn unrepresented(
     )
 }
 
+/// The construct's source text, at most 120 bytes cut on a character
+/// boundary and followed by `...` when cut.
+#[cfg(test)]
 fn source_text(cst: &LosslessCst, span: Span) -> String {
     let text = cst
         .source()
@@ -1856,7 +1862,6 @@ impl<'c> Mapping<'c> {
                     suffixes.push((shape, end, arguments));
                 }
                 Item::Token(token) if token.spelling() == b"[" => {
-                    let ahead = rest.clone();
                     let selector = match (rest.next(), rest.next()) {
                         (Some(Item::Node(selector)), Some(Item::Token(close)))
                             if selector.production() == Production::Expression
@@ -1867,24 +1872,7 @@ impl<'c> Mapping<'c> {
                         _ => None,
                     };
                     let Some((selector, end)) = selector else {
-                        let end = ahead
-                            .clone()
-                            .find_map(|item| match item {
-                                Item::Token(close) if close.spelling() == b"]" => {
-                                    Some(close.span().end)
-                                }
-                                Item::Token(_) | Item::Node(_) => None,
-                            })
-                            .unwrap_or(node.span().end);
-                        return Err(unrepresented(
-                            self.cst,
-                            Production::Postfix,
-                            Span {
-                                start: node.span().start,
-                                end,
-                            },
-                            ConstructKind::IndexSelection,
-                        ));
+                        return Err(unexpected(node));
                     };
                     suffixes.push((Shape::Index, end, vec![selector]));
                 }
@@ -2009,21 +1997,8 @@ impl<'c> Mapping<'c> {
                     return Err(unexpected(node));
                 }
                 let edge_node = only(items, Production::QualifiedName, node)?;
-                let edge_items = self::items(self.cst, edge_node);
-                let segments = tokens_of(&edge_items, TokenKind::Identifier);
-                let [edge_token] = segments.as_slice() else {
-                    // S1 parses the edge as a `QualifiedName`; a
-                    // multi-segment spelling names a member of the
-                    // operands' own type, which S3 resolves (FR-102-AC-3).
-                    return Err(unrepresented(
-                        self.cst,
-                        Production::QualifiedName,
-                        edge_node.span(),
-                        ConstructKind::QualifiedReachesEdge,
-                    ));
-                };
-                let edge = text(edge_token, node)?;
-                let edge_span = edge_token.span();
+                let edge = spelled(self.cst, edge_node)?;
+                let edge_span = edge_node.span();
                 self.with_children(Shape::Reaches(edge, edge_span), &task, operands)
             }
             b"convert" | b"allInstances" => {

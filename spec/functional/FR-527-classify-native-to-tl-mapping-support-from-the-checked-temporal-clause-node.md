@@ -129,6 +129,15 @@ view names a definition identity that is none of the five temporal profiles the
 - The classifier SHALL treat a clause with no bounded operator under either
   false-extension profile as FR-045's last row.
 - The classifier SHALL classify a clause selected under
+  `filament.temporal.infinite-trace/v1` whose `formula()` holds at least one
+  past operator, only past operators, and an `interval` that is a closed
+  `[a, b]` on every one of them as `Supported` with `mltl.infinite-trace/v1`
+  (FR-045's infinite-trace bounded-past row), under either `surrounding`
+  value. Every other infinite-trace clause, one holding a future operator, an
+  interval-less or `[a,*]` past operator, or no operator, SHALL be
+  `Unsupported` naming `InfiniteTrace`, and also `MixedDirection` when it
+  holds a past and a future operator.
+- The classifier SHALL classify a clause selected under
   `filament.temporal.timed/v1` (FR-234) as `Unsupported` naming `TimedProfile`.
   FR-234 admits the timed profile at check, but FR-045's table lists four
   profiles and no TL target evaluates exact rational time, so the classification
@@ -220,7 +229,7 @@ leave TL formula/request/result admission and evaluation with their TL owners.
 | FR-527-AC-1 | For one clause per row of FR-045's table, each matching that row and no other, `mapping_support` returns that row's disposition and TL target. | Test (TC-1322) |
 | FR-527-AC-2 | A finite-window clause returns `Unsupported` naming `FiniteWindow`, and a clause with a past and a future operator returns `Unsupported` naming `MixedDirection`. | Test (TC-1322) |
 | FR-527-AC-3 | Each of the four past operators alone, under each false-extension profile, returns `Supported` with `mltl.origin-complete-history/v1`. | Test (TC-1322) |
-| FR-527-AC-4 | A finite-window clause that also mixes a past and a future operator returns `Unsupported` naming `FiniteWindow` and `MixedDirection`, and an infinite-trace clause returns `Unsupported` naming `InfiniteTrace`. | Test (TC-1322) |
+| FR-527-AC-4 | A finite-window clause that also mixes a past and a future operator returns `Unsupported` naming `FiniteWindow` and `MixedDirection`; an infinite-trace clause holding a future operator (`always[0,2] holds(p)`), an interval-less past operator (`once holds(p)`) or no operator returns `Unsupported` naming `InfiniteTrace`, and one holding `once[0,1] eventually[0,1] holds(p)` names `InfiniteTrace` and `MixedDirection`; an infinite-trace clause whose only operators are closed-interval past operators (`once[1,1] not holds(p)`, `historically[0,2] holds(p)`) returns `Supported` with `mltl.infinite-trace/v1` under both `surrounding` values. | Test (TC-1322) |
 | FR-527-AC-5 | `once[0,1] holds(p)` classifies as past-only, `eventually[0,2] holds(q)` as future-only, and a formula holding both `once[0,1]` and `eventually[0,2]` as mixed-direction; the connectives `not`, `and`, `or` and `implies` change none of the three. | Test (TC-1322) |
 | FR-527-AC-6 | A clause `holds(p)` with no bounded operator, under each false-extension profile, returns `Supported` with the closed-trace target for `Complete` and the online-prefix target for `Open`. | Test (TC-1322) |
 | FR-527-AC-7 | The fixed-sample future clause returns `total_sample_valuation` true under both `surrounding` values, and the event-position future clause returns it false. | Test (TC-1322) |

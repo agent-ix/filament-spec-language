@@ -360,6 +360,7 @@ pub(super) fn witness_arm(result: &StateClauseReplayResult) -> &crate::WitnessAr
         ReplayResult::ObservedTemporal(arm) => panic!("expected the witness arm, got {arm:?}"),
         ReplayResult::ModelGraph(arm) => panic!("expected the witness arm, got {arm:?}"),
         ReplayResult::ProtocolAnalysis(_) => panic!("a protocol analysis arm"),
+        ReplayResult::Hybrid(_) => panic!("a hybrid arm"),
     }
 }
 
@@ -1140,6 +1141,45 @@ fn an_out_of_range_post_state_value_violates_even_when_the_clause_holds() {
     );
 }
 
+/// FR-269-AC-8: post-state range violations precede both true and false
+/// clause outcomes in the public witness derivation entry.
+#[trace("TC-3121", "FR-269-AC-8")]
+#[test]
+fn public_witness_derivation_refuses_out_of_range_post_state_before_clause_truth() {
+    for (pre, post) in [
+        (
+            vec![object("root", 1, None), object("child", 0, Some("root"))],
+            vec![object("root", 1, None), object("child", -1, Some("root"))],
+        ),
+        (
+            vec![object("root", 1000, None), object("child", 2, Some("root"))],
+            vec![object("root", 1001, None), object("child", 2, Some("root"))],
+        ),
+    ] {
+        let case = case(
+            config_version_unit(),
+            "VersionUnchanged",
+            invocation(&pre, &post),
+        );
+        let refusal = crate::derive_state_clause_witness(
+            case.wire,
+            &case.envelope,
+            crate::ReplayLimits::default(),
+        )
+        .expect_err("an out-of-range post value takes precedence over clause truth");
+        assert_eq!(refusal.code(), crate::Code::InvalidRuntimeInput.as_str());
+        assert_eq!(refusal.cause(), Some("invalid-value"));
+        assert_eq!(
+            refusal.pointer().as_deref(),
+            Some("/family_payload/observation")
+        );
+        assert!(matches!(
+            refusal,
+            crate::DerivationRefusal::RangeViolation(violations) if violations.len() == 1
+        ));
+    }
+}
+
 /// TC-517 step 7 (FR-122-AC-7): an out-of-range pre-state value is still an
 /// input defect, refused `invalid_runtime_input`/`invalid-value` naming
 /// `child` and `versionNumber`, whatever the post-state holds.
@@ -1231,6 +1271,9 @@ fn a_range_violation_settles_even_when_the_clause_completes_no_value() {
             }
             ReplayResult::ProtocolAnalysis(_) => {
                 panic!("state-clause replay returned a protocol analysis result")
+            }
+            ReplayResult::Hybrid(_) => {
+                panic!("state-clause replay returned a hybrid result")
             }
         };
         assert!(reproduced);

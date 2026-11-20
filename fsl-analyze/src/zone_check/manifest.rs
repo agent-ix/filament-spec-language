@@ -3,9 +3,11 @@
 //! publishes so the registry can route items to it, converted by FR-288's
 //! conversion as EN-1's is ([`crate::model_check::manifest`]).
 //!
-//! EN-6 settles `temporal-satisfaction` over a `bounded` domain: the timed
-//! claims, deadlock-freedom and time-lock-freedom items it decides on zones
-//! over a subject whose universes bound its populations (FR-239). It
+//! EN-6 settles `temporal-satisfaction` over a `bounded` and an `unbounded`
+//! domain: the timed claims, deadlock-freedom and time-lock-freedom items it
+//! decides on zones. Zones are symbolic, so a timed item needs no finite
+//! bound on time (FR-239); an unbounded population root is still refused
+//! in-engine with `RequiresBound` (FR-239-AC-4). It
 //! decides under weak and strong fairness read over time (FR-240), and
 //! applies symmetry and no other reduction (FSpec FR-430).
 
@@ -20,11 +22,17 @@ use fsl_semantics::check::Capability;
 /// EN-6's backend identity, the identity its terminal records name.
 pub const BACKEND_ID: &str = "en-6";
 
-/// The (kind, mode) pairs EN-6 advertises: exactly one.
-pub const ADVERTISED: [(Option<&str>, Option<&str>); 1] = [(
-    Some(Capability::TemporalSatisfaction.to_wire()),
-    Some(Mode::Bounded.to_wire()),
-)];
+/// The (kind, mode) pairs EN-6 advertises: exactly two (FR-239): `temporal-satisfaction` bounded and unbounded.
+pub const ADVERTISED: [(Option<&str>, Option<&str>); 2] = [
+    (
+        Some(Capability::TemporalSatisfaction.to_wire()),
+        Some(Mode::Bounded.to_wire()),
+    ),
+    (
+        Some(Capability::TemporalSatisfaction.to_wire()),
+        Some(Mode::Unbounded.to_wire()),
+    ),
+];
 
 /// The boundable domain kinds EN-6's subject universes bound.
 pub const DOMAINS: [&str; 2] = [
@@ -44,6 +52,14 @@ pub const METHOD: &str = "method";
 
 /// EN-6's one `method` value, its default: zone search (FR-239).
 pub const METHOD_ZONES: &str = "zones";
+
+/// The timed state-graph forms EN-6 decides over its checked zone graph
+/// (FSpec FR-331, FR-390).
+pub const STATE_GRAPH_FORMS: [fsl_route::StateGraphFormKind; 3] = [
+    fsl_route::StateGraphFormKind::Possible,
+    fsl_route::StateGraphFormKind::AlwaysPossible,
+    fsl_route::StateGraphFormKind::UniquePath,
+];
 
 /// EN-6's routed descriptor, converted from [`ADVERTISED`], [`DOMAINS`],
 /// [`FAIRNESS_KINDS`] and [`REDUCTIONS`] by FR-288's conversion, and
@@ -70,6 +86,7 @@ pub fn descriptor(origin: ProviderOrigin) -> Result<BackendDescriptor, Registrat
     .map(|descriptor| {
         descriptor
             .with_timed()
+            .with_state_graph_forms(STATE_GRAPH_FORMS)
             .with_option_values(METHOD, [METHOD_ZONES.to_owned()])
     })
 }

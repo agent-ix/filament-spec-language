@@ -242,6 +242,164 @@ impl StatePredicate for Condition<'_> {
 }
 
 impl ClauseLetters<'_, '_> {
+    /// Evaluate one `holds` atom with the capture values fixed for its
+    /// activation position.
+    pub(super) fn atom_with_captures(
+        &self,
+        atom: FormulaNodeId,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        captures: &[Value],
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        let node = match self.node {
+            ClauseSource::Source(node) => node,
+            ClauseSource::Package { key, .. } => {
+                let observed = self.observe(state)?;
+                let bound = self
+                    .bound(&observed.rows, instance)
+                    .ok_or_else(|| fault("package-form-reads-a-bound-instance"))?;
+                return reading(
+                    &self
+                        .system
+                        .evaluator()
+                        .evaluate_holds(
+                            &crate::value::HoldsAtom {
+                                clause: key.clone(),
+                                position: atom.index(),
+                            },
+                            Value::Reference(bound),
+                            captures,
+                            &observed.observation.environment,
+                            meter,
+                        )
+                        .map_err(call_stop)?
+                        .outcome,
+                );
+            }
+        };
+        let (body, slots) = node
+            .condition(atom)
+            .ok_or_else(|| fault("engine-reads-only-holds-atoms"))?;
+        let observed = self.observe(state)?;
+        let condition = Condition { body, slots };
+        let further = captures.to_vec();
+        let evaluation = if let Some(package) = self.system.source_package() {
+            match self.bound(&observed.rows, instance) {
+                Some(bound) => evaluate_state_predicate_with_reference_bindings(
+                    package,
+                    &condition,
+                    &observed.observation.environment,
+                    Some(bound),
+                    further,
+                    Some(&self.reference_bindings),
+                    meter,
+                ),
+                None => evaluate_state_predicate_at_absent_key_with_reference_bindings(
+                    package,
+                    &condition,
+                    &observed.observation.environment,
+                    self.key_reference(instance)?,
+                    instance.population.node.clone(),
+                    Some(&self.reference_bindings),
+                    meter,
+                ),
+            }
+        } else {
+            match self.bound(&observed.rows, instance) {
+                Some(bound) => self.system.evaluator().evaluate_state_predicate(
+                    &condition,
+                    &observed.observation.environment,
+                    Some(bound),
+                    further,
+                    meter,
+                ),
+                None => self
+                    .system
+                    .evaluator()
+                    .evaluate_state_predicate_at_absent_key(
+                        &condition,
+                        &observed.observation.environment,
+                        self.key_reference(instance)?,
+                        instance.population.node.clone(),
+                        meter,
+                    ),
+            }
+        }
+        .map_err(AtomStop::Fault)?;
+        reading(&evaluation.outcome)
+    }
+
+    /// Evaluate a clause's captures at an activation and return their typed
+    /// values for the following `holds` reads.
+    pub(super) fn captures_with_values(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<(CaptureReading, Vec<Value>), AtomStop> {
+        let clause = self.node.clause();
+        if clause.captures().len() == 0 {
+            return Ok((CaptureReading::Fixed, Vec::new()));
+        }
+        let ClauseSource::Source(node) = self.node else {
+            return Err(fault("package-form-reads-no-capture-yet"));
+        };
+        let observed = self.observe(state)?;
+        let binders = 1 + usize::from(clause.trigger().is_some());
+        let bound = self.bound(&observed.rows, instance);
+        let object = match &bound {
+            Some(bound) => bound.clone(),
+            None => self.key_reference(instance)?,
+        };
+        let mut values: Vec<Value> = Vec::new();
+        for (index, (name, _)) in clause.captures().enumerate() {
+            let (body, slots) = node
+                .capture(index)
+                .ok_or_else(|| fault("engine-reads-the-typed-captures-of-a-clause"))?;
+            let capture = Condition { body, slots };
+            let mut arguments = vec![Value::Reference(object.clone()); binders];
+            arguments.extend(values.iter().cloned());
+            let absent = bound
+                .is_none()
+                .then(|| ((0..binders).collect(), instance.population.node.clone()));
+            let evaluation = self
+                .system
+                .evaluator()
+                .evaluate_capture(
+                    &capture,
+                    &observed.observation.environment,
+                    arguments,
+                    absent,
+                    meter,
+                )
+                .map_err(AtomStop::Fault)?;
+            if let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &evaluation.outcome {
+                values.push(value.clone());
+                continue;
+            }
+            let reading = match verdict(&evaluation.outcome) {
+                Verdict::Undecided(outcome) => {
+                    if let Some(cause) = outcome.undefined_cause() {
+                        CaptureReading::Undefined {
+                            capture: name.to_owned(),
+                            cause,
+                        }
+                    } else if let ClauseOutcome::Incomplete(incomplete) = outcome {
+                        return Err(AtomStop::Incomplete(incomplete));
+                    } else {
+                        return Err(AtomStop::Refused(outcome));
+                    }
+                }
+                Verdict::True | Verdict::False => {
+                    return Err(fault("a-capture-completes-no-boolean-verdict"));
+                }
+            };
+            return Ok((reading, values));
+        }
+        Ok((CaptureReading::Fixed, values))
+    }
+
     /// The reference the `over` parameter reads as under `instance`'s key in
     /// the observed state: the first object of an overlapping population held
     /// under the key whose most-specific type conforms to the parameter's.
@@ -371,9 +529,10 @@ impl ClauseLetters<'_, '_> {
     }
 }
 
-/// The footprint refusal of a package-form clause: its reads are derived
-/// from source checked bodies the package route does not hold, so a reduction
-/// that needs them is not applied to it.
+/// The footprint refusal of a package-form clause whose activation holds
+/// captures: the package form reads no capture initializer yet (the
+/// evaluation faults at it too), so a reduction that needs its reads is not
+/// applied to it.
 const PACKAGE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
     what: "package-form clause footprint",
 };
@@ -425,81 +584,7 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         state: &ModelSimState,
         meter: &mut Meter,
     ) -> Result<AtomReading, AtomStop> {
-        let node = match self.node {
-            ClauseSource::Source(node) => node,
-            ClauseSource::Package { key, .. } => {
-                let observed = self.observe(state)?;
-                let bound = self
-                    .bound(&observed.rows, instance)
-                    .ok_or_else(|| fault("package-form-reads-a-bound-instance"))?;
-                return reading(
-                    &self
-                        .system
-                        .evaluator()
-                        .evaluate_holds(
-                            &crate::value::HoldsAtom {
-                                clause: key.clone(),
-                                position: atom.index(),
-                            },
-                            Value::Reference(bound),
-                            &[],
-                            &observed.observation.environment,
-                            meter,
-                        )
-                        .map_err(call_stop)?
-                        .outcome,
-                );
-            }
-        };
-        let (body, slots) = node
-            .condition(atom)
-            .ok_or_else(|| fault("engine-reads-only-holds-atoms"))?;
-        let observed = self.observe(state)?;
-        let condition = Condition { body, slots };
-        let evaluation = if let Some(package) = self.system.source_package() {
-            match self.bound(&observed.rows, instance) {
-                Some(bound) => evaluate_state_predicate_with_reference_bindings(
-                    package,
-                    &condition,
-                    &observed.observation.environment,
-                    Some(bound),
-                    Vec::new(),
-                    Some(&self.reference_bindings),
-                    meter,
-                ),
-                None => evaluate_state_predicate_at_absent_key_with_reference_bindings(
-                    package,
-                    &condition,
-                    &observed.observation.environment,
-                    self.key_reference(instance)?,
-                    instance.population.node.clone(),
-                    Some(&self.reference_bindings),
-                    meter,
-                ),
-            }
-        } else {
-            match self.bound(&observed.rows, instance) {
-                Some(bound) => self.system.evaluator().evaluate_state_predicate(
-                    &condition,
-                    &observed.observation.environment,
-                    Some(bound),
-                    Vec::new(),
-                    meter,
-                ),
-                None => self
-                    .system
-                    .evaluator()
-                    .evaluate_state_predicate_at_absent_key(
-                        &condition,
-                        &observed.observation.environment,
-                        self.key_reference(instance)?,
-                        instance.population.node.clone(),
-                        meter,
-                    ),
-            }
-        }
-        .map_err(AtomStop::Fault)?;
-        reading(&evaluation.outcome)
+        self.atom_with_captures(atom, instance, state, &[], meter)
     }
 
     /// The guard of the clause's `on each` activation (FR-337) for
@@ -581,65 +666,8 @@ impl ModelLetters for ClauseLetters<'_, '_> {
         state: &ModelSimState,
         meter: &mut Meter,
     ) -> Result<CaptureReading, AtomStop> {
-        let clause = self.node.clause();
-        if clause.captures().len() == 0 {
-            return Ok(CaptureReading::Fixed);
-        }
-        let ClauseSource::Source(node) = self.node else {
-            return Err(fault("package-form-reads-no-capture-yet"));
-        };
-        let observed = self.observe(state)?;
-        let binders = 1 + usize::from(clause.trigger().is_some());
-        let bound = self.bound(&observed.rows, instance);
-        let object = match &bound {
-            Some(bound) => bound.clone(),
-            None => self.key_reference(instance)?,
-        };
-        let mut values: Vec<Value> = Vec::new();
-        for (index, (name, _)) in clause.captures().enumerate() {
-            let (body, slots) = node
-                .capture(index)
-                .ok_or_else(|| fault("engine-reads-the-typed-captures-of-a-clause"))?;
-            let capture = Condition { body, slots };
-            let mut arguments = vec![Value::Reference(object.clone()); binders];
-            arguments.extend(values.iter().cloned());
-            let absent = bound
-                .is_none()
-                .then(|| ((0..binders).collect(), instance.population.node.clone()));
-            let evaluation = self
-                .system
-                .evaluator()
-                .evaluate_capture(
-                    &capture,
-                    &observed.observation.environment,
-                    arguments,
-                    absent,
-                    meter,
-                )
-                .map_err(AtomStop::Fault)?;
-            if let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &evaluation.outcome {
-                values.push(value.clone());
-                continue;
-            }
-            return match verdict(&evaluation.outcome) {
-                Verdict::Undecided(outcome) => {
-                    if let Some(cause) = outcome.undefined_cause() {
-                        Ok(CaptureReading::Undefined {
-                            capture: name.to_owned(),
-                            cause,
-                        })
-                    } else if let ClauseOutcome::Incomplete(incomplete) = outcome {
-                        Err(AtomStop::Incomplete(incomplete))
-                    } else {
-                        Err(AtomStop::Refused(outcome))
-                    }
-                }
-                Verdict::True | Verdict::False => {
-                    Err(fault("a-capture-completes-no-boolean-verdict"))
-                }
-            };
-        }
-        Ok(CaptureReading::Fixed)
+        self.captures_with_values(instance, state, meter)
+            .map(|(reading, _)| reading)
     }
 
     fn captured_read(&self) -> Option<usize> {
@@ -650,8 +678,14 @@ impl ModelLetters for ClauseLetters<'_, '_> {
     }
 
     fn activation_reads(&self) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        let ClauseSource::Source(node) = self.node else {
-            return Err(PACKAGE_FOOTPRINT);
+        let node = match self.node {
+            ClauseSource::Source(node) => node,
+            ClauseSource::Package { clause, key } => {
+                if clause.captures().len() > 0 {
+                    return Err(PACKAGE_FOOTPRINT);
+                }
+                return self.system.activation_guard_reads(key);
+            }
         };
         let clause = node.clause();
         let mut reads = BTreeSet::new();
@@ -677,15 +711,16 @@ impl ModelLetters for ClauseLetters<'_, '_> {
     }
 
     fn reads(&self, atom: FormulaNodeId) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        let ClauseSource::Source(node) = self.node else {
-            return Err(PACKAGE_FOOTPRINT);
+        let node = match self.node {
+            ClauseSource::Source(node) => node,
+            ClauseSource::Package { key, .. } => {
+                return self.system.holds_reads(key, atom.index());
+            }
         };
         let (condition, _) = node
             .condition(atom)
             .ok_or(FootprintRefusal::Unresolved { what: "holds atom" })?;
-        let mut reads = self
-            .system
-            .atom_reads(node.clause().over(), condition)?;
+        let mut reads = self.system.atom_reads(node.clause().over(), condition)?;
         self.add_reference_literal_reads(condition, &mut reads);
         Ok(reads)
     }

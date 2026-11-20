@@ -131,6 +131,9 @@ impl<S: Clone> ModelRefinementItem<'_, S> {
 pub enum ObligationKind {
     /// An authored claim, by its occurrence.
     Authored(OccurrenceKey),
+    /// An authored state-graph claim, kept distinct from a temporal clause
+    /// for timed zone-certificate identity.
+    StateGraphAuthored(OccurrenceKey),
     /// An authored claim over a protocol subject, by its occurrence and the
     /// subject's resolved models, which are part of the protocol subject
     /// (FSpec FR-425) and so of its identity.

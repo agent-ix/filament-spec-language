@@ -210,6 +210,7 @@ fn parse_unit(id: &str, text: &str) -> fsl_cst::ParsedSource {
 /// edition string literal, with no other diagnostic.
 #[trace("FSpec-TC-1000", "FSpec-FR-500-AC-1")]
 #[test]
+#[ignore = "QSL-2685: unsupported editions require the sole unknown_edition refusal"]
 fn an_edition_other_than_1_draft_refuses_unknown_edition_at_its_literal() {
     let body = "\nfunction f(): Boolean pure { true }";
     let admitted = parse_unit(

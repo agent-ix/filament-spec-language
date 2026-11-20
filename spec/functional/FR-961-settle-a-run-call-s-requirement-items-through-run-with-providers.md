@@ -58,6 +58,44 @@ it started from `--provider-config` as `providers` (an empty vector when the
 option is absent) and the limits it resolved from `--provider-limit` as
 `options.provider_limits` (FR-287, FR-964).
 
+### Caller overrides
+
+The provider entry SHALL take the same caller overrides as the plain entry
+`run_with_limits_and_overrides`:
+
+```rust
+fsl_command::command::run_with_providers_and_limits_and_overrides(
+    request: &Path,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+    negotiate: &dyn Negotiate,
+    providers: Vec<Engine>,
+    options: &ProviderOptions,
+    cancel: &Cancel,
+) -> Result<RunResult, Box<RunError>>
+```
+
+`run_with_providers` SHALL be this entry with `RunLimits::default()` and
+`RequestOverrides::default()`. `limits` are the request and dependent-file
+byte ceilings (FR-312), and `overrides` the request members a caller supplies
+beside the request file (FR-640): `clocks`, `output`, the stage limits
+`limits` (a `SpineLimits`, FR-869) and the observation limits `observation`
+(FR-312). The entry SHALL apply each of them to the call exactly as
+`run_with_limits_and_overrides` applies it to the same request: the call
+compiles and evaluates under the caller's `SpineLimits`, never under
+`SpineLimits::default()` when the caller supplied others, whether or not the
+call carries `requirements`. A bound the call reaches SHALL settle FR-255's
+typed limit outcome naming the setting and its configured value, category
+`incomplete`, exit 22, the outcome the plain entry gives for the same request
+and overrides.
+
+The reason is that every FSL-enforced bound of a run is caller-configurable
+(FR-287, FR-312), and `fsl run` routes a request whose call carries
+`requirements` to this entry. If the entry dropped the caller's limits, a
+`--limit` the driver resolved would reach a call without `requirements` and
+silently not reach the same call with them, so one call would have two
+limit behaviours.
+
 ### Decision: the negotiator is a parameter
 
 Negotiation is not an FSL stage: `filament-contract-codegen`'s `negotiate_item`
@@ -87,6 +125,8 @@ registered. The negotiator is called only for the items of a call carrying
 ## Inputs
 
 - The native-run/1 request file, prepared by FR-100's one preparation path.
+- `limits` and `overrides`: the caller's byte ceilings and request overrides
+  ("Caller overrides"); `run_with_providers` passes the defaults.
 - The caller's negotiator.
 - `providers`: the started process providers, each an `Engine::external` over
   its `Process` descriptor and its `ExternalProvider` transport.
@@ -107,10 +147,11 @@ The entry SHALL work in this order:
    runs. A provider repeating a registered `BackendId` refuses the request
    `invalid-request` naming `providers`, before any stage, as
    `analyze_with_providers` does.
-3. Compile and run the call through FR-395's `run_with_requirements`, which
+3. Compile and run the call through FR-395's `run_with_requirements`, under
+   the caller's `limits` and `overrides` ("Caller overrides"), which
    returns the call's outcome, the same as `run` returns for the same inputs,
-   with the items of the call. A refusal before the call settles no item and
-   is the run's outcome.
+   with the items of the call. A refusal, or a compile-stage limit stop
+   (FR-255), before the call settles no item and is the run's outcome.
 4. When the call carries `requirements`, for each item of the call, in
    FR-395's package order: write its named backend and options (FR-960),
    check its options against the named backend's manifest (FR-967): an item
@@ -151,6 +192,7 @@ The entry SHALL work in this order:
 | FR-961-AC-3 | A run without `call.requirements` through `run_with_providers` with the recording provider registered never calls the negotiator or the provider, and its result equals `command::run`'s for the same request with no `requirements` member in it. | Test (TC-2701) |
 | FR-961-AC-4 | Negative: two providers with one `BackendId` refuse the request `invalid-request` naming `providers` before any stage, and neither provider is called; a call whose compile refuses settles no item and calls neither the negotiator nor a provider. | Test (TC-2701) |
 | FR-961-AC-5 | A recording provider that reports `refuted` with counterexample `n = 4` for an item that the native evaluator does not violate at `n = 4` settles that item `inconclusive` with cause `replay-parity`, never `refuted`; a handle cancelled before the run settles every item `incomplete` with `cancelled{source: requested}` and sends no request. | Test (TC-2701) |
+| FR-961-AC-6 | FR-961-AC-1's `Even` request, run through `run_with_providers_and_limits_and_overrides` with the recording provider and `overrides.limits` a `SpineLimits` whose `s1.nodes` bound is set to 1 through `SettingLimits::set_bound`, settles the typed limit outcome naming `s1.nodes` with configured value 1, category `incomplete`, exit 22, the same outcome `run_with_limits_and_overrides` gives for that request and those overrides; the compile does not finish, so no item settles and neither the negotiator nor the provider is called (Behavior step 3). With the bound set back to its published default, the result equals AC-1's, `{"boolean": true}` with each item `proved`. The same request with its accounting counter `work_units` set to 0 returns outcome `incomplete` on `work_units` through both entries, and the provider entry still settles every item of `Even` in package order, as FR-395-AC-5's items of an incomplete call. A run whose call runs under `SpineLimits::default()` whatever the caller supplied fails the first clause. | Test (TC-2701) |
 
 ## Dependencies
 

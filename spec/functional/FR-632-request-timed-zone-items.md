@@ -80,7 +80,12 @@ with its timed-product certificate (FR-920).
   `refuted` with the timed counterexample. A behaviour that lets time
   converge (a Zeno run) never witnesses a liveness violation: liveness is
   decided over non-Zeno runs, and a run whose only violating cycles are Zeno
-  settles `proved` with the non-Zeno premise in its record.
+  settles `proved` with the non-Zeno premise in its record: the result
+  entry's FSpec FR-416 `non_zeno` member, `assumed`, as FR-235 settles it.
+  The member is on every result of a liveness-product item on either route
+  (`not-required`, `assumed`, `checked` or `refuted`), not only on that
+  case, so a reader always sees whether a timed liveness verdict rests on
+  the premise.
 - `counterexample`: the symbolic run concretised with exact rational delays,
   replayed by FR-237.
 

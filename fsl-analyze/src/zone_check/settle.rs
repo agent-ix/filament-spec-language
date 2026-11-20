@@ -11,7 +11,7 @@
 use filament_exact::Cancel;
 use fsl_replay::{
     CertificateRejection, CounterexampleKind, IncompleteCause, InconclusiveCause, ModelCheckLimit,
-    ModelTraceReplayResult, ModelTraceSettlement, ProofBasis, ReachedLimit,
+    ModelTraceReplayResult, ModelTraceSettlement, NonZeno, ProofBasis, ReachedLimit,
     RefinementTraceSettlement, ReplayRefusal, ResultLabel, SettlementBasis, TemporalCounterexample,
     TerminalValue, Truth, UnavailabilityCause, ZoneCertificate, ZoneCertificateRefusal,
     ZoneCertificateVerdict,
@@ -55,6 +55,9 @@ pub struct ZoneCheckRecord {
     pub execution: Execution,
     /// The truth.
     pub truth: Truth,
+    /// FR-235's non-Zeno premise for a liveness-product result; absent for
+    /// other items and results that did not establish the premise.
+    pub non_zeno: Option<NonZeno>,
     /// The settlement method: [`ZONE_CERTIFIED`].
     pub method: &'static str,
     /// The limit a stopped run or check reached.
@@ -78,6 +81,7 @@ impl ZoneCheckRecord {
             basis,
             execution,
             truth,
+            non_zeno: None,
             method: ZONE_CERTIFIED,
             limit_reached: None,
             counterexample: None,
@@ -175,7 +179,9 @@ pub fn settle_zone_check<S>(
         ZoneItem::Outcome(outcome) => outcome,
     };
     match outcome {
-        ZoneCheckOutcome::Holds { certificate, .. } => certified(check(certificate)),
+        ZoneCheckOutcome::Holds { certificate, .. } => {
+            certified(check(certificate), certificate.non_zeno)
+        }
         // FR-160 (FSpec FR-430): a symmetry-reduced proof, which no core
         // checker reads. FR-235's map has no reduced row (spec gap
         // STD-493); FR-160's is used.
@@ -210,11 +216,19 @@ pub fn settle_zone_check<S>(
                 })
             }
         },
-        ZoneCheckOutcome::Undecided { cause, .. } => {
-            ZoneCheckRecord::inconclusive(undecided_cause(cause))
+        ZoneCheckOutcome::Undecided {
+            cause, non_zeno, ..
+        } => {
+            let mut record = ZoneCheckRecord::inconclusive(undecided_cause(cause));
+            record.non_zeno = *non_zeno;
+            record
         }
         ZoneCheckOutcome::Stopped { cause, .. } => stopped(*cause, cancel),
-        ZoneCheckOutcome::Violated { counterexample, .. } => match replay(counterexample) {
+        ZoneCheckOutcome::Violated {
+            counterexample,
+            non_zeno,
+            ..
+        } => match replay(counterexample) {
             Ok(ModelTraceReplayResult {
                 settlement: ModelTraceSettlement::Reproduced { .. },
                 ..
@@ -230,6 +244,7 @@ pub fn settle_zone_check<S>(
                 };
                 ZoneCheckRecord {
                     counterexample: Some(counterexample.as_ref().clone()),
+                    non_zeno: *non_zeno,
                     ..ZoneCheckRecord::row(
                         TerminalValue::Refuted,
                         ResultLabel::Refuted,
@@ -307,8 +322,9 @@ fn stopped(cause: ZoneStop, cancel: &Cancel) -> ZoneCheckRecord {
 /// certificate: `Proved{ZoneCertified, Certified}` only when it accepts.
 fn certified<O>(
     checked: Result<ZoneCertificateVerdict, ZoneCertificateRefusal<O>>,
+    non_zeno: Option<NonZeno>,
 ) -> ZoneCheckRecord {
-    match checked {
+    let mut record = match checked {
         Ok(ZoneCertificateVerdict::Accepted) => ZoneCheckRecord::row(
             TerminalValue::Proved {
                 basis: ProofBasis::ZoneCertified,
@@ -341,7 +357,9 @@ fn certified<O>(
             | ZoneCertificateRefusal::Undecided
             | ZoneCertificateRefusal::Fault(_),
         ) => ZoneCheckRecord::failed(),
-    }
+    };
+    record.non_zeno = non_zeno;
+    record
 }
 
 /// FR-144 and FSpec FR-430: settle EN-6's timed refinement item as one
@@ -378,7 +396,7 @@ pub fn settle_timed_refinement<S>(
 ) -> ZoneCheckRecord {
     let liveness = match (&outcome.safety, &outcome.liveness) {
         (TimedSafetyOutcome::Holds { certificate, .. }, Some(liveness)) => {
-            let safety = certified(check(certificate));
+            let safety = certified(check(certificate), None);
             if !matches!(safety.value, TerminalValue::Proved { .. }) {
                 return safety;
             }
@@ -429,7 +447,7 @@ fn timed_safety<S>(
     replay: impl FnOnce(&TemporalCounterexample) -> Result<RefinementTraceSettlement, ReplayRefusal>,
 ) -> ZoneCheckRecord {
     match outcome {
-        TimedSafetyOutcome::Holds { certificate, .. } => certified(check(certificate)),
+        TimedSafetyOutcome::Holds { certificate, .. } => certified(check(certificate), None),
         TimedSafetyOutcome::Violated { counterexample, .. } => violated(counterexample, replay),
         TimedSafetyOutcome::Undecided { cause, .. } => undecided(cause),
         TimedSafetyOutcome::Stopped { cause, .. } => timed_stopped(*cause, cancel),

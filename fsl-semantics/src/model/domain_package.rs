@@ -564,7 +564,7 @@ pub(crate) fn unaliased<'r>(
     Some((value_type, sequences))
 }
 
-/// One operation parameter: `{key, value_type, multiplicity}`.
+/// One operation parameter: `{key, value_type, multiplicity, presence}`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperationParameterRecord {
     /// This parameter's own original declaration key.
@@ -573,6 +573,8 @@ pub struct OperationParameterRecord {
     pub value_type: ValueTypeRef,
     /// The declared parameter multiplicity.
     pub multiplicity: Multiplicity,
+    /// Whether the parameter may be absent at a call site.
+    pub presence: Presence,
 }
 
 /// An operation's declared result: `{value_type, multiplicity}`; absent
@@ -1119,4 +1121,41 @@ impl DomainPackage {
     pub fn original(&self, key: &DeclarationKey) -> Option<&OriginalDeclaration> {
         self.originals.get(key)
     }
+}
+
+/// The data slot of each authored tuple position; a Clock has no data slot.
+pub(crate) fn tuple_data_projection(
+    records: &[DomainPackageRecord],
+    owner: &DeclarationKey,
+) -> Vec<Option<usize>> {
+    let by_key: BTreeMap<_, _> = records
+        .iter()
+        .map(|record| (record.key(), record))
+        .collect();
+    let mut positions: Vec<_> = records
+        .iter()
+        .filter_map(|record| match record {
+            DomainPackageRecord::TuplePosition(position) if &position.owner == owner => {
+                Some(position)
+            }
+            _ => None,
+        })
+        .collect();
+    positions.sort_by_key(|position| position.ordinal);
+    let mut data = 0;
+    positions
+        .into_iter()
+        .map(|position| {
+            if matches!(
+                unaliased(&position.value_type, |key| by_key.get(key).copied()),
+                Some((ValueTypeRef::Clock, 0))
+            ) {
+                None
+            } else {
+                let slot = data;
+                data += 1;
+                Some(slot)
+            }
+        })
+        .collect()
 }

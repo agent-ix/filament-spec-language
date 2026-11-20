@@ -13,6 +13,8 @@ use super::admission_corpus::config_version_unit;
 use super::*;
 use crate::checked_v2::{read_terminal, read_terminals, ReadTerminalDeclaration, V2ReadRefusal};
 
+mod emission_boundaries;
+
 const WHEN: &str = "terminal Done using v on Config when { self.versionNumber = 3 };";
 /// A declaration other than a `terminal`, so the unit is not empty.
 const NONE: &str = "function noop using v(): Boolean pure { true }";
@@ -43,7 +45,11 @@ fn compile(declarations: &str) -> Compiled {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let graph = assemble_with_models(text.as_bytes(), &packages)
         .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
@@ -229,6 +235,7 @@ fn a_terminal_declaration_emits_its_node_and_the_i2_read_returns_it() {
         read.node,
         key(&when.wire, &terminal_node(&when.wire)["node_id"])
     );
+    assert_eq!(read.ordinal, 0);
     assert_eq!(
         read.declaration,
         ReadTerminalDeclaration::When {
@@ -240,7 +247,7 @@ fn a_terminal_declaration_emits_its_node_and_the_i2_read_returns_it() {
         }
     );
     assert_eq!(
-        read_terminal(&package, &model),
+        read_terminal(&package, &model, 0),
         Ok(read.declaration.clone())
     );
 
@@ -250,14 +257,14 @@ fn a_terminal_declaration_emits_its_node_and_the_i2_read_returns_it() {
     };
     assert_eq!(read.declaration, ReadTerminalDeclaration::Any);
     assert_eq!(
-        read_terminal(&package, &any_model.expect("one terminal")),
+        read_terminal(&package, &any_model.expect("one terminal"), 0),
         Ok(ReadTerminalDeclaration::Any)
     );
 
     let package = admit(&none);
     assert_eq!(read_terminals(&package), Ok(Vec::new()));
     assert_eq!(
-        read_terminal(&package, &model),
+        read_terminal(&package, &model, 0),
         Ok(ReadTerminalDeclaration::None)
     );
 }
@@ -360,7 +367,11 @@ fn a_packages_terminals_resolve_through_their_emitted_nodes() {
         let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
         let graph = assemble_with_models(text.as_bytes(), &packages)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks");
         let package = CheckedPackage::link(graph);
         let terminals = resolve_terminals(&package)
@@ -399,7 +410,11 @@ fn resolution_follows_the_node_not_the_checked_declaration() {
     let checked = || {
         assemble_with_models(unit(WHEN).as_bytes(), &packages)
             .expect("the unit assembles")
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
             .expect("the package checks")
     };
     let mut graph = checked();

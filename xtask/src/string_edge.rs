@@ -40,6 +40,7 @@ fn crate_roots() -> Vec<PathBuf> {
         "fsl-route/src",
         "fsl-replay/src",
         "fsl-analyze/src",
+        "fsl-hybrid-reference/src",
         "fsl-inspect/src",
         "fsl-bench/src",
         "fsl-conformance/src",

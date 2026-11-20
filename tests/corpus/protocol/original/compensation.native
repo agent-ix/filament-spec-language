@@ -1,0 +1,27 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+profile t = "filament.temporal.timestamped-event.finite-window/v1";
+model Factory = "example/parts";
+record Completion { ok: Boolean; }
+record Trigger { fire: Boolean; }
+protocol Recovery using p over (job: Factory::Job) on origin {
+  role Worker on Factory::MachiningStation;
+  compensate Undo for Main::Prepared as (forward: Completion)
+    by Worker on Factory::MachiningStation::release using t clock "timer" {
+    activate first (trigger: Trigger) when { trigger.fire } {}
+    within [0, 2];
+    attempts 1 of Factory::WorkOrder;
+    retry (older: Factory::WorkOrder, newer: Factory::WorkOrder) { true };
+    commit Main::Done;
+    recover (recovery: Completion) { recovery.ok };
+  }
+  run sequence Main {
+    attempt Reserved by Worker on Factory::MachiningStation::reserve contracts []
+      as (reserved: Boolean) { reserved };
+    effect Prepared of Reserved as (prepared: Completion) { prepared.ok };
+    event Aborted by Worker for Undo as (abort: Trigger) { abort.fire };
+    commit Done by Worker as (done: Boolean) { done };
+  }
+  finish Over as (closing: Boolean) { closing };
+}

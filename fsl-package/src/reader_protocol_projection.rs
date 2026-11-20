@@ -18,7 +18,8 @@ use filament_checked::node::{
     NodeKind, OrderedKind, RecordField, RecordSlot, Visit,
 };
 use filament_contract_model::{
-    CheckedNodeId, CheckedPackageV2, CheckedProtocolLocation, CheckedProtocolSemanticLocation,
+    CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedBodySemanticLocation, CheckedNodeId,
+    CheckedPackageV2, CheckedProtocolLocation, CheckedProtocolSemanticLocation,
     CheckedSemanticNodeV2, CheckedTerm, OperationModeKind,
 };
 use filament_exact::{
@@ -84,6 +85,17 @@ impl ReaderProtocolProjection {
             .and_then(|node| node.location.as_ref())
     }
 
+    /// The occurrence key of the node at an arena index when it has just one `expression`
+    /// occurrence; `None` otherwise.
+    pub fn occurrence(
+        &self,
+        index: usize,
+    ) -> Option<&fsl_foundation::source::provenance::OccurrenceKey> {
+        self.nodes
+            .get(index)
+            .and_then(|node| node.occurrence.as_ref())
+    }
+
     /// Ordered child node indices.
     pub fn children(&self, index: usize) -> Option<&[usize]> {
         self.nodes.get(index).map(|node| node.children.as_slice())
@@ -94,6 +106,7 @@ impl ReaderProtocolProjection {
         let function = self.functions.get(index)?;
         Some(ReaderProtocolFunction {
             name: &function.name,
+            node: &function.key,
             body: function.body,
             slots: function.slots,
             parameters: &function.parameters,
@@ -128,26 +141,91 @@ impl ReaderProtocolProjection {
         self.locate_from(self.root, owner);
     }
 
-    /// Locate each called function's body under its own `Body` owner, its
-    /// declaration index the one `indices` gives its name: the location the
-    /// source route's checked body gives each of its nodes.
-    fn locate_functions(&mut self, indices: &BTreeMap<String, usize>) {
-        let bodies: Vec<(usize, Origin)> = self
-            .functions
-            .iter()
-            .filter_map(|function| {
-                let index = *indices.get(&function.name)?;
-                Some((
-                    function.body,
-                    Origin::Body {
-                        function: function.name.clone(),
-                        index,
-                    },
-                ))
-            })
-            .collect();
-        for (body, owner) in bodies {
-            self.locate_from(body, owner);
+    /// Locate each term of every function body from the admitted
+    /// `body_locations` rows of its function (FSpec FR-322): visit `k` of an
+    /// application in the body's walk takes the application's row `k` of the
+    /// function, in (occurrence, `term_ordinal`) order. A node the wire
+    /// carries no row for keeps no location, and the evaluator faults rather
+    /// than invent one (FR-390).
+    fn locate_function_bodies(&mut self, admitted: &CheckedPackageV2) {
+        let Some(data) = admitted.checked_term_data() else {
+            return;
+        };
+        let mut rows: BTreeMap<
+            &CheckedNodeId,
+            BTreeMap<&CheckedNodeId, Vec<&CheckedBodySemanticLocation>>,
+        > = BTreeMap::new();
+        for row in &data.body_locations {
+            let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+            rows.entry(function)
+                .or_default()
+                .entry(&row.application)
+                .or_default()
+                .push(row);
+        }
+        for group in rows.values_mut().flat_map(BTreeMap::values_mut) {
+            group.sort_by_key(|row| (&row.occurrence, row.term_ordinal));
+        }
+        let has_rows: BTreeSet<CheckedNodeId> = rows.keys().map(|node| (*node).clone()).collect();
+        let mut located = Vec::new();
+        for function in &self.functions {
+            let Some(applications) = rows.get(&function.node) else {
+                continue;
+            };
+            let mut seen: BTreeMap<&CheckedNodeId, usize> = BTreeMap::new();
+            for position in walk(&self.nodes, function.body) {
+                let Some(node) = self.nodes.get(position) else {
+                    continue;
+                };
+                for application in node.terms() {
+                    let visit = seen.entry(application).or_default();
+                    let row = applications
+                        .get(application)
+                        .and_then(|group| group.get(*visit));
+                    *visit += 1;
+                    if node.term.as_ref() == Some(application) {
+                        if let Some(location) = row.and_then(|row| body_location(&row.location)) {
+                            located.push((position, location));
+                        }
+                    }
+                }
+            }
+        }
+        for (position, location) in located {
+            if let Some(node) = self.nodes.get_mut(position) {
+                node.location = Some(location);
+            }
+        }
+        // A `let`, conditional or `case` is no term and has no row (FSpec
+        // FR-322), so one the author wrote stays unlocated: an evaluator never
+        // invents a location. The checker locates the `let` it synthesizes
+        // for an IEEE ordering at its body's position, so that node takes its
+        // last child's location, children first.
+        for function in &self.functions {
+            if !has_rows.contains(&function.node) {
+                continue;
+            }
+            for position in walk(&self.nodes, function.body).into_iter().rev() {
+                let Some(node) = self.nodes.get(position) else {
+                    continue;
+                };
+                if node.location.is_some()
+                    || !matches!(
+                        &node.kind,
+                        NodeKind::Let { name, .. } if crate::introduced_binders::is_ieee_operand(name)
+                    )
+                {
+                    continue;
+                }
+                let inherited = node
+                    .children
+                    .last()
+                    .and_then(|child| self.nodes.get(*child))
+                    .and_then(|child| child.location.clone());
+                if let Some(node) = self.nodes.get_mut(position) {
+                    node.location = inherited;
+                }
+            }
         }
     }
 
@@ -224,6 +302,8 @@ impl ReaderProtocolProjection {
 pub struct ReaderProtocolFunction<'a> {
     /// Function name used by evaluator diagnostics.
     pub name: &'a str,
+    /// Structural identity of the admitted function declaration.
+    pub node: &'a NodeKey,
     /// Function body node index.
     pub body: usize,
     /// Number of checked parameter slots.
@@ -516,6 +596,11 @@ pub(crate) struct SlotRequest {
     pub(crate) root: NodeKey,
     pub(crate) origin: String,
     pub(crate) binders: Vec<NodeKey>,
+    /// The checker binders in scope that no local slot holds: a term that reads
+    /// only some of its clause's binders is given slots for those alone, while
+    /// the checker numbers an introduced binder's level after every binder of
+    /// the clause.
+    pub(crate) level_offset: usize,
 }
 
 /// Project every slot of `admitted`, over the selected `identities` the view
@@ -729,6 +814,7 @@ pub(crate) fn admit_equality_decisions(
 }
 
 struct WireIndex<'wire> {
+    populations: Option<&'wire crate::bare::BarePackage<'wire>>,
     equality: std::borrow::Cow<'wire, EqualityDecisions>,
     projections: std::borrow::Cow<'wire, ExactProjections>,
     admitted: &'wire CheckedPackageV2,
@@ -769,6 +855,7 @@ impl<'wire> WireIndex<'wire> {
             ids.insert(key, &node.node_id);
         }
         Ok(Self {
+            populations: None,
             equality,
             projections,
             admitted,
@@ -866,9 +953,9 @@ impl<'wire> WireIndex<'wire> {
             nodes: Vec::new(),
             functions: Vec::new(),
             function_indexes: BTreeMap::new(),
-            memo: BTreeMap::new(),
             binders: BTreeMap::new(),
             root_slots: request.binders.len(),
+            level_offset: request.level_offset,
             active: None,
             suspended: Vec::new(),
             ordinal: 0,
@@ -879,7 +966,7 @@ impl<'wire> WireIndex<'wire> {
             context: Context::Root,
             locals: std::rc::Rc::new(locals),
         })?;
-        Ok(ReaderProtocolProjection {
+        let mut projection = ReaderProtocolProjection {
             nodes: builder.nodes,
             functions: builder.functions,
             root: root_index,
@@ -887,7 +974,9 @@ impl<'wire> WireIndex<'wire> {
             selected_function_node: None,
             frame_slots: builder.root_slots,
             locals: local_keys,
-        })
+        };
+        projection.locate_function_bodies(self.admitted);
+        Ok(projection)
     }
 
     fn project_function(
@@ -900,9 +989,9 @@ impl<'wire> WireIndex<'wire> {
             nodes: Vec::new(),
             functions: Vec::new(),
             function_indexes: BTreeMap::new(),
-            memo: BTreeMap::new(),
             binders: BTreeMap::new(),
             root_slots: 0,
+            level_offset: 0,
             active: None,
             suspended: Vec::new(),
             ordinal: 0,
@@ -918,7 +1007,7 @@ impl<'wire> WireIndex<'wire> {
             .ok_or_else(|| fault("reader-selected-function-index-is-retained"))?;
         let root = function.body;
         let frame_slots = function.slots;
-        Ok(ReaderProtocolProjection {
+        let mut projection = ReaderProtocolProjection {
             nodes: builder.nodes,
             functions: builder.functions,
             root,
@@ -926,7 +1015,9 @@ impl<'wire> WireIndex<'wire> {
             selected_function_node,
             frame_slots,
             locals: BTreeMap::new(),
-        })
+        };
+        projection.locate_function_bodies(self.admitted);
+        Ok(projection)
     }
 }
 
@@ -1104,6 +1195,15 @@ pub(crate) struct BareWalker<'wire> {
 }
 
 impl<'wire> BareWalker<'wire> {
+    /// Read named population operands from the already admitted catalog.
+    pub(crate) fn with_populations(
+        mut self,
+        package: &'wire crate::bare::BarePackage<'wire>,
+    ) -> Self {
+        self.index.populations = Some(package);
+        self
+    }
+
     pub(crate) fn new(
         admitted: &'wire CheckedPackageV2,
         identities: &'wire filament_contract_model::SelectedExactIdentities,
@@ -1287,6 +1387,7 @@ impl<'wire> BareWalker<'wire> {
             root: root.clone(),
             origin: String::new(),
             binders: binders.to_vec(),
+            level_offset: 0,
         };
         let projection = self.slot(&request)?;
         let mut visits: BTreeMap<CheckedNodeId, usize> = BTreeMap::new();
@@ -1314,6 +1415,7 @@ impl<'wire> BareWalker<'wire> {
             root: root.clone(),
             origin: origin.unwrap_or_default().to_owned(),
             binders: binders.to_vec(),
+            level_offset: 0,
         };
         let mut projection = self.slot(&request)?;
         let rows = OriginRows::new(self.index.admitted);
@@ -1340,53 +1442,27 @@ impl<'wire> BareWalker<'wire> {
         binders: &[NodeKey],
         owner: Origin,
     ) -> Result<ReaderProtocolProjection, WalkFailure> {
+        self.project_term_at(root, binders, 0, owner)
+    }
+
+    /// [`Self::project_term`] for a term whose scope holds `level_offset`
+    /// checker binders beyond `binders`.
+    pub(crate) fn project_term_at(
+        &self,
+        root: &NodeKey,
+        binders: &[NodeKey],
+        level_offset: usize,
+        owner: Origin,
+    ) -> Result<ReaderProtocolProjection, WalkFailure> {
         let mut projection = self.slot(&SlotRequest {
             root: root.clone(),
             origin: String::new(),
             binders: binders.to_vec(),
+            level_offset,
         })?;
         projection.locate_under(owner);
-        projection.locate_functions(&self.function_indices());
+        projection.locate_function_bodies(self.index.admitted);
         Ok(projection)
-    }
-
-    /// Each pure function's declaration index among the package's functions
-    /// in source order, by its name: the rank of its `declaration`
-    /// occurrence among every pure function's, by the start of their
-    /// source-map regions.
-    fn function_indices(&self) -> BTreeMap<String, usize> {
-        let admitted = self.index.admitted;
-        let mut declared: Vec<(u64, String)> = admitted
-            .resolved_graph()
-            .nodes
-            .iter()
-            .filter(|node| has_form(node, WireTag::Function, WireForm::PureFunction))
-            .filter_map(|node| {
-                let name = node
-                    .declaration
-                    .as_ref()?
-                    .qualified_name
-                    .last()?
-                    .to_string();
-                let start = admitted
-                    .source_map()
-                    .iter()
-                    .filter(|entry| {
-                        entry.node_id == node.node_id
-                            && entry.role
-                                == filament_contract_model::CheckedOccurrenceRole::Declaration
-                    })
-                    .filter_map(|entry| entry.regions.first().map(|region| region.start))
-                    .min()?;
-                Some((start, name))
-            })
-            .collect();
-        declared.sort();
-        declared
-            .into_iter()
-            .enumerate()
-            .map(|(index, (_, name))| (name, index))
-            .collect()
     }
 
     /// The number of rows each type-declaration origin holds for each
@@ -1444,13 +1520,12 @@ struct ReaderBuilder<'index, 'wire> {
     nodes: Vec<ReaderProjectedNode>,
     functions: Vec<ReaderFunction>,
     function_indexes: BTreeMap<CheckedNodeId, usize>,
-    /// Function bodies share a node reached twice; the slot's own walk
-    /// holds one position per parent (FR-390).
-    memo: BTreeMap<(usize, CheckedNodeId), usize>,
     /// The binder of each `let` or query scope read so far, which a node
     /// projected again does not look up again.
     binders: BTreeMap<CheckedNodeId, Option<CheckedNodeId>>,
     root_slots: usize,
+    /// [`SlotRequest::level_offset`].
+    level_offset: usize,
     /// The node [`Self::project_tree`] is projecting now.
     active: Option<Frame>,
     /// The children the active node's projection asked for and did not
@@ -1533,7 +1608,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     _ => {
                         return Err(BuildError::Fault(fault(
                             "reader-function-body-has-checked-identity",
-                        )))
+                        )));
                     }
                 };
                 let name = node
@@ -1568,7 +1643,9 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let index = self.functions.len();
             self.function_indexes.insert(node.clone(), index);
             self.functions.push(ReaderFunction {
+                node: node.clone(),
                 name: name.clone(),
+                key: self.index.key(node)?,
                 body: usize::MAX,
                 slots: parameter_ids.len(),
                 parameters: parameters
@@ -1603,6 +1680,30 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             );
         }
         Ok(())
+    }
+
+    /// The occurrence key of `node` (ADR-013 O-07) when it has exactly one
+    /// `expression` occurrence. A node shared by structurally equal
+    /// expressions has several, and the wire pairs none with a position of
+    /// this walk, so such a node names none.
+    fn sole_expression_occurrence(
+        &self,
+        id: &CheckedNodeId,
+        node: &CheckedSemanticNodeV2,
+    ) -> Option<fsl_foundation::source::provenance::OccurrenceKey> {
+        let mut expression = node.occurrences.iter().filter(|occurrence| {
+            occurrence.role == filament_contract_model::CheckedOccurrenceRole::Expression
+        });
+        let (Some(only), None) = (expression.next(), expression.next()) else {
+            return None;
+        };
+        Some(fsl_foundation::source::provenance::OccurrenceKey::new(
+            self.index.key(id).ok()?,
+            filament_exact::Origin::new(
+                filament_exact::Role::new(crate::checked_v2::role_spelling(&only.role)),
+                only.ordinal,
+            ),
+        ))
     }
 
     fn push(&mut self, node: ReaderProjectedNode) -> usize {
@@ -1656,11 +1757,6 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             self.set_slots(context, self.slots(context).max(slots));
             return Ok(index);
         }
-        if let Context::Function(function) = context {
-            if let Some(index) = self.memo.get(&(function, id.clone())) {
-                return Ok(*index);
-            }
-        }
         self.suspended = vec![(
             ordinal,
             NodeRequest {
@@ -1692,9 +1788,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let known = self
                 .active
                 .as_ref()
-                .is_some_and(|frame| frame.finished.contains_key(&ordinal))
-                || matches!(context, Context::Function(function)
-                    if self.memo.contains_key(&(function, target.clone())));
+                .is_some_and(|frame| frame.finished.contains_key(&ordinal));
             if !known {
                 let locals = shared.get_or_insert_with(|| std::rc::Rc::new(locals.clone()));
                 missing.push((
@@ -1730,11 +1824,6 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
     /// stack holds one frame per node on the path from `root`, and each
     /// frame one entry per child.
     fn project_tree(&mut self, root: NodeRequest) -> Result<usize, BuildError> {
-        if let Context::Function(function) = root.context {
-            if let Some(index) = self.memo.get(&(function, root.id.clone())) {
-                return Ok(*index);
-            }
-        }
         let mut parents: Vec<Frame> = Vec::new();
         let mut frame = self.enter(root);
         loop {
@@ -1749,15 +1838,10 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 .take()
                 .ok_or_else(|| fault("reader-projection-frame-is-active"))?;
             let finished = match result {
-                Ok(index) => {
-                    if let Context::Function(function) = request.context {
-                        self.memo.insert((function, request.id.clone()), index);
-                    }
-                    Finished {
-                        index,
-                        slots: self.slots(request.context),
-                    }
-                }
+                Ok(index) => Finished {
+                    index,
+                    slots: self.slots(request.context),
+                },
                 Err(BuildError::Suspended) => {
                     self.nodes.truncate(added);
                     frame.queue = std::mem::take(&mut self.suspended);
@@ -1801,18 +1885,6 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let Some((ordinal, wanted)) = parent.queue.pop() else {
                 return Ok(None);
             };
-            if let Context::Function(function) = wanted.context {
-                if let Some(index) = self.memo.get(&(function, wanted.id.clone())) {
-                    parent.finished.insert(
-                        ordinal,
-                        Finished {
-                            index: *index,
-                            slots: 0,
-                        },
-                    );
-                    continue;
-                }
-            }
             parent.waiting = ordinal;
             return Ok(Some(self.enter(wanted)));
         }
@@ -1838,6 +1910,20 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         if let Some(slot) = locals.get(id).copied() {
             let value_type = self.value_type(id)?;
             return Ok(self.push(ReaderProjectedNode::leaf(NodeKind::Local(slot), value_type)));
+        }
+        if let Some(package) = self.index.populations {
+            let key = self.index.key(id).map_err(BuildError::Fault)?;
+            if let Some((population, members)) = package.population_types(&key) {
+                return Ok(self.push(ReaderProjectedNode::leaf(
+                    NodeKind::NamedPopulation {
+                        population: population.clone(),
+                        members: members.to_vec(),
+                    },
+                    // The all_instances/lookup result carries the bound;
+                    // the population reference itself is bound-independent.
+                    ValueType::Population(None),
+                )));
+            }
         }
         let node = self.node(id)?;
         let (kind, children, term) = match &node.body {
@@ -1931,7 +2017,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                             | "filament.op.control.case"
                     )
                 );
-                let term = (context == Context::Root && has_location_row).then(|| id.clone());
+                let term = has_location_row.then(|| id.clone());
                 (kind, children, term)
             }
             _ => {
@@ -1949,6 +2035,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             children,
             term,
             absorbed: None,
+            occurrence: self.sole_expression_occurrence(id, node),
         }))
     }
 
@@ -2055,14 +2142,27 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let [CheckedTerm::Binding { name, value }, body] = arguments else {
                     return Err(fault("reader-let-has-binding-and-body").into());
                 };
-                let binder = self.binder_of(id, name.as_ref(), body)?;
+                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
+                    name.kind()
+                else {
+                    return Err(fault("reader-let-binder-has-name").into());
+                };
                 let slot = self.next_slot(context, locals);
+                let binder = self.binder_of(id, name.as_ref(), body, slot, context)?;
                 let value = self.project_argument(id, value, context, locals)?;
                 let mut body_locals = locals.clone();
                 body_locals.extend(binder.map(|binder| (binder, slot)));
                 let body = self.project_argument(id, body, context, &body_locals)?;
                 self.grow_frame(context, slot.saturating_add(1));
-                Ok((NodeKind::Let { slot, value, body }, vec![value, body]))
+                Ok((
+                    NodeKind::Let {
+                        slot,
+                        name: name.as_ref().to_owned(),
+                        value,
+                        body,
+                    },
+                    vec![value, body],
+                ))
             }
             Some("filament.op.function.call") => {
                 let callee = arguments
@@ -2329,8 +2429,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let [source_term, CheckedTerm::Binding { name, value }] = arguments else {
                     return Err(fault("reader-collection-query-has-source-and-binder").into());
                 };
-                let binder = self.binder_of(id, name.as_ref(), value)?;
+                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
+                    name.kind()
+                else {
+                    return Err(fault("reader-collection-query-binder-has-name").into());
+                };
                 let slot = self.next_slot(context, locals);
+                let binder = self.binder_of(id, name.as_ref(), value, slot, context)?;
                 let source = self.project_argument(id, source_term, context, locals)?;
                 let mut body_locals = locals.clone();
                 body_locals.extend(binder.map(|binder| (binder, slot)));
@@ -2349,6 +2454,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     NodeKind::Query {
                         visit,
                         slot,
+                        name: name.as_ref().to_owned(),
                         source,
                         body,
                     },
@@ -2433,7 +2539,12 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     children,
                 ))
             }
-            Some("filament.op.numeric.convert") => {
+            Some(
+                "filament.op.numeric.convert"
+                | "filament.op.ieee.from_exact"
+                | "filament.op.ieee.to_float32"
+                | "filament.op.ieee.to_float64",
+            ) => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;
                 let [operand] = children.as_slice() else {
                     return Err(fault("reader-numeric-conversion-has-one-operand").into());
@@ -2534,6 +2645,64 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     .ok_or_else(|| fault("reader-order-family-is-catalogued"))?;
                 Ok((NodeKind::Order(operator, kind, *left, *right), children))
             }
+            Some(
+                "filament.op.ieee.numeric_equal"
+                | "filament.op.ieee.total_order"
+                | "filament.op.ieee.bit_identical",
+            ) => {
+                let children = self.project_arguments(id, Some(arguments), context, locals)?;
+                let [left, right] = children.as_slice() else {
+                    return Err(fault("reader-ieee-comparison-has-two-operands").into());
+                };
+                let kind = match identity {
+                    Some("filament.op.ieee.numeric_equal") => {
+                        NodeKind::IeeeNumericEquality(*left, *right)
+                    }
+                    Some("filament.op.ieee.total_order") => {
+                        NodeKind::IeeeTotalOrder(OrderedKind::Float, *left, *right)
+                    }
+                    _ => NodeKind::IeeeBitIdentical(*left, *right),
+                };
+                Ok((kind, children))
+            }
+            Some("filament.op.ieee.float32.negate" | "filament.op.ieee.float64.negate") => {
+                let children = self.project_arguments(id, Some(arguments), context, locals)?;
+                let [operand] = children.as_slice() else {
+                    return Err(fault("reader-ieee-negation-has-one-operand").into());
+                };
+                self.ieee_width_matches(id, identity)?;
+                Ok((NodeKind::Negate(*operand), children))
+            }
+            Some(
+                "filament.op.ieee.float32.add"
+                | "filament.op.ieee.float32.sub"
+                | "filament.op.ieee.float32.mul"
+                | "filament.op.ieee.float32.div"
+                | "filament.op.ieee.float64.add"
+                | "filament.op.ieee.float64.sub"
+                | "filament.op.ieee.float64.mul"
+                | "filament.op.ieee.float64.div",
+            ) => {
+                let children = self.project_arguments(id, Some(arguments), context, locals)?;
+                let [left, right] = children.as_slice() else {
+                    return Err(fault("reader-ieee-arithmetic-has-two-operands").into());
+                };
+                let operator = identity
+                    .and_then(arithmetic_operator)
+                    .ok_or_else(|| fault("reader-ieee-arithmetic-is-catalogued"))?;
+                self.ieee_width_matches(id, identity)?;
+                let rounding = ieee_rounding(operation)?;
+                Ok((NodeKind::Ieee(operator, rounding, *left, *right), children))
+            }
+            Some("filament.op.ieee.float32.sqrt" | "filament.op.ieee.float64.sqrt") => {
+                let children = self.project_arguments(id, Some(arguments), context, locals)?;
+                let [operand] = children.as_slice() else {
+                    return Err(fault("reader-ieee-square-root-has-one-operand").into());
+                };
+                self.ieee_width_matches(id, identity)?;
+                let rounding = ieee_rounding(operation)?;
+                Ok((NodeKind::IeeeSquareRoot(rounding, *operand), children))
+            }
             Some("filament.op.record.project") => {
                 self.projection(id, operation, arguments, context, locals)
             }
@@ -2544,6 +2713,25 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 id,
                 identity.unwrap_or("unidentified operation"),
             )),
+        }
+    }
+
+    /// A width-specific IEEE identity (`float32.*` or `float64.*`) names the
+    /// width of the float its application yields; a mismatch is an admitted
+    /// package the source lowering never writes.
+    fn ieee_width_matches(
+        &self,
+        id: &CheckedNodeId,
+        identity: Option<&str>,
+    ) -> Result<(), BuildError> {
+        let named = match identity.and_then(|identity| identity.strip_prefix("filament.op.ieee.")) {
+            Some(rest) if rest.starts_with("float32.") => filament_exact::IeeeWidth::Binary32,
+            Some(rest) if rest.starts_with("float64.") => filament_exact::IeeeWidth::Binary64,
+            _ => return Err(fault("reader-ieee-identity-names-a-width").into()),
+        };
+        match self.value_type(id)? {
+            ValueType::Float(float) if float.width() == named => Ok(()),
+            _ => Err(fault("reader-ieee-width-matches-its-operation").into()),
         }
     }
 
@@ -2675,9 +2863,17 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             };
             let mut arm_locals = locals.clone();
             let mut arm_slots = Vec::with_capacity(binders.len());
+            let mut arm_names = Vec::with_capacity(binders.len());
             for binder in binders {
                 let target = reference_target(binder)
                     .ok_or_else(|| fault("reader-union-case-binder-has-identity"))?;
+                // FR-400: the declared name is the parameter node's `name`.
+                let declared = self
+                    .index
+                    .node(target)
+                    .and_then(|node| parameter_name(&node.body))
+                    .ok_or_else(|| fault("reader-union-case-binder-has-name"))?;
+                arm_names.push(declared.to_owned());
                 arm_slots.push(next_slot);
                 arm_locals.insert(target.clone(), next_slot);
                 next_slot = next_slot
@@ -2692,6 +2888,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             arms.push(CaseArm {
                 member,
                 binders: arm_slots,
+                names: arm_names,
                 body,
             });
         }
@@ -2743,11 +2940,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         id: &CheckedNodeId,
         name: &str,
         scope: &CheckedTerm,
+        slot: usize,
+        context: Context,
     ) -> Result<Option<CheckedNodeId>, BuildError> {
         if let Some(binder) = self.binders.get(id) {
             return Ok(binder.clone());
         }
-        let binder = self.binder_node(name, scope)?;
+        let binder = self.binder_node(name, scope, slot, context)?;
         self.binders.insert(id.clone(), binder.clone());
         Ok(binder)
     }
@@ -2757,6 +2956,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         &self,
         name: &str,
         scope: &CheckedTerm,
+        slot: usize,
+        context: Context,
     ) -> Result<Option<CheckedNodeId>, BuildError> {
         let mut found = BTreeSet::new();
         let lookup = |id: &CheckedNodeId| self.index.node(id);
@@ -2765,6 +2966,30 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 found.insert(node.node_id.clone());
             }
         });
+        if crate::introduced_binders::is_ieee_operand(name) {
+            // The checker names every operand binder of an IEEE ordering
+            // lowering `#ieee_operand` and nests them, so a scope reads the
+            // binders of its enclosing lets by that one name. A let binds the
+            // operand whose level is the let's own slot (FR-092).
+            if found.is_empty() {
+                return Ok(None);
+            }
+            // A function body numbers its levels from its own parameters.
+            let offset = if context == Context::Root {
+                self.level_offset
+            } else {
+                0
+            };
+            let slot = u64::try_from(slot.saturating_add(offset))
+                .map_err(|_| fault("reader-let-slot-is-in-range"))?;
+            return found
+                .into_iter()
+                .find(|node| {
+                    self.index.node(node).and_then(|n| parameter_level(&n.body)) == Some(slot)
+                })
+                .map(Some)
+                .ok_or_else(|| fault("reader-ieee-operand-binder-is-at-the-let-slot").into());
+        }
         let mut found = found.into_iter();
         match (found.next(), found.next()) {
             (binder, None) => Ok(binder),
@@ -2807,6 +3032,14 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         if let Some(filament_contract_model::SelectedExactIdentity::Object(owner)) = selected {
             // A model attribute reads the reference under its `model.deref`.
             let operand = self.node(operand_id)?;
+            let explicit_deref = matches!(
+                read_form,
+                Some(filament_contract_model::CheckedFieldReadForm::ExplicitDeref)
+            ) && matches!(
+                &operand.body,
+                CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.model.deref")
+            );
             let reference = match &operand.body {
                 CheckedTerm::Application {
                     operation,
@@ -2830,6 +3063,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 Some(filament_contract_model::CheckedMemberType::Option(_))
             );
             let child = self.project_argument(id, &reference, context, locals)?;
+            // The explicit `deref` stays a position of the slot's walk (FR-383)
+            // with its own row, held by the reference it reads.
+            if explicit_deref && context == Context::Root {
+                if let Some(node) = self.nodes.get_mut(child) {
+                    node.absorbed = Some(operand_id.clone());
+                }
+            }
             return Ok((
                 NodeKind::Attribute {
                     reference: child,
@@ -3121,6 +3361,7 @@ fn arithmetic_operator(identity: &str) -> Option<ArithmeticOperator> {
 
 /// The selected exact type of admitted node `id`, joining declared and
 /// structural identities where IR's projection leaves the join to FSL.
+#[ix_trace_rs::string_edge]
 pub(crate) fn node_value_type(
     index: &TypeReader<'_>,
     id: &CheckedNodeId,
@@ -3140,6 +3381,23 @@ pub(crate) fn node_value_type(
         error.code,
         Code::UnsupportedExactType | Code::UnavailableIdentityWitness
     ) && error.form.as_deref().is_some_and(is_collection_bounds)
+    {
+        return collection_node_type(index, id);
+    }
+    if index
+        .node(id)
+        .and_then(|node| index.node(&node.semantic_type))
+        .is_some_and(|node| {
+            matches!(
+                index.admitted.node_kind(&node.node_id),
+                Some(filament_contract_model::CheckedNodeKind::CompositeType(
+                    filament_contract_model::CompositeTypeForm::Sequence
+                        | filament_contract_model::CompositeTypeForm::Set
+                        | filament_contract_model::CompositeTypeForm::Bag
+                        | filament_contract_model::CompositeTypeForm::OrderedSet
+                ))
+            )
+        })
     {
         return collection_node_type(index, id);
     }
@@ -3170,6 +3428,22 @@ pub(crate) fn node_value_type(
             .filter(|node| has_form(node, tag, form))
             .and_then(|_| index.graph.key(declaration).ok())
     };
+    if error.code == Code::UnsupportedExactType
+        && error.form.as_deref() == Some("bounded_domain/rational_range")
+    {
+        let declaration = scalar_at.ok_or(TypeError::Unsupported)?;
+        return rational_range_type(index.node(declaration).ok_or(TypeError::Unsupported)?);
+    }
+    if unresolved && error.form.as_deref() == Some("bounded_domain/float_rounding") {
+        // Only the requested node's own float type is typed here; a float
+        // nested in an option, collection, tuple, record or map is refused
+        // like the sibling scalar forms.
+        let declaration = scalar_at.ok_or(TypeError::Unsupported)?;
+        return Ok(crate::checked_v2::float_rounding_type(
+            index.admitted,
+            declaration,
+        )?);
+    }
     match error.form.as_deref().and_then(split_tag_form) {
         Some((WireTag::ScalarType, WireForm::Text)) if unresolved => {
             index
@@ -3244,6 +3518,37 @@ fn is_collection_bounds(form: &str) -> bool {
     form == "bounded_domain/collection_bounds"
 }
 
+/// The `Rational[nmin, nmax; dmin, dmax]` a `rational_range` node holds, its
+/// four bounds exact integers.
+#[ix_trace_rs::string_edge]
+fn rational_range_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeError> {
+    let bound = |wanted: &str| -> Option<filament_exact::Integer> {
+        let CheckedTerm::Aggregate { members } = &node.body else {
+            return None;
+        };
+        members.iter().find_map(|member| {
+            let CheckedTerm::Binding { name, value } = member else {
+                return None;
+            };
+            (name.as_ref() == wanted).then(|| match value.literal_read()?.value {
+                filament_contract_model::CheckedLiteralValue::Integer(bound) => {
+                    bound.to_string().parse().ok()
+                }
+                _ => None,
+            })?
+        })
+    };
+    let interval = |lower: &str, upper: &str| {
+        filament_exact::IntegerInterval::new(bound(lower)?, bound(upper)?).ok()
+    };
+    let numerator = interval("numerator_min", "numerator_max").ok_or(TypeError::Unsupported)?;
+    let denominator =
+        interval("denominator_min", "denominator_max").ok_or(TypeError::Unsupported)?;
+    filament_exact::RationalDomain::new(numerator, denominator)
+        .map(ValueType::Rational)
+        .map_err(|_| TypeError::Unsupported)
+}
+
 /// The integer a `min` or `max` member of a bounds node holds.
 #[ix_trace_rs::string_edge]
 fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
@@ -3263,8 +3568,8 @@ fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
     })
 }
 
-/// The exact type of a node whose semantic type is a cardinality-bounded
-/// collection. IR's projection reads a collection only as a record member, so
+/// The exact type of a node whose semantic type is a collection, optionally
+/// cardinality-bounded. IR's projection reads a collection only as a record member, so
 /// the join is FSL's: the bounds node gives the cardinality, the collection
 /// type node the kind and its element, and the element is typed by a node of
 /// the package that has it as semantic type (IR's own projection of that node).
@@ -3273,14 +3578,29 @@ fn collection_node_type(
     index: &TypeReader<'_>,
     id: &CheckedNodeId,
 ) -> Result<ValueType, TypeError> {
-    let bounds = index
+    let semantic_type = index
         .node(id)
         .and_then(|node| index.node(&node.semantic_type))
-        .ok_or_else(|| fault("reader-collection-bounds-node-is-admitted"))?;
-    let collection = index
-        .node(&bounds.semantic_type)
-        .filter(|node| node.node_tag.as_ref() == "composite_type")
         .ok_or_else(|| fault("reader-collection-type-node-is-admitted"))?;
+    let (collection, bound) = if semantic_type.node_tag.as_ref() == "bounded_domain"
+        && semantic_type.semantic_form.as_ref() == "collection_bounds"
+    {
+        let (Some(minimum), Some(maximum)) = (
+            bound_member(&semantic_type.body, "min"),
+            bound_member(&semantic_type.body, "max"),
+        ) else {
+            return Err(fault("reader-collection-bounds-are-integers").into());
+        };
+        let bound = filament_exact::CardinalityBound::new(minimum, maximum)
+            .map_err(|_| fault("reader-collection-bounds-are-ordered"))?;
+        let collection = index
+            .node(&semantic_type.semantic_type)
+            .filter(|node| node.node_tag.as_ref() == "composite_type")
+            .ok_or_else(|| fault("reader-collection-type-node-is-admitted"))?;
+        (collection, Some(bound))
+    } else {
+        (semantic_type, None)
+    };
     let kind = match collection.semantic_form.as_ref() {
         "sequence" => filament_exact::CollectionKind::Sequence,
         "set" => filament_exact::CollectionKind::Set,
@@ -3288,14 +3608,6 @@ fn collection_node_type(
         "ordered_set" => filament_exact::CollectionKind::OrderedSet,
         _ => return Err(TypeError::Unsupported),
     };
-    let (Some(minimum), Some(maximum)) = (
-        bound_member(&bounds.body, "min"),
-        bound_member(&bounds.body, "max"),
-    ) else {
-        return Err(fault("reader-collection-bounds-are-integers").into());
-    };
-    let bound = filament_exact::CardinalityBound::new(minimum, maximum)
-        .map_err(|_| fault("reader-collection-bounds-are-ordered"))?;
     let element = match &collection.body {
         CheckedTerm::Aggregate { members } => match members.as_slice() {
             [CheckedTerm::Reference { target }] => target,
@@ -3310,9 +3622,7 @@ fn collection_node_type(
         .ok_or(TypeError::Unsupported)?;
     let element = node_value_type(index, &witness.node_id)?;
     Ok(ValueType::collection(filament_exact::CollectionType::new(
-        kind,
-        element,
-        Some(bound),
+        kind, element, bound,
     )))
 }
 
@@ -3331,6 +3641,31 @@ pub(crate) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
             filament_contract_model::CheckedLiteralValue::Text(name) => Some(name),
             _ => None,
         })?
+    })
+}
+
+/// The `level` binding of a parameter node's body.
+///
+/// `#[string_edge]`: `name` is an admitted binding key in the parameter wire
+/// form.
+#[ix_trace_rs::string_edge]
+fn parameter_level(term: &CheckedTerm) -> Option<u64> {
+    let CheckedTerm::Aggregate { members } = term else {
+        return None;
+    };
+    members.iter().find_map(|member| {
+        let CheckedTerm::Binding { name, value } = member else {
+            return None;
+        };
+        if name.as_ref() != "level" {
+            return None;
+        }
+        match value.literal_read()?.value {
+            filament_contract_model::CheckedLiteralValue::Integer(level) => {
+                level.to_string().parse().ok()
+            }
+            _ => None,
+        }
     })
 }
 
@@ -3367,6 +3702,26 @@ fn location(admitted: &CheckedProtocolLocation) -> Option<Location> {
             protocol: usize::try_from(*protocol).ok()?,
             attempt: usize::try_from(*attempt).ok()?,
         },
+    };
+    let path = admitted
+        .path
+        .iter()
+        .map(|ordinal| match ordinal {
+            filament_contract_model::CheckedKeyOrdinal::Safe(value) => usize::try_from(*value).ok(),
+            filament_contract_model::CheckedKeyOrdinal::BeyondSafe(value) => {
+                value.parse::<usize>().ok()
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Location::at(origin, &path))
+}
+
+/// The checker's location of a function-body term, as its row captured it.
+fn body_location(admitted: &CheckedBodyLocation) -> Option<Location> {
+    let CheckedBodyLocationOrigin::FunctionBody { name, index, .. } = &admitted.origin;
+    let origin = Origin::Body {
+        function: name.to_string(),
+        index: usize::try_from(*index).ok()?,
     };
     let path = admitted
         .path
@@ -3432,6 +3787,8 @@ fn literal_value(
                 _ => return None,
             }
         }
+        Literal::Float32Bits(bits) => Value::Float(filament_exact::IeeeValue::binary32(bits)),
+        Literal::Float64Bits(bits) => Value::Float(filament_exact::IeeeValue::binary64(bits)),
         Literal::String(value) => Value::String(value.into()),
         Literal::Text(value) => {
             let checked_type = index.node(type_id)?;
@@ -3514,6 +3871,8 @@ struct ReaderProjectedNode {
     /// other node, the wire carrying no location of its own for it.
     location: Option<Location>,
     children: Vec<usize>,
+    /// The occurrence of the node at this position, when it has just one.
+    occurrence: Option<fsl_foundation::source::provenance::OccurrenceKey>,
     /// The application this slot-walk position is a term of (FR-383).
     term: Option<CheckedNodeId>,
     /// A quantity conversion the walk visits directly above this node,
@@ -3530,6 +3889,7 @@ impl ReaderProjectedNode {
             children: Vec::new(),
             term: None,
             absorbed: None,
+            occurrence: None,
         }
     }
 
@@ -3541,7 +3901,9 @@ impl ReaderProjectedNode {
 }
 
 struct ReaderFunction {
+    node: CheckedNodeId,
     name: String,
+    key: NodeKey,
     body: usize,
     slots: usize,
     parameters: Vec<ReaderProtocolParameter>,
@@ -3550,6 +3912,19 @@ struct ReaderFunction {
 
 fn fault(invariant: &'static str) -> InternalFault {
     InternalFault::new("FR-390", invariant)
+}
+
+/// The rounding mode an IEEE operation application declares.
+fn ieee_rounding(
+    operation: &filament_contract_model::CheckedApplicationOperation,
+) -> Result<filament_exact::RoundingMode, BuildError> {
+    let mode = operation
+        .mode()
+        .map_err(|_| fault("reader-ieee-rounding-mode-is-admitted"))?
+        .filter(|mode| mode.kind == OperationModeKind::Rounding)
+        .ok_or_else(|| fault("reader-ieee-operation-has-rounding-mode"))?;
+    filament_exact::RoundingMode::from_code(mode.value)
+        .ok_or_else(|| fault("reader-ieee-rounding-mode-is-catalogued").into())
 }
 
 impl UnsupportedView {

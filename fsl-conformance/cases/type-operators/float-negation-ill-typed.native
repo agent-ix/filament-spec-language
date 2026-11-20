@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F32 = Float32[nearest-even];
+type F64 = Float64[nearest-even];
+function bad using v(a: F64): Boolean pure { not a }

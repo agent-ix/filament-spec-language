@@ -123,6 +123,55 @@ fn call(function: &str, arguments: Value) -> Value {
     json!({"function": function, "arguments": arguments})
 }
 
+#[test]
+#[trace("TC-3063", "FR-680-AC-8")]
+fn matching_map_key_guards_evaluate_present_and_absent_keys() {
+    for body in [
+        "if contains(m,1) then m[1] else -1",
+        "if not contains(m,1) then -1 else m[1]",
+        "if contains(m,1) or contains(m,1) then m[1] else -1",
+        "if contains(m,k) then m[k] else -1",
+    ] {
+        let program = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function f using v(m: Map<Int[0,9],Integer>[0,3], k: Int[0,9]): Integer pure {{ {body} }}"
+        );
+        for (entries, expected) in [
+            (
+                json!([{ "key": {"integer":"1"}, "value": {"integer":"8"}}]),
+                "8",
+            ),
+            (json!([]), "-1"),
+            (
+                json!([{ "key": {"integer":"2"}, "value": {"integer":"9"}}]),
+                "-1",
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            spine_run_request(
+                directory.path(),
+                program.as_bytes(),
+                call(
+                    "f",
+                    json!([
+                        {"parameter":"m", "value":{"map":entries}},
+                        {"parameter":"k", "value":{"integer":"1"}}
+                    ]),
+                ),
+            );
+            let output = run(directory.path());
+            assert_eq!(output.status.code(), Some(0), "{body}: {output:?}");
+            let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                value["outcome"],
+                json!({"kind":"completed", "value":{"integer":expected}}),
+                "{body}: {value}"
+            );
+        }
+    }
+}
+
 /// FR-267-AC-3: the clause-run transition changes command failures to the
 /// closed /2 envelope, including failures before the source can compile.
 #[test]
@@ -994,6 +1043,7 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
                 accounting: default_accounting(work_units),
                 supplied: Default::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
             },
             &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
             &filament_exact::Cancel::new(),
@@ -1130,7 +1180,6 @@ const ZERO: &str = "0";
 /// raising the limit lets it finish.
 #[trace("TC-2164", "NFR-130-AC-3")]
 #[test]
-#[ignore = "QSL-2183: the evaluation.live_occurrences limit not implemented yet"]
 fn native_run_live_occurrence_limit_stops_deep_recursion() {
     let work = json!({"work_units": 100_000_000_000_u64});
     let (code, document, stderr) = run_recursion(1_000_000, json!({"accounting": work}));
@@ -1154,7 +1203,6 @@ fn native_run_live_occurrence_limit_stops_deep_recursion() {
 /// zero is a real limit, and a malformed `call.evaluation` refuses.
 #[trace("TC-2165", "NFR-130-AC-4")]
 #[test]
-#[ignore = "QSL-2183: the evaluation.live_occurrences limit not implemented yet"]
 fn native_run_live_occurrence_limit_defaults_and_refusals() {
     let (code, document, stderr) = run_recursion(1000, json!({}));
     assert_eq!(code, Some(0), "{stderr}");
@@ -1170,6 +1218,34 @@ fn native_run_live_occurrence_limit_defaults_and_refusals() {
     );
 }
 
+/// NFR-130-AC-4 (TC-2165) refusals: a `call.evaluation` whose
+/// `live_occurrences` is `-1`, `1.5` or `"x"`, or which holds an unknown
+/// member, refuses `invalid-request` at stage `request`, exit 20, naming the
+/// member.
+#[trace("TC-2165", "NFR-130-AC-4")]
+#[test]
+fn native_run_live_occurrence_limit_malformed_refuses() {
+    for (evaluation, member) in [
+        (json!({"live_occurrences": -1}), "live_occurrences"),
+        (json!({"live_occurrences": 1.5}), "live_occurrences"),
+        (json!({"live_occurrences": "x"}), "live_occurrences"),
+        (json!({"live_occurrences": 1, "depth": 1}), "depth"),
+    ] {
+        let (code, document, failure) = run_recursion(1, json!({"evaluation": evaluation}));
+        assert_eq!(code, Some(20), "{evaluation}: {failure}");
+        assert_eq!(document, Value::Null, "{evaluation}");
+        assert_eq!(
+            failure["code"], "invalid-request",
+            "{evaluation}: {failure}"
+        );
+        assert_eq!(failure["stage"], "request", "{evaluation}: {failure}");
+        assert!(
+            failure.to_string().contains(member),
+            "{evaluation}: {failure} names no `{member}`"
+        );
+    }
+}
+
 /// NFR-130-AC-4 request-boundary slice: omitted settings use the request
 /// default, and zero is accepted as an explicit limit value before execution.
 #[trace("TC-2165", "NFR-130-AC-4")]
@@ -1179,7 +1255,7 @@ fn native_run_live_occurrence_limit_default_and_zero_are_accepted() {
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"kind": "integer", "decimal": ZERO}})
+        json!({"kind": "completed", "value": {"integer": ZERO}})
     );
 
     let directory = tempfile::tempdir().unwrap();

@@ -73,9 +73,6 @@ pub struct Node {
     /// FSL producer facts that the equality checker selected, retained until
     /// lowering assigns the checked application its structural key.
     pub(in crate::check) equality_producer: Option<Box<EqualityProducerData>>,
-    /// A numeric-equality part of a float ordering's composition: FR-397
-    /// charges the ordering once, so such a part adds no charge of its own.
-    pub(in crate::check) ordering_part: bool,
     /// The authored bound of the population a field-edge `Reaches` walks,
     /// linked by the state-clause checker (FR-380 "Field-edge
     /// reachability"); `None` on every other node. `NodeKind::Reaches`
@@ -84,6 +81,16 @@ pub struct Node {
     /// Equality operand context used to explain an unproved contextual
     /// integer range refusal.
     pub(in crate::check) equality_range_context: Option<EqualityRangeContext>,
+    /// Authored named aggregate type argument, retained separately from its
+    /// structural checked type for canonical expression labels.
+    pub(in crate::check) type_argument: Option<String>,
+}
+
+impl Node {
+    pub(in crate::check) fn with_type_argument(mut self, name: String) -> Self {
+        self.type_argument = Some(name);
+        self
+    }
 }
 
 /// The peer that supplied a bounded integer type to an equality operand.
@@ -462,9 +469,9 @@ impl CheckedBody {
                     filament_semantic_value::location::ExpressionOwner::Expression,
                 ),
                 equality_producer: None,
-                ordering_part: false,
                 field_population: None,
                 equality_range_context: None,
+                type_argument: None,
             })
             .collect();
         nodes.push(Node {
@@ -474,9 +481,9 @@ impl CheckedBody {
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
             equality_producer: None,
-            ordering_part: false,
             field_population: None,
             equality_range_context: None,
+            type_argument: None,
         });
         Self::new(nodes)
     }
@@ -511,9 +518,9 @@ impl CheckedBody {
                     filament_semantic_value::location::ExpressionOwner::Expression,
                 ),
                 equality_producer: None,
-                ordering_part: false,
                 field_population: None,
                 equality_range_context: None,
+                type_argument: None,
             })
             .collect::<Vec<_>>();
         Self::new(nodes)
@@ -674,6 +681,11 @@ impl<'a> CheckedNode<'a> {
         &self.node().value_type
     }
 
+    /// The authored named type argument on an aggregate, when retained.
+    pub fn type_argument(self) -> Option<&'a str> {
+        self.node().type_argument.as_deref()
+    }
+
     /// FR-495's lowered integer type, including division-bound locals and
     /// the hull of a control node's yielded leaves.
     pub(crate) fn lowered_value_type(self) -> std::borrow::Cow<'a, ValueType> {
@@ -691,12 +703,6 @@ impl<'a> CheckedNode<'a> {
 
     pub(crate) fn equality_range_context(self) -> Option<&'a EqualityRangeContext> {
         self.node().equality_range_context.as_ref()
-    }
-
-    /// Whether the node is a numeric-equality part of a float ordering's
-    /// composition (FR-397), which adds no charge beyond the ordering's own.
-    pub fn is_ordering_part(self) -> bool {
-        self.node().ordering_part
     }
 
     /// The authored bound a field-edge `Reaches` is linked to (FR-380).
@@ -1315,9 +1321,9 @@ mod tests {
             value_type: ValueType::Integer,
             location: Location::root(Origin::Expression),
             equality_producer: None,
-            ordering_part: false,
             field_population: None,
             equality_range_context: None,
+            type_argument: None,
         };
         let mut builder = BodyBuilder::default();
         let mut operand = builder.push(node(NodeKind::Local(slot)));

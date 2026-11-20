@@ -295,7 +295,7 @@ fn bank_site(bank: Bank, unit: &str) -> Result<CallSite<OperationSite>, Box<Call
 /// The first refusal of `result`, a `Compile` refusal with its message.
 fn refusal(result: Result<impl std::fmt::Debug, Box<CallSiteRefusal>>) -> String {
     let refused = result.expect_err("the unit is refused");
-    let CallSiteRefusal::Compile { code, message } = *refused else {
+    let CallSiteRefusal::Compile { code, message, .. } = *refused else {
         panic!("expected a Compile refusal, got {refused:?}");
     };
     assert_eq!(code, fsl_foundation::Code::UndefinedExpression, "{message}");
@@ -417,6 +417,26 @@ fn a_precondition_declared_after_the_postcondition_discharges_it_with_the_same_i
     let moved = identities(unit(&[DEBITED, CAN_AFFORD, NON_NEGATIVE]));
     assert_eq!(first.0.clauses.len(), 2);
     assert_eq!(first, moved);
+}
+
+#[trace("TC-1416", "FR-121-AC-37")]
+#[test]
+fn the_refusal_region_spans_exactly_the_bytes_of_the_unproved_node() {
+    let unit = without_can_afford();
+    let refused = bank_site(PLAIN, &unit).expect_err("refused");
+    let CallSiteRefusal::Compile { code, region, .. } = *refused else {
+        panic!("expected a Compile refusal");
+    };
+    assert_eq!(code, fsl_foundation::Code::UndefinedExpression);
+    let region = region.expect("an unproved range is located");
+    // The region names the unit's own source.
+    assert_eq!(region.source().authority(), "agent-ix");
+    assert_eq!(region.source().identity(), "clause-run-fixture");
+    let start = unit.find(DIFFERENCE).expect("in the unit");
+    assert_eq!(
+        (region.start() as usize, region.end() as usize),
+        (start, start + DIFFERENCE.len())
+    );
 }
 
 #[trace("TC-1416", "FR-577-AC-3", "FR-577-AC-4")]
@@ -618,16 +638,10 @@ fn an_arithmetic_operand_yields_no_bound() {
     );
 }
 
-#[trace("TC-1416", "FR-577-AC-18")]
-#[test]
-fn a_bound_does_not_refine_a_sum() {
-    let unit = unit(&[
-        &clause(
-            "pre",
-            "CanAfford",
-            "Account",
-            "self.balance + amount <= 100",
-        ),
+fn with_sum_bound(bound: &str) -> String {
+    let can_afford = format!("self.balance + amount <= {bound}");
+    unit(&[
+        &clause("pre", "CanAfford", "Account", &can_afford),
         &clause(
             "post",
             "Credited",
@@ -635,8 +649,19 @@ fn a_bound_does_not_refine_a_sum() {
             "self.balance = pre(self.balance) + amount",
         ),
         NON_NEGATIVE,
-    ]);
-    refuses_at(PLAIN, &unit, "pre(self.balance) + amount");
+    ])
+}
+
+#[trace("TC-1416", "FR-577-AC-18")]
+#[test]
+fn a_transferred_sum_bound_refines_the_same_sum() {
+    checks(PLAIN, &with_sum_bound("100"));
+}
+
+#[trace("TC-1416", "FR-577-AC-18")]
+#[test]
+fn a_too_weak_sum_bound_leaves_the_sum_refused() {
+    refuses_at(PLAIN, &with_sum_bound("101"), "pre(self.balance) + amount");
 }
 
 #[trace("TC-1416", "FR-577-AC-19")]

@@ -1,0 +1,35 @@
+{
+  "ticket": "QSL-2081",
+  "component": "fsl-analyze 0.3.0 / complete zone_mitl integration module",
+  "reviews": ["SR-1477", "SR-1478"],
+  "review_verdict": "PASS",
+  "command": "CARGO_TARGET_DIR=<own-worktree>/target CARGO_BUILD_JOBS=2 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_INCREMENTAL=false cargo test --locked -p fsl-analyze --test it zone_mitl:: -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+  "exit_code": 0,
+  "passed": 17,
+  "failed": 0,
+  "ignored": 2,
+  "filtered_outside_module": 2165,
+  "new_feature_cases": {"passed": 7, "ignored": 2},
+  "pending_owner": "QSL-2689",
+  "pending_cases": [
+    "nested_until_with_inner_and_outer_bounds",
+    "unbounded_upper_bound_matches_the_actual_untimed_checker"
+  ],
+  "scoped_lint": {
+    "status": "blocked by four unchanged library findings; accepted limitation",
+    "exit_code": 101,
+    "findings": [
+      "analyze/state_graph_item.rs: too_many_arguments",
+      "model_check/state_graph/explore.rs: large_enum_variant",
+      "statistical/method.rs: drop_non_drop",
+      "zone_check/live_certificate.rs: redundant_closure"
+    ]
+  },
+  "notes": [
+    "One final complete affected-module gate after review and metadata-only disposition.",
+    "Latest validated review artifacts were committed unchanged before the gate.",
+    "Both strict required scenarios remain ignored and are excluded from coverage; their faults were not reprobed.",
+    "This receipt claims only the complete zone_mitl module, not unrelated analysis tests or the workspace.",
+    "No blocked lint retry, suppression, production binary, proof/Kani gate, review repeat or main refresh."
+  ]
+}

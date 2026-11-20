@@ -16,16 +16,18 @@ use filament_semantic_value::declaration::TypeEnvironment;
 use super::domain_package::OperationEffect;
 
 /// A declared operation of an object type (FR-103, ADR-012 §15.2
-/// `StateModel`): its name, its parameters and result value types (typed by
-/// a field's own FR-056 rule, with no `Option` wrapping -- the domain
-/// package's own `OperationParameterRecord`/`OperationResult` carry no
-/// independent presence flag the way a field's `presence` does), and its
+/// `StateModel`): its name, its parameters and result value types, and its
 /// producer-declared effect frame, carried unchanged from the domain
 /// package: the assembler resolves none of its keys further.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperationDeclaration {
     name: String,
     parameters: Vec<(String, ValueType)>,
+    /// Whether each data parameter may be absent at invocation admission.
+    optional_parameters: Vec<bool>,
+    /// The last required argument position plus one. Parameters after this
+    /// position form the trailing optional suffix callers may omit.
+    required_arity: usize,
     result: Option<ValueType>,
     effect: OperationEffect,
     /// The `Clock` parameters (FR-230 "Operation parameters"): each a
@@ -48,12 +50,37 @@ impl OperationDeclaration {
     ) -> Self {
         Self {
             name: name.into(),
+            optional_parameters: vec![false; parameters.len()],
+            required_arity: parameters.len(),
             parameters,
             result,
             effect,
             clock_parameters: Vec::new(),
             clock_result: false,
         }
+    }
+
+    /// This operation with optional-presence flags corresponding to its
+    /// data parameters. A required Option-valued parameter remains required.
+    #[must_use]
+    pub fn with_optional_parameters(mut self, optional: &[bool]) -> Self {
+        self.optional_parameters = optional.to_vec();
+        self.required_arity = optional
+            .iter()
+            .rposition(|is_optional| !is_optional)
+            .map_or(0, |position| position + 1);
+        self
+    }
+
+    /// The number of leading arguments every call must supply.
+    pub fn required_arity(&self) -> usize {
+        self.required_arity
+    }
+
+    /// Whether the data parameter at `index` may be omitted or explicitly
+    /// absent at invocation admission.
+    pub fn parameter_is_optional(&self, index: usize) -> bool {
+        self.optional_parameters.get(index).copied().unwrap_or(false)
     }
 
     /// This operation with the `Clock` parameters `clock_parameters`, each

@@ -15,23 +15,61 @@
 //! `unit ms`, so a quantity literal types.
 
 use filament_checked::node::CheckedLiteral;
-use filament_exact::{Integer, IntegerInterval, Rational, ValueType};
+use filament_exact::{Integer, IntegerInterval, Meter, Rational, Value as KernelValue, ValueType};
+use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Confidence,
     Event, PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
-    ProbabilisticFeature, ReachTarget, SemanticNode, WeightOwner,
+    ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator,
+    SemanticNode, WeightOwner,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
+use std::cell::RefCell;
 
 use crate::model_operations::{parse_and_build, wire_envelope, wire_field, PACKAGE_IDENTITY};
 
 const P: &str = PACKAGE_IDENTITY;
+
+struct ZeroRewardEvaluator;
+
+impl RewardEvaluator for ZeroRewardEvaluator {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        _reward: &Reward,
+        _arguments: Vec<KernelValue>,
+        _meter: &mut Meter,
+    ) -> Result<KernelValue, RewardEvaluationFailure> {
+        Ok(KernelValue::Integer(Integer::from(0_i64)))
+    }
+}
+
+struct NegativeRewardEvaluator(RefCell<Vec<(String, KernelValue)>>);
+
+impl RewardEvaluator for NegativeRewardEvaluator {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        reward: &Reward,
+        arguments: Vec<KernelValue>,
+        _meter: &mut Meter,
+    ) -> Result<KernelValue, RewardEvaluationFailure> {
+        let value = arguments[0].clone();
+        self.0
+            .borrow_mut()
+            .push((reward.name().to_owned(), value.clone()));
+        Ok(KernelValue::Integer(match self.0.borrow().len() {
+            1 => Integer::from(0_i64),
+            _ => Integer::from(-1_i64),
+        }))
+    }
+}
 
 fn id(node: &str) -> String {
     format!("ix://{P}/{node}")
@@ -347,7 +385,11 @@ fn assemble_over(document: &[u8], body: &str) -> PackageDeclarations {
 
 fn checked(body: &str) -> CheckedGraph {
     assemble(body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"))
 }
 
@@ -357,13 +399,21 @@ fn semantic_nodes(graph: &CheckedGraph) -> Vec<SemanticNode> {
 
 fn checked_timed_service(body: &str) -> CheckedGraph {
     assemble_over(&timed_service_document(), body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the timed unit checks: {refusals:?}"))
 }
 
 fn refusals_of(body: &str) -> Vec<CheckRefusal> {
     assemble(body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &ZeroRewardEvaluator,
+        )
         .expect_err("the unit refuses")
 }
 
@@ -377,7 +427,11 @@ fn located_over(document: &[u8], body: &str) -> Vec<(Code, Option<&'static str>,
     let regions = declarations.regions();
     let (text, _) = service_unit_over(document, body);
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("the unit refuses")
         .iter()
         .map(|refusal| {
@@ -624,7 +678,11 @@ fn a_precondition_that_reads_a_random_parameter_refuses_at_the_read() {
     // position.
     let document = service_document_with(&["self.phase = Service::Phase::Busy and d < 5"]);
     let refusals = assemble_over(&document, &service(None, ""))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("the requires reads d");
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
@@ -655,7 +713,11 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
     let body = |random: &str| format!("{D}\n{OUTCOME}\n{DURATION}\n{steady}\n{random}\n");
     let refused = body("random Server::assign(target) ~ { 3: 1 };");
     let refusals = assemble_over(&document, &refused)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("a reference-typed support is refused");
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
@@ -668,7 +730,11 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
 
     let reference = body("random Server::assign(target) ~ { Service::Server#\"s1\": 1 };");
     let refusals = assemble_over(&document, &reference)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("FR-185 refuses reference-literal support values");
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
@@ -681,7 +747,11 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
 
     // The `Int[1, 12]` parameter with the integer value `3` checks.
     assemble_over(&document, &body(""))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("the integer-typed parameter checks");
 }
 
@@ -759,6 +829,7 @@ fn a_configured_rational_bits_ceiling_is_named_by_the_refusal() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_rational_bits(8),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("255 is eight bits");
     let past = service(Some((STEADY, &steady_with_request("256"))), "");
@@ -766,6 +837,7 @@ fn a_configured_rational_bits_ceiling_is_named_by_the_refusal() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_rational_bits(8),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("256 is nine bits");
     let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
@@ -988,7 +1060,11 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
     let random = "random Server::attempt(d) ~ { 1 ms: 90, 3 ms: 7, 12 ms: 3 };";
     let body = service(Some((D, random)), "");
     let graph = assemble_over(&document, &body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("same-unit quantities are a valid support");
     let model = graph.probabilistic_model();
     let [duration, outcome] = model.random_parameters() else {
@@ -1025,7 +1101,11 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
         let invalid = format!("random Server::attempt(d) ~ {{ {value}: 1 }};");
         let body = service(Some((D, &invalid)), "");
         let refusals = assemble_over(&document, &body)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect_err("wrong-unit and wrong-type supports are refused");
         assert_eq!(refusals.len(), 1, "one refusal for {value}: {refusals:?}");
         let refusal = &refusals[0];
@@ -1040,7 +1120,11 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
                { self.phase = Service::Phase::Busy and d < 5 ms }";
     let body = service(Some((D, random)), pre);
     let refusals = assemble_over(&document, &body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("a precondition cannot read a random parameter");
     assert_eq!(refusals.len(), 1, "one refusal: {refusals:?}");
     let [refusal] = &refusals[..] else {
@@ -1059,7 +1143,11 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
 #[test]
 fn quantity_literals_type_against_the_declared_units() {
     assemble("function lag using v(): Boolean pure { 5 ms <= 3 ms }")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("a quantity literal in a function body checks");
     let refusals = refusals_of("function lag using v(): Boolean pure { 5 parsec <= 3 ms }");
     assert_eq!(
@@ -1080,10 +1168,18 @@ fn quantity_literals_type_against_the_declared_units() {
 fn a_quantity_literal_is_bounded_by_the_configured_rational_bits() {
     let limits = CheckingLimits::default().with_rational_bits(8);
     assemble("function lag using v(): Boolean pure { 255 ms <= 3 ms }")
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("eight bits is within the ceiling");
     let past = assemble("function lag using v(): Boolean pure { 256 ms <= 3 ms }")
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("256 is nine bits");
     let CheckCause::ResourceExhausted(limit) = &past[0].cause else {
         panic!("a limit refusal: {:?}", past[0].cause);
@@ -1104,7 +1200,11 @@ fn a_distribution_total_is_bounded_by_the_configured_rational_bits() {
     let body = service(Some((D, random)), "");
     let limits = CheckingLimits::default().with_rational_bits(3);
     let refusals = assemble(&body)
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("the sum is four bits");
     let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
         panic!("a limit refusal: {:?}", refusals[0].cause);
@@ -1117,6 +1217,7 @@ fn a_distribution_total_is_bounded_by_the_configured_rational_bits() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_rational_bits(7),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("the sum is within seven bits (the other declarations' 98)");
 }
@@ -1330,29 +1431,30 @@ fn the_adr_024_claims_check_and_record_their_forms() {
     );
 }
 
-/// FR-186 "Outputs", FR-498: a claim is emitted as its own node, so the
-/// first declaration S4 would refuse a package for is the first other
-/// probabilistic declaration, wherever the claim is declared.
+/// FR-186 "Outputs", FR-498, FSpec FR-640: a claim is emitted as its own
+/// node and a reward lowers to a clause function, wherever the claim is
+/// declared.
 #[trace("TC-621")]
 #[test]
-fn a_checked_claim_is_no_declaration_s4_would_refuse() {
-    let first = format!("{LATENCY}\n{}\n{}", no_fault(), service(None, ""));
-    let graph = checked(&first);
-    let model = graph.probabilistic_model();
-    assert!(!model.is_empty());
-    assert_eq!(
-        model.first_declaration(),
-        Some((ProbabilisticFeature::Reward, "latency".to_owned()))
-    );
-    let claim_first = format!("{}\n{LATENCY}\n{}", no_fault(), service(None, ""));
-    let graph = checked(&claim_first);
-    assert_eq!(
-        graph.probabilistic_model().first_declaration(),
-        Some((ProbabilisticFeature::Reward, "latency".to_owned()))
-    );
-    assert!(graph.probabilistic_model().claims()[0]
-        .occurrence()
-        .is_some());
+fn a_checked_claim_and_a_reward_are_both_lowered() {
+    for source in [
+        format!("{LATENCY}\n{}\n{}", no_fault(), service(None, "")),
+        format!("{}\n{LATENCY}\n{}", no_fault(), service(None, "")),
+    ] {
+        let graph = checked(&source);
+        let model = graph.probabilistic_model();
+        assert!(!model.is_empty());
+        assert!(model.claims()[0].occurrence().is_some());
+        assert!(!model.rewards().is_empty());
+        for reward in model.rewards() {
+            assert!(
+                reward.function().is_some(),
+                "{}: the expression is lowered",
+                reward.name()
+            );
+        }
+        assert!(model.rewards().iter().any(|reward| reward.name() == "latency"));
+    }
 }
 
 /// The checked claim `C` of `body`.
@@ -1576,17 +1678,24 @@ fn a_reward_a_claim_names_is_one_the_model_declares() {
         fraction.weight.as_ref().map(|weight| weight.as_str()),
         Some("latency")
     );
-    for unknown in ["nothing", "delay"] {
-        assert_eq!(
-            located(&weighted(unknown)),
-            [(
-                Code::MissingDeclaration,
-                Some("missing-name"),
-                unknown.to_owned()
-            )],
-            "{unknown}"
-        );
-    }
+    assert_eq!(
+        located(&weighted("nothing")),
+        [(
+            Code::MissingDeclaration,
+            Some("missing-name"),
+            "nothing".to_owned()
+        )]
+    );
+    // FR-186: `delay` is the delay weighting, never a reward lookup; it has no
+    // emitted form until QSL-2551, so it is a typed refusal at its name.
+    assert_eq!(
+        located(&weighted("delay")),
+        [(
+            Code::InvalidProbabilisticModel,
+            Some("delay-weighting-unsupported"),
+            "delay".to_owned()
+        )]
+    );
     let long_run = |weight: &str| {
         service(
             None,
@@ -1682,9 +1791,9 @@ fn an_over_type_resolves_and_an_accumulate_event_compares() {
     assert_eq!(*bound, Bound::AtMost(ratio(7, 1)));
 }
 
-/// FR-186-AC-3 (TC-621 step 3): an event with an operator that has no closed
-/// interval is refused `unbounded-event`, located at the operator or the
-/// interval; a nested window checks with the horizon the intervals sum to.
+/// FR-186-AC-3 (TC-621 step 3): a bounded-profile event with an operator that
+/// has no closed interval is refused at operator admission; a nested window
+/// checks with the horizon the intervals sum to.
 #[trace("TC-621", "FR-186-AC-3")]
 #[test]
 fn an_unbounded_event_is_refused_and_a_windowed_one_has_its_horizon() {
@@ -1702,7 +1811,11 @@ fn an_unbounded_event_is_refused_and_a_windowed_one_has_its_horizon() {
     ] {
         assert_eq!(
             located(&event(&formula)),
-            [invalid("unbounded-event", at)],
+            [(
+                Code::UnsupportedConstruct,
+                Some("expression-form"),
+                at.to_owned()
+            )],
             "{formula}"
         );
     }
@@ -2160,8 +2273,8 @@ fn an_unbounded_event_under_the_infinite_profile_is_a_reach_form() {
 /// Checks FR-195-AC-1 (TC-630 step 1): a temporal operator, or a constant, where a
 /// reachability event needs a `holds(P)` state predicate is refused
 /// `not-state-predicate` at the operand; other events under the
-/// infinite-trace profile stay unbounded, and the same `eventually` under a
-/// bounded profile is still an unbounded event.
+/// infinite-trace profile stay unbounded; a bounded profile rejects an
+/// interval-less operator at operator admission.
 #[trace("TC-630", "FR-195-AC-1")]
 #[test]
 fn a_reach_operand_must_be_a_state_predicate() {
@@ -2201,17 +2314,18 @@ fn a_reach_operand_must_be_a_state_predicate() {
     );
     assert_eq!(
         refused("inf", &format!("{holds} and eventually {holds}")),
-        [
-            invalid(
-                "unbounded-event",
-                &format!("{holds} and eventually {holds}")
-            ),
-            invalid("unbounded-event", "eventually"),
-        ]
+        [invalid(
+            "unbounded-event",
+            &format!("{holds} and eventually {holds}")
+        )]
     );
     assert_eq!(
         refused("ev", &format!("eventually {holds}")),
-        [invalid("unbounded-event", "eventually")]
+        [(
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            "eventually".to_owned()
+        )]
     );
 }
 
@@ -2895,6 +3009,25 @@ fn a_quantile_over_a_fraction_refuses() {
     );
 }
 
+/// FR-612-AC-1: a probability event whose whole condition reads a trace index
+/// outside a `hyper` clause refuses `unsupported_construct`/`expression-form`
+/// at the read.
+#[trace("FR-612-AC-1")]
+#[test]
+fn an_indexed_read_in_a_probability_condition_refuses_as_hyper_only() {
+    let source = claim(
+        "{ probability >= 0.5 [ always[0,10] holds(s.phase @ a = Service::Phase::Idle) ] }",
+    );
+    assert_eq!(
+        located(&service(None, &source)),
+        [(
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            "s.phase @ a".to_owned()
+        )]
+    );
+}
+
 /// A second distribution or reward is a duplicate even when the first was
 /// refused.
 #[trace("TC-620")]
@@ -3081,7 +3214,11 @@ fn a_workload_name_is_package_wide() {
         let regions = declarations.regions();
         let (text, _) = service_unit(&body);
         let refusals = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .expect_err("the unit refuses");
         let [refusal] = &refusals[..] else {
             panic!("{second}: one refusal: {refusals:?}");
@@ -3177,7 +3314,12 @@ fn a_cancelled_check_ends_cancelled() {
     assert!(handle.set(tripping.clone()).is_ok());
     for (when, cancel) in [("before", before), ("at the first charge", tripping)] {
         let refusals = assemble(&refused)
-            .check_with_cancel(CheckMode::Linked, CheckingLimits::default(), &cancel)
+            .check_with_cancel(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &ZeroRewardEvaluator,
+                &cancel,
+            )
             .expect_err("a cancelled check refuses");
         assert_eq!(
             cancel.tripped(),
@@ -3243,7 +3385,11 @@ fn service_document_with_flow() -> Vec<u8> {
 #[test]
 fn a_process_in_the_package_does_not_make_a_workload_incomplete() {
     assemble_over(&service_document_with_flow(), &service(None, ""))
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
 }
 
@@ -3274,7 +3420,11 @@ fn a_claims_subject_is_its_own_units_package() {
         &[("a", &a), ("b", b)],
         &[service.as_slice(), other.as_slice()],
     )
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("b's claim checks: {refusals:?}"));
     let [claim] = graph.probabilistic_model().claims() else {
         panic!("one claim: {:?}", graph.probabilistic_model().claims());
@@ -3381,16 +3531,37 @@ fn a_negative_workload_weight_is_refused() {
     ));
 }
 
-/// TC-2061 (FR-185-AC-11): S3, not model admission, refuses a reward that is
-/// negative for some argument vector, naming the reward; `d` ranges over its
-/// support `{1, 3, 12}`, so `d - 3` is negative at `d = 1`.
-#[trace("TC-2061", "FR-185-AC-11")]
-#[trace("FSpec-TC-1560", "FSpec-FR-405-AC-11")]
+/// TC-3027: S3 preserves canonical vector order and stops when its evaluator
+/// reports the first negative reward.
+#[trace("TC-3027", "FR-185-AC-13")]
 #[test]
-#[ignore = "QSL-2252: negative-reward refusal at S3 not implemented yet"]
-fn s3_refuses_a_reward_that_can_be_negative() {
-    let body = service(None, "reward refund on Server::attempt = d - 3;");
-    let refusals = refusals_of(&body);
+fn s3_stops_at_the_first_negative_returned_by_the_evaluator() {
+    let body = service(
+        Some((DURATION, "reward refund on Server::attempt = d - 3;")),
+        "",
+    );
+    let evaluator = NegativeRewardEvaluator(RefCell::new(Vec::new()));
+    let refusals = assemble(&body)
+        .check(CheckMode::Linked, CheckingLimits::default(), &evaluator)
+        .expect_err("the recording evaluator reports a negative reward");
+    let calls = evaluator.0.into_inner();
+    assert_eq!(calls.len(), 2, "evaluation stops at the first negative");
+    assert_eq!(
+        calls
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["refund", "refund"],
+        "the recording evaluator sees the intended reward"
+    );
+    assert!(matches!(
+        &calls[0].1,
+        KernelValue::Integer(value) if value == &Integer::from(1_i64)
+    ));
+    assert!(matches!(
+        &calls[1].1,
+        KernelValue::Integer(value) if value == &Integer::from(3_i64)
+    ));
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
     };
@@ -3400,8 +3571,54 @@ fn s3_refuses_a_reward_that_can_be_negative() {
     assert!(text.contains("refund"), "{text}");
     assert!(text.contains("attempt"), "{text}");
 
-    // Over the support the reward is never negative, so it checks.
-    checked(&service(None, "reward refund on Server::attempt = d - 1;"));
+    // The S6a-backed analyzer test verifies the actual expression result.
+}
+
+struct UndefinedRewardEvaluator(RefCell<Vec<String>>);
+
+impl RewardEvaluator for UndefinedRewardEvaluator {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        reward: &Reward,
+        _arguments: Vec<KernelValue>,
+        _meter: &mut Meter,
+    ) -> Result<KernelValue, RewardEvaluationFailure> {
+        self.0.borrow_mut().push(reward.name().to_owned());
+        Err(RewardEvaluationFailure {
+            diagnostic_code: Code::UndefinedExpression,
+            catalog: CatalogCode::new("undefined_expression", "unproved-nonzero"),
+            fields: vec![("reason", "division-by-zero".to_owned())],
+        })
+    }
+}
+
+/// TC-3027: an undefined S6a result refuses the reward with its original
+/// record and does not become a negative-reward classification.
+#[trace("TC-3027", "FR-185-AC-13")]
+#[test]
+fn s3_preserves_an_undefined_reward_evaluation_record() {
+    let body = service(
+        Some((DURATION, "reward refund on Server::attempt = d - 3;")),
+        "",
+    );
+    let evaluator = UndefinedRewardEvaluator(RefCell::new(Vec::new()));
+    let refusals = assemble(&body)
+        .check(CheckMode::Linked, CheckingLimits::default(), &evaluator)
+        .expect_err("undefined reward evaluation refuses S3");
+    assert_eq!(
+        evaluator.0.into_inner(),
+        ["refund"],
+        "the recording evaluator sees the intended reward"
+    );
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal")
+    };
+    assert_eq!(
+        refusal.cause.catalog_code(),
+        Some(CatalogCode::new("undefined_expression", "unproved-nonzero"))
+    );
+    assert!(!format!("{refusal:?}").contains("negative-reward"));
 }
 
 /// TC-2063 (FR-186-AC-7, FR-186-AC-3): under a bounded profile an
@@ -3414,7 +3631,6 @@ fn s3_refuses_a_reward_that_can_be_negative() {
 #[trace("TC-2063", "FR-186-AC-3")]
 #[trace("TC-2063", "FR-195-AC-1")]
 #[test]
-#[ignore = "QSL-2252: profile operator admission before the probabilistic event check not implemented yet"]
 fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
     let holds = format!("holds({IDLE})");
     let refused = |profile: &str, formula: &str| {
@@ -3548,7 +3764,11 @@ fn bare_decimal_threshold_overlong_refused() {
     let declarations = assemble(&body);
     let regions = declarations.regions();
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("a threshold beyond the decimal scale limit refuses");
     let [refusal] = refusals.as_slice() else {
         panic!("one threshold refusal: {refusals:?}");
@@ -3717,6 +3937,40 @@ fn probabilistic_claim_timed_profile_checks() {
             "v".to_owned()
         )]
     );
+}
+
+/// QSL-2252 (FR-186-AC-7): the timed profile admits bounded windows and
+/// refuses interval-less or open-window operators at operator admission.
+#[trace("TC-2063", "FR-186-AC-7")]
+#[test]
+fn a_timed_profile_refuses_unbounded_event_operators() {
+    let holds = format!("holds({IDLE})");
+    let source = |formula: &str| {
+        format!(
+            "time Service dense unit ms;\n{STEADY}\n\
+             probabilistic C using tm on Service {OVER} under Steady on origin \
+             {{ probability >= 0.9 [ {formula} ] }}"
+        )
+    };
+    let expression_form = |at: &str| {
+        (
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            at.to_owned(),
+        )
+    };
+    for (formula, at) in [
+        (format!("eventually {holds}"), "eventually"),
+        (format!("eventually[0 ms,*] {holds}"), "[0 ms,*]"),
+    ] {
+        assert_eq!(
+            located_over(&timed_service_document(), &source(&formula)),
+            [expression_form(at)],
+            "{formula}"
+        );
+    }
+    // The bounded timed-window case remains admitted.
+    checked_timed_service(&source(&format!("eventually[0 ms,4 ms] {holds}")));
 }
 
 /// FR-186-AC-14 (TC-2171): every quantity position of a claim is read: the
@@ -3908,7 +4162,11 @@ fn assert_rebuilds_s3(document: &[u8], body: &str) {
     use fsl_semantics::model::state::StateModel;
 
     let graph = assemble_over(document, body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     let (_, packages) = service_unit_over(document, body);
     let model = StateModel::new(
@@ -3956,6 +4214,8 @@ fn assert_rebuilds_s3(document: &[u8], body: &str) {
                     .collect(),
             })
             .collect(),
+        delays: Vec::new(),
+        rewards: Vec::new(),
     };
     let read = model
         .probabilistic_model(graph.scope().operations(), &package)

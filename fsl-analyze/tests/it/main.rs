@@ -2,8 +2,6 @@
 //! Public API tests for the unreduced graph core and the model checker.
 
 mod analysis_view;
-#[path = "../../../tests/support/published_fspec.rs"]
-pub(crate) mod published_fspec;
 mod analyze;
 mod analyze_cli;
 mod analyze_cli_support;
@@ -70,6 +68,7 @@ mod loop_proof;
 mod model_check;
 mod model_check_captures;
 mod model_check_input;
+mod terminal_two_models;
 mod model_check_oracle;
 mod model_check_safety;
 mod model_instances;
@@ -87,6 +86,7 @@ mod monitor_root;
 mod observation_mapping;
 mod operation_contract;
 mod package_forms;
+mod package_refusal_route;
 mod partial_order;
 mod por_world;
 mod prob_world;
@@ -102,6 +102,7 @@ mod protocol_constructs;
 mod protocol_counted_steps;
 mod protocol_footprints;
 mod protocol_item_bounds;
+mod protocol_docs_examples;
 mod protocol_outcomes;
 mod protocol_projection;
 mod protocol_realizability;
@@ -113,6 +114,8 @@ mod protocol_system;
 mod provider_external_contract;
 mod provider_request_seam;
 mod provision_contract;
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
 mod quotient;
 mod race_freedom;
 mod rc11_oracle;
@@ -125,6 +128,7 @@ mod reduction_manifest;
 mod reduction_proptest;
 mod reduction_world;
 mod reference_literal_binding;
+mod reward_evaluator_port;
 #[path = "../../../tests/support/refinement_aux.rs"]
 mod refinement_aux;
 mod refinement_auxiliary;
@@ -151,10 +155,12 @@ mod schedulability_routing;
 mod scheduler_fairness;
 mod simulation_findings;
 mod smt_query;
+mod source_model_boundaries;
 mod state_graph;
 mod state_graph_certificate;
 mod state_graph_settle;
 mod state_probabilistic_replay;
+mod statistical_coverage;
 mod statistical_manifest;
 mod statistical_model;
 mod statistical_witness_replay;

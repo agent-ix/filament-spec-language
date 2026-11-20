@@ -13,6 +13,7 @@
 //! on the same search, with FR-142's discrete product (FSpec FR-430).
 
 mod certificate;
+pub(crate) use certificate::state_graph_certificate;
 mod concretise;
 mod dbm;
 mod divergence;
@@ -23,6 +24,7 @@ mod refine;
 mod scale;
 mod search;
 mod settle;
+mod state_graph;
 mod time_lock;
 
 pub use certificate::certificate_item;
@@ -35,10 +37,12 @@ pub mod manifest;
 pub use dbm::{Bound, Dbm, DbmError};
 pub use scale::{scale_constants, ScaledConstants};
 pub use search::{
-    canonical_symbolic_state, check_timed_model, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits,
-    ZoneCheckOutcome, ZoneCheckRefusal, ZoneCheckRequest, ZoneReduction, ZoneStats, ZoneStop,
-    ZoneUndecided,
+    canonical_symbolic_state, check_timed_model, concretise_timed_state_graph_path,
+    explore_timed_state_graph, TimedStateGraph, TimedStateGraphEdge, TimedStateGraphNode,
+    ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal,
+    ZoneCheckRequest, ZoneReduction, ZoneStats, ZoneStop, ZoneUndecided,
 };
+pub use state_graph::{decide_timed_state_graph, TimedStateGraphDecision};
 pub use settle::{
     settle_timed_refinement, settle_zone_check, ZoneCheckRecord, ZoneItem, ZONE_CERTIFIED,
 };

@@ -159,6 +159,7 @@ fn operation_redefining(
                 key: DeclarationKey::fixture(id),
                 value_type: ValueTypeRef::Package(DeclarationKey::fixture(ty)),
                 multiplicity: m,
+                presence: filament_exact::Presence::Required,
             })
             .collect(),
         result: result.map(|(ty, m)| OperationResult {
@@ -436,6 +437,81 @@ fn an_unavailable_owning_axis_wins_before_an_unavailable_ancestor_edge() {
 fn bundle_h(mut records: Vec<DomainPackageRecord>) -> DomainPackage {
     records.extend(fixture_h_base());
     DomainPackage::new(DomainPackageRef::fixture("bundle.h"), records)
+}
+
+fn set_operation_parameter_presence(
+    package: &mut DomainPackage,
+    operation_identity: &str,
+    presence: filament_exact::Presence,
+) {
+    let operation = package.records.iter_mut().find_map(|record| match record {
+        DomainPackageRecord::OperationMember(operation)
+            if operation.key.node == operation_identity => Some(operation),
+        _ => None,
+    });
+    operation
+        .expect("operation exists")
+        .parameters[0]
+        .presence = presence;
+}
+
+#[trace("FSpec-FR-151-AC-20")]
+#[test]
+fn operation_parameter_presence_is_contravariant_under_redefinition() {
+    let redefining = operation_redefining(
+        "model.B.op",
+        "model.B",
+        vec![("model.B.op.p1", "model.A", mult(0, Some(2)))],
+        Some(("model.B", mult(1, Some(1)))),
+        vec![],
+        vec![],
+        vec![],
+        Some("model.A.op"),
+    );
+    let mut package = bundle_h(vec![redefining.clone()]);
+    set_operation_parameter_presence(
+        &mut package,
+        "model.A.op",
+        filament_exact::Presence::Optional,
+    );
+    set_operation_parameter_presence(
+        &mut package,
+        "model.B.op",
+        filament_exact::Presence::Optional,
+    );
+    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    assert!(matches!(
+        check_operation_redefinition(
+            &ModelIndex::build(package),
+            &DeclarationKey::fixture("model.B.op"),
+            &DeclarationKey::fixture("model.A.op"),
+            &mut meter,
+        ),
+        ConformanceCheckOutcome::Completed(ConformanceOutcome::Compatible)
+    ));
+
+    let mut package = bundle_h(vec![redefining]);
+    set_operation_parameter_presence(
+        &mut package,
+        "model.A.op",
+        filament_exact::Presence::Optional,
+    );
+    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let ConformanceCheckOutcome::Completed(ConformanceOutcome::Refused(failures)) =
+        check_operation_redefinition(
+            &ModelIndex::build(package),
+            &DeclarationKey::fixture("model.B.op"),
+            &DeclarationKey::fixture("model.A.op"),
+            &mut meter,
+        )
+    else {
+        panic!("required parameter cannot redefine an optional parameter");
+    };
+    assert!(failures.iter().any(|failure| {
+        failure.axis == "parameter-presence"
+            && failure.code == Code::IllTyped
+            && matches!(failure.cause, ModelRefusalCause::VarianceParameter { index: 1, .. })
+    }));
 }
 
 /// Finds the effective TYPE entry (no owner) declared with original identity
@@ -1169,7 +1245,11 @@ fn a_wide_domain_and_a_literal_above_i64_max_are_decided_exactly() {
             vec![],
         )
         .expect("model-owned narrowing waits for its checked clause");
-        let result = declarations.check(CheckMode::Linked, CheckingLimits::default());
+        let result = declarations.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        );
         if succeeds {
             assert!(result.is_ok(), "exact 2^63 bound: {result:?}");
         } else {

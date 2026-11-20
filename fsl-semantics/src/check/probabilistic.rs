@@ -32,6 +32,7 @@ mod claim;
 mod exact;
 pub(crate) use exact::{value as exact_value, ExactFault};
 mod model;
+mod node_key;
 
 pub use claim::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedTemporalFormula,
@@ -40,11 +41,13 @@ pub use claim::{
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
-    CheckedProbabilisticModel, Delay, DelayDistribution, PackageLiteral, PackageProbabilistic,
-    PackageProbabilisticRefusal, PackageRandomParameter, PackageSupport, PackageWeight,
-    PackageWorkload, PreconditionSite, ProbabilisticFeature, ProbabilisticOperation,
-    RandomParameter, Reward, SupportValue, Workload,
+    CheckedProbabilisticModel, Delay, DelayDistribution, PackageDelay, PackageDelayFamily,
+    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
+    PackageReward, PackageSupport, PackageWeight, PackageWorkload, PreconditionSite,
+    ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReadReward, Reward,
+    SupportValue, Workload,
 };
+pub use node_key::{ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead, Statement};
 
 use filament_exact::Integer;
 use filament_semantic_value::location::{
@@ -226,6 +229,16 @@ pub enum ProbabilisticCause {
         /// The read's span.
         span: Span,
     },
+    /// A reward's value is negative for one finite argument vector
+    /// (`invalid_probabilistic_model`/`negative-reward`, FR-185).
+    NegativeReward {
+        /// The operation, as written.
+        operation: String,
+        /// The reward.
+        reward: String,
+        /// The argument names and values in operation parameter order.
+        arguments: Vec<(String, String)>,
+    },
     /// A probability threshold, quantile level, mean threshold or long-run
     /// threshold of 0, 1 or outside `(0, 1)`.
     /// `invalid_probabilistic_model`/`qualitative-threshold`.
@@ -286,14 +299,15 @@ pub enum ProbabilisticCause {
         /// The parameter's span.
         span: Span,
     },
-    /// A workload on a name no `model` declaration binds.
+    /// A workload on a name that is neither a `model` alias of the unit nor an
+    /// object type of its source model.
     /// `missing_declaration`/`missing-name`.
     UnresolvedModel {
         /// The workload.
         workload: String,
-        /// The model alias, as written.
+        /// The `on` name, as written.
         model: String,
-        /// The alias's span.
+        /// The name's span.
         span: Span,
     },
     /// A support value that is not a literal of the parameter's type.
@@ -493,6 +507,16 @@ pub enum ProbabilisticCause {
         /// The time position's span.
         span: Span,
     },
+    /// `weighted by delay` (FR-186 delay weighting): S3 records no
+    /// `Weighting::Delay` yet, and the claim has no emitted spelling for it.
+    /// Interim refusal until QSL-2551. `invalid_probabilistic_model`/
+    /// `delay-weighting-unsupported`.
+    DelayWeightingUnsupported {
+        /// The claim.
+        claim: String,
+        /// The `delay` name's span.
+        span: Span,
+    },
     /// A claim's `over` parameter whose type is not an object type of the
     /// subject's model. `invalid_probabilistic_model`/`over-not-object-type`
     /// (FSL-proposed, STD-188).
@@ -565,9 +589,10 @@ impl ProbabilisticCause {
             | Self::FractionBound { span, .. }
             | Self::ThresholdNotLiteral { span, .. }
             | Self::TimeTypeMismatch { span, .. }
+            | Self::DelayWeightingUnsupported { span, .. }
             | Self::OverNotObjectType { span, .. }
             | Self::NotStatePredicate { span, .. } => Some(*span),
-            Self::RandomReadInPrecondition { .. } => None,
+            Self::RandomReadInPrecondition { .. } | Self::NegativeReward { .. } => None,
         }
     }
 
@@ -591,6 +616,7 @@ impl ProbabilisticCause {
             | Self::DuplicateReward { .. }
             | Self::QuantileOverFraction { .. }
             | Self::StateReadInReward { .. }
+            | Self::NegativeReward { .. }
             | Self::QualitativeThreshold { .. }
             | Self::PartialConfidence { .. }
             | Self::InvalidConfidence { .. }
@@ -606,6 +632,7 @@ impl ProbabilisticCause {
             | Self::ForeignWorkload { .. }
             | Self::FractionBound { .. }
             | Self::OverNotObjectType { .. }
+            | Self::DelayWeightingUnsupported { .. }
             | Self::NotStatePredicate { .. } => Code::InvalidProbabilisticModel,
             Self::InvalidDelay { .. } => Code::InvalidModelBinding,
             Self::UnitMismatch { .. }
@@ -639,6 +666,7 @@ impl ProbabilisticCause {
             Self::DelayOnUntimedModel { .. } => "delay-on-untimed-model",
             Self::QuantileOverFraction { .. } => "quantile-over-fraction",
             Self::StateReadInReward { .. } => "state-read-in-reward",
+            Self::NegativeReward { .. } => "negative-reward",
             Self::QualitativeThreshold { .. } => "qualitative-threshold",
             Self::PartialConfidence { .. } => "partial-confidence",
             Self::InvalidConfidence { .. } => "invalid-confidence",
@@ -662,6 +690,7 @@ impl ProbabilisticCause {
             Self::UnitMismatch { .. } => "unit-mismatch",
             Self::ThresholdNotLiteral { .. } => "type-mismatch",
             Self::TimeTypeMismatch { .. } => "type-mismatch",
+            Self::DelayWeightingUnsupported { .. } => "delay-weighting-unsupported",
             Self::FractionBound { .. } => "fraction-bound-out-of-range",
             Self::OverNotObjectType { .. } => "over-not-object-type",
             Self::NotStatePredicate { .. } => "not-state-predicate",

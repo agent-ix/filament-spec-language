@@ -53,7 +53,11 @@ fn package_and_relation_with_document(
     let documents = [document.as_slice()];
     let unit = hyper_world::unit_text(None, vault, false, text);
     let graph = hyper_world::declarations(&documents, &unit)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("the relation unit checks");
     let package = CheckedPackage::link(graph);
     let declarations = hyper_world::declarations(&documents, &unit);

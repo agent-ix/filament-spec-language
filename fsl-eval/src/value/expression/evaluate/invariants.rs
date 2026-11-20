@@ -279,6 +279,7 @@ fn checked_dispatch_package() -> fsl_package::CheckedPackage {
             receiver_type: owner.clone(),
             member: "step".to_owned(),
             parameters: vec![],
+            required_arity: 0,
             result: ValueType::Boolean,
             selected_operation_owner: owner.clone(),
             selected_operation: "step".to_owned(),
@@ -302,6 +303,7 @@ fn checked_dispatch_package() -> fsl_package::CheckedPackage {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     )
@@ -622,6 +624,7 @@ fn imported_callable_consumer_uses_a_real_emitted_and_admitted_library() {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -643,6 +646,7 @@ fn imported_callable_consumer_uses_a_real_emitted_and_admitted_library() {
         "fixture".to_owned(),
         fsl_foundation::IdentityLimits::default(),
     );
+    declarations.types = a_declared_type();
     declarations.imports.insert(
         "lib".to_owned(),
         AdmittedImport {
@@ -656,6 +660,7 @@ fn imported_callable_consumer_uses_a_real_emitted_and_admitted_library() {
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -836,6 +841,7 @@ fn query_stop_provenance_rejects_a_missing_selected_position_at_the_real_quantif
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -1081,11 +1087,13 @@ fn both_ieee_profile_checks_and_conversion_operand_check_are_real_producers() {
             fsl_foundation::IdentityLimits::default(),
         );
         declarations.ieee_profile = Some(profile);
+        declarations.types = a_declared_type();
         declarations
     }
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
     )
     .unwrap();
     let package = fsl_package::CheckedPackage::link(graph);
@@ -1106,6 +1114,17 @@ fn both_ieee_profile_checks_and_conversion_operand_check_are_real_producers() {
             m.apply(ieee.root())
         }
     );
+}
+
+/// One declared type: FR-746 admits no empty checked graph, and these
+/// packages otherwise declare nothing the probe reads.
+fn a_declared_type() -> filament_semantic_value::declaration::TypeEnvironment {
+    let declaration = filament_semantic_value::declaration::CompositeDeclaration::new(
+        crate::test_ids::node_key([9]),
+        "Placeholder",
+        CompositeShape::Record(vec![]),
+    );
+    filament_semantic_value::declaration::TypeEnvironment::new([declaration], []).unwrap()
 }
 
 #[test]
@@ -1151,6 +1170,7 @@ fn field_slot_and_record_constructor_fail_at_the_actual_application_sites() {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
     )
     .unwrap();
     let package = fsl_package::CheckedPackage::link(graph);
@@ -1188,6 +1208,7 @@ fn object_package(
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
     )
     .unwrap();
     fsl_package::CheckedPackage::link(graph)
@@ -1551,6 +1572,7 @@ fn an_out_of_type_stored_value_is_refused_at_the_public_call_and_evaluate_entrie
             .check(
                 CheckMode::Linked,
                 filament_semantic_value::checking::CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
             )
             .unwrap(),
     );
@@ -1843,13 +1865,14 @@ fn stack_extraction_and_frame_producers_report_their_own_invariants() {
         m.step(Task::Branch(root.root()))
     });
     probe!("evaluation-connective-node-expected", m, [], {
-        m.step(Task::Short(root.root()))
+        m.step(Task::Short(root.root(), None))
     });
     for root in [
         body(|_| NodeKind::Literal(CheckedLiteral(Value::Boolean(true)))),
         body(|_| NodeKind::Local(0)),
         body(|ids| NodeKind::Let {
             slot: 0,
+            name: "x".to_owned(),
             value: ids[0],
             body: ids[1],
         }),
@@ -1939,7 +1962,7 @@ fn admitted_stack_values_bound_locals_and_branch_keep_the_uncharged_valid_prefix
     ));
     machine.push_frame(
         vec![Some(Value::Boolean(true)), Some(Value::Boolean(false))],
-        vec![],
+        vec![false, false],
     );
     assert!(matches!(
         machine.slot(0).unwrap_or_else(|_| panic!("bound slot")),
@@ -2331,6 +2354,7 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
         let root = body(|ids| NodeKind::Query {
             visit,
             slot: 0,
+            name: "x".to_owned(),
             source: ids[0],
             body: ids[1],
         });
@@ -2346,6 +2370,7 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
     let sum = body(|ids| NodeKind::Query {
         visit: Visit::Sum,
         slot: 0,
+        name: "x".to_owned(),
         source: ids[0],
         body: ids[1],
     });
@@ -2360,6 +2385,8 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
     let fold = body(|ids| NodeKind::Fold {
         accumulator: 0,
         binder: 1,
+        accumulator_name: "acc".to_owned(),
+        binder_name: "x".to_owned(),
         source: ids[0],
         step: ids[1],
         identity: Some(ids[0]),
@@ -2382,6 +2409,7 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
     let query = body(|ids| NodeKind::Query {
         visit: Visit::Map,
         slot: 0,
+        name: "x".to_owned(),
         source: ids[0],
         body: ids[1],
     });
@@ -2404,6 +2432,7 @@ fn iteration_resume_finish_and_stop_reporting_reach_distinct_producers() {
         let root = body(|ids| NodeKind::Query {
             visit,
             slot: 0,
+            name: "x".to_owned(),
             source: ids[0],
             body: ids[1],
         });
@@ -2444,6 +2473,7 @@ fn scalar_query_resume_retains_the_valid_result_and_preserves_earlier_stops() {
             |ids| NodeKind::Query {
                 visit,
                 slot: 0,
+                name: "x".to_owned(),
                 source: ids[0],
                 body: ids[1],
             },
@@ -2528,6 +2558,8 @@ fn fold_resume_and_finish_retain_the_real_accumulator_and_earlier_stop() {
         |ids| NodeKind::Fold {
             accumulator: 0,
             binder: 1,
+            accumulator_name: "acc".to_owned(),
+            binder_name: "x".to_owned(),
             source: ids[0],
             step: ids[1],
             identity: Some(ids[2]),
@@ -2638,6 +2670,7 @@ fn a_query_binds_each_element_to_the_owner_of_its_source() {
     let query = body(|ids| NodeKind::Query {
         visit: Visit::Exists,
         slot: 0,
+        name: "x".to_owned(),
         source: ids[0],
         body: ids[1],
     });
@@ -2656,6 +2689,8 @@ fn a_fold_binds_its_accumulator_and_element_to_the_owner_of_its_source() {
     let fold = body(|ids| NodeKind::Fold {
         accumulator: 0,
         binder: 1,
+        accumulator_name: "acc".to_owned(),
+        binder_name: "x".to_owned(),
         source: ids[0],
         step: ids[1],
         identity: Some(ids[0]),
@@ -2677,6 +2712,7 @@ fn a_fold_binds_its_accumulator_and_element_to_the_owner_of_its_source() {
 fn a_seq_binds_each_integer_to_the_owner_of_its_bounds() {
     let seq = body(|ids| NodeKind::Seq {
         slot: 0,
+        name: "x".to_owned(),
         low: ids[0],
         high: ids[1],
         body: ids[1],
@@ -2715,6 +2751,7 @@ fn a_query_element_after_the_first_keeps_its_source_owner_not_the_merged_results
     let query = body(|ids| NodeKind::Query {
         visit: Visit::Exists,
         slot: 0,
+        name: "x".to_owned(),
         source: ids[0],
         body: ids[1],
     });
@@ -2737,6 +2774,8 @@ fn a_fold_element_after_the_first_keeps_its_source_owner_and_the_accumulator_tak
     let fold = body(|ids| NodeKind::Fold {
         accumulator: 0,
         binder: 1,
+        accumulator_name: "acc".to_owned(),
+        binder_name: "x".to_owned(),
         source: ids[0],
         step: ids[1],
         identity: Some(ids[0]),
@@ -2762,6 +2801,7 @@ fn a_fold_element_after_the_first_keeps_its_source_owner_and_the_accumulator_tak
 fn a_seq_integer_after_the_first_keeps_its_bounds_owner_not_the_merged_results() {
     let seq = body(|ids| NodeKind::Seq {
         slot: 0,
+        name: "x".to_owned(),
         low: ids[0],
         high: ids[1],
         body: ids[1],

@@ -30,6 +30,8 @@ use super::{region, CheckedUnit, CompileRefusal, ParsedUnitSource};
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RequestClocks {
     members: BTreeMap<String, ClockConfiguration>,
+    dependency_members: BTreeMap<String, ClockConfiguration>,
+    program_source: Option<(String, String)>,
 }
 
 impl RequestClocks {
@@ -51,17 +53,63 @@ impl RequestClocks {
                 });
             }
         }
-        Ok(Self { members })
+        Ok(Self {
+            dependency_members: members.clone(),
+            members,
+            program_source: None,
+        })
+    }
+
+    /// The separate clock namespaces recorded by a proving package. Program
+    /// rows serve only its source; dependency rows serve library sources.
+    pub(crate) fn for_replay(
+        program_source: (String, String),
+        program: BTreeMap<String, ClockConfiguration>,
+        dependencies: BTreeMap<String, ClockConfiguration>,
+    ) -> Result<Self, InvalidClock> {
+        let program = Self::new(program)?;
+        let dependencies = Self::new(dependencies)?;
+        Ok(Self {
+            members: program.members,
+            dependency_members: dependencies.members,
+            program_source: Some(program_source),
+        })
     }
 
     /// Whether the request supplied no member.
     pub fn is_empty(&self) -> bool {
-        self.members.is_empty()
+        self.members.is_empty() && self.dependency_members.is_empty()
     }
 
     /// The configuration supplied for the clock `name`.
     pub fn get(&self, name: &str) -> Option<&ClockConfiguration> {
         self.members.get(name)
+    }
+
+    fn get_for_source(
+        &self,
+        source: &fsl_foundation::source::provenance::RawSourceRef,
+        name: &str,
+    ) -> Option<&ClockConfiguration> {
+        if self
+            .program_source
+            .as_ref()
+            .is_some_and(|(authority, identity)| {
+                source.authority() == authority && source.identity() == identity
+            })
+        {
+            self.members.get(name)
+        } else {
+            self.dependency_members.get(name)
+        }
+    }
+
+    fn is_program_source(&self, source: &fsl_foundation::source::provenance::RawSourceRef) -> bool {
+        self.program_source
+            .as_ref()
+            .is_none_or(|(authority, identity)| {
+                source.authority() == authority && source.identity() == identity
+            })
     }
 
     /// The named clock configurations in request order.
@@ -96,7 +144,7 @@ impl RequestClocks {
                     .map_or(fsl_semantics::check::DEFAULT_CLOCK_ROLE, |clock| {
                         clock.text.as_str()
                     });
-                let clock = self.get(role)?;
+                let clock = self.get_for_source(&source, role)?;
                 matches!(
                     clock,
                     ClockConfiguration::TimestampedEvent { .. } | ClockConfiguration::Timed { .. }
@@ -106,9 +154,10 @@ impl RequestClocks {
             .collect()
     }
 
-    /// The selection of every clock-bearing temporal clause, hyper clause and
-    /// `compensate` template of `checked`, in source order, or the FR-640
-    /// refusal at stage `emit`. `parsed` are the program's parsed units,
+    /// The selection of every clock-bearing temporal clause, hyper clause,
+    /// protocol `await` and `compensate` template of `checked`, in source
+    /// order, or the FR-640 refusal at stage `emit`. `parsed` are the
+    /// program's parsed units,
     /// which locate a refusal at the declaration's `clock` argument. A member
     /// is unused when no declaration of the program or of any library unit
     /// it compiles with (FR-099) takes its configuration from `clocks`.
@@ -130,14 +179,23 @@ impl RequestClocks {
             for declaration in declarations(library) {
                 if declaration.model.is_none()
                     && configured_kind(declaration.profile).is_some()
-                    && self.get(declaration.clock).is_some()
+                    && self
+                        .get_for_source(&declaration.source, declaration.clock)
+                        .is_some()
                 {
-                    used.insert(declaration.clock.to_owned());
+                    used.insert((
+                        self.is_program_source(&declaration.source),
+                        declaration.clock.to_owned(),
+                    ));
                 }
             }
             pending.extend(library.dependencies().values().map(AsRef::as_ref));
         }
-        if let Some(name) = self.members.keys().find(|name| !used.contains(*name)) {
+        if let Some(name) = self
+            .members
+            .keys()
+            .find(|name| !used.contains(&(true, (*name).clone())))
+        {
             return Err(emit_refusal(
                 ClockSelectionRefusal {
                     cause: ClockSelectionCause::UnusedClockSelection,
@@ -148,6 +206,24 @@ impl RequestClocks {
                 },
                 None,
             ));
+        }
+        if self.program_source.is_some() {
+            if let Some(name) = self
+                .dependency_members
+                .keys()
+                .find(|name| !used.contains(&(false, (*name).clone())))
+            {
+                return Err(emit_refusal(
+                    ClockSelectionRefusal {
+                        cause: ClockSelectionCause::UnusedClockSelection,
+                        clock: name.clone(),
+                        declaration: None,
+                        supplied: None,
+                        unit: None,
+                    },
+                    None,
+                ));
+            }
         }
         Ok(selections)
     }
@@ -170,9 +246,14 @@ impl RequestClocks {
         &self,
         package: &pkg::CheckedPackage,
         locator: &ClockLocator,
-        used: &mut BTreeSet<String>,
+        used: &mut BTreeSet<(bool, String)>,
     ) -> Result<Vec<TemporalClockSelection>, Box<CompileRefusal>> {
-        if let Some(name) = self.members.keys().find(|name| is_model_binding_name(name)) {
+        if let Some(name) = self
+            .members
+            .keys()
+            .chain(self.dependency_members.keys())
+            .find(|name| is_model_binding_name(name))
+        {
             return Err(emit_refusal(
                 ClockSelectionRefusal {
                     cause: ClockSelectionCause::ReservedClockName,
@@ -207,7 +288,8 @@ impl RequestClocks {
                     &declaration.source,
                     locator.clock_span(&declaration.source, declaration.span),
                 );
-                let Some(clock) = self.get(declaration.clock) else {
+                let Some(clock) = self.get_for_source(&declaration.source, declaration.clock)
+                else {
                     return Err(emit_refusal(
                         ClockSelectionRefusal {
                             cause: ClockSelectionCause::MissingClockSelection,
@@ -231,7 +313,10 @@ impl RequestClocks {
                         locus,
                     ));
                 }
-                used.insert(declaration.clock.to_owned());
+                used.insert((
+                    self.is_program_source(&declaration.source),
+                    declaration.clock.to_owned(),
+                ));
                 clock.clone()
             };
             selections.push(TemporalClockSelection::new(
@@ -245,12 +330,13 @@ impl RequestClocks {
 }
 
 /// What the parsed units of one checked package tell a clock selection that
-/// its checked graph does not: where each `temporal` clause's `clock`
-/// argument is, which locates a refusal. Built before the check consumes the
-/// parsed units.
+/// its checked graph does not: where each `temporal` clause's and protocol
+/// `await`'s `clock` argument is, which locates a refusal. Built before the
+/// check consumes the parsed units.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ClockLocator {
-    /// Each `temporal` clause's source, declaration span and `clock` span.
+    /// Each `temporal` clause and protocol `await`'s source, declaration span
+    /// and `clock` span.
     clocks: Vec<(RawSourceRef, Span, Span)>,
 }
 
@@ -260,12 +346,24 @@ impl ClockLocator {
         for unit in parsed {
             let source = unit.source().reference();
             for form in unit.unit().forms() {
-                if let fsl_forms::DeclarationForm::Temporal(clause) = form.form() {
-                    if let Some(clock) = &clause.clock {
-                        locator
-                            .clocks
-                            .push((source.clone(), form.span(), clock.span));
+                match form.form() {
+                    fsl_forms::DeclarationForm::Temporal(clause) => {
+                        if let Some(clock) = &clause.clock {
+                            locator
+                                .clocks
+                                .push((source.clone(), form.span(), clock.span));
+                        }
                     }
+                    fsl_forms::DeclarationForm::Protocol(protocol) => {
+                        for await_form in &protocol.awaits {
+                            locator.clocks.push((
+                                source.clone(),
+                                await_form.span,
+                                await_form.clock.span,
+                            ));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -294,8 +392,8 @@ fn emit_refusal(
 }
 
 /// Every clock-bearing declaration of `package`'s own graph, in source
-/// order: its temporal clauses, its hyper clauses and its `compensate`
-/// templates.
+/// order: its temporal clauses, hyper clauses, protocol `await`s and
+/// `compensate` templates.
 fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
     let graph = package.graph();
     let mut declarations = Vec::new();
@@ -365,6 +463,19 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
         });
     }
     for protocol in graph.protocols() {
+        for await_form in &protocol.awaits {
+            let Some(profile) = await_form.profile else {
+                continue;
+            };
+            declarations.push(Declaration {
+                name: &await_form.name,
+                profile,
+                clock: &await_form.clock,
+                model: None,
+                source: graph.source().clone(),
+                span: await_form.span,
+            });
+        }
         for template in &protocol.obligations.compensations {
             let Some(profile) = template.temporal_profile else {
                 continue;
@@ -428,7 +539,7 @@ fn derived_configuration(
                 model_configuration(declaration.profile, declaration.clock, authority)
             }
             None if declaration.profile == TemporalProfile::EventPositionFalseExtension => {
-                return Err(per_trace_clocks(declaration))
+                return Err(per_trace_clocks(declaration));
             }
             None => model_configuration(declaration.profile, declaration.clock, ""),
         };
@@ -572,4 +683,40 @@ pub(crate) fn check_clock_refusal(
         },
         regions.refusal_region(refusal),
     ))
+}
+
+#[cfg(test)]
+mod replay_clock_tests {
+    use super::*;
+    use filament_contract_model::ClockConfiguration;
+
+    #[test]
+    fn replay_clock_names_are_scoped_to_program_and_dependency_sources() {
+        let program =
+            fsl_foundation::source::provenance::RawSourceRef::new("test", "program").unwrap();
+        let library =
+            fsl_foundation::source::provenance::RawSourceRef::new("test", "library").unwrap();
+        let program_clock = ClockConfiguration::TimestampedEvent {
+            timestamp_unit: "ms".into(),
+        };
+        let dependency_clock = ClockConfiguration::TimestampedEvent {
+            timestamp_unit: "s".into(),
+        };
+        let clocks = RequestClocks::for_replay(
+            ("test".into(), "program".into()),
+            BTreeMap::from([("shared".into(), program_clock.clone())]),
+            BTreeMap::from([("shared".into(), dependency_clock.clone())]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            clocks.get_for_source(&program, "shared"),
+            Some(&program_clock)
+        );
+        assert_eq!(
+            clocks.get_for_source(&library, "shared"),
+            Some(&dependency_clock)
+        );
+        assert_eq!(clocks.get_for_source(&library, "program-only"), None);
+    }
 }

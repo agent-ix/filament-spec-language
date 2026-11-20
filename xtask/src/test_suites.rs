@@ -3352,15 +3352,10 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         (worker.join().expect("reap worker"), pid)
     }
 
-    /// A child that exists but has not been waited for is still listed by
-    /// `ps` (as a zombie); a reaped one is not. Looking never reaps.
+    /// A child that exists but has not been waited for still has a `/proc`
+    /// entry; a reaped one does not. Looking never reaps.
     fn is_unreaped(pid: u32) -> bool {
-        Command::new("ps")
-            .args(["-p", &pid.to_string()])
-            .stdout(Stdio::null())
-            .status()
-            .expect("run ps")
-            .success()
+        Path::new("/proc").join(pid.to_string()).exists()
     }
 
     #[test]
@@ -3381,13 +3376,17 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         assert!(!is_unreaped(pid), "a waited child is gone");
     }
 
-    /// Whether `ps` shows the process as exited-but-unwaited (state `Z`).
+    /// Whether `/proc` shows the process as exited-but-unwaited (state `Z`).
     fn is_zombie(pid: u32) -> bool {
-        let out = Command::new("ps")
-            .args(["-o", "stat=", "-p", &pid.to_string()])
-            .output()
-            .expect("run ps");
-        String::from_utf8_lossy(&out.stdout).trim().starts_with('Z')
+        let stat =
+            match std::fs::read_to_string(Path::new("/proc").join(pid.to_string()).join("stat")) {
+                Ok(stat) => stat,
+                Err(_) => return false,
+            };
+        let Some((_, fields)) = stat.rsplit_once(')') else {
+            return false;
+        };
+        fields.split_whitespace().next() == Some("Z")
     }
 
     fn stream_failure(what: &'static str, message: &str) -> Result<()> {

@@ -27,7 +27,8 @@ the population is unknown.
 2. Analyze a closed recording in which only `x` is observed, first with
    premises omitting `y`, then with `y`'s branch premises listed, then with
    closure `open`.
-3. Analyze step 1's recording with no `population` member.
+3. Analyze step 1's recording with no `population` member, then the same
+   recording with closure `open`.
 4. Analyze step 1's recording with each FR-990-AC-10 defective population.
 
 ## Expected Results
@@ -39,6 +40,8 @@ the population is unknown.
   cause `missing`; then those obligations `pending`, item `inconclusive`,
   cause `open-history`.
 - Step 3: `inconclusive`, cause `incomplete-closure-scope`, `complete`
-  `false`, `closure.state` `closed`.
+  `false`, `closure.state` `closed`; with closure `open` the same
+  label and cause (never `open-history`) with `closure.state` `open`, every
+  member `control` obligation `pending` in both.
 - Step 4: the item refusals and request refusals FR-990-AC-10 names, with no
   verdict.

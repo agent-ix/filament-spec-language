@@ -1,0 +1,50 @@
+{
+  "ticket": "QSL-2089",
+  "reviewed_source_head": "3b51f5d8f9ed7a5f2f71392fc29e9f8998ff8239",
+  "tested_head": "d81e997277c9f2f25fc8188dddb9764f8b3ea466",
+  "reviews": [
+    {"id": "SR-1493", "verdict": "PASS", "validation_exit": 0},
+    {"id": "SR-1494", "verdict": "PASS", "validation_exit": 0}
+  ],
+  "final_gate": {
+    "scope": "Complete affected root integration forms_package_contracts component, including both child modules",
+    "command": "cargo test --locked --features checked-handoff --test it forms_package_contracts:: -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+    "environment": {
+      "CARGO_TARGET_DIR": "<owned-worktree>/target",
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0"
+    },
+    "free_disk_before_gate_gib": 208,
+    "exit": 0,
+    "passed": 8,
+    "failed": 0,
+    "ignored": 0,
+    "new_tests": 8,
+    "embedded_carrier_tests": 0,
+    "filtered_out": 1234,
+    "test_seconds": 0.15,
+    "passing_tests": [
+      "forms_package_contracts::conformance_ancestor_limit_denies_the_next_edge_then_accepts_the_exact_bound",
+      "forms_package_contracts::operation_conformance_reports_each_independent_axis_and_all_three_together",
+      "forms_package_contracts::redefinition_requires_a_proper_ancestor_and_cycles_yield_no_view",
+      "forms_package_contracts::relationship_binding_preserves_declared_ends_and_refuses_each_missing_type",
+      "forms_package_contracts::routing::manifest_admission_refuses_exact_bad_kind_and_mode_without_replacement",
+      "forms_package_contracts::routing::reordered_registrations_keep_exact_evidence_and_permanently_withdraw_conflicts",
+      "forms_package_contracts::source_package::function_identities_survive_linking_strict_read_and_unrelated_reordering",
+      "forms_package_contracts::ten_thousand_conformance_edges_complete_on_a_small_stack"
+    ]
+  },
+  "scope_limits": [
+    "This is the reviewed FR-082, FR-085, FR-075, FR-057 and FR-065 behavior slice; broader historical QSL-2089 families remain unclaimed.",
+    "There are no strict pending tests or newly established product defects in this slice.",
+    "Retired source-content FR-001-AC-1 receives no test or trace tag.",
+    "No matrix, unrelated suite, lint retry, proof gate, shared binary build or main refresh was run.",
+    "Baseline compiler warnings remain preserved; no green Clippy claim is made."
+  ],
+  "authoring_corrections": [
+    "An initial private-module import failed compilation before tests ran; corrected to the existing public read_evaluation_package reexport.",
+    "The initial target-eligibility test asked normalization to own the conformance query. Its failed receipt is preserved; the corrected test uses public resolve_redefinition_target and separately checks cycle normalization. Only the changed failed test reran."
+  ]
+}

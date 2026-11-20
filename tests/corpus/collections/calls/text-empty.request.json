@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"text-empty.native","authority":"agent-ix","identity":"test:collections:calls:text-empty","document":"text-empty","formal_revision":1}},"call":{"function":"f","arguments":[{"parameter":"a","value":{"kind":"text","text":""}}]}}}

@@ -400,7 +400,9 @@ pub(super) fn run_bytes(
                         call_output: None,
                     }
                 }
-                super::PreparedRun::Function(_) | super::PreparedRun::TlLowering(_) => {
+                super::PreparedRun::Function(_)
+                | super::PreparedRun::TlLowering(_)
+                | super::PreparedRun::Package(_) => {
                     return Err(refused(
                         "value_invariants",
                         "expected a clause-run preparation",
@@ -443,6 +445,19 @@ pub(super) fn run_bytes(
                     return Err(refused(
                         "items.selections",
                         "tl_lowering is not an item selection",
+                    ));
+                }
+                Ok(super::PreparedRun::Package(package)) if kind == "call" => {
+                    // FR-1039: each call selection executes from the admitted
+                    // package bytes. The package route owns admission and
+                    // evaluation; this batch layer only preserves selection
+                    // order and result framing.
+                    ItemExecution::Run(Box::new(super::package_run::execute(*package)))
+                }
+                Ok(super::PreparedRun::Package(_)) => {
+                    return Err(refused(
+                        "items.selections",
+                        "this package item selection has no checked-package execution route",
                     ));
                 }
                 Err(cause) => return Err(cause),

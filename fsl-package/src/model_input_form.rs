@@ -8,7 +8,7 @@
 
 use filament_contract_model::{
     CheckedNodeId, CheckedNodeKind, CheckedNodeTag, CheckedSemanticNodeV2, CompositeTypeForm,
-    ModelForm, ScalarTypeForm, TemporalForm,
+    ModelForm, ProbabilisticForm, ScalarTypeForm, StateForm,
 };
 
 use crate::BarePackage;
@@ -17,12 +17,12 @@ use crate::BarePackage;
 /// yet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnreadModelForm {
-    /// A state clause, frame, transition, operation anchor or snapshot.
+    /// A Boolean-field transition or a snapshot. A state clause, frame and
+    /// operation anchor are read: the clause by its `claim_names` row and
+    /// package form, the frame and anchor by theirs (FR-940).
     State,
     /// A timed model, time source, clock place or timed clause.
     TimedModel,
-    /// A `terminal` declaration.
-    Terminal,
     /// A protocol declaration.
     Protocol,
     /// A hybrid model.
@@ -31,6 +31,11 @@ pub enum UnreadModelForm {
     Variant,
     /// An enumeration, which a value's canonical form names.
     Enumeration,
+    /// A `reward` node of a `probabilistic` declaration: the package route
+    /// rebuilds it as a `ReadReward` record, but no
+    /// engine reads that record, so a model check over the package would run
+    /// without the reward.
+    Reward,
     /// An `object` declaration of the unit's own source package (FR-569).
     SourceObject,
 }
@@ -41,11 +46,11 @@ impl UnreadModelForm {
         match self {
             Self::State => "state",
             Self::TimedModel => "timed-model",
-            Self::Terminal => "terminal",
             Self::Protocol => "protocol",
             Self::Hybrid => "hybrid",
             Self::Variant => "variant",
             Self::Enumeration => "enumeration",
+            Self::Reward => "reward",
             Self::SourceObject => "source-object",
         }
     }
@@ -55,14 +60,17 @@ fn unread(node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
     let kind = CheckedNodeTag::from_wire(&node.node_tag)
         .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))?;
     match kind {
+        CheckedNodeKind::State(
+            StateForm::StateClause | StateForm::Frame | StateForm::OperationAnchor,
+        ) => None,
         CheckedNodeKind::State(_) => Some(UnreadModelForm::State),
         CheckedNodeKind::TimedModel(_) => Some(UnreadModelForm::TimedModel),
-        CheckedNodeKind::Temporal(TemporalForm::Terminal) => Some(UnreadModelForm::Terminal),
         CheckedNodeKind::Protocol(_) => Some(UnreadModelForm::Protocol),
         CheckedNodeKind::Hybrid(_) => Some(UnreadModelForm::Hybrid),
         CheckedNodeKind::CompositeType(CompositeTypeForm::Union)
         | CheckedNodeKind::Model(ModelForm::VariantType) => Some(UnreadModelForm::Variant),
         CheckedNodeKind::ScalarType(ScalarTypeForm::Enum) => Some(UnreadModelForm::Enumeration),
+        CheckedNodeKind::Probabilistic(ProbabilisticForm::Reward) => Some(UnreadModelForm::Reward),
         _ => None,
     }
 }

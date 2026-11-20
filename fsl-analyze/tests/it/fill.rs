@@ -377,7 +377,11 @@ pub(crate) fn package_with(profiles: &str, body: &str) -> CheckedPackage {
 /// Kernel semantics differ from its enclosing clauses' linked semantics.
 pub(crate) fn package_with_mode(profiles: &str, body: &str, mode: CheckMode) -> CheckedPackage {
     let graph = declarations_over(document(), "package", profiles, body)
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -418,7 +422,11 @@ pub(crate) fn package_over(
     body: &str,
 ) -> CheckedPackage {
     let graph = declarations_over(document, package_name, profiles, body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -432,7 +440,11 @@ pub(crate) fn check_refusals(
     let regions = declarations.regions();
     let text = unit_text_with("", body);
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .err()
         .unwrap_or_else(|| panic!("{body}: the unit refuses"))
         .into_iter()
@@ -534,7 +546,11 @@ pub(crate) fn package_without_protocol_profile_selection(body: &str) -> CheckedP
     declarations.protocol_profile = None;
     let graph = declarations
         .with_unwritten_refinements()
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -838,6 +854,7 @@ pub(crate) fn projections(reached: &[Reached]) -> std::collections::BTreeSet<Vec
         for (transition, next) in &reached[at].steps {
             let named = match transition.kind() {
                 StepKind::Attempt
+                | StepKind::Recommend
                 | StepKind::Event
                 | StepKind::Send
                 | StepKind::Receive

@@ -76,6 +76,7 @@ fn limits() -> ExecuteLimits {
         accounting: accounting(),
         supplied: Default::default(),
         prepare: PrepareLimits::default(),
+        session: Default::default(),
     }
 }
 

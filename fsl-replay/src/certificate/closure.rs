@@ -85,7 +85,7 @@ use fsl_semantics::model::observation::AdmissionFailure;
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::certificate::check::{
-    admit, expansion_halt, finish, poll, stopped, widen, Budgets, Checker, Halt, Step,
+    admit, admit_read_identities, expansion_halt, finish, poll, stopped, widen, Budgets, Checker, Halt, Step,
 };
 use crate::certificate::recording::Recording;
 use crate::certificate::scc::{check_partition, Component, ComponentCertificate};
@@ -317,7 +317,11 @@ fn check_model(
     cancel: &Cancel,
 ) -> Result<TemporalCertificateCheck, ClosureRefusal> {
     let simulation = request.subject.simulation.clone();
-    let system = admit(simulation)?;
+    let system = if matches!(request.item, ModelCheckItem::DeadlockFreedom) {
+        admit_read_identities(simulation)
+    } else {
+        admit(simulation)
+    }?;
     check_system(
         &system,
         &system,
@@ -422,7 +426,8 @@ fn check_protocol(
         SubjectMemory::Sc => {
             let system = ProtocolSystem::new(model, subject, Sc)
                 .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances);
+                .with_max_live_instances(live_instances)
+                .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -443,7 +448,8 @@ fn check_protocol(
             };
             let system = ProtocolSystem::new(model, subject, tso)
                 .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances);
+                .with_max_live_instances(live_instances)
+                .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -464,7 +470,8 @@ fn check_protocol(
             };
             let system = ProtocolSystem::new(model, subject, ra)
                 .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances);
+                .with_max_live_instances(live_instances)
+                .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -1555,7 +1562,7 @@ impl<S: SubjectSystem> Check<'_, S> {
                 };
                 let value = self
                     .model
-                    .constraint_value(&self.system.atom_state(&state), clause.name())
+                    .constraint_value(&self.system.atom_state(&state), clause.name)
                     .map_err(|stop| self.expansion_stop(stop))?;
                 match value {
                     ConstraintValue::Holds => (translation.read(before, true), None),

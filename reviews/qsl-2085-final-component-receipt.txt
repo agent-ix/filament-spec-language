@@ -1,0 +1,38 @@
+QSL-2085 final affected-component gate
+Reviewed records: SR1489/SR1490 PASS, FND-001 fixed/no remaining findings
+Gate head: 46918191a28d24048434ce2b8d14385140f1d0ff
+Worktree: /home/peter/dev/.worktrees/luna-qsl-2085
+Owned target: /home/peter/dev/.worktrees/luna-qsl-2085/target
+df -h / before gate: 208G available (77% used)
+
+Exact command:
+CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test --locked --features checked-handoff --test it checker_value_boundaries:: -- --nocapture --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated
+
+Actual Cargo exit: 0
+Actual result: 21 passed; 0 failed; 3 ignored; 0 measured; 1208 filtered out
+Component execution time: 2.21s
+Warm Cargo test-profile preparation: 0.51s
+Full original log: /home/peter/dev/.agent/qsl-2085-final-component.log
+
+Scope accounting:
+19 passing functions are original QSL2085 behavior tests.
+2 passing functions are embedded existing carrier-constructor tests:
+- observations::carrier::tc235_shared_k2_fixture_preserves_meaning_contract
+- observations::fields::base::tc235_shared_k2_fixture_preserves_meaning_contract
+They are not new feature coverage.
+3 strict ignored functions are not coverage:
+- source Byte literal/concat/length case, QSL2610
+- source JsonObject literal/equality case, QSL2610
+- recursive-state public ModelSystem journey, QSL2704
+
+Guard receipt within this gate:
+35 formulas; 280 independent Boolean assignments; 9 accepted; 26 refused;
+3 mandatory accepted controls; 36 correct mandatory-control evaluations.
+
+The three active deep cases completed in their existing isolated512KiB
+threads. No stack increase or repeat outside this gate occurred.
+Known pending tests were not executed. No unrelated integration/workspace/
+proof/Kani suite, lint, product binary build, matrix, main refresh or review
+was run. Original authoring failures and passing receipts remain unchanged.
+
+The trailing final-receipt commit changes records only; no re-gate applies.

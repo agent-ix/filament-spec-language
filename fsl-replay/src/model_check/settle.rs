@@ -202,6 +202,8 @@ pub enum CertificateChecker {
     Closure,
     /// The SCC and ranking checker of a liveness claim (ADR-018 PC-4).
     Component,
+    /// The EN-6 FR-245 zone-certificate checker.
+    Zone,
 }
 
 impl CertificateChecker {
@@ -210,6 +212,7 @@ impl CertificateChecker {
         match self {
             Self::Closure => "en-1-closure",
             Self::Component => "scc-ranking",
+            Self::Zone => "zone-certificate",
         }
     }
 }

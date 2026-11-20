@@ -57,6 +57,10 @@ pub(super) struct CompileRequest {
     /// FR-665: checked-package handoff written after compilation succeeds.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub handoff: Option<Handoff>,
+    /// FR-767: an optional caller-selected law for this program's `div` and
+    /// `rem` nodes; imported libraries retain their own selection.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
     /// FR-952: the mode every function body of the unit is checked under;
     /// `Linked` when absent.
     #[serde(default = "linked", deserialize_with = "check_mode")]
@@ -256,12 +260,14 @@ fn present_json_value<'de, D: serde::Deserializer<'de>>(
 pub(super) struct Request {
     #[serde(deserialize_with = "deserialize_objects")]
     pub models: Vec<Model>,
-    #[serde(deserialize_with = "from_object")]
-    pub program: Program,
-    /// FR-767/FR-100/FR-031: selected package artifact, mutually exclusive
-    /// with extraction; a precompiled package does not take a request-selected law.
+    /// FR-100: the program source selection; exactly one of `program` and
+    /// `package` is present.
     #[serde(default, deserialize_with = "from_object_opt")]
-    pub package: Option<FileSelection>,
+    pub program: Option<Program>,
+    /// FR-100, FR-1039: a selected checked package in place of `program`; a
+    /// package takes no request-selected law (FR-767).
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub package: Option<RunPackageSelection>,
     #[serde(default, deserialize_with = "from_object")]
     pub limits: Limits,
     /// FR-100: a `1-draft` program's named call. Absent for a `0-draft`
@@ -292,6 +298,10 @@ pub(super) struct Request {
     /// each refusal names its member path; none when absent.
     #[serde(default, deserialize_with = "present_json_value")]
     pub tl_lowering: Option<serde_json::Value>,
+    /// FR-1036: a synthesis request. The checked-package route is held at
+    /// QSL-2235 until synthesis lowering can admit its S1-S3 records.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub synthesis: Option<serde_json::Value>,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
@@ -329,6 +339,9 @@ pub(super) struct Call {
     /// FR-100: the call's accounting limits by counter name; absent is `{}`.
     #[serde(default, deserialize_with = "from_object")]
     pub accounting: Accounting,
+    /// NFR-130, FR-100: the call's evaluation limits; absent is `{}`.
+    #[serde(default, deserialize_with = "from_object")]
+    pub evaluation: Evaluation,
     /// FR-650: the file of the one current snapshot the call's Reference and
     /// Population arguments resolve against.
     #[serde(default)]
@@ -389,6 +402,36 @@ impl Accounting {
         .into_iter()
         .filter_map(|(setting, bound)| bound.map(|bound| (setting, bound)))
     }
+}
+
+/// The `evaluation` member of a [`Call`] (FR-100, NFR-130): a closed object
+/// whose one member, `live_occurrences`, is a JSON integer from 0 to
+/// `u64::MAX`. Any other member, or a malformed value, refuses at decode.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Evaluation {
+    #[serde(default, deserialize_with = "live_occurrence_limit")]
+    live_occurrences: Option<u64>,
+}
+
+impl Evaluation {
+    /// The live-occurrence limit the call evaluates under: the member's
+    /// value, or the FR-255 default 1048576 when it is omitted. Zero is a
+    /// real limit.
+    pub fn live_occurrences(&self) -> u64 {
+        self.live_occurrences
+            .unwrap_or(fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES)
+    }
+}
+
+/// A present `live_occurrences` is a JSON integer from 0 to `u64::MAX`; a
+/// malformed one refuses naming the member (NFR-130-AC-4).
+fn live_occurrence_limit<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<u64>, D::Error> {
+    u64::deserialize(decoder).map(Some).map_err(|error| {
+        serde::de::Error::custom(format!("`call.evaluation.live_occurrences`: {error}"))
+    })
 }
 
 /// A present counter is a JSON integer from 0 to `u64::MAX`. This
@@ -565,13 +608,18 @@ pub(super) struct HandoffSelection {
     pub directory: String,
 }
 
-/// A `{file}` selection of a supplied document or checked package.
+/// FR-1039: a run request's `package` selection, exactly one of `{file}`, a
+/// checked-package v2 file, and `{directory}`, an FR-517 handoff directory.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct FileSelection {
-    /// Deserialized so the selection's shape is validated; no consumer reads it yet.
-    #[allow(dead_code)]
-    pub file: String,
+pub(super) struct RunPackageSelection {
+    #[serde(default)]
+    pub file: Option<String>,
+    #[serde(default)]
+    pub directory: Option<String>,
+    /// The exact source reference required when this package is exported.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub source_package: Option<serde_json::Value>,
 }
 
 /// A supplied document and its optional FR-821 provision identity.
@@ -639,11 +687,6 @@ pub(super) struct NormalizationLimits {
     pub effective_declarations: Option<u64>,
     #[serde(default, deserialize_with = "limit")]
     pub dispatch_candidates: Option<u64>,
-    /// `model.hashed_bytes` is FSpec's limit name (FR-255): it is read and
-    /// range-checked so a request that states it is admitted, but FSL's
-    /// normalization hashes under no byte meter, so no FSL limit takes it.
-    #[serde(default, rename = "hashed_bytes", deserialize_with = "limit")]
-    _hashed_bytes: Option<u64>,
     #[serde(default, deserialize_with = "limit")]
     pub work_units: Option<u64>,
     #[serde(default, deserialize_with = "limit")]

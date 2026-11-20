@@ -412,7 +412,11 @@ fn package(scenario: &Scenario) -> CheckedPackage {
         declarations.models = vec![scenario.model.clone()];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap();
     CheckedPackage::link(graph)
 }
@@ -454,7 +458,11 @@ fn package_with_size_function(scenario: &Scenario, maximum: u64) -> CheckedPacka
         )];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap();
     CheckedPackage::link(graph)
 }
@@ -492,7 +500,11 @@ fn package_with_collection_function(scenario: &Scenario) -> CheckedPackage {
         )];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap();
     CheckedPackage::link(graph)
 }
@@ -1342,7 +1354,11 @@ fn package_with_unrelated_type(scenario: &Scenario) -> CheckedPackage {
         declarations.models = vec![scenario.model.clone()];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap();
     CheckedPackage::link(graph)
 }
@@ -1591,7 +1607,11 @@ fn attribute_world_of(
         declarations.models = vec![scenario.model.clone()];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap();
     (CheckedPackage::link(graph), objects)
 }
@@ -2100,7 +2120,11 @@ fn all_instances_expression_target_declared_but_not_in_model_is_type_mismatch() 
         declarations.models = vec![scenario.model.clone()];
         declarations
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .unwrap();
     let package = CheckedPackage::link(graph);
     let parameters = [("p", ValueType::Population(Some(3)))];
@@ -3932,7 +3956,11 @@ fn a_refused_lookup_builds_a_record_at_the_lookup_expression() {
             declarations.functions = vec![function];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect("the unit checks"),
     );
     let world = objects(&scenario)
@@ -4061,6 +4089,7 @@ fn a_kernel_refusal_builds_a_record_only_where_the_catalog_has_a_code() {
         location: None,
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     };
     let cardinality = evaluation(Refusal::CardinalityOutOfBound {
         violation: BoundViolation::AboveMaximum,
@@ -4115,6 +4144,7 @@ fn a_kernel_foreign_reference_builds_a_record_with_both_universes() {
         location: None,
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     };
     let record =
         fsl_eval::value::refusal_record(&evaluation, |location| package.graph().region(location))
@@ -4212,7 +4242,11 @@ fn empty_admitted_member_faults_through_public_call_and_evaluate_with_exact_pref
             )];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
         let package = CheckedPackage::link(graph);
         let expression = check(&package, &[("p", ValueType::Population(Some(1)))], &query);

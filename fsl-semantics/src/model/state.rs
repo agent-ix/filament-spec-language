@@ -350,13 +350,31 @@ impl StateModel {
         &self,
         units: &BTreeMap<String, filament_exact::UnitId>,
     ) -> Result<crate::model::operation::OperationTable, crate::check::AssemblyRefusal> {
-        crate::check::model_operation_table(
-            self.views
-                .iter()
-                .filter(|view| !view.is_source())
-                .map(|view| &view.view),
-            units,
-        )
+        crate::check::model_operation_table(self.views.iter().map(|view| &view.view), units)
+    }
+
+    /// FR-940: the one population domain of the selected domain packages
+    /// that covers `object` by conformance, as S3 reads a state clause's
+    /// context population (FR-104 "Resolution"), before the unit's authored
+    /// bounds (FR-380) are applied: `Ok(None)` when none does, and the
+    /// populations' keys when several do.
+    ///
+    /// # Errors
+    ///
+    /// The covering populations' declaration keys, ascending, when more
+    /// than one covers `object`.
+    pub fn covering_population(
+        &self,
+        object: filament_exact::EffectiveId,
+    ) -> Result<Option<crate::check::PopulationDomain>, Vec<filament_checked::key::DeclarationKey>>
+    {
+        let models: Vec<crate::check::lowering::AdmittedModel> = self
+            .views
+            .iter()
+            .filter(|view| !view.is_source())
+            .map(|view| crate::check::lowering::AdmittedModel::from_view(&view.view))
+            .collect();
+        crate::check::state_clause::population_of(&models, object, &self.types)
     }
 
     /// FR-940: the population domains of the selected domain packages whose
@@ -480,6 +498,28 @@ impl StateModel {
             }
         }
         orders
+    }
+
+    /// Each model tuple's authored positions mapped to its data slots.
+    /// Clock positions have no data slot, including aliases of Clock.
+    pub fn tuple_data_positions(&self) -> BTreeMap<filament_exact::NodeKey, Vec<Option<usize>>> {
+        let mut positions = BTreeMap::new();
+        for view in &self.views {
+            let records = &view.view.domain_package().records;
+            for record in records {
+                let DomainPackageRecord::TupleValueType(tuple) = record else {
+                    continue;
+                };
+                let Ok(Some(node)) = crate::check::record_node_key(record) else {
+                    continue;
+                };
+                positions.insert(
+                    node,
+                    crate::model::domain_package::tuple_data_projection(records, &tuple.key),
+                );
+            }
+        }
+        positions
     }
 
     /// The [`Observation`] of `state`, named `identity`: the object

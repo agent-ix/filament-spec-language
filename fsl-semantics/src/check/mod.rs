@@ -81,6 +81,7 @@ mod composition;
 mod dispatch_link;
 pub mod footprint;
 mod guarantee;
+mod numeric_conversion;
 mod rust_syntax;
 pub use abstraction::{
     AbstractionKey, AbstractionRefusal, AuthoredBinding, CheckedAbstractionRelation,
@@ -142,6 +143,7 @@ pub(crate) use lowering::record_node_key;
 pub use lowering::{protocol_site, ProtocolSite, RelatedSide};
 mod extension;
 mod hybrid;
+mod hybrid_locus;
 mod hyper_clause;
 mod node_key;
 mod observation;
@@ -149,6 +151,8 @@ mod operation_body;
 mod operation_clause;
 mod probabilistic;
 mod profile;
+mod reward_evaluator;
+pub use reward_evaluator::{RewardEvaluationFailure, RewardEvaluator};
 mod protocol_clause;
 mod protocol_controls;
 mod protocol_memory;
@@ -161,6 +165,29 @@ mod references;
 mod refinement;
 mod refusal;
 mod region;
+mod reward_validation;
+#[cfg(any(test, feature = "test-support"))]
+/// Test-only helpers for S3 check fixtures.
+pub mod test_support {
+    use filament_exact::{Integer, Meter, Value};
+
+    use super::{CheckedGraph, Reward, RewardEvaluationFailure, RewardEvaluator};
+
+    /// Explicit test fixture for checker tests that assert no reward value.
+    pub struct ZeroRewardEvaluator;
+
+    impl RewardEvaluator for ZeroRewardEvaluator {
+        fn evaluate(
+            &self,
+            _graph: &CheckedGraph,
+            _reward: &Reward,
+            _arguments: Vec<Value>,
+            _meter: &mut Meter,
+        ) -> Result<Value, RewardEvaluationFailure> {
+            Ok(Value::Integer(Integer::from(0_i64)))
+        }
+    }
+}
 mod settings;
 mod source_model;
 pub(crate) mod state_clause;
@@ -176,15 +203,17 @@ pub use time_units::is_clock_unit_node;
 mod timed_model;
 pub use probabilistic::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
-    CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, Confidence, ConfidenceFault, Delay,
-    DelayDistribution, DelayFault, Event, FractionMeasure, ModelSubjectRef, OverBinding,
-    PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
-    ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
-    Reward, SupportValue, WeightOwner, Workload,
+    CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, ClaimReadFault, ClaimReads,
+    Confidence, ConfidenceFault, Delay, DelayDistribution, DelayFault, Event, FairnessRead,
+    FractionMeasure, ModelSubjectRef, OverBinding, PreconditionSite, ProbForm, ProbScheduler,
+    ProbabilisticCause, ProbabilisticDeclaration, ProbabilisticFeature, ProbabilisticOperation,
+    QualitativeForm, RandomParameter, ReachTarget, Reward, SchedulerRead, Statement, SupportValue,
+    WeightOwner, Workload,
 };
 pub use probabilistic::{
-    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
-    PackageSupport, PackageWeight, PackageWorkload,
+    PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
+    PackageProbabilisticRefusal, PackageRandomParameter, PackageReward, PackageSupport,
+    PackageWeight, PackageWorkload, ReadReward,
 };
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
@@ -208,9 +237,9 @@ pub use refinement::{
     StepRow, StepTarget, UnsupportedFeature,
 };
 pub use terminal::{
-    CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration, TerminalClauseKind,
-    TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode, TerminalNode,
-    TerminalRefusal,
+    terminal_predicate_site, CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration,
+    TerminalClauseKind, TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode,
+    TerminalNode, TerminalRefusal,
 };
 mod type_form;
 mod type_invariant;
@@ -477,6 +506,7 @@ pub use hybrid::{
     HybridModelIndex, HybridTerm, InitialEntry, LogicOp, MalformedReason, ModeIndex,
     ResetConstraint, TransitionIndex, VariableClass, VariableIndex,
 };
+pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 #[cfg(any(test, feature = "test-support"))]
 pub use hyper_clause::check_hyper_clauses;
 pub use hyper_clause::{
@@ -531,8 +561,10 @@ pub use refusal::{
     TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
-    CheckedPredicateBody, CheckedStateGraphClaim, CheckedStatePredicate, OverParameter,
-    StateGraphClaim, StateGraphDeclaration, StateGraphFamily, StateGraphForm, StatePredicate,
+    state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,
+    CheckedStatePredicate, OverParameter, PackagePredicate, PackageStateGraphForm,
+    PackageStateGraphKind, PackageStatePredicate, StateGraphClaim, StateGraphDeclaration,
+    StateGraphFamily, StateGraphForm, StatePredicate,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use temporal_clause::check_clauses;
@@ -980,6 +1012,11 @@ pub struct CheckedGraph {
     /// FSpec FR-491: the profile that declares FR-176's lattice, when the
     /// unit selects one.
     composition_lattice: Option<String>,
+    /// FR-753: S3-checked verification plans retained for S4 emission.
+    verification_plans: Vec<fsl_forms::VerificationPlanForm>,
+    /// FR-192: domain declaration keys resolved while S3 still has the
+    /// authored plan references and the admitted model declaration table.
+    verification_plan_domain_keys: Vec<Vec<Option<filament_checked::key::DeclarationKey>>>,
     /// FSpec FR-490: the model alias of each temporal clause's subject, by
     /// the clause's name.
     temporal_subject_aliases: BTreeMap<String, String>,
@@ -1151,6 +1188,8 @@ impl DebugWith for CheckedGraph {
             composition_forms,
             compositions,
             composition_lattice,
+            verification_plans,
+            verification_plan_domain_keys,
             temporal_subject_aliases,
             predicate_names,
             protocols,
@@ -1276,6 +1315,11 @@ impl DebugWith for CheckedGraph {
             .field("composition_forms", &composition_forms)
             .field("compositions", &compositions)
             .field("composition_lattice", &composition_lattice)
+            .field("verification_plans", &verification_plans)
+            .field(
+                "verification_plan_domain_keys",
+                &verification_plan_domain_keys,
+            )
             .field("temporal_subject_aliases", &temporal_subject_aliases)
             .field("predicate_names", &predicate_names)
             .field("protocols", &Seq(protocols, table))
@@ -1413,6 +1457,9 @@ pub struct ClauseSite {
     pub claim: filament_exact::Origin,
     /// The declared clause name.
     pub name: String,
+    /// The span of the whole declaration (FSpec FR-322 "Clause declaration
+    /// regions").
+    pub span: fsl_foundation::Span,
 }
 
 impl TemporalClauseNode {
@@ -1764,7 +1811,9 @@ fn limit_cause(limit: &fsl_foundation::diagnostic::LimitExceeded) -> CheckCause 
             actual: limit.actual(),
             region: match limit.locus() {
                 Some(Locus::Region(region)) => Some(region.clone()),
-                Some(Locus::Occurrence(_) | Locus::Artifact { .. }) | None => None,
+                Some(Locus::Occurrence(_) | Locus::Artifact { .. } | Locus::Input { .. }) | None => {
+                    None
+                }
             },
         })),
         Err(setting) => CheckCause::InternalFault(Box::new(KeyFault::UncheckedLimit(setting))),
@@ -1773,6 +1822,179 @@ fn limit_cause(limit: &fsl_foundation::diagnostic::LimitExceeded) -> CheckCause 
 
 fn root(origin: Origin) -> Location {
     Location::root(origin)
+}
+
+/// The first directed prerequisite cycle in source order. A verification
+/// plan is a sidecar, so its graph is checked before clause checking begins
+/// (FR-753, FSpec FR-192).
+fn verification_plan_cycle(
+    plan: &fsl_forms::VerificationPlanForm,
+) -> Option<Vec<(String, String)>> {
+    let steps = &plan.steps;
+    let indices: BTreeMap<&str, usize> = steps
+        .iter()
+        .enumerate()
+        .map(|(index, step)| (step.name.name.as_str(), index))
+        .collect();
+    let mut state = vec![0_u8; steps.len()];
+    let mut next_dependency = vec![0_usize; steps.len()];
+    for start in 0..steps.len() {
+        if state[start] != 0 {
+            continue;
+        }
+        let mut active = vec![start];
+        state[start] = 1;
+        while let Some(&node) = active.last() {
+            let dependencies = &steps[node].depends;
+            if next_dependency[node] == dependencies.len() {
+                state[node] = 2;
+                active.pop();
+                continue;
+            }
+            let dependency_index = next_dependency[node];
+            next_dependency[node] += 1;
+            let dependency = dependencies.get(dependency_index)?;
+            let Some(&target) = indices.get(dependency.name.as_str()) else {
+                continue;
+            };
+            match state[target] {
+                0 => {
+                    state[target] = 1;
+                    active.push(target);
+                }
+                1 => {
+                    let cycle_start = active.iter().position(|&member| member == target)?;
+                    let members = active.get(cycle_start..)?;
+                    let mut edges: Vec<(String, String)> = members
+                        .windows(2)
+                        .filter_map(|edge| {
+                            Some((
+                                steps.get(*edge.first()?)?.name.name.clone(),
+                                steps.get(*edge.last()?)?.name.name.clone(),
+                            ))
+                        })
+                        .collect();
+                    edges.push((
+                        steps.get(node)?.name.name.clone(),
+                        steps.get(target)?.name.name.clone(),
+                    ));
+                    return Some(edges);
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// The first S3 refusal in one plan's source order. These checks resolve
+/// references that do not require the completed clause graph; the graph
+/// itself is checked separately before clause assembly (FR-753/FSpec FR-192).
+fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> bool {
+    package
+        .state_clauses
+        .iter()
+        .any(|clause| clause.name == name)
+        || package
+            .temporal_clauses
+            .iter()
+            .any(|clause| clause.form.name.name == name)
+        || package
+            .state_graph_claims
+            .iter()
+            .any(|claim| claim.form.name.name == name)
+        || package
+            .hybrid_claims
+            .iter()
+            .any(|claim| claim.form.name.name == name)
+        || package
+            .hyper_clauses
+            .iter()
+            .any(|claim| claim.name() == name)
+        || package
+            .refinements
+            .iter()
+            .any(|claim| claim.form.name.name == name)
+        || package
+            .probabilistic
+            .iter()
+            .any(|declaration| match declaration {
+                ProbabilisticDeclaration::Claim(claim) => claim.name.name == name,
+                ProbabilisticDeclaration::Random(_)
+                | ProbabilisticDeclaration::Reward(_)
+                | ProbabilisticDeclaration::Delay(_)
+                | ProbabilisticDeclaration::Workload(_) => false,
+            })
+}
+
+fn verification_plan_refusal(
+    package: &PackageDeclarations,
+    plan: &fsl_forms::VerificationPlanForm,
+) -> Option<CheckCause> {
+    let mut names = BTreeMap::new();
+    for step in &plan.steps {
+        if let Some(first) = names.insert(step.name.name.as_str(), step.name.span) {
+            return Some(CheckCause::DuplicateVerificationStep {
+                name: step.name.name.clone(),
+                first,
+                second: step.name.span,
+            });
+        }
+    }
+    for step in &plan.steps {
+        if !verification_plan_claim_exists(package, &step.claim.name) {
+            return Some(CheckCause::MissingQualifiedName(step.claim.clone()));
+        }
+        if !matches!(
+            step.method.name.as_str(),
+            "model_check"
+                | "contract_check"
+                | "value_check"
+                | "probabilistic_exact"
+                | "probabilistic_statistical"
+                | "hybrid_solver"
+                | "schedulability"
+                | "model_based_test"
+                | "simulate"
+                | "replay"
+        ) {
+            return Some(CheckCause::MissingQualifiedName(step.method.clone()));
+        }
+        if step.method.name == "schedulability"
+            && package
+                .temporal_clauses
+                .iter()
+                .any(|clause| clause.form.name.name == step.claim.name)
+        {
+            return Some(CheckCause::VerificationPlanInapplicableMethod {
+                method: step.method.name.clone(),
+                span: step.method.span,
+            });
+        }
+        if !package.declared_type_spans.contains_key(&step.domain.name)
+            && !package
+                .models
+                .iter()
+                .any(|model| model.object_type_named(&step.domain).is_some())
+        {
+            return Some(CheckCause::MissingQualifiedName(step.domain.clone()));
+        }
+        if step.bound.as_deref() == Some("0") {
+            return Some(CheckCause::VerificationPlanBoundZero {
+                span: step.bound_span.unwrap_or(step.span),
+            });
+        }
+        for dependency in &step.depends {
+            if !names.contains_key(dependency.name.as_str()) {
+                return Some(CheckCause::MissingQualifiedName(fsl_forms::NameForm {
+                    name: dependency.name.clone(),
+                    segments: vec![dependency.name.clone()].into(),
+                    span: dependency.span,
+                }));
+            }
+        }
+    }
+    None
 }
 
 /// Internal declared-span key for a timed source. Timed declarations have a
@@ -1977,8 +2199,9 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-        self.check_with_cancel(mode, limits, &Cancel::new())
+        self.check_with_cancel(mode, limits, reward_evaluator, &Cancel::new())
     }
 
     /// Check the unit while preserving refusals that belong to individual
@@ -1989,8 +2212,9 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-        self.check_with_protocol_results_and_cancel(mode, limits, &Cancel::new())
+        self.check_with_protocol_results_and_cancel(mode, limits, reward_evaluator, &Cancel::new())
     }
 
     /// [`Self::check`] under a caller-owned [`Cancel`] handle (FR-276): the
@@ -2003,6 +2227,7 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
         cancel: &Cancel,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
         let mut protocol_refusals = Vec::new();
@@ -2010,6 +2235,7 @@ impl PackageDeclarations {
             mode,
             limits,
             cancel,
+            reward_evaluator,
             false,
             false,
             &mut protocol_refusals,
@@ -2041,9 +2267,18 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
         cancel: &Cancel,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-        self.check_retaining_protocols(mode, limits, cancel, true, false, &mut Vec::new())
+        self.check_retaining_protocols(
+            mode,
+            limits,
+            cancel,
+            reward_evaluator,
+            true,
+            false,
+            &mut Vec::new(),
+        )
     }
 
     /// Continue through a unit-level state-clause refusal so independent
@@ -2054,9 +2289,18 @@ impl PackageDeclarations {
         self,
         mode: CheckMode,
         limits: CheckingLimits,
+        reward_evaluator: &dyn RewardEvaluator,
         cancel: &Cancel,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
-        self.check_retaining_protocols(mode, limits, cancel, true, true, &mut Vec::new())
+        self.check_retaining_protocols(
+            mode,
+            limits,
+            cancel,
+            reward_evaluator,
+            true,
+            true,
+            &mut Vec::new(),
+        )
     }
 
     /// The check proper. `protocol_check_refusals` receives every refusal a
@@ -2072,10 +2316,25 @@ impl PackageDeclarations {
         mode: CheckMode,
         limits: CheckingLimits,
         cancel: &Cancel,
+        reward_evaluator: &dyn RewardEvaluator,
         independent_protocols: bool,
         continue_state_clause_refusals: bool,
         protocol_check_refusals: &mut Vec<ProtocolCheckRefusal>,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+        for plan in &self.verification_plans {
+            if let Some(cause) = verification_plan_refusal(&self, plan) {
+                return Err(vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause,
+                }]);
+            }
+            if let Some(edges) = verification_plan_cycle(plan) {
+                return Err(vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::DefinitionCycle { edges },
+                }]);
+            }
+        }
         // FR-230: S2 retains every timed declaration independent of header
         // selection. S3 owns the facet gate and keeps incomplete timed
         // constructs from silently entering the checked package.
@@ -2090,7 +2349,8 @@ impl PackageDeclarations {
                 &self.dimension_equivalences,
                 &self.source,
                 &self.package_name,
-            );
+            )
+            .owned_by(&self.source_owners, &self.package_name);
             // The model a `time invariant` or `urgent` declaration belongs
             // to (FR-230 "Timed facet gate"): the one model the unit's
             // `time` members name, else the unit's one selected model.
@@ -2311,6 +2571,7 @@ impl PackageDeclarations {
                                 self.time_sources.push(ModelTimeSource {
                                     model: source.model.name.clone(),
                                     span: source.span,
+                                    declared_in: self.source_owners.get(owner).cloned(),
                                     model_node: model_node.clone(),
                                     tick_operation_key,
                                     tick_operation_span,
@@ -2392,7 +2653,8 @@ impl PackageDeclarations {
                 &self.dimension_equivalences,
                 &self.source,
                 &self.package_name,
-            );
+            )
+            .owned_by(&self.source_owners, &self.package_name);
             timed_model::prepare(
                 &timed_model::Inputs {
                     models: &self.models,
@@ -2811,6 +3073,10 @@ impl PackageDeclarations {
             .state_clauses
             .iter()
             .any(|clause| clause.body.contains_ieee_literal())
+            || self
+                .temporal_clauses
+                .iter()
+                .any(temporal_clause::TemporalDeclaration::has_ieee_literal)
             || self
                 .hyper_clauses
                 .iter()
@@ -3404,6 +3670,11 @@ impl PackageDeclarations {
         // family's own contract once every function signature is known (a
         // clause body may call a function), against the same package-wide
         // node total and contract meter.
+        let state_clause_names: Vec<(String, fsl_foundation::Span)> = self
+            .state_clauses
+            .iter()
+            .map(|clause| (clause.name.clone(), clause.name_span))
+            .collect();
         let mut state_clause_forms = self.state_clauses;
         let mut typed_clauses: Vec<(usize, state_clause::TypedStateClause)> =
             Vec::with_capacity(state_clause_forms.len());
@@ -3732,6 +4003,7 @@ impl PackageDeclarations {
                     nodes_used = used;
                     terminals.push(CheckedTerminal {
                         model: terminal.model.clone(),
+                        package: terminal.package.clone(),
                         name: Some(terminal.name.clone()),
                         declaration,
                         occurrence: None,
@@ -3751,8 +4023,22 @@ impl PackageDeclarations {
             if *kind == AliasKind::Model
                 && !terminals.iter().any(|terminal| terminal.model == *alias)
             {
+                let Some(package) = models
+                    .iter()
+                    .find(|model| model.alias() == Some(alias.as_str()))
+                    .map(|model| model.selection().identity.clone())
+                else {
+                    refusals.push(CheckRefusal {
+                        location: Location::root(Origin::Expression),
+                        cause: CheckCause::InternalFault(Box::new(KeyFault::MissingAdmittedModel(
+                            alias.clone(),
+                        ))),
+                    });
+                    return Err(refusals);
+                };
                 terminals.push(CheckedTerminal {
                     model: alias.clone(),
+                    package,
                     name: None,
                     declaration: TerminalDeclaration::None,
                     occurrence: None,
@@ -3941,15 +4227,6 @@ impl PackageDeclarations {
                 check_one_refinement!(index, refinement, &[], false);
             }
         }
-        // FR-218: a second reference to one protocol in the unit refuses at
-        // the second: the function bodies in declaration order, then the
-        // state clauses.
-        refusals.extend(protocol_reference::repeated(
-            drafts
-                .iter()
-                .map(|(_, body, _)| &body.body)
-                .chain(typed_clauses.iter().map(|clause| &clause.body)),
-        ));
         let deferred: Vec<CheckRefusal> = protocol_refinements
             .iter()
             .flat_map(|(_, pending)| pending.refusals().iter().cloned())
@@ -4799,6 +5076,12 @@ impl PackageDeclarations {
         // FR-185: the `random`, `reward` and `workload` declarations,
         // resolved, typed and recorded; FR-186: a `probabilistic` claim,
         // resolved, typed and recorded with its obligation identity.
+        let task_set_owners: Vec<_> = (0..self.task_set_forms.len())
+            .map(|index| self.source_owners.get(&format!("task_set {index}")).cloned())
+            .collect();
+        let declaration_owners: Vec<_> = (0..self.probabilistic.len())
+            .map(|index| self.source_owners.get(&format!("probabilistic {index}")).cloned())
+            .collect();
         let probabilistic_input = probabilistic::ProbabilisticInput {
             scope: &scope,
             signatures: &signatures,
@@ -4811,6 +5094,8 @@ impl PackageDeclarations {
             preconditions: &precondition_reads,
             profiles: &self.profile_selections,
             limits,
+            declaration_owners: &declaration_owners,
+            task_set_owners: &task_set_owners,
             cancel,
         };
         let mut probabilistic_cx = crate::family::CheckContext::new(
@@ -4865,8 +5150,70 @@ impl PackageDeclarations {
         // family's contract once every function signature is known, against
         // the same package-wide node total and contract meter.
         let mut checked_state_graph_claims = Vec::with_capacity(self.state_graph_claims.len());
-        for claim in &self.state_graph_claims {
+        // FR-940 "Claim names": a claim name names one declaration of any
+        // kind, so the later of two declarations that share a name, one of
+        // them a state-graph claim, is refused at its name, naming both; the
+        // later is the one that follows in source order.
+        let mut named: Vec<(&str, fsl_foundation::Span, Option<usize>)> = Vec::new();
+        named.extend(self.temporal_clauses.iter().map(|temporal| {
+            (
+                temporal.form.name.name.as_str(),
+                temporal.form.name.span,
+                None,
+            )
+        }));
+        named.extend(
+            state_clause_names
+                .iter()
+                .map(|(name, span)| (name.as_str(), *span, None)),
+        );
+        named.extend(
+            self.probabilistic
+                .iter()
+                .filter_map(|declaration| match declaration {
+                    ProbabilisticDeclaration::Claim(claim) => {
+                        Some((claim.name.name.as_str(), claim.name.span, None))
+                    }
+                    _ => None,
+                }),
+        );
+        named.extend(
+            self.state_graph_claims
+                .iter()
+                .enumerate()
+                .map(|(position, claim)| {
+                    (
+                        claim.form.name.name.as_str(),
+                        claim.form.name.span,
+                        Some(position),
+                    )
+                }),
+        );
+        named.sort_by_key(|(_, span, _)| span.start);
+        let mut collided = BTreeSet::new();
+        for (index, (name, span, graph)) in named.iter().enumerate() {
+            let earlier = named[..index].iter().find(|(earlier, _, earlier_graph)| {
+                earlier == name && (graph.is_some() || earlier_graph.is_some())
+            });
+            if let Some((_, earlier_span, _)) = earlier {
+                refusals.push(CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::StateGraph(Box::new(StateGraphCause::AmbiguousName {
+                        name: (*name).to_owned(),
+                        earlier: *earlier_span,
+                        span: *span,
+                    })),
+                });
+                if let Some(position) = graph {
+                    collided.insert(*position);
+                }
+            }
+        }
+        for (position, claim) in self.state_graph_claims.iter().enumerate() {
             let location = root(Origin::Expression);
+            if collided.contains(&position) {
+                continue;
+            }
             let declarations = state_clause::ClauseDeclarations {
                 unit: self.source_owners.get(&claim.form.name.name),
                 scope: &scope,
@@ -6258,12 +6605,16 @@ impl PackageDeclarations {
         }
         // FSpec FR-640: the nodes each checked random parameter and
         // workload refers to.
-        if let Err(refusal) = lowering.probabilistic_declarations(&probabilistic_model) {
-            refusals.push(refusal);
-        }
+        let lowered_rewards = match lowering.probabilistic_declarations(&probabilistic_model) {
+            Ok(keys) => keys,
+            Err(refusal) => {
+                refusals.push(refusal);
+                Vec::new()
+            }
+        };
         // FR-498: each checked probabilistic claim's node.
         let lowered_probabilistic =
-            match lowering.probabilistic_claims(probabilistic_model.claims()) {
+            match lowering.probabilistic_claims(&probabilistic_model, &lowered_rewards) {
                 Ok(keys) => Some(keys),
                 Err(refusal) => {
                     refusals.push(refusal);
@@ -6514,6 +6865,14 @@ impl PackageDeclarations {
         let lowered = lowering
             .finish(&generated)
             .map_err(|refusal| vec![refusal])?;
+        let settled_clause_keys: Option<Vec<filament_exact::NodeKey>> = lowered_clauses
+            .iter()
+            .map(|clause| {
+                clause
+                    .as_ref()
+                    .and_then(|clause| lowered.resolve_node_ref(&clause.key))
+            })
+            .collect();
         // FR-380: a population node's `Type` occurrences take their ordinals
         // in ascending source order, whichever writer recorded one first.
         occurrences.order_by(
@@ -6548,10 +6907,7 @@ impl PackageDeclarations {
             .ok_or_else(unlowered)?;
         // Each contract entry's own checked identity (FR-114 "Outputs"),
         // captured before `lowered_clauses` is consumed below.
-        let lowered_clause_keys: Vec<filament_exact::NodeKey> = lowered_clauses
-            .iter()
-            .map(|lowered| lowered.key.clone())
-            .collect();
+        let lowered_clause_keys = settled_clause_keys.ok_or_else(unlowered)?;
         // FR-115: each operation a `pre`/`post` clause or an attempt names,
         // with the frame node lowering bound it to (FR-105, FR-114).
         let clause_frames =
@@ -6695,6 +7051,7 @@ impl PackageDeclarations {
             .zip(lowered_clauses)
             .enumerate()
             .map(|(index, ((form, typed), lowered))| {
+                let clause_key = &lowered_clause_keys[index];
                 let location = clause_location(index, &form.name);
                 let unkeyable = || {
                     vec![CheckRefusal {
@@ -6703,7 +7060,7 @@ impl PackageDeclarations {
                     }]
                 };
                 let claim = occurrences
-                    .first_origin(&lowered.key, family::OccurrenceRole::Claim, |at| {
+                    .first_origin(clause_key, family::OccurrenceRole::Claim, |at| {
                         *at == location
                     })
                     .ok_or_else(unkeyable)?;
@@ -6720,7 +7077,7 @@ impl PackageDeclarations {
                         .extend(ranged.iter().cloned());
                 }
                 clause_populations
-                    .entry(lowered.key.clone())
+                    .entry(clause_key.clone())
                     .or_default()
                     .extend(ranged);
                 let keyed = state_clause::clause_records(
@@ -6728,6 +7085,7 @@ impl PackageDeclarations {
                     &claims,
                     &form,
                     &lowered,
+                    clause_key,
                     &claim,
                     scope.types(),
                     limits.nodes(),
@@ -6748,7 +7106,7 @@ impl PackageDeclarations {
                         // Every clause naming one operation keys the same
                         // frame record; any other collision is a fault.
                         std::collections::hash_map::Entry::Occupied(existing)
-                            if node != lowered.key && *existing.get() == record => {}
+                            if node != *clause_key && *existing.get() == record => {}
                         std::collections::hash_map::Entry::Occupied(_) => return Err(unkeyable()),
                     }
                 }
@@ -6761,7 +7119,7 @@ impl PackageDeclarations {
                     body: typed.body,
                     slots: typed.slots,
                     observations: typed.observations,
-                    identity: lowered.key,
+                    identity: clause_key.clone(),
                     claim,
                     spans: form.spans,
                     has_result: typed.has_result,
@@ -7009,7 +7367,14 @@ impl PackageDeclarations {
         // FR-498 "Outputs": each probabilistic claim carries its node's one
         // `claim` occurrence.
         let mut probabilistic_model = probabilistic_model;
-        for (claim, (key, over_node)) in probabilistic_model
+        for (reward, function) in probabilistic_model
+            .rewards_mut()
+            .iter_mut()
+            .zip(lowered_rewards)
+        {
+            reward.set_function(function);
+        }
+        for (claim, (key, over_node, statement)) in probabilistic_model
             .claims_mut()
             .iter_mut()
             .zip(lowered_probabilistic)
@@ -7027,6 +7392,7 @@ impl PackageDeclarations {
             if let Some(over) = &mut claim.over {
                 over.node = over_node;
             }
+            claim.statement = Some(statement);
         }
         let lowered_temporal = lowered_temporal
             .into_iter()
@@ -7191,6 +7557,7 @@ impl PackageDeclarations {
                 identity: lowered.key.clone(),
                 claim: claim.clone(),
                 name: declared.form.name.name.clone(),
+                span: declared.span,
             });
             let bounded = checked_claim.horizon.is_some();
             // The class S3 recorded for each variable; the request label is
@@ -7336,6 +7703,7 @@ impl PackageDeclarations {
             .zip(checked_protocols.iter_mut())
         {
             let mut attempts = Vec::with_capacity(bindings.len());
+            let mut recommendations = Vec::new();
             for ((bound, lowered_attempt), location) in bindings.iter().zip(lowered).zip(locations)
             {
                 let unkeyable = || {
@@ -7383,6 +7751,26 @@ impl PackageDeclarations {
                     .map(|&index| lowered_clause_keys.get(index).cloned())
                     .collect::<Option<Vec<_>>>()
                     .ok_or_else(unkeyable)?;
+                let form = self
+                    .protocols
+                    .iter()
+                    .find(|protocol| protocol.name.name == checked.name)
+                    .and_then(|protocol| {
+                        protocol.attempts.iter().find(|form| {
+                            form.declaration == bound.declaration && form.recommendation
+                        })
+                    });
+                if let Some(form) = form {
+                    recommendations.push(protocol_clause::CheckedRecommendation {
+                        declaration: bound.declaration,
+                        role: form.role.name.clone(),
+                        operation: bound.operation.clone(),
+                        receiver: bound.receiver.clone(),
+                        anchor,
+                        contracts,
+                    });
+                    continue;
+                }
                 attempts.push(protocol_clause::CheckedAttempt {
                     declaration: bound.declaration,
                     operation: bound.operation.clone(),
@@ -7393,6 +7781,7 @@ impl PackageDeclarations {
                 });
             }
             checked.attempts = attempts;
+            checked.recommendations = recommendations;
         }
         // FR-381 "Compensation registration": each template bound to its
         // operation's one anchor and frame node, with the one frame record
@@ -7728,6 +8117,24 @@ impl PackageDeclarations {
                 std::collections::hash_map::Entry::Occupied(_) => return Err(unkeyable()),
             }
         }
+        let verification_plan_domain_keys = self
+            .verification_plans
+            .iter()
+            .map(|plan| {
+                plan.steps
+                    .iter()
+                    .map(|step| {
+                        let (alias, object) = step
+                            .domain
+                            .name
+                            .split_once("::")
+                            .unwrap_or(("", step.domain.name.as_str()));
+                        let object = Identifier::new(object.to_owned()).ok()?;
+                        model_objects.get(alias)?.get(&object).cloned()
+                    })
+                    .collect()
+            })
+            .collect();
         let mut graph = CheckedGraph {
             graph_identity: CheckedGraphIdentity::fresh(),
             source,
@@ -7788,6 +8195,8 @@ impl PackageDeclarations {
             composition_forms: self.compositions,
             compositions: Vec::new(),
             composition_lattice: self.composition_lattice,
+            verification_plans: self.verification_plans,
+            verification_plan_domain_keys,
             temporal_subject_aliases,
             predicate_names,
             model_names,
@@ -7909,6 +8318,14 @@ impl PackageDeclarations {
         }
         // Every occurrence is recorded by now.
         graph.occurrences_by_location = occurrences_by_location(&graph.occurrences);
+        if let Err(refusals) = reward_validation::check_reward_signs(
+            &graph,
+            reward_evaluator,
+            &mut contract_meter,
+            limits.work_budget(),
+        ) {
+            return Err(refusals);
+        }
         Ok(graph)
     }
 }
@@ -8180,8 +8597,13 @@ fn type_tables<'m>(
                 objects.insert(artifact, key.clone());
             }
         }
+        // The source models of a package's several units share one alias (FR-569), so
+        // their declarations join under it instead of the last unit's replacing the rest.
         if let Some(alias) = model.alias() {
-            by_alias.insert(alias.to_owned(), objects);
+            by_alias
+                .entry(alias.to_owned())
+                .or_insert_with(BTreeMap::new)
+                .extend(objects);
         }
     }
     (by_alias, identities)
@@ -8853,10 +9275,24 @@ impl CheckedGraph {
         self.sources.iter().collect()
     }
 
+    /// The raw source document that declared a source-owned name.
+    pub fn source_owner(
+        &self,
+        declaration: &str,
+    ) -> Option<&fsl_foundation::source::provenance::RawSourceRef> {
+        self.source_owners.get(declaration)
+    }
+
     /// The package manifest's top-level name this package was checked under:
     /// the `package` of every structural node id of the graph.
     pub fn package_name(&self) -> &str {
         &self.package_name
+    }
+
+    /// FR-753: the source-ordered verification plans that passed this
+    /// package's S3 name, applicability, bound and cycle checks.
+    pub fn verification_plans(&self) -> &[fsl_forms::VerificationPlanForm] {
+        &self.verification_plans
     }
 
     /// The lowered nodes, for a test that re-keys one after the nodes bound
@@ -8909,6 +9345,26 @@ impl CheckedGraph {
         node: filament_exact::NodeKey,
     ) -> Option<&filament_checked::key::DeclarationKey> {
         self.model_correspondence.resolve(node)
+    }
+
+    /// FR-192: the source document that owns a checked plan declaration.
+    pub fn verification_plan_source(
+        &self,
+        name: &str,
+    ) -> Option<&fsl_foundation::source::provenance::RawSourceRef> {
+        self.source_owners.get(name)
+    }
+
+    /// FR-192: the domain key already resolved for a checked plan step.
+    pub fn verification_plan_domain_key(
+        &self,
+        plan_index: usize,
+        step_index: usize,
+    ) -> Option<&filament_checked::key::DeclarationKey> {
+        self.verification_plan_domain_keys
+            .get(plan_index)?
+            .get(step_index)?
+            .as_ref()
     }
 
     /// ADR-013 O-14/C-26 (PR #300 review finding 1): `node`'s own checked
@@ -10026,7 +10482,11 @@ mod tests {
     fn protocol_population_types_debug_joins_the_shared_node_table() {
         use filament_exact::{NodeKey, PathSegment};
         let mut graph = depth_forms::declarations(depth_forms::Form::Add, 2)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap();
         let leaf = NodeKey::new(
             "population_scope",
@@ -10164,7 +10624,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("one record declaration checks cleanly");
 
         let nodes: Vec<&CheckedTypeNode> = graph.checked_type_nodes().collect();
@@ -10223,7 +10687,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("a package-qualified declared name checks cleanly");
 
         let nodes: Vec<&CheckedTypeNode> = graph.checked_type_nodes().collect();
@@ -10326,7 +10794,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("one enum declaration checks cleanly");
 
         let mut checked_nodes = 0;
@@ -10409,7 +10881,11 @@ mod tests {
             literal_function("caller_one", call_helper()),
             literal_function("caller_two", call_helper()),
         ])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("two callers of one no-argument function check cleanly");
 
         // Steps 2-3: both call sites mint the same identity, but distinct
@@ -10462,7 +10938,11 @@ mod tests {
             literal_function("renamed_caller_one", call_helper()),
             literal_function("renamed_caller_two", call_helper()),
         ])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("renaming the callers changes no checking outcome");
         assert!(
             renamed.occurrence(call_identity.clone(), &first).is_some(),
@@ -10512,7 +10992,11 @@ mod tests {
                 ),
             ),
         ])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("a caller of a one-parameter function checks");
         let mut nodes = 0;
         for node in graph.semantic_graph().nodes() {
@@ -10541,7 +11025,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("index 0 names no function");
         assert!(matches!(
             refusals.as_slice(),

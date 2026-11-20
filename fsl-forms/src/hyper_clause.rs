@@ -204,7 +204,7 @@ pub(crate) fn hyper_clause(construct: Construct<'_>) -> Result<DeclarationForm, 
             match_block,
             match_span,
             align_skip,
-            body: formula_form(cst, body, true)?,
+            body: formula_form(cst, body)?,
             span: node.span(),
         },
     )))

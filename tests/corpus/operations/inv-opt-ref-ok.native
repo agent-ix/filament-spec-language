@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model Config = "example/config-version";
+invariant ParentRange using v on Config::ConfigVersion at current { present(self.parent) implies deref(value(self.parent)).versionNumber <= 1000 }

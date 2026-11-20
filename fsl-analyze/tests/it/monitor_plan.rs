@@ -15,6 +15,8 @@ use ix_trace_rs::trace;
 
 use crate::units::Domain;
 
+mod behavior_boundaries;
+
 pub(crate) const TIME_UNITS: &str = "dimension Time;\n\
     unit s : Time = rational(1, 1);\n\
     unit ms : Time = rational(1, 1000) * s;\n\
@@ -112,6 +114,7 @@ pub(crate) fn checked_clause_on(
         declarations.time_sources.push(ModelTimeSource {
             model: "M".to_owned(),
             span: Span { start: 0, end: 1 },
+            declared_in: None,
             // The model node of `M`'s state object, which names the timed
             // model's package.
             model_node: fsl_semantics::model::key::object_type_node_key(
@@ -135,6 +138,7 @@ pub(crate) fn checked_clause_on(
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("S3: {refusals:?}"));
     assert_eq!(graph.temporal_clauses().len(), 1);
@@ -942,6 +946,7 @@ fn position_counted(profile: &str, formula: &str) -> CheckedPackage {
     .check(
         CheckMode::Linked,
         filament_semantic_value::checking::CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
     )
     .unwrap_or_else(|refusals| panic!("S3: {refusals:?}"));
     CheckedPackage::link(graph)

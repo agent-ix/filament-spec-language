@@ -517,6 +517,7 @@ fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
         )
         .expect_err("an await under no temporal profile refuses");
     // The protocol profile's emission refusal is not this check's subject.

@@ -11,13 +11,13 @@ use filament_exact::{IntegerInterval, ObjectId, ObjectReference, ScalarLimits, V
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::simulation::model::{
-    explore_model, sample_model, ClauseOutcome, ExpansionLimits, ModelBoundaryKind, ModelFinding,
-    ModelSampleError, ModelSimulationRequest, ModelSystem, PopulationUniverse, StepEffect,
-    UndecidedSuccessor, Unsteppable,
+    ClauseOutcome, ExpansionLimits, ModelBoundaryKind, ModelFinding, ModelSampleError,
+    ModelSimulationRequest, ModelSystem, PopulationUniverse, StepEffect, UndecidedSuccessor,
+    Unsteppable, explore_model, sample_model,
 };
 use fsl_eval::simulation::{
-    replay, sample_probabilistic, Exploration, Limits, NotSimulated, Outcome, ReplayError,
-    SampleStop, StopReason, TransitionSystem,
+    Exploration, Limits, NotSimulated, Outcome, ReplayError, SampleStop, StopReason,
+    TransitionSystem, replay, sample_probabilistic,
 };
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
@@ -26,17 +26,20 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{
-    declared_type_universe_for, AdmissionFailure, AnchorKind, DocumentRef, ObservationLimits,
-    SelectedAnchor,
+    AdmissionFailure, AnchorKind, DocumentRef, ObservationLimits, PathStep, SelectedAnchor,
+    declared_type_universe_for,
 };
 use fsl_semantics::model::state::{ModelState, StateModel};
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 #[path = "mbt_generate.rs"]
 mod mbt_generate;
 #[path = "mbt_shrink.rs"]
 mod mbt_shrink;
+mod evaluator_closure_cases;
+#[path = "model_simulation/model_based_run.rs"]
+mod model_based_run;
 #[path = "model_simulation/reference_literals.rs"]
 mod reference_literals;
 
@@ -363,9 +366,19 @@ fn build_world_document(
     extras: bool,
     enum_mode: bool,
 ) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+    build_world_document_with_header(document, clauses, "", extras, enum_mode)
+}
+
+fn build_world_document_with_header(
+    document: Vec<u8>,
+    clauses: &str,
+    header: &str,
+    extras: bool,
+    enum_mode: bool,
+) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
     let packages = package_input([document.as_slice()]).unwrap();
     let unit = format!(
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n{header}\
          model M = \"{PACKAGE}\";\nfunction Noop using v(): Boolean pure {{ true }}\n{clauses}\n",
     );
     let parsed = fsl_cst::parse(
@@ -395,7 +408,11 @@ fn build_world_document(
         Vec::new(),
     )
     .expect("the unit assembles");
-    let graph = declarations.check(CheckMode::Linked, CheckingLimits::default())?;
+    let graph = declarations.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )?;
     Ok(World {
         extras,
         enum_mode,
@@ -685,9 +702,11 @@ fn an_unconstrained_increment_has_one_successor_per_value() {
     for (transition, state) in &successors {
         assert_eq!(transition, &identity);
         assert_eq!(int_field(&state.0, "c1", "label"), "0");
-        assert!(!state.0.populations[&counters()]["c1"]
-            .fields
-            .contains_key(&field("next")));
+        assert!(
+            !state.0.populations[&counters()]["c1"]
+                .fields
+                .contains_key(&field("next"))
+        );
     }
 }
 
@@ -1025,12 +1044,14 @@ fn an_exhausted_budget_is_undetermined_or_stops_the_run() {
     assert_eq!(stats(&exploration).0, 3);
     assert_eq!(exploration.findings.len(), 3);
     for entry in &exploration.findings {
-        let [ModelFinding::InvariantUndetermined {
-            clause,
-            self_object,
-            evaluation,
-            ..
-        }] = &entry.findings[..]
+        let [
+            ModelFinding::InvariantUndetermined {
+                clause,
+                self_object,
+                evaluation,
+                ..
+            },
+        ] = &entry.findings[..]
         else {
             panic!("one undetermined invariant per state: {:?}", entry.findings)
         };
@@ -1347,16 +1368,20 @@ fn a_sampled_trace_replays_and_two_equal_runs_agree() {
         first_change.post.as_deref(),
         Some(r#"{"type":"integer","value":"1"}"#)
     );
-    assert!(sampled.effects[0]
-        .changed
-        .iter()
-        .any(|change| change.field == "mode"));
-    assert!(replay(
-        &system,
-        &sampled.trace,
-        fsl_foundation::IdentityLimits::default()
-    )
-    .is_ok());
+    assert!(
+        sampled.effects[0]
+            .changed
+            .iter()
+            .any(|change| change.field == "mode")
+    );
+    assert!(
+        replay(
+            &system,
+            &sampled.trace,
+            fsl_foundation::IdentityLimits::default()
+        )
+        .is_ok()
+    );
 
     let mut missing = sampled.trace.clone();
     missing.findings.clear();
@@ -1453,10 +1478,12 @@ fn a_query_result_is_step_effect_data() {
             effect.created.is_empty() && effect.deleted.is_empty() && effect.changed.is_empty()
         );
     }
-    assert!(system
-        .domains()
-        .iter()
-        .any(|(_, value_type)| matches!(value_type, filament_exact::ValueType::Boolean)));
+    assert!(
+        system
+            .domains()
+            .iter()
+            .any(|(_, value_type)| matches!(value_type, filament_exact::ValueType::Boolean))
+    );
 }
 
 /// FR-120-AC-11 (TC-473): increment, spawn and remove steps carry their
@@ -1788,12 +1815,14 @@ fn an_undecided_precondition_is_a_contract_finding() {
 
     let (successors, findings, _) = run("pre Low using v on M::A::ready { self.ready() }");
     assert_eq!(successors, 0, "an undecided precondition enables nothing");
-    let [ModelFinding::ContractUndetermined {
-        candidate,
-        clause,
-        evaluation,
-        ..
-    }] = &findings[..]
+    let [
+        ModelFinding::ContractUndetermined {
+            candidate,
+            clause,
+            evaluation,
+            ..
+        },
+    ] = &findings[..]
     else {
         panic!("one contract finding: {findings:?}")
     };
@@ -1944,10 +1973,12 @@ fn an_ungranted_unbounded_field_is_neither_probed_nor_a_root() {
     let s0 = world.start("s0", &[Obj("c1", 0, 0, None)]);
     let system = self::system(&world, vec![s0], &["c1"], UNLIMITED);
     assert_eq!(successors_of(&system, 0).len(), 3);
-    assert!(system
-        .domains()
-        .iter()
-        .all(|(_, value_type)| !matches!(value_type, filament_exact::ValueType::Integer)));
+    assert!(
+        system
+            .domains()
+            .iter()
+            .all(|(_, value_type)| !matches!(value_type, filament_exact::ValueType::Integer))
+    );
     assert_eq!(stats(&explore(&system)).0, 3);
 }
 
@@ -2513,8 +2544,20 @@ fn float_bits(state: &ModelState, object: &str) -> u64 {
 /// (`modifies a`, `post Flip { self.a = -pre(self.a) }`).
 fn float_world() -> World {
     let flip = operation("flip", &[], None, frame(&["a"], false, false));
+    float_world_with_body(
+        "post Flip using v on M::Counter::flip { self.a = -pre(self.a) }",
+        vec![flip],
+    )
+}
+
+/// The counter fixture with Float fields and a checked unit body.
+fn float_world_with_body(body: &str, operations: Vec<Json>) -> World {
+    float_world_with_body_and_set_bound(body, operations, 8)
+}
+
+fn float_world_with_body_and_set_bound(body: &str, operations: Vec<Json>, set_upper: u64) -> World {
     let mut document: Json =
-        serde_json::from_slice(&counters_document_with(vec![flip], false, Vec::new()))
+        serde_json::from_slice(&counters_document_with(operations, false, Vec::new()))
             .expect("fixture JSON");
     let counter = document["types"]
         .as_array_mut()
@@ -2522,13 +2565,27 @@ fn float_world() -> World {
         .iter_mut()
         .find(|ty| ty["identity"] == ident("Counter"))
         .expect("Counter declaration");
-    counter["fields"]
-        .as_array_mut()
-        .expect("fields")
-        .push(wire_field("a", "ix://filament/native/Float64", "required"));
+    let fields = counter["fields"].as_array_mut().expect("fields");
+    for name in ["a", "b", "reading", "limit"] {
+        fields.push(wire_field(name, "ix://filament/native/Float64", "required"));
+    }
+    fields.push(wire_field(
+        "f32",
+        "ix://filament/native/Float32",
+        "required",
+    ));
+    let mut levels = wire_field("levels", "ix://filament/native/Float64", "required");
+    levels["multiplicity"]["lower"] = json!(0);
+    levels["multiplicity"]["upper"] = json!(set_upper);
+    fields.push(levels);
+    let mut taps = wire_field("taps", "ix://filament/native/Float32", "required");
+    taps["multiplicity"]["lower"] = json!(0);
+    taps["multiplicity"]["upper"] = json!(3);
+    taps["multiplicity"]["unique"] = json!(false);
+    fields.push(taps);
     build_world_document(
         serde_json::to_vec(&document).expect("fixture serializes"),
-        "post Flip using v on M::Counter::flip { self.a = -pre(self.a) }",
+        body,
         false,
         false,
     )
@@ -2537,8 +2594,23 @@ fn float_world() -> World {
 
 /// An initial snapshot of `c1` (value 0, label 0) whose `a` holds `bits`.
 fn float_start(world: &mut World, name: &str, bits: &str) -> DocumentRef {
+    float_snapshot(world, name, json!({"a": {"kind": "float64", "bits": bits}}))
+}
+
+/// An initial snapshot with default values for the Float fixture's fields,
+/// with the supplied fields replacing those defaults.
+fn float_snapshot(world: &mut World, name: &str, overrides: Json) -> DocumentRef {
     let mut object = object_json(&Obj("c1", 0, 0, None), false, false);
-    object["fields"]["a"] = json!({"kind": "float64", "bits": bits});
+    object["fields"]["a"] = json!({"kind": "float64", "bits": "0000000000000000"});
+    object["fields"]["b"] = json!({"kind": "float64", "bits": "0000000000000000"});
+    object["fields"]["reading"] = json!({"kind": "float64", "bits": "0000000000000000"});
+    object["fields"]["limit"] = json!({"kind": "float64", "bits": "0000000000000000"});
+    object["fields"]["f32"] = json!({"kind": "float32", "bits": "00000000"});
+    object["fields"]["levels"] = json!({"set": []});
+    object["fields"]["taps"] = json!({"bag": []});
+    for (field, value) in overrides.as_object().expect("field overrides") {
+        object["fields"][field] = value.clone();
+    }
     let document = json!({
         "format": "filament.state.snapshot/v1",
         "identity": {"authority": "test", "identity": name},
@@ -2583,4 +2655,530 @@ fn a_float_field_model_explores_by_its_ieee_bits() {
     successors.sort_unstable();
     assert_eq!(successors, [0x0000_0000_0000_0000, 0x8000_0000_0000_0000]);
     assert_eq!(stats(&explore(&from_zero)).0, 2);
+}
+
+/// FR-056-AC-58 (TC-3005): model state identity retains the Float64 bits of
+/// a field, including the sign bit on zero.
+#[trace("TC-3005", "FR-056-AC-58", "FR-106-AC-57", "FR-106-AC-58")]
+#[test]
+fn float_model_state_keys_distinguish_signed_zero() {
+    let mut world = float_world();
+    let plus_zero = float_start(&mut world, "plus-zero", "0000000000000000");
+    let minus_zero = float_start(&mut world, "minus-zero", "8000000000000000");
+    let system = system(&world, vec![plus_zero, minus_zero], &["c1"], UNLIMITED);
+    let initial = system.initial();
+    assert_eq!(initial.len(), 2, "both signed-zero snapshots are admitted");
+    let plus = initial
+        .iter()
+        .find(|state| float_bits(state.state(), "c1") == 0x0000_0000_0000_0000)
+        .expect("the +0 state is present");
+    let minus = initial
+        .iter()
+        .find(|state| float_bits(state.state(), "c1") == 0x8000_0000_0000_0000)
+        .expect("the -0 state is present");
+    let (_, plus_key) = system.state_key(plus).expect("plus-zero key encodes");
+    let (_, minus_key) = system.state_key(minus).expect("minus-zero key encodes");
+    assert_ne!(
+        plus_key, minus_key,
+        "states differing only by signed zero have distinct keys"
+    );
+}
+
+/// FR-106-AC-57 (TC-1171): admitted Float snapshot fields, sets, and bags
+/// retain the specified IEEE bit patterns.
+#[trace("TC-1171", "FR-106-AC-57")]
+#[test]
+fn float_snapshot_admission_preserves_ieee_values_and_collections() {
+    let mut world = float_world_with_body("", Vec::new());
+    let snapshot = float_snapshot(
+        &mut world,
+        "float-values",
+        json!({
+            "a": {"kind": "float64", "bits": "3ff0000000000000"},
+            "b": {"kind": "float64", "bits": "7ff8000000000001"},
+            "f32": {"kind": "float32", "bits": "7f800001"},
+            "levels": {"set": [
+                {"kind": "float64", "bits": "fff0000000000000"},
+                {"kind": "float64", "bits": "bff0000000000000"},
+                {"kind": "float64", "bits": "8000000000000000"},
+                {"kind": "float64", "bits": "0000000000000000"},
+                {"kind": "float64", "bits": "3ff0000000000000"},
+                {"kind": "float64", "bits": "7ff0000000000000"},
+                {"kind": "float64", "bits": "7ff8000000000001"},
+                {"kind": "float64", "bits": "7ff8000000000002"}
+            ]},
+            "taps": {"bag": [
+                {"kind": "float32", "bits": "3f800000"},
+                {"kind": "float32", "bits": "3f800000"}
+            ]}
+        }),
+    );
+    let system = system(&world, vec![snapshot], &["c1"], UNLIMITED);
+    let initial = system.initial();
+    assert_eq!(initial.len(), 1);
+    let state = initial[0].state();
+    assert_eq!(float_bits(state, "c1"), 0x3ff0_0000_0000_0000);
+    assert!(matches!(
+        state.populations[&counters()]["c1"].fields.get(&field("b")),
+        Some(Value::Float(value)) if value.bits() == 0x7ff8_0000_0000_0001
+    ));
+    assert!(matches!(
+        state.populations[&counters()]["c1"].fields.get(&field("f32")),
+        Some(Value::Float(value)) if value.width() == filament_exact::IeeeWidth::Binary32
+            && value.bits() == 0x7f80_0001
+    ));
+    let Some(Value::Collection(levels)) = state.populations[&counters()]["c1"]
+        .fields
+        .get(&field("levels"))
+    else {
+        panic!("levels is an admitted Set<Float64>")
+    };
+    assert_eq!(levels.elements().len(), 8);
+    let level_bits: Vec<u64> = levels
+        .elements()
+        .iter()
+        .map(|value| match value {
+            Value::Float(value) => value.bits(),
+            other => panic!("a Float64 set member: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        level_bits,
+        vec![
+            0xfff0_0000_0000_0000,
+            0xbff0_0000_0000_0000,
+            0x8000_0000_0000_0000,
+            0x0000_0000_0000_0000,
+            0x3ff0_0000_0000_0000,
+            0x7ff0_0000_0000_0000,
+            0x7ff8_0000_0000_0001,
+            0x7ff8_0000_0000_0002,
+        ]
+    );
+    let Some(Value::Collection(taps)) = state.populations[&counters()]["c1"]
+        .fields
+        .get(&field("taps"))
+    else {
+        panic!("taps is an admitted Bag<Float32>")
+    };
+    assert_eq!(taps.elements().len(), 2);
+    assert!(taps
+        .elements()
+        .iter()
+        .all(|value| matches!(value, Value::Float(value) if value.bits() == 0x3f80_0000)));
+}
+
+/// FR-106-AC-57: the evaluator executes a checked Float field graph over
+/// snapshot values, retaining strict refusal and nearest-even behavior.
+#[trace("TC-3005", "FR-056-AC-57", "FR-106-AC-57")]
+#[test]
+fn checked_float_field_graph_evaluates_exact_and_rounded_sums() {
+    let clauses = concat!(
+        "invariant StrictSum using v on M::Counter at current { ",
+        "self.reading + self.limit = self.limit }\n",
+        "invariant RoundedSum using v on M::Counter at current { ",
+        "convert<Float64[nearest-even]>(self.reading) + ",
+        "convert<Float64[nearest-even]>(self.limit) <= ",
+        "convert<Float64[nearest-even]>(self.limit) }\n",
+    );
+    let mut world = float_world_with_body(clauses, Vec::new());
+    let snapshot = float_snapshot(
+        &mut world,
+        "float-rounding",
+        json!({
+            "reading": {"kind": "float64", "bits": "3ff0000000000000"},
+            "limit": {"kind": "float64", "bits": "3ca0000000000000"}
+        }),
+    );
+    let system = system(&world, vec![snapshot], &["c1"], UNLIMITED);
+    let state = system.initial().remove(0);
+    let findings = system
+        .successors(&state)
+        .expect("evaluates checked clauses")
+        .findings;
+    assert!(findings.iter().any(|finding| matches!(
+        finding,
+        ModelFinding::InvariantUndetermined { clause, evaluation: ClauseOutcome::KernelRefused(_), .. }
+            if clause == "StrictSum"
+    )), "strict exact addition refuses its inexact result: {findings:?}");
+    assert!(
+        findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::InvariantViolated { clause, .. } if clause == "RoundedSum"
+        )),
+        "nearest-even sum is evaluated before comparison: {findings:?}"
+    );
+}
+
+/// FR-106-AC-58: checked comparisons evaluate NaN and signed zero through
+/// admitted fields, while the Float64 set retains both zero encodings.
+#[trace("TC-3005", "FR-056-AC-58", "FR-106-AC-58")]
+#[test]
+fn checked_float_field_graph_compares_nan_and_signed_zero() {
+    let comparisons = concat!(
+        "invariant Equal using v on M::Counter at current { self.a = self.b }\n",
+        "invariant NotEqual using v on M::Counter at current { self.a != self.b }\n",
+        "invariant Less using v on M::Counter at current { self.a < self.b }\n",
+        "invariant LessEqual using v on M::Counter at current { self.a <= self.b }\n",
+        "invariant LevelsSelf using v on M::Counter at current { self.levels = self.levels }"
+    );
+    let mut nan_world = float_world_with_body(comparisons, Vec::new());
+    let nan = float_snapshot(
+        &mut nan_world,
+        "nan-comparison",
+        json!({
+            "a": {"kind": "float64", "bits": "7ff8000000000001"},
+            "b": {"kind": "float64", "bits": "7ff8000000000001"}
+        }),
+    );
+    let nan_system = system(&nan_world, vec![nan], &["c1"], UNLIMITED);
+    let nan_state = nan_system.initial().remove(0);
+    let nan_findings = nan_system
+        .successors(&nan_state)
+        .expect("evaluates checked NaN comparison")
+        .findings;
+    assert!(
+        nan_findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::InvariantViolated { clause, .. } if clause == "Equal"
+        )),
+        "numeric equality of NaN is false: {nan_findings:?}"
+    );
+    assert!(
+        !nan_findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::InvariantUndetermined { clause, .. } if clause == "NotEqual"
+        )),
+        "NaN inequality must be determined: {nan_findings:?}"
+    );
+    assert!(
+        !nan_findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::InvariantViolated { clause, .. } if clause == "NotEqual"
+        )),
+        "numeric inequality of NaN is true: {nan_findings:?}"
+    );
+    for clause in ["Less", "LessEqual"] {
+        assert!(
+            nan_findings.iter().any(|finding| matches!(
+                finding,
+                ModelFinding::InvariantViolated { clause: found, .. } if found == clause
+            )),
+            "ordered comparison with NaN is false for {clause}: {nan_findings:?}"
+        );
+    }
+    assert!(
+        !nan_findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::InvariantUndetermined { clause, .. }
+                if clause == "Less" || clause == "LessEqual"
+        )),
+        "NaN ordered comparisons must be determined: {nan_findings:?}"
+    );
+
+    let mut zero_world = float_world_with_body(comparisons, Vec::new());
+    let plus_zero = float_snapshot(
+        &mut zero_world,
+        "plus-zero-graph",
+        json!({
+            "a": {"kind": "float64", "bits": "0000000000000000"},
+            "b": {"kind": "float64", "bits": "8000000000000000"},
+            "levels": {"set": [
+                {"kind": "float64", "bits": "0000000000000000"},
+                {"kind": "float64", "bits": "8000000000000000"}
+            ]}
+        }),
+    );
+    let minus_zero = float_snapshot(
+        &mut zero_world,
+        "minus-zero-graph",
+        json!({
+            "a": {"kind": "float64", "bits": "8000000000000000"},
+            "b": {"kind": "float64", "bits": "8000000000000000"},
+            "levels": {"set": [
+                {"kind": "float64", "bits": "0000000000000000"},
+                {"kind": "float64", "bits": "8000000000000000"}
+            ]}
+        }),
+    );
+    let zero_system = system(&zero_world, vec![plus_zero, minus_zero], &["c1"], UNLIMITED);
+    let initial = zero_system.initial();
+    assert_eq!(initial.len(), 2);
+    for state in &initial {
+        let findings = zero_system
+            .successors(state)
+            .expect("evaluates checked signed-zero comparison")
+            .findings;
+        for clause in ["Equal", "LessEqual", "LevelsSelf"] {
+            assert!(
+                !findings.iter().any(|finding| matches!(
+                    finding,
+                    ModelFinding::InvariantUndetermined { clause: found, .. }
+                        if found == clause
+                )),
+                "signed zero invariant {clause} is determined: {findings:?}"
+            );
+            assert!(
+                !findings.iter().any(|finding| matches!(
+                    finding,
+                    ModelFinding::InvariantViolated { clause: found, .. } if found == clause
+                )),
+                "signed zero invariant {clause} holds: {findings:?}"
+            );
+        }
+        for clause in ["NotEqual", "Less"] {
+            assert!(
+                findings.iter().any(|finding| matches!(
+                    finding,
+                    ModelFinding::InvariantViolated { clause: found, .. } if found == clause
+                )),
+                "signed zero invariant {clause} is false: {findings:?}"
+            );
+        }
+        assert!(
+            !findings.iter().any(|finding| matches!(
+                finding,
+                ModelFinding::InvariantUndetermined { clause, .. }
+                    if clause == "NotEqual" || clause == "Less"
+            )),
+            "signed zero comparisons are determined: {findings:?}"
+        );
+        let Some(Value::Collection(levels)) = state.state().populations[&counters()]["c1"]
+            .fields
+            .get(&field("levels"))
+        else {
+            panic!("levels is an admitted Set<Float64>")
+        };
+        assert_eq!(levels.elements().len(), 2);
+    }
+    let (_, plus_key) = zero_system
+        .state_key(&initial[0])
+        .expect("plus-zero state key encodes");
+    let (_, minus_key) = zero_system
+        .state_key(&initial[1])
+        .expect("minus-zero state key encodes");
+    assert_ne!(
+        plus_key, minus_key,
+        "the state key retains signed-zero bits"
+    );
+}
+
+/// FR-106-AC-58: malformed Float bit payloads and Float kinds in the wrong
+/// declared slots refuse through snapshot admission.
+#[trace("TC-1171", "FR-106-AC-58")]
+#[test]
+fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
+    let mut world = float_world_with_body("", Vec::new());
+    let model = world.model();
+    let cases = [
+        (
+            "uppercase",
+            "a",
+            json!({"kind":"float64", "bits":"3FF0000000000000"}),
+            "invalid-value",
+            "bits",
+        ),
+        (
+            "short",
+            "a",
+            json!({"kind":"float64", "bits":"3ff000000000000"}),
+            "invalid-value",
+            "bits",
+        ),
+        (
+            "long",
+            "a",
+            json!({"kind":"float64", "bits":"03ff00000000000000"}),
+            "invalid-value",
+            "bits",
+        ),
+        (
+            "bad-hex",
+            "a",
+            json!({"kind":"float64", "bits":"3ff000000000000g"}),
+            "invalid-value",
+            "bits",
+        ),
+        (
+            "prefixed",
+            "a",
+            json!({"kind":"float64", "bits":"0x3ff0000000000000"}),
+            "invalid-value",
+            "bits",
+        ),
+        (
+            "short-width",
+            "f32",
+            json!({"kind":"float32", "bits":"3f80000"}),
+            "invalid-value",
+            "bits",
+        ),
+        (
+            "wide-width",
+            "f32",
+            json!({"kind":"float32", "bits":"00003f8000000000"}),
+            "invalid-value",
+            "bits",
+        ),
+        (
+            "number",
+            "a",
+            json!({"kind":"float64", "bits":0}),
+            "wrong-value-kind",
+            "bits",
+        ),
+        (
+            "missing",
+            "a",
+            json!({"kind":"float64"}),
+            "missing-member",
+            "bits",
+        ),
+        (
+            "extra",
+            "a",
+            json!({"kind":"float64", "bits":"3ff0000000000000", "value":"1"}),
+            "unknown-member",
+            "value",
+        ),
+        (
+            "bad-kind",
+            "a",
+            json!({"kind":"Float64", "bits":"3ff0000000000000"}),
+            "invalid-value",
+            "kind",
+        ),
+        (
+            "f32-in-f64",
+            "a",
+            json!({"kind":"float32", "bits":"3f800000"}),
+            "wrong-value-kind",
+            "kind",
+        ),
+        (
+            "f64-in-f32",
+            "f32",
+            json!({"kind":"float64", "bits":"3ff0000000000000"}),
+            "wrong-value-kind",
+            "kind",
+        ),
+        (
+            "float-in-integer",
+            "value",
+            json!({"kind":"float64", "bits":"3ff0000000000000"}),
+            "wrong-value-kind",
+            "kind",
+        ),
+    ];
+    for (name, field, value, cause, member) in cases {
+        let snapshot = float_snapshot(&mut world, name, json!({field: value}));
+        let failure = model
+            .admit_initial(&world.snapshots, &snapshot, ObservationLimits::default())
+            .expect_err("the malformed Float snapshot refuses");
+        let AdmissionFailure::Refused(record) = failure else {
+            panic!("case {name} refuses with a diagnostic record");
+        };
+        assert_eq!(record.catalog.code(), "invalid_runtime_input", "case {name}");
+        assert_eq!(record.catalog.cause(), cause, "case {name}");
+        assert_eq!(
+            record.fields.get("member").map(String::as_str),
+            Some(member),
+            "case {name} identifies the malformed native member"
+        );
+        assert_eq!(
+            record.fields.get("field").map(String::as_str),
+            Some(field),
+            "case {name} identifies the declared field"
+        );
+        assert_eq!(
+            record.fields.get("path").map(String::as_str),
+            Some(format!("/populations/0/objects/0/fields/{field}").as_str()),
+            "case {name} identifies the snapshot field path"
+        );
+        assert_eq!(
+            record.path,
+            Vec::<PathStep>::new(),
+            "case {name} keeps the native-local path empty; the snapshot field path is asserted above"
+        );
+    }
+    let duplicate = float_snapshot(
+        &mut world,
+        "duplicate-zero",
+        json!({"levels": {"set": [
+            {"kind":"float64", "bits":"0000000000000000"},
+            {"kind":"float64", "bits":"0000000000000000"}
+        ]}}),
+    );
+    let failure = model
+        .admit_initial(&world.snapshots, &duplicate, ObservationLimits::default())
+        .expect_err("duplicate Float set members refuse");
+    let AdmissionFailure::Refused(record) = failure else {
+        panic!("duplicate Float set members refuse");
+    };
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "duplicate-member");
+    assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("levels")
+    );
+    assert_eq!(
+        record.fields.get("earlier-index").map(String::as_str),
+        Some("0")
+    );
+    assert_eq!(record.path, vec![PathStep::Index(1)]);
+    let duplicate_nan = float_snapshot(
+        &mut world,
+        "duplicate-nan",
+        json!({"levels": {"set": [
+            {"kind":"float64", "bits":"7ff8000000000001"},
+            {"kind":"float64", "bits":"7ff8000000000001"}
+        ]}}),
+    );
+    let failure = model
+        .admit_initial(
+            &world.snapshots,
+            &duplicate_nan,
+            ObservationLimits::default(),
+        )
+        .expect_err("duplicate Float NaN members refuse");
+    let AdmissionFailure::Refused(record) = failure else {
+        panic!("duplicate Float NaN members refuse");
+    };
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "duplicate-member");
+    assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("levels")
+    );
+    assert_eq!(
+        record.fields.get("earlier-index").map(String::as_str),
+        Some("0")
+    );
+    assert_eq!(record.path, vec![PathStep::Index(1)]);
+}
+
+/// FR-106-AC-57: a large unique Float set is admitted through the canonical
+/// membership-key path, not an all-pairs uniqueness scan.
+#[trace("TC-1171", "FR-106-AC-57")]
+#[test]
+fn a_large_unique_float_set_is_admitted() {
+    let mut world = float_world_with_body_and_set_bound("", Vec::new(), 8192);
+    let levels = (0..8192_u64)
+        .map(|bits| json!({"kind":"float64", "bits":format!("{bits:016x}")}))
+        .collect::<Vec<_>>();
+    let snapshot = float_snapshot(
+        &mut world,
+        "large-float-set",
+        json!({"levels":{"set":levels}}),
+    );
+    let system = system(&world, vec![snapshot], &["c1"], UNLIMITED);
+    let initial = system.initial();
+    assert_eq!(initial.len(), 1, "the large unique set is admitted");
+    let Some(Value::Collection(levels)) = initial[0].state().populations[&counters()]["c1"]
+        .fields
+        .get(&field("levels"))
+    else {
+        panic!("levels is an admitted Set<Float64>")
+    };
+    assert_eq!(levels.elements().len(), 8192);
 }

@@ -2498,7 +2498,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             let (initial_state, mut lift) = self.lift_start(run, root)?;
             self.lift_edges(run, &mut lift, &stem)?;
             let entry_index = lift.len();
-            let entry_state = lift.key();
+            let entry_state = lift.loop_key()?;
             let loop_edges = pass(lift.sigma())?;
             let mut edges = Vec::with_capacity(loop_edges.len());
             for (source, position) in loop_edges {
@@ -2530,7 +2530,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     return Err(LoopStop::Quotient(QuotientStop::Cancelled));
                 }
                 self.lift_edges(run, &mut lift, &edges)?;
-                if lift.key() == entry_state {
+                if lift.loop_key()? == entry_state {
                     break;
                 }
                 if run.binding.group.is_trivial() {

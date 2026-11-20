@@ -42,7 +42,11 @@ fn a_100000_node_cycle_emits_and_reads_back_under_supplied_limits() {
         PackageDeclarations::new(source(), "pkg", fsl_foundation::IdentityLimits::default());
     declarations.types = types;
     let checked = declarations
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| {
             panic!(
                 "caller budget admits the cycle; checker returned {} refusals",

@@ -3,11 +3,12 @@
 //! declarations of an admitted `filament.checked-package/v2`.
 //!
 //! IR's reader has already refused every FR-476 defect, so this reads the
-//! admitted `temporal`/`terminal` nodes alone: the model each names, its mode
+//! admitted terminal rows by (model, ordinal) and their `temporal`/`terminal`
+//! nodes: the model each names, its mode
 //! and the nodes of its `self` parameter and condition. A model with no node
 //! reads as [`ReadTerminalDeclaration::None`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::{
     CheckedNodeKind, CheckedNodeTag, CheckedPackageV2, CheckedSemanticNodeV2, CheckedTerm,
@@ -40,6 +41,9 @@ pub struct ReadTerminal {
     pub node: NodeKey,
     /// The `model` node the declaration is on.
     pub model: NodeKey,
+    /// The position among the model's terminal nodes in terminal node key order;
+    /// (`model`, `ordinal`) is the terminal key.
+    pub ordinal: u32,
     /// The declaration: never [`ReadTerminalDeclaration::None`].
     pub declaration: ReadTerminalDeclaration,
 }
@@ -88,6 +92,7 @@ fn bindings(node: &CheckedSemanticNodeV2) -> Option<[&CheckedTerm; 4]> {
 fn read_node(
     graph: &WireGraph,
     node: &CheckedSemanticNodeV2,
+    ordinal: u32,
 ) -> Result<ReadTerminal, InternalFault> {
     let key = |id: &filament_contract_model::CheckedNodeId| key(graph, id);
     let [model, mode, parameters, condition] = bindings(node).ok_or(SHAPE)?;
@@ -117,35 +122,39 @@ fn read_node(
     Ok(ReadTerminal {
         node: key(&node.node_id)?,
         model,
+        ordinal,
         declaration,
     })
 }
 
-/// Every `terminal` node of `package`, in graph order.
+/// Every `terminal` node of `package`, one per admitted terminal row, in the
+/// rows' order: the model node's structural key, then the terminal node's
+/// (FSpec FR-476-AC-6). A model with several terminal nodes has one entry
+/// each, told apart by [`ReadTerminal::ordinal`].
 ///
 /// # Errors
 ///
 /// [`InternalFault`] when an admitted node has a shape IR's reader admits and
 /// this read does not expect.
 pub fn read_terminals(package: &CheckedPackageV2) -> Result<Vec<ReadTerminal>, InternalFault> {
-    read_nodes(&package.resolved_graph().nodes)
-}
-
-/// Every `terminal` node among `nodes`, a whole graph, in order.
-pub(crate) fn read_nodes(
-    nodes: &[CheckedSemanticNodeV2],
-) -> Result<Vec<ReadTerminal>, InternalFault> {
+    let nodes = &package.resolved_graph().nodes;
     let graph = WireGraph::new(nodes.iter().map(|node| &node.node_id)).map_err(|_| SHAPE)?;
-    nodes
+    let mut terminals = BTreeMap::new();
+    for node in nodes.iter().filter(|node| is_terminal(node)) {
+        terminals.insert(key(&graph, &node.node_id)?, node);
+    }
+    package
+        .terminal_rows()
         .iter()
-        .filter(|node| is_terminal(node))
-        .map(|node| read_node(&graph, node))
+        .map(|row| {
+            let node = terminals.get(&key(&graph, &row.node)?).ok_or(SHAPE)?;
+            read_node(&graph, node, row.ordinal)
+        })
         .collect()
 }
 
-/// The intended terminal states of the model node `model`:
-/// [`ReadTerminalDeclaration::None`] when the package holds no `terminal`
-/// node on it.
+/// The intended terminal states of the terminal row (`model`, `ordinal`):
+/// [`ReadTerminalDeclaration::None`] when the package holds no such row.
 ///
 /// # Errors
 ///
@@ -153,10 +162,11 @@ pub(crate) fn read_nodes(
 pub fn read_terminal(
     package: &CheckedPackageV2,
     model: &NodeKey,
+    ordinal: u32,
 ) -> Result<ReadTerminalDeclaration, InternalFault> {
     Ok(read_terminals(package)?
         .into_iter()
-        .find(|terminal| &terminal.model == model)
+        .find(|terminal| &terminal.model == model && terminal.ordinal == ordinal)
         .map_or(ReadTerminalDeclaration::None, |terminal| {
             terminal.declaration
         }))
@@ -165,10 +175,17 @@ pub fn read_terminal(
 /// One `terminal` declaration of a checked package as the package's emitted
 /// node gives it: the mode comes from the node, and a `when` declaration's
 /// checked predicate is the one the node's occurrence names.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct PackageTerminal<'p> {
-    /// The model alias the declaration is on.
+    /// The model alias the declaration is on, a display label.
     pub model: &'p str,
+    /// The identity of the domain package the model selects.
+    pub package: &'p str,
+    /// The declaration's `temporal`/`terminal` node.
+    pub node: filament_exact::NodeKey,
+    /// The declaration's ordinal among the declarations of models selecting
+    /// the same identity, in terminal node key order (FR-411).
+    pub ordinal: usize,
     /// The declared name.
     pub name: &'p str,
     /// The declaration.
@@ -202,7 +219,8 @@ pub enum TerminalResolveRefusal {
 /// The `terminal` declarations of `package`, resolved through the
 /// `temporal`/`terminal` nodes of its checked graph (FR-411, FSpec FR-476:
 /// the node is the only carrier of the declaration). A declaration is
-/// present exactly when the graph holds its node, in model-alias order, and
+/// present exactly when the graph holds its node, ordered by the model
+/// selection's identity then alias (FR-940), and
 /// its mode is the node's. A `when` declaration's predicate is the checked
 /// body the node's `claim` occurrence names, because a checked body cannot
 /// be rebuilt from the wire.
@@ -240,9 +258,23 @@ pub fn resolve_terminals(
         }
         resolved.push(PackageTerminal {
             model: checked.model(),
+            package: checked.package(),
+            ordinal: 0,
+            node: found
+                .map(|node| node.node.clone())
+                .ok_or_else(|| disagrees(checked.model()))?,
             name: checked.name().unwrap_or("terminal"),
             declaration,
         });
+    }
+    // FR-124-AC-11: aliases and source placement do not affect a declaration's
+    // ordinal; both routes order each identity's terminals by node key.
+    resolved.sort_by(|left, right| (left.package, &left.node).cmp(&(right.package, &right.node)));
+    let mut ordinals = std::collections::BTreeMap::<&str, usize>::new();
+    for terminal in &mut resolved {
+        let ordinal = ordinals.entry(terminal.package).or_default();
+        terminal.ordinal = *ordinal;
+        *ordinal += 1;
     }
     if let Some(orphan) = nodes.iter().find(|node| !claimed.contains(&node.node)) {
         return Err(disagrees(&orphan.node.to_string()));

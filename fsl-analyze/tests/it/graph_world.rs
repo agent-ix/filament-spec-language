@@ -24,7 +24,7 @@ use fsl_foundation::{BackendId, SourceIdentity};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     GraphEvidence, GraphEvidenceEnvelope, GraphReplayResult, ModelCheckLimits, ModelPath,
-    ModelTraceSubject, ReplayLimits, ReplayRequestWire, ReplayResult, ReplaySource,
+    ModelTraceSubject, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
     RequestTargetWire, StateEnvironment, WitnessPath, WitnessSource,
 };
 use fsl_semantics::check::{CheckedStateGraphClaim, PackageDeclarations};
@@ -238,6 +238,18 @@ impl World {
         body: &str,
         starts: &[&[Object<'_>]],
     ) -> Self {
+        Self::build(model, profiles, body, starts, CheckMode::Linked)
+    }
+
+    /// Check function bodies under Kernel (FR-495-AC-3), while every
+    /// declared clause and state-graph predicate retains Linked checking.
+    fn build(
+        model: Model,
+        profiles: &str,
+        body: &str,
+        starts: &[&[Object<'_>]],
+        mode: CheckMode,
+    ) -> Self {
         let document = model.document();
         let packages = package_input([document.as_slice()]).unwrap();
         let text = format!(
@@ -282,7 +294,11 @@ impl World {
             .expect("the division profile admits"),
         );
         let graph = declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
         let package = CheckedPackage::link(graph);
         let mut world = Self {
@@ -374,6 +390,27 @@ impl World {
         source: WitnessSource,
         keys: &[&str],
     ) -> GraphReplayResult {
+        self.replay_evidence(
+            claim,
+            GraphEvidence::Witness {
+                paths: vec![(WitnessPath::Path(path), source)],
+                over,
+            },
+            keys,
+            ReplayLimits::default(),
+        )
+        .expect("the state-graph witness replays")
+    }
+
+    /// Recompile and replay returned graph evidence, preserving typed refusals
+    /// and caller-selected replay limits for adverse evidence cases.
+    pub(crate) fn replay_evidence(
+        &self,
+        claim: &CheckedStateGraphClaim,
+        evidence: GraphEvidence,
+        keys: &[&str],
+        limits: ReplayLimits,
+    ) -> Result<GraphReplayResult, ReplayRefusal> {
         let original_source = self.package.graph().source();
         let byte_provision = vec![(
             original_source.authority().to_owned(),
@@ -394,10 +431,7 @@ impl World {
             UNLIMITED,
             Vec::new(),
             BackendId::new("fsl-en-1"),
-            GraphEvidence::Witness {
-                paths: vec![(WitnessPath::Path(path), source)],
-                over,
-            },
+            evidence,
         );
         let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&self.package);
         let emission = fsl_package::emit_checked_with_temporal_selections(
@@ -409,7 +443,7 @@ impl World {
         let wire = ReplayRequestWire {
             package: fsl_replay::ReplayPackage::read(
                 emission.package().bytes(),
-                ReplayLimits::default().input_bytes,
+                limits.input_bytes,
             )
             .expect("the emitted package is bounded JSON"),
             profile_selections: Vec::new(),
@@ -443,13 +477,12 @@ impl World {
                 wire,
                 &subject,
                 &temporal_clock_selections,
-                ReplayLimits::default(),
-            )
-            .expect("the state-graph witness replays")
+                limits,
+            )?
         else {
             panic!("state-graph replay returns its typed result arm")
         };
-        replayed
+        Ok(replayed)
     }
 
     /// The reference of the object `key` of the world's type.
@@ -564,9 +597,37 @@ pub(crate) fn temporal_config_world() -> World {
 pub(crate) const REACHES_THREE: &str =
     "possible ReachesThree using v over (c: Config::ConfigVersion) { c.versionNumber = 3 }\n";
 /// FR-166-AC-5's and FR-168-AC-5's target with no value at `versionNumber`
-/// 2.
+/// 2. Use [`config_kernel_world`] to check its called division body.
 pub(crate) const DIVIDES: &str = "possible Divides using v over (c: Config::ConfigVersion) { \
-     2 div (2 - c.versionNumber) = 2 }\n";
+     quotient(2 - c.versionNumber) = 2 }\n";
+
+/// The runtime division fixture's function body defers its nonzero
+/// obligation to the Kernel; its calling predicates remain Linked.
+const QUOTIENT: &str =
+    "function quotient using v(divisor: Integer): Integer pure { 2 div divisor }\n";
+
+/// As [`config_world`], with [`QUOTIENT`] checked under Kernel.
+pub(crate) fn config_kernel_world(claims: &str, starts: &[(i64, i64)]) -> World {
+    let starts: Vec<Vec<i64>> = starts.iter().map(|(a, b)| vec![*a, *b]).collect();
+    config_kernel_world_over("", claims, &["a", "b"], &starts)
+}
+
+/// As [`config_world_over`], with [`QUOTIENT`] checked under Kernel.
+pub(crate) fn config_kernel_world_over(
+    extra: &str,
+    claims: &str,
+    keys: &[&str],
+    starts: &[Vec<i64>],
+) -> World {
+    config_world_over_model_mode(
+        config_version(),
+        extra,
+        &format!("{QUOTIENT}{claims}"),
+        keys,
+        starts,
+        CheckMode::Kernel,
+    )
+}
 
 /// §7.1's world: universe `{a, b}`, one snapshot per entry of `starts`, each
 /// `(va, vb)`.
@@ -629,6 +690,17 @@ fn config_world_over_model(
     keys: &[&str],
     starts: &[Vec<i64>],
 ) -> World {
+    config_world_over_model_mode(model, extra, claims, keys, starts, CheckMode::Linked)
+}
+
+fn config_world_over_model_mode(
+    model: Model,
+    extra: &str,
+    claims: &str,
+    keys: &[&str],
+    starts: &[Vec<i64>],
+    mode: CheckMode,
+) -> World {
     let fields: Vec<Vec<[(&str, i64); 1]>> = starts
         .iter()
         .map(|values| {
@@ -648,7 +720,13 @@ fn config_world_over_model(
         })
         .collect();
     let starts: Vec<&[Object<'_>]> = objects.iter().map(Vec::as_slice).collect();
-    World::new(model, &format!("{CONFIG_CONTRACT}{extra}{claims}"), &starts)
+    World::build(
+        model,
+        "",
+        &format!("{CONFIG_CONTRACT}{extra}{claims}"),
+        &starts,
+        mode,
+    )
 }
 
 /// §7.2's game: `phase` is `Start` 0, `Mid` 1, `Lost` 2 or `Won` 3, so
@@ -828,7 +906,16 @@ pub(crate) fn job_world_with_claims(sequenced: bool, reset: bool, claims: &str) 
 
 /// FR-168-AC-9's `Fork`: `pos: Int[0, 4]`, initially 0.
 pub(crate) fn fork_world(body: &str) -> World {
-    moves_world(
+    fork_world_mode(body, CheckMode::Linked)
+}
+
+/// As [`fork_world`], deferring function-body obligations to the Kernel.
+pub(crate) fn fork_kernel_world(body: &str) -> World {
+    fork_world_mode(body, CheckMode::Kernel)
+}
+
+fn fork_world_mode(body: &str, mode: CheckMode) -> World {
+    moves_world_mode(
         ["test/fork", "F", "Fork", "forks"],
         4,
         &[
@@ -839,6 +926,7 @@ pub(crate) fn fork_world(body: &str) -> World {
             ("back", 3, 0),
         ],
         body,
+        mode,
     )
 }
 
@@ -883,10 +971,20 @@ pub(crate) fn detour_world(body: &str) -> World {
 /// per `(name, from, to)`: pre `pos = from`, post `pos = to`, each framed
 /// `modifies self.pos`.
 fn moves_world(
+    identities: [&'static str; 4],
+    high: i64,
+    moves: &[(&'static str, i64, i64)],
+    body: &str,
+) -> World {
+    moves_world_mode(identities, high, moves, body, CheckMode::Linked)
+}
+
+fn moves_world_mode(
     [package, alias, object, population]: [&'static str; 4],
     high: i64,
     moves: &[(&'static str, i64, i64)],
     body: &str,
+    mode: CheckMode,
 ) -> World {
     let model = Model {
         package,
@@ -915,9 +1013,11 @@ fn moves_world(
             )
         })
         .collect::<String>();
-    World::new(
+    World::build(
         model,
+        "",
         &format!("{contract}{body}"),
         &[&[("f", &[("pos", 0)])]],
+        mode,
     )
 }

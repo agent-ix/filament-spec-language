@@ -51,6 +51,8 @@ use crate::fill::{
 };
 use crate::model_settle::{envelope_at, protocol_anchor, request};
 
+mod replay_boundary_cases;
+
 /// A replay that reads no atom: the deadlock-freedom item has none.
 const NO_ATOMS: Letters = Letters { atom: |_| None };
 
@@ -101,6 +103,29 @@ impl Case {
             documents,
             initial,
             checked: package_with(PROTOCOL_PROFILE, body),
+            capacities: Vec::new(),
+        }
+    }
+
+    /// A Kernel remainder function called by the protocol's Linked clauses.
+    fn with_kernel_remainder(body: &str, values: &[i64]) -> Self {
+        let body = format!("function q using v(x: Integer): Integer pure {{ 6 mod x }}\n{body}");
+        let mut documents = Documents::new();
+        let initial = values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| documents.start(&format!("s{index}"), &[("c", *value)]))
+            .collect();
+        let checked = crate::fill::package_with_mode(
+            PROTOCOL_PROFILE,
+            &body,
+            filament_semantic_value::checking::CheckMode::Kernel,
+        );
+        Self {
+            body,
+            documents,
+            initial,
+            checked,
             capacities: Vec::new(),
         }
     }
@@ -975,8 +1000,11 @@ fn an_undefined_or_exhausted_predicate_is_never_read_as_false() {
     let branches = [("a", touch("TA")), ("b", touch("TB"))];
     let run = parallel(&branches, "join predicate(f) [a] outstanding cancel");
 
-    let undefined = "function f using v(x: Boolean): Boolean pure { x and 6 mod (1 - 1) >= 0 }";
-    let case = predicate_case(undefined, &run);
+    let undefined = "function f using v(x: Boolean): Boolean pure { x and q(1 - 1) >= 0 }";
+    let case = Case::with_kernel_remainder(
+        &(contracts("self.v = 0") + undefined + "\n" + &protocol("P", "", &run, "d")),
+        &[0],
+    );
     let subject = case.subject("P");
     let system = sc_system(&subject);
     let reached = reachable(&system);
@@ -2627,7 +2655,17 @@ fn an_undefined_contract_or_constraint_ends_an_undefined_evaluation() {
         undefined.site.locus
     };
     // The postcondition divides by zero at the post-state `c.v = 2`.
-    let post = bump_case("6 mod (2 - self.v) >= 0", &run("true"), 0);
+    let kernel_case = |post_body: &str, constraint: &str, value: i64| {
+        let contracts = contracts("self.v = 0").replace(
+            "post BumpPost using v on M::Cell::bump { self.v - pre(self.v) >= 1 }",
+            &format!("post BumpPost using v on M::Cell::bump {{ {post_body} }}"),
+        );
+        Case::with_kernel_remainder(
+            &(contracts + &protocol("P", "", &run(constraint), "d")),
+            &[value],
+        )
+    };
+    let post = kernel_case("q(2 - self.v) >= 0", "true", 0);
     let subject = post.subject("P");
     let system = sc_system(&subject);
     let findings = system
@@ -2646,7 +2684,7 @@ fn an_undefined_contract_or_constraint_ends_an_undefined_evaluation() {
     );
 
     // The constraint divides by zero at the pre-state `c.v = 2`.
-    let constraint = bump_case("self.v - pre(self.v) >= 1", &run("6 mod (2 - k.v) >= 0"), 2);
+    let constraint = kernel_case("self.v - pre(self.v) >= 1", "q(2 - k.v) >= 0", 2);
     let subject = constraint.subject("P");
     let system = sc_system(&subject);
     let findings = system

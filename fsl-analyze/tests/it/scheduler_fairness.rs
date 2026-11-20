@@ -574,7 +574,11 @@ pub(crate) fn check_refusal(body: &str) -> CheckRefusal {
         Vec::new(),
     )
     .expect("the unit assembles")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
     .expect_err("the unit refuses");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     refusals.remove(0)

@@ -13,7 +13,7 @@
 use fsl_eval::temporal::{TemporalOutcome, TemporalTrace};
 use ix_trace_rs::trace;
 
-use crate::temporal_trace::{counters, fixture, outcome, violated, EVENT};
+use crate::temporal_trace::{counters, fixture, outcome, violated, EVENT, INFINITE};
 
 /// The atom `holds(c.level = k)` at position `j` under false extension on
 /// both sides of a trace of `values`.
@@ -145,6 +145,79 @@ fn fsl_eval_agrees_with_the_reference_on_the_whole_corpus() {
                 counters(&values),
             );
             assert_eq!(settled, expected, "{body} over {values:?}");
+        }
+    }
+}
+
+/// Every lasso of a prefix of 0 to 2 samples and a loop of 1 to 3, at most 3
+/// samples in all, over the values 0, 1 and 2, as (prefix length, samples).
+fn lassos() -> Vec<(usize, Vec<i64>)> {
+    let mut all = Vec::new();
+    for len in 1..=3u32 {
+        for prefix in 0..usize::try_from(len).expect("a small lasso") {
+            for code in 0..3i64.pow(len) {
+                let mut code = code;
+                let mut values = Vec::new();
+                for _ in 0..len {
+                    values.push(code % 3);
+                    code /= 3;
+                }
+                all.push((prefix, values));
+            }
+        }
+    }
+    all
+}
+
+/// The samples of the lasso `values` (prefix length `prefix`) read as an
+/// infinite trace: position `j >= prefix` wraps into the loop (FR-329), and
+/// a position before 0 is the pre-origin extension, every atom false
+/// (FSpec FR-092).
+fn unrolled(prefix: usize, values: &[i64], positions: usize) -> Vec<i64> {
+    let loop_len = values.len() - prefix;
+    (0..positions)
+        .map(|j| {
+            if j < prefix {
+                values[j]
+            } else {
+                values[prefix + (j - prefix) % loop_len]
+            }
+        })
+        .collect()
+}
+
+/// FR-932-AC-4: under the infinite-trace profile, every past case of the
+/// corpus has the reference outcome in fsl-eval over every small lasso. The
+/// corpus reaches at most 2 positions back, so the reference reads the
+/// positions 0 to `prefix + 3 × loop` of the unrolled lasso, past which every
+/// position repeats one of them.
+#[trace("TC-3024", "FR-932-AC-4")]
+#[test]
+fn fsl_eval_agrees_with_the_reference_on_every_lasso() {
+    let past = CASES[..5].iter().chain(PRE_ORIGIN_CASES);
+    for (body, truth) in past {
+        let fx = fixture(INFINITE, "c: Counter", "on each (q: Counter)", body);
+        for (prefix, values) in lassos() {
+            let loop_len = values.len() - prefix;
+            let horizon = prefix + 3 * loop_len;
+            let reading = unrolled(prefix, &values, horizon);
+            let horizon = i64::try_from(horizon).expect("a small lasso");
+            let expected = match (0..horizon).find(|i| !truth(&reading, *i)) {
+                None => TemporalOutcome::Holds,
+                Some(i) => violated(u64::try_from(i).expect("a position")),
+            };
+            let settled = outcome(
+                &fx,
+                TemporalTrace::Lasso {
+                    prefix: u64::try_from(prefix).expect("a small prefix"),
+                    loop_len: u64::try_from(loop_len).expect("a small loop"),
+                },
+                counters(&values),
+            );
+            assert_eq!(
+                settled, expected,
+                "{body} over prefix {prefix} of {values:?}"
+            );
         }
     }
 }

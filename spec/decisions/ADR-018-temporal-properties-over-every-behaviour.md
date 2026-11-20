@@ -382,12 +382,26 @@ values with their result pairs. The example's request sets the subject's
 6,000, such as TC-472's 1,000, stops the run with `Stopped{ResourceExhausted,
 {MaxCandidates, value}}` at the first expansion.
 
-The shipped unit's post clause `VersionUnchanged` keeps `versionNumber`
-fixed, so every transition is a self-loop. The example unit keeps the two
+The shipped unit's post clause `VersionAdvances`,
+`(result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)
+and (not result implies self.versionNumber = pre(self.versionNumber))`, makes
+the result say what an update did: a `true` result advances the receiver's
+version by one and a `false` result keeps it. It narrows the frame's
+permission to that one change, so a transition the frame admits and the post
+clause accepts is either a self-loop with result `false` or a one-step
+advance with result `true`, and at version 1000 only the self-loop remains.
+The first equality compares at `Integer`: unconverted,
+`self.versionNumber = pre(self.versionNumber) + 1` gives the sum the field's
+type `Int[0, 1000]` with a range obligation (FSpec FR-149, FR-104), and the
+sum of 1000 and one leaves that range, so the checker refuses it
+`undefined_expression`/`unproved-range`. The example unit keeps the two
 invariants and replaces that post clause with one that advances the version
-modulo 3. The post clause spells the wrap out, because `(pre(self.versionNumber)
-+ 1) mod 3` is an unbounded `Int` and does not type-check against the bounded
-field. The fairness clause spelling is illustrative; FSpec's shared grammar
+modulo 3, so its rows stay small: 9 reachable states instead of the shipped
+unit's 1,002,001. The post clause spells
+the wrap out, because `(pre(self.versionNumber) + 1) mod 3` is an unbounded
+`Int`, and `mod` gets no expected type from the bounded field, so the
+equality does not type-check against it; the guard `pre(self.versionNumber) < 2`
+proves the range of the sum it writes instead. The fairness clause spelling is illustrative; FSpec's shared grammar
 owns it (QS-4).
 
 ```text
@@ -460,15 +474,24 @@ formula is false at position 0, `trace_position` `0`. Under `each` the same
 lasso is unfair (`upd(a)` is enabled throughout and never taken) and replay
 refuses it.
 
-**The shipped unit.** With `VersionUnchanged` and the receiver-scoped frame the only reachable state is
-`(0, 0)`. Under `fair weak each` the item settles `refuted` with the lasso
-whose loop is `(0, 0) -upd(a)-> (0, 0) -upd(b)-> (0, 0)`. Fairness makes
-every operation instance run, and the post clause still prevents progress.
+**The shipped unit.** With `VersionAdvances` and the receiver-scoped frame
+every `(va, vb)` in `[0, 1000] x [0, 1000]` is reachable, 1,002,001 states,
+and each state has, for each receiver, a result-`false` self-loop and, below
+version 1000, a result-`true` advance. Under `fair weak each` the item settles
+`refuted` with the lasso whose loop is
+`(0, 0) -upd(a)-> (0, 0) -upd(b)-> (0, 0)`, each step returning `false`:
+fairness makes every operation instance run, and an update that reports
+`false` satisfies the post clause without making progress, so the lasso
+stays in the initial product state's accepting SCC.
 
 **Deadlock freedom.** The unit declares no `terminal` declaration, so the request
 adds the subject's deadlock-freedom item (DL-3). Each of the 9 reachable
-states has two successors, so EN-1 settles it `proved`, V-1. The shipped
-unit's one state has its two self-loops and settles the same way.
+states has two successors, so EN-1 settles it `proved`, V-1. In the shipped
+unit every state keeps its two result-`false` self-loops, so no state is a
+deadlock: a proof visits all 1,002,001 states and 4,006,002 transitions, each
+expansion charging 6,006 candidates against the per-expansion
+`max_candidates` (FR-120), within the default `max_states` and
+`max_transitions`, and EN-1 settles it `proved`, V-1.
 
 **A bounded variant.** `eventually[0,5] holds(c.versionNumber = 2)` under
 event-position false-extension, `on origin`, is TP-2 with `h = 5`. It settles
@@ -768,7 +791,9 @@ Each amended cell carries an "Amended by ADR-018" note.
   filament-spec-language#568), QSL-369 (EF and AG EF), QSL-370
   (hyperproperties).
 - TL-256: the tl-mltl infinite-trace acceptance criteria. FSpec FR-251 gives
-  infinite-trace requests no TL target, so TL is not an engine here; its
+  closed-past infinite-trace requests the `mltl.infinite-trace/v1` TL target and
+  every other infinite-trace request no TL target, so TL is not an engine for
+  unbounded properties here; its
   conformance lassos are candidates for QS-10 (a).
 - FSpec V1-TEMP-021 to V1-TEMP-026: infinite-trace capability inventory rows.
   V1-TEMP-026's `unsupported` settlement holds until EN-1's provider

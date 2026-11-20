@@ -216,6 +216,15 @@ impl MessageOccurrence {
         self.ordinal
     }
 
+    pub(crate) fn with_ordinal(&self, ordinal: u64) -> Self {
+        Self {
+            instance: self.instance,
+            node: self.node,
+            path: self.path.clone(),
+            ordinal,
+        }
+    }
+
     pub(crate) fn enc(&self) -> Enc {
         Enc::tagged(
             "message-occurrence",
@@ -377,6 +386,8 @@ impl RestPoint {
 pub enum StepKind {
     /// ST-1.
     Attempt,
+    /// FR-206: a side-effect-free recommendation of an operation call.
+    Recommend,
     /// ST-2: a domain `event` or `commit`.
     Event,
     /// ST-3.
@@ -417,6 +428,23 @@ pub enum StepKind {
     Retire,
 }
 
+/// The typed operation call carried by a protocol recommendation. Receiver
+/// and arguments are canonical JSON values; they are descriptive data and
+/// do not represent an applied model transition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolRecommendation {
+    /// The recommendation control's static declaration path.
+    pub node: String,
+    /// The role named by the recommendation.
+    pub role: String,
+    /// The operation's qualified identity.
+    pub operation: String,
+    /// The receiver's canonical JSON value.
+    pub receiver: String,
+    /// The argument values' canonical JSON encodings, in parameter order.
+    pub arguments: Vec<String>,
+}
+
 impl StepKind {
     /// Whether a step of this kind counts for interval distance (ADR-027
     /// PB-3, FSpec FR-431): an operation (`attempt`, `cattempt`), an event
@@ -428,6 +456,7 @@ impl StepKind {
     pub const fn counts(self) -> bool {
         match self {
             Self::Attempt
+            | Self::Recommend
             | Self::CAttempt
             | Self::CFail
             | Self::CTimeout
@@ -453,6 +482,7 @@ impl StepKind {
     fn text(self) -> &'static str {
         match self {
             Self::Attempt => "attempt",
+            Self::Recommend => "recommend",
             Self::Event => "event",
             Self::Send => "send",
             Self::Receive => "receive",
@@ -488,6 +518,14 @@ enum Members {
         arguments: Vec<Enc>,
         /// `memory_choice`: the message or slot the memory model chose.
         choice: Option<MemoryChoice>,
+    },
+    /// A side-effect-free protocol recommendation, carrying the candidate
+    /// call without applying it to the model.
+    Recommendation {
+        role: String,
+        operation: String,
+        receiver: Enc,
+        arguments: Vec<Enc>,
     },
     /// No further member.
     Control,
@@ -888,6 +926,28 @@ pub(crate) struct VisibilityRead {
 }
 
 impl ProtocolTransition {
+    /// Map message and delivery labels in an identity; reporting metadata stays concrete.
+    pub(super) fn relabel_cycle_labels(
+        &self,
+        entries: &[(Enc, Enc)],
+        mut relabel_message: impl FnMut(&MessageOccurrence) -> MessageOccurrence,
+        mut relabel_delivery: impl FnMut(&DeliveryIdentity) -> DeliveryIdentity,
+    ) -> Self {
+        let mut renamed = self.clone();
+        if let Members::Channel { entry, .. } = &mut renamed.members {
+            if let Some((_, canonical)) = entries.iter().find(|(concrete, _)| concrete == entry) {
+                *entry = canonical.clone();
+            }
+        }
+        if let Some(message) = &self.message {
+            renamed.message = Some(relabel_message(message));
+        }
+        if let Some(delivery) = &self.delivery {
+            renamed.delivery = Some(relabel_delivery(delivery));
+        }
+        renamed
+    }
+
     /// `fork(node)` by `thread`.
     pub fn fork(thread: ThreadPath, node: impl Into<String>) -> Self {
         Self::control(StepKind::Fork, thread, node.into())
@@ -906,6 +966,41 @@ impl ProtocolTransition {
             thread: Some(thread),
             node: Some(node),
             members: Members::Control,
+            binder_record: None,
+            removed: None,
+            send_record: None,
+            memory: None,
+            actor: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
+            race: None,
+            children: Vec::new(),
+            flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
+        }
+    }
+
+    /// A side-effect-free operation recommendation at `node`.
+    pub(crate) fn recommended(
+        thread: ThreadPath,
+        node: String,
+        role: String,
+        operation: String,
+        receiver: Enc,
+        arguments: Vec<Enc>,
+    ) -> Self {
+        Self {
+            kind: StepKind::Recommend,
+            thread: Some(thread),
+            node: Some(node),
+            members: Members::Recommendation {
+                role,
+                operation,
+                receiver,
+                arguments,
+            },
             binder_record: None,
             removed: None,
             send_record: None,
@@ -952,6 +1047,7 @@ impl ProtocolTransition {
         application: ModelTransition,
         receiver: Enc,
         arguments: Vec<Enc>,
+        binder_record: Option<filament_exact::Value>,
     ) -> Self {
         Self {
             kind: StepKind::Attempt,
@@ -964,7 +1060,7 @@ impl ProtocolTransition {
                 arguments,
                 choice: None,
             },
-            binder_record: None,
+            binder_record,
             removed: None,
             send_record: None,
             memory: None,
@@ -1504,6 +1600,7 @@ impl ProtocolTransition {
     pub fn anchor(&self) -> PositionAnchor<'_> {
         match &self.members {
             Members::Attempt { operation, .. }
+            | Members::Recommendation { operation, .. }
             | Members::CAttempt { operation, .. }
             | Members::COutcome { operation, .. } => PositionAnchor::Operation(operation),
             Members::Memory { identity } => PositionAnchor::Memory(identity),
@@ -1532,6 +1629,34 @@ impl ProtocolTransition {
     /// The step's kind.
     pub fn kind(&self) -> StepKind {
         self.kind
+    }
+
+    /// The typed recommendation carried by a `recommend` step.
+    pub fn recommendation(&self) -> Option<ProtocolRecommendation> {
+        let Members::Recommendation {
+            role,
+            operation,
+            receiver,
+            arguments,
+        } = &self.members
+        else {
+            return None;
+        };
+        let canonical = |value: &Enc| {
+            quire_canonical::to_vec(value, quire_canonical::Limits::new(u64::MAX))
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+        };
+        Some(ProtocolRecommendation {
+            node: self.node.clone()?,
+            role: role.clone(),
+            operation: operation.clone(),
+            receiver: canonical(receiver)?,
+            arguments: arguments
+                .iter()
+                .map(canonical)
+                .collect::<Option<Vec<_>>>()?,
+        })
     }
 
     /// The per-attempt compensation outcome named by this transition.
@@ -1586,6 +1711,7 @@ impl ProtocolTransition {
             | Members::COutcome { registration, .. }
             | Members::CEnd { registration, .. } => Some(registration),
             Members::Attempt { .. }
+            | Members::Recommendation { .. }
             | Members::Control
             | Members::Record { .. }
             | Members::Channel { .. }
@@ -1614,6 +1740,7 @@ impl ProtocolTransition {
             | Members::CAttempt { application, .. }
             | Members::COutcome { application, .. } => Some(application),
             Members::Control
+            | Members::Recommendation { .. }
             | Members::Record { .. }
             | Members::Channel { .. }
             | Members::Memory { .. }
@@ -1623,10 +1750,9 @@ impl ProtocolTransition {
         }
     }
 
-    /// The typed binder record carried by an `event`, `send`, `receive`, a
-    /// compensation attempt, `finish` or recovery-view `cend` transition. Refinement rows compare
-    /// their expressions with these admitted binder values; they do not
-    /// infer a record from the transition's display identity.
+    /// The typed value carried by a bound `attempt` result, `event`, `send`,
+    /// `receive`, compensation attempt, `finish` or recovery-view `cend`
+    /// transition. It is diagnostic metadata outside the transition identity.
     pub fn binder_record(&self) -> Option<&filament_exact::Value> {
         self.binder_record.as_ref()
     }
@@ -1636,6 +1762,7 @@ impl ProtocolTransition {
         match &self.members {
             Members::Memory { identity } => Some(identity),
             Members::Attempt { .. }
+            | Members::Recommendation { .. }
             | Members::Control
             | Members::Record { .. }
             | Members::Channel { .. }
@@ -1653,6 +1780,7 @@ impl ProtocolTransition {
         match &self.members {
             Members::Channel { name, instance, .. } => Some((name, *instance)),
             Members::Attempt { .. }
+            | Members::Recommendation { .. }
             | Members::Control
             | Members::Record { .. }
             | Members::Memory { .. }
@@ -1699,6 +1827,24 @@ impl ProtocolTransition {
                     members.push(("memory_choice", choice.enc()));
                 }
             }
+            Members::Recommendation {
+                role,
+                operation,
+                receiver,
+                arguments,
+            } => members.push((
+                "recommendation",
+                Enc::tagged(
+                    "protocol-recommendation",
+                    vec![
+                        ("node", Enc::Str(self.node.clone().unwrap_or_default())),
+                        ("role", Enc::Str(role.clone())),
+                        ("operation", Enc::Str(operation.clone())),
+                        ("receiver", receiver.clone()),
+                        ("arguments", Enc::Array(arguments.clone())),
+                    ],
+                ),
+            )),
             Members::Control => {}
             Members::Record {
                 record,

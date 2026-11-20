@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:filament:monitor-summary:1",
+  "title": "filament.monitor-summary/1",
+  "type": "object",
+  "required": ["format", "clauses", "records", "refused", "ledger"],
+  "properties": {
+    "format": {"const": "filament.monitor-summary/1"},
+    "clauses": {"type": "array", "items": {"type": "object"}},
+    "records": {"type": "integer", "minimum": 0},
+    "refused": {"type": "integer", "minimum": 0},
+    "ledger": {"oneOf": [{"type": "null"}, {"type": "object"}]},
+    "cancelled": {"enum": ["requested", "deadline"]},
+    "items": {"type": "array", "items": {"type": "object"}},
+    "registry": {"type": "array", "items": {"type": "object"}}
+  },
+  "allOf": [
+    {"if": {"properties": {"items": {"type": "array"}}, "required": ["items"]}, "then": {"required": ["registry"]}, "else": {"not": {"required": ["registry"]}}},
+    {"if": {"properties": {"registry": {"type": "array"}}, "required": ["registry"]}, "then": {"required": ["items"]}, "else": {"not": {"required": ["items"]}}}
+  ],
+  "unevaluatedProperties": false
+}

@@ -1,0 +1,24 @@
+{
+  "ticket": "QSL-2083",
+  "reviewed_head": "51b9efb986727c478ce7a60543bb099223a9c011",
+  "tested_head": "6b1d6a4daf048ecd3cf1ad3d5ddc0a8024a46cfe",
+  "review_artifacts": ["SR-1483", "SR-1484"],
+  "profile": {"target": "$PWD/target", "jobs": 2, "dev_debug": 0, "test_debug": 0, "incremental": false, "test_threads": 1},
+  "segments": [
+    {
+      "scope": "All operation_uniqueness integration cases",
+      "command": "CARGO_TARGET_DIR=$PWD/target CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test --locked -p fsl-semantics --test it operation_uniqueness:: -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+      "exit_code": 0, "passed": 17, "failed": 0, "ignored": 11, "filtered_out": 711
+    },
+    {
+      "scope": "All operation_bodies unit cases including source_contracts",
+      "command": "CARGO_TARGET_DIR=$PWD/target CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test --locked -p fsl-package --lib emit::tests::operation_bodies:: -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+      "exit_code": 0, "passed": 21, "failed": 0, "ignored": 0, "filtered_out": 992
+    }
+  ],
+  "aggregate": {"passed": 38, "failed": 0, "ignored": 11, "exit_code": 0},
+  "strict_pending_owners": ["QSL-2696", "QSL-2697"],
+  "ignored_counted_as_coverage": false,
+  "scope_note": "Two non-overlapping requested component segments, each run once after review; no unrelated suite or product build.",
+  "trailing_changes": "Gate receipt and prepared PR body only; reviewed source and validated review artifacts unchanged."
+}

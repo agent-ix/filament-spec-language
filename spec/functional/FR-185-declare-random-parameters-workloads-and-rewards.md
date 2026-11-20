@@ -158,6 +158,21 @@ of probabilities start from.
   of a workload on the source model is one of its source object types,
   resolved as FR-230 resolves the source model's time member: first as a
   model alias of the unit and, failing that, as a source object type.
+- A workload `W on T`, `T` a source object type, SHALL weigh exactly the
+  operations of `T`'s effective view: each operation `T` declares and each it
+  inherits from an ancestor, an ancestor's operation that `T` or a nearer
+  ancestor redefines counted once, and an operation that several unrelated
+  nearest ancestors declare counted once per declaration: such an operation
+  is weighed under its declaring ancestor's name, and `T::op` naming it is
+  ambiguous. It SHALL NOT weigh
+  the operations of any other object type of the source model, so the rules
+  below read "its model" as that view: an operation of a type `T` does not
+  conform to, named in `W`, is an operation that is not in the workload's
+  model and is refused [`unknown-operation`], and an omitted operation of
+  that view is refused [`incomplete-workload`]. The reason is that the `on`
+  name chooses the object whose behaviour the workload schedules; a source
+  model holds every object type the unit declares, and weighing all of them
+  would make a workload on one type require weights for unrelated ones.
 - S3 SHALL admit a workload declaration on a model that gives each operation
   of the model a non-negative exact rational weight. A weight of 0 states that
   the workload does not choose the operation while an operation of positive
@@ -223,6 +238,38 @@ name.
   the denied charge would reach and the setting `s3.work_units`, and SHALL
   NOT report `negative-reward` for that reward.
 
+#### The reward evaluator port
+
+S3 is in `fsl-semantics` (ADR-011 §6.1 layer 3) and FSL's one expression
+evaluator, S6a, is in `fsl-eval` (layer 5), which depends on layer 3. S3
+therefore evaluates a reward through a port, never through an evaluator of
+its own:
+
+- Layer 3's `check` core SHALL define the trait `RewardEvaluator`, whose one
+  operation evaluates a checked reward body at one argument vector of kernel
+  values against the checked graph's scope view, charging the kernel meter it
+  is given, and returns the value, the `Undefined` result or the kernel
+  refusal S6a gives that body at those arguments.
+- `fsl-eval` SHALL implement `RewardEvaluator` with its S6a
+  `value::expression` evaluator, the same evaluator model admission (FR-187)
+  and every engine re-check call, so a reward's value is computed by one
+  interpreter at S3, at admission and in an engine. `fsl-semantics` SHALL
+  hold no expression evaluator for rewards and SHALL NOT depend on
+  `fsl-eval` or on any layer above 3, in its normal or its development
+  dependencies.
+- Every S3 entry that checks a unit SHALL take a `RewardEvaluator` as a
+  required argument, with no default and no optional form, so no S3 call can
+  produce a checked unit holding a reward the sign check did not run on. The
+  spine (layer 6 `replay`) supplies `fsl-eval`'s implementation, and every
+  caller above layer 5 (`fsl-command`, `fsl-analyze`, the root crate)
+  reaches S3 with that implementation.
+- The check runs after the unit's checked graph is assembled and before S3
+  returns its result, so the port sees every constant the reward reads; its
+  refusal is an S3 `CheckRefusal` at the reward's span, and S4 does not run.
+- A reward value that the evaluator reports `Undefined`, or a kernel refusal
+  of its evaluation, refuses the reward with that record at the reward's
+  span; it is never treated as zero or as non-negative.
+
 ### Quantity-typed parameters
 
 A quantity-typed operation parameter, such as ADR-024 §7.2's duration `d`, has
@@ -274,6 +321,8 @@ source reference is written into the message text instead of the locus.
 | FR-185-AC-10 | `Steady` with `Server::reset: 0` and weight 1 on the other two operations checks and records weight 0 for `Server::reset`, with no diagnostic; `Steady` with weight 0 on all three operations checks; `Steady` with `Server::reset` omitted is still refused `incomplete-workload`. | Test (TC-2060) |
 | FR-185-AC-11 | `reward refund on Server::request = n - 3` on an operation with parameter `n: Int[0, 5]` is refused at S3 `invalid_probabilistic_model`/`negative-reward` naming `Server::request`, `refund` and `n = 0`, so S4 never runs; `reward refund on Server::request = n` checks; a reward over a random parameter is evaluated over its support only; with `s3.work_units` set below the number of argument vectors, S3 stops `stage_limit_exceeded`/`work-budget-exceeded` naming `s3.work_units` at the reward and reports no `negative-reward`. | Test (TC-2061) |
 | FR-185-AC-12 | An S4 refusal concerning a random parameter, a workload, a reward or a delay carries that declaration's source reference and label span in its locus member (never `null`), and its message names the declaration in words and holds no debug rendering of a span or source reference. | Test (TC-2062) |
+| FR-185-AC-13 | Through the spine, `reward refund on Server::attempt = d - 3` over a random `d` with support `{1, 3, 12}` is refused at S3 `invalid_probabilistic_model`/`negative-reward` naming `Server::attempt`, `refund` and `d = 1`, computed by `fsl-eval`'s `RewardEvaluator`; `d - 1` checks. A recording `RewardEvaluator` passed to S3 is called once per argument vector, in canonical order, until the first negative value; one that reports `Undefined` at a vector refuses the reward with that record, never `negative-reward` and never a checked unit. | Test (TC-3027) |
+| FR-185-AC-14 | In a unit whose source declares `object Switch { n: Integer; operation choose(k: Int[0, 1]) modifies self.n; operation clear() modifies self.n; }` and `object Other { n: Integer; operation poke() modifies self.n; }`, `workload Input on Switch { weight Switch::choose = 1; weight Switch::clear = 0; }` checks with exactly the weights `choose` `1/1` and `clear` `0/1` and no weight for `Other::poke`; adding `weight Other::poke = 1;` is refused at S3 `invalid_probabilistic_model`/`unknown-operation` naming `Input` and `Other::poke`; omitting `Switch::clear` is refused `incomplete-workload` naming `Switch::clear`; `on Missing` is refused `missing_declaration`/`missing-name` naming `Missing`. With `object Base { n: Integer; operation a() modifies self.n; }` and `object Sub extends Base { operation b() modifies self.n; }`, `workload W on Sub` checks with weights for exactly `a` and `b`, whether `a` is written `Sub::a` or `Base::a`; `W on Sub` without `a` is refused `incomplete-workload` naming `Base::a`; and `W on Base` with `weight Sub::b = 1;` is refused `unknown-operation` naming `Sub::b`. A `Sub` that redefines `a` is weighed for `a` once. With `object L { n: Integer; operation a() modifies self.n; }`, `object R { n: Integer; operation a() modifies self.n; }` and `object J extends L, R { }`, `workload W on J` checks with exactly the two weights `L::a` and `R::a`; omitting `R::a` is refused `incomplete-workload` naming `R::a`; writing `J::a` is refused `ambiguous_declaration` (cause `ambiguous-name`) naming `J::a`, as the effective view refuses an ambiguous operation (ADR-016 SC-1). | Test (TC-620) |
 
 ## Dependencies
 

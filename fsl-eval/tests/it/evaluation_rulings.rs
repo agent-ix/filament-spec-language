@@ -9,7 +9,10 @@ use filament_exact::{
     form_collection, CollectionKind, CollectionType, Integer, IntegerInterval, LimitKind, Meter,
     Outcome, ScalarLimits, Value, ValueType,
 };
-use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use filament_semantic_value::{
+    checking::{CheckMode, CheckingLimits},
+    supplied_stop::{SuppliedLimits, SuppliedRun},
+};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
@@ -55,7 +58,11 @@ fn package() -> CheckedPackage {
     .expect("the unit assembles");
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .expect("the package checks"),
     )
 }
@@ -188,26 +195,51 @@ fn peak_resident_bytes() -> u64 {
 }
 
 /// NFR-130-AC-2: a recursion 1,000,000 calls deep grows the process's peak
-/// memory by at most 1 KiB per `work_units` unit it consumes. Run alone
-/// (`--exact`), on Linux, so no other test moves the peak.
+/// memory by at most 1 KiB per consumed work unit and per live occurrence.
+/// Run alone (`--exact`), on Linux, so no other test moves the peak.
 #[trace("TC-1931", "NFR-130-AC-2")]
 #[test]
-#[ignore = "QSL-2183: evaluation memory within 1 KiB per charged work unit, not yet measured"]
 fn deep_recursion_memory_stays_within_one_kib_per_work_unit() {
     let package = package();
     let before = peak_resident_bytes();
     let mut meter = Meter::new(UNLIMITED);
-    let outcome = call(
+    let mut run = SuppliedRun::new(SuppliedLimits::default(), filament_exact::Cancel::new())
+        .expect("the supplied-value run starts");
+    let evaluation = fsl_eval::value::call_checked_package_with_session_limits(
         &package,
-        "d",
+        &QualifiedName::unqualified("d").expect("a function name is an identifier"),
         vec![Value::Integer(Integer::from(1_000_000_i64))],
+        &ObjectEnvironment::default(),
         &mut meter,
+        &mut run,
+        filament_eval::SessionLimits {
+            live_occurrences: u64::MAX,
+            held: 0,
+        },
+    )
+    .expect("the checked package call runs");
+    assert!(
+        matches!(
+            &evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(zero)))
+                if *zero == Integer::from(0_i64)
+        ),
+        "{:?}",
+        evaluation.outcome
     );
-    assert!(matches!(outcome, Outcome::Completed(_)), "{outcome:?}");
     let grown = peak_resident_bytes().saturating_sub(before);
     let work = meter.consumed(LimitKind::WorkUnits);
+    let live_occurrences = evaluation.peak_live_occurrences;
     assert!(
         grown <= work.saturating_mul(1024),
         "{grown} bytes of peak growth over {work} work units"
+    );
+    assert!(
+        live_occurrences > 0,
+        "the recursion records live occurrences"
+    );
+    assert!(
+        grown <= live_occurrences.saturating_mul(1024),
+        "{grown} bytes of peak growth over {live_occurrences} live occurrences"
     );
 }

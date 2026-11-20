@@ -11,7 +11,7 @@
 //! Reuses FR-100's outcome mapping ([`super::call::convert_outcome`]) by
 //! reference, rather than restating it.
 
-use filament_checked::node::{Connective, NodeKind};
+use filament_checked::node::{CheckedLiteral, Connective, NodeKind};
 use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Identifier, Meter, ScalarLimits, Value, ValueType};
@@ -482,13 +482,358 @@ pub struct OperationContractViolation {
 pub struct TemporalValuation {
     /// The checked clause.
     pub clause: fsl_semantics::check::CheckedTemporalClause,
+    /// The checked Boolean condition of each `holds` atom, keyed by the
+    /// formula node whose valuation the clause report carries. These views
+    /// let command adapters render a package-independent canonical label.
+    pub checked_conditions: Vec<(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )>,
+    /// Alias-free declaration spellings referenced by the checked conditions.
+    /// Structural package keys never provide surface labels by themselves.
+    pub canonical_declarations: BTreeMap<filament_exact::NodeKey, String>,
+    /// Canonical source keys for named aggregate type arguments.
+    pub canonical_type_arguments: BTreeMap<String, String>,
+    /// Alias-free identities of local functions called by checked conditions.
+    pub canonical_functions: BTreeMap<usize, String>,
+    /// Declared field order of record constructors in checked conditions.
+    pub canonical_record_fields: BTreeMap<filament_exact::NodeKey, Vec<String>>,
+    /// Declared member names, in declaration order, of the unions that checked
+    /// `case` and union-value nodes in the conditions name (FR-931 "Binders").
+    pub canonical_union_members: BTreeMap<filament_exact::NodeKey, Vec<String>>,
     /// The valuation over the supplied trace; `None` when the trace is an
-    /// empty finite trace, which asks for the clause alone.
+    /// empty finite trace, which asks for the clause alone, or a lasso beside a
+    /// profile that does not read one.
     pub positions: Option<crate::spine_eval_api::SpineEvalObservedValuation>,
     /// FR-931 `cross_evaluate.initial`: the valuation of every (instance,
     /// behaviour) closed trace of the model subject a snapshot builds;
     /// `None` for a supplied trace.
     pub behaviours: Option<crate::BehaviourValuations>,
+}
+
+impl TemporalValuation {
+    /// Retain the checked conditions for one temporal clause alongside its
+    /// valuation. The formula arena's node order is the source/package
+    /// formula order, so the resulting keys are stable across both routes.
+    pub(crate) fn from_node(
+        node: &fsl_semantics::check::TemporalClauseNode,
+        graph: &CheckedGraph,
+        positions: Option<crate::spine_eval_api::SpineEvalObservedValuation>,
+        behaviours: Option<crate::BehaviourValuations>,
+    ) -> Self {
+        let clause = node.clause();
+        let mut checked_conditions = Vec::new();
+        for index in 0..clause.formula().nodes().len() {
+            let Some(atom) = clause.formula().node_id(index) else {
+                continue;
+            };
+            if !matches!(
+                clause.formula().nodes().get(index),
+                Some(fsl_semantics::check::FormulaNode::Holds { .. })
+            ) {
+                continue;
+            }
+            if let Some((condition, _)) = node.condition(atom) {
+                checked_conditions.push((atom, condition.body().clone()));
+            }
+        }
+        let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
+        let canonical_type_arguments =
+            canonical_condition_type_arguments(graph, &checked_conditions);
+        let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
+        let canonical_record_fields = canonical_condition_record_fields(graph, &checked_conditions);
+        let canonical_union_members = canonical_condition_union_members(graph, &checked_conditions);
+        Self {
+            clause: clause.clone(),
+            checked_conditions,
+            canonical_declarations,
+            canonical_type_arguments,
+            canonical_functions,
+            canonical_record_fields,
+            canonical_union_members,
+            positions,
+            behaviours,
+        }
+    }
+}
+
+fn canonical_condition_type_arguments(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<String, String> {
+    let mut names = std::collections::BTreeSet::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let Some(name) = node.type_argument() {
+                names.insert(name.to_owned());
+            }
+            pending.extend(node.children());
+        }
+    }
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let key = match graph.source_owner(&name) {
+                Some(owner) => format!("ix://{}/{}", owner.identity(), name),
+                // A qualified or imported name has no owner of its own: the
+                // retained authored name is its spelling.
+                None if is_declared_type_name(&name) => name.clone(),
+                None => return None,
+            };
+            Some((name, key))
+        })
+        .collect()
+}
+
+/// Whether a retained type argument is a declared type's authored name (a
+/// path of identifiers beginning with a capital) and not a structural
+/// spelling or a builtin scalar, which the printer spells itself.
+fn is_declared_type_name(name: &str) -> bool {
+    const BUILTIN: [&str; 7] = [
+        "Integer", "Boolean", "Text", "Decimal", "Rational", "Float32", "Float64",
+    ];
+    let identifier = |segment: &str| {
+        !segment.is_empty()
+            && segment
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    };
+    let last = name.rsplit("::").next().unwrap_or_default();
+    !BUILTIN.contains(&name)
+        && name.split("::").all(identifier)
+        && last
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_uppercase())
+}
+
+fn canonical_condition_record_fields(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<filament_exact::NodeKey, Vec<String>> {
+    let mut records = BTreeMap::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::Record { declaration, .. } = node.kind() {
+                if let Some(composite) = graph.scope().types().composite(declaration.clone()) {
+                    if let filament_semantic_value::declaration::CompositeShape::Record(fields) =
+                        composite.shape()
+                    {
+                        records.insert(
+                            declaration.clone(),
+                            fields.iter().map(|field| field.name().to_owned()).collect(),
+                        );
+                    }
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                    ()
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    records
+}
+
+fn canonical_condition_union_members(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<filament_exact::NodeKey, Vec<String>> {
+    let mut unions = BTreeMap::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::Case { declaration, .. } | NodeKind::UnionValue { declaration, .. } =
+                node.kind()
+            {
+                if let Some(composite) = graph.scope().types().composite(declaration.clone()) {
+                    if let filament_semantic_value::declaration::CompositeShape::Union(members) =
+                        composite.shape()
+                    {
+                        unions.insert(
+                            declaration.clone(),
+                            members
+                                .iter()
+                                .map(|member| member.identifier().to_owned())
+                                .collect(),
+                        );
+                    }
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    unions
+}
+
+fn canonical_condition_functions(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<usize, String> {
+    let mut functions = BTreeMap::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::Call { function, .. } = node.kind() {
+                if let Some(identity) = graph.function_identity_at(*function) {
+                    if let Some(identity) = source_function_identity(&identity) {
+                        functions.insert(*function, identity);
+                    }
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                    ()
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    functions
+}
+
+fn canonical_condition_declarations(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<filament_exact::NodeKey, String> {
+    let mut declarations = BTreeMap::new();
+    for (key, declaration) in graph.semantic_graph().source_enum_declarations() {
+        declarations.insert(
+            key.clone(),
+            format!(
+                "ix://{}/{}",
+                declaration.owner.identity(),
+                declaration
+                    .qualified_declaration
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<_>>()
+                    .join("/")
+            ),
+        );
+    }
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::ImportedCall { callee, .. } = node.kind() {
+                if let Some(identity) = source_function_identity(callee) {
+                    declarations.insert(callee.clone(), identity);
+                }
+            }
+            if let NodeKind::Record { declaration, .. } = node.kind() {
+                if let Some(identity) = source_function_identity(declaration) {
+                    declarations.insert(declaration.clone(), identity);
+                }
+            }
+            if let NodeKind::Case { declaration, .. } | NodeKind::UnionValue { declaration, .. } =
+                node.kind()
+            {
+                if let Some(identity) = source_function_identity(declaration) {
+                    declarations.insert(declaration.clone(), identity);
+                } else if let Some(resolved) = graph.resolve_declaration(declaration.clone()) {
+                    declarations.insert(
+                        declaration.clone(),
+                        format!("ix://{}/{}", resolved.package, resolved.node),
+                    );
+                }
+            }
+            let key = match node.kind() {
+                NodeKind::Literal(CheckedLiteral(filament_exact::Value::Enum(member))) => {
+                    Some(member.variant().owner().clone())
+                }
+                NodeKind::Field { field, .. } => Some(field.declaration()),
+                _ => None,
+            };
+            if let Some(key) = key {
+                if let Some(declaration) = graph.resolve_declaration(key.clone()) {
+                    declarations.insert(
+                        key,
+                        format!("ix://{}/{}", declaration.package, declaration.node),
+                    );
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                    ()
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    declarations
+}
+
+/// The source declaration identity carried by a checked function key. Its
+/// package is the source owner's identity, and its text path is the
+/// alias-free qualified declaration name.
+fn source_function_identity(key: &filament_exact::NodeKey) -> Option<String> {
+    let path = key
+        .view()
+        .path()
+        .map(|segment| match segment {
+            filament_exact::PathSegmentView::Text(text) => Some(text.to_owned()),
+            filament_exact::PathSegmentView::Node(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(format!("ix://{}/{}", key.package(), path.join("/")))
 }
 
 impl ClauseDisposition {
@@ -1385,9 +1730,10 @@ pub(crate) fn run_clause_with_function_modes(
 /// does and, for a `Temporal` or `SampledTemporal` selection, report
 /// [`ClauseDisposition::TemporalValuation`] in place of the verdict: the
 /// checked clause and, over a non-empty closed finite trace, the native
-/// valuation of its atoms and activations. An empty finite trace asks for
-/// the clause alone. Every refusal before evaluation is the one the clause
-/// run gives.
+/// valuation of its atoms and activations; a lasso is valued under the
+/// infinite-trace profile only (a bounded profile reports the clause alone).
+/// An empty finite trace asks for the clause alone. Every refusal before
+/// evaluation is the one the clause run gives.
 pub fn run_temporal_valuation(
     request: ClauseRunRequest,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
@@ -1627,7 +1973,14 @@ fn run_clause_reading(
             ref arguments,
             ref snapshot,
             ref snapshot_path,
-        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref()),
+        } => run_function(
+            &run,
+            models.models(),
+            name,
+            arguments,
+            snapshot,
+            snapshot_path.as_deref(),
+        ),
         ClauseRunSelection::Frame {
             ref operation,
             ref invocation,
@@ -2246,15 +2599,22 @@ fn run_compiled_clause_selection(
             arguments,
             snapshot,
             snapshot_path,
-        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref())
-            .unwrap_or_else(|_| {
-                report(ClauseDisposition::EvaluateFault(
-                    filament_semantic_value::catalog::InternalFault::new(
-                        "FR-050",
-                        "compiled-function-selection-runs",
-                    ),
-                ))
-            }),
+        } => run_function(
+            &run,
+            compiled.models.models(),
+            name,
+            arguments,
+            snapshot,
+            snapshot_path.as_deref(),
+        )
+        .unwrap_or_else(|_| {
+            report(ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "FR-050",
+                    "compiled-function-selection-runs",
+                ),
+            ))
+        }),
         ClauseRunSelection::Frame {
             operation,
             invocation,
@@ -2940,6 +3300,7 @@ fn evaluate_operation_contracts(
 
 fn run_function(
     run: &CompiledRun<'_>,
+    models: &[fsl_semantics::model::intake::SelectedModel],
     name: &str,
     arguments: &[ClauseArgument],
     snapshot: &DocumentRef,
@@ -3057,6 +3418,16 @@ fn run_function(
             ))));
         }
     }
+    for (position, (parameter, _)) in selected.parameters.iter().enumerate() {
+        if slots[position].is_none() {
+            return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                RunRefusal::UnboundParameter {
+                    parameter: parameter.clone(),
+                },
+            ))));
+        }
+    }
+    let mut environment = environment;
     let mut bound = Vec::with_capacity(selected.parameters.len());
     for (position, (parameter, value_type)) in selected.parameters.iter().enumerate() {
         let Some(value) = slots[position] else {
@@ -3066,6 +3437,24 @@ fn run_function(
                 },
             ))));
         };
+        if let (ValueType::Population(maximum), ClauseArgumentValue::Form(form)) =
+            (value_type, value)
+        {
+            if let Some(population) = form.get("population").and_then(serde_json::Value::as_str) {
+                environment = match super::call::bind_snapshot_population(
+                    environment,
+                    models,
+                    population,
+                    *maximum,
+                    position,
+                ) {
+                    Ok(environment) => environment,
+                    Err(refusal) => {
+                        return Ok(report(ClauseDisposition::ArgumentRefusal(refusal)));
+                    }
+                };
+            }
+        }
         let converted = match (value, value_type) {
             (ClauseArgumentValue::Integer(0), ValueType::Boolean) => Value::Boolean(false),
             (ClauseArgumentValue::Integer(1), ValueType::Boolean) => Value::Boolean(true),

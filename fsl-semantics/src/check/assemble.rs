@@ -32,8 +32,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{
     Cancel, CardinalityBound, CarriedQuantityType, CollectionKind, CollectionType, EffectiveId,
-    EnumShape, Identifier, IeeeWidth, Integer, IntegerInterval, InvalidNodeKey, NodeKey, Presence,
-    QuantityCarrier, RoundingMode, ValueType,
+    EnumShape, FloatType, Identifier, IeeeWidth, Integer, IntegerInterval, InvalidNodeKey, NodeKey,
+    Presence, QuantityCarrier, RoundingMode, ValueType,
 };
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_forms::{
@@ -52,20 +52,20 @@ use super::check::{
 };
 use super::check::{UntypedKind, UntypedMember};
 use super::layer::LayerAdmission;
-use super::lowering::{model_declaration_key, strongly_connected, AdmittedModel};
+use super::lowering::{AdmittedModel, model_declaration_key, strongly_connected};
 use super::model_gate::{self, ModelGateRefusal};
-use super::model_spelling::{package_names, ModelName, ModelSpellings, PackageNames, Spelled};
+use super::model_spelling::{ModelName, ModelSpellings, PackageNames, Spelled, package_names};
 use super::node_key::{NodeKeyRefusal, NodeTag, SourceOwner};
 use super::operation_body::OperationBodyDeclaration;
 use super::operation_clause::OperationClauseDeclaration;
 use super::refusal::{AliasKind, TimedConstruct};
 use super::state_clause::{
-    population_of, AttemptDeclaration, ClauseOperation, StateClauseDeclaration,
+    AttemptDeclaration, ClauseOperation, StateClauseDeclaration, population_of,
 };
 use super::state_graph_claim::StateGraphDeclaration;
 use super::terminal::{TerminalClauseDeclaration, TerminalClauseKind};
 use super::type_form::{
-    native_scalar_named, parse_rounding_mode, resolve_form, TypeFormError, TypeFormFault, TypeNames,
+    TypeFormError, TypeFormFault, TypeNames, native_scalar_named, parse_rounding_mode, resolve_form,
 };
 use super::type_invariant::{TypeInvariantDeclaration, TypeSlot};
 use crate::library::{ImportView, LibraryName};
@@ -81,15 +81,15 @@ pub use equivalence::{
     DimensionEquivalence, EquivalenceClasses, EquivalenceFault, EquivalenceRetained,
 };
 
-use super::navigation::{EndDeclaration, RelationshipDeclaration, Relationships};
 use super::CheckedGraph;
+use super::navigation::{EndDeclaration, RelationshipDeclaration, Relationships};
 use crate::model::domain_package::{
-    unaliased, AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord,
-    MapTypeRecord, Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord,
-    RelationshipEnd, ScalarValueDomain, SequenceTypeRecord, ValueTypeRef,
+    AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord, MapTypeRecord,
+    Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord, RelationshipEnd,
+    ScalarValueDomain, SequenceTypeRecord, ValueTypeRef, unaliased,
 };
 use crate::model::intake::{
-    member_identity_name, type_identity_segment, SelectedModel, SelectedModels,
+    SelectedModel, SelectedModels, member_identity_name, type_identity_segment,
 };
 use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
 use crate::value::enumeration::{
@@ -97,7 +97,7 @@ use crate::value::enumeration::{
 };
 use crate::value::environment_stage::stage_limit;
 use crate::value::layer::{HeaderLayer, LayerForm};
-use crate::value::semantic_node::{identity_limit, NominalRefusal, OwnerSelection};
+use crate::value::semantic_node::{NominalRefusal, OwnerSelection, identity_limit};
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, DeclarationCause, EnvironmentFailure, FieldDeclaration,
@@ -344,18 +344,6 @@ pub enum AssemblyCause {
     /// A built-in constructor's declared bounds are rejected by its value
     /// type, with that value type's own cause.
     IllFormedBounds(TypeFormFault),
-    /// A domain package's native `Float32`/`Float64` model field, which the
-    /// assembler still refuses (QSL-285 owns admitting it). Function
-    /// parameter, result and body floating types are admitted (FR-091-OQ-4).
-    FloatingType {
-        /// The width.
-        width: IeeeWidth,
-        /// The rounding mode, `exact` when none is written.
-        rounding: RoundingMode,
-        /// The profile selection the declaration's `using` alias names,
-        /// when the type is in a function's signature.
-        profile: Option<String>,
-    },
     /// An alias's resolution reaches that alias again.
     AliasCycle {
         /// The cycle's dependency edges, `(alias, alias it names)`.
@@ -602,8 +590,8 @@ pub enum AssemblyCause {
         /// The alias as written.
         alias: String,
     },
-    /// A `terminal when` declaration's model has no population, so its state
-    /// has no object for the predicate's `self` to range over (FR-124).
+    /// A `terminal when` declaration's populations cover no single object
+    /// type for the predicate's `self` to range over (FR-124).
     UnresolvedTerminalState {
         /// The model alias.
         model: String,
@@ -642,11 +630,6 @@ pub enum AssemblyCause {
     /// A synthesis form whose FR-754 lowering is not installed yet.
     SynthesisNotChecked {
         /// The synthesis declaration's authored name.
-        name: String,
-    },
-    /// A verification plan form whose FR-753 lowering is not installed yet.
-    VerificationPlanNotChecked {
-        /// The verification plan's authored name.
         name: String,
     },
 }
@@ -702,9 +685,7 @@ impl AssemblyCause {
             Self::IllFormedBounds(_)
             | Self::ImportedTypeName { .. }
             | Self::OverNotObjectType { .. } => Code::IllTyped,
-            Self::FloatingType { .. } | Self::UnsupportedModelMember { .. } => {
-                Code::UnknownRequiredFeature
-            }
+            Self::UnsupportedModelMember { .. } => Code::UnknownRequiredFeature,
             Self::AliasCycle { .. } => Code::InvalidPackage,
             Self::InvalidTypeDeclaration(invalid) => match &invalid.cause {
                 DeclarationCause::DuplicateMember(_) => Code::AmbiguousDeclaration,
@@ -730,8 +711,7 @@ impl AssemblyCause {
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
             | Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. }
-            | Self::VerificationPlanNotChecked { .. } => Code::UnsupportedConstruct,
+            | Self::SynthesisNotChecked { .. } => Code::UnsupportedConstruct,
         }
     }
 
@@ -819,9 +799,7 @@ impl AssemblyCause {
             ) => "operator-ineligible",
             Self::IllFormedBounds(_) | Self::OverNotObjectType { .. } => "type-mismatch",
             Self::ImportedTypeName { .. } => "operator-ineligible",
-            Self::FloatingType { .. } | Self::UnsupportedModelMember { .. } => {
-                "unsupported-feature"
-            }
+            Self::UnsupportedModelMember { .. } => "unsupported-feature",
             Self::AliasCycle { .. } => "definition-cycle",
             Self::UndeclaredAlias { .. }
             | Self::UnadmittedModel { .. }
@@ -846,9 +824,7 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. }
-            | Self::VerificationPlanNotChecked { .. } => "not-yet-implemented",
+            Self::TimedNotChecked(_) | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -1056,6 +1032,9 @@ struct Unit {
     /// Each state-graph claim's form, in source order, resolved by the
     /// caller into `StateGraphDeclaration`s (FR-165).
     state_graph_claims: Vec<fsl_forms::StateGraphClaimForm>,
+    /// Verification plan source forms, kept outside the checked clause graph
+    /// and checked at S3 (FR-753).
+    verification_plans: Vec<fsl_forms::VerificationPlanForm>,
 }
 
 impl Unit {
@@ -1115,6 +1094,7 @@ impl Unit {
             clock_reading: Vec::new(),
             task_sets: Vec::new(),
             state_graph_claims: Vec::new(),
+            verification_plans: Vec::new(),
         };
         unit.timed.extend(
             std::mem::take(&mut clock_forms.positions)
@@ -1243,6 +1223,9 @@ impl Unit {
                     .probabilistic
                     .push(super::ProbabilisticDeclaration::Claim(claim)),
                 DeclarationForm::StateGraphClaim(claim) => unit.state_graph_claims.push(*claim),
+                DeclarationForm::VerificationPlan(plan) => {
+                    unit.verification_plans.push(*plan);
+                }
                 DeclarationForm::Temporal(clause) => {
                     unit.temporal_clauses
                         .push(super::temporal_clause::TemporalDeclaration {
@@ -1250,7 +1233,7 @@ impl Unit {
                             span,
                         });
                 }
-                DeclarationForm::Synthesis(_) | DeclarationForm::VerificationPlan(_) => {}
+                DeclarationForm::Synthesis(_) => {}
             }
         }
         // The `Clock` type positions were listed first; FR-230's gate reads
@@ -1896,13 +1879,6 @@ fn model_object_types(
                     }
                     Err(Unmapped::Unsupported) => errors.push(unsupported(&field.key.node)),
                     Err(Unmapped::Broken) => errors.push(broken(&field.key.node)),
-                    Err(Unmapped::Float(width)) => {
-                        errors.push(error(AssemblyCause::FloatingType {
-                            width,
-                            rounding: RoundingMode::Exact,
-                            profile: None,
-                        }))
-                    }
                     Err(Unmapped::QuantityType {
                         name,
                         member_identity,
@@ -1952,13 +1928,6 @@ fn model_object_types(
                         errors.push(unsupported(&operation.key.node))
                     }
                     Err(Unmapped::Broken) => errors.push(broken(&operation.key.node)),
-                    Err(Unmapped::Float(width)) => {
-                        errors.push(error(AssemblyCause::FloatingType {
-                            width,
-                            rounding: RoundingMode::Exact,
-                            profile: None,
-                        }))
-                    }
                     Err(Unmapped::QuantityType {
                         name,
                         member_identity,
@@ -2174,11 +2143,6 @@ fn model_object_types(
                     errors.push(unsupported(&field.key.node))
                 }
                 Err(Unmapped::Broken) => errors.push(broken(&field.key.node)),
-                Err(Unmapped::Float(width)) => errors.push(error(AssemblyCause::FloatingType {
-                    width,
-                    rounding: RoundingMode::Exact,
-                    profile: None,
-                })),
                 Err(Unmapped::QuantityType {
                     name,
                     member_identity,
@@ -2244,6 +2208,9 @@ fn model_object_types(
         positions.sort_by_key(|position| position.ordinal);
         let mut elements = Vec::with_capacity(positions.len());
         for position in positions {
+            if clock_place_type(&position.value_type, &records) {
+                continue;
+            }
             match model_value_type(
                 &position.value_type,
                 Multiplicity {
@@ -2263,11 +2230,6 @@ fn model_object_types(
                     errors.push(unsupported(&position.key.node))
                 }
                 Err(Unmapped::Broken) => errors.push(broken(&position.key.node)),
-                Err(Unmapped::Float(width)) => errors.push(error(AssemblyCause::FloatingType {
-                    width,
-                    rounding: RoundingMode::Exact,
-                    profile: None,
-                })),
                 Err(Unmapped::QuantityType {
                     name,
                     member_identity,
@@ -2315,7 +2277,11 @@ fn model_object_types(
         let mut members = Vec::with_capacity(cases.len());
         for case in cases {
             let mut payload = Vec::new();
-            if let Some(payload_type) = &case.payload_type {
+            if let Some(payload_type) = case
+                .payload_type
+                .as_ref()
+                .filter(|payload| !clock_place_type(payload, &records))
+            {
                 match model_value_type(
                     payload_type,
                     Multiplicity {
@@ -2335,13 +2301,6 @@ fn model_object_types(
                         errors.push(unsupported(&case.key.node))
                     }
                     Err(Unmapped::Broken) => errors.push(broken(&case.key.node)),
-                    Err(Unmapped::Float(width)) => {
-                        errors.push(error(AssemblyCause::FloatingType {
-                            width,
-                            rounding: RoundingMode::Exact,
-                            profile: None,
-                        }))
-                    }
                     Err(Unmapped::QuantityType {
                         name,
                         member_identity,
@@ -2379,6 +2338,17 @@ fn model_object_types(
         ));
     }
     let mut model_records = record_renames(model, &records, &own_handles);
+    for record in &package.records {
+        let DomainPackageRecord::TupleValueType(tuple) = record else {
+            continue;
+        };
+        let Some(handle) = meaning_handles.get(&tuple.key) else {
+            continue;
+        };
+        let projection =
+            crate::model::domain_package::tuple_data_projection(&package.records, &tuple.key);
+        model_records.declare_tuple_positions(handle.clone(), projection);
+    }
     for (key, handle) in &own_handles {
         if matches!(records.get(key), Some(DomainPackageRecord::EventType(_))) {
             model_records.declare_event(handle.clone());
@@ -2575,8 +2545,6 @@ fn record_renames(
 enum Unmapped {
     /// No kernel type or presence represents it.
     Unsupported,
-    /// A floating type, refused as the assembler refuses every float.
-    Float(IeeeWidth),
     /// A `ix://filament/unit/<name>` reference has no unit in the compiling unit.
     QuantityName(String),
     /// An unresolved unit in a model typeRef with its source contract path.
@@ -2659,7 +2627,7 @@ fn model_value_type(
     let element = match value_type {
         ValueTypeRef::Clock => return Err(Unmapped::Unsupported),
         ValueTypeRef::Resolved(value_type) => {
-            return with_multiplicity((**value_type).clone(), multiplicity)
+            return with_multiplicity((**value_type).clone(), multiplicity);
         }
         ValueTypeRef::Native(native) => match native {
             NativeValueType::Boolean => ValueType::Boolean,
@@ -2668,8 +2636,12 @@ fn model_value_type(
             NativeValueType::Timestamp => ValueType::Timestamp,
             NativeValueType::Bytes => ValueType::Bytes,
             NativeValueType::JsonObject => ValueType::JsonObject,
-            NativeValueType::Float32 => return Err(Unmapped::Float(IeeeWidth::Binary32)),
-            NativeValueType::Float64 => return Err(Unmapped::Float(IeeeWidth::Binary64)),
+            NativeValueType::Float32 => {
+                ValueType::Float(FloatType::new(IeeeWidth::Binary32, RoundingMode::Exact))
+            }
+            NativeValueType::Float64 => {
+                ValueType::Float(FloatType::new(IeeeWidth::Binary64, RoundingMode::Exact))
+            }
             // FR-056 admits these native names at the domain-package boundary,
             // but the current checked-model value algebra has no corresponding
             // element types. Preserve them in intake; do not coerce either to
@@ -2678,7 +2650,7 @@ fn model_value_type(
             // Bare, these have no checked type: the member is admitted and
             // refused where used (FR-056-AC-43).
             NativeValueType::Rational | NativeValueType::Decimal | NativeValueType::Text => {
-                return Err(Unmapped::Untyped(String::new()))
+                return Err(Unmapped::Untyped(String::new()));
             }
         },
         ValueTypeRef::Unit(name) => ValueType::Quantity(
@@ -2722,7 +2694,7 @@ fn model_value_type(
                 // FR-505-AC-6: a Rational value type with no constraints
                 // has no checked type, as a bare native Rational has none.
                 ScalarValueDomain::Rational { domain: None, .. } => {
-                    return Err(Unmapped::Untyped(String::new()))
+                    return Err(Unmapped::Untyped(String::new()));
                 }
                 ScalarValueDomain::Native(NativeValueType::Uuid) => ValueType::Uuid,
                 ScalarValueDomain::Native(NativeValueType::Timestamp) => ValueType::Timestamp,
@@ -2781,9 +2753,8 @@ fn model_value_type(
                 // A native `Text` key (no bounds, no profile) is keyed by its
                 // exact Unicode scalar sequence as a `String` key is (FSpec
                 // FR-154 "Map types", FR-144): it is the key type only, a
-                // member typed bare `Text` still has no type. A `Float32` or
-                // `Float64` key draws the typed refusal a floating member
-                // does.
+                // member typed bare `Text` still has no type. Float keys are
+                // still rejected by `MapType`'s canonical key rules.
                 let mut named = &map.keys;
                 for _ in 0..=records.len() {
                     match named {
@@ -2796,6 +2767,11 @@ fn model_value_type(
                 }
                 let key_type = if matches!(named, ValueTypeRef::Native(NativeValueType::Text)) {
                     ValueType::String
+                } else if matches!(
+                    named,
+                    ValueTypeRef::Native(NativeValueType::Float32 | NativeValueType::Float64)
+                ) {
+                    return Err(Unmapped::Unsupported);
                 } else {
                     element(&map.keys)?
                 };
@@ -2838,6 +2814,17 @@ fn sequence_items<'r>(
     records: &BTreeMap<&DeclarationKey, &'r DomainPackageRecord>,
 ) -> &'r ValueTypeRef {
     unaliased(value_type, |key| records.get(key).copied()).map_or(value_type, |(items, _)| items)
+}
+
+/// A single clock place, read through aliases without crossing a collection.
+fn clock_place_type(
+    value_type: &ValueTypeRef,
+    records: &BTreeMap<&DeclarationKey, &DomainPackageRecord>,
+) -> bool {
+    matches!(
+        unaliased(value_type, |key| records.get(key).copied()),
+        Some((ValueTypeRef::Clock, 0))
+    )
 }
 
 /// `element` held by a member of `multiplicity`: itself for `[1, 1]`, else
@@ -2957,6 +2944,7 @@ fn model_operation(
             )
     };
     let mut parameters = Vec::with_capacity(operation.parameters.len());
+    let mut optional_parameters = Vec::with_capacity(operation.parameters.len());
     let mut clock_parameters = Vec::new();
     for (index, parameter) in operation.parameters.iter().enumerate() {
         let parameter_name = member_identity_name(&operation.key.node, &parameter.key.node)
@@ -2997,6 +2985,12 @@ fn model_operation(
             }
             Err(error) => return Err(error),
         };
+        let value_type = if parameter.presence == filament_exact::Presence::Optional {
+            ValueType::Option(Arc::new(value_type))
+        } else {
+            value_type
+        };
+        optional_parameters.push(parameter.presence == filament_exact::Presence::Optional);
         parameters.push((parameter_name.to_owned(), value_type));
     }
     let clock_result = operation
@@ -3043,6 +3037,7 @@ fn model_operation(
     };
     Ok((
         OperationDeclaration::new(name, parameters, result, operation.effect.clone())
+            .with_optional_parameters(&optional_parameters)
             .with_clocks(clock_parameters, clock_result),
         untyped_locus.map(|locus| (locus, untyped_parameters)),
     ))
@@ -4268,8 +4263,32 @@ impl PackageDeclarations {
         let mut state_clause_index = 0usize;
         let mut time_source_index = 0usize;
         let mut equivalence_index = 0usize;
+        let mut probabilistic_index = 0usize;
+        let mut task_set_index = 0usize;
         for (source, unit) in &units {
             for form in unit.forms() {
+                if matches!(
+                    form.form(),
+                    fsl_forms::DeclarationForm::Taskset(_)
+                        | fsl_forms::DeclarationForm::Schedulable(_)
+                        | fsl_forms::DeclarationForm::Response(_)
+                        | fsl_forms::DeclarationForm::Release(_)
+                ) {
+                    source_owners.insert(format!("task_set {task_set_index}"), source.clone());
+                    task_set_index += 1;
+                }
+                if matches!(
+                    form.form(),
+                    fsl_forms::DeclarationForm::Random(_)
+                        | fsl_forms::DeclarationForm::Reward(_)
+                        | fsl_forms::DeclarationForm::Delay(_)
+                        | fsl_forms::DeclarationForm::Workload(_)
+                        | fsl_forms::DeclarationForm::Probabilistic(_)
+                ) {
+                    // FR-096: a site of the declaration is located in its own unit.
+                    source_owners.insert(format!("probabilistic {probabilistic_index}"), source.clone());
+                    probabilistic_index += 1;
+                }
                 if matches!(form.form(), fsl_forms::DeclarationForm::StateClause(_)) {
                     source_owners
                         .insert(format!("state_clause:{state_clause_index}"), source.clone());
@@ -4465,11 +4484,6 @@ impl PackageDeclarations {
                     fsl_forms::DeclarationForm::Synthesis(synthesis) => {
                         Some(AssemblyCause::SynthesisNotChecked {
                             name: synthesis.name.name.clone(),
-                        })
-                    }
-                    fsl_forms::DeclarationForm::VerificationPlan(plan) => {
-                        Some(AssemblyCause::VerificationPlanNotChecked {
-                            name: plan.name.name.clone(),
                         })
                     }
                     _ => None,
@@ -4683,6 +4697,9 @@ impl PackageDeclarations {
                 continue;
             };
             let mut declared = AdmittedModel::from_view(&model.view).with_alias(&selection.alias);
+            if super::source_model::is_source_alias(&selection.alias) {
+                declared = declared.of_package(&package_name);
+            }
             // Units scope a source model only when the package has several.
             if super::source_model::is_source_alias(&selection.alias) && !source_owners.is_empty() {
                 declared = declared.declared_in(unit_source);
@@ -5894,7 +5911,7 @@ impl PackageDeclarations {
         // condition's expression tree.
         let mut declared_site_spans = BTreeMap::new();
         for (index, clause) in unit.temporal_clauses.iter().enumerate() {
-            use super::lowering::{temporal_site, TemporalSite};
+            use super::lowering::{TemporalSite, temporal_site};
             let form = &clause.form;
             let temporal_owner = package.source_owners.get(&form.name.name).cloned();
             let mut temporal_sites = vec![TemporalSite::Claim, TemporalSite::Over];
@@ -5998,7 +6015,7 @@ impl PackageDeclarations {
             let super::hyper_clause::HyperDeclaration::Behaviours(form) = declaration else {
                 continue;
             };
-            use super::hyper_clause::lowering::{hyper_site, Site};
+            use super::hyper_clause::lowering::{Site, hyper_site};
             declared_type_spans.insert(hyper_site(behaviours, Site::Claim), form.name.span);
             declared_type_spans.insert(hyper_site(behaviours, Site::Body), form.span);
             for (id, node) in form.body.iter() {
@@ -6036,7 +6053,7 @@ impl PackageDeclarations {
         // each mode's clause and each transition's clause; a hybrid claim's
         // nodes at its declared name and its `over` parameter's name.
         for (model, declaration) in package.hybrids.iter().enumerate() {
-            use super::lowering::{hybrid_site, HybridSite};
+            use super::lowering::{HybridSite, hybrid_site};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Model(model)), form.name.span);
             for (mode, written) in form.modes.iter().enumerate() {
@@ -6051,7 +6068,7 @@ impl PackageDeclarations {
             }
         }
         for (claim, declaration) in package.hybrid_claims.iter().enumerate() {
-            use super::lowering::{hybrid_site, HybridSite};
+            use super::lowering::{HybridSite, hybrid_site};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Claim(claim)), form.name.span);
             declared_type_spans.insert(hybrid_site(HybridSite::Over(claim)), form.over.name.span);
@@ -6061,7 +6078,7 @@ impl PackageDeclarations {
         // tree; the constant `true` an omitted `from` stands for is located
         // at the claim.
         for (index, declaration) in package.state_graph_claims.iter().enumerate() {
-            use super::state_graph_claim::{state_graph_site, Site};
+            use super::state_graph_claim::{Site, state_graph_site};
             let form = &declaration.form;
             declared_type_spans.insert(state_graph_site(index, Site::Claim), form.name.span);
             if let Some(over) = &form.over {
@@ -6120,6 +6137,7 @@ impl PackageDeclarations {
         package.timed_forms = unit.timed;
         package.clock_reading = unit.clock_reading;
         package.task_set_forms = unit.task_sets;
+        package.verification_plans = unit.verification_plans;
         // FR-451: a declaration is located under its own spaced name.
         declared_type_spans.extend(unit.abstractions.iter().map(|abstraction| {
             (
@@ -6673,30 +6691,48 @@ fn terminal_declarations(
         let kind = match &form.kind {
             TerminalDeclarationKind::Any => TerminalClauseKind::Any,
             TerminalDeclarationKind::When(predicate) => {
-                let objects: Vec<EffectiveId> = model.population_objects().into_iter().collect();
-                let [context] = objects.as_slice() else {
-                    let cause = if objects.is_empty() {
-                        AssemblyCause::UnresolvedTerminalState {
-                            model: alias.to_owned(),
-                        }
-                    } else {
-                        AssemblyCause::AmbiguousTerminalState {
-                            model: alias.to_owned(),
-                        }
-                    };
-                    errors.push(error(cause, form.model.span));
-                    continue;
+                let objects: BTreeSet<EffectiveId> = model
+                    .named_populations()
+                    .flat_map(|population| population.members)
+                    .collect();
+                let objects: Vec<_> = objects.into_iter().collect();
+                let self_span = predicate
+                    .expression
+                    .iter()
+                    .find(|node| matches!(node.node(), ExprNode::SelfRef))
+                    .and_then(|node| {
+                        predicate
+                            .spans
+                            .of_nodes(&predicate.expression)?
+                            .get(node.id().index())
+                            .copied()
+                    });
+                let context = match (self_span, objects.as_slice()) {
+                    (Some(_), [_]) => objects.first().cloned(),
+                    (Some(span), _) => {
+                        errors.push(error(
+                            AssemblyCause::UnresolvedTerminalState {
+                                model: alias.to_owned(),
+                            },
+                            span,
+                        ));
+                        continue;
+                    }
+                    (None, _) => None,
                 };
-                let context = context.clone();
-                let population = match population_of(models, context.clone(), types) {
-                    Ok(domain) => domain,
+                let population = match context
+                    .as_ref()
+                    .map(|context| population_of(models, context.clone(), types))
+                    .transpose()
+                {
+                    Ok(domain) => domain.flatten(),
                     Err(populations) => {
                         errors.push(error(
                             AssemblyCause::AmbiguousPopulation {
                                 context: alias.to_owned(),
                                 populations,
                             },
-                            form.model.span,
+                            self_span.unwrap_or(form.model.span),
                         ));
                         continue;
                     }

@@ -2,7 +2,8 @@
 //! A CG-shaped external caller enters FSL only through fsl-replay.
 
 use filament_eval::{
-    Admission, Body, BodyFactory, BodyFailure, Evaluation, FamilyOutcome, Resume, Transition,
+    Admission, Body, BodyFactory, BodyFailure, Evaluation, FamilyOutcome, LiveContext, Resume,
+    Transition,
 };
 use filament_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
 use filament_semantic_value::object_closure::ObjectClosure;
@@ -23,7 +24,12 @@ impl BodyFactory for Generated {
 }
 
 impl Body for GeneratedCall {
-    fn resume(&mut self, input: Resume, _meter: &mut Meter) -> Result<Transition, BodyFailure> {
+    fn resume(
+        &mut self,
+        input: Resume,
+        _context: &mut filament_eval::LiveContext,
+        _meter: &mut Meter,
+    ) -> Result<Transition, BodyFailure> {
         match input {
             Resume::Start(_) => Ok(Transition::Done(Evaluation {
                 outcome: FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(
@@ -32,6 +38,7 @@ impl Body for GeneratedCall {
                 location: None,
                 losses: vec![],
                 frame_depth: 0,
+                peak_live_occurrences: 0,
             })),
             Resume::Again | Resume::Child(_) => {
                 unreachable!("the generated body finishes on Start")
@@ -92,7 +99,7 @@ pub fn run() {
         result_units: limit,
     });
     let session = registry
-        .begin_call(
+        .begin_call_default(
             &selection,
             vec![Value::Integer(Integer::from(3_u64))],
             &environment,

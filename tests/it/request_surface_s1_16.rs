@@ -6,9 +6,9 @@
 //! adapter (`fsl_command::command::run`) and asserts on the output document,
 //! because the engines' own entry points do not exist yet.
 
-use crate::support::config_version_spine::{spine, Case};
+use crate::support::config_version_spine::{Case, spine};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -290,7 +290,10 @@ fn a_supported_clause_lowers_to_a_tl_formula() {
     let lowered = &value["tl_lowering"];
     assert_eq!(lowered["correspondence"], "mltl.closed-trace/v1", "{value}");
     assert_eq!(lowered["formula"], "G[0,3] p0", "{value}");
-    assert!(lowered["atoms"]["p0"].is_string(), "{value}");
+    assert_eq!(
+        lowered["atoms"]["p0"], "holds(c.versionNumber <= 2)",
+        "{value}"
+    );
 }
 
 // ---- FR-345: the layering gate in CI -----------------------------------
@@ -299,7 +302,6 @@ fn a_supported_clause_lowers_to_a_tl_formula() {
 /// `layering-check`, the check that passes only on the CLI's exit 21 run.
 #[test]
 #[trace("TC-2108", "FR-345-AC-15")]
-#[ignore = "QSL-2246: `refinement-layering` is not in CI_CHECKS yet"]
 fn ci_checks_include_the_layering_gate() {
     let makefile = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Makefile"))
         .expect("the Makefile");
@@ -314,8 +316,10 @@ fn ci_checks_include_the_layering_gate() {
         "{checks}"
     );
     assert!(
-        makefile.contains("refinement layering-check"),
-        "the recipe runs layering-check"
+        makefile.contains("refinement generate-layering")
+            && makefile.contains("refinement layering-check")
+            && makefile.contains("trap 'rm -rf \"$$corpus\"' EXIT"),
+        "the recipe generates the corpus, checks it, and removes the temporary directory"
     );
     // The check accepts no exit other than 21: 0 and 10 are rejected.
     for code in [0, 10] {
@@ -361,7 +365,7 @@ fn compile_bytes(unit: &str) -> Result<Vec<u8>, Value> {
 #[test]
 #[trace("TC-2103", "FR-753-AC-3")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-11")]
-#[ignore = "QSL-2236: `verify` plan emission outside the checked package not implemented yet"]
+#[ignore = "QSL-2509: plan emission outside the checked package (S4) is not on main yet"]
 fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
     let plan_free = RELEASE_PLAN.split("verify Release").next().unwrap();
     let without = compile_bytes(&format!("{MODEL_HEADER}{plan_free}")).expect("compiles");
@@ -397,9 +401,11 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
 /// and blocks `timely` naming `safe`, one disposition per node.
 #[test]
 #[trace("TC-2103", "FR-753-AC-4")]
-#[ignore = "QSL-2236: verification plan execution not implemented yet"]
+#[trace("TC-3018", "FR-1038-AC-1")]
+#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
+#[ignore = "QSL-2511: the plan coordinator (execute_plan) and QSL-2509 plan documents are not on main yet"]
 fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
-    let (_, value) = run(
+    let (exit, value) = run(
         &format!("{MODEL_HEADER}{RELEASE_PLAN}"),
         true,
         (
@@ -414,6 +420,165 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     assert_eq!(nodes["timely"]["status"], "blocked", "{value}");
     assert_eq!(nodes["timely"]["blocked_by"], "safe", "{value}");
     assert_eq!(nodes.as_object().map(|n| n.len()), Some(3), "{value}");
+    let outcome = &value["verification_plan"];
+    assert_eq!(
+        outcome["format"], "filament.verification-plan-outcome/v1",
+        "{value}"
+    );
+    assert_eq!(outcome["failed_steps"], json!(["safe"]), "{value}");
+    assert_eq!(outcome["inputs"]["seed"], 7, "{value}");
+    assert_eq!(exit, 22, "{value}");
+}
+
+/// The `details.path` of a refused run's document.
+fn refusal_path(value: &Value) -> &str {
+    value["details"]["path"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a path: {value}"))
+}
+
+/// FR-1038-AC-2, FSpec FR-824-AC-3: the strict reader refuses a malformed
+/// `verification_plan` member at its exact pointer before any stage runs, so
+/// no outcome is written and the run exits `20`.
+#[test]
+#[trace("TC-3018", "FR-1038-AC-2")]
+#[trace("TC-3032", "FR-1038-AC-3")]
+#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
+#[trace("FSpec-TC-2046", "FSpec-FR-824-AC-6")]
+fn the_verification_plan_reader_refuses_a_malformed_member_at_its_pointer() {
+    let unit = format!("{MODEL_HEADER}{RELEASE_PLAN}");
+    for (member, cause, pointer) in [
+        (
+            json!({"plan": "Release", "seed": "7"}),
+            "wrong-value-kind",
+            "/request/verification_plan/seed",
+        ),
+        (
+            json!({"plan": "Release", "seed": -1}),
+            "invalid-value",
+            "/request/verification_plan/seed",
+        ),
+        (
+            json!({"plan": "Release", "seed": 7.5}),
+            "invalid-value",
+            "/request/verification_plan/seed",
+        ),
+        (
+            serde_json::from_str(r#"{"plan": "Release", "seed": 18446744073709551616}"#).unwrap(),
+            "invalid-value",
+            "/request/verification_plan/seed",
+        ),
+        (
+            json!({"plan": "Release", "emit": "yes"}),
+            "wrong-value-kind",
+            "/request/verification_plan/emit",
+        ),
+        (
+            json!({"plan": "Release", "emit": false, "execute": false}),
+            "invalid-value",
+            "/request/verification_plan/execute",
+        ),
+        (
+            json!({"plan": "Release", "engine": "x"}),
+            "unknown-member",
+            "/request/verification_plan/engine",
+        ),
+        (
+            json!({"plan": "Release", "document": {"file": "p.json"}}),
+            "unknown-member",
+            "/request/verification_plan/document",
+        ),
+        (json!([]), "wrong-value-kind", "/request/verification_plan"),
+        (
+            json!(null),
+            "wrong-value-kind",
+            "/request/verification_plan",
+        ),
+    ] {
+        let (exit, value) = run(&unit, true, ("verification_plan", member));
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(refusal_path(&value), pointer, "{value}");
+        refusal_names(&value, cause);
+        assert!(
+            value.get("verification_plan").is_none(),
+            "no outcome: {value}"
+        );
+    }
+}
+
+/// FR-1038-AC-3, FSpec FR-824-AC-6: a `null` member inside the object is
+/// absent, so the request passes the reader and reaches the stages after it
+/// (which refuse the unimplemented member as before, not at its kind).
+#[test]
+#[trace("TC-3032", "FR-1038-AC-3")]
+#[trace("FSpec-TC-2046", "FSpec-FR-824-AC-6")]
+fn a_null_member_inside_the_verification_plan_object_is_absent() {
+    let unit = format!("{MODEL_HEADER}{RELEASE_PLAN}");
+    let (_, value) = run(
+        &unit,
+        true,
+        (
+            "verification_plan",
+            json!({"plan": "Release", "seed": null, "emit": null, "initial": null}),
+        ),
+    );
+    let path = value["details"]["path"].as_str().unwrap_or_default();
+    assert!(
+        !path.starts_with("/request/verification_plan/"),
+        "the reader refused a null member: {value}"
+    );
+}
+
+/// FR-1038-AC-2, FSpec FR-824-AC-2/AC-3: the plan is selected by declared
+/// name, an omitted name runs the only plan, and bad selections or inputs
+/// refuse at their `/verification_plan` pointers.
+#[test]
+#[trace("TC-3018", "FR-1038-AC-2")]
+#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
+#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
+#[ignore = "QSL-2508/QSL-2509: plan selection over emitted plan documents is not on main yet; the request members are read (QSL-2510)"]
+fn the_verification_plan_member_selects_one_plan_or_refuses() {
+    let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
+    let (_, value) = run(
+        &one,
+        true,
+        ("verification_plan", json!({"emit": true, "execute": false})),
+    );
+    assert_eq!(value["verification_plan"]["plan"], "Release", "{value}");
+    let two = format!(
+        "{one}verify Other using v {{\n\
+           check only claim Always method model_based_test domain Config::ConfigVersion bound 5;\n\
+         }}\n"
+    );
+    for (unit, member, cause, pointer) in [
+        (
+            two.as_str(),
+            json!({}),
+            "missing-member",
+            "/verification_plan/plan",
+        ),
+        (
+            one.as_str(),
+            json!({"plan": "Nope"}),
+            "missing-name",
+            "/verification_plan/plan",
+        ),
+        (
+            one.as_str(),
+            json!({"plan": "Never"}),
+            "missing-name",
+            "/verification_plan/plan",
+        ),
+    ] {
+        let (exit, value) = run(unit, true, ("verification_plan", member));
+        assert_eq!(exit, 20, "{value}");
+        refusal_names(&value, cause);
+        refusal_names(&value, pointer);
+        assert!(
+            value["verification_plan"].get("dispositions").is_none(),
+            "{value}"
+        );
+    }
 }
 
 fn pick(block: &str, objective: &str) -> String {
@@ -428,19 +593,28 @@ fn pick(block: &str, objective: &str) -> String {
 #[test]
 #[trace("TC-2104", "FR-754-AC-3")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-6")]
+#[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
 #[ignore = "QSL-2235: bounded synthesis run not implemented yet"]
 fn pick_finds_validates_exhausts_and_optimizes() {
     let synth = |unit: String| run(&unit, false, ("synthesis", json!({"declaration": "Pick"}))).1;
     let found = synth(pick("Pick * Pick = 49", ""));
     assert_eq!(found["synthesis"]["status"], "candidate", "{found}");
-    assert_eq!(found["synthesis"]["candidate"], 7, "{found}");
+    assert_eq!(
+        found["synthesis"]["candidate"],
+        json!({"type": "integer", "value": "7"}),
+        "{found}"
+    );
     assert_eq!(found["synthesis"]["check"], "validated", "{found}");
     let none = synth(pick("Pick * Pick = 50", ""));
     assert_eq!(none["synthesis"]["status"], "no-candidate", "{none}");
-    assert_eq!(none["synthesis"]["visited"], 10, "{none}");
+    assert_eq!(none["synthesis"]["explored"]["visited"], 10, "{none}");
     let optimal = synth(pick("Pick >= 3", "minimize Pick"));
-    assert_eq!(optimal["synthesis"]["candidate"], 3, "{optimal}");
+    assert_eq!(
+        optimal["synthesis"]["candidate"],
+        json!({"type": "integer", "value": "3"}),
+        "{optimal}"
+    );
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
 }
 
@@ -455,11 +629,11 @@ fn a_work_limited_synthesis_is_incomplete() {
         false,
         (
             "synthesis",
-            json!({"declaration": "Pick", "limits": {"work": 1}}),
+            json!({"declaration": "Pick", "limits": {"max_work": 1}}),
         ),
     );
     assert_eq!(value["synthesis"]["status"], "incomplete", "{value}");
-    refusal_names(&value["synthesis"], "work");
+    refusal_names(&value["synthesis"]["cause"], "synthesis.max_work");
 }
 
 fn reach(objective: &str, policy: Value) -> Value {
@@ -773,7 +947,10 @@ fn a_tl_lowering_request_selects_its_correspondence() {
     assert_eq!(record["disposition"], "supported", "{default}");
     assert_eq!(record["correspondence"], "mltl.closed-trace/v1");
     assert_eq!(record["formula"], "G[0,3] p0");
-    assert!(record["atoms"]["p0"].is_string(), "{default}");
+    assert_eq!(
+        record["atoms"]["p0"], "holds(c.versionNumber <= 2)",
+        "{default}"
+    );
     let (code, named) = lower(json!({"clause": "Low", "correspondence": "mltl.closed-trace/v1"}));
     assert_eq!(code, 0);
     assert_eq!(
@@ -808,6 +985,449 @@ fn a_tl_lowering_request_selects_its_correspondence() {
         value["tl_lowering"]["correspondence"],
         "mltl.origin-complete-history/v1"
     );
+}
+
+/// `Low` with the source union `Shape` declared by the unit, the leaf `leaf`
+/// as its body under `always [0, 3]`.
+fn shape_low(leaf: &str) -> String {
+    low(EVENT_POSITION, &format!("always [0, 3] {leaf}"))
+        .replacen(
+            "model Config",
+            "profile v = \"filament.value.complete/v1\";\nmodel Config",
+            1,
+        )
+        .replacen(
+            "temporal Low",
+            "union Shape { Circle(Integer), Rect(Integer, Integer), Empty }\ntemporal Low",
+            1,
+        )
+}
+
+/// FR-931-AC-13 (source route): a `case` prints its arms in member
+/// declaration order with each binder under its declared name, nested
+/// binders keep their scopes, `_` is an ordinary binder, and renaming a
+/// binder changes the label. The package route is
+/// `case_binders_match_across_the_source_and_package_routes`.
+#[test]
+#[trace("TC-3039", "FR-931-AC-13")]
+#[ignore = "QSL-2632: a bounded-integer argument to a union member emits a union_value the strict package read refuses (TypeMismatch); the literal-argument twin below runs"]
+fn case_binders_print_under_their_declared_names() {
+    let atom = |leaf: &str| {
+        let (code, value) = run(
+            &shape_low(leaf),
+            true,
+            ("tl_lowering", json!({"clause": "Low"})),
+        );
+        assert_eq!(code, 0, "{value}");
+        value["tl_lowering"]["atoms"]["p0"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let first = atom(
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
+    );
+    // The union's declaration key `ix://<SourceOwner identity>/Shape` (FR-931 "Names").
+    let key = first
+        .strip_prefix("holds(case ")
+        .and_then(|rest| rest.split_once("::Rect("))
+        .map(|(key, _)| key.to_owned())
+        .unwrap_or_else(|| panic!("{first}"));
+    assert!(
+        key.starts_with("ix://") && key.ends_with("/Shape"),
+        "{first}"
+    );
+    assert_eq!(
+        first,
+        format!(
+            "holds(case {key}::Rect(c.versionNumber, 2) {{ Circle(r): r <= 2; \
+             Rect(w, h): w + h <= 4; Empty: true; }})"
+        )
+    );
+    let nested = atom(
+        "holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; \
+         Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; \
+         Empty: true; })",
+    );
+    assert_eq!(
+        nested,
+        format!(
+            "holds(let k = c.versionNumber in case {key}::Rect(k, 1) {{ Circle(r): r <= k; \
+             Rect(_, h): case {key}::Circle(h) {{ Circle(x): x + k <= 4; Rect(a, b): false; \
+             Empty: true; }}; Empty: true; }})"
+        )
+    );
+    let renamed = atom(
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(width, h): width+h<=4; Circle(r): r<=2; })",
+    );
+    assert!(
+        renamed.contains("Rect(width, h): width + h <= 4"),
+        "{renamed}"
+    );
+    assert_ne!(renamed, first);
+}
+
+/// The atom of `leaf` lowered on the source route.
+fn source_only(leaf: &str) -> String {
+    let (code, value) = run(
+        &shape_low(leaf),
+        true,
+        ("tl_lowering", json!({"clause": "Low"})),
+    );
+    assert_eq!(code, 0, "{value}");
+    value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// A leaf over `shape_low` lowered on the
+/// source route and, after compiling `shape_low(leaf)` to a checked package
+/// and removing the source, on the package route (FR-1039) over the
+/// handoff directory, whose identity rows carry the unit's source union. Returns each
+/// leaf's source and package `atoms` entry of `p0`.
+fn both_routes(leaf: &str) -> (String, String) {
+    both_routes_over(leaf, json!({"directory": "handoff"}))
+}
+
+/// [`both_routes`] with the package leg selecting `package`.
+fn both_routes_over(leaf: &str, package: Value) -> (String, String) {
+    let unit = shape_low(leaf);
+    let lower = json!({"clause": "Low"});
+    let (code, value) = run(&unit, true, ("tl_lowering", lower.clone()));
+    assert_eq!(code, 0, "{value}");
+    let from_source = value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    let compile = directory.path().join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": models, "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": package, "tl_lowering": lower}}),
+    );
+    assert_eq!(code, 0, "{value}");
+    let from_package = value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (from_source, from_package)
+}
+
+/// FR-931-AC-18, FR-1039-AC-6 (TC-2601, TC-3019): a unit's checked package
+/// selected as its handoff `package` `{"directory": D}` with the source
+/// removed returns the record the source route returns, byte-equal, for each
+/// correspondence, and a name that is no temporal clause refuses
+/// `missing_declaration` as on the source route. Over a `{file}` selection
+/// that name refuses the same way and a `cross_evaluate` refuses
+/// `invalid-request` with `requires: directory`.
+#[test]
+#[trace("TC-2601", "FR-931-AC-18")]
+#[trace("TC-3019", "FR-1039-AC-6")]
+fn a_tl_lowering_over_a_package_returns_the_source_record() {
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    let compile = directory.path().join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": models, "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    for lowering in [
+        json!({"clause": "Low"}),
+        json!({"clause": "Low", "correspondence": "mltl.online-prefix/v1"}),
+        json!({"clause": "Low", "correspondence": "mltl.origin-complete-history/v1"}),
+        json!({"clause": "Nothing"}),
+    ] {
+        let (source_code, from_source) = run(&unit, true, ("tl_lowering", lowering.clone()));
+        let (code, from_package) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {"models": models,
+                "package": {"directory": "handoff"}, "tl_lowering": lowering}}),
+        );
+        assert_eq!(code, source_code, "{lowering}: {from_package}");
+        assert_eq!(from_package, from_source, "{lowering}");
+    }
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"file": "package.json"}, "tl_lowering": {"clause": "Nothing"}}}),
+    );
+    assert_eq!(code, 20, "{value}");
+    assert_eq!(value["code"], "missing_declaration", "{value}");
+    assert_eq!(value["cause"], "missing-name", "{value}");
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"file": "package.json"},
+            "tl_lowering": {"clause": "Low", "cross_evaluate": {"trace": {"finite": []}}}}}),
+    );
+    assert_eq!(code, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert_eq!(
+        value["details"],
+        json!({"member": "tl_lowering.cross_evaluate", "requires": "directory"}),
+        "{value}"
+    );
+    for (request, member) in [
+        (
+            json!({"models": models, "package": {"directory": "handoff"},
+                "tl_lowering": {"clause": "Low", "formula": 1}}),
+            "tl_lowering.formula",
+        ),
+        (
+            json!({"models": models, "package": {"directory": "handoff"},
+                "call": {"function": "f", "arguments": []},
+                "tl_lowering": {"clause": "Low"}}),
+            "tl_lowering",
+        ),
+    ] {
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": request}),
+        );
+        assert_eq!(code, 20, "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert!(value["message"].as_str().unwrap().contains(member), "{value}");
+    }
+}
+
+/// FR-400-AC-13 and FR-931-AC-13 (package route): the reader-backed read
+/// gives every `case` and `let` binding site the declared names the
+/// in-process read gives, observed through the one printer that reads them,
+/// so each leaf, and each leaf with its binders renamed, gives byte-equal
+/// `atoms` on both routes.
+#[test]
+#[trace("TC-3039", "FR-400-AC-13")]
+#[trace("TC-3039", "FR-931-AC-13")]
+fn case_binders_match_across_the_source_and_package_routes() {
+    for leaf in [
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
+        "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(width, h): width+h<=4; Circle(r): r<=2; })",
+        "holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; \
+         Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; \
+         Empty: true; })",
+        "holds(let kk = c.versionNumber in case Shape::Rect(kk, 1) { Circle(rr): rr <= kk; \
+         Rect(_, hh): case Shape::Circle(hh) { Circle(xx): xx + kk <= 4; Rect(aa, bb): false; Empty: true; }; \
+         Empty: true; })",
+    ] {
+        let (from_source, from_package) = both_routes(leaf);
+        assert_eq!(from_source, from_package, "{leaf}");
+    }
+}
+
+/// FR-931-AC-18 and FR-1039 (`{file}` form): the atom text of a clause that
+/// reads a model object is built from the package alone, so the `{file}`
+/// selection returns the source route's atom.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-6")]
+#[ignore = "QSL-2726: a {file} selection carries no identity rows, so the package world has no model object or source union"]
+fn the_file_form_prints_the_source_routes_atoms() {
+    let leaf = "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })";
+    let (from_source, from_package) = both_routes_over(leaf, json!({"file": "package.json"}));
+    assert_eq!(from_source, from_package);
+}
+
+/// The unit of `a_reading_clause_with_a_capture_lowers_alike_on_both_routes`:
+/// an `on each` clause with one capture, an IEEE ordering over a non-local
+/// operand written in a `holds` condition and in a pure function it calls.
+const READING_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.value.complete/v1\";\n\
+     profile t = \"filament.temporal.infinite-trace/v1\";\n\
+     record Reading { level: Int[0, 9]; stopped: Boolean; }\n\
+     function below using v(x: Reading): Boolean pure \
+     { -float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000) }\n\
+     temporal Direct using t over (r: Reading) clock \"steps\" \
+     on each (q: Reading) when (r.level >= 0 and q.level >= 0) \
+     { capture start: Int[0, 9] = q.level; \
+     once [1, 1] holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000) \
+     and r.level >= start) }\n\
+     temporal Called using t over (r: Reading) clock \"steps\" \
+     on each (q: Reading) { capture start: Int[0, 9] = q.level; \
+     once [1, 1] holds(below(r) and r.level >= start) }\n";
+
+/// FR-931-AC-14, FR-397-AC-29: the checker numbers an IEEE operand binder
+/// after every binder its term is typed over, so a `holds` condition of an
+/// `on each` clause with a capture, and a function body it calls (numbered
+/// from its own parameters), lower to the same record on both routes.
+#[test]
+#[trace("TC-3039", "FR-931-AC-14")]
+fn a_reading_clause_with_a_capture_lowers_alike_on_both_routes() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("unit.native"), READING_UNIT).unwrap();
+    let compile = directory.path().join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": [], "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    for clause in ["Direct", "Called"] {
+        let lower = json!({"clause": clause, "correspondence": "mltl.infinite-trace/v1"});
+        let (source_code, from_source) = run(READING_UNIT, false, ("tl_lowering", lower.clone()));
+        let (code, from_package) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {"models": [],
+                "package": {"directory": "handoff"}, "tl_lowering": lower}}),
+        );
+        assert_eq!(source_code, 0, "{clause}: {from_source}");
+        assert_eq!(code, 0, "{clause}: {from_package}");
+        assert_eq!(from_package, from_source, "{clause}");
+    }
+}
+
+/// FR-931-AC-14: the checker's own `#ieee_operand` binders of an IEEE
+/// ordering never print. With one bound operand the composition prints
+/// lesser-left; with two it keeps its source orientation. An author's
+/// `ieee_operand_0` around a comparison prints as written. Both routes agree.
+#[test]
+#[trace("TC-3039", "FR-931-AC-14")]
+fn the_checker_ieee_operand_binder_never_prints() {
+    const A: &str = "float64(bits: 0x3ff0000000000000)";
+    const Z: &str = "float64(bits: 0x0000000000000000)";
+    let check = |leaf: String, expected: &str| {
+        let (from_source, from_package) = both_routes(&leaf);
+        assert_eq!(from_source, expected, "{leaf}");
+        assert_eq!(from_package, expected, "{leaf}");
+        assert!(
+            !from_source.contains("let") && !from_source.contains('#'),
+            "{from_source}"
+        );
+    };
+    let one = format!("holds(-{A} < {Z})");
+    check(one.clone(), &one);
+    check(format!("holds({Z} > -{A})"), &one);
+    let greater = format!("holds(-{A} > -{Z})");
+    check(greater.clone(), &greater);
+    let lesser = format!("holds(-{Z} < -{A})");
+    check(lesser.clone(), &lesser);
+    assert_ne!(greater, lesser);
+
+    let written = format!("holds(let ieee_operand_0 = -{A} in ieee_operand_0 < {Z})");
+    let (from_source, from_package) = both_routes(&written);
+    assert_eq!(from_source, written);
+    assert_eq!(from_package, written);
+}
+
+/// FR-931-AC-14 (source route): a float literal that only a temporal clause
+/// writes selects the IEEE profile, so the unit compiles with no float
+/// declared and the lowering prints the ordering as written.
+#[test]
+#[trace("TC-3039", "FR-931-AC-14")]
+fn a_float_literal_only_a_temporal_clause_writes_selects_the_ieee_profile() {
+    let leaf = "holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000))";
+    assert_eq!(source_only(leaf), leaf);
+}
+
+/// FR-397-AC-29: the checker names each IEEE ordering operand binder
+/// `#ieee_operand`, outer (left operand) first, and binds no literal or
+/// local read; no parameter node name begins with `ieee_operand`.
+#[test]
+#[trace("TC-3039", "FR-397-AC-29")]
+fn the_checker_names_its_ieee_operand_binders_with_a_hash() {
+    for (body, levels) in [
+        ("-p < -q", vec![2, 3]),
+        ("-p < q", vec![2]),
+        ("p < q", vec![]),
+    ] {
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function lt using v(p: Float64[nearest-even], q: Float64[nearest-even]): Boolean pure {{ {body} }}\n"
+        );
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+        let compile = directory.path().join("compile.json");
+        std::fs::write(
+            &compile,
+            serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+                "models": [], "program": {"source": source("unit.native")},
+                "output": {"package": "package.json"}}}))
+            .unwrap(),
+        )
+        .unwrap();
+        fsl_command::command::compile(&compile).expect("the unit compiles");
+        let package: Value =
+            serde_json::from_slice(&std::fs::read(directory.path().join("package.json")).unwrap())
+                .unwrap();
+        // Every parameter node's `name` and `level` members.
+        let mut parameters = Vec::new();
+        let nodes = package["semantic_graph"]["nodes"].as_array().unwrap();
+        for node in nodes
+            .iter()
+            .filter(|node| node["semantic_form"] == "parameter")
+        {
+            let member = |name: &str| {
+                node["body"]["members"]
+                    .as_array()
+                    .and_then(|members| members.iter().find(|member| member["name"] == name))
+                    .map(|member| member["value"]["value"].clone())
+            };
+            parameters.push((member("name"), member("level")));
+        }
+        // The binders bind the operand expressions, so a one-operand binder
+        // fails the count and the levels.
+        let mut hashed = parameters
+            .iter()
+            .filter(|(name, _)| name.as_ref().is_some_and(|name| name == "#ieee_operand"))
+            .map(|(_, level)| {
+                level
+                    .as_ref()
+                    .and_then(Value::as_str)
+                    .and_then(|level| level.parse::<u64>().ok())
+            })
+            .collect::<Vec<_>>();
+        hashed.sort_unstable();
+        assert_eq!(
+            hashed,
+            levels.iter().copied().map(Some).collect::<Vec<_>>(),
+            "{body}: {parameters:?}"
+        );
+        assert!(
+            !parameters.iter().any(|(name, _)| name
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.starts_with("ieee_operand"))),
+            "{body}: {parameters:?}"
+        );
+    }
 }
 
 /// A driver can execute the value returned by the public preparation API.
@@ -934,11 +1554,6 @@ fn a_malformed_tl_lowering_member_is_refused() {
             json!({"clause": "Low", "cross_evaluate": {"initial": "spine-snapshot.json",
                 "max_steps": 0}}),
             "max_steps",
-        ),
-        (
-            json!({"clause": "Low", "cross_evaluate": {"trace": {"lasso": {"prefix": [],
-                "loop": ["spine-snapshot.json"]}}}}),
-            "tl_lowering.cross_evaluate.trace",
         ),
     ] {
         let (code, value) = lower(member.clone());
@@ -1077,7 +1692,7 @@ fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
         .map(|key| {
             let mut object = template.clone();
             object["key"] = json!(key);
-            object["fields"]["versionNumber"] = json!({"type": "integer", "value": "0"});
+            object["fields"]["versionNumber"] = json!({"integer": "0"});
             object["fields"]["parent"] = json!({"absent": {}});
             object
         })
@@ -1266,4 +1881,101 @@ fn tl_cross_evaluation_refuses_an_incomplete_universe_and_counts_an_empty_one() 
     assert_eq!(cross["traces"], 0, "{value}");
     assert_eq!(cross["positions"], 0, "{value}");
     assert_eq!(cross["agree"], true, "{value}");
+}
+
+/// FR-931-AC-10, fairness half (TC-3023 step 4): the infinite-trace clause
+/// `C` with a weak fairness constraint over an observed lasso settles
+/// `MissingFairnessPremise` as FR-329 settles it, exit 21, and its record
+/// carries no `cross_evaluation`, because the native side has no verdict to
+/// compare; the same clause without the constraint cross-evaluates.
+#[test]
+#[trace("TC-3023", "FR-931-AC-10")]
+fn a_fairness_constraint_over_a_lasso_settles_missing_fairness_premise() {
+    let unit = |constraint: &str| {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             profile m = \"filament.model.complete/v1\";\n\
+             profile t = \"filament.temporal.infinite-trace/v1\";\n\
+             model Config = \"example/config-version\";\n\
+             record Counter {{ level: Int[0, 9]; }}\n\
+             temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+             {{ {constraint}once[1,1] not holds(c.level = 0) }}\n"
+        )
+    };
+    let lasso = json!({"lasso": {"prefix": [],
+        "loop": [{"sample": {"level": {"integer": "0"}}}]}});
+    let lower = |unit: String| {
+        run(
+            &unit,
+            true,
+            (
+                "tl_lowering",
+                json!({"clause": "C", "cross_evaluate": {"trace": lasso}}),
+            ),
+        )
+    };
+    let (code, value) = lower(unit(""));
+    assert_eq!(code, 0, "{value}");
+    assert_eq!(value["tl_lowering"]["cross_evaluation"]["agree"], true);
+    assert_eq!(
+        value["tl_lowering"]["atoms"]["p0"], "holds(c.level = 0)",
+        "{value}"
+    );
+
+    let (code, value) = lower(unit(
+        "fair weak each Config::ConfigVersion::attemptUpdate; ",
+    ));
+    assert_eq!(code, 21, "{value}");
+    assert!(
+        value.to_string().contains("MissingFairnessPremise")
+            || value.to_string().contains("missing-fairness-premise"),
+        "{value}"
+    );
+    assert!(value.get("tl_lowering").is_none(), "{value}");
+}
+
+/// FR-931-AC-13 over leaves with no model field read (the package route of
+/// `tl_lowering` is not implemented yet): each
+/// `case` and `let` binder prints under its declared name, arms print in
+/// member declaration order, `_` is an ordinary binder, and renaming a binder
+/// renames the label.
+#[test]
+#[trace("TC-3039", "FR-931-AC-13")]
+fn case_binders_print_under_their_declared_names_without_a_model_read() {
+    let leaf = |binders: [&str; 8]| {
+        let [k, r, h, x, a, b, w, m] = binders;
+        format!(
+            "holds((let {k} = 3 in case Shape::Rect({k}, 1) {{ Circle({r}): {r} <= {k}; \
+             Rect(_, {h}): case Shape::Circle({h}) {{ Circle({x}): {x} + {k} <= 4; \
+             Rect({a}, {b}): false; Empty: true; }}; Empty: true; }}) and (case Shape::Rect(1, 2) \
+             {{ Empty: true; Rect({w}, {m}): {w} + {m} <= 4; Circle(z): z <= 2; }}))"
+        )
+    };
+    let from_source = source_only(&leaf(["k", "r", "h", "x", "a", "b", "w", "m"]));
+    let key = from_source
+        .strip_prefix("holds((let k = 3 in case ")
+        .and_then(|rest| rest.split_once("::Rect("))
+        .map(|(key, _)| key.to_owned())
+        .unwrap_or_else(|| panic!("{from_source}"));
+    assert!(
+        key.starts_with("ix://") && key.ends_with("/Shape"),
+        "{from_source}"
+    );
+    assert_eq!(
+        from_source,
+        format!(
+            "holds((let k = 3 in case {key}::Rect(k, 1) {{ Circle(r): r <= k; \
+             Rect(_, h): case {key}::Circle(h) {{ Circle(x): x + k <= 4; Rect(a, b): false; \
+             Empty: true; }}; Empty: true; }}) and (case {key}::Rect(1, 2) \
+             {{ Circle(z): z <= 2; Rect(w, m): w + m <= 4; Empty: true; }}))"
+        )
+    );
+    let renamed = leaf(["kk", "rr", "hh", "xx", "aa", "bb", "ww", "mm"]);
+    let renamed_source = source_only(&renamed);
+    assert_ne!(renamed_source, from_source);
+    assert!(
+        renamed_source.contains("Rect(ww, mm): ww + mm <= 4"),
+        "{renamed_source}"
+    );
 }

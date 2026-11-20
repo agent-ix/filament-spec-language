@@ -413,11 +413,10 @@ fn an_analyze_request_supplies_the_integer_division_law() {
     assert_eq!(document["diagnostics"][0]["cause"], "unsupported-selection");
 }
 
-/// FR-620-AC-11 (TC-2215): `hashed_bytes` bounds no work in FSL, so a
+/// FR-620-AC-11 (TC-2215): `hashed_bytes` is not a normalization limit, so a
 /// `limits.normalization` member of that name refuses the whole request.
 #[trace("TC-2215", "FR-620-AC-11")]
 #[test]
-#[ignore = "QSL-2269: the analyze request still accepts limits.normalization.hashed_bytes"]
 fn hashed_bytes_is_not_a_normalization_limit() {
     for (n, (normalization, exit)) in [
         (json!({"hashed_bytes": 1}), 20),
@@ -625,7 +624,6 @@ fn a_pending_clause_run_reports_its_pending_disposition() {
 #[trace("TC-1580", "FR-620-AC-1")]
 #[trace("TC-2410", "FR-850-AC-1")]
 #[test]
-#[ignore = "QSL-2410: the Counter's pre and post state clauses have no package form until claim_names names them, so its package model-check input refuses the state form"]
 fn a_package_selection_analyzes_as_its_source() {
     let items = json!([{"claim": "Bounded"}, {"claim": "BelowThree"}]);
     let body = format!("{}{}", bounded(), below_three());

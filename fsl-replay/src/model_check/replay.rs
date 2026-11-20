@@ -71,6 +71,11 @@ use fsl_semantics::model::observation::DocumentRef;
 
 mod timed;
 
+#[cfg(test)]
+#[path = "../../../fsl-semantics/tests/support/tc1070.rs"]
+#[allow(dead_code, clippy::duplicate_mod)]
+mod qsl_2204_tc1070;
+
 pub(super) use self::timed::timed_prefix;
 
 use crate::bounds::ReplayLimits;
@@ -115,6 +120,9 @@ pub struct TimedReplay {
     /// The bound on a state's live clocks the counterexample was found
     /// under (FSpec FR-415, `model_check.max_clocks`).
     pub max_clocks: std::num::NonZeroU64,
+    /// Whether the evidence was produced by the integer-clock reading
+    /// selected by EN-1's `digital-clocks` method.
+    pub digital: bool,
 }
 
 /// What forbids a delay in a timed counterexample (FR-231 "Delay").
@@ -404,6 +412,17 @@ pub enum ModelTraceRefusal {
         /// Its transition identity.
         transition: Box<ProtocolTransition>,
     },
+    /// An observed protocol event was not enabled because its first
+    /// `related by` premise did not hold (FR-731).
+    #[error("invalid_runtime_input/invalid-value: protocol step {step} at `{node}` fails related-by clause `{relationship}`")]
+    ProtocolRelatedBy {
+        /// The step's zero-based index in the prefix.
+        step: usize,
+        /// The event node's declaration path.
+        node: String,
+        /// The first failed relationship clause's protocol-local name.
+        relationship: String,
+    },
     /// A `send` step whose replayed send record differs from the one it
     /// records (ADR-027 PX-2).
     #[error("stale_dependency/content-mismatch: send step {step} records {recorded:?}; it replays {replayed:?}")]
@@ -532,6 +551,7 @@ impl ModelTraceRefusal {
             | Self::TimedSubject(_)
             | Self::NotEnabled { .. }
             | Self::ProtocolNotEnabled { .. }
+            | Self::ProtocolRelatedBy { .. }
             | Self::SendRecordShape { .. }
             | Self::OverBinding
             | Self::RaceOverModel
@@ -584,6 +604,7 @@ impl ModelTraceRefusal {
             | Self::TimedSubject(_)
             | Self::NotEnabled { .. }
             | Self::ProtocolNotEnabled { .. }
+            | Self::ProtocolRelatedBy { .. }
             | Self::SendRecordShape { .. }
             | Self::OverBinding
             | Self::RaceOverModel
@@ -824,7 +845,7 @@ pub fn replay_model_trace_from_package(
     let payload = envelope.family_payload();
     let documents = request.byte_provision().snapshots();
     let meter = request.accounting_limits();
-    let system = ModelSystem::new(ModelSimulationRequest {
+    let admission = ModelSimulationRequest {
         input: input.input(),
         packages: &packages,
         normalization: limits.spine.model,
@@ -835,9 +856,14 @@ pub fn replay_model_trace_from_package(
         expansion: subject.expansion,
         meter,
         emit: limits.spine.package.emit(),
-    })
-    .map_err(ReplayRefusal::Admission)?;
+    };
     let (for_deadlock, for_race) = derived_items(payload);
+    let system = if for_deadlock {
+        ModelSystem::new_over_read_identities(admission)
+    } else {
+        ModelSystem::new(admission)
+    }
+    .map_err(ReplayRefusal::Admission)?;
     if for_deadlock || for_race || matches!(payload.kind, CounterexampleKind::TimeLock) {
         // A package-level freedom item over a model subject is anchored at
         // the `model_root` node of a model selection the package records, with
@@ -867,12 +893,12 @@ pub fn replay_model_trace_from_package(
         return Ok(ModelTraceReplayResult {
             settlement,
             hints,
-            terminals: TerminalKeys::default(),
+            terminals: input.input().terminal_keys(),
         });
     }
     let clause = input
         .temporal_clause(
-            envelope.clause_node(),
+            envelope.occurrence_key(),
             filament_semantic_value::checking::CheckingLimits::default().nodes(),
         )
         .map_err(|refusal| {
@@ -919,7 +945,7 @@ pub fn replay_model_trace_from_package(
     Ok(ModelTraceReplayResult {
         settlement,
         hints,
-        terminals: TerminalKeys::default(),
+        terminals: input.input().terminal_keys(),
     })
 }
 
@@ -953,7 +979,12 @@ pub fn replay_model_trace_with_temporal_selections(
                     recompiled: clause.fairness().to_vec(),
                 }))
             })?;
-            let system = ModelSystem::new(simulation(subject)).map_err(ReplayRefusal::Admission)?;
+            let system = if resolved_deadlock(envelope.family_payload(), clause.is_none()) {
+                ModelSystem::new_over_read_identities(simulation(subject))
+            } else {
+                ModelSystem::new(simulation(subject))
+            }
+            .map_err(ReplayRefusal::Admission)?;
             let formula = clause.map(|clause| FormulaReplay {
                 clause,
                 letters,
@@ -1239,7 +1270,23 @@ impl ProtocolReplay<'_> {
         // A step that the resolved models do not reproduce refuses before a
         // fairness set that differs, which a change of memory model changes
         // too (FR-227-AC-1).
-        let replayed = replay_prefix(system, payload, &PROTOCOL_STEPS)?;
+        let replayed = match replay_prefix_with_mismatch_explanation(
+            system,
+            payload,
+            &PROTOCOL_STEPS,
+            |step, state, transition| {
+                system
+                    .related_by_failure(state, transition)
+                    .map(|relationship| ModelTraceRefusal::ProtocolRelatedBy {
+                        step,
+                        node: transition.node().unwrap_or("<unknown>").to_owned(),
+                        relationship,
+                    })
+            },
+        ) {
+            Ok(replayed) => replayed,
+            Err(refusal) => return Err(refusal),
+        };
         if self.clause.is_some() && payload.fairness != fairness {
             return Err(refused(ModelTraceRefusal::ProtocolFairnessSet {
                 payload: payload.fairness.clone(),
@@ -1454,7 +1501,20 @@ fn resolve_item<'p, T: SubjectTransition>(
         .graph()
         .temporal_clauses()
         .iter()
-        .find(|candidate| candidate.identity() == *envelope.clause_node());
+        .find(|candidate| {
+            candidate.identity() == *envelope.clause_node()
+                && candidate.claim() == envelope.occurrence_key().origin()
+        })
+        // Structurally equal clauses share a node: the whole key names the
+        // declaration, and a node whose occurrence is not declared still
+        // answers with the identity mismatch below.
+        .or_else(|| {
+            package
+                .graph()
+                .temporal_clauses()
+                .iter()
+                .find(|candidate| candidate.identity() == *envelope.clause_node())
+        });
     let Some(found) = found else {
         return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
             clause_node: envelope.clause_node().clone(),
@@ -1467,6 +1527,16 @@ fn resolve_item<'p, T: SubjectTransition>(
     let clause = found.clause();
     check_fairness(clause)?;
     Ok(Some(clause))
+}
+
+/// Whether a source-route replay of `payload` is of the derived deadlock
+/// item: a counterexample of a deadlock, or of an undefined derived
+/// evaluation, over a request item that is no authored clause.
+fn resolved_deadlock<T: SubjectTransition>(
+    payload: &TemporalCounterexample<T>,
+    no_clause: bool,
+) -> bool {
+    no_clause && derived_items(payload).0
 }
 
 /// Which derived items the payload's shape belongs to, as (deadlock-freedom,
@@ -1813,6 +1883,20 @@ fn replay_prefix<S: SubjectSystem>(
     Ok(replay_prefix_stopped(system, payload, rules)?.ok())
 }
 
+/// [`replay_prefix`] with a subject-specific explanation for a transition
+/// that is not enabled at its observed pre-state.
+fn replay_prefix_with_mismatch_explanation<S: SubjectSystem>(
+    system: &S,
+    payload: &TemporalCounterexample<S::TransitionId>,
+    rules: &StepRules<S::TransitionId>,
+    explain_mismatch: impl FnMut(usize, &S::State, &S::TransitionId) -> Option<ModelTraceRefusal>,
+) -> Result<Option<Replayed<S>>, ReplayRefusal> {
+    Ok(
+        replay_prefix_stopped_with_mismatch_explanation(system, payload, rules, explain_mismatch)?
+            .ok(),
+    )
+}
+
 /// [`replay_prefix`], naming the stop an expansion returned.
 #[allow(
     clippy::type_complexity,
@@ -1822,6 +1906,24 @@ fn replay_prefix_stopped<S: SubjectSystem>(
     system: &S,
     payload: &TemporalCounterexample<S::TransitionId>,
     rules: &StepRules<S::TransitionId>,
+) -> Result<Result<Replayed<S>, ExpansionStop>, ReplayRefusal> {
+    replay_prefix_stopped_with_mismatch_explanation(
+        system,
+        payload,
+        rules,
+        |step, _, transition| Some((rules.not_enabled)(step, transition)),
+    )
+}
+
+#[allow(
+    clippy::type_complexity,
+    reason = "a replay or the stop of an expansion, or a refusal"
+)]
+fn replay_prefix_stopped_with_mismatch_explanation<S: SubjectSystem>(
+    system: &S,
+    payload: &TemporalCounterexample<S::TransitionId>,
+    rules: &StepRules<S::TransitionId>,
+    mut explain_mismatch: impl FnMut(usize, &S::State, &S::TransitionId) -> Option<ModelTraceRefusal>,
 ) -> Result<Result<Replayed<S>, ExpansionStop>, ReplayRefusal> {
     if let Some(step) = payload.prefix.iter().position(|step| step.delay.is_some()) {
         return Err(refused(ModelTraceRefusal::UntimedDelay {
@@ -1873,15 +1975,20 @@ fn replay_prefix_stopped<S: SubjectSystem>(
             state_keys.push(state_key);
         }
         if !enabled {
-            return Err(refused((rules.not_enabled)(index, &step.transition)));
+            let refusal = explain_mismatch(index, &current.state, &step.transition)
+                .unwrap_or_else(|| (rules.not_enabled)(index, &step.transition));
+            return Err(refused(refusal));
         }
-        let (next, replayed) = reached.ok_or_else(|| {
-            refused(ModelTraceRefusal::PostState {
+        let Some((next, replayed)) = reached else {
+            if let Some(refusal) = explain_mismatch(index, &current.state, &step.transition) {
+                return Err(refused(refusal));
+            }
+            return Err(refused(ModelTraceRefusal::PostState {
                 step: index,
                 recorded: step.post_state.clone(),
                 reached: state_keys,
-            })
-        })?;
+            }));
+        };
         let replayed = system
             .reported(replayed, &next.state)
             .map_err(|_| fault("a-replayed-step-reports"))?;
@@ -1926,7 +2033,14 @@ pub(super) fn close_loop<S: SubjectSystem>(
     }
     let entry = positions.get(lasso.entry).ok_or_else(open)?;
     let last = positions.last().ok_or_else(|| fault("a-position-exists"))?;
-    if lasso.entry >= steps || entry.state_key != last.state_key {
+    if lasso.entry >= steps
+        || system
+            .loop_state_key(&entry.state)
+            .map_err(|_| fault("a-loop-key-encodes"))?
+            != system
+                .loop_state_key(&last.state)
+                .map_err(|_| fault("a-loop-key-encodes"))?
+    {
         return Err(open());
     }
     Ok(())

@@ -44,16 +44,13 @@ use filament_semantic_value::catalog::Category;
 mod replay;
 mod value;
 use value::{
-    Keys, decode_element, encode_element, reference_of, validate_boolean_element_shape,
-    validate_element_shape,
+    decode_element, encode_element, reference_of, validate_boolean_element_shape,
+    validate_element_shape, Keys,
 };
 
 /// Why a [`DisagreementCause`] did not encode or read.
 #[derive(Debug, thiserror::Error)]
 pub enum CauseCodecError {
-    /// A replay result belongs to another public entry's result contract.
-    #[error("the {0} result uses its owning replay result codec")]
-    UnsupportedReplayArm(&'static str),
     /// The document is not a cause this reader admits: malformed JSON, an
     /// unknown or missing member, an unknown tag, or a `null` member.
     #[error("the cause document does not read: {0}")]
@@ -467,6 +464,8 @@ impl HybridCounterexampleWire {
 struct HybridTraceWire {
     #[serde(skip_serializing_if = "Option::is_none")]
     delta: Option<RationalWire>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end: Option<HybridBeforeWire>,
     jumps: Vec<HybridJumpWire>,
     #[serde(rename = "loop", skip_serializing_if = "Option::is_none")]
     loop_to: Option<u64>,
@@ -568,6 +567,11 @@ impl HybridTraceWire {
             .collect::<Result<_, CauseCodecError>>()?;
         Ok(Self {
             delta: trace.delta.as_ref().map(RationalWire::of),
+            end: trace
+                .end
+                .as_ref()
+                .map(|end| before_wire(end, model))
+                .transpose()?,
             jumps,
             loop_to: trace.loop_to,
             start: state(&trace.start)?,
@@ -593,6 +597,7 @@ impl HybridTraceWire {
                 .collect::<Result<_, CauseCodecError>>()?,
             delta: self.delta.map(RationalWire::read).transpose()?,
             loop_to: self.loop_to,
+            end: self.end.map(|end| read_before(end, model)).transpose()?,
         };
         crate::hybrid_replay::admit(model, &trace)
             .map_err(|_| CauseCodecError::HybridIndex("trace"))?;
@@ -1785,6 +1790,11 @@ impl LocationWire {
             &self.path,
         )
     }
+}
+
+pub(super) fn expression_location_json(location: &Location) -> serde_json::Value {
+    serde_json::to_value(LocationWire::of(location))
+        .expect("expression location wire form is serializable")
 }
 
 /// Whether `left` and `right` have the same typed value encoding; a value

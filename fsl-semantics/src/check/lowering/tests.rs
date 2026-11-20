@@ -201,7 +201,11 @@ fn deep_option_keys(stack: usize) -> Vec<KeyShape> {
                     fsl_foundation::IdentityLimits::default(),
                 )
             }
-            .check(CheckMode::Linked, limits)
+            .check(
+                CheckMode::Linked,
+                limits,
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("the deep option parameter checks: {refusals:?}"));
             let options = checked
                 .semantic_graph()
@@ -309,7 +313,11 @@ fn equality_and_contains_over_a_recursive_record_without_text_have_no_leaves() {
             fsl_foundation::IdentityLimits::default(),
         )
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("equality and contains over List check");
     for identity in [
         "filament.op.structural.eq",
@@ -433,6 +441,7 @@ fn keying_a_recursion_group_is_charged_to_the_work_budget() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_work_budget(budget),
+            &crate::check::test_support::ZeroRewardEvaluator,
         )
     };
     assert!(checked(u64::MAX).is_ok(), "the ring checks unbounded");
@@ -544,7 +553,11 @@ fn check_under(
         functions,
         ..PackageDeclarations::new(source, "fixture", fsl_foundation::IdentityLimits::default())
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
 }
 
 fn check(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<CheckRefusal>> {
@@ -656,6 +669,7 @@ fn seq_lowers_as_a_map_over_its_integer_range() {
         vec![ValueType::Integer; 3],
         |ids| NodeKind::Seq {
             slot: 0,
+            name: "i".to_owned(),
             low: ids[0],
             high: ids[1],
             body: ids[2],
@@ -742,7 +756,11 @@ fn a_text_equality_carries_the_text_profile_law() {
             fsl_foundation::IdentityLimits::default(),
         )
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("the text equality checks");
     let equality = application(graph.semantic_graph(), "filament.op.text.eq");
     let operation = &equality["body"]["operation"];
@@ -1419,6 +1437,21 @@ fn nb() -> FunctionDeclaration {
     )
 }
 
+/// A call lowers even when its callee has not yet received its final key.
+#[test]
+fn a_call_to_a_function_without_a_key_yet_lowers() {
+    let caller = function(
+        "caller",
+        &[],
+        boolean(),
+        None,
+        Expression::call("callee".to_owned(), vec![]),
+    );
+    let callee = function("callee", &[], boolean(), None, Expression::boolean(true));
+    let graph = check(vec![caller, callee]).expect("the call lowers");
+    application(graph.semantic_graph(), "filament.op.function.call");
+}
+
 fn h() -> FunctionDeclaration {
     function(
         "h",
@@ -1460,7 +1493,11 @@ fn parameter_type(form: TypeForm, aliases: Vec<(String, ValueType)>) -> NodeKey 
             fsl_foundation::IdentityLimits::default(),
         )
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("g checks");
     parameter_named(graph.semantic_graph(), "x")
         .semantic_type()
@@ -1546,7 +1583,11 @@ fn an_alias_introduces_no_type_node() {
             fsl_foundation::IdentityLimits::default(),
         )
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("g checks");
     let parameter = parameter_named(graph.semantic_graph(), "x");
     assert_eq!(
@@ -1980,7 +2021,11 @@ fn record_projection_and_record_values_name_their_record_node() {
             fsl_foundation::IdentityLimits::default(),
         )
     }
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::check::test_support::ZeroRewardEvaluator,
+    )
     .expect("the record fixtures check");
     let semantic = graph.semantic_graph();
     let record = only_node_of_form(semantic, "record");

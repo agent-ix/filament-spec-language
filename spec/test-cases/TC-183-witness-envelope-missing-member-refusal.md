@@ -29,7 +29,7 @@ silently lose it without a visible refusal. Scope: FR-070-AC-4, FR-070-AC-18.
 5. Remove exactly the obligation identity and attempt reconstruction.
 6. Reconstruct a function packet carrying `function`, a frame packet
    carrying `frame_operation` (`Config::ConfigVersion`, `attemptUpdate`)
-   and a state-clause packet carrying `state_clause` (`VersionUnchanged`),
+   and a state-clause packet carrying `state_clause` (`VersionAdvances`),
    and round-trip each envelope; remove each packet's replay target; add a
    `function` member to the frame packet and to the state-clause packet.
 

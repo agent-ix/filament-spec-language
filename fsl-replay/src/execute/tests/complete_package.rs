@@ -48,14 +48,20 @@ fn native_package_fault_is_not_laundered_by_its_valid_name_and_sources() {
         other => panic!("the native owner refuses this graph: {other:?}"),
     };
     let error = replay(wire, ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Package(crate::ReplayPackageAdmissionRefusal::Refused { refusal, .. }) =
-        &error
+    let ReplayRefusal::PackageWithIdentity {
+        refusal: crate::ReplayPackageAdmissionRefusal::Refused { refusal, .. },
+        ..
+    } = &error
     else {
         panic!("the actual native cause survives replay: {error:?}");
     };
     assert_eq!(refusal.as_ref(), &native);
-    let expected_pointer = format!("/package{}", native.loci[0].path.as_ref().unwrap().as_str());
-    assert_eq!(error.pointer().as_deref(), Some(expected_pointer.as_str()));
+    let expected_package_pointer = native.loci[0].path.as_ref().unwrap().to_string();
+    let expected_request_pointer = format!("/package{expected_package_pointer}");
+    assert_eq!(
+        error.pointer().as_deref(),
+        Some(expected_request_pointer.as_str())
+    );
     let expected_cause = serde_json::to_value(native.cause).unwrap();
     assert_eq!(error.cause(), expected_cause.as_str());
     let result = Err(error);
@@ -63,7 +69,7 @@ fn native_package_fault_is_not_laundered_by_its_valid_name_and_sources() {
     let output: serde_json::Value = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
     assert_eq!(
         output["diagnostics"][0]["locus"]["pointer"],
-        expected_pointer
+        expected_package_pointer
     );
 }
 
@@ -77,8 +83,10 @@ fn original_noncanonical_package_spelling_reaches_the_native_owner_unchanged() {
     wire.package = crate::ReplayPackage::read(&bytes, ReplayLimits::default().input_bytes).unwrap();
     assert_eq!(wire.package.bytes(), bytes);
     let error = replay(wire, ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Package(crate::ReplayPackageAdmissionRefusal::Refused { refusal, .. }) =
-        &error
+    let ReplayRefusal::PackageWithIdentity {
+        refusal: crate::ReplayPackageAdmissionRefusal::Refused { refusal, .. },
+        ..
+    } = &error
     else {
         panic!("native refusal: {error:?}")
     };
@@ -95,7 +103,10 @@ fn native_admission_uses_the_callers_finite_i2_input_ceiling() {
     let mut wire = small(7);
     wire.stage_limits.insert("i2.input_bytes".to_owned(), 0);
     let error = replay(wire, ReplayLimits::default()).unwrap_err();
-    let ReplayRefusal::Package(crate::ReplayPackageAdmissionRefusal::Incomplete(limit)) = &error
+    let ReplayRefusal::PackageWithIdentity {
+        refusal: crate::ReplayPackageAdmissionRefusal::Incomplete(limit),
+        ..
+    } = &error
     else {
         panic!("native reader stop: {error:?}")
     };
@@ -161,8 +172,9 @@ fn supplied_root_internal_lists_reach_the_semantic_owner_before_native_admission
         Some(protocol_results) => ReplayRefusal::RecompileWithProtocolResults {
             refusal,
             protocol_results,
+            pointer: None,
         },
-        None => ReplayRefusal::Recompile(refusal),
+        None => ReplayRefusal::Recompile { refusal, pointer: None },
     };
     let located = locate_refinement_internals(&request, ordinary);
     assert_eq!(located.code(), code);

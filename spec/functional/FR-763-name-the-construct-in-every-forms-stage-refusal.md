@@ -69,9 +69,6 @@ members are below.
 
 | `construct` | Where S2 refuses it | `text` holds | Message |
 | --- | --- | --- | --- |
-| `index-selection` | `e[i]` that does not directly follow a field or selector of a clock place expression | the indexing expression, such as `s[i]` | `` the index selection `<text>` is not supported here yet `` |
-| `qualified-reaches-edge` | `reaches(a, b, e)` whose edge `e` has more than one segment | the edge name | `` `reaches` over the qualified edge `<text>` is not supported yet `` |
-| `hyper-condition` | a hyper expression as a temporal condition | the hyper expression | `` a hyper expression is not supported as a temporal condition yet `` |
 | `declaration` | a declaration whose leading keyword has no dispatch entry | the leading keyword | `` `<text>` declarations are not supported yet `` |
 
 - The message SHALL be the row's sentence with the placeholders filled from
@@ -80,6 +77,10 @@ members are below.
   of refusals sees which construct each one is.
 - `null` has no row: S2 builds it as the `Null` form outside a record field value, and check refuses it `ill_typed`/`type-mismatch` (FR-986).
 - `size<N>(e)` has no row: S2 builds it as the `Size` form carrying its result type (FR-981), and check types it.
+- `e[i]` has no row: S2 builds every grammar-admitted bracket selection as
+  `Index` (FR-680). A CST whose bracket contents do not have the grammar's
+  expression-and-closing-bracket shape refuses `UnexpectedShape`, not an
+  unsupported language construct.
 - `none` and `result` have no row: S2 builds them as the `Absent` and
   `Result` forms (FR-091 "Expression mapping"), and check, not S2, refuses
   them where their position admits neither.
@@ -90,6 +91,13 @@ members are below.
   production, so the `declaration` row is reached only by a keyword that
   lacks its entry; the row stays so that such a gap still refuses with a
   named construct instead of a null cause.
+- A hyper expression (an indexed read `e @ t`, a step label or `stutter`)
+  outside a `hyper` clause is no refusal construct: S2 builds it and S3
+  refuses it `unsupported_construct`/`expression-form` (FR-612), because it is
+  ill-formed there, not an unbuilt feature.
+- No construct reaches `FormsCause::UnrepresentedConstruct` today. It stays
+  the specified S2 cause for a construct that has no form yet, so a new row
+  needs no new cause; FR-763-AC-5 exercises it at unit level.
 - A construct that S2 later learns to build leaves this table with it; a new
   site that refuses with either cause adds a row. Every row's kind is a
   `ConstructKind` variant, and `ConstructKind` has no variant without a row.
@@ -105,11 +113,11 @@ members are below.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-763-AC-1 | The `parse` outcome document of a unit holding `synthesis Pick using v grammar Digit domain Digit satisfies { Pick >= 3 };`, and of one holding `verify Release using v { check safe claim M::Safe method model_check domain M::Order bound 20; }`, holds no `unsupported_construct` diagnostic and no diagnostic whose `construct` is `declaration`; `leading_keywords()` yields `synthesis` and `verify`. | Test (TC-2155) |
-| FR-763-AC-2 | S2 over a function body `xs[0]` refuses `UnrepresentedConstruct` with `construct` `index-selection`, `text` `xs[0]`, the function's name and profile, and the span of `xs[0]`. | Test (TC-2156) |
-| FR-763-AC-3 | S2 over the function body `size(xs) + xs[1]` refuses with `construct` `index-selection`, `text` `xs[1]` (the indexing expression alone, not the whole body) and the span of `xs[1]`. | Test (TC-2157) |
-| FR-763-AC-4 | S2 over a state clause `reaches(self, self, Config::ConfigVersion::parent)` refuses with `construct` `qualified-reaches-edge` and `text` `Config::ConfigVersion::parent`, at the edge's span. | Test (TC-2158) |
-| FR-763-AC-5 | For every `ConstructKind` variant that source reaches (every row but `declaration`), the refusal's message begins with the row's sentence filled from `text`; a construct whose source text is 200 bytes long carries a `text` of at most 123 bytes that ends with `...`. No refusal of either cause has an empty `text`. | Test (TC-2159) |
-| FR-763-AC-6 | The `parse` outcome document of AC-2's unit holds one diagnostic with `code` `unsupported_construct`, `cause` `not-yet-implemented` (not `null`), `construct` `index-selection`, `text` `xs[0]`, `declaration` the function's name and `profile` its profile identity, and the message of AC-5; the document's category is `unsupported`, exit 21. | Test (TC-2160) |
+| FR-763-AC-2 | S2 builds function bodies `null` and `xs[0]` as `Null` and `Index`, retaining the index's operand, selector and span; their parse outcome documents have no diagnostics and exit 0. | Test (TC-2156) |
+| FR-763-AC-3 | S2 builds `size<Integer>(xs)` and `size(xs) + xs[1]` without an unsupported-construct diagnostic; typed size retains its result type and operand, and the index and typed-size forms retain their exact spans. | Test (TC-2157) |
+| FR-763-AC-4 | S2 over a state clause `reaches(self, self, Config::ConfigVersion::parent)` builds the form without an unsupported-construct diagnostic; the complete edge name and span are retained for S3. | Test (TC-2158) |
+| FR-763-AC-5 | The `FormsCause::UnrepresentedConstruct` refusal for the `declaration` row, built directly because no source reaches the row, has catalog code `unsupported_construct` and construct spelling `declaration`; a 200-byte `text` is cut to at most 123 bytes ending with `...` and a short `text` is kept whole; its message is `` `<text>` declarations are not supported yet `` followed by ` (declaration <declaration>)` when an owner is set. | Test (TC-2159) |
+| FR-763-AC-6 | A function body `null` passes S2 and its check outcome document has one diagnostic with `code` `ill_typed`, `cause` `type-mismatch`, the exact span of `null`, and a message naming `null`, `none` and `absent` (FR-986); the document's category is `refusal`, exit 20. | Test (TC-2160) |
 
 ## Dependencies
 

@@ -566,7 +566,11 @@ function increment using v(x: Integer): Integer pure { x + 1 }\n";
         .expect("library assembles");
         let package = fsl_package::CheckedPackage::link(
             declarations
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+                )
                 .expect("library checks"),
         );
         let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::new(1 << 20))

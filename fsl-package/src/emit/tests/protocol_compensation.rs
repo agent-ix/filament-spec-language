@@ -140,14 +140,17 @@ fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<C
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
 }
 
 /// FR-892-AC-1 (TC-2525): one package may bind a compensation template, an
 /// awaited event and a required temporal clause to clock configurations.
 #[trace("TC-2525", "FR-892-AC-1")]
 #[test]
-#[ignore = "Blocked by QSL-2391: Contract IR must admit await-keyed temporal bindings."]
 fn a_compensation_and_a_timed_await_emit_together() {
     let temporal =
         "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
@@ -176,7 +179,13 @@ fn a_compensation_and_a_timed_await_emit_together() {
     assert!(nodes
         .iter()
         .any(|node| node["semantic_form"] == "compensation"));
-    assert!(nodes.iter().any(|node| node["semantic_form"] == "await"));
+    let awaited = nodes
+        .iter()
+        .find(|node| {
+            node["semantic_form"] == "control"
+                && node["body"]["operation"]["member"]["operator"] == "await"
+        })
+        .expect("the awaited control node");
     assert!(nodes
         .iter()
         .any(|node| node["semantic_form"] == "temporal_clause"));
@@ -198,6 +207,16 @@ fn a_compensation_and_a_timed_await_emit_together() {
     let bindings = wire["temporal_bindings"]
         .as_array()
         .expect("clock bindings");
+    let await_bindings = bindings
+        .iter()
+        .filter(|row| row["declaration"] == awaited["node_id"])
+        .collect::<Vec<_>>();
+    assert_eq!(await_bindings.len(), 1, "the await has one clock binding");
+    assert_eq!(await_bindings[0]["clock_name"], "model-steps");
+    assert_eq!(
+        await_bindings[0]["clock"],
+        json!({"kind": "event_position", "sequence_authority": "compensation-events"})
+    );
     assert_eq!(
         bindings.len(),
         4,
@@ -210,7 +229,7 @@ fn a_compensation_and_a_timed_await_emit_together() {
 /// package and identifies the declaration that needs one.
 #[trace("TC-2525", "FR-892-AC-4")]
 #[test]
-fn a_timed_unit_without_clock_selection_is_refused_by_declaration_name() {
+fn the_missing_clock_message_names_the_template() {
     let temporal =
         "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
     let mut unit = unit_text(temporal, "true", "false");

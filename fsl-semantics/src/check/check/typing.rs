@@ -25,10 +25,11 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
-    node, refuse, LocalKind, Typer,
+    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
+    is_integer, mismatch, node, refuse,
 };
-use crate::check::call_target::{resolve_target, ResolvedTarget};
+use crate::check::DispatchOperation;
+use crate::check::call_target::{ResolvedTarget, resolve_target};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -37,7 +38,6 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
-use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -287,7 +287,7 @@ enum Frame<'e, 'r> {
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
     /// field's name, the union case, and the `present` node's location;
     /// admits the typed owner `r` (FR-230 "Presence is derived").
-    PlacePresence(&'e str, Option<&'e str>, Location),
+    PlacePresence(String, Option<String>, Location),
     /// `ref(r.f[s]...)` of a clock place: the path below the owner `r`, then
     /// each selector as typed; admits the typed owner and selectors in turn
     /// (FR-230 "Clock references", "Selection").
@@ -383,6 +383,7 @@ struct CaseArms<'r> {
 struct OpenArm {
     member: usize,
     binders: Vec<Slot>,
+    names: Vec<String>,
 }
 
 /// Which operand of a pair is being typed.
@@ -559,11 +560,12 @@ impl<'r> Callee<'r> {
     }
 
     /// The declared parameter type at `index` of a function or imported
-    /// call, the only calls whose argument type node FR-347 compares.
+    /// call, or a union member's declared payload type (FR-317-AC-7), the
+    /// positions whose argument type node FR-347 and FR-149-AC-30 compare.
     fn call_parameter(&self, index: usize) -> Option<ValueType> {
         match self {
             Self::Value(application) => application.call_parameter(index),
-            Self::Union(_) => None,
+            Self::Union(member) => member.parameter(index).cloned(),
         }
     }
 
@@ -656,6 +658,7 @@ struct QueryFrame<'e> {
 struct AccumulateFrame<'e> {
     form: Accumulation,
     value_type: ValueType,
+    type_argument: String,
     accumulator: &'e str,
     binder: &'e str,
     step: ExprRef<'e>,
@@ -729,6 +732,7 @@ enum Tally {
 struct TallyFrame<'e> {
     tally: Tally,
     value_type: ValueType,
+    type_argument: String,
     binder: &'e str,
     body: ExprRef<'e>,
     location: Location,
@@ -752,6 +756,8 @@ struct PopulationFrame<'e> {
     source: Node,
     /// The slot the binder reads.
     slot: Slot,
+    /// The source name of the population binder.
+    binder: String,
     /// The body of `sum` and `only`.
     body: Option<ExprRef<'e>>,
     /// The typed condition, once typed.
@@ -1361,10 +1367,10 @@ impl<'a> Typer<'a> {
             } => self.decimal_literal(coefficient, *scale, hint.as_deref(), &location)?,
             ExprNode::Absent => self.absent_literal(hint.as_deref(), &location)?,
             ExprNode::Null => {
-                return Err(CheckRefusal::ill_typed(
-                    &location,
-                    IllTypedCause::TypeMismatch,
-                ));
+                return Err(CheckRefusal {
+                    location,
+                    cause: CheckCause::NullExpression,
+                });
             }
             // FR-185: a quantity literal is its magnitude, measured and
             // reduced as an exact value, in the unit its name declares.
@@ -1463,7 +1469,7 @@ impl<'a> Typer<'a> {
                     CheckRefusal::ill_typed(&location, IllTypedCause::OperatorIneligible)
                 } else {
                     missing_segment(&name.name, &location)
-                })
+                });
             }
             ExprNode::Name(name) if self.population_named(&name.name).is_some() => {
                 self.population_objects(&name.name, &location)?
@@ -1512,7 +1518,7 @@ impl<'a> Typer<'a> {
                     (expression, case),
                     location,
                     frames,
-                ))
+                ));
             }
             ExprNode::Let {
                 name,
@@ -1526,7 +1532,7 @@ impl<'a> Typer<'a> {
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                )
+                );
             }
             ExprNode::If {
                 condition,
@@ -1844,11 +1850,11 @@ impl<'a> Typer<'a> {
                     super::super::state_model::Form::ReachesContext(self.in_state_clause()),
                     &location,
                 )?;
-                let source_location = location.child(0);
+                let (source_location, target_location) = (location.child(0), location.child(1));
                 frames.push(Frame::Reaches(Box::new(ReachesFrame {
                     edge,
                     location,
-                    pair: Pair::First(target, source_location.clone()),
+                    pair: Pair::First(target, target_location),
                 })));
                 return Ok(Step::Descend(Goal::Infer(source, None, source_location)));
             }
@@ -2015,6 +2021,7 @@ impl<'a> Typer<'a> {
                 frames.push(Frame::Accumulate(Box::new(AccumulateFrame {
                     form: *form,
                     value_type,
+                    type_argument: accumulator_type.clone(),
                     accumulator,
                     binder,
                     step: expression.at(*step),
@@ -2411,6 +2418,15 @@ impl<'a> Typer<'a> {
             }
         }
         Ok(match peer {
+            Some(peer)
+                if matches!(peer.as_ref(), ValueType::Float(_))
+                    && matches!(expression.node(), ExprNode::Integer(_)) =>
+            {
+                // An exact integer literal is not a Float operand merely
+                // because equality has a Float peer. Keep its admitted type
+                // so the refusal can retain both operand types.
+                Goal::Infer(expression, None, location)
+            }
             Some(peer) if contextual(expression) => {
                 Goal::Expect(expression, Expected::Checked(peer), location)
             }
@@ -2482,6 +2498,7 @@ impl<'a> Typer<'a> {
         &mut self,
         typed: Node,
         converted: Option<(ValueType, Location)>,
+        operator: EqualityOperator,
     ) -> Result<(TypedOperand, ValueType), CheckRefusal> {
         match converted {
             Some((target, location)) => {
@@ -2495,10 +2512,35 @@ impl<'a> Typer<'a> {
                         return Err(refusal);
                     }
                 }
+                if matches!(&typed.value_type, ValueType::Text(_) | ValueType::String) {
+                    let source = typed.value_type.clone();
+                    let converted = self.convert(&target, typed, &location)?;
+                    let authored = EqualityOperand::converted(source.clone(), target.clone());
+                    let compared = EqualityOperand::typed(target.clone());
+                    return Ok((
+                        TypedOperand {
+                            node: converted,
+                            authored,
+                            checked: compared.clone(),
+                            stored: compared,
+                            source_type: source,
+                            conversion_target: Some(target.clone()),
+                        },
+                        target,
+                    ));
+                }
                 if matches!(&target, ValueType::Float(_))
                     && !super::admits_equality_conversion(&typed.value_type, &target, &self.units)
                 {
-                    return Err(mismatch(&location));
+                    return Err(super::operand_mismatch(
+                        &location,
+                        match operator {
+                            EqualityOperator::Equal => BinaryOperator::Equal,
+                            EqualityOperator::NotEqual => BinaryOperator::NotEqual,
+                        },
+                        typed.value_type.clone(),
+                        target,
+                    ));
                 }
                 if matches!(typed.value_type, ValueType::Float(_)) {
                     let source = typed.value_type.clone();
@@ -2746,6 +2788,7 @@ impl<'a> Typer<'a> {
         frames.push(Frame::Tally(Box::new(TallyFrame {
             tally,
             value_type,
+            type_argument: result_type.to_owned(),
             binder,
             body,
             location,
@@ -2783,10 +2826,22 @@ impl<'a> Typer<'a> {
                 let DispatchArgumentsFrame {
                     receiver,
                     operation_index,
+                    arguments,
                     location,
-                    typed,
+                    mut typed,
                     ..
                 } = *frame;
+                if index == arguments.len() {
+                    for parameter in operation.parameters.iter().skip(index) {
+                        // This `absent` is a synthetic argument: there is no
+                        // source expression at the missing position. Attribute
+                        // its checked literal to the call site so package
+                        // emission can retain a source occurrence for it.
+                        let at = location.clone();
+                        let absent = self.absent_literal(Some(parameter), &at)?;
+                        typed.push(self.push(absent));
+                    }
+                }
                 let receiver = self.push(receiver);
                 self.model_node(
                     super::super::state_model::Form::Dispatch {
@@ -2843,7 +2898,8 @@ impl<'a> Typer<'a> {
                 };
                 let position = position
                     .to_u64()
-                    .and_then(|position| usize::try_from(position).ok());
+                    .and_then(|position| usize::try_from(position).ok())
+                    .and_then(|position| self.scope.tuple_data_position(declaration, position));
                 let Some(position) = position.filter(|position| positions.get(*position).is_some())
                 else {
                     return Err(CheckRefusal::ill_typed(
@@ -2998,7 +3054,7 @@ impl<'a> Typer<'a> {
                 self.next_selector(frame, frames)
             }
             Frame::PlacePresence(field, case, location) => self
-                .place_presence(typed, field, case, &location)
+                .place_presence(typed, &field, case.as_deref(), &location)
                 .map(Step::Typed),
             Frame::Reaches(frame) => {
                 let ReachesFrame {
@@ -3230,7 +3286,10 @@ impl<'a> Typer<'a> {
             Some((value, slot)) => {
                 self.unbind(1);
                 let LetFrame {
-                    branches, location, ..
+                    branches,
+                    location,
+                    name,
+                    ..
                 } = *frame;
                 let body = typed;
                 let value_type = match branches {
@@ -3240,6 +3299,7 @@ impl<'a> Typer<'a> {
                 Ok(Step::Typed(node(
                     NodeKind::Let {
                         slot,
+                        name: self.slot_name(slot, &location)?,
                         value: self.push(value),
                         body: self.push(body),
                     },
@@ -3285,7 +3345,12 @@ impl<'a> Typer<'a> {
                     arms.result = Some(case_result(arms.result.take(), &typed)?);
                 }
                 let body = self.push(typed);
-                arms.builder.arm(open.member, open.binders, body);
+                let names = open
+                    .binders
+                    .iter()
+                    .map(|slot| self.slot_name(*slot, &frame.location))
+                    .collect::<Result<Vec<_>, _>>()?;
+                arms.builder.arm(open.member, open.binders, names, body);
                 arms
             }
         };
@@ -3316,7 +3381,15 @@ impl<'a> Typer<'a> {
                 binders.push(self.bind(&binder.name, value_type.clone(), &at, LocalKind::Bound)?);
             }
             let goal = frame.branches.goal(frame.expression.at(arm.body), at);
-            arms.open = Some(OpenArm { member, binders });
+            arms.open = Some(OpenArm {
+                member,
+                binders,
+                names: arm
+                    .binders
+                    .iter()
+                    .map(|binder| binder.name.clone())
+                    .collect(),
+            });
             frame.stage = CaseStage::Arms(arms);
             frames.push(Frame::Case(frame));
             return Ok(Step::Descend(goal));
@@ -3584,7 +3657,7 @@ impl<'a> Typer<'a> {
                 pair,
                 converted,
             } => {
-                let (typed, peer) = self.equality_typed(typed, converted)?;
+                let (typed, peer) = self.equality_typed(typed, converted, operator)?;
                 match pair {
                     Pair::First(second, second_location) => {
                         let mut converted = None;
@@ -3915,13 +3988,16 @@ impl<'a> Typer<'a> {
             NodeKind::Fold {
                 accumulator: fold.accumulator,
                 binder: fold.binder,
+                accumulator_name: self.slot_name(fold.accumulator, &frame.location)?,
+                binder_name: self.slot_name(fold.binder, &frame.location)?,
                 source: self.push(fold.source),
                 step: self.push(fold.step),
                 identity: identity.map(|identity| self.push(identity)),
             },
             frame.value_type,
             &frame.location,
-        ))
+        )
+        .with_type_argument(frame.type_argument))
     }
 
     fn accept_tally<'e, 'r>(
@@ -3954,23 +4030,29 @@ impl<'a> Typer<'a> {
                 };
                 let TallyFrame {
                     value_type,
+                    type_argument,
                     location,
+                    binder,
                     ..
                 } = *frame;
                 if matches!(visit, Visit::Sum) && !summand_of_family(&value_type, &body.value_type)
                 {
                     return Err(mismatch(&body.location));
                 }
-                Ok(Step::Typed(node(
-                    NodeKind::Query {
-                        visit,
-                        slot,
-                        source: self.push(source),
-                        body: self.push(body),
-                    },
-                    value_type,
-                    &location,
-                )))
+                Ok(Step::Typed(
+                    node(
+                        NodeKind::Query {
+                            visit,
+                            slot,
+                            name: self.slot_name(slot, &location)?,
+                            source: self.push(source),
+                            body: self.push(body),
+                        },
+                        value_type,
+                        &location,
+                    )
+                    .with_type_argument(type_argument),
+                ))
             }
         }
     }
@@ -4119,13 +4201,13 @@ impl<'a> Typer<'a> {
                             population,
                             &location,
                             Some(population_span),
-                        ))
+                        ));
                     }
                     None => {
                         return Err(refuse(
                             &location,
                             CheckCause::PopulationFormOutsideRefinement,
-                        ))
+                        ));
                     }
                 }
             }
@@ -4148,7 +4230,7 @@ impl<'a> Typer<'a> {
                     } else {
                         CheckCause::PopulationFormOutsideRefinement
                     },
-                ))
+                ));
             }
         };
         let element = self.element_type(&source)?;
@@ -4164,14 +4246,15 @@ impl<'a> Typer<'a> {
             ),
             (None, None) => {
                 return self
-                    .finish_population(form, source, slot, None, None, &location)
-                    .map(Step::Typed)
+                    .finish_population(form, source, slot, binder, None, None, &location)
+                    .map(Step::Typed);
             }
         };
         frames.push(Frame::Population(Box::new(PopulationFrame {
             form,
             source,
             slot,
+            binder: binder.to_owned(),
             body,
             typed_condition: None,
             awaiting,
@@ -4200,11 +4283,20 @@ impl<'a> Typer<'a> {
                         form,
                         source,
                         slot,
+                        binder,
                         location,
                         ..
                     } = *frame;
-                    self.finish_population(form, source, slot, Some(typed), None, &location)
-                        .map(Step::Typed)
+                    self.finish_population(
+                        form,
+                        source,
+                        slot,
+                        &binder,
+                        Some(typed),
+                        None,
+                        &location,
+                    )
+                    .map(Step::Typed)
                 }
             },
             PopulationAwait::Body => {
@@ -4212,12 +4304,21 @@ impl<'a> Typer<'a> {
                     form,
                     source,
                     slot,
+                    binder,
                     typed_condition,
                     location,
                     ..
                 } = *frame;
-                self.finish_population(form, source, slot, typed_condition, Some(typed), &location)
-                    .map(Step::Typed)
+                self.finish_population(
+                    form,
+                    source,
+                    slot,
+                    &binder,
+                    typed_condition,
+                    Some(typed),
+                    &location,
+                )
+                .map(Step::Typed)
             }
         }
     }
@@ -4231,6 +4332,7 @@ impl<'a> Typer<'a> {
         form: PopulationForm,
         source: Node,
         slot: Slot,
+        binder: &str,
         condition: Option<Node>,
         body: Option<Node>,
         location: &Location,
@@ -4244,16 +4346,17 @@ impl<'a> Typer<'a> {
             )
         };
         let query = |typer: &mut Self, visit, source: Node, body: Node, value_type| {
-            node(
+            Ok::<_, CheckRefusal>(node(
                 NodeKind::Query {
                     visit,
                     slot,
+                    name: typer.slot_name(slot, location)?,
                     source: typer.push(source),
                     body: typer.push(body),
                 },
                 value_type,
                 location,
-            )
+            ))
         };
         let tally = |typer: &mut Self, visit, value_type, source: Node, condition: Option<Node>| {
             let body = condition.unwrap_or_else(|| truth(location));
@@ -4274,22 +4377,22 @@ impl<'a> Typer<'a> {
                     }
                     _ => ValueType::Integer,
                 };
-                Ok(tally(self, Visit::Count, value_type, source, condition))
+                tally(self, Visit::Count, value_type, source, condition)
             }
-            PopulationForm::Exists => Ok(tally(
+            PopulationForm::Exists => tally(
                 self,
                 Visit::Exists,
                 ValueType::Boolean,
                 source,
                 condition,
-            )),
-            PopulationForm::All => Ok(tally(
+            ),
+            PopulationForm::All => tally(
                 self,
                 Visit::Forall,
                 ValueType::Boolean,
                 source,
                 condition,
-            )),
+            ),
             PopulationForm::Sum | PopulationForm::Only => {
                 let body = body.ok_or_else(|| mismatch(location))?;
                 // A `sum` folds its condition into the summand, so each object
@@ -4316,38 +4419,40 @@ impl<'a> Typer<'a> {
                     (Some(condition), _) => {
                         let filtered = source.value_type.clone();
                         (
-                            query(self, Visit::Filter, source, condition, filtered),
+                            query(self, Visit::Filter, source, condition, filtered)?,
                             body,
                         )
                     }
                     (None, _) => (source, body),
                 };
                 if form == PopulationForm::Sum {
-                    if !is_integer(&body.value_type) {
+                    if !summand_of_family(&body.value_type, &body.value_type) {
                         return Err(refuse(
                             &body.location,
-                            CheckCause::PopulationFormNotChecked {
-                                what: "a sum over a value that is not an integer",
-                            },
+                            CheckCause::IllTyped(IllTypedCause::TypeMismatch),
                         ));
                     }
-                    let value_type = match (named, maximum, self.static_range(&body)) {
-                        (true, Some(maximum), Some((low, high))) => {
-                            let count = Integer::from(maximum);
-                            let product_low = count.mul(&low);
-                            let product_high = count.mul(&high);
-                            int_type(
-                                product_low.min(Integer::zero()),
-                                product_high.max(Integer::zero()),
-                                location,
-                            )?
+                    let value_type = if is_integer(&body.value_type) {
+                        match (named, maximum, self.static_range(&body)) {
+                            (true, Some(maximum), Some((low, high))) => {
+                                let count = Integer::from(maximum);
+                                let product_low = count.mul(&low);
+                                let product_high = count.mul(&high);
+                                int_type(
+                                    product_low.min(Integer::zero()),
+                                    product_high.max(Integer::zero()),
+                                    location,
+                                )?
+                            }
+                            _ => ValueType::Integer,
                         }
-                        _ => ValueType::Integer,
+                    } else {
+                        body.value_type.clone()
                     };
-                    Ok(query(self, Visit::Sum, source, body, value_type))
+                    query(self, Visit::Sum, source, body, value_type)
                 } else {
                     let value_type = body.value_type.clone();
-                    Ok(query(self, Visit::Only, source, body, value_type))
+                    query(self, Visit::Only, source, body, value_type)
                 }
             }
         }
@@ -4413,6 +4518,7 @@ impl<'a> Typer<'a> {
                 Ok(Step::Typed(node(
                     NodeKind::Seq {
                         slot,
+                        name: self.slot_name(slot, &location)?,
                         low: self.push(*low),
                         high: self.push(*high),
                         body: self.push(typed),

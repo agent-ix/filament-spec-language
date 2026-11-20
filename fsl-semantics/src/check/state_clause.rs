@@ -1271,9 +1271,20 @@ impl CheckedStateClause {
         self.identity.clone()
     }
 
+    /// The clause's node identity, by reference.
+    pub fn node(&self) -> &NodeKey {
+        &self.identity
+    }
+
     /// The clause's `claim` occurrence of its node (ADR-013 O-07).
     pub fn claim(&self) -> &Origin {
         &self.claim
+    }
+
+    /// The span of the whole declaration, from its first keyword to its
+    /// closing byte (FSpec FR-322 "Clause declaration regions").
+    pub fn declaration_span(&self) -> fsl_foundation::Span {
+        self.spans.declaration
     }
 
     /// FR-391 "Evaluation": each domain-package population the body names,
@@ -1498,6 +1509,7 @@ pub(crate) fn clause_records(
     claims: &[ClauseClaim],
     form: &StateClauseDeclaration,
     lowered: &LoweredClause,
+    clause_key: &NodeKey,
     claim: &Origin,
     types: &TypeEnvironment,
     position_limit: u64,
@@ -1554,7 +1566,7 @@ pub(crate) fn clause_records(
                     record
                 };
                 keyed.push(KeyedClaim {
-                    node: lowered.key.clone(),
+                    node: clause_key.clone(),
                     origin: claim.clone(),
                     record,
                 });

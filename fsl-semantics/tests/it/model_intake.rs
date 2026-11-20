@@ -751,6 +751,42 @@ fn rational_intake_document() -> Value {
     )
 }
 
+fn assemble_model_document(
+    package: &str,
+    document: &Value,
+    source_name: &str,
+) -> Result<fsl_semantics::check::PackageDeclarations, fsl_semantics::check::AssemblyRefusal> {
+    let bytes = serde_json::to_vec(document).expect("serialize package");
+    let packages = package_input([bytes.as_slice()]).expect("package input");
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         model M = {package:?};\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", source_name),
+        &format!("{source_name}.native"),
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let selected = admit_unit(
+        &unit.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("I1 admits the package");
+    fsl_semantics::check::PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        crate::TEST_PACKAGE_NAME.to_owned(),
+        unit,
+        selected,
+        Vec::new(),
+    )
+}
+
 /// FR-505-AC-1: a bounded Rational value type is admitted through Semantic IR
 /// validation and package reading, and its typed field retains that identity.
 #[trace("FR-505-AC-1", "TC-1300")]
@@ -2568,6 +2604,7 @@ fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("both protocols check: {refusals:?}"));
     for (protocol, package) in [("Pa", A), ("Pb", B)] {
@@ -2594,7 +2631,6 @@ fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
 /// them as `UnsupportedModelMember`, and a protocol role binds to the Port.
 #[trace("TC-3013", "FR-103-AC-11")]
 #[test]
-#[ignore = "QSL-2176: model intake admitting systems part, port and allocation records through assembly and checking not implemented yet"]
 fn systems_part_port_allocation_records() {
     use fsl_semantics::model::domain_package::{DomainPackageRecord, PortDirection};
 
@@ -2694,6 +2730,7 @@ fn systems_part_port_allocation_records() {
         .check(
             CheckMode::Linked,
             filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("the protocol checks: {refusals:?}"));
     let protocol = checked
@@ -2764,6 +2801,7 @@ fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
                 .check(
                     CheckMode::Linked,
                     filament_semantic_value::checking::CheckingLimits::default(),
+                    &crate::reward_evaluator::ZeroRewardEvaluator,
                 )
                 .err()
                 .is_some_and(|refusals| {
@@ -2784,7 +2822,8 @@ fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
     assert!(bounded
         .check(
             CheckMode::Linked,
-            filament_semantic_value::checking::CheckingLimits::default()
+            filament_semantic_value::checking::CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator
         )
         .is_ok());
 }
@@ -2797,7 +2836,7 @@ mod float_members {
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use filament_semantic_value::declaration::CompositeShape;
     use fsl_foundation::Code;
-    use fsl_semantics::check::{AssemblyRefusal, PackageDeclarations};
+    use fsl_semantics::check::{AssemblyRefusal, CheckCause, CheckedGraph, PackageDeclarations};
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
     use fsl_semantics::model::intake::{admit_unit, meaning};
     use ix_trace_rs::trace;
@@ -2959,7 +2998,6 @@ mod float_members {
 
     #[trace("TC-3004", "TC-405", "FR-056-AC-20")]
     #[test]
-    #[ignore = "QSL-2176: a domain-package Float64 field admitted as strict exact Float64 not implemented yet"]
     fn a_domain_package_float64_field_is_admitted() {
         let document = gauge_document(FLOAT64, 1, 1);
         let declarations =
@@ -2981,7 +3019,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-53")]
     #[test]
-    #[ignore = "QSL-2176: a domain-package Float32 field admitted as strict exact Float32 not implemented yet"]
     fn a_domain_package_float32_field_is_admitted() {
         let document = gauge_document(FLOAT32, 1, 1);
         let declarations =
@@ -2994,7 +3031,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-54")]
     #[test]
-    #[ignore = "QSL-2176: a Float64 operation parameter and result admitted as strict exact Float64 not implemented yet"]
     fn a_domain_package_float_operation_parameter_is_admitted() {
         let document = config_document(
             operation(
@@ -3024,7 +3060,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-55")]
     #[test]
-    #[ignore = "QSL-2176: a Float64 tuple position admitted as strict exact Float64 not implemented yet"]
     fn a_domain_package_float_tuple_position_is_admitted() {
         let pair = wire_type(
             &identity("Pair"),
@@ -3058,7 +3093,6 @@ mod float_members {
 
     #[trace("TC-3004", "FR-056-AC-56")]
     #[test]
-    #[ignore = "QSL-2176: a Float32 union payload admitted as strict exact Float32 not implemented yet"]
     fn a_domain_package_float_union_payload_is_admitted() {
         let sample = wire_type(
             &identity("Sample"),
@@ -3131,7 +3165,11 @@ mod float_members {
             },
         )?;
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
             .map(|_| ())
             .map_err(|refusals| {
                 refusals
@@ -3146,9 +3184,68 @@ mod float_members {
             })
     }
 
+    /// Check one clause while retaining the checked graph or typed refusals
+    /// for acceptance assertions that depend on their provenance.
+    fn check_clause_with_diagnostics(
+        clause: &str,
+    ) -> Result<CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+        let body =
+            format!("invariant I using v on Config::ConfigVersion at current {{ {clause} }}\n");
+        let declarations = admit_and_assemble_with_body(&rule_document(), &body)
+            .unwrap_or_else(|refusal| panic!("the valid rule fixture assembles: {refusal:?}"));
+        declarations.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+    }
+
+    fn graph_for_clause(clause: &str) -> CheckedGraph {
+        check_clause_with_diagnostics(clause)
+            .unwrap_or_else(|refusals| panic!("{clause} checks: {refusals:?}"))
+    }
+
+    fn applications(graph: &CheckedGraph) -> Vec<&fsl_semantics::check::ApplicationTerm> {
+        graph
+            .semantic_graph()
+            .nodes()
+            .filter_map(|node| match node.body() {
+                fsl_semantics::check::BodyTerm::Application(application) => Some(application),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn assert_ieee_law(graph: &CheckedGraph) {
+        let apps = applications(graph);
+        assert!(
+            apps.iter().any(
+                |application| application.operation.laws().iter().any(|law| {
+                    law.role == fsl_semantics::check::LawRole::IeeeProfile
+                        && law.definition.identity == "filament.value.ieee754-2019-default/v1"
+                })
+            ),
+            "every admitted float expression carries the selected IEEE profile law: {apps:?}"
+        );
+    }
+
+    fn ieee_meter() -> filament_exact::Meter {
+        filament_exact::Meter::new(filament_exact::ScalarLimits {
+            integer_bits: u64::MAX,
+            decimal_digits: u64::MAX,
+            scale_expansion: u64::MAX,
+            text_input_bytes: u64::MAX,
+            text_scalars: u64::MAX,
+            normalized_scalars: u64::MAX,
+            unit_edges: u64::MAX,
+            value_occurrences: u64::MAX,
+            work_units: u64::MAX,
+            result_units: u64::MAX,
+        })
+    }
+
     #[trace("TC-3005", "FR-056-AC-57")]
     #[test]
-    #[ignore = "QSL-2176: rules over a float model field checked under the IEEE profile not implemented yet"]
     fn a_rule_over_a_float_field_checks_with_the_ieee_profile() {
         for clause in [
             "self.reading <= self.limit",
@@ -3158,11 +3255,66 @@ mod float_members {
         ] {
             assert_eq!(check_clause(clause), Ok(()), "{clause}");
         }
+        let comparison = graph_for_clause("self.reading <= self.limit");
+        assert_ieee_law(&comparison);
+        let strict_sum = graph_for_clause("self.reading + self.limit = self.limit");
+        assert_ieee_law(&strict_sum);
+        assert!(
+            applications(&strict_sum).iter().any(|application| {
+                matches!(
+                    application.operation.mode(),
+                    Some(fsl_semantics::check::OperationMode::Rounding(
+                        RoundingMode::Exact
+                    ))
+                )
+            }),
+            "bare float addition retains strict exact rounding metadata"
+        );
+        let converted_sum = graph_for_clause(
+            "convert<Float64[nearest-even]>(self.reading) + convert<Float64[nearest-even]>(self.limit) <= convert<Float64[nearest-even]>(self.limit)",
+        );
+        assert_ieee_law(&converted_sum);
+        assert!(
+            applications(&converted_sum).iter().any(|application| {
+                matches!(
+                    application.operation.mode(),
+                    Some(fsl_semantics::check::OperationMode::Rounding(
+                        RoundingMode::NearestEven
+                    ))
+                )
+            }),
+            "converted float addition retains nearest-even rounding metadata"
+        );
+
+        let reading = filament_exact::IeeeValue::binary64(0x3ff0_0000_0000_0000);
+        let limit = filament_exact::IeeeValue::binary64(0x3ca0_0000_0000_0000);
+        let strict = filament_exact::evaluate_ieee(
+            filament_exact::IeeeOperation::Add(reading, limit),
+            RoundingMode::Exact,
+            &mut ieee_meter(),
+        );
+        assert!(matches!(
+            strict,
+            Ok(filament_exact::Outcome::Refused(filament_exact::Refusal::IeeeNotExact {
+                would_be,
+                ..
+            })) if would_be.contains(filament_exact::IeeeFlag::Inexact)
+        ));
+        let rounded = filament_exact::evaluate_ieee(
+            filament_exact::IeeeOperation::Add(reading, limit),
+            RoundingMode::NearestEven,
+            &mut ieee_meter(),
+        );
+        assert!(matches!(
+            rounded,
+            Ok(filament_exact::Outcome::Completed(result))
+                if result.value().bits() == 0x3ff0_0000_0000_0000
+                    && result.flags().contains(filament_exact::IeeeFlag::Inexact)
+        ));
     }
 
     #[trace("TC-3005", "FR-056-AC-58")]
     #[test]
-    #[ignore = "QSL-2176: IEEE equality and comparison over float model fields not implemented yet"]
     fn a_float_field_equality_follows_the_ieee_rules() {
         for clause in [
             "self.a = self.b",
@@ -3173,11 +3325,52 @@ mod float_members {
         ] {
             assert_eq!(check_clause(clause), Ok(()), "{clause}");
         }
+        let nan = filament_exact::IeeeValue::binary64(0x7ff8_0000_0000_0000);
+        let plus_zero = filament_exact::IeeeValue::binary64(0);
+        let minus_zero = filament_exact::IeeeValue::binary64(0x8000_0000_0000_0000);
+        assert!(matches!(
+            filament_exact::compare_ieee(
+                filament_exact::IeeeComparison::NumericEqual,
+                nan,
+                nan,
+                &mut ieee_meter(),
+            ),
+            Ok(filament_exact::Outcome::Completed(false))
+        ));
+        assert!(matches!(
+            filament_exact::compare_ieee(
+                filament_exact::IeeeComparison::NumericEqual,
+                plus_zero,
+                minus_zero,
+                &mut ieee_meter(),
+            ),
+            Ok(filament_exact::Outcome::Completed(true))
+        ));
+        let set_type = filament_exact::CollectionType::new(
+            filament_exact::CollectionKind::Set,
+            ValueType::Float(FloatType::new(
+                IeeeWidth::Binary64,
+                RoundingMode::NearestEven,
+            )),
+            Some(filament_exact::CardinalityBound::at_most(2)),
+        );
+        let set = filament_exact::form(
+            &set_type,
+            vec![
+                filament_exact::Value::Float(plus_zero),
+                filament_exact::Value::Float(minus_zero),
+            ],
+            &mut ieee_meter(),
+        );
+        assert!(matches!(
+            set,
+            filament_exact::Outcome::Completed(filament_exact::Value::Collection(value))
+                if value.elements().len() == 2
+        ));
     }
 
     #[trace("TC-3005", "FR-056-AC-59")]
     #[test]
-    #[ignore = "QSL-2176: float model fields reach the checker, where an exact or unlike operand refuses type-mismatch, not implemented yet"]
     fn a_float_field_against_an_exact_type_is_refused() {
         for clause in [
             "self.a = 0",
@@ -3187,11 +3380,170 @@ mod float_members {
             "self.a + 1 = self.a",
             "self.a = convert<Float64[nearest-even]>(self.a)",
         ] {
+            let refusals = check_clause_with_diagnostics(clause)
+                .expect_err("incompatible float/exact operands produce no checked graph");
+            assert_eq!(refusals.len(), 1, "{clause}: {refusals:?}");
+            let refusal = &refusals[0];
+            assert_eq!(refusal.cause.code(), Code::IllTyped, "{clause}");
+            assert_eq!(refusal.cause.cause(), Some("type-mismatch"), "{clause}");
+            assert_eq!(
+                refusal.location.origin,
+                filament_semantic_value::location::ExpressionOwner::StateClause {
+                    clause: "I".to_owned(),
+                    index: 0,
+                },
+                "the diagnostic identifies the source clause owning the rejected operator: {clause}: {refusal:?}"
+            );
+            assert_eq!(
+                refusal.location.path(),
+                if clause.contains("self.a + 1") {
+                    vec![0]
+                } else if clause.contains("convert<Float64") {
+                    vec![1]
+                } else {
+                    Vec::new()
+                },
+                "the diagnostic path ends at the rejected operator expression: {clause}: {refusal:?}"
+            );
+            match &refusal.cause {
+                CheckCause::OperandTypeMismatch {
+                    operator,
+                    left_type,
+                    right_type,
+                } => {
+                    let expected_operator = if clause.contains(" < ") {
+                        fsl_forms::BinaryOperator::Less
+                    } else if clause.contains(" + ") {
+                        fsl_forms::BinaryOperator::Add
+                    } else {
+                        fsl_forms::BinaryOperator::Equal
+                    };
+                    assert_eq!(*operator, expected_operator, "{clause}");
+                    assert_ne!(left_type, right_type, "{clause}");
+                    let operand_types = format!("{left_type:?} {right_type:?}");
+                    assert!(operand_types.contains("Float"), "{clause}: {operand_types}");
+                    if clause.contains("convert<Float64") {
+                        assert!(
+                            operand_types.matches("Float").count() >= 2,
+                            "both rounded and exact float types are retained: {clause}: {operand_types}"
+                        );
+                    } else {
+                        assert!(
+                            operand_types.contains("Integer")
+                                || operand_types.contains("Binary32"),
+                            "both float and exact/narrow float types are retained: {clause}: {operand_types}"
+                        );
+                    }
+                }
+                other => panic!("typed operand mismatch for {clause}: {other:?}"),
+            }
             assert_eq!(
                 check_clause(clause),
                 Err(vec![(Code::IllTyped, Some("type-mismatch".to_owned()))]),
                 "{clause}"
             );
         }
+    }
+}
+
+/// FR-056-AC-10 and FSpec FR-322's model-owned-member rule: an unbounded
+/// collection with a positive lower bound has no kernel type and is refused
+/// at the selected model with the typed unsupported-feature cause.
+#[trace("FR-056-AC-10")]
+#[test]
+fn unbounded_multiplicity_with_nonzero_lower_bound_is_unsupported_feature() {
+    let package = "test/rational-value-type";
+    let mut document = rational_intake_document();
+    document["types"][1]["fields"][0]["multiplicity"] =
+        serde_json::json!({"lower": 1, "ordered": false, "unique": true});
+    let refusal = assemble_model_document(package, &document, "unbounded-positive-lower")
+        .expect_err("an unbounded positive lower bound has no kernel collection type");
+    let [error] = refusal.errors.as_slice() else {
+        panic!("one unsupported model field refusal: {:?}", refusal.errors);
+    };
+    assert_eq!(
+        error.cause.catalog_code().to_string(),
+        "unknown_required_feature/unsupported-feature"
+    );
+    assert!(matches!(
+        error.cause,
+        fsl_semantics::check::AssemblyCause::UnsupportedModelMember { .. }
+    ));
+}
+
+/// FR-056-AC-43: bare native Text, Rational and Decimal members remain in an
+/// admitted model package even though they have no checked value type. The
+/// assembler records them as untyped members rather than rejecting the model.
+#[trace("FR-056-AC-43")]
+#[test]
+fn bare_native_text_rational_and_decimal_model_members_are_admitted() {
+    let package = "test/rational-value-type";
+    let mut document = rational_intake_document();
+    let fields = document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Holder fields");
+    fields[0]["typeRef"] = "ix://filament/native/Rational".into();
+    fields.push(wire_field(
+        "ix://test/rational-value-type/Holder/memo",
+        "memo",
+        "ix://filament/native/Text",
+    ));
+    fields.push(wire_field(
+        "ix://test/rational-value-type/Holder/amount",
+        "amount",
+        "ix://filament/native/Decimal",
+    ));
+    let bytes = serde_json::to_vec(&document).expect("serialize package");
+    let packages = package_input([bytes.as_slice()]).expect("package input");
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         model M = {package:?};\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "bare-native-model-members"),
+        "bare-native-model-members.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let selected = admit_unit(
+        &unit.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("I1 admits the package");
+    fsl_semantics::check::PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        crate::TEST_PACKAGE_NAME.to_owned(),
+        unit,
+        selected,
+        Vec::new(),
+    )
+    .unwrap_or_else(|refusal| panic!("bare native members are admitted: {refusal:?}"));
+}
+
+/// FR-056-AC-63: a value type bound by `target` to a data native is that
+/// native under its own name, so a field typed by it assembles with the
+/// native's type and raises no `UnsupportedModelMember`.
+#[trace("TC-3031", "FR-056-AC-63")]
+#[test]
+#[ignore = "QSL-2176: a value type bound to a data native by target is not assembled as that native yet"]
+fn a_value_type_bound_to_a_data_native_by_target_is_that_native() {
+    let package = "test/rational-value-type";
+    for native in ["Boolean", "Integer", "String", "Float64", "Float32"] {
+        let mut document = rational_intake_document();
+        let ratio = &mut document["types"][0];
+        let node = ratio.as_object_mut().expect("Ratio node");
+        node.remove("scalar");
+        node.insert("constraints".to_owned(), serde_json::json!([]));
+        node.insert(
+            "target".to_owned(),
+            format!("ix://filament/native/{native}").into(),
+        );
+        assemble_model_document(package, &document, &format!("bound-{native}"))
+            .unwrap_or_else(|refusal| panic!("a value type bound to {native}: {refusal:?}"));
     }
 }

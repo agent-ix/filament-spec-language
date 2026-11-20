@@ -18,6 +18,8 @@ probabilistic TooMuch using inf on M over (m: M::Msg) under every scheduler on o
 probabilistic TooLittle using inf on M over (m: M::Msg) under every scheduler on origin
 { probability >= 0.97 [ eventually holds(m.delivered) ] }
 ";
+
+mod certificate_boundary_cases;
 fn ratio(a: i64, b: i64) -> Rational {
     Rational::new(Integer::from(a), Integer::from(b)).unwrap()
 }

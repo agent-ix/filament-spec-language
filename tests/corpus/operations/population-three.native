@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model Config = "example/config-version";
+type Count = Integer;
+invariant Two using v on Config::ConfigVersion at current { size<Count>(allInstances<Config::ConfigVersion>(Config::config_history))=2 }

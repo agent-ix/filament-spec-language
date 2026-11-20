@@ -25,9 +25,9 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType) -> Node {
         value_type,
         location: Location::root(Origin::Expression),
         equality_producer: None,
-        ordering_part: false,
         field_population: None,
         equality_range_context: None,
+        type_argument: None,
     }
 }
 

@@ -2,8 +2,8 @@
 //! FR-485-AC-15: owner-authored FSV failures cross the public application boundary.
 
 use filament_eval::{
-    Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, FamilyOutcome, Resume,
-    Transition,
+    Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, FamilyOutcome,
+    LiveContext, Resume, Transition,
 };
 use filament_exact::{
     Cancel, CancelCause, ChargePoint, Integer, LimitKind, Meter, Outcome, ScalarLimits,
@@ -80,7 +80,12 @@ impl BodyFactory for ActionFactory {
 struct ActionBody(Action);
 
 impl Body for ActionBody {
-    fn resume(&mut self, input: Resume, _meter: &mut Meter) -> Result<Transition, BodyFailure> {
+    fn resume(
+        &mut self,
+        input: Resume,
+        _context: &mut filament_eval::LiveContext,
+        _meter: &mut Meter,
+    ) -> Result<Transition, BodyFailure> {
         assert!(matches!(input, Resume::Start(_)));
         match &self.0 {
             Action::MembershipFalse {
@@ -95,6 +100,7 @@ impl Body for ActionBody {
                     location: None,
                     losses: vec![],
                     frame_depth: 0,
+                    peak_live_occurrences: 0,
                 })),
                 Ok(true) => panic!("the mismatched value was admitted"),
                 Err(failure) => Err(BodyFailure::fsv_environment(failure, None)),
@@ -360,7 +366,7 @@ fn run(fixture: &Fixture, action: Action) -> (Result<Evaluation, CallFailure>, M
         result_units: u64::MAX,
     });
     let result = registry
-        .begin_call(
+        .begin_call_default(
             &fixture.selection,
             vec![fixture.argument.clone()],
             &environment,

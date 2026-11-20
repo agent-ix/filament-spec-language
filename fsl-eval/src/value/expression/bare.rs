@@ -346,6 +346,7 @@ pub fn evaluate_frame(
             location: None,
             losses: Vec::new(),
             frame_depth: 0,
+            peak_live_occurrences: 0,
         },
         witness,
     })
@@ -436,6 +437,74 @@ fn evaluate_state_clause(
             )
             .map_err(CallFailure::Fault)?;
     Ok(ClauseEvaluation::new(evaluation, trail, receiver_path))
+}
+
+/// FR-940: the state-graph predicate of `role` of the claim at `claim` on
+/// the package route, read from its admitted node and run through the shared
+/// evaluator at the state whose objects are `current`, with the `over`
+/// parameter at slot 0 bound to `over` and `further` after it. A claim
+/// instance whose key holds no object (`absent`) reads the parameter as
+/// `absent-key` undefined, `key` standing for the reference where it is a
+/// `lookup`'s operand.
+///
+/// # Errors
+///
+/// An internal fault when the claim or its predicate does not read, which
+/// the package form of the claim has already established.
+pub(crate) fn evaluate_state_graph_predicate(
+    package: &BarePackage<'_>,
+    claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    role: fsl_semantics::check::PredicateRole,
+    objects: &ObjectEnvironment,
+    over: StateGraphOver,
+    mut further: Vec<Value>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let fault = |cause: &'static str| InternalFault::new("FR-940", cause);
+    let predicate = package
+        .project_state_graph_predicate(claim, role)
+        .map_err(|_| fault("state-graph-predicate-projects"))?;
+    let world = package
+        .world()
+        .map_err(|_| fault("state-graph-predicate-world"))?;
+    if predicate
+        .parameters()
+        .iter()
+        .enumerate()
+        .any(|(position, (_, slot))| position != *slot)
+    {
+        return Err(fault("state-graph-parameters-take-their-slots-in-order"));
+    }
+    let mut machine = Machine::from_bare_package(&world, objects, meter);
+    let mut bindings = Vec::new();
+    match over {
+        StateGraphOver::None => {}
+        StateGraphOver::Bound(reference) => bindings.push(Value::Reference(reference)),
+        StateGraphOver::Absent { key, binding } => {
+            machine = machine.with_absent_parameter(0, binding);
+            bindings.push(Value::Reference(key));
+        }
+    }
+    bindings.append(&mut further);
+    machine.run(
+        ReaderNode::root(predicate.projection()),
+        predicate.projection().frame_slots(),
+        bindings,
+    )
+}
+
+/// How a state-graph predicate's `over` parameter is bound.
+pub(crate) enum StateGraphOver {
+    /// The claim has no `over` parameter.
+    None,
+    /// The instance's object.
+    Bound(filament_exact::ObjectReference),
+    /// The instance's key holds no object: the reference of the parameter's
+    /// type under the key, and the population's name for the undefined value.
+    Absent {
+        key: filament_exact::ObjectReference,
+        binding: String,
+    },
 }
 
 /// FR-940 package form of [`super::source_post_targets`]: the targets of
@@ -567,9 +636,10 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
                 return Ok(Evaluation {
                     outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
-                    location: None,
+                    location: projection.location(selected.body).cloned(),
                     losses: Vec::new(),
                     frame_depth: 0,
+                    peak_live_occurrences: 0,
                 });
             }
             capture.drain(meter, projection.location(selected.body));
@@ -588,6 +658,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                     location: projection.location(selected.body).cloned(),
                     losses: Vec::new(),
                     frame_depth: 0,
+                    peak_live_occurrences: 0,
                 });
             }
             function_evaluations = 1;
@@ -645,9 +716,10 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
             return Ok(Evaluation {
                 outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
-                location: None,
+                location: projection.location(selected.body).cloned(),
                 losses: Vec::new(),
                 frame_depth: 0,
+                peak_live_occurrences: 0,
             });
         }
         Machine::from_bare_package(&world, objects, meter)
@@ -940,7 +1012,11 @@ mod tests {
         );
         fsl_package::CheckedPackage::link(
             declarations
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &crate::value::S6aRewardEvaluator,
+                )
                 .expect("the identity function checks"),
         )
     }
@@ -985,7 +1061,11 @@ mod tests {
         .expect("the declarations assemble");
         let source = fsl_package::CheckedPackage::link(
             declarations
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &crate::value::S6aRewardEvaluator,
+                )
                 .expect("the source-supported package checks"),
         );
         (source, models)
@@ -1213,7 +1293,11 @@ mod tests {
         .expect("the declarations assemble");
         let source = fsl_package::CheckedPackage::link(
             declarations
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &crate::value::S6aRewardEvaluator,
+                )
                 .expect("the set-returning function checks"),
         );
         let limits = fsl_package::V2ReadLimits::fixture();
@@ -1310,4 +1394,37 @@ mod tests {
             Some(value)
         );
     }
+}
+
+/// FR-411, FR-940: the `terminal when` condition `predicate` on the package
+/// route, read from its admitted node and run through the shared evaluator at
+/// the state whose objects are `objects`, with `self` bound to `self_object`
+/// when the condition reads it. Like an invariant's, the condition reads no
+/// `pre(..)`, so every model read observes `objects`.
+///
+/// # Errors
+///
+/// An internal fault when the package's world does not read.
+pub(crate) fn evaluate_terminal_predicate(
+    package: &BarePackage<'_>,
+    predicate: &fsl_package::BareTerminalPredicate,
+    objects: &ObjectEnvironment,
+    self_object: Option<filament_exact::ObjectReference>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let world = package
+        .world()
+        .map_err(|_| InternalFault::new("FR-940", "terminal-predicate-world"))?;
+    let bindings = if predicate.reads_self() {
+        vec![Value::Reference(self_object.ok_or_else(|| {
+            InternalFault::new("FR-124", "terminal-self-object")
+        })?)]
+    } else {
+        Vec::new()
+    };
+    Machine::from_bare_package(&world, objects, meter).run(
+        ReaderNode::root(predicate.projection()),
+        predicate.projection().frame_slots(),
+        bindings,
+    )
 }

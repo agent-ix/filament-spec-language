@@ -8,7 +8,7 @@
 use filament_exact::Cancel;
 use fsl_cst::Limits;
 use fsl_foundation::SourceIdentity;
-use fsl_replay::spine::{parse, ParseRequest};
+use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
 use fsl_replay::OutcomeDocument;
 use ix_trace_rs::trace;
 use serde_json::Value;
@@ -39,18 +39,6 @@ fn parsed(declaration: &str) -> (String, Value, u8) {
     (text, value, exit)
 }
 
-/// The one diagnostic of a unit S2 refuses, checked for the FR-763 code and
-/// cause.
-fn construct_diagnostic(declaration: &str) -> (String, Value) {
-    let (text, value, _) = parsed(declaration);
-    let diagnostics = value["diagnostics"].as_array().expect("diagnostics");
-    assert_eq!(diagnostics.len(), 1, "{declaration}: {diagnostics:?}");
-    let diagnostic = diagnostics[0].clone();
-    assert_eq!(diagnostic["code"], "unsupported_construct", "{declaration}");
-    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{declaration}");
-    (text, diagnostic)
-}
-
 fn function(body: &str) -> String {
     format!("function f using v(xs: Sequence<Integer>[0, 4]): Integer pure {{ {body} }}")
 }
@@ -79,98 +67,101 @@ fn an_undispatched_declaration_names_its_keyword() {
 
 #[trace("TC-2156", "FR-763-AC-2")]
 #[test]
-fn a_null_primary_names_null() {
-    let (text, diagnostic) = construct_diagnostic(&function("null"));
-    assert_eq!(diagnostic["construct"], "null-value");
-    assert_eq!(diagnostic["text"], "null");
-    assert_eq!(diagnostic["declaration"], "f");
-    assert_eq!(diagnostic["profile"], PROFILE);
-    let at = text.rfind("null").expect("in the unit");
-    assert_eq!(locus_start(&diagnostic), Some(at as u64));
+fn null_and_index_forms_parse_without_construct_refusals() {
+    for body in ["null", "xs[0]"] {
+        let (_, document, exit) = parsed(&function(body));
+        assert_eq!(exit, 0, "{document}");
+        assert_eq!(document["diagnostics"], serde_json::json!([]), "{body}");
+    }
 }
 
 #[trace("TC-2157", "FR-763-AC-3")]
 #[test]
-fn size_of_type_and_index_selection_name_their_construct() {
-    for (body, construct) in [
-        ("size<Integer>(xs)", "size-of-type"),
-        ("xs[0]", "index-selection"),
-    ] {
-        let (_, diagnostic) = construct_diagnostic(&function(body));
-        assert_eq!(diagnostic["construct"], construct, "{body}");
-        assert_eq!(diagnostic["text"], body);
+fn typed_size_and_nested_index_forms_parse_without_construct_refusals() {
+    for body in ["size<Integer>(xs)", "size(xs) + xs[1]"] {
+        let (_, document, exit) = parsed(&function(body));
+        assert_eq!(exit, 0, "{document}");
+        assert_eq!(document["diagnostics"], serde_json::json!([]), "{body}");
     }
 }
 
 #[trace("TC-2158", "FR-763-AC-4")]
 #[test]
-fn a_qualified_reaches_edge_names_the_edge() {
+fn a_qualified_reaches_edge_builds_without_a_forms_refusal() {
     let edge = "Config::ConfigVersion::parent";
-    let (text, diagnostic) = construct_diagnostic(&format!(
+    let (_, document, exit) = parsed(&format!(
         "invariant I using v on M::Order at current {{ reaches(self, self, {edge}) }}"
     ));
-    assert_eq!(diagnostic["construct"], "qualified-reaches-edge");
-    assert_eq!(diagnostic["text"], edge);
-    let at = text.find(edge).expect("in the unit");
-    assert_eq!(locus_start(&diagnostic), Some(at as u64));
-}
-
-#[trace("TC-2159", "FR-763-AC-5")]
-#[test]
-fn every_construct_message_begins_with_the_construct() {
-    for (declaration, prefix) in [
-        (
-            function("null"),
-            "`null` is not supported as a value here yet".to_owned(),
-        ),
-        (
-            function("xs[0]"),
-            "the index selection `xs[0]` is not supported here yet".to_owned(),
-        ),
-        (
-            function("size<Integer>(xs)"),
-            "`size<Integer>` is not supported in expressions yet".to_owned(),
-        ),
-        (
-            "invariant I using v on M::Order at current { reaches(self, self, M::Order::next) }"
-                .to_owned(),
-            "`reaches` over the qualified edge `M::Order::next` is not supported yet".to_owned(),
-        ),
-        (
-            "temporal T using v over (x: M::Order) clock \"steps\" on origin { always holds(x @ a = x @ b) }"
-                .to_owned(),
-            "a hyper expression is not supported as a temporal condition yet".to_owned(),
-        ),
-    ] {
-        let (_, diagnostic) = construct_diagnostic(&declaration);
-        let message = diagnostic["message"].as_str().expect("a message");
-        assert!(message.starts_with(&prefix), "{message}");
-        assert!(!diagnostic["text"].as_str().expect("text").is_empty());
-    }
-    let long = format!("size<Integer>({})", "x".repeat(185));
-    assert_eq!(long.len(), 200);
-    let (_, diagnostic) = construct_diagnostic(&function(&long));
-    let text = diagnostic["text"].as_str().expect("text");
-    assert!(text.len() <= 123 && text.ends_with("..."), "{text}");
+    assert_eq!(exit, 0, "{document}");
+    assert_eq!(document["diagnostics"], serde_json::json!([]));
 }
 
 #[trace("TC-2160", "FR-763-AC-6")]
+#[trace("TC-2785", "FR-986-AC-1", "FR-986-AC-2")]
 #[test]
-fn the_parse_document_renders_the_construct_cause() {
-    let (_, value, exit) = parsed(&function("null"));
-    assert_eq!(value["category"], "unsupported");
-    assert_eq!(exit, 21);
-    let diagnostic = &value["diagnostics"][0];
-    assert!(!diagnostic["cause"].is_null());
-    assert_eq!(diagnostic["cause"], "not-yet-implemented");
-    assert_eq!(diagnostic["construct"], "null-value");
-    assert_eq!(diagnostic["text"], "null");
-    assert_eq!(diagnostic["declaration"], "f");
-    assert_eq!(diagnostic["profile"], PROFILE);
-    assert!(diagnostic["message"]
-        .as_str()
-        .expect("a message")
-        .starts_with("`null` is not supported as a value here yet"));
+fn a_null_expression_is_refused_at_check_with_its_locus() {
+    for declaration in [
+        "function f using v(): Option<Integer> pure { null }",
+        "function g using v(a: Option<Integer>): Boolean pure { a = null }",
+        "function h using v(): Integer pure { null }",
+        "function k using v(): Boolean pure { let x = null in true }",
+    ] {
+        let text = format!(
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"{PROFILE}\";\n{}\n",
+            declaration
+        );
+        let identity = SourceIdentity::new("agent-ix", "test:null-check");
+        let limits = SpineLimits::default();
+        let cancel = Cancel::new();
+        let parsed = parse(
+            &ParseRequest {
+                source: &identity,
+                path: "null.native",
+                bytes: text.as_bytes(),
+            },
+            limits.source,
+            &cancel,
+        )
+        .expect("S2 admits null")
+        .into_value();
+        let models = select(
+            &parsed,
+            &fsl_semantics::model::intake::PackageInput::default(),
+            limits.model,
+            &cancel,
+        )
+        .expect("no model imports")
+        .into_value();
+        let result = check(
+            &parsed,
+            "null-check".to_owned(),
+            &models,
+            &DependencyInput::default(),
+            limits,
+            &cancel,
+        );
+        assert!(result.is_err(), "null is never a value");
+        let document = OutcomeDocument::from_check(&result);
+        assert_eq!(document.category().exit_code(), 20);
+        let value: Value =
+            serde_json::from_slice(&document.to_bytes().expect("encoded check outcome"))
+                .expect("JSON");
+        assert_eq!(value["category"], "refusal");
+        assert_eq!(
+            value["diagnostics"].as_array().expect("diagnostics").len(),
+            1
+        );
+        let diagnostic = &value["diagnostics"][0];
+        assert_eq!(diagnostic["code"], "ill_typed");
+        assert_eq!(diagnostic["cause"], "type-mismatch");
+        let start = text.rfind("null").expect("null expression") as u64;
+        assert_eq!(locus_start(diagnostic), Some(start));
+        assert_eq!(diagnostic["locus"]["end"].as_u64(), Some(start + 4));
+        let message = diagnostic["message"].as_str().expect("message");
+        for spelling in ["null", "none", "absent"] {
+            assert!(message.contains(spelling), "{message}");
+        }
+    }
 }
 
 /// The start byte of a diagnostic's source locus, written as a JSON number

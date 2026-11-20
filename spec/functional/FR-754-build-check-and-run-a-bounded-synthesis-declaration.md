@@ -20,6 +20,21 @@ it by FSpec FR-194 "Source form" including the finite-domain rule, and the
 in-tree synthesizer enumerates the finite domain in cost order and has each
 found candidate validated by the native value checker.
 
+This requirement is how FSL provides FSpec capability V1-RUN-019, bounded
+synthesis that keeps a found candidate apart from a proof. A found candidate
+carries the independent checker's verdict (`validated` or `rejected`, or
+`unchecked` for an `incomplete` run's best candidate) and is never reported
+as proved. `no-candidate` is reported only after every value of the finite
+domain has been visited, and a run stopped by a limit is reported
+`incomplete`. Synthesis runs from a `native-run/1` request's
+`synthesis` member in `fsl-command`: from source by FR-1037, and from a
+checked package by FR-1039. It is not an FR-281 `analyze` engine, because
+those engines decide claims over every behaviour of a model, so it has no
+`fsl-analyze` engine row. The conformance corpus that `qualify` runs
+(FR-350) has no V1-RUN-019 vector, so the capability is verified on the
+command path: FR-754-AC-3 and FR-1037-AC-1 run it from source, and
+FR-1039-AC-2 runs it from a checked package.
+
 ## Inputs
 
 A unit holding a `synthesis` declaration; the checked package; the run's
@@ -28,7 +43,10 @@ work, deadline and cancellation limits.
 ## Outputs
 
 `DeclarationForm::Synthesis` at S2; a checked synthesis at S3, emitted as the
-checked package's `synthesis_request` node; one FSpec FR-194 result per run.
+checked package's `claim`/`synthesis_request` node (FR-1036, FSpec FR-322
+"Synthesis-request nodes"); one FSpec FR-194 result per run, selected and
+written as the `filament.synthesis-outcome/v1` document by the run
+request's `synthesis` member (FR-1037, FSpec FR-823).
 
 ## Behavior
 
@@ -55,8 +73,9 @@ checked package's `synthesis_request` node; one FSpec FR-194 result per run.
 | --- | --- | --- |
 | FR-754-AC-1 | S2 builds `synthesis Pick using p grammar Digit domain Digit satisfies { Pick * Pick = 49 };` into one `Synthesis` form with its names and block spans, and the same declaration with `minimize Pick` holds the objective direction and expression. | Test (TC-2104) |
 | FR-754-AC-2 | S3 refuses a `domain` naming unbounded `Integer`, a record with an unbounded `Text` field and a recursive union each `unsupported_projection`/`unbounded-extent` at the `domain` name, naming the component. | Test (TC-2104) |
-| FR-754-AC-3 | Running `Pick` returns `candidate` 7 `validated`; with `Pick * Pick = 50`, `no-candidate` after ten values; with `minimize Pick` and `Pick >= 3`, the optimal 3. | Test (TC-2104) |
+| FR-754-AC-3 | Running `Pick` returns `candidate` 7 `validated` after eight values; with `Pick * Pick = 50`, `no-candidate` after ten values; with `minimize Pick` and `Pick >= 3`, the optimal 3. | Test (TC-2104) |
 
 ## Dependencies
 
 - FR-067 (S2 dispatch); FR-755 (plans); FSpec FR-194.
+- FR-1037 and FR-1039: the run-request routes that run the synthesizer.

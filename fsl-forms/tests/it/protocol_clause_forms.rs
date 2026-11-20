@@ -6,7 +6,7 @@
 
 use fsl_forms::{
     build_unit, AnchorSite, BinderForm, BinderKind, BuiltinType, DeclarationForm, ExprNode,
-    ExprRef, ExpressionSpans, FormsCause, OperationBodyForm, ParsedUnit, ProtocolConstructKind,
+    ExprRef, ExpressionSpans, OperationBodyForm, ParsedUnit, ProtocolConstructKind,
     ProtocolDeclarationForm, ProtocolNodeDeclaration, ProtocolNodeKind, ScopedAnchorForm, SpanId,
     StateClauseForm, StateClauseKind, TypeFormHead,
 };
@@ -74,14 +74,6 @@ fn recovery_aware_forms_keep_clean_protocol_siblings() {
         text[refusals[0].declaration_span.start..refusals[0].declaration_span.end]
             .starts_with("protocol X")
     );
-}
-
-fn refusal(declarations: &str) -> (String, FormsCause, Option<Span>) {
-    let (text, parsed) = admissible(declarations);
-    match build_unit(&parsed) {
-        Err(refusal) => (text, refusal.cause, refusal.span),
-        other => panic!("{declarations}: a refusal, not {other:?}"),
-    }
 }
 
 /// SR-722 FND-007 (TC-456 step 1): every node of an expression tree's own
@@ -1119,7 +1111,7 @@ fn pre_and_post_build_their_own_kind_with_the_operation_member() {
 
 #[trace("TC-456", "FR-102-AC-3")]
 #[test]
-fn self_result_and_reaches_build_and_a_qualified_edge_refuses() {
+fn self_result_and_reaches_build_with_a_qualified_edge() {
     let (_, unit) = build(
         "invariant NoCycle using v on Config::ConfigVersion at current \
          { not reaches(self, self, parent) }",
@@ -1144,25 +1136,14 @@ fn self_result_and_reaches_build_and_a_qualified_edge_refuses() {
     let form = state_clause(unit.forms()[0].form());
     assert!(matches!(form.body.root_node(), ExprNode::Result));
 
-    let (text, cause, span) = refusal(
+    let (_, unit) = build(
         "invariant Q using v on Config::ConfigVersion at current \
          { reaches(self, self, Config::ConfigVersion::parent) }",
     );
-    assert!(matches!(
-        &cause,
-        FormsCause::UnrepresentedConstruct {
-            production: fsl_cst::Production::QualifiedName,
-            ..
-        }
-    ));
-    let needle = "Config::ConfigVersion::parent";
-    let start = text.rfind(needle).expect("the edge is in the unit");
+    let form = state_clause(unit.forms()[0].form());
     assert_eq!(
-        span,
-        Some(Span {
-            start,
-            end: start + needle.len()
-        })
+        show(form.body.root()),
+        "Reaches[Config::ConfigVersion::parent](SelfRef, SelfRef)"
     );
 }
 
