@@ -379,7 +379,7 @@ impl ZeroTimeSolver<'_> {
                 if denominator.is_zero() {
                     continue;
                 }
-                let value = exit_value.div(&denominator);
+                let value = exit_value.div(&denominator).ok_or(FhError::InvalidProbability)?;
                 if !rational_fits(&value, self.max_rational_bits) {
                     return Err(FhError::InvalidProbability);
                 }

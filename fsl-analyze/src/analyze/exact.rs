@@ -1951,6 +1951,7 @@ fn replay_refutation(
         Err(error) => return document_failure(error, subject),
     };
     let mut scheduler = Vec::new();
+    let mut spelled_scheduler = Vec::new();
     for (state, action) in produced.entries {
         // Terminal stutter carries no scheduler decision. Evidence paths
         // stop at first hits or independently checked nonreach leaves.
@@ -1964,6 +1965,12 @@ fn replay_refutation(
             Ok(key) => key,
             Err(error) => return document_failure(error, subject),
         };
+        if let ProductAction::Identity(identity) = &action {
+            spelled_scheduler.push((
+                fsl_eval::simulation::StateKey::from_canonical_bytes(key.as_bytes().to_vec()),
+                identity.clone(),
+            ));
+        }
         let action = match replay_choice(&action) {
             Ok(action) => action,
             Err(_) => return not_yet(),
@@ -2054,7 +2061,7 @@ fn replay_refutation(
                 };
                 let mut candidates = Vec::new();
                 for action in actions {
-                    if action.identity != identity {
+                    if &action.identity != identity {
                         continue;
                     }
                     for draw in action.draws {
@@ -2189,19 +2196,6 @@ fn replay_refutation(
     match replay_probabilistic_witness(package, system, &item, &witness, limits, cancel) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let scope = package.graph().scope();
-            // FR-413: each entry is keyed by its product state key.
-            let spelled: Vec<_> = witness
-                .scheduler
-                .iter()
-                .map(|(key, choice)| {
-                    (
-                        fsl_eval::simulation::StateKey::from_canonical_bytes(
-                            key.as_bytes().to_vec(),
-                        ),
-                        choice.clone(),
-                    )
-                })
-                .collect();
             let wire = fsl_replay::probabilistic_wire(
                 &witness,
                 match &claim.form {
@@ -2211,7 +2205,7 @@ fn replay_refutation(
                 scope.types(),
                 scope.variant_types(),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
-                &spelled,
+                &spelled_scheduler,
             );
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
         }

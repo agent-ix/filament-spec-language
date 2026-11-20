@@ -901,7 +901,7 @@ fn stutter_edge(state: ProbStateId) -> super::ProbEdge {
         draw: None,
         to: state,
         probability: one(),
-        elapsed: Rational::from_integer(0.into()),
+        elapsed: Rational::from_integer(0_i64.into()),
         rewards: Vec::new(),
     }
 }
