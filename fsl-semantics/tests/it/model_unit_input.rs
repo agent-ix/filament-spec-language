@@ -7,7 +7,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    admit, admit_unit, compile_model_unit, package_input, package_input_from_sources,
+    admit, admit_unit, compile_model_unit, package_input, package_input_from_sources, read_records,
 };
 use ix_trace_rs::trace;
 
@@ -292,4 +292,57 @@ population items: Item;
         ModelNormalizationLimits::default().intake,
     )
     .expect("FR-154 admits the compiled scalar alias");
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_a_record_value_type() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/records";
+record Point { x: Integer; }
+"#;
+    let packages = package_input([source.as_bytes()]).expect("record model unit compiles");
+    let (_, document) = admit(
+        "example/records",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the record value type");
+    let records = read_records("example/records", &document).expect("record is read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::RecordValueType(_)
+        )
+    }));
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_enum_and_union_cases() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/variants";
+enum Tier { Gold, Standard }
+union Mark { Circle(Integer), Blank }
+"#;
+    let packages = package_input([source.as_bytes()]).expect("variant model unit compiles");
+    let (_, document) = admit(
+        "example/variants",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the variant types");
+    let records = read_records("example/variants", &document).expect("variant cases are read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::Enum(_)
+        )
+    }));
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::Variant(_)
+        )
+    }));
 }

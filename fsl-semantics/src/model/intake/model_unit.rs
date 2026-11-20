@@ -201,7 +201,10 @@ pub fn compile_model_unit(
     let mut population_names = std::collections::BTreeSet::new();
     let mut references = Vec::new();
     let mut has_object_type = false;
+    let mut has_record_type = false;
+    let mut has_tuple_type = false;
     let mut has_value_type = false;
+    let mut has_variant_type = false;
     let mut index = cursor;
     while index < tokens.len() {
         let declaration_start = index;
@@ -288,6 +291,60 @@ pub fn compile_model_unit(
                 has_value_type = true;
                 index = next;
             }
+            Some("tuple") => {
+                let Some((tuple_type, name, next)) =
+                    read_tuple_type(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid tuple type declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens
+                            .get(declaration_start + 1)
+                            .map_or(tokens[declaration_start].span, |token| token.span),
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(tuple_type);
+                has_tuple_type = true;
+                index = next;
+            }
+            Some("enum") | Some("ordered") | Some("union") => {
+                let Some((variant_type, name, next)) =
+                    read_variant_type(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid variant type declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens
+                            .get(declaration_start + 1)
+                            .map_or(tokens[declaration_start].span, |token| token.span),
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(variant_type);
+                has_variant_type = true;
+                index = next;
+            }
             Some("record") => {
                 if let Some(span) = record_operation_span(&tokens, index) {
                     return Err(vec![diagnostic(
@@ -298,14 +355,34 @@ pub fn compile_model_unit(
                         "operations are not admitted on a record value type",
                     )]);
                 }
-                let token = &tokens[index];
-                return Err(vec![diagnostic(
-                    parsed,
-                    CompleteCode::UnsupportedConstruct,
-                    CompleteCause::DeclarationForm,
-                    token.span,
-                    "record value types are not supported by model-unit compilation",
-                )]);
+                let Some((mut record, next)) = read_object(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[index].span,
+                        "invalid record declaration",
+                    )]);
+                };
+                if !declaration_names.insert(record.name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens
+                            .get(index + 1)
+                            .map_or(tokens[index].span, |token| token.span),
+                        format!("declaration {} is declared more than once", record.name),
+                    )]);
+                }
+                record.wire["kind"]["name"] = json!("record_value_type");
+                if let Some(object) = record.wire.as_object_mut() {
+                    object.remove("operations");
+                }
+                types.push(record.wire);
+                has_record_type = true;
+                index = next;
             }
             Some(_) => {
                 let token = &tokens[index];
@@ -366,6 +443,18 @@ pub fn compile_model_unit(
     }
     if has_value_type {
         meanings.push(("value_type", "filament.meaning.model.value-type/v1"));
+    }
+    if has_record_type {
+        meanings.push((
+            "record_value_type",
+            "filament.meaning.model.record-value-type/v1",
+        ));
+    }
+    if has_tuple_type {
+        meanings.push(("tuple_type", "filament.meaning.model.tuple-value-type/v1"));
+    }
+    if has_variant_type {
+        meanings.push(("variant_type", "filament.meaning.model.variant-type/v1"));
     }
     if !populations.is_empty() {
         meanings.push(("population", "filament.meaning.model.population/v1"));
@@ -765,6 +854,152 @@ fn signed_integer(tokens: &[Token], index: &mut usize) -> Option<String> {
     })
 }
 
+fn read_variant_type(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    if tokens.get(index)?.text == "ordered" {
+        index += 1;
+    }
+    let kind = tokens.get(index)?.text.as_str();
+    if kind != "enum" && kind != "union" {
+        return None;
+    }
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "{" {
+        return None;
+    }
+    index += 1;
+    let mut variants = Vec::new();
+    while tokens.get(index)?.text != "}" {
+        if tokens.get(index)?.text == "," {
+            index += 1;
+            continue;
+        }
+        let case_start = tokens.get(index)?.span.start;
+        let case_name = tokens.get(index)?.text.clone();
+        index += 1;
+        let mut payload_type = None;
+        if kind == "union" && tokens.get(index).is_some_and(|token| token.text == "(") {
+            index += 1;
+            let payload = tokens.get(index)?.text.clone();
+            index += 1;
+            while tokens.get(index)?.text != ")" {
+                index += 1;
+            }
+            let mut reference = type_ref(&payload, package);
+            if matches!(payload.as_str(), "Int" | "Integer") {
+                reference = "ix://filament/native/Integer".to_owned();
+            }
+            payload_type = Some(reference);
+            index += 1;
+        }
+        if kind == "enum" && tokens.get(index).is_some_and(|token| token.text == "=") {
+            index += 2;
+        }
+        let case_end = tokens
+            .get(index.saturating_sub(1))
+            .map_or(case_start, |token| token.span.end);
+        let case_identity = format!("ix://{package}/variant/{name}-{case_name}");
+        let mut case = json!({
+            "identity": case_identity,
+            "name": case_name,
+            "origin": source_origin(parsed, Span { start: case_start, end: case_end }),
+        });
+        if let Some(payload_type) = payload_type {
+            case["payloadType"] = json!(payload_type);
+        }
+        variants.push(case);
+        if tokens.get(index).is_some_and(|token| token.text == ",") {
+            index += 1;
+        }
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    let identity = format!("ix://{package}/{name}");
+    Some((
+        json!({
+            "identity": identity,
+            "displayName": name,
+            "kind": {"module": package, "name": "variant_type"},
+            "roles": [], "origin": source_origin(parsed, Span { start, end }),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "variants": variants,
+        }),
+        name,
+        index,
+    ))
+}
+
+fn read_tuple_type(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "(" {
+        return None;
+    }
+    index += 1;
+    let mut positions = Vec::new();
+    while tokens.get(index)?.text != ")" {
+        if tokens.get(index)?.text == "," {
+            index += 1;
+            continue;
+        }
+        let position_start = tokens.get(index)?.span.start;
+        let type_name = tokens.get(index)?.text.clone();
+        index += 1;
+        let mut nesting = 0usize;
+        while let Some(token) = tokens.get(index) {
+            match token.text.as_str() {
+                "<" | "[" => nesting += 1,
+                ">" | "]" if nesting > 0 => nesting -= 1,
+                "," | ")" if nesting == 0 => break,
+                _ => {}
+            }
+            index += 1;
+        }
+        let position_end = tokens
+            .get(index.saturating_sub(1))
+            .map_or(position_start, |token| token.span.end);
+        let ordinal = positions.len();
+        positions.push(json!({
+            "identity": format!("ix://{package}/{name}/p{ordinal}"),
+            "typeRef": type_ref(&type_name, package),
+            "origin": source_origin(parsed, Span { start: position_start, end: position_end }),
+        }));
+    }
+    index += 1;
+    if tokens.get(index)?.text != ";" {
+        return None;
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    let identity = format!("ix://{package}/{name}");
+    Some((
+        json!({
+            "identity": identity,
+            "displayName": name,
+            "kind": {"module": package, "name": "tuple_type"},
+            "roles": [], "origin": source_origin(parsed, Span { start, end }),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "positions": positions,
+        }),
+        name,
+        index,
+    ))
+}
+
 fn read_multiplicity(
     tokens: &[Token],
     mut index: usize,
@@ -952,6 +1187,7 @@ fn skip_statement(tokens: &[Token], mut index: usize) -> Option<usize> {
 fn type_ref(type_name: &str, package: &str) -> String {
     let native = match type_name {
         "Boolean" => "Boolean",
+        "Int" => "Integer",
         "Text" => "Text",
         "Integer" => "Integer",
         "Rational" => "Rational",
