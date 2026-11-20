@@ -2329,6 +2329,7 @@ fn assess_obligations(
                 crate::monitor::MonitorVerdict::Violated
                 | crate::monitor::MonitorVerdict::Undefined,
             ) => (RecordingVerdict::Violated, Some(RecordingCause::Unexpected)),
+            Some(crate::monitor::MonitorVerdict::Inactive) => (RecordingVerdict::Pending, None),
             _ if document.closure.state == "closed" => {
                 (RecordingVerdict::Violated, Some(RecordingCause::Missing))
             }
