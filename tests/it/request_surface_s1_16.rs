@@ -37,9 +37,27 @@ fn source(file: &str) -> Value {
 /// and a `native-run/1` request whose `request` carries `member`, runs it
 /// through the command adapter, and returns its exit code and document.
 fn run(unit: &str, with_model: bool, member: (&str, Value)) -> (u8, Value) {
+    run_with_domain_package(unit, with_model, member, None)
+}
+
+/// Runs against a private domain-package string when a request-surface case
+/// needs a smaller model than the shared spine fixture.
+fn run_with_domain_package(
+    unit: &str,
+    with_model: bool,
+    member: (&str, Value),
+    domain_package: Option<&str>,
+) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    if let Some(domain_package) = domain_package {
+        std::fs::write(
+            directory.path().join("spine-model.semantic-ir.json"),
+            domain_package,
+        )
+        .unwrap();
+    }
     let models = if with_model {
         json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}])
     } else {
@@ -154,7 +172,23 @@ fn a_passing_run_records_tested_and_never_proved() {
     let unit = format!(
         "{MODEL_HEADER}invariant Always using v on Config::ConfigVersion at current {{ true }}\n"
     );
-    let (_, value) = run(
+    let mut domain_package: Value =
+        serde_json::from_str(spine::DOMAIN_PACKAGE).expect("the shared model is JSON");
+    let version_number = domain_package["types"]
+        .as_array_mut()
+        .expect("the model has types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == "ix://example/config-version/VersionNumber")
+        .expect("the model declares VersionNumber");
+    let max = version_number["constraints"]
+        .as_array_mut()
+        .expect("VersionNumber has constraints")
+        .iter_mut()
+        .find(|constraint| constraint["keyword"] == "max")
+        .expect("VersionNumber has a maximum");
+    max["operands"]["value"] = json!("2");
+    let domain_package = serde_json::to_string(&domain_package).expect("the model serializes");
+    let (_, value) = run_with_domain_package(
         &unit,
         true,
         (
@@ -163,12 +197,20 @@ fn a_passing_run_records_tested_and_never_proved() {
         "clause": "Always", "seed": 7, "max_cases": 50, "max_trace_length": 4,
         "initial": "spine-snapshot.json"}),
         ),
+        Some(&domain_package),
     );
     let result = &value["model_based_test"];
     assert_eq!(result["evidence"], "tested", "{value}");
-    assert_ne!(result["status"], "proved", "{value}");
+    assert_eq!(result["status"], "tested", "{value}");
+    assert!(result["verdict"].is_null(), "{value}");
     assert!(
-        result["cases"]["passed"].as_u64().is_some_and(|n| n <= 50),
+        result["cases"]["generated"]
+            .as_u64()
+            .is_some_and(|n| (1..=50).contains(&n)),
+        "{value}"
+    );
+    assert!(
+        result["cases"]["passed"].as_u64().is_some_and(|n| n > 0),
         "{value}"
     );
 }
