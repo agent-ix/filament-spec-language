@@ -2,10 +2,9 @@
 //! FR-411, FR-940, FR-124: a unit that selects two models, each with its own
 //! `terminal` declaration, classifies terminal states and replays an
 //! undefined `terminal when` as one declaration on the source route and on
-//! the package route. Both routes order the declarations by the model
-//! selection's identity (`test/vault` before `test/vault-other`), the
-//! reverse of their aliases (`V`, `N`), so an `any` that comes first
-//! intends a state before a later undefined `when` is read.
+//! the package route. Both routes classify a terminal state by the same rule
+//! (an intending declaration outweighs a refused one, which outweighs an
+//! undefined one) and name declarations in selection-identity order.
 
 use filament_exact::Cancel;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
@@ -49,6 +48,8 @@ const UNDEFINED_WHEN: &str = "terminal Done using v on V when { q(1 - self.l) = 
 const OTHER_ANY: &str = "terminal Halt using v on N any;\n";
 /// The declaration on `test/vault` that intends every terminal state.
 const ANY: &str = "terminal Halt using v on V any;\n";
+/// The declaration on `test/vault-other` that never intends a state.
+const OTHER_FALSE: &str = "terminal Stop using v on N when { false };\n";
 /// The declaration on `test/vault-other` that is undefined at `l = 1`.
 const OTHER_UNDEFINED_WHEN: &str = "terminal Done using v on N when { q(1 - self.l) = 0 };\n";
 
@@ -225,13 +226,13 @@ enum Expected {
     Undecided,
 }
 
-/// FR-124, FR-411, FR-940: over two models, the declarations are read in
-/// selection-identity order on both routes (`test/vault` before
-/// `test/vault-other`, the reverse of the aliases `V`, `N`). An `any` read
-/// first intends a state before a later undefined or refused `when`; the
-/// `when` read first decides the state: undefined (`6 mod 0`) or undecided
-/// (a function result outside its `Int[0, 3]`). No declaration deadlocks the
-/// terminal state, and a plain `when` that holds intends it.
+/// FR-124, FR-411, FR-940: over two models a terminal state is intended when
+/// any declaration intends it, whichever is read first (`any`, or a `when`
+/// that holds); otherwise undecided when any is refused (a function result
+/// outside its `Int[0, 3]`), otherwise undefined when any is (`6 mod 0`),
+/// otherwise deadlocked. Both routes agree, and a report names the first
+/// refused or undefined declaration in selection-identity order (`test/vault`
+/// before `test/vault-other`, the reverse of the aliases `V`, `N`).
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn two_models_read_their_terminals_in_selection_identity_order_on_both_routes() {
@@ -244,14 +245,27 @@ fn two_models_read_their_terminals_in_selection_identity_order_on_both_routes() 
             Expected::Intended,
         ),
         (format!("{ANY}{OTHER_UNDEFINED_WHEN}"), Expected::Intended),
-        (format!("{UNDEFINED_WHEN}{OTHER_ANY}"), Expected::Undefined),
+        // Any declaration that intends the state outweighs one that is
+        // undefined or refused, whichever is read first (FR-124).
+        (format!("{UNDEFINED_WHEN}{OTHER_ANY}"), Expected::Intended),
+        (
+            format!("{UNDEFINED_WHEN}terminal Fin using v on N when {{ self.l = 1 }};\n"),
+            Expected::Intended,
+        ),
+        // A refused declaration outweighs an undefined one, and an undefined
+        // one outweighs no declaration at all.
+        (
+            format!("terminal Done using v on V when {{ b(self.l) = 0 }};\n{OTHER_UNDEFINED_WHEN}"),
+            Expected::Undecided,
+        ),
+        (UNDEFINED_WHEN.to_owned(), Expected::Undefined),
         (
             format!("{ANY}terminal Done using v on N when {{ b(self.l) = 0 }};\n"),
             Expected::Intended,
         ),
         (
             format!("terminal Done using v on V when {{ b(self.l) = 0 }};\n{OTHER_ANY}"),
-            Expected::Undecided,
+            Expected::Intended,
         ),
     ] {
         let world = two_models(&terminals);
@@ -307,7 +321,7 @@ fn world_keys(world: &Two) -> fsl_semantics::check::TerminalKeys {
 #[trace("TC-539", "FR-128-AC-6")]
 #[test]
 fn an_undefined_terminal_of_two_models_runs_and_replays_as_on_the_source_route() {
-    let world = two_models(&format!("{UNDEFINED_WHEN}{OTHER_ANY}"));
+    let world = two_models(&format!("{UNDEFINED_WHEN}{OTHER_FALSE}"));
     let selection = world
         .package
         .graph()
