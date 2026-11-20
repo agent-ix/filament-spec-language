@@ -259,69 +259,7 @@ impl ProtocolInput<'_> {
         {
             unemitted.push(ProtocolConstruct::ProtocolReferenceInBody);
         }
-        if self.repeat_steps_through_repeat() {
-            unemitted.push(ProtocolConstruct::RepeatStepsThroughRepeat);
-        }
         unemitted
-    }
-
-    /// Whether some `repeat`'s body does not necessarily step when no
-    /// `repeat` counts as stepping: S3 admitted it through a nested repeat
-    /// whose exit is infeasible (FSpec FR-464 "Nested `repeat` rule",
-    /// STD-539). It is withheld until IR's reader decides that rule
-    /// (IR-1100).
-    fn repeat_steps_through_repeat(&self) -> bool {
-        use ProtocolNodeKind as K;
-        let tree = &self.checked.controls;
-        let mut steps: BTreeMap<ProtocolNodeId, bool> = BTreeMap::new();
-        // Children follow their holder in `controls`, so in reverse each
-        // child is decided before its holder.
-        for control in tree.controls.iter().rev() {
-            let child = |index: usize| {
-                control
-                    .children
-                    .get(index)
-                    .and_then(|child| steps.get(child))
-                    .copied()
-                    .unwrap_or(false)
-            };
-            let necessarily = match control.kind {
-                K::Send
-                | K::Receive
-                | K::Attempt
-                | K::Effect
-                | K::Event
-                | K::Commit
-                | K::Fence
-                | K::Await
-                | K::Parallel => true,
-                K::Check | K::Finish | K::CompensateTemplate => false,
-                // A repeat makes progress when its body makes progress. In
-                // particular, this lets an outer repeat step through a
-                // nested repeat whose body contains an action.
-                K::Repeat => child(0),
-                K::Branch | K::Case => child(0),
-                K::Sequence => (0..control.children.len()).any(child),
-                K::Choice => (0..control.children.len()).all(child),
-            };
-            steps.insert(control.node, necessarily);
-        }
-        self.form.repeats.iter().any(|repeat| {
-            tree.control(ProtocolNodeId(repeat.declaration))
-                .is_some_and(|control| {
-                    !control.children.iter().any(|child| {
-                        steps.get(child).copied().unwrap_or(false)
-                            && self
-                                .form
-                                .declarations
-                                .get(child.0)
-                                .is_some_and(|declaration| {
-                                    repeat.body.start <= declaration.name.span.start
-                                        && declaration.name.span.end <= repeat.body.end
-                                })
-                    })
-                })
-        })
     }
 
     /// Whether the `run` tree holds an `attempt` or `recommend`, whose node

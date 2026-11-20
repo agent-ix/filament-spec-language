@@ -835,8 +835,10 @@ struct ItemSelectionWire {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("a non-protocol item carries an unsupported protocol member or count")]
-struct ItemSelectionReadError;
+#[error("{message}")]
+struct ItemSelectionReadError {
+    message: &'static str,
+}
 
 impl TryFrom<ItemSelectionWire> for ItemSelection {
     type Error = ItemSelectionReadError;
@@ -846,17 +848,23 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
             wire.kind.as_deref(),
             Some("local-projection" | "realizability")
         );
-        if !protocol_analysis
-            && wire.temporal.as_ref().is_some_and(|temporal| {
-                temporal.max_depth.is_some_and(|bound| {
+        if !protocol_analysis {
+            if let Some(temporal) = wire.temporal.as_ref() {
+                if temporal.max_depth.is_some_and(|bound| {
                     bound
                         .value()
                         .is_none_or(|value| usize::try_from(value).is_err())
-                }) || temporal.profile.is_some()
-                    || temporal.max_history.is_some()
-            })
-        {
-            return Err(ItemSelectionReadError);
+                }) {
+                    return Err(ItemSelectionReadError {
+                        message: "temporal.max_depth is out of range",
+                    });
+                }
+                if temporal.profile.is_some() || temporal.max_history.is_some() {
+                    return Err(ItemSelectionReadError {
+                        message: "a non-protocol item carries an unsupported protocol member or count",
+                    });
+                }
+            }
         }
         Ok(Self {
             claim: wire.claim,

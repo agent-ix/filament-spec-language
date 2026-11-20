@@ -97,7 +97,6 @@ fn a_returned_counterexample_rejects_an_out_of_range_initial_state() {
 
 #[trace("FR-128-AC-3")]
 #[test]
-#[ignore = "QSL-2702: enabled temporal replay edges with a wrong target must retain PostState classification"]
 fn a_returned_counterexample_rejects_a_different_real_post_state_as_content_mismatch() {
     let case = case(CONTRACT, &[2]);
     let returned = counterexample(&case);

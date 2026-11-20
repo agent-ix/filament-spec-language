@@ -1980,9 +1980,10 @@ fn replay_prefix_stopped_with_mismatch_explanation<S: SubjectSystem>(
             return Err(refused(refusal));
         }
         let Some((next, replayed)) = reached else {
-            if let Some(refusal) = explain_mismatch(index, &current.state, &step.transition) {
-                return Err(refused(refusal));
-            }
+            // The transition identity is enabled at this pre-state, but none
+            // of its replayed successors has the recorded key. This is a
+            // stale post-state even when the subject can explain an absent
+            // transition identity as a different refusal.
             return Err(refused(ModelTraceRefusal::PostState {
                 step: index,
                 recorded: step.post_state.clone(),

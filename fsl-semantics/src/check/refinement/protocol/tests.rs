@@ -2114,14 +2114,12 @@ fn check_written(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
     )
 }
 
-/// A refinement whose rows select a protocol with an `attempt` adds no
-/// `ReferenceToAttemptProtocol` refusal of its own when a function that refers to
-/// the protocol is already refused (that refusal is the only one): the attempt-bearing node is
-/// written only for a unit with no earlier refusal, and the earlier refusal
-/// alone is reported. Without the earlier refusal the same unit checks.
-#[trace("TC-541", "FR-136-AC-1")]
+/// FR-218-AC-8: a function may refer to a selected protocol even when that
+/// protocol contains an `attempt`; the reference checks against its protocol
+/// type and adds no checker refusal.
+#[trace("TC-1021", "FR-218-AC-8")]
 #[test]
-fn a_refinement_over_an_attempt_protocol_adds_no_attempt_reference_refusal() {
+fn a_function_reference_to_an_attempt_protocol_checks() {
     let solo = "protocol Solo using pp over (k: M::Node) on origin {\n\
         role w on M::Node;\n\
         run sequence Main {\n\
@@ -2133,18 +2131,6 @@ fn a_refinement_over_an_attempt_protocol_adds_no_attempt_reference_refusal() {
     let text = unit(solo, rows);
     check_written(&text).unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
 
-    // A function that refers to the protocol is refused while the functions
-    // are lowered, before the attempt nodes: that is the one earlier refusal.
     let text = text + "function refers using v(): Boolean pure { protocol Solo }\n";
-    let refusals = check_written(&text).expect_err("the reference refuses");
-    let attempt_reference = |refusal: &CheckRefusal| {
-        matches!(
-            &refusal.cause,
-            CheckCause::ProtocolReference(cause)
-                if cause.construct()
-                    == Some(crate::check::ProtocolConstruct::ReferenceToAttemptProtocol)
-        )
-    };
-    assert_eq!(refusals.len(), 1, "{refusals:?}");
-    assert!(attempt_reference(&refusals[0]), "{refusals:?}");
+    check_written(&text).unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
 }

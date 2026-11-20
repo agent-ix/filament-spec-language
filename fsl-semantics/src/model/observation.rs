@@ -1683,6 +1683,7 @@ pub(crate) fn model_views<'a>(
 ) -> Result<Vec<ModelView>, AdmissionFailure> {
     let model_selections = model_selections.into();
     let mut views = Vec::with_capacity(model_selections.selections.len());
+    let mut included_sources = BTreeSet::new();
     for selection in model_selections.selections {
         let source = model_selections.source(&selection.identity);
         let domain_package = match source {
@@ -1699,39 +1700,56 @@ pub(crate) fn model_views<'a>(
                 DomainPackage::new(package_ref, records)
             }
         };
-        let view = match normalize(&domain_package, limits) {
-            NormalizeOutcome::Completed(view) => view,
-            // A reached ceiling of `ModelNormalizationLimits` is the caller's
-            // budget wherever it is read (ADR-014 section 1), so it refuses
-            // as the compile path does, naming its setting; any other
-            // refusal is a broken invariant, since the same packages already
-            // normalized at compile time.
-            NormalizeOutcome::Incomplete(incomplete) => {
-                return Err(caller_budget_refusal(
-                    &incomplete.denial(),
-                    INSUFFICIENT_NEXT_CHARGE,
-                ))
-            }
-            NormalizeOutcome::Refused(refusals) => {
-                return Err(refusals
-                    .iter()
-                    .find_map(|refusal| {
-                        let denial = refusal.cause.denial()?;
-                        Some(caller_budget_refusal(
-                            &denial,
-                            refusal.cause.catalog_code().cause(),
-                        ))
-                    })
-                    .unwrap_or_else(|| fault("model-reconsistent-normalize")))
-            }
-        };
+        if source.is_some() {
+            included_sources.insert(selection.identity.as_str());
+        }
+        let view = normalize_view(&domain_package, limits)?;
         views.push(if source.is_some() {
             ModelView::source(view)
         } else {
             ModelView::new(view)
         });
     }
+    // Source declarations are always part of a checked unit, even when the
+    // unit selects no model package (or selects only unrelated model
+    // packages). Observation admission still needs their effective views to
+    // resolve source-owned clause contexts and declaration names.
+    for source in model_selections.sources {
+        if !included_sources.insert(source.model_selection.identity.as_str()) {
+            continue;
+        }
+        views.push(ModelView::source(normalize_view(source, limits)?));
+    }
     Ok(views)
+}
+
+/// The effective view of `package`, normalized again under `limits`.
+///
+/// A reached ceiling of `ModelNormalizationLimits` is the caller's budget
+/// wherever it is read (ADR-014 section 1), so it refuses as the compile path
+/// does, naming its setting; any other refusal is a broken invariant, since
+/// the same packages already normalized at compile time.
+fn normalize_view(
+    package: &DomainPackage,
+    limits: ModelNormalizationLimits,
+) -> Result<EffectiveView, AdmissionFailure> {
+    match normalize(package, limits) {
+        NormalizeOutcome::Completed(view) => Ok(view),
+        NormalizeOutcome::Incomplete(incomplete) => Err(caller_budget_refusal(
+            &incomplete.denial(),
+            INSUFFICIENT_NEXT_CHARGE,
+        )),
+        NormalizeOutcome::Refused(refusals) => Err(refusals
+            .iter()
+            .find_map(|refusal| {
+                let denial = refusal.cause.denial()?;
+                Some(caller_budget_refusal(
+                    &denial,
+                    refusal.cause.catalog_code().cause(),
+                ))
+            })
+            .unwrap_or_else(|| fault("model-reconsistent-normalize"))),
+    }
 }
 
 /// FR-106 "Document forms": the declaration identity a snapshot's `name`
