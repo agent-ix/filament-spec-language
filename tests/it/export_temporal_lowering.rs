@@ -2393,7 +2393,7 @@ fn a_check_only_protocol_subject_keeps_its_typed_refusal() {
     );
     for target in [Target::Tla, Target::Lean] {
         let refusal = refusal_of(&tail, target);
-        assert_eq!(refusal["construct"], "temporal/protocol-subject");
+        assert_eq!(refusal["construct"], "protocol/protocol_clause");
     }
 }
 

@@ -383,43 +383,16 @@ fn enum_spec_doc() -> Vec<u8> {
     serde_json::to_vec(&document).expect("the enum model serializes")
 }
 
-fn enum_collision_doc() -> Vec<u8> {
-    let mut document: Value =
-        serde_json::from_slice(&enum_spec_doc()).expect("the enum model is json");
-    let mut second = document["types"]
-        .as_array()
+fn enum_collision_models() -> Vec<(&'static str, &'static str, Vec<u8>)> {
+    let second = String::from_utf8(enum_spec_doc())
         .unwrap()
-        .iter()
-        .find(|node| node["identity"] == "ix://example/counter-spec/Tier")
-        .expect("the first enum type")
-        .clone();
-    second["identity"] = json!("ix://example/other/Tier");
-    second["origin"]["generated"]["generatorIdentity"] = json!("ix://example/other/Tier");
-    second["origin"]["generated"]["inputIdentities"] = json!(["ix://example/other/Tier"]);
-    for variant in second["variants"].as_array_mut().unwrap() {
-        let name = variant["name"].as_str().unwrap();
-        variant["identity"] = json!(format!("ix://example/other/variant/Tier-{name}"));
-        variant["origin"]["source"]["sourceIdentity"] = json!("ix://example/other/spec");
-    }
-    document["types"].as_array_mut().unwrap().push(second);
-    let counter = document["types"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|node| node["identity"] == "ix://example/counter-spec/Counter")
-        .unwrap();
-    counter["fields"].as_array_mut().unwrap().push(json!({
-        "identity": "ix://example/counter-spec/Counter/status",
-        "name": "status",
-        "typeRef": "ix://example/other/Tier",
-        "presence": "required",
-        "nullable": false,
-        "defaultKind": "none",
-        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-        "origin": {"generated": {"generatorIdentity": "ix://example/other/Tier",
-            "generatorVersion": "1.0.0", "inputIdentities": ["ix://example/other/Tier"]}}
-    }));
-    serde_json::to_vec(&document).expect("the enum collision model serializes")
+        .replace("example/counter-spec", "example/other-spec")
+        .replace("Counter", "Gauge")
+        .into_bytes();
+    vec![
+        ("spec.json", refinement_cas::SPEC, enum_spec_doc()),
+        ("other.json", "example/other-spec", second),
+    ]
 }
 
 fn spec_models() -> Vec<(&'static str, &'static str, Vec<u8>)> {
@@ -707,11 +680,17 @@ fn enum_fields_lower_to_finite_tla_values_and_lean_constructors() {
 #[test]
 #[trace("FSpec-FR-812")]
 fn enum_names_and_name_map_preserve_distinct_declaration_owners() {
-    let models = vec![("spec.json", refinement_cas::SPEC, enum_collision_doc())];
+    let models = enum_collision_models();
+    let unit = format!(
+        "{HEADER}model Spec = \"example/counter-spec\";\n\
+         model Other = \"example/other-spec\";\n\
+         invariant Low using m on Spec::Counter at current {{ self.value <= 2 }}\n\
+         invariant High using m on Other::Gauge at current {{ self.value <= 2 }}\n"
+    );
     let (exit, value) = exported(
         &models,
-        &spec_unit(),
-        &spec_member("filament.output.lean4/v1"),
+        &unit,
+        &json!({"profile": "filament.output.lean4/v1", "obligations": ["Low", "High"]}),
     );
     assert_eq!(exit, 0, "{value}");
     let name_map = value["export"]["name_map"].as_array().unwrap();

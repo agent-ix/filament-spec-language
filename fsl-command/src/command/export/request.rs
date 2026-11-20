@@ -283,11 +283,10 @@ fn protocol_inputs(object: &Map<String, Value>) -> Result<Vec<ProtocolSelection>
                 .keys()
                 .find(|key| !["protocol", "over", "roles", "capacities"].contains(&key.as_str()))
             {
-                return Err(refuse(
-                    &format!("{path}/{}", pointer_token(unknown)),
-                    "unknown-member",
-                    "unknown protocol binding member",
-                ));
+                return Err(RunCause::ExportProtocolRequest {
+                    path: format!("/request/export{path}"),
+                    reason: format!("unknown protocol binding member `{unknown}`"),
+                });
             }
             let selection: ProtocolSelection =
                 serde_json::from_value(entry.clone()).map_err(|error| {
@@ -486,15 +485,24 @@ mod tests {
 
     #[test]
     #[trace("FSpec-FR-1015-AC-17")]
-    fn protocol_bindings_reject_unknown_nested_members() {
+    fn protocol_bindings_reject_unknown_members_like_analyze_reader() {
         let mut member = member();
-        member["protocols"][0]["over"]["unexpected"] = json!(true);
+        member["protocols"][0]["unexpected"] = json!(true);
         let error = read(&member, &Default::default()).expect_err("closed protocol binding");
-        let message = error.to_string();
-        assert!(
-            message.contains("/request/export/protocols/0/over/unexpected"),
-            "{message}"
+        assert_eq!(error.code(), fsl_foundation::Code::InvalidRequest);
+        let output = super::super::super::output::error(
+            &super::super::super::RunError {
+                cause: error,
+                sources: crate::Sources::default(),
+            },
+            false,
+        )
+        .expect("serialize request failure");
+        assert_eq!(output["code"], "invalid-request", "{output}");
+        assert!(output.get("cause").is_none(), "{output}");
+        assert_eq!(
+            output["details"]["path"], "/request/export/protocols/0",
+            "{output}"
         );
-        assert!(message.contains("unknown-member"), "{message}");
     }
 }

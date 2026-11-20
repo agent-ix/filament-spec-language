@@ -753,6 +753,16 @@ pub enum RunCause {
         /// Why the member is refused.
         reason: String,
     },
+    /// FR-1015-AC-17: a protocol binding has the same invalid-request
+    /// classification as the analyze reader, while retaining its export
+    /// request pointer for the caller.
+    #[error("invalid analyze request member {path}: {reason}")]
+    ExportProtocolRequest {
+        /// The export protocol binding at fault.
+        path: String,
+        /// Why the binding is refused.
+        reason: String,
+    },
     /// FR-1038: a `verification_plan` member the request reader refuses, with
     /// its FR-805 cause apart from the message.
     #[error("invalid verification plan request member {path}: {cause}: {reason}")]
@@ -1091,7 +1101,8 @@ impl RunCause {
             | Self::RequiresDirectory { .. }
             | Self::ClocksGivenTwice
             | Self::OutputGivenTwice
-            | Self::OutputExists { .. } => Code::InvalidRequest,
+            | Self::OutputExists { .. }
+            | Self::ExportProtocolRequest { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
             Self::ExportRequest { .. } | Self::PlanRequest { .. } => Code::InvalidRuntimeInput,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
@@ -1303,6 +1314,20 @@ impl RunError {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         Some(*cause),
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(path.clone()),
+                    )]))),
+                ])
+            }
+            RunCause::ExportProtocolRequest { path, .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
                         self.cause.code().as_str(),
                         None,
                         self.outcome_message(),
