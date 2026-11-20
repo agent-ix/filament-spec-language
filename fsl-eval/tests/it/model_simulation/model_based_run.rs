@@ -1627,6 +1627,7 @@ fn text_domain_work_limits_settle_a_record_before_any_case() {
 fn model_based_entry_refuses_missing_and_invalid_request_members() {
     let mut world = ac7_model_world();
     let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let initial_for_success = initial.clone();
     let identity = world
         .package
         .graph()
@@ -1787,7 +1788,6 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
         "max_value_bits"
     );
 
-    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
     request.clause = Some(
         world
             .package
@@ -1799,7 +1799,7 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
     request.subject = Some(ModelBasedTestSubject {
         packages: &world.packages,
         snapshots: &world.snapshots,
-        initial: vec![initial],
+        initial: vec![initial_for_success],
         universes: universe(&["c1"]),
     });
     request.max_cases = 100;
@@ -1919,7 +1919,7 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
 }
 
 fn ac7_model_world() -> World {
-    let clauses = "pre CanInc using v on M::Counter::inc { self.value + by <= 5 }\n\
+    let clauses = "pre CanInc using v on M::Counter::inc { self.value + delta <= 5 }\n\
                    post Inc using v on M::Counter::inc { self.value <= 5 }\n\
                    pre CanReset using v on M::Counter::reset { self.value = 5 }\n\
                    post Reset using v on M::Counter::reset { self.value = 0 }\n\
@@ -1928,7 +1928,7 @@ fn ac7_model_world() -> World {
     let operations = vec![
         operation(
             "inc",
-            &[("by", &ident("By"))],
+            &[("delta", &ident("By"))],
             None,
             frame(&["value"], false, false),
         ),
