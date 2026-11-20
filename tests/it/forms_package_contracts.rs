@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Public model assembly and conformance boundaries.
 
+mod routing;
+mod source_package;
+
 use filament_checked::key::DeclarationKey;
 use filament_exact::Presence;
 use fsl_foundation::diagnostic::Code;
@@ -191,11 +194,10 @@ fn redefinition_requires_a_proper_ancestor_and_cycles_yield_no_view() {
         match normalize::normalize(&input, ModelNormalizationLimits::default()) {
             NormalizeOutcome::Completed(view) => {
                 assert!(inherited_parent, "unrelated owner must not redefine Base");
-                assert!(
-                    view.declarations()
-                        .iter()
-                        .any(|entry| entry.preimage.original == key("Child/update"))
-                );
+                assert!(view
+                    .declarations()
+                    .iter()
+                    .any(|entry| entry.preimage.original == key("Child/update")));
             }
             NormalizeOutcome::Refused(refusals) => {
                 assert!(!inherited_parent, "actual inherited target must resolve");
