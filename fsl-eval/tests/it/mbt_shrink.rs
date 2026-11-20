@@ -170,13 +170,13 @@ fn shrinking_decreases_an_operation_argument_while_preserving_failure() {
             let trace =
                 fsl_eval::simulation::model::sample_model(&system, 10_000, &sampler(), seed, 0, 1)
                     .expect("the finite model produces a trace");
-            trace
+            let is_one = trace
                 .trace
                 .steps
                 .first()
                 .and_then(|step| step.transition.arguments().first())
-                .filter(|argument| argument.contains(r#""value":"1""#))
-                .map(|_| trace)
+                .is_some_and(|argument| argument.contains(r#""value":"1""#));
+            is_one.then_some(trace)
         })
         .expect("the fixed seed range includes the immediate lower argument");
     assert!(
