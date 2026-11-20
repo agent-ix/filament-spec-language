@@ -127,8 +127,33 @@ fn format_cases(directory: &Path) -> [(String, String, &'static str); 2] {
     ]
 }
 
-fn assert_selected_model_format_refusal(error: &command::RunError, reason: &str) {
-    assert!(error.to_string().contains(reason), "{error}");
+fn assert_selected_model_format_refusal(
+    error: &command::RunError,
+    operation: Operation,
+    file: &str,
+    reason: &str,
+) {
+    let outcome: Value = serde_json::from_slice(
+        &error
+            .outcome_document(operation)
+            .to_bytes()
+            .expect("model format refusal outcome serializes"),
+    )
+    .expect("model format refusal outcome is JSON");
+    assert_eq!(outcome["last_stage"], "I1", "{outcome}");
+    let diagnostic = &outcome["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "invalid_model_binding", "{outcome}");
+    assert_eq!(diagnostic["cause"], "malformed-declaration", "{outcome}");
+    assert_eq!(diagnostic["locus"]["kind"], "region", "{outcome}");
+    assert_eq!(
+        diagnostic["locus"]["source"]["identity"],
+        format!("test:{file}"),
+        "{outcome}"
+    );
+    assert!(
+        diagnostic["message"].as_str().unwrap().contains(reason),
+        "{outcome}"
+    );
 }
 
 #[test]
@@ -240,12 +265,27 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
 
     let program_entry = json!([{"format": "native-model-unit/1", "source": source("program.fsl")}]);
     let path = compile_request(directory.path(), &[], "program.fsl", program_entry, &[]);
-    let not_a_unit = refusal(&command::compile_outcome(&path).err().expect("no domain"));
-    assert_eq!(not_a_unit["code"], "invalid-request", "{not_a_unit}");
-    assert!(not_a_unit.to_string().contains("models[0]"), "{not_a_unit}");
+    let not_a_unit_error = command::compile_outcome(&path).err().expect("no domain");
+    let not_a_unit = refusal(&not_a_unit_error);
+    assert_eq!(not_a_unit["code"], "invalid_model_binding", "{not_a_unit}");
     assert!(
         not_a_unit.to_string().contains("native-model-unit/1"),
         "{not_a_unit}"
+    );
+    let not_a_unit_outcome: Value = serde_json::from_slice(
+        &not_a_unit_error
+            .outcome_document(Operation::Package)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        not_a_unit_outcome["last_stage"], "I1",
+        "{not_a_unit_outcome}"
+    );
+    assert_eq!(
+        not_a_unit_outcome["diagnostics"][0]["cause"], "malformed-declaration",
+        "{not_a_unit_outcome}"
     );
 
     let wrong_format = json!([{"format": "semantic-ir/2.0.0", "source": source("shop.fsl")}]);
@@ -345,7 +385,11 @@ fn check_takes_a_model_unit_as_a_selection_and_as_its_source() {
 #[test]
 fn clause_request_honors_model_format_without_content_sniffing() {
     let directory = tempfile::tempdir().unwrap();
-    std::fs::write(directory.path().join("program.fsl"), program("example/shop")).unwrap();
+    std::fs::write(
+        directory.path().join("program.fsl"),
+        program("example/shop"),
+    )
+    .unwrap();
     for (format, file, reason) in format_cases(directory.path()) {
         let request = json!({
             "models": [{"format": format, "source": source(&file)}],
@@ -363,7 +407,7 @@ fn clause_request_honors_model_format_without_content_sniffing() {
         let error = command::read_clause_run_request(&path)
             .err()
             .expect("the selected format must be enforced");
-        assert_selected_model_format_refusal(&error, reason);
+        assert_selected_model_format_refusal(&error, Operation::Execute, &file, reason);
     }
 }
 
@@ -382,11 +426,16 @@ fn analyze_package_request_honors_model_format_without_content_sniffing() {
             "package": {"directory": "handoff"},
             "models": [{"format": format, "source": source(&file)}]
         });
-        let path = write_route_request(directory.path(), "analyze.json", "native-analyze/1", request);
+        let path = write_route_request(
+            directory.path(),
+            "analyze.json",
+            "native-analyze/1",
+            request,
+        );
         let error = command::prepare_analyze(&path, command::RunLimits::default())
             .err()
             .expect("the selected format must be enforced");
-        assert_selected_model_format_refusal(&error, reason);
+        assert_selected_model_format_refusal(&error, Operation::Analyze, &file, reason);
     }
 }
 
@@ -404,12 +453,65 @@ fn package_run_request_honors_model_format_without_content_sniffing() {
             "package": {"file": "package.json"},
             "call": {"function": "one", "arguments": [], "accounting": {"work_units": 1000}}
         });
-        let path = write_route_request(directory.path(), "package-run.json", "native-run/1", request);
+        let path = write_route_request(
+            directory.path(),
+            "package-run.json",
+            "native-run/1",
+            request,
+        );
         let error = command::prepare_run(&path, command::RunLimits::default())
             .err()
             .expect("the selected format must be enforced");
-        assert_selected_model_format_refusal(&error, reason);
+        assert_selected_model_format_refusal(&error, Operation::Execute, &file, reason);
     }
+}
+
+#[test]
+fn analyze_duplicate_domain_packages_keep_the_typed_conflict_refusal() {
+    let directory = tempfile::tempdir().unwrap();
+    let handoff = directory.path().join("handoff");
+    std::fs::create_dir(&handoff).unwrap();
+    std::fs::write(
+        handoff.join("checked-package.json"),
+        r#"{"contract_version":"filament.checked-package/v2"}"#,
+    )
+    .unwrap();
+    let package = package_input([SHOP.as_bytes()]).expect("the model compiles");
+    let document = &package["example/shop"];
+    std::fs::write(directory.path().join("first.json"), document).unwrap();
+    std::fs::write(directory.path().join("second.json"), document).unwrap();
+    let request = json!({
+        "package": {"directory": "handoff"},
+        "models": [
+            {"format": "semantic-ir/2.0.0", "source": source("first.json")},
+            {"format": "semantic-ir/2.0.0", "source": source("second.json")}
+        ]
+    });
+    let path = write_route_request(
+        directory.path(),
+        "analyze.json",
+        "native-analyze/1",
+        request,
+    );
+    let error = command::prepare_analyze(&path, command::RunLimits::default())
+        .err()
+        .expect("duplicate selected package identities refuse");
+    let outcome: Value = serde_json::from_slice(
+        &error
+            .outcome_document(Operation::Analyze)
+            .to_bytes()
+            .expect("typed package conflict outcome serializes"),
+    )
+    .expect("typed package conflict outcome is JSON");
+    assert_eq!(outcome["last_stage"], "I1", "{outcome}");
+    assert_eq!(
+        outcome["diagnostics"][0]["code"], "invalid_package",
+        "{outcome}"
+    );
+    assert_eq!(
+        outcome["diagnostics"][0]["cause"], "conflicting-definition",
+        "{outcome}"
+    );
 }
 
 #[test]

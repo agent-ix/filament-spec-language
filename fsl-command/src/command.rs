@@ -806,6 +806,9 @@ pub enum RunCause {
     /// A model-unit compiler refusal at I1, retaining its exact source cause.
     #[error("{0}")]
     ModelUnit(#[source] Box<SourceFailure>),
+    /// A package-input refusal while parsing selected Semantic IR documents.
+    #[error("model package input refusal: {0:?}")]
+    ModelPackageInput(Box<fsl_semantics::model::normalize::ModelRefusal>),
     /// A `1-draft` program's request selects what spine compile does not
     /// take.
     #[error("a complete-V1 program compiles alone; the request selects {0}")]
@@ -1100,6 +1103,7 @@ impl RunCause {
             Self::ModelUnit(error) => {
                 Code::from_code(error.diagnostic.code.as_str()).unwrap_or(Code::InvalidModelBinding)
             }
+            Self::ModelPackageInput(refusal) => refusal.code,
             Self::CompleteSelection(_)
             | Self::Libraries(_)
             | Self::CompleteRunSelection(_)
@@ -1240,6 +1244,17 @@ impl RunError {
             )
             .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                 &failure.diagnostic,
+            )]),
+            RunCause::ModelPackageInput(refusal) => OutcomeDocument::new(
+                operation,
+                Some(fsl_replay::OutcomeStage::I1),
+                self.category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                Some(refusal.cause.as_str()),
+                refusal.code.as_str(),
+                None,
+                refusal.detail.clone(),
             )]),
             RunCause::Native(diagnostic) => {
                 let projected = if let Some(cause) = diagnostic.identity_cause() {
@@ -2851,21 +2866,10 @@ fn compile_formal_model_unit(
 }
 
 fn malformed_model_unit_format(source: &Source) -> RunCause {
-    let text = source.text();
-    let start = text.find("domain").unwrap_or(0);
-    let end = text[start..]
-        .find(';')
-        .map_or(start, |offset| start + offset + 1);
-    let diagnostic = *fsl_cst::diagnostic::error(
+    model_unit_format_refusal(
         source,
-        fsl_cst::CompleteCode::InvalidModelBinding,
-        fsl_cst::CompleteCause::MalformedDeclaration,
-        fsl_foundation::Phase::Parse,
-        start,
-        end,
         "a native model unit was selected as a semantic-ir/2.0.0 document",
-    );
-    model_unit_refusal(source, diagnostic)
+    )
 }
 
 fn package_input_from_formal_sources(
@@ -2928,18 +2932,15 @@ fn package_input_from_selected_models(
     let documents = models
         .iter()
         .zip(sources)
-        .enumerate()
-        .map(|(index, (model, source))| {
+        .map(|(model, source)| {
             let bytes = source.source().text().as_bytes();
             match model.format.as_str() {
                 "native-model-unit/1" => {
                     if !fsl_semantics::model::intake::is_model_unit_source(bytes) {
-                        return Err(RunCause::ClauseRequest {
-                            member: format!("models[{index}]"),
-                            reason:
-                                "native-model-unit/1 requires a model unit with a domain identity"
-                                    .to_owned(),
-                        });
+                        return Err(model_unit_format_refusal(
+                            source.source(),
+                            "native-model-unit/1 requires a model unit with a domain identity",
+                        ));
                     }
                     compile_formal_model_unit(source).map(|compiled| compiled.bytes().to_vec())
                 }
@@ -2953,12 +2954,26 @@ fn package_input_from_selected_models(
             }
         })
         .collect::<Result<Vec<_>>>()?;
-    fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).map_err(
-        |refusal| RunCause::ClauseRequest {
-            member: "models".to_owned(),
-            reason: refusal.detail,
-        },
-    )
+    fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice))
+        .map_err(|refusal| RunCause::ModelPackageInput(Box::new(refusal)))
+}
+
+fn model_unit_format_refusal(source: &Source, message: &str) -> RunCause {
+    let text = source.text();
+    let start = text.find("domain").unwrap_or(0);
+    let end = text[start..]
+        .find(';')
+        .map_or(start, |offset| start + offset + 1);
+    let diagnostic = *fsl_cst::diagnostic::error(
+        source,
+        fsl_cst::CompleteCode::InvalidModelBinding,
+        fsl_cst::CompleteCause::MalformedDeclaration,
+        fsl_foundation::Phase::Parse,
+        start,
+        end,
+        message,
+    );
+    model_unit_refusal(source, diagnostic)
 }
 
 /// Spine-compile a `1-draft` program. Each selected model is a domain

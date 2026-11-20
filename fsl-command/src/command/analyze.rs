@@ -742,11 +742,7 @@ fn admit_package<'d>(
     let supplied = super::package_input_from_selected_models(&request.models, &documents).map_err(
         |cause| match cause {
             RunCause::ClauseRequest { member, reason } if member == "models" => {
-                if reason.contains("conflicting") {
-                    conflicting_model("selected model")
-                } else {
-                    RunCause::AnalyzeRequest { member, reason }
-                }
+                RunCause::AnalyzeRequest { member, reason }
             }
             cause => cause,
         },
