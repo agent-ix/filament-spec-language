@@ -888,6 +888,43 @@ fn timed_trace_uses_its_authenticated_clock_and_through_boundary() {
         .expect("the timed prefix evaluates");
     assert_eq!(only(&outcome).verdict, MonitorVerdict::Pending);
 
+    let wrong_binding = TraceInput::Timed {
+        prefix: match &pending {
+            TraceInput::Timed { prefix, .. } => prefix.clone(),
+            _ => unreachable!(),
+        },
+        repeat: Vec::new(),
+        period: None,
+        through: None,
+        binding: Some(TraceBinding {
+            profile: "filament.temporal.timed/v1".to_owned(),
+            clock_name: "plant".to_owned(),
+            parameters: ClockConfiguration::Timed { unit: "s".into() },
+        }),
+    };
+    assert!(matches!(
+        world.run(
+            &timed,
+            vec![record_clause("Ack")],
+            MonitorTrace::Typed(&wrong_binding),
+            &timed.sources,
+            &timed.selections,
+            &limits(1 << 20),
+        ),
+        Err(StageFailure::Refused(MonitorRefusal::ClauseRefused { .. }))
+    ));
+    assert!(matches!(
+        world.run(
+            &timed,
+            vec![record_clause("Ack")],
+            MonitorTrace::Typed(&pending),
+            &timed.sources,
+            &[],
+            &limits(1 << 20),
+        ),
+        Err(StageFailure::Refused(MonitorRefusal::ClauseRefused { .. }))
+    ));
+
     let complete = TraceInput::Timed {
         prefix: vec![
             spine::TimedObservation {
