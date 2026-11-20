@@ -561,7 +561,7 @@ fn an_omitted_optional_parameter_matches_an_explicit_absent_call() {
         .as_array()
         .expect("semantic nodes")
         .iter()
-        .filter(|node| node["semantic_form"] == "dispatch_call")
+        .filter(|node| node["semantic_form"] == "call")
         .collect();
     assert_eq!(dispatch_calls.len(), 1, "one dispatch call is emitted");
     assert!(references_any_target(dispatch_calls[0], &none_ids));
