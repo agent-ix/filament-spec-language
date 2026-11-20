@@ -58,6 +58,6 @@ fn one_application<'a>(package: &'a Value, operation: &str) -> &'a Value {
 }
 
 fn reference_target(term: &Value) -> &Value {
-    assert_eq!(term["kind"], "reference", "{term}");
+    assert_eq!(term["term"], "reference", "{term}");
     term.get("target").expect("reference target")
 }

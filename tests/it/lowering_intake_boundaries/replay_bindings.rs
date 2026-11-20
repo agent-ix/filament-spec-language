@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::{identity, source};
+use filament_semantic_value::call::InputRefusal;
 use fsl_replay::{
     CanonicalAssignment, DependencyInput, EnvelopeSource, EvaluatedValue, Identifier,
     InputSettlement, QualifiedName, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire,
@@ -10,7 +11,7 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
-const PROGRAM: &str = "function positive using v(x: Int[0, 9]): Boolean pure { x > 0 }\nfunction ordered using v(left: Int[0, 9], right: Int[0, 9]): Boolean pure { left > right }\nfunction flag using v(x: Boolean): Boolean pure { not x }\nfunction foreign using v(y: Int[0, 9]): Boolean pure { y = 0 }";
+const PROGRAM: &str = "function positive using v(x: Int[0, 9]): Boolean pure { x > 0 }\nfunction compareInputs using v(left: Int[0, 9], right: Int[0, 9]): Boolean pure { left > right }\nfunction flag using v(x: Boolean): Boolean pure { not x }\nfunction foreign using v(y: Int[0, 9]): Boolean pure { y = 0 }";
 
 fn qualified(name: &str) -> QualifiedName {
     QualifiedName::new(vec![Identifier::new(name).unwrap()]).unwrap()
@@ -80,6 +81,14 @@ fn assert_value(request: ReplayRequestWire, expected: bool) {
             InputSettlement::ReproducedWithoutWitness
         );
         assert_eq!(result.category().exit_code(), 10);
+        assert!(result.disagreement().is_none());
+    } else {
+        assert_eq!(result.settlement(), InputSettlement::Inconclusive);
+        assert_eq!(result.category().exit_code(), 0);
+        assert!(
+            result.disagreement().is_some(),
+            "a true predicate does not reproduce a refutation"
+        );
     }
 }
 
@@ -101,7 +110,7 @@ fn located_parameter_ids_bind_the_actual_predicate_in_a_source_only_provision() 
 fn input_assignments_bind_by_node_identity_in_either_request_order() {
     assert_value(
         request(
-            "ordered",
+            "compareInputs",
             &[
                 ("right", WitnessValue::Integer(3)),
                 ("left", WitnessValue::Integer(8)),
@@ -111,7 +120,7 @@ fn input_assignments_bind_by_node_identity_in_either_request_order() {
     );
     assert_value(
         request(
-            "ordered",
+            "compareInputs",
             &[
                 ("left", WitnessValue::Integer(3)),
                 ("right", WitnessValue::Integer(8)),
@@ -138,7 +147,10 @@ fn boolean_input_assignments_require_boolean_values_instead_of_integer_aliases()
     )
     .unwrap_err();
     assert!(
-        matches!(refusal, ReplayRefusal::Input(ref input) if input.cause() == "wrong-value-kind"),
+        matches!(
+            refusal.input_refusal(),
+            Some(InputRefusal::WrongValueKind { parameter: 0 })
+        ),
         "{refusal:?}"
     );
 }

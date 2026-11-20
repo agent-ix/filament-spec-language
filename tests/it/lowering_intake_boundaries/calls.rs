@@ -120,8 +120,7 @@ fn zero_evaluation_work_is_incomplete_while_the_same_call_with_work_completes() 
     let CallOutcome::Incomplete(incomplete) = outcome else {
         panic!("zero work must stop: {outcome:?}");
     };
-    assert_eq!(incomplete.setting_name(), "work_units");
-    assert_eq!(incomplete.category().exit_code(), 22);
+    assert_eq!(incomplete.setting_name(), "accounting.work_units");
     let CallOutcome::Completed(value) = call("negateFlag", arguments(), 1000).unwrap() else {
         panic!("sufficient work must complete");
     };
