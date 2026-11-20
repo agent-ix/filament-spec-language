@@ -240,7 +240,7 @@ impl Default for ProviderLimits {
 pub struct ProviderRequest<'r> {
     package: &'r EmittedPackage,
     items: Vec<RequirementItem>,
-    targets: Vec<&'r ValueTarget<'r>>,
+    targets: Vec<ProviderTarget<'r>>,
     manifest: Vec<&'r BackendDescriptor>,
     descriptor: &'r BackendDescriptor,
     limits: ProviderLimits,
@@ -274,7 +274,7 @@ impl<'r> ProviderRequest<'r> {
     }
 
     /// The claim target of each item, in [`Self::items`] order.
-    pub fn targets(&self) -> &[&'r ValueTarget<'r>] {
+    pub fn targets(&self) -> &[ProviderTarget<'r>] {
         &self.targets
     }
 
@@ -304,6 +304,25 @@ impl<'r> ProviderRequest<'r> {
     /// The provider deadline: FR-331 `request.deadline_ms`.
     pub fn deadline_ms(&self) -> u64 {
         self.limits.deadline_ms
+    }
+}
+
+/// The typed claim target paired with an FR-331 provider request item.
+pub enum ProviderTarget<'r> {
+    /// A value-validity target whose counterexample is replayed by the value
+    /// evaluator.
+    Value(&'r ValueTarget<'r>),
+    /// An operation-contract claim selected by FR-485.
+    Contract(&'r fsl_replay::contract_check::ContractClaim),
+}
+
+impl ProviderTarget<'_> {
+    /// The exact occurrence named by the paired provider request item.
+    pub fn claim(&self) -> &OccurrenceKey {
+        match self {
+            Self::Value(target) => target.claim(),
+            Self::Contract(target) => target.claim(),
+        }
     }
 }
 
@@ -692,6 +711,14 @@ impl ProviderSelection<'_> {
             Self::Contract(selection) => selection.is_err(),
         }
     }
+
+    fn target(&self) -> Option<ProviderTarget<'_>> {
+        match self {
+            Self::Value(Ok(target)) => Some(ProviderTarget::Value(target)),
+            Self::Contract(Ok(target)) => Some(ProviderTarget::Contract(target)),
+            Self::Value(Err(_)) | Self::Contract(Err(_)) => None,
+        }
+    }
 }
 
 /// The `value-validity` item at `input.claim` that `backend`, an engine
@@ -890,8 +917,8 @@ pub(crate) fn settle_items(
         let mut targets = Vec::new();
         let mut indices = Vec::new();
         for (index, work) in &members {
-            match (&work.routed, &work.selection) {
-                (Some(item), Ok(target)) => {
+            match (&work.routed, work.selection.target()) {
+                (Some(item), Some(target)) => {
                     routed.push(item.at_index(RequestIndex::new(routed.len())));
                     targets.push(target);
                     indices.push(*index);
