@@ -270,14 +270,22 @@ pub(super) fn prepare(
         let package = checked.package();
         let function =
             fsl_eval::value::QualifiedName::unqualified(&selection.clause).map_err(route_error)?;
-        let record = fsl_eval::simulation::model::run_value_model_based_test(
-            &selection.clause,
-            &package_name(source.source().identity()),
-            &parameters,
-            selection.max_cases,
-            selection.seed,
-            selection.max_value_bits,
-            |arguments| {
+        let record = fsl_eval::simulation::model::run_model_based_test(
+            fsl_eval::simulation::model::ModelBasedTestRequest::Values {
+                clause: &selection.clause,
+                domain: &package_name(source.source().identity()),
+                parameters: &parameters,
+                max_cases: selection.max_cases,
+                seed: selection.seed,
+                max_value_bits: selection.max_value_bits,
+            },
+            |case| {
+                let fsl_eval::simulation::model::ModelBasedTestCase::Values(arguments) = case
+                else {
+                    return fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
+                        reason: "unexpected-model-case-kind".to_owned(),
+                    };
+                };
                 use fsl_eval::value::CheckedPackageEvaluation;
 
                 let values = arguments.to_vec();
@@ -378,16 +386,23 @@ pub(super) fn prepare(
         .unwrap_or_default();
     let max_trace_length = selection.max_trace_length.unwrap_or(1);
     let record = fsl_eval::simulation::model::run_model_based_test(
-        &model_system,
-        &sampler,
-        &selection.clause,
-        &domain,
-        selection.max_cases,
-        selection.seed,
-        max_trace_length,
-        selection.max_value_bits,
-        10_000,
-        |trace| {
+        fsl_eval::simulation::model::ModelBasedTestRequest::State {
+            system: &model_system,
+            sampler: &sampler,
+            clause: &selection.clause,
+            domain: &domain,
+            max_cases: selection.max_cases,
+            seed: selection.seed,
+            max_trace_length,
+            max_value_bits: selection.max_value_bits,
+            position_limit: 10_000,
+        },
+        |case| {
+            let fsl_eval::simulation::model::ModelBasedTestCase::State(trace) = case else {
+                return fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
+                    reason: "unexpected-model-case-kind".to_owned(),
+                };
+            };
             let findings = trace
                 .trace
                 .findings
