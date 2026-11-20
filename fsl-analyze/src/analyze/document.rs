@@ -1101,6 +1101,9 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             clause.assembled_occurrence()?.node().clone(),
         ))
     }));
+    names.extend(graph.step_relations().iter().filter_map(|relation| {
+        Some((relation.name().to_owned(), relation.identity()?))
+    }));
     names.extend(
         graph
             .temporal_clauses()
@@ -1210,6 +1213,14 @@ fn claim_occurrence(
         .hyper_clauses()
         .iter()
         .filter_map(|clause| clause.assembled_occurrence())
+        .find(|occurrence| occurrence.node() == node)
+    {
+        return Some(occurrence.clone());
+    }
+    if let Some(occurrence) = graph
+        .step_relations()
+        .iter()
+        .filter_map(|relation| relation.occurrence())
         .find(|occurrence| occurrence.node() == node)
     {
         return Some(occurrence.clone());

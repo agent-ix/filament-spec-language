@@ -224,3 +224,53 @@ fn analyze_hyper_witness_budget_is_incomplete() {
     assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_witness_set");
     assert_eq!(run.exit, 22);
 }
+
+const DETERMINISTIC_STEP: &str = "relation Det using v over (x: V::Vault::step, y: V::Vault::step) \
+    { x.i = y.i and pre(x.self.h) = pre(y.self.h) implies x.self.l = y.self.l }";
+
+const NONDETERMINISTIC_STEP: &str =
+    "post Step using v on V::Vault::step { self.l = i or self.l = 1 - i }\n";
+
+#[trace("TC-1591", "FR-631-AC-1", "FR-179-AC-1", "FR-179-AC-2")]
+#[test]
+fn hyper_step_relation_through_analyze() {
+    for (vault, expected, exit) in [
+        (Vault::Secure, "proved", 0),
+        (Vault::Custom(NONDETERMINISTIC_STEP), "refuted", 10),
+    ] {
+        let (unit, model, snapshots) =
+            request_files_over_starts(vault, false, &STARTS, DETERMINISTIC_STEP);
+        let ws = Workspace::new(&format!("hyper-wire-step-relation-{expected}"));
+        let run = analyze(&request_over(
+            &ws,
+            &unit,
+            &model,
+            &snapshots,
+            json!({"items": [{"claim": "Det"}]}),
+        ));
+        assert_eq!(run.exit, exit, "{}", run.document());
+        assert_eq!(label(&run.item(0)), expected);
+        if exit == 10 {
+            assert_eq!(run.item(0)["counterexample"]["kind"], "step-tuple");
+            assert_eq!(run.item(0)["replay"]["reproduced"], true);
+        }
+    }
+}
+
+#[trace("TC-1591", "FR-631-AC-3", "FR-184-AC-2")]
+#[test]
+fn analyze_hyper_step_relation_tuple_budget_is_incomplete() {
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, DETERMINISTIC_STEP);
+    let ws = Workspace::new("hyper-wire-step-relation-budget");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Det", "temporal": {"limits": {"max_relation_tuples": 1}}}]}),
+    ));
+    assert_eq!(label(&run.item(0)), "incomplete", "{}", run.document());
+    assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_relation_tuples");
+    assert_eq!(run.exit, 22);
+}

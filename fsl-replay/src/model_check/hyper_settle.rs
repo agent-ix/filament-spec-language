@@ -336,6 +336,134 @@ pub fn settle_hyper_check(
     })
 }
 
+/// The result of an EN-1 explicit-state check of a step relation (FR-179), as
+/// FR-182 settles it.
+#[derive(Clone, Debug)]
+pub enum ModelRelationRun {
+    /// Every tuple of the reachable transition product satisfied the body.
+    Holds {
+        /// The run's counts.
+        stats: crate::RunStats,
+    },
+    /// The first tuple on which the body was false, to be replayed (FR-183).
+    Violated {
+        /// The `step-tuple` counterexample.
+        counterexample: Box<HyperCounterexample>,
+        /// The run's counts.
+        stats: crate::RunStats,
+    },
+    /// A subject reached its requested depth horizon before closure.
+    BoundReached {
+        /// The horizon.
+        depth: u64,
+        /// The run's counts.
+        stats: crate::RunStats,
+    },
+    /// A body evaluation yielded no Boolean.
+    Undecided {
+        /// The run's counts.
+        stats: crate::RunStats,
+    },
+    /// A budget or cancellation stopped the run.
+    Stopped {
+        /// `ResourceExhausted` for a limit, `Cancelled` for a cancellation.
+        cause: IncompleteCause,
+        /// The limit reached; `None` for a cancellation.
+        limit: Option<ReachedLimit>,
+        /// The tuple count a tuple budget reached.
+        count: Option<u64>,
+        /// The run's counts.
+        stats: crate::RunStats,
+    },
+}
+
+/// FR-182: settle `run`, an EN-1 relation check under `limits`, as one
+/// terminal record. A relation that holds is proved by the exhausted
+/// transition product, which no core checker re-derives, so it is
+/// `uncertified`. A violation is replayed (FR-183) before it counts.
+pub fn settle_model_relation(
+    run: &ModelRelationRun,
+    limits: &ModelCheckLimits,
+    requested: &[ModelCheckLimit],
+    replay: impl FnOnce(&HyperCounterexample) -> Result<ModelTraceSettlement, ReplayRefusal>,
+) -> HyperRecord {
+    let mut counterexample = None;
+    let mut depth = None;
+    let mut count = None;
+    let (row, stats) = match run {
+        ModelRelationRun::Holds { stats } => (
+            Row::proof(
+                ProofBasis::Exhaustive,
+                Certification::Uncertified,
+                SettlementBasis::ClosedScope,
+            ),
+            *stats,
+        ),
+        ModelRelationRun::Violated {
+            counterexample: payload,
+            stats,
+        } => (
+            match replay(payload) {
+                Ok(ModelTraceSettlement::Reproduced { .. }) => {
+                    counterexample = Some(payload.as_ref().clone());
+                    Row::refuted(SettlementBasis::DecisiveCounterexample)
+                }
+                Ok(ModelTraceSettlement::Inconclusive(cause)) => {
+                    Row::inconclusive(InconclusiveCause::ReplayParity(cause))
+                }
+                Ok(ModelTraceSettlement::Stopped {
+                    reached,
+                    count: held,
+                }) => {
+                    count = held;
+                    Row::stopped_run(IncompleteCause::ResourceExhausted, Some(reached))
+                }
+                Err(refusal) => Row::refused(&refusal),
+            },
+            *stats,
+        ),
+        ModelRelationRun::BoundReached {
+            depth: reached,
+            stats,
+        } => {
+            depth = Some(*reached);
+            (
+                Row::inconclusive(InconclusiveCause::BoundReached { depth: *reached }),
+                *stats,
+            )
+        }
+        ModelRelationRun::Undecided { stats } => (
+            Row::inconclusive(crate::UndecidedCause::UndecidedSuccessor.inconclusive()),
+            *stats,
+        ),
+        ModelRelationRun::Stopped {
+            cause,
+            limit,
+            count: reached,
+            stats,
+        } => {
+            count = *reached;
+            (Row::stopped_run(cause.clone(), *limit), *stats)
+        }
+    };
+    HyperRecord {
+        certificates: Vec::new(),
+        exploration: Some(stats),
+        value: row.value,
+        label: row.label,
+        basis: row.basis,
+        execution: row.execution,
+        truth: row.truth,
+        method: EXPLICIT_STATE,
+        depth,
+        covers: None,
+        limits: used(limits, requested),
+        limit_reached: row.limit_reached,
+        count,
+        counterexample,
+    }
+}
+
 /// Each limit of the run with its value and origin, in member order.
 fn used(limits: &ModelCheckLimits, requested: &[ModelCheckLimit]) -> [UsedLimit; 5] {
     let [states, transitions, automaton] = limits.used();
