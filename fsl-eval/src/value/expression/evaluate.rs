@@ -1697,12 +1697,25 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             if let Some(owners) = self.owners.as_mut() {
                 owners.begin_step();
             }
+            let on_clause_frame = self.trail.is_some() && self.frames.len() == 1;
             let stepped = self.step(task);
+            // FR-269 (TC-3121): a call the clause's own frame makes into a
+            // function body, kept so a stop inside it names the clause's call.
+            if on_clause_frame && self.frames.len() > 1 {
+                if let Some(trail) = self.trail.as_mut() {
+                    trail.enter_call(located.location());
+                }
+            }
             if let Some(capture) = self.operation_capture.as_deref_mut() {
                 capture.drain(self.meter, located.location());
             }
             self.route_step_charges()?;
             if let Err(halt) = stepped {
+                if self.frames.len() > 1 {
+                    if let Some(trail) = self.trail.as_mut() {
+                        trail.stop_in_call();
+                    }
+                }
                 let located = self.imported.first().copied().unwrap_or(located);
                 // A reader node reports only the location its admitted wire
                 // carries, never one of the source package (FR-390-AC-64).
