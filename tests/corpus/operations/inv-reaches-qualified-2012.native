@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model Config = "example/config-version";
+invariant I using v on Config::ConfigVersion at current { not reaches(self, self, Config::ConfigVersion::parent) }

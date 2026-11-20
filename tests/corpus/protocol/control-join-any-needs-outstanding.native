@@ -1,0 +1,17 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model Parts = "example/parts";
+
+pre MachineFree using v on Parts::MachiningStation::reserve { not self.reserved }
+protocol PartFlow using p over (job: Parts::Job) on origin {
+  role Machining on Parts::MachiningStation;
+  role Assembly on Parts::AssemblyStation;
+  run parallel Both {
+    branch Machine attempt Reserved by Machining on Parts::MachiningStation::reserve contracts [MachineFree]
+      as (reserved: Boolean) { reserved };
+    branch Assemble attempt Assembled by Assembly on Parts::AssemblyStation::assemble contracts []
+      as (assembled: Boolean) { assembled };
+  } join any [Machine, Assemble];
+  finish Over as (closing: Parts::ClosureView) { closing.complete };
+}

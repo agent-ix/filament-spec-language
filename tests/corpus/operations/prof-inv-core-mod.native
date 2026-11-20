@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile s = "filament.state.core/v1";
+model Shop = "example/shop";
+invariant I using s on Shop::Order at current { self.total mod 2 = 0 or true }
