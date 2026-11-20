@@ -207,6 +207,7 @@ pub fn compile_model_unit(
     let mut has_tuple_type = false;
     let mut has_value_type = false;
     let mut has_variant_type = false;
+    let mut has_event_type = false;
     let mut index = cursor;
     while index < tokens.len() {
         let declaration_start = index;
@@ -314,6 +315,34 @@ pub fn compile_model_unit(
                     )]);
                 }
                 types.push(map_type);
+                index = next;
+            }
+            Some("event") => {
+                let Some((event, next)) = read_event_type(&tokens, index, &identity, parsed) else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid event type declaration",
+                    )]);
+                };
+                let event_name = event["identity"]
+                    .as_str()
+                    .and_then(|identity| identity.rsplit('/').next())
+                    .unwrap_or_default()
+                    .to_owned();
+                if !declaration_names.insert(event_name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {event_name} is declared more than once"),
+                    )]);
+                }
+                types.push(event);
+                has_event_type = true;
                 index = next;
             }
             Some("dimension") => {
@@ -527,6 +556,9 @@ pub fn compile_model_unit(
     if has_variant_type {
         meanings.push(("variant_type", "filament.meaning.model.variant-type/v1"));
     }
+    if has_event_type {
+        meanings.push(("event_type", "filament.meaning.model.event-type/v1"));
+    }
     if !populations.is_empty() {
         meanings.push(("population", "filament.meaning.model.population/v1"));
     }
@@ -725,6 +757,9 @@ fn read_object(
                 let (operation, next) = read_operation(tokens, index, &name, package, parsed)?;
                 operations.push(operation);
                 index = next;
+            }
+            "occurs" => {
+                index = skip_statement(tokens, index)?;
             }
             "invariant" => index = skip_statement(tokens, index)?,
             _ => {
@@ -1076,6 +1111,31 @@ fn read_map_type(
         name,
         index,
     ))
+}
+
+fn read_event_type(
+    tokens: &[Token],
+    index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, usize)> {
+    let occurs_index = (index..tokens.len()).find(|candidate| {
+        tokens[*candidate].text == "occurs"
+            && tokens[index..=*candidate]
+                .iter()
+                .any(|token| token.text == "{")
+    })?;
+    let occurrence = tokens.get(occurs_index + 1)?.text.clone();
+    let (mut event, next) = read_object(tokens, index, package, parsed)?;
+    let event_name = event.name.clone();
+    event.wire["kind"]["name"] = json!("event_type");
+    event.wire["identityFields"] = json!([]);
+    event.wire["supertypes"] = json!([]);
+    event.wire["occurrenceField"] = json!(format!("ix://{package}/{event_name}/{occurrence}"));
+    if let Some(object) = event.wire.as_object_mut() {
+        object.remove("relationships");
+    }
+    Some((event.wire, next))
 }
 
 fn read_dimension(

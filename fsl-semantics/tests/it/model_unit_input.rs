@@ -390,3 +390,26 @@ unit m: Length = 1;
     )
     .expect("FR-154 admits the dimension and unit");
 }
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_an_event_type() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/events";
+event Placed { at: Timestamp; occurs at; }
+"#;
+    let packages = package_input([source.as_bytes()]).expect("event model compiles");
+    let (_, document) = admit(
+        "example/events",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the event type");
+    let records = read_records("example/events", &document).expect("event type is read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::EventType(_)
+        )
+    }));
+}
