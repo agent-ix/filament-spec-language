@@ -37,8 +37,8 @@ pub use locus::{
 };
 pub use process_request::{
     AdmittedHybridProcessItem, AdmittedHybridProcessRequest, HybridProcessDependencyPackage,
-    HybridProcessItem, HybridProcessPackageContext, HybridProcessRequest,
-    HybridProcessRequestRefusal,
+    HybridProcessDependency, HybridProcessItem, HybridProcessPackageContext, HybridProcessRequest,
+    HybridProcessRequestRefusal, HybridProcessStage,
 };
 pub use provider::{
     HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
@@ -1295,6 +1295,14 @@ mod tests {
         )
     }
 
+    fn process_stage() -> HybridProcessStage {
+        HybridProcessStage {
+            manifest: vec![json!({"backend": "hybrid-fixture", "tool": {"name": "fixture", "version": "1"},
+                "advertises": [{"kind": "temporal-satisfaction", "mode": "bounded"}]})],
+            dependencies: Vec::new(),
+        }
+    }
+
     fn process_package_context() -> HybridProcessPackageContext {
         let mut context = HybridProcessPackageContext::new();
         context.support_feature("filament.value.complete/v1");
@@ -1674,6 +1682,7 @@ mod tests {
                 &[item(
                     resolved["semantic_graph"]["nodes"][position]["node_id"].clone(),
                 )],
+                &process_stage(),
             )
             .unwrap();
             let admitted = HybridProcessRequest::read(request.bytes(), &context).unwrap();
@@ -1682,7 +1691,7 @@ mod tests {
                 Some(position as u64)
             );
             let mut ambiguous: serde_json::Value = serde_json::from_slice(request.bytes()).unwrap();
-            ambiguous["items"][0]["claim"]["node"] = raw_nodes[position]["node_id"].clone();
+            ambiguous["request"]["items"][0]["claim"]["node"] = raw_nodes[position]["node_id"].clone();
             assert!(
                 matches!(
                     HybridProcessRequest::read(&serde_json::to_vec(&ambiguous).unwrap(), &context),
@@ -1708,17 +1717,17 @@ mod tests {
             .expect("the budget is admitted");
         let item = process_item(package_bytes, budget);
         let context = process_package_context();
-        let request = HybridProcessRequest::compose(package_bytes, &context, 20_000, &[item])
+        let request = HybridProcessRequest::compose(package_bytes, &context, 20_000, &[item], &process_stage())
             .expect("the process request composes");
         let wire: serde_json::Value =
             serde_json::from_slice(request.bytes()).expect("the request is JSON");
         use base64::Engine as _;
         let carried_package = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(wire["package"].as_str().expect("package base64url"))
+            .decode(wire["request"]["package"].as_str().expect("package base64url"))
             .expect("the package decodes");
         assert_eq!(carried_package, package_bytes);
         assert_eq!(
-            wire["items"][0]["hybrid"]["limits"],
+            wire["request"]["items"][0]["hybrid"]["limits"],
             json!({"max_solver_time": 2, "max_solver_steps": 1000})
         );
         let admitted = HybridProcessRequest::read(request.bytes(), &context)
@@ -1727,7 +1736,7 @@ mod tests {
         assert_eq!(admitted.items()[0].budget(), budget);
 
         let mut wrong_occurrence = wire.clone();
-        wrong_occurrence["items"][0]["claim"]["occurrence"]["role"] = json!("trigger");
+        wrong_occurrence["request"]["items"][0]["claim"]["occurrence"]["role"] = json!("trigger");
         let wrong_occurrence =
             serde_json::to_vec(&wrong_occurrence).expect("wrong occurrence serializes");
         assert!(matches!(
@@ -1736,7 +1745,7 @@ mod tests {
         ));
 
         let mut malformed = wire.clone();
-        malformed["items"][0]["hybrid"]["limits"]["max_solver_time"] = json!(1.5);
+        malformed["request"]["items"][0]["hybrid"]["limits"]["max_solver_time"] = json!(1.5);
         let malformed = serde_json::to_vec(&malformed).expect("malformed request serializes");
         assert!(matches!(
             HybridProcessRequest::read(&malformed, &context),
@@ -1844,13 +1853,13 @@ mod tests {
         let unset = SolverBudget::from_request(None, None).expect("unset budget is valid");
         let item = process_item(package_bytes, unset);
         let context = process_package_context();
-        let request = HybridProcessRequest::compose(package_bytes, &context, 20_000, &[item])
+        let request = HybridProcessRequest::compose(package_bytes, &context, 20_000, &[item], &process_stage())
             .expect("the process request composes");
         let admitted = HybridProcessRequest::read(request.bytes(), &context)
             .expect("the process request admits its v2 package");
         let request_wire: serde_json::Value =
             serde_json::from_slice(request.bytes()).expect("the process request is JSON");
-        assert!(request_wire["items"][0].get("hybrid").is_none());
+        assert!(request_wire["request"]["items"][0].get("hybrid").is_none());
         assert_eq!(
             admitted.items()[0].budget().resolved(60, 1_000_000),
             (60, 1_000_000)

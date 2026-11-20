@@ -1005,6 +1005,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsl-hybrid-test-provider"
+version = "0.1.0"
+dependencies = [
+ "filament-exact",
+ "fsl-analyze",
+ "fsl-command",
+ "fsl-foundation",
+ "fsl-replay",
+ "fsl-route",
+ "fsl-semantics",
+ "ix-trace-rs",
+ "quire-canonical",
+ "serde_json",
+]
+
+[[package]]
 name = "fsl-inspect"
 version = "0.1.0"
 dependencies = [

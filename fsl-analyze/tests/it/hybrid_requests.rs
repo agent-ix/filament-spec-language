@@ -9,10 +9,8 @@
 //! `certificate` (`accepted`, `rule`, `at`, `form`).
 //!
 //! The in-process fixture providers are made by `Engine::hybrid` (FR-750).
-//! `Engine::hybrid_process` does not exist yet, so [`process_fixture`] builds
-//! a probe engine in its place: it advertises no hybrid dynamics, so it is
-//! never a candidate for a hybrid item, and the assertions that use it fail
-//! for real.
+//! The process providers (`Engine::hybrid_process`) run as a real child process
+//! and are tested in `tools/fsl-hybrid-test-provider`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -259,13 +257,6 @@ pub(crate) fn descriptor_of(descriptor: &Value) -> Result<fsl_route::BackendDesc
     .map_err(|refusal| format!("{refusal:?}"))
 }
 
-/// The process hybrid fixture `id` whose exchange returns `entry` as its
-/// result frame: `Engine::hybrid_process` (FR-750). The probe stands in.
-pub(crate) fn process_fixture(id: &str, entry: &Value) -> Engine {
-    let _answer = entry;
-    Engine::probe(id)
-}
-
 /// `Engine::hybrid` over the FSpec FR-331 descriptor `descriptor`, its error
 /// rendered as text (FR-750).
 pub(crate) fn hybrid_engine(descriptor: &Value) -> Result<Engine, String> {
@@ -485,46 +476,6 @@ fn hybrid_replay_request_for(
         byte_provision: vec![(source.authority, source.identity, unit.as_bytes().to_vec())],
         documents: Vec::new(),
     }
-}
-
-/// FR-750-AC-5: a process provider composed for a clause request returns a
-/// point trace; one that replays settles `refuted`, one that does not
-/// `inconclusive`, `replay-parity`.
-#[test]
-#[trace("TC-2100", "FR-750-AC-5")]
-#[ignore = "QSL-2532: process-provider composition for hybrid clause requests not implemented yet"]
-fn a_process_provider_refutation_settles_by_exact_replay() {
-    let unit = braking(&claim("Positive", "always [0, 12] holds(h.v > 0)"));
-    let (_, item) = first_item(
-        "hybrid-750-5a",
-        &unit,
-        named("Positive", "hybrid-process"),
-        json!({}),
-        vec![process_fixture(
-            "hybrid-process",
-            &refuted_entry(point_trace("0")),
-        )],
-    );
-    assert_eq!(item["record"]["result"], "refuted", "{item}");
-    assert_eq!(item["replay"]["reproduced"], true, "{item}");
-    assert!(
-        item["counterexample"]
-            .to_string()
-            .contains("hybrid-counterexample"),
-        "{item}"
-    );
-    let (_, item) = first_item(
-        "hybrid-750-5b",
-        &unit,
-        named("Positive", "hybrid-process"),
-        json!({}),
-        vec![process_fixture(
-            "hybrid-process",
-            &refuted_entry(point_trace("1")),
-        )],
-    );
-    assert_eq!(item["record"]["result"], "inconclusive", "{item}");
-    assert_eq!(item["record"]["cause"]["type"], "replay-parity", "{item}");
 }
 
 /// FR-751-AC-1 and FSpec FR-652-AC-1: an accepted `inductive-enclosure`
@@ -793,6 +744,17 @@ fn an_accepted_witness_settles_a_not_exact_provider_refutation() {
     let text = rejected.to_string();
     assert!(text.contains("replay-parity"), "{rejected}");
     assert!(text.contains("hybrid-trace"), "{rejected}");
+    assert!(text.contains("not-exact"), "{rejected}");
+    assert_eq!(
+        rejected["record"]["cause"]["parity"]["disagreement"]["type"], "not-exact",
+        "{rejected}"
+    );
+    // FR-450-AC-3: the disagreement retains the complete counterexample.
+    assert_eq!(
+        rejected["record"]["cause"]["parity"]["disagreement"]["counterexample"]["type"],
+        "hybrid-counterexample",
+        "{rejected}"
+    );
     assert!(rejected.get("counterexample").is_none(), "{rejected}");
 }
 
@@ -939,16 +901,6 @@ fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
     assert_eq!(reproduced["record"]["result"], "refuted", "{reproduced}");
     let wrong = run("hybrid-193-23b", trace("5"));
     assert_eq!(wrong["record"]["result"], "inconclusive", "{wrong}");
-}
-
-/// FR-750-AC-7 (process half): a process fixture whose entry is
-/// `unsupported` with `unsupported_construct`/`expression-form` settles the
-/// same located `unsupported` as the in-process fixture.
-#[test]
-#[trace("TC-3035", "FR-750-AC-7")]
-#[ignore = "QSL-2532: `Engine::hybrid_process` does not exist yet"]
-fn a_process_unsupported_entry_settles_a_located_expression_form() {
-    todo!("QSL-2532: process half of FR-750-AC-7");
 }
 
 /// FR-750-AC-9 (reader and irrational instant): the plugin reader reads a
@@ -1207,23 +1159,14 @@ fn a_refuted_hybrid_item_replays_through_fr_098() {
     );
 }
 
-/// FR-750-AC-11 (process half): a process `failed` `tool-failure` entry is
-/// `NotRead` and the item settles `failed` by FR-290.
-#[test]
-#[trace("TC-3035", "FR-750-AC-11")]
-#[ignore = "QSL-2532: process providers (`Engine::hybrid_process`) do not exist yet"]
-fn a_process_failed_entry_settles_failed_by_fr_290() {
-    todo!("QSL-2532: process half of FR-750-AC-11");
-}
-
 /// FR-1021-AC-3: the plan's `Fill`/`Drain` validation item reaches the
 /// reference provider with its dwell and horizon as `Rational` objects, and a
 /// trace bound written as `"8"` refuses `invalid_result`/`wrong-value-kind`.
 #[test]
 #[trace("TC-3035", "FR-1021-AC-3")]
-#[ignore = "QSL-2534: the plan validation item and the reference provider are not implemented yet"]
+#[ignore = "QSL-1978: the hybrid plan synthesis that builds the validation item is not implemented yet"]
 fn a_plan_validation_item_carries_rational_objects() {
-    todo!("QSL-2534: FR-1021-AC-3");
+    todo!("QSL-1978: FR-1021-AC-3");
 }
 
 /// `Shuttle` of FR-750-AC-12, its `Moving -> Stopped` reset `reset`, with
@@ -1334,6 +1277,10 @@ fn exact_replay_decides_nondeterministic_reset_fairness_claims() {
     );
     assert_eq!(
         unfair["record"]["cause"]["parity"]["reason"], "hybrid-trace",
+        "{unfair}"
+    );
+    assert_eq!(
+        unfair["record"]["cause"]["parity"]["disagreement"]["type"], "not-reproduced",
         "{unfair}"
     );
     let never_enabled = run("hybrid-750-12-never", "v <= 1/2", "Named");

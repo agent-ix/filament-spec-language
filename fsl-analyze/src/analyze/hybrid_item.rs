@@ -13,7 +13,7 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, EmitLimits};
 use fsl_replay::{
-    hybrid_locus_wire, ExactGap, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
+    hybrid_locus_wire, Certification, ExactGap, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
     HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict, IncompleteCause,
     ModelCheckLimit, TerminalValue, UnsupportedConstruct,
 };
@@ -33,6 +33,9 @@ pub(crate) struct HybridReport {
     pub(crate) counterexample: Option<Box<HybridCounterexample>>,
     pub(crate) wire: Result<Value, fsl_replay::CounterexampleWireError>,
     pub(crate) certificate: Option<fsl_replay::CertificateRecord>,
+    /// The FR-286 spelling of the provider's complete counterexample when
+    /// replay disagreed with it (FR-450 "Settlement").
+    pub(crate) disagreement: Option<Value>,
 }
 
 /// The package and request context a hybrid item reads to spell a locus.
@@ -49,10 +52,13 @@ pub(super) struct Spelling<'a> {
 pub(super) fn hybrid_item<'a>(
     package: &'a CheckedPackage,
     request_index: RequestIndex,
-    claim: &OccurrenceKey,
+    claim: &'a OccurrenceKey,
     form: &'a HybridItem,
     work_units: u64,
     deadline: DeadlineSupply,
+    provider_limits: crate::provider::ProviderLimits,
+    manifest: Vec<Value>,
+    candidates: Vec<fsl_foundation::BackendId>,
     spelling: Spelling<'a>,
 ) -> Option<AnalyzeItem<'a>> {
     let graph = package.graph();
@@ -70,51 +76,79 @@ pub(super) fn hybrid_item<'a>(
             Mode::Bounded,
             fsl_hybrid_reference::BACKEND,
             move |cancel, engine| {
-                let Some(provider) = engine.hybrid_provider() else {
-                    return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new(
-                        "unsupported_projection",
-                        "tool-unavailable",
-                    )));
-                };
-                // FSpec FR-779: an option value outside its domain settles
-                // before any solver step.
-                if let Err(refusal) = provider.check_options(&form.options) {
-                    return EngineReport::Refused(Refusal::InvalidOptionValue {
-                        option: refusal.option,
-                        value: refusal.value,
-                    });
-                }
-                let bounds = engine.descriptor().solver_bounds();
-                let budget = form.limits.resolved_budget(
-                    bounds
-                        .and_then(|bounds| bounds.max_solver_time)
-                        .unwrap_or(u64::MAX),
-                    bounds
-                        .and_then(|bounds| bounds.max_solver_steps)
-                        .unwrap_or(u64::MAX),
-                );
                 // The package is emitted once for the item. When FSL cannot
                 // emit it, no locus can be spelled or read: an FSL fault, not
                 // the provider's.
-                let Some(wire) = wire_graph(package, spelling) else {
+                let Some(emitted) = emitted_bytes(package, spelling) else {
                     return EngineReport::Refused(Refusal::Failed(CatalogCode::new(
                         "runtime_invariant",
                         "established-invariant-broken",
                     )));
                 };
-                let request = HybridSolveRequest {
-                    graph,
-                    wire: &wire,
-                    claim: checked,
-                    model,
-                    budget,
-                    options: form.options.clone(),
-                    deadline_ms: match deadline {
-                        DeadlineSupply::Unbounded => None,
-                        DeadlineSupply::Milliseconds(milliseconds) => Some(milliseconds),
-                    },
+                let Ok(wire) = WireGraph::of_package_bytes(&emitted) else {
+                    return EngineReport::Refused(Refusal::Failed(CatalogCode::new(
+                        "runtime_invariant",
+                        "established-invariant-broken",
+                    )));
                 };
-                let answer = provider.solve(&request, cancel);
+                let answer = if let Some(provider) = engine.hybrid_provider() {
+                    // FSpec FR-779: an option value outside its domain
+                    // settles before any solver step.
+                    if let Err(refusal) = provider.check_options(&form.options) {
+                        return EngineReport::Refused(Refusal::InvalidOptionValue {
+                            option: refusal.option,
+                            value: refusal.value,
+                        });
+                    }
+                    let bounds = engine.descriptor().solver_bounds();
+                    let budget = form.limits.resolved_budget(
+                        bounds
+                            .and_then(|bounds| bounds.max_solver_time)
+                            .unwrap_or(u64::MAX),
+                        bounds
+                            .and_then(|bounds| bounds.max_solver_steps)
+                            .unwrap_or(u64::MAX),
+                    );
+                    let request = HybridSolveRequest {
+                        graph,
+                        wire: &wire,
+                        claim: checked,
+                        model,
+                        budget,
+                        options: form.options.clone(),
+                        deadline_ms: match deadline {
+                            DeadlineSupply::Unbounded => None,
+                            DeadlineSupply::Milliseconds(milliseconds) => Some(milliseconds),
+                        },
+                    };
+                    provider.solve(&request, cancel)
+                } else if let Some(exchange) = engine.hybrid_exchange() {
+                    let call = super::hybrid_process::ProcessCall {
+                        exchange,
+                        backend: engine.descriptor().id(),
+                        candidates: &candidates,
+                        manifest: &manifest,
+                        dependencies: &[],
+                        package: &emitted,
+                        claim,
+                        graph,
+                        checked,
+                        wire: &wire,
+                        budget: form.limits,
+                        options: &form.options,
+                        deadline_ms: provider_limits.deadline_ms,
+                    };
+                    match super::hybrid_process::answer(&call, cancel) {
+                        Ok(answer) => answer,
+                        Err(report) => return report,
+                    }
+                } else {
+                    return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new(
+                        "unsupported_projection",
+                        "tool-unavailable",
+                    )));
+                };
+                let trusted = engine.hybrid_exchange().is_some();
                 let certificate = match answer.read_certificate(graph, checked) {
                     Ok(certificate) => certificate,
                     Err(refusal) => {
@@ -144,6 +178,13 @@ pub(super) fn hybrid_item<'a>(
                 };
                 match settled {
                     Ok(settled) => {
+                        let disagreement = match &settled.value {
+                            TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayParity(
+                                fsl_replay::DisagreementCause::HybridTrace(found),
+                            )) => counterexample_wire(graph, &wire, position, model, found.counterexample())
+                                .ok(),
+                            _ => None,
+                        };
                         let wire = match &settled.counterexample {
                             Some(found) => {
                                 counterexample_wire(graph, &wire, position, model, found)
@@ -151,7 +192,8 @@ pub(super) fn hybrid_item<'a>(
                             None => Ok(Value::Null),
                         };
                         EngineReport::Hybrid(Box::new(HybridReport {
-                            value: settled.value,
+                            disagreement,
+                            value: if trusted { plugin_trust(settled.value) } else { settled.value },
                             counterexample: settled.counterexample.map(Box::new),
                             certificate: settled.certificate,
                             wire,
@@ -268,16 +310,32 @@ fn unsupported_construct(
     EngineReport::Refused(Refusal::UnsupportedConstruct(detail))
 }
 
-/// The graph of the package emitted for this request, whose node ids spell
+/// The v2 bytes of the package emitted for this request, whose node ids spell
 /// a `Locus`.
-fn wire_graph(package: &CheckedPackage, spelling: Spelling<'_>) -> Option<WireGraph> {
+fn emitted_bytes(package: &CheckedPackage, spelling: Spelling<'_>) -> Option<Vec<u8>> {
     match spelling.shared {
-        Some(shared) => WireGraph::of_package_bytes(shared.emitted.bytes()).ok(),
+        Some(shared) => Some(shared.emitted.bytes().to_vec()),
         None => {
             let bytes =
                 crate::provider::admitted_bytes(package, spelling.packages, spelling.emit).ok()?;
-            WireGraph::of_package_bytes(bytes.bytes()).ok()
+            Some(bytes.bytes().to_vec())
         }
+    }
+}
+
+/// A process provider's `proved` word without an accepted certificate is
+/// `trusted`, not the first-party `uncertified` (FR-290, FSpec FR-331
+/// "Certification"); a `certified` proof stays so.
+fn plugin_trust(value: TerminalValue) -> TerminalValue {
+    match value {
+        TerminalValue::Proved {
+            basis,
+            certification: Certification::Uncertified,
+        } => TerminalValue::Proved {
+            basis,
+            certification: Certification::Trusted,
+        },
+        other => other,
     }
 }
 
