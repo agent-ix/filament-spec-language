@@ -12,4 +12,4 @@ The accepted focused composition is six new active functions passed, with one st
 
 The new leaf was formatted alone. The parent changes only its module registration. No workspace formatting or unrelated source edits were made. Known semantics/package library warnings and the program's accepted lint limitations are not suppressed or retried; there is no green Clippy claim.
 
-One independent feature review and one final complete affected terminal-component gate remain reserved for the lead. The authoring command is not that final gate.
+Independent SR-1503 code/Rust and SR-1504 gap reviews passed without findings. Their validated artifacts are committed unchanged. After that review, the one final complete affected terminal-component gate passed: 11 passed, 0 failed, 1 strict QSL-2718 pending ignored. Six passes are the new active cases; five are existing parent cases. `final-gate.md` records its exact tested head and command. The original authoring failure remains preserved above, and the pending desired root-binding oracle was not executed again.
