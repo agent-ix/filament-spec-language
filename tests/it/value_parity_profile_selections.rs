@@ -117,6 +117,7 @@ fn a_unit_whose_lock_selects_profiles_replays_with_an_empty_selection_list() {
     assert!(envelope.profile_selections().is_empty());
 
     let wire = ReplayRequestWire {
+        certificate: None,
         profile_selections: envelope.profile_selections().to_vec(),
         package: fsl_replay::ReplayPackage::read(
             &located.package,

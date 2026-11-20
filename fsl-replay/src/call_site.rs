@@ -1070,6 +1070,7 @@ mod tests {
         )
         .expect("actual source package");
         ReplayRequestWire {
+            certificate: None,
             package: crate::ReplayPackage::read(
                 package.bytes(),
                 crate::ReplayLimits::default().input_bytes,

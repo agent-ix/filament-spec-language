@@ -45,6 +45,7 @@ fn request(function: &str, supplied: &[(&str, WitnessValue)]) -> ReplayRequestWi
         })
         .collect();
     ReplayRequestWire {
+        certificate: None,
         profile_selections: Vec::new(),
         package: ReplayPackage::read(&located.package, ReplayLimits::default().input_bytes)
             .unwrap(),

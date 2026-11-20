@@ -280,6 +280,7 @@ impl PluginReplayContext {
         let name = name.ok_or_else(fault)?;
         let selected_function = QualifiedName::new(vec![name]).map_err(|_| fault())?;
         Ok(ReplayRequestWire {
+            certificate: None,
             package: crate::ReplayPackage::read(&self.package, self.package_input_bytes)
                 .map_err(PluginReplayRefusal::PackageRead)?,
             profile_selections: Vec::new(),

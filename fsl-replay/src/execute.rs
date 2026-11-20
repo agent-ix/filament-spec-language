@@ -618,6 +618,10 @@ pub enum ReplayRefusal {
     /// FR-750: caller-supplied hybrid trace is malformed under FR-193.
     #[error("invalid_runtime_input/invalid-value at `{}`", .0.pointer)]
     HybridTrace(#[from] TraceRefusal),
+    /// FSpec FR-652: the `certificate` of a hybrid replay request is not a
+    /// readable `validated-witness`.
+    #[error("invalid_runtime_input/{}: the certificate is refused at `{}`", .0.code.as_str(), .0.pointer)]
+    HybridCertificate(crate::hybrid_replay::CertificateRefusal),
     /// An executor or S6a invariant broke.
     #[error("internal fault in {}: {}", .0.stage(), .0.invariant())]
     Fault(InternalFault),
@@ -696,6 +700,7 @@ impl ReplayRefusal {
             Self::Cancelled(_) => Code::Cancelled,
             Self::ModelTrace(refusal) => refusal.code(),
             Self::HybridTrace(_) => Code::InvalidRuntimeInput,
+            Self::HybridCertificate(_) => Code::InvalidRuntimeInput,
             Self::Fault(_) => Code::RuntimeInvariant,
         }
     }
@@ -744,6 +749,7 @@ impl ReplayRefusal {
             Self::WrongObservation { .. } => Some("wrong-observation"),
             Self::ModelTrace(refusal) => Some(refusal.cause()),
             Self::HybridTrace(_) => Some("invalid-value"),
+            Self::HybridCertificate(refusal) => Some(refusal.code.as_str()),
             Self::UnusedObjectEnvironment | Self::UnusedProfileSelections { .. } => {
                 Some("unknown-member")
             }
@@ -806,14 +812,13 @@ impl ReplayRefusal {
                 .pointer()
                 .map(|pointer| Cow::Owned(pointer.to_owned())),
             Self::Package(refusal) => Some(Cow::Owned(refusal.pointer())),
-            Self::PackageWithIdentity { refusal, .. } => {
-                Some(Cow::Owned(refusal.pointer()))
-            }
+            Self::PackageWithIdentity { refusal, .. } => Some(Cow::Owned(refusal.pointer())),
             Self::RefinementInternals { pointer, .. } => Some(Cow::Owned(pointer.clone())),
             Self::WrongReplayTarget { target, .. } => {
                 Some(Cow::Borrowed(target.member().pointer()))
             }
             Self::HybridTrace(refusal) => Some(Cow::Owned(refusal.pointer.to_string())),
+            Self::HybridCertificate(refusal) => Some(Cow::Owned(refusal.pointer.clone())),
             Self::WrongObservedTemporalTarget { .. } => {
                 Some(Cow::Borrowed("/replay/observed_counterexample"))
             }
@@ -939,6 +944,7 @@ pub enum DependencySelectionsCause {
 /// # };
 /// # let key = site.site.declaration.clone();
 /// let wire = ReplayRequestWire {
+///     certificate: None,
 ///     replay_target: RequestTargetWire::function("small", key),
 /// #   profile_selections: vec![],
 /// #   package: ReplayPackage::read(&site.package, ReplayLimits::default().input_bytes).unwrap(),
@@ -995,6 +1001,7 @@ pub enum DependencySelectionsCause {
 /// # };
 /// # let key = site.site.declaration.clone();
 /// let wire = ReplayRequestWire {
+///     certificate: None,
 ///     replay_target: RequestTargetWire::function(small, key),
 /// #   profile_selections: vec![],
 /// #   package: ReplayPackage::read(&site.package, ReplayLimits::default().input_bytes).unwrap(),
@@ -1508,6 +1515,17 @@ fn replay_hybrid(
         .ok_or_else(|| ReplayRefusal::Fault(InternalFault::new("replay", "hybrid-claim-model")))?;
     crate::hybrid_replay::admit(model, &counterexample.trace)
         .map_err(ReplayRefusal::HybridTrace)?;
+    let certificate = request
+        .hybrid_certificate()
+        .map(|value| {
+            crate::hybrid_replay::read_certificate(
+                model,
+                crate::hybrid_replay::Expect::Witness(&counterexample.trace),
+                value,
+            )
+        })
+        .transpose()
+        .map_err(|refusal| ReplayRefusal::HybridCertificate(refusal.under("/replay")))?;
 
     let work_units = request.accounting_limits().work_units;
     let mut meter = HybridReplayMeter::new(work_units);
@@ -1563,24 +1581,67 @@ fn replay_hybrid(
                 counterexample,
             )?),
         ),
-        ExactReplay::NotExact => (
-            HybridReplaySettlement::Inconclusive {
-                replay: ReplayRecord {
-                    static_outcome,
-                    exact: Some(ExactRecord::NotExact),
-                },
-                disagreement: crate::HybridTraceDisagreement::NotExact {
-                    counterexample: Box::new(counterexample.clone()),
-                },
-            },
-            Some(hybrid_counterexample_wire(
-                compiled,
-                graph,
-                claim_position,
-                model,
-                counterexample,
-            )?),
-        ),
+        ExactReplay::NotExact => {
+            let witnessed = match &certificate {
+                Some(certificate) => crate::hybrid_replay::check_certificate(
+                    graph,
+                    claim,
+                    certificate,
+                    None,
+                    Some(&counterexample.trace),
+                    &mut meter,
+                )
+                .map_err(hybrid_runtime_refusal)?,
+                None => crate::hybrid_replay::CertificateOutcome::Rejected(
+                    crate::hybrid_replay::Rejection {
+                        rule: crate::hybrid_replay::HybridCertificateRule::WitnessStart,
+                        at: String::new(),
+                    },
+                ),
+            };
+            let record = ReplayRecord {
+                static_outcome,
+                exact: Some(ExactRecord::NotExact),
+            };
+            match witnessed {
+                crate::hybrid_replay::CertificateOutcome::Accepted(
+                    crate::hybrid_replay::Acceptance::Witness(decisive),
+                ) if crate::hybrid::witness_agrees(&counterexample.kind, &decisive) => {
+                    let found = HybridCounterexample {
+                        kind: decisive.kind,
+                        trace: counterexample.trace.clone(),
+                    };
+                    let wire =
+                        hybrid_counterexample_wire(compiled, graph, claim_position, model, &found)?;
+                    (
+                        HybridReplaySettlement::ReproducedWithValidatedWitness { replay: record },
+                        Some(wire),
+                    )
+                }
+                crate::hybrid_replay::CertificateOutcome::Rejected(rejection)
+                    if certificate.is_some()
+                        && rejection.rule
+                            == crate::hybrid_replay::HybridCertificateRule::WorkLimit =>
+                {
+                    (HybridReplaySettlement::Incomplete { work_units }, None)
+                }
+                _ => (
+                    HybridReplaySettlement::Inconclusive {
+                        replay: record,
+                        disagreement: crate::HybridTraceDisagreement::NotExact {
+                            counterexample: Box::new(counterexample.clone()),
+                        },
+                    },
+                    Some(hybrid_counterexample_wire(
+                        compiled,
+                        graph,
+                        claim_position,
+                        model,
+                        counterexample,
+                    )?),
+                ),
+            }
+        }
     };
     Ok(ReplayResult::Hybrid(HybridReplayResult {
         settlement,

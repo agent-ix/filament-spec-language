@@ -368,12 +368,12 @@ fn the_activation_scan_is_charged_to_the_meter() {
     let phase = check(PHASE);
     let phase_trace = phase_lasso();
     let cases = [
-        (&shuttle, "Cap", &lasso, 2151),
-        (&shuttle, "Range", &lasso, 1554),
-        (&shuttle, "Past", &lasso, 45),
-        (&shuttle, "Origin", &lasso, 35),
+        (&shuttle, "Cap", &lasso, 2152),
+        (&shuttle, "Range", &lasso, 1555),
+        (&shuttle, "Past", &lasso, 46),
+        (&shuttle, "Origin", &lasso, 36),
         (&ramp, "Nested", &ramp_trace, 16724),
-        (&phase, "Twice", &phase_trace, 70),
+        (&phase, "Twice", &phase_trace, 71),
         (&ramp, "Cube", &ramp_trace, 483),
         (&ramp, "Touch", &ramp_trace, 4653),
         (&ramp, "Moves", &ramp_trace, 412),

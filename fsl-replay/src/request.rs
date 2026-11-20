@@ -296,6 +296,8 @@ pub struct ReplayRequest {
     replay_target: Option<ReplayTarget>,
     over: Option<ReplayOverBinding>,
     source: ReplaySource,
+    /// The `validated-witness` certificate supplied with a hybrid replay.
+    hybrid_certificate: Option<serde_json::Value>,
     profile_selections: Vec<ProfileSelection>,
     obligation_identity: ObligationIdentity,
     backend: BackendId,
@@ -357,6 +359,10 @@ impl ReplayRequest {
     /// observed-temporal or hybrid counterexample (FR-331).
     pub fn source(&self) -> &ReplaySource {
         &self.source
+    }
+    /// The certificate supplied with a hybrid replay, as the request wrote it.
+    pub fn hybrid_certificate(&self) -> Option<&serde_json::Value> {
+        self.hybrid_certificate.as_ref()
     }
     /// The semantic profile selections in effect for the proving run
     /// (ADR-013 O-25/QC-8: one of the #231 envelope members O-26 carries
@@ -453,6 +459,9 @@ pub struct ReplayRequestWire {
     /// The replay source: a witness transcript, canonical inputs, or a typed
     /// observed-temporal or hybrid counterexample (FR-331).
     pub source: ReplaySource,
+    /// The `validated-witness` certificate accompanying a hybrid replay (FSpec
+    /// FR-652); a request of another source refuses it at `/replay/certificate`.
+    pub certificate: Option<serde_json::Value>,
     /// The obligation this request replays.
     pub obligation_identity: ObligationIdentity,
     /// The provider identity of the backend that produced the originating
@@ -590,6 +599,13 @@ pub enum ReplayRequestRefusal {
     /// frame target, which has no temporal clause binding.
     #[error("invalid_runtime_input/unknown-member at /replay/over: only a state-clause target accepts over")]
     UnexpectedOverBinding,
+    /// A replay request supplies a certificate for a non-hybrid source.
+    #[error("invalid_runtime_input/unknown-member at /replay/certificate: only a hybrid request carries a certificate")]
+    UnexpectedCertificate,
+    /// A hybrid replay request's certificate names a form other than
+    /// `validated-witness`.
+    #[error("invalid_runtime_input/invalid-value at /replay/certificate/type: hybrid replay accepts only a validated-witness certificate")]
+    InvalidCertificateType,
     /// A model-graph request carries a generic target instead of selecting
     /// its claim from the evidence envelope identity.
     #[error("invalid_runtime_input/unknown-member at {pointer}: model-graph replay selects its claim from the evidence envelope", pointer = .member.map_or("/replay", TargetMember::pointer))]
@@ -714,6 +730,8 @@ impl ReplayRequestRefusal {
             | Self::UnexpectedArguments { .. }
             | Self::UnexpectedOccurrenceKey { .. }
             | Self::UnexpectedOverBinding
+            | Self::UnexpectedCertificate
+            | Self::InvalidCertificateType
             | Self::UnexpectedModelGraphTarget { .. } => Code::InvalidRuntimeInput,
             Self::BoundExceeded(_) => Code::StageLimitExceeded,
         }
@@ -730,7 +748,9 @@ impl ReplayRequestRefusal {
             | Self::UnexpectedOccurrenceKey { .. }
             | Self::FunctionOwnerWithoutFunction
             | Self::UnexpectedOverBinding
+            | Self::UnexpectedCertificate
             | Self::UnexpectedModelGraphTarget { .. } => Some("unknown-member"),
+            Self::InvalidCertificateType => Some("invalid-value"),
             _ => None,
         }
     }
@@ -749,6 +769,8 @@ impl ReplayRequestRefusal {
             Self::FunctionOwnerWithoutFunction => Some(crate::target::FUNCTION_OWNER_POINTER),
             Self::UnexpectedOccurrenceKey { .. } => Some("/replay/occurrence_key"),
             Self::UnexpectedOverBinding => Some("/replay/over"),
+            Self::UnexpectedCertificate => Some("/replay/certificate"),
+            Self::InvalidCertificateType => Some("/replay/certificate/type"),
             Self::UnexpectedModelGraphTarget { member } => {
                 Some(member.map_or("/replay", TargetMember::pointer))
             }
@@ -766,6 +788,9 @@ fn measured_encoded_bytes(wire: &ReplayRequestWire) -> usize {
     let mut bytes = 0usize;
     let mut add = |length| bytes = bytes.saturating_add(length);
     add(wire.package.bytes().len());
+    if let Some(certificate) = &wire.certificate {
+        add(certificate.to_string().len());
+    }
     for selection in &wire.profile_selections {
         add(selection.profile().len());
         add(selection.value().len());
@@ -858,6 +883,18 @@ impl ReplayRequest {
         provision: Provision,
     ) -> Result<Self, ReplayRequestRefusal> {
         BoundExceeded::check(measured_encoded_bytes(&wire), limits)?;
+        if let Some(certificate) = &wire.certificate {
+            if !matches!(&wire.source, ReplaySource::Hybrid(_))
+                || wire.replay_target.members.state_clause.is_none()
+            {
+                return Err(ReplayRequestRefusal::UnexpectedCertificate);
+            }
+            if certificate.get("type").and_then(serde_json::Value::as_str)
+                != Some("validated-witness")
+            {
+                return Err(ReplayRequestRefusal::InvalidCertificateType);
+            }
+        }
         // FSpec FR-323 decode rule 1: before any byte-provision rule.
         let (replay_target, over) = if matches!(
             wire.source,
@@ -978,6 +1015,7 @@ impl ReplayRequest {
             replay_target,
             over,
             source: wire.source,
+            hybrid_certificate: wire.certificate,
             profile_selections: wire.profile_selections,
             obligation_identity: wire.obligation_identity.clone(),
             backend: BackendId::new(wire.backend),
@@ -1019,6 +1057,7 @@ impl ReplayRequest {
                 .collect(),
             replay_target,
             source: self.source.clone(),
+            certificate: self.hybrid_certificate.clone(),
             obligation_identity: self.obligation_identity.clone(),
             backend: self.backend.as_str().to_owned(),
             state_environment: self.state_environment.clone(),
@@ -1104,6 +1143,7 @@ mod tests {
     fn wire(stage_seed: u64) -> ReplayRequestWire {
         let source_bytes = source_bytes(0xAB, 64);
         ReplayRequestWire {
+            certificate: None,
             package: raw_package_descriptor(
                 "fixture",
                 &[("registry".to_owned(), "pkg-a".to_owned())],

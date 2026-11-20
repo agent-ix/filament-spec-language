@@ -335,6 +335,7 @@ fn replay_fixture_source(source: &str) -> Fixture {
         "source":{"kind":"input","assignments":[{"parameter":node(&selected.site.parameters[0].1),"value":{"kind":"integer","decimal":"1"}}]},"obligation_identity":{"node_id":node(selected.site.obligation_identity().node()),"model":selected.site.obligation_identity().model().map(|model|model.as_str()),"ordinal":selected.site.obligation_identity().ordinal()},"backend":"fixture", "state_environment":[],"accounting_limits":limits,"stage_limits":{},"supplied_limits":null,"object_environment":null,"declared_domains":[],"byte_provision":[{"authority":"agent-ix","identity":"inputs/unit.native","bytes_path":"inputs/bytes.native"}]
     });
     let native_request = fsl_replay::ReplayRequestWire {
+        certificate: None,
         package: fsl_replay::ReplayPackage::read(
             &selected.package,
             fsl_replay::ReplayLimits::default().input_bytes,

@@ -194,6 +194,7 @@ pub(crate) fn request<'a>(
     )
     .expect("the original checked replay package emits");
     ReplayRequestWire {
+        certificate: None,
         package: fsl_replay::ReplayPackage::read(
             emission.package().bytes(),
             ReplayLimits::default().input_bytes,

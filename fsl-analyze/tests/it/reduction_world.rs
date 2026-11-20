@@ -539,6 +539,7 @@ pub(crate) fn replay_unit_result(
     )
     .expect("the original checked reduction package emits");
     let wire = ReplayRequestWire {
+        certificate: None,
         package: fsl_replay::ReplayPackage::read(
             emission.package().bytes(),
             ReplayLimits::default().input_bytes,

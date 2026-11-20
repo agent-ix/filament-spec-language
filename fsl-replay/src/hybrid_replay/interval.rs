@@ -118,7 +118,7 @@ impl Interval {
         }
     }
 
-    fn from_range(range: &ValueRange) -> Self {
+    pub(super) fn from_range(range: &ValueRange) -> Self {
         Self {
             lower: range.lower.clone(),
             upper: range.upper.clone(),
@@ -148,7 +148,7 @@ impl Interval {
         }
     }
 
-    fn add(&self, other: &Self) -> Self {
+    pub(super) fn add(&self, other: &Self) -> Self {
         let both = |a: &Option<Rational>, b: &Option<Rational>| match (a, b) {
             (Some(a), Some(b)) => Some(a.add(b)),
             _ => None,
@@ -159,14 +159,14 @@ impl Interval {
         }
     }
 
-    fn neg(&self) -> Self {
+    pub(super) fn neg(&self) -> Self {
         Self {
             lower: self.upper.as_ref().map(Rational::neg),
             upper: self.lower.as_ref().map(Rational::neg),
         }
     }
 
-    fn mul(&self, other: &Self) -> Self {
+    pub(super) fn mul(&self, other: &Self) -> Self {
         let products = [
             self.low().mul(&other.low()),
             self.low().mul(&other.high()),
@@ -181,11 +181,11 @@ impl Interval {
         }
     }
 
-    fn contains_zero(&self) -> bool {
+    pub(super) fn contains_zero(&self) -> bool {
         self.low().sign() != Ordering::Greater && self.high().sign() != Ordering::Less
     }
 
-    fn div(&self, divisor: &Self) -> Self {
+    pub(super) fn div(&self, divisor: &Self) -> Self {
         if divisor.contains_zero() {
             return Self::whole();
         }
@@ -201,7 +201,7 @@ impl Interval {
         self.mul(&inverse)
     }
 
-    fn hull(&self, other: &Self) -> Self {
+    pub(super) fn hull(&self, other: &Self) -> Self {
         let lower = match (&self.lower, &other.lower) {
             (Some(a), Some(b)) => Some(a.clone().min(b.clone())),
             _ => None,
@@ -214,7 +214,7 @@ impl Interval {
     }
 
     /// The intersection, `None` when empty.
-    fn intersect(&self, other: &Self) -> Option<Self> {
+    pub(super) fn intersect(&self, other: &Self) -> Option<Self> {
         let lower = match (&self.lower, &other.lower) {
             (Some(a), Some(b)) => Some(a.clone().max(b.clone())),
             (a, b) => a.clone().or_else(|| b.clone()),

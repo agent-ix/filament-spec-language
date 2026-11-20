@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-250 (ADR-026 HY-1 to HY-3): a hybrid solver result settles as an FR-331
 //! terminal value. A result settles `proved` only where its method kind makes
-//! it sound for its outcome, and that proof is `uncertified`: a solver FSL
-//! runs has no core certificate checker (ADR-018 PC-1). Every other result is
+//! it sound for its outcome, and that proof is `uncertified` until FR-751's
+//! core check accepts the provider's certificate ([`SolverResult::settle_certified`]),
+//! which makes the record `certified`. Every other result is
 //! `inconclusive` or `incomplete`. A solver result settles `refuted` only
 //! through FR-450's exact replay of the trace it reports
 //! ([`SolverResult::settle`]), and a provider's own claim about its
@@ -14,8 +15,10 @@ use serde::{Serialize, Serializer};
 use std::collections::BTreeSet;
 
 use crate::hybrid_replay::{
-    exact_replay, static_replay, ExactReal, ExactRecord, ExactReplay, HybridCounterexample,
-    HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal, HybridTrace, ReplayRecord,
+    check_certificate, exact_replay, static_replay, Acceptance, CertificateOutcome, Decisive,
+    ExactReal, ExactRecord, ExactReplay, HybridCertificate, HybridCertificateRule,
+    HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal,
+    HybridTrace, ProofCoverage, ReplayRecord,
 };
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::{
@@ -353,15 +356,39 @@ impl SolverResult {
         claim: &CheckedHybridClaim,
         meter: &mut HybridReplayMeter,
     ) -> Result<HybridSettlement, HybridReplayRefusal> {
+        self.settle_certified(graph, claim, None, meter)
+    }
+
+    /// [`Self::settle`] with the provider's FSpec FR-652 `certificate`
+    /// (FR-751): a proof whose certificate the core accepts settles
+    /// `certified`, and a trace exact replay cannot decide refutes through an
+    /// accepted `validated-witness`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::settle`], and a fault of the checked model.
+    pub fn settle_certified(
+        &self,
+        graph: &CheckedGraph,
+        claim: &CheckedHybridClaim,
+        certificate: Option<&HybridCertificate>,
+        meter: &mut HybridReplayMeter,
+    ) -> Result<HybridSettlement, HybridReplayRefusal> {
         let value = self.terminal_value(&ClaimHorizon::of(claim));
         let Some(trace) = self.outcome.trace() else {
-            return Ok(HybridSettlement::without_counterexample(value));
+            let mut settled = HybridSettlement::without_counterexample(value);
+            if let Some(certificate) = certificate {
+                self.certify_proof(graph, claim, certificate, &mut settled, meter)?;
+            }
+            return Ok(settled);
         };
         if !matches!(
             value,
             TerminalValue::Inconclusive(InconclusiveCause::SolverInconclusive { .. })
         ) {
-            return Ok(HybridSettlement::without_counterexample(value));
+            let mut settled = HybridSettlement::without_counterexample(value);
+            settled.certificate = certificate.map(CertificateRecord::unchecked);
+            return Ok(settled);
         }
         let exhausted = |meter: &HybridReplayMeter| {
             HybridSettlement::without_counterexample(TerminalValue::Incomplete(
@@ -383,6 +410,7 @@ impl SolverResult {
                 return Ok(HybridSettlement {
                     value: TerminalValue::Refuted,
                     counterexample: Some(*counterexample),
+                    certificate: certificate.map(CertificateRecord::unchecked),
                 });
             }
             Ok(ExactReplay::NotReproduced { at, check }) => {
@@ -392,15 +420,87 @@ impl SolverResult {
             Err(HybridReplayRefusal::ResourceExhausted { .. }) => return Ok(exhausted(meter)),
             Err(refusal) => return Err(refusal),
         };
-        Ok(HybridSettlement::without_counterexample(
-            TerminalValue::Inconclusive(InconclusiveCause::SolverInconclusive {
+        let mut record = certificate.map(CertificateRecord::unchecked);
+        if matches!(exact, Some(ExactRecord::NotExact)) {
+            match run_witness(graph, claim, certificate, trace, meter)? {
+                Witnessed::Absent => {}
+                Witnessed::Accepted(decisive) => {
+                    return Ok(HybridSettlement {
+                        value: TerminalValue::Refuted,
+                        counterexample: Some(HybridCounterexample {
+                            kind: decisive.kind,
+                            trace: trace.clone(),
+                        }),
+                        certificate: certificate.map(CertificateRecord::accepted),
+                    });
+                }
+                Witnessed::Rejected(at, rule) => {
+                    record = certificate.map(|c| CertificateRecord::rejected(c, rule, at));
+                }
+                Witnessed::WorkLimit(at) => {
+                    let mut settled = exhausted(meter);
+                    settled.certificate = certificate.map(|c| {
+                        CertificateRecord::rejected(c, HybridCertificateRule::WorkLimit, at)
+                    });
+                    return Ok(settled);
+                }
+            }
+        }
+        let mut settled = HybridSettlement::without_counterexample(TerminalValue::Inconclusive(
+            InconclusiveCause::SolverInconclusive {
                 trace: Some(Box::new(trace.clone())),
                 replay: Some(Box::new(ReplayRecord {
                     static_outcome,
                     exact,
                 })),
+            },
+        ));
+        settled.certificate = record;
+        Ok(settled)
+    }
+
+    /// Check the certificate of a proof that settled `proved` (FR-750
+    /// "Dispatch"): accepted, the record is `certified`; rejected, it stays
+    /// as FR-250 settled it. A proof settled any other way records its
+    /// certificate unchecked.
+    fn certify_proof(
+        &self,
+        graph: &CheckedGraph,
+        claim: &CheckedHybridClaim,
+        certificate: &HybridCertificate,
+        settled: &mut HybridSettlement,
+        meter: &mut HybridReplayMeter,
+    ) -> Result<(), HybridReplayRefusal> {
+        settled.certificate = Some(CertificateRecord::unchecked(certificate));
+        let TerminalValue::Proved { certification, .. } = &mut settled.value else {
+            return Ok(());
+        };
+        let coverage = match &self.coverage {
+            SolverCoverage::Bounded {
+                horizon,
+                jumps,
+                exhaustive,
+            } => Some(ProofCoverage {
+                horizon: horizon.seconds().clone(),
+                jumps: *jumps,
+                exhaustive: exhaustive.clone(),
             }),
-        ))
+            SolverCoverage::Inductive => None,
+        };
+        match check_certificate(graph, claim, certificate, coverage.as_ref(), None, meter)? {
+            CertificateOutcome::Accepted(_) => {
+                *certification = Certification::Certified;
+                settled.certificate = Some(CertificateRecord::accepted(certificate));
+            }
+            CertificateOutcome::Rejected(rejection) => {
+                settled.certificate = Some(CertificateRecord::rejected(
+                    certificate,
+                    rejection.rule,
+                    rejection.at,
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// The FSpec FR-243 basis the result settles with: `closed-scope` for a
@@ -449,6 +549,103 @@ pub struct HybridSettlement {
     pub value: TerminalValue,
     /// The reproduced trace; `Some` exactly when `value` is `Refuted`.
     pub counterexample: Option<HybridCounterexample>,
+    /// The provider's certificate and what the core did with it (FR-621).
+    pub certificate: Option<CertificateRecord>,
+}
+
+/// The FR-621 `certificate.checker` spelling of FR-751's hybrid certificate
+/// checker.
+pub const HYBRID_CERTIFICATE_CHECKER: &str = "hybrid-interval-certificate";
+
+/// What the core did with a provider's certificate (FSpec FR-652
+/// "Settlement"): the certificate as returned, and its outcome.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CertificateRecord {
+    /// The certificate exactly as the provider returned it.
+    pub form: serde_json::Value,
+    /// The certificate's `type`.
+    pub kind: &'static str,
+    /// The check's outcome.
+    pub outcome: CertificateStatus,
+}
+
+/// The outcome of FR-751's check of a certificate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CertificateStatus {
+    /// The settlement does not rest on the certificate, so it was not checked.
+    Unchecked,
+    /// Every rule of its form passed.
+    Accepted,
+    /// The first failing rule and its pointer.
+    Rejected {
+        /// The rule.
+        rule: HybridCertificateRule,
+        /// The pointer, rooted at `/certificate`.
+        at: String,
+    },
+}
+
+impl CertificateRecord {
+    fn with(certificate: &HybridCertificate, outcome: CertificateStatus) -> Self {
+        Self {
+            form: certificate.raw().clone(),
+            kind: certificate.form(),
+            outcome,
+        }
+    }
+
+    fn unchecked(certificate: &HybridCertificate) -> Self {
+        Self::with(certificate, CertificateStatus::Unchecked)
+    }
+
+    fn accepted(certificate: &HybridCertificate) -> Self {
+        Self::with(certificate, CertificateStatus::Accepted)
+    }
+
+    fn rejected(certificate: &HybridCertificate, rule: HybridCertificateRule, at: String) -> Self {
+        Self::with(certificate, CertificateStatus::Rejected { rule, at })
+    }
+}
+
+/// What checking a witness decided.
+enum Witnessed {
+    /// No witness to check.
+    Absent,
+    Accepted(Box<Decisive>),
+    Rejected(String, HybridCertificateRule),
+    /// The work meter stopped the check, at this pointer.
+    WorkLimit(String),
+}
+
+fn run_witness(
+    graph: &CheckedGraph,
+    claim: &CheckedHybridClaim,
+    certificate: Option<&HybridCertificate>,
+    trace: &HybridTrace,
+    meter: &mut HybridReplayMeter,
+) -> Result<Witnessed, HybridReplayRefusal> {
+    let Some(certificate) = certificate else {
+        return Ok(Witnessed::Absent);
+    };
+    if certificate.form() != "validated-witness" {
+        return Ok(Witnessed::Absent);
+    }
+    Ok(
+        match check_certificate(graph, claim, certificate, None, Some(trace), meter)? {
+            CertificateOutcome::Accepted(Acceptance::Witness(decisive)) => {
+                Witnessed::Accepted(decisive)
+            }
+            CertificateOutcome::Accepted(Acceptance::Proof) => Witnessed::Absent,
+            CertificateOutcome::Rejected(rejection)
+                if rejection.rule == HybridCertificateRule::WorkLimit =>
+            {
+                Witnessed::WorkLimit(rejection.at)
+            }
+            CertificateOutcome::Rejected(rejection) => {
+                Witnessed::Rejected(rejection.at, rejection.rule)
+            }
+        },
+    )
 }
 
 impl HybridSettlement {
@@ -456,6 +653,7 @@ impl HybridSettlement {
         Self {
             value,
             counterexample: None,
+            certificate: None,
         }
     }
 
@@ -467,6 +665,25 @@ impl HybridSettlement {
         counterexample: HybridCounterexample,
         meter: &mut HybridReplayMeter,
     ) -> Result<Self, HybridReplayRefusal> {
+        Self::from_provider_certified(graph, claim, counterexample, None, meter)
+    }
+
+    /// [`Self::from_provider_counterexample`] with the entry's
+    /// `validated-witness`: a trace exact replay cannot decide settles
+    /// `refuted` only when FR-751 accepts the witness and the claimed kind
+    /// agrees with the kind the witness gives.
+    ///
+    /// # Errors
+    ///
+    /// [`HybridReplayRefusal`] when the trace breaks the correspondence
+    /// rules, or the claim's model or a called function cannot be read.
+    pub fn from_provider_certified(
+        graph: &CheckedGraph,
+        claim: &CheckedHybridClaim,
+        counterexample: HybridCounterexample,
+        certificate: Option<&HybridCertificate>,
+        meter: &mut HybridReplayMeter,
+    ) -> Result<Self, HybridReplayRefusal> {
         let exhausted = |meter: &HybridReplayMeter| {
             Self::without_counterexample(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::EvaluationMeter {
@@ -475,6 +692,12 @@ impl HybridSettlement {
                 value: meter.work_units,
             }))
         };
+        let unchecked = certificate.map(CertificateRecord::unchecked);
+        let settle = |value, certificate| Self {
+            value,
+            counterexample: None,
+            certificate,
+        };
         match exact_replay(graph, claim, &counterexample.trace, meter) {
             Ok(ExactReplay::Reproduced(replayed))
                 if agrees(&counterexample.kind, &replayed.kind) =>
@@ -482,27 +705,97 @@ impl HybridSettlement {
                 Ok(Self {
                     value: TerminalValue::Refuted,
                     counterexample: Some(counterexample),
+                    certificate: unchecked,
                 })
             }
-            Ok(ExactReplay::Reproduced(_)) | Ok(ExactReplay::NotReproduced { .. }) => {
-                Ok(Self::without_counterexample(TerminalValue::Inconclusive(
-                    InconclusiveCause::ReplayParity(DisagreementCause::HybridTrace(
-                        HybridTraceDisagreement::NotReproduced {
-                            counterexample: Box::new(counterexample),
-                        },
-                    )),
-                )))
-            }
-            Ok(ExactReplay::NotExact) => Ok(Self::without_counterexample(
+            Ok(ExactReplay::Reproduced(_)) | Ok(ExactReplay::NotReproduced { .. }) => Ok(settle(
                 TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
-                    DisagreementCause::HybridTrace(HybridTraceDisagreement::NotExact {
+                    DisagreementCause::HybridTrace(HybridTraceDisagreement::NotReproduced {
                         counterexample: Box::new(counterexample),
                     }),
                 )),
+                unchecked,
             )),
-            Err(HybridReplayRefusal::ResourceExhausted { .. }) => Ok(exhausted(meter)),
+            Ok(ExactReplay::NotExact) => {
+                let not_exact = |counterexample: HybridCounterexample| {
+                    TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
+                        DisagreementCause::HybridTrace(HybridTraceDisagreement::NotExact {
+                            counterexample: Box::new(counterexample),
+                        }),
+                    ))
+                };
+                match run_witness(graph, claim, certificate, &counterexample.trace, meter)? {
+                    Witnessed::Absent => Ok(settle(not_exact(counterexample), unchecked)),
+                    Witnessed::Accepted(decisive) => {
+                        let record = certificate.map(CertificateRecord::accepted);
+                        if witness_agrees(&counterexample.kind, &decisive) {
+                            Ok(Self {
+                                value: TerminalValue::Refuted,
+                                counterexample: Some(HybridCounterexample {
+                                    kind: decisive.kind,
+                                    trace: counterexample.trace,
+                                }),
+                                certificate: record,
+                            })
+                        } else {
+                            Ok(settle(not_exact(counterexample), record))
+                        }
+                    }
+                    Witnessed::Rejected(at, rule) => Ok(settle(
+                        not_exact(counterexample),
+                        certificate.map(|c| CertificateRecord::rejected(c, rule, at)),
+                    )),
+                    Witnessed::WorkLimit(at) => {
+                        let mut settled = exhausted(meter);
+                        settled.certificate = certificate.map(|c| {
+                            CertificateRecord::rejected(c, HybridCertificateRule::WorkLimit, at)
+                        });
+                        Ok(settled)
+                    }
+                }
+            }
+            Err(HybridReplayRefusal::ResourceExhausted { .. }) => {
+                let mut settled = exhausted(meter);
+                settled.certificate = unchecked;
+                Ok(settled)
+            }
             Err(refusal) => Err(refusal),
         }
+    }
+}
+
+/// FSpec FR-652 "Settlement": a provider's claimed kind agrees with the kind
+/// its accepted witness gives when both are `formula`, or both are
+/// `undefined-evaluation` with equal position, locus and cause and a claimed
+/// time interval that contains the decisive reading's instants.
+pub(crate) fn witness_agrees(claimed: &HybridCounterexampleKind, decisive: &Decisive) -> bool {
+    match (claimed, &decisive.kind) {
+        (HybridCounterexampleKind::Formula, HybridCounterexampleKind::Formula) => true,
+        (
+            HybridCounterexampleKind::UndefinedEvaluation {
+                at: claim,
+                cause: claim_cause,
+            },
+            HybridCounterexampleKind::UndefinedEvaluation {
+                at: found,
+                cause: found_cause,
+            },
+        ) => {
+            let (lower, upper) = if let Some(interval) = &claim.time_interval {
+                (&interval.lower, &interval.upper)
+            } else {
+                match &claim.time {
+                    ExactReal::Rational(point) => (point, point),
+                    ExactReal::Root(root) => (root.lower(), root.upper()),
+                }
+            };
+            claim.state == found.state
+                && claim.locus == found.locus
+                && claim_cause == found_cause
+                && *lower <= decisive.time.lower
+                && decisive.time.upper <= *upper
+        }
+        _ => false,
     }
 }
 

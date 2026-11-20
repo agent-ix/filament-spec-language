@@ -1642,6 +1642,7 @@ fn an_original_replay_rejects_a_stale_clause_before_missing_observation_admissio
     let obligation = fsl_package::ObligationIdentity::new(current_node.clone(), None, 0);
     let accounting = fsl_replay::spine::default_accounting(100_000);
     let wire = fsl_replay::ReplayRequestWire {
+        certificate: None,
         package: fsl_replay::ReplayPackage::read(
             emitted.package().bytes(),
             fsl_replay::ReplayLimits::default().input_bytes,

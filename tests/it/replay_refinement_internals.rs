@@ -185,6 +185,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
         )
     }));
     ReplayRequestWire {
+        certificate: None,
         package: ReplayPackage::read(&offered, ReplayLimits::default().input_bytes).unwrap(),
         profile_selections: Vec::new(),
         dependencies: libraries
