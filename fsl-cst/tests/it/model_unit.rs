@@ -43,7 +43,7 @@ object Node identity (id) {
   note: Text[0, 8; nfc]?;
   tags: Integer [0, *] ordered unique;
   relationship next: Node [0, 1] inverse prev [0, 1];
-  operation bump(amount: Int): Boolean modifies self.id;
+  operation bump(amount: Int[0, 9]): Boolean modifies self.id;
   invariant Bounded { self.id >= 0 };
 }
 event Placed { at: Integer; occurs at; }
