@@ -101,6 +101,7 @@ fn one_test() -> Vec<TestSubject> {
     vec![TestSubject {
         initial: 0,
         binding: None,
+        reference: None,
     }]
 }
 
@@ -340,10 +341,12 @@ fn two_initial_states_run_two_bonferroni_tests_at_interleaved_traces() {
         TestSubject {
             initial: 0,
             binding: None,
+            reference: None,
         },
         TestSubject {
             initial: 1,
             binding: None,
+            reference: None,
         },
     ];
     let sampler = sampler_ref();
@@ -1222,10 +1225,12 @@ fn provenance_records_each_test_and_its_trace_range() {
         TestSubject {
             initial: 0,
             binding: None,
+            reference: None,
         },
         TestSubject {
             initial: 1,
             binding: None,
+            reference: None,
         },
     ];
     let sampler = sampler_ref();
@@ -1304,6 +1309,7 @@ fn requests_and_claims_outside_the_method_are_refused() {
         TestSubject {
             initial: 0,
             binding: None,
+            reference: None,
         };
         2
     ];
@@ -1383,6 +1389,7 @@ fn two_tests() -> Vec<TestSubject> {
         .map(|initial| TestSubject {
             initial,
             binding: None,
+            reference: None,
         })
         .collect()
 }
@@ -1543,6 +1550,7 @@ fn finished(index: u32, decision: Decision, estimate: Option<Rational>) -> TestR
         index,
         initial: index,
         binding: None,
+        reference: None,
         decision,
         estimate,
         interval: None,
@@ -2376,10 +2384,12 @@ fn the_verdict_carries_the_least_favourable_tests_quantile() {
         TestSubject {
             initial: 0,
             binding: None,
+            reference: None,
         },
         TestSubject {
             initial: 1,
             binding: None,
+            reference: None,
         },
     ];
     let reference = sampler_ref();
@@ -2480,10 +2490,12 @@ fn an_at_least_quantile_claims_estimate_is_its_strict_probability() {
         TestSubject {
             initial: 0,
             binding: None,
+            reference: None,
         },
         TestSubject {
             initial: 1,
             binding: None,
+            reference: None,
         },
     ];
     let reference = sampler_ref();

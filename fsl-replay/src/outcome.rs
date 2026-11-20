@@ -27,7 +27,7 @@ mod counterexample;
 pub mod hint;
 pub use counterexample::{
     CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
-    probabilistic_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
+    sampled_witness_wire, probabilistic_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
     task_temporal_wire_with_queue_growth,
     task_source_transition_wire, task_transition_wire,
     replay_model_trace_document, state_key_wire, task_product_transition_wire, ReadCounterexample,
@@ -94,8 +94,7 @@ impl From<&FormatRefusal> for FormatOutcomeRefusal {
 /// The document's `format` member.
 pub const OUTCOME_FORMAT: &str = "filament-outcome/1";
 /// FR-286's published draft 2020-12 schema for `filament-outcome/1`.
-pub const OUTCOME_SCHEMA_1: &str =
-    include_str!("../schemas/filament-outcome-1.schema.json");
+pub const OUTCOME_SCHEMA_1: &str = include_str!("../schemas/filament-outcome-1.schema.json");
 
 /// The library operation that produced the document (ADR-029 LC-1).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -1734,10 +1733,21 @@ fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json
     }
 }
 
-fn statistical_decision_wire(decision: Decision) -> serde_json::Value {
+fn statistical_decision_wire(
+    decision: Decision,
+    undefined: Option<&statistical::SampledUndefined>,
+) -> serde_json::Value {
     match decision {
         Decision::Accepted => serde_json::json!({"type": "accepted"}),
-        Decision::Rejected => serde_json::json!({"type": "rejected"}),
+        Decision::Rejected => {
+            let mut rejected = serde_json::json!({"type": "rejected"});
+            if let Some(cause) =
+                undefined.and_then(|found| counterexample::sampled_undefined_wire(found).ok())
+            {
+                rejected["cause"] = cause;
+            }
+            rejected
+        }
         Decision::Undecided(cause) => serde_json::json!({
             "type": "undecided",
             "cause": {"type": match cause {
@@ -1748,27 +1758,22 @@ fn statistical_decision_wire(decision: Decision) -> serde_json::Value {
     }
 }
 
+/// FSpec FR-410's `estimate`. The backend-provider `Estimate` schema has no
+/// spelling for an absent estimate or a censored quantile, so neither is
+/// written: `None` for no estimate, and no `quantile` member for a censored one.
 fn statistical_estimate_wire(
     estimate: Option<&filament_exact::Rational>,
     quantile: Option<&statistical::MeasureValue>,
-) -> serde_json::Value {
-    let estimate = estimate
-        .cloned()
-        .unwrap_or_else(|| filament_exact::Rational::from_integer(Integer::from(0_i64)));
+) -> Option<serde_json::Value> {
     let mut value = serde_json::Map::new();
-    value.insert("value".to_owned(), rational_wire(&estimate));
-    if let Some(quantile) = quantile {
-        let quantile = match quantile {
-            statistical::MeasureValue::Value(value) => {
-                serde_json::json!({"value": rational_wire(value)})
-            }
-            statistical::MeasureValue::Censored => {
-                serde_json::json!({"value": rational_wire(&estimate)})
-            }
-        };
-        value.insert("quantile".to_owned(), quantile);
+    value.insert("value".to_owned(), rational_wire(estimate?));
+    if let Some(statistical::MeasureValue::Value(quantile)) = quantile {
+        value.insert(
+            "quantile".to_owned(),
+            serde_json::json!({"value": rational_wire(quantile)}),
+        );
     }
-    serde_json::Value::Object(value)
+    Some(serde_json::Value::Object(value))
 }
 
 fn statistical_interval_wire(
@@ -1784,8 +1789,11 @@ fn statistical_interval_wire(
 
 fn statistical_verdict_wire(verdict: &StatisticalVerdict) -> serde_json::Value {
     let method = statistical_method_wire(verdict.basis.method);
-    let method_name = method["type"].as_str().unwrap_or("okamoto");
-    let decision = statistical_decision_wire(verdict.decision);
+    let rejection = verdict
+        .tests
+        .iter()
+        .find_map(|test| test.undefined.as_ref());
+    let decision = statistical_decision_wire(verdict.decision, rejection);
     let tests: Vec<_> = verdict
         .tests
         .iter()
@@ -1797,12 +1805,13 @@ fn statistical_verdict_wire(verdict: &StatisticalVerdict) -> serde_json::Value {
             );
             result.insert(
                 "decision".to_owned(),
-                statistical_decision_wire(test.decision),
+                statistical_decision_wire(test.decision, test.undefined.as_ref()),
             );
-            result.insert(
-                "estimate".to_owned(),
-                statistical_estimate_wire(test.estimate.as_ref(), test.quantile.as_ref()),
-            );
+            if let Some(estimate) =
+                statistical_estimate_wire(test.estimate.as_ref(), test.quantile.as_ref())
+            {
+                result.insert("estimate".to_owned(), estimate);
+            }
             if let Some(interval) = statistical_interval_wire(test.interval.as_ref()) {
                 result.insert("interval".to_owned(), interval);
             }
@@ -1831,7 +1840,9 @@ fn statistical_verdict_wire(verdict: &StatisticalVerdict) -> serde_json::Value {
             serde_json::json!({
                 "index": test.index.to_string(),
                 "initial_state": test.initial.to_string(),
-                "binding": null,
+                "binding": counterexample::binding_wire(test.reference.as_ref())
+                    .unwrap_or(serde_json::Value::Null),
+                "instance": null,
                 "first_trace_index": test.traces.first.to_string(),
                 "last_trace_index": last.to_string(),
             })
@@ -1875,16 +1886,23 @@ fn statistical_verdict_wire(verdict: &StatisticalVerdict) -> serde_json::Value {
     }
     let mut value = serde_json::json!({
         "decision": decision,
-        "estimate": statistical_estimate_wire(verdict.estimate.as_ref(), verdict.quantile.as_ref()),
         "basis": basis,
         "provenance": provenance,
         "tests": tests,
-        "witnesses": [],
+        "witnesses": verdict
+            .witnesses
+            .iter()
+            .filter_map(|witness| counterexample::sampled_witness_wire(witness).ok().flatten())
+            .collect::<Vec<_>>(),
     });
+    if let Some(estimate) =
+        statistical_estimate_wire(verdict.estimate.as_ref(), verdict.quantile.as_ref())
+    {
+        value["estimate"] = estimate;
+    }
     if let Some(interval) = statistical_interval_wire(verdict.interval.as_ref()) {
         value["interval"] = interval;
     }
-    let _ = method_name;
     value
 }
 

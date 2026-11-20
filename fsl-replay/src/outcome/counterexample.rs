@@ -1108,6 +1108,84 @@ fn undefined(
     }))
 }
 
+/// The FR-410 `where` of an undefined sample: its test, trace, position and
+/// state. FR-364's `locus` is not here: the verdict does not hold the claim.
+pub(super) fn sampled_undefined_wire(
+    undefined: &crate::statistical::SampledUndefined,
+) -> Result<Json, CounterexampleWireError> {
+    let site = &undefined.evaluation.site;
+    Ok(json!({
+        "type": "undefined-evaluation",
+        "where": {
+            "position": site.position,
+            "state_key": state(&site.state_key)?,
+            "test": undefined.test,
+            "trace_index": undefined.trace.to_string(),
+        },
+        "cause": undefined_reason(&undefined.evaluation.cause),
+    }))
+}
+
+/// A `binding` member (FSpec FR-410): the typed reference, or `null`.
+pub(super) fn binding_wire(
+    binding: Option<&ObjectReference>,
+) -> Result<Json, CounterexampleWireError> {
+    binding.map_or(Ok(Json::Null), reference)
+}
+
+/// One sampled witness (FSpec FR-410 "Sampled witness"). `Ok(None)` for a
+/// witness the schema has no spelling for: a censored measure, a terminal
+/// stutter step, or a drawn value that needs the package's declarations.
+pub(super) fn sampled_witness_wire(
+    witness: &crate::statistical::SampledWitness,
+) -> Result<Option<Json>, CounterexampleWireError> {
+    use crate::statistical::{MeasureValue, WitnessValue};
+    use fsl_eval::simulation::model::TransitionId;
+    let value = match &witness.value {
+        WitnessValue::Event(holds) => json!({"type": "event", "value": holds}),
+        WitnessValue::Fraction(fraction) | WitnessValue::Measure(MeasureValue::Value(fraction)) => {
+            json!({"type": "measure", "value": {"value": rational(fraction)}})
+        }
+        WitnessValue::Measure(MeasureValue::Censored) => return Ok(None),
+        WitnessValue::Undefined(evaluation) => {
+            sampled_undefined_wire(&crate::statistical::SampledUndefined {
+                test: witness.test,
+                trace: witness.trace,
+                evaluation: evaluation.clone(),
+            })?
+        }
+    };
+    let mut steps = Vec::with_capacity(witness.steps.len());
+    for step in &witness.steps {
+        let TransitionId::Operation(transition) = &step.transition else {
+            return Ok(None);
+        };
+        let mut random = Vec::with_capacity(step.random.len());
+        for drawn in &step.random {
+            let Some(drawn) = fsl_eval::simulation::model::value_json(drawn) else {
+                return Ok(None);
+            };
+            random.push(drawn);
+        }
+        let mut written = json!({
+            "transition": model_transition(transition)?,
+            "post_state": state(&step.post_state)?,
+            "random": random,
+        });
+        if let Some(delay) = &step.delay {
+            written["delay"] = rational(delay);
+        }
+        steps.push(written);
+    }
+    Ok(Some(json!({
+        "test": witness.test,
+        "trace_index": witness.trace.to_string(),
+        "steps": steps,
+        "probability": rational(&witness.path_probability),
+        "value": value,
+    })))
+}
+
 fn race(race: &Race) -> Result<Json, CounterexampleWireError> {
     Ok(json!({
         "location": location_json(&race.location)

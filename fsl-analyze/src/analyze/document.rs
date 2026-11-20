@@ -870,7 +870,8 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
                 }
                 if temporal.profile.is_some() || temporal.max_history.is_some() {
                     return Err(ItemSelectionReadError {
-                        message: "a non-protocol item carries an unsupported protocol member or count",
+                        message:
+                            "a non-protocol item carries an unsupported protocol member or count",
                     });
                 }
             }
@@ -1432,15 +1433,11 @@ fn claim_occurrence(
     name: Option<&str>,
 ) -> Option<OccurrenceKey> {
     let graph = package.graph();
-    if let Some(clause) = graph
-        .state_clauses()
-        .iter()
-        .find(|clause| {
-            clause.identity() == *node
-                && clause.operation().is_some()
-                && name.is_none_or(|name| clause.name() == name)
-        })
-    {
+    if let Some(clause) = graph.state_clauses().iter().find(|clause| {
+        clause.identity() == *node
+            && clause.operation().is_some()
+            && name.is_none_or(|name| clause.name() == name)
+    }) {
         return Some(OccurrenceKey::new(
             clause.identity(),
             clause.claim().clone(),
@@ -1813,7 +1810,11 @@ fn resolve_one(
             }
             match kinds.as_slice() {
                 [kind] => *kind,
-                [] if selection.probabilistic.is_some() => Capability::ProbabilisticSatisfaction,
+                [] if selection.probabilistic.is_some()
+                    || package.graph().probabilistic_model().claim(name).is_some() =>
+                {
+                    Capability::ProbabilisticSatisfaction
+                }
                 [] if state_graph.is_some() => Capability::TemporalSatisfaction,
                 _ => return invalid_kind(index, Some(name), "absent-kind"),
             }
@@ -1852,7 +1853,12 @@ fn resolve_one(
     if selection.probabilistic.is_some() && kind != Capability::ProbabilisticSatisfaction {
         return invalid_value(index, name, "probabilistic");
     }
-    let probabilistic = if let Some(value) = &selection.probabilistic {
+    let empty_member = json!({});
+    let probabilistic_member = selection
+        .probabilistic
+        .as_ref()
+        .or((kind == Capability::ProbabilisticSatisfaction).then_some(&empty_member));
+    let probabilistic = if let Some(value) = probabilistic_member {
         let checked = package
             .graph()
             .probabilistic_model()
@@ -3777,11 +3783,10 @@ fn write_run(
         let index = record.request_index();
         if let Some(bytes) = record.exact_certificate_document() {
             if let Ok(document) = serde_json::from_slice::<Value>(bytes) {
-                written["certificate"] = json!({
-                    "accepted": true,
-                    "kind": "exact",
-                    "document": document,
-                });
+                written["certificate"] = exact_certificate_member(
+                    echoes.get(&index).and_then(|echo| echo.identity.clone()),
+                    document,
+                );
             }
         }
         if let Some(output) = outcome.protocol_conformance.get(&index) {
@@ -4034,6 +4039,32 @@ fn hybrid_certificate_member(identity: Value, recorded: &fsl_replay::Certificate
             member.insert("at".to_owned(), at.clone().into());
         }
     }
+    Value::Object(member)
+}
+
+/// The checker that accepts an exact probability certificate document
+/// (EN-5, FR-201).
+const EXACT_PROBABILITY_CHECKER: &str = "probability-certificate";
+
+/// FR-621's `certificate` of an exact `proved` item (FR-741): `identity`,
+/// `checker` and `accepted`, `kind` (`long-run` for a long-run objective,
+/// else `exact`) and the `document`.
+fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
+    let long_run = document
+        .pointer("/objective/profile")
+        .and_then(Value::as_str)
+        .is_some_and(|profile| profile.contains("long-run"));
+    let mut member = Map::new();
+    if let Some(identity) = identity {
+        member.insert("identity".to_owned(), identity);
+    }
+    member.insert("checker".to_owned(), EXACT_PROBABILITY_CHECKER.into());
+    member.insert("accepted".to_owned(), true.into());
+    member.insert(
+        "kind".to_owned(),
+        (if long_run { "long-run" } else { "exact" }).into(),
+    );
+    member.insert("document".to_owned(), document);
     Value::Object(member)
 }
 

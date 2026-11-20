@@ -168,10 +168,8 @@ fn run_health_long_run(name: &str, items: Value) -> Value {
 }
 
 /// FR-741-AC-1: each statistical method settles `measured` with a
-/// measurement naming its method and seed, and a rerun with four workers
-/// gives the same item.
-#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
-#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
+/// `verdict` naming its method and seed, and a rerun with four workers
+/// gives the same item. The tests that call it carry the trace.
 fn statistical_method_from_source(method: &str, method_selection: Value) {
     let claim_name = if method == "regenerative" {
         "LongRun"
@@ -216,6 +214,16 @@ fn statistical_method_from_source(method: &str, method_selection: Value) {
         first["verdict"]["basis"]["draws"].as_str().is_some(),
         "{first}"
     );
+    // FR-410: every test row names its binding and instance, and no
+    // number is written for what the run did not measure.
+    for test in first["verdict"]["provenance"]["tests"]
+        .as_array()
+        .expect("provenance tests")
+    {
+        assert!(test.get("instance").is_some(), "{first}");
+        assert!(test.get("binding").is_some(), "{first}");
+    }
+    assert!(first["verdict"]["witnesses"].is_array(), "{first}");
     assert_eq!(first["request"]["probabilistic"]["workers"], 1);
     assert_eq!(four["items"][0]["request"]["probabilistic"]["workers"], 4);
     assert_eq!(
@@ -224,16 +232,22 @@ fn statistical_method_from_source(method: &str, method_selection: Value) {
     );
 }
 
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_okamoto_from_source() {
     statistical_method_from_source("okamoto", json!({"type": "okamoto"}));
 }
 
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_sprt_from_source() {
     statistical_method_from_source("sprt", json!({"type": "sprt"}));
 }
 
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_regenerative_from_source() {
     statistical_method_from_source(
@@ -312,13 +326,18 @@ fn an_exact_item_settles_proved_with_its_certificate() {
     assert_eq!(item["certificate"]["accepted"], true, "{item}");
     assert_eq!(item["certificate"]["kind"], "exact", "{item}");
     assert!(item["certificate"]["document"].is_object(), "{item}");
+    // FR-621: the certificate names its identity and its checker.
+    assert!(
+        item["certificate"]["identity"]["node_id"].is_object(),
+        "{item}"
+    );
+    assert!(
+        item["certificate"]["identity"]["model"].is_string(),
+        "{item}"
+    );
+    assert!(item["certificate"]["checker"].is_string(), "{item}");
     let text = item.to_string();
     assert!(text.contains("391") && text.contains("400"), "{text}");
-}
-
-#[test]
-fn exact_unbounded_from_source() {
-    an_exact_item_settles_proved_with_its_certificate();
 }
 
 /// Exact source routing covers bounded reachability, unbounded until, bounded
@@ -449,6 +468,7 @@ fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
             "seed": "0", "max_witnesses": 0}}]),
     );
     let item = &document["items"][0];
+    assert!(item.is_object(), "{document}");
     assert_eq!(label(item), "unsupported", "{item}");
     assert!(item.to_string().contains("exact-only-form"), "{item}");
     assert!(
@@ -699,10 +719,7 @@ fn every_scheduler_without_random_is_refuted() {
     let document = run_unit("every-no-random-refuted", &without_random());
     let item = &document["items"][0];
     assert_eq!(label(item), "refuted", "{item}");
-    assert_eq!(
-        item["counterexample"]["replay"]["reproduced"], true,
-        "{item}"
-    );
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// FR-876-AC-3 (TC-2488): with its `random` lines the same claim's minimum
@@ -714,6 +731,8 @@ fn exact_every_scheduler_from_source() {
     let document = run_unit("every-random-proved", &unit(EVERY));
     let item = &document["items"][0];
     assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(item["certificate"]["kind"], "exact", "{item}");
     let text = item.to_string();
     assert!(text.contains("24") && text.contains("25"), "{text}");
 }
@@ -759,6 +778,8 @@ fn exact_fair_scheduler_from_source() {
     );
 }
 
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_clopper_pearson_from_source() {
     statistical_method_from_source("clopper-pearson", json!({"type": "clopper-pearson"}));
@@ -836,6 +857,79 @@ fn absent_probabilistic_members_take_their_published_defaults() {
     assert_eq!(request["method"], json!({"type": "okamoto"}), "{bounded}");
     assert_eq!(request["seed"], "0", "{bounded}");
     assert_eq!(request["max_witnesses"], 8, "{bounded}");
+}
+
+/// FR-254 / QSL-2551: a delay-weighted fraction is a valid form, so EN-4
+/// refuses it as not yet implemented (`unsupported`), never as a caller's
+/// method choice (`invalid-request` `not-statistical`).
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[test]
+fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
+    let claim = "probabilistic Weighted using t on M over (m: M::Msg) under Even on origin \
+         with alpha 0.01, beta 0.01, indifference 0.05 \
+         { long_run_fraction holds(m.delivered) weighted by delay >= 0.1 }";
+    let document = run_timed(
+        "delay-weighting-statistical",
+        claim,
+        json!([{"claim": "Weighted", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "regenerative", "min_cycles": 1}, "seed": "7"}}]),
+    );
+    let item = &document["items"][0];
+    assert!(item.is_object(), "{document}");
+    assert_eq!(label(item), "unsupported", "{document}");
+    assert_ne!(
+        item["record"]["diagnostic"]["cause"], "not-statistical",
+        "{item}"
+    );
+}
+
+/// FR-741 "Request": an item with no `probabilistic` member at all reaches a
+/// verdict, and its request echo carries every default FSL wrote.
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[test]
+fn an_item_with_no_probabilistic_member_takes_every_default() {
+    let document = run(
+        "no-probabilistic-member",
+        DELIVERED,
+        json!([{"claim": "Delivered"}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "measured", "{item}");
+    let request = &item["request"]["probabilistic"];
+    assert_eq!(request["evidence"], "statistical", "{item}");
+    assert_eq!(request["method"], json!({"type": "okamoto"}), "{item}");
+    assert_eq!(request["seed"], "0", "{item}");
+    assert_eq!(request["max_witnesses"], 8, "{item}");
+    assert_eq!(request["workers"], 1, "{item}");
+    assert_eq!(request["limits"]["max_samples"], 1_u64 << 24, "{item}");
+}
+
+/// FR-410: a `measured` verdict spells its sampled witnesses, each test's
+/// `over` binding as a typed reference and its `instance` as null.
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[test]
+fn a_verdict_spells_its_witnesses_bindings_and_instances() {
+    let document = run(
+        "verdict-wire",
+        DELIVERED,
+        json!([{"claim": "Delivered", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "okamoto"},
+            "seed": "7", "max_witnesses": 8}}]),
+    );
+    let verdict = &document["items"][0]["verdict"];
+    let tests = verdict["provenance"]["tests"].as_array().expect("tests");
+    assert!(!tests.is_empty(), "{verdict}");
+    for test in tests {
+        assert!(test["binding"].is_object(), "{test}");
+        assert!(test["instance"].is_null(), "{test}");
+    }
+    let witnesses = verdict["witnesses"].as_array().expect("witnesses");
+    assert!(!witnesses.is_empty(), "{verdict}");
+    for witness in witnesses {
+        assert!(witness["steps"].is_array(), "{witness}");
+        assert!(witness["probability"].is_object(), "{witness}");
+        assert!(witness["value"]["type"].is_string(), "{witness}");
+    }
 }
 
 /// FR-741 request members and FR-203 budgets: an exact item's
