@@ -1,0 +1,26 @@
+{
+  "format": "native-compile/1",
+  "request": {
+    "models": [
+      {
+        "format": "semantic-ir/2.0.0",
+        "source": {
+          "file": "../model/architecture.semantic-ir.json",
+          "authority": "example",
+          "identity": "example:architecture/model",
+          "document": "model",
+          "formal_revision": 1
+        }
+      }
+    ],
+    "program": {
+      "source": {
+        "file": "../rules/staged-availability-missed.fsl",
+        "authority": "example",
+        "identity": "example:architecture/staged-availability-missed",
+        "document": "stagedavailabilitymissed",
+        "formal_revision": 1
+      }
+    }
+  }
+}
