@@ -1183,7 +1183,7 @@ fn stage_original_decimal_parameter_model(destination: &Path, source: &Path) -> 
     let bytes = std::fs::read(repository.join("examples/checked-handoff/model.semantic-ir.json"))
         .map_err(|error| error.to_string())?;
     let mut model: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-    let bytes = std::fs::read(source.join("workflow.native-decimal.json"))
+    let bytes = std::fs::read(source.join("workflow.decimal.json"))
         .map_err(|error| error.to_string())?;
     let extension: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
     let populations = model
@@ -1198,6 +1198,18 @@ fn stage_original_decimal_parameter_model(destination: &Path, source: &Path) -> 
             .iter()
             .cloned(),
     );
+    model
+        .get_mut("types")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "checked-handoff model must declare types".to_owned())?
+        .extend(
+            extension
+                .get("types")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "Decimal extension must declare types".to_owned())?
+                .iter()
+                .cloned(),
+        );
     for operation in extension
         .get("operations")
         .and_then(Value::as_array)
@@ -1253,6 +1265,7 @@ fn corpus_decimal_model_and_native_parameter_cases() {
         "decimal.native",
         "decimal.expected.json",
         "decimal.request.json",
+        "workflow.decimal.json",
     ] {
         std::fs::copy(original.join(name), scratch.path().join(name))
             .unwrap_or_else(|error| panic!("stage original Decimal case {name}: {error}"));

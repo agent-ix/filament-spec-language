@@ -10,7 +10,7 @@ use filament_exact::{DecimalType, Integer, RoundingMode, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, CheckedGraph, IllTypedCause, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput, UnitIntakeCause};
 use fsl_semantics::model::observation::{
@@ -282,6 +282,72 @@ fn amount_decimal_native_alias_has_its_policy_and_checks_equality() {
     assert_eq!(checked.field("amount"), decimal("-99999", "99999", 2));
 }
 
+/// FR-056-AC-63 (TC-3031): a target-bound Decimal value type without policy
+/// remains untyped and cannot be used by equality.
+#[trace("TC-3031", "FR-056-AC-63")]
+#[test]
+fn target_bound_cash_without_policy_is_operator_ineligible() {
+    let mut document = golden();
+    let cash_identity = "ix://test/decimal/Cash";
+    let mut cash = type_mut(&mut document, "Price").clone();
+    cash["identity"] = cash_identity.into();
+    cash["displayName"] = "Cash".into();
+    cash.as_object_mut().expect("Cash").remove("scalar");
+    cash.as_object_mut().expect("Cash").remove("decimal");
+    cash["target"] = "ix://filament/native/Decimal".into();
+    document["types"].as_array_mut().expect("types").push(cash);
+
+    let mut cash_field = field_mut(&mut document, "price").clone();
+    cash_field["identity"] = "ix://test/decimal/Meter/cash".into();
+    cash_field["name"] = "cash".into();
+    cash_field["typeRef"] = cash_identity.into();
+    type_mut(&mut document, "Meter")["fields"]
+        .as_array_mut()
+        .expect("Meter fields")
+        .push(cash_field);
+
+    let bytes = serde_json::to_vec(&document).expect("Cash fixture encoding");
+    let packages = package_input([bytes.as_slice()]).expect("Cash package bytes");
+    let body = "invariant CashEquality using v on Config::Meter at current { self.cash = self.cash }\n";
+    let unit = unit_text(PACKAGE, "Config", body);
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("test", "decimal-cash"),
+        "cash.native",
+        unit.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let built = build_unit(&parsed).expect("S2 builds the unit");
+    let selected = admit_unit(
+        &built.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .unwrap_or_else(|refusal| panic!("I1 admits Cash: {refusal:?}"));
+    let declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        crate::TEST_PACKAGE_NAME.to_owned(),
+        built,
+        selected,
+        Vec::new(),
+    )
+    .unwrap_or_else(|refusal| panic!("Cash unit assembles: {refusal:?}"));
+    let refusals = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect_err("Cash has no Decimal policy and no checked value type");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(
+        refusals[0].cause,
+        CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
+        "{refusals:?}"
+    );
+}
+
 #[trace("TC-3031", "FR-056-AC-63")]
 #[test]
 fn cyclic_decimal_alias_refuses_at_intake() {
@@ -488,6 +554,21 @@ fn decimal_policy_defects_refuse_once() {
         .remove("decimal");
     cases.push((
         "fee without a policy",
+        document,
+        "malformed-declaration",
+        "DECIMAL_POLICY_MISSING",
+        true,
+    ));
+    let mut document = golden();
+    let amount = type_mut(&mut document, "Rate");
+    amount["identity"] = "ix://test/decimal/Amount".into();
+    amount["displayName"] = "Amount".into();
+    amount["constraints"] = json!([]);
+    amount.as_object_mut().expect("Amount").remove("decimal");
+    amount["origin"]["generated"]["generatorIdentity"] = "ix://test/decimal/Amount".into();
+    amount["origin"]["generated"]["inputIdentities"] = json!(["ix://test/decimal/Amount"]);
+    cases.push((
+        "Amount without a policy",
         document,
         "malformed-declaration",
         "DECIMAL_POLICY_MISSING",
