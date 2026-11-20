@@ -2690,7 +2690,8 @@ fn receiver_object(declarations: &HyperDeclarations<'_>, alias: &str) -> Option<
 
 /// FR-172 "Align skip": each entry names an operation of a bound alias's
 /// model, once; the list is not empty; and no variable of the clause has a
-/// fairness constraint (ADR-023 PA-1, PA-3).
+/// fairness constraint (ADR-023 PA-1, PA-3). The parser admits an empty list
+/// so this stage can return the specified located refusal.
 fn checked_align_skip(
     form: &HyperBehavioursForm,
     quantifiers: &[CheckedQuantifier],

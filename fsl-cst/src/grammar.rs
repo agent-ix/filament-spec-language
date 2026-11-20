@@ -2660,7 +2660,7 @@ fn analysis(g: &mut Grammar) {
             literal("align"),
             literal("skip"),
             x("{"),
-            list(|| r(P::QualifiedName)),
+            opt(list(|| r(P::QualifiedName))),
             x("}"),
         ]),
     );

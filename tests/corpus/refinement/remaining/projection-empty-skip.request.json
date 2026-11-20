@@ -14,7 +14,7 @@
       {
         "format": "semantic-ir/2.0.0",
         "source": {
-          "file": "../../../../../fsl-conformance/cases/counter-step-package.json",
+          "file": "../../../../fsl-conformance/cases/counter-step-package.json",
           "authority": "test",
           "identity": "test:counter-step-package",
           "document": "Package",
