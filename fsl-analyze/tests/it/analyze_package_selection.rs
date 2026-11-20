@@ -661,6 +661,49 @@ fn named_operation_clauses_resolve_over_a_package() {
     }
 }
 
+/// FR-940: package operation-contract claims with one shared structural node
+/// retain their distinct claim occurrence ordinals when names resolve. The
+/// later name must not fall back to the first state clause on that node.
+#[test]
+fn shared_operation_contract_node_keeps_each_named_occurrence() {
+    let body = concat!(
+        "post First using v on M::Counter::setTo { self.value = n }\n",
+        "post Second using v on M::Counter::setTo { self.value = n }\n",
+    );
+    let items = json!([{"claim": "First"}, {"claim": "Second"}]);
+    let ws = Workspace::new("package-shared-operation-contract-node");
+    let request = counter_request(&ws, body, items.clone());
+    let source = analyze(&request);
+    let (members, package_bytes) = package_selection(&ws, &request_of(&request));
+    let package: Value = serde_json::from_slice(&package_bytes).expect("checked package JSON");
+    let rows = package["claim_names"].as_array().expect("claim_names rows");
+    let first = rows
+        .iter()
+        .find(|row| row["name"] == "First")
+        .expect("First claim-name row");
+    let second = rows
+        .iter()
+        .find(|row| row["name"] == "Second")
+        .expect("Second claim-name row");
+    assert_eq!(first["declaration"], second["declaration"]);
+    assert_eq!(first["occurrence"]["ordinal"], 0);
+    assert_eq!(second["occurrence"]["ordinal"], 1);
+
+    let run = analyze_members(&ws, "analyze-shared-operation-contract.json", &members);
+    assert_eq!(run.document()["items"], source.document()["items"]);
+    for (index, expected_ordinal) in [0, 1].into_iter().enumerate() {
+        for (route, result) in [("source", &source), ("package", &run)] {
+            let item = result.item(index);
+            assert_eq!(item["claim_name"], items[index]["claim"], "{route}: {item}");
+            assert_eq!(
+                claim_ordinal(&item),
+                json!(expected_ordinal),
+                "{route}: {item}"
+            );
+        }
+    }
+}
+
 /// FR-850 "Admission" (FSpec FR-520): an absent handoff directory, and a
 /// handoff with no `checked-package.json`, refuse the request
 /// `invalid_package`/`missing-file` at the request stage, exit 20.
