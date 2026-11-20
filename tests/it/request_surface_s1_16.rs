@@ -990,13 +990,17 @@ fn a_tl_lowering_request_selects_its_correspondence() {
 /// `Low` with the source union `Shape` declared by the unit, the leaf `leaf`
 /// as its body under `always [0, 3]`.
 fn shape_low(leaf: &str) -> String {
-    low(EVENT_POSITION, &format!("always [0, 3] {leaf}")).replacen(
-        "model Config",
-        "profile v = \"filament.value.complete/v1\";\n\
-         union Shape { Circle(Integer), Rect(Integer, Integer), Empty }\n\
-         model Config",
-        1,
-    )
+    low(EVENT_POSITION, &format!("always [0, 3] {leaf}"))
+        .replacen(
+            "model Config",
+            "profile v = \"filament.value.complete/v1\";\nmodel Config",
+            1,
+        )
+        .replacen(
+            "temporal Low",
+            "union Shape { Circle(Integer), Rect(Integer, Integer), Empty }\ntemporal Low",
+            1,
+        )
 }
 
 /// FR-931-AC-13 (source route): a `case` prints its arms in member
@@ -1006,7 +1010,7 @@ fn shape_low(leaf: &str) -> String {
 /// `case_binders_match_across_the_source_and_package_routes`.
 #[test]
 #[trace("TC-3039", "FR-931-AC-13")]
-#[ignore = "QSL-2562: case binder names in the checked record and canonical case printing not implemented yet"]
+#[ignore = "QSL-2632: a bounded-integer argument to a union member emits a union_value the strict package read refuses (TypeMismatch); the literal-argument twin below runs"]
 fn case_binders_print_under_their_declared_names() {
     let atom = |leaf: &str| {
         let (code, value) = run(
@@ -1063,6 +1067,20 @@ fn case_binders_print_under_their_declared_names() {
     assert_ne!(renamed, first);
 }
 
+/// The atom of `leaf` lowered on the source route.
+fn source_only(leaf: &str) -> String {
+    let (code, value) = run(
+        &shape_low(leaf),
+        true,
+        ("tl_lowering", json!({"clause": "Low"})),
+    );
+    assert_eq!(code, 0, "{value}");
+    value["tl_lowering"]["atoms"]["p0"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
 /// A leaf over `shape_low` lowered on the
 /// source route and, after compiling `shape_low(leaf)` to a checked package
 /// and removing the source, on the package route (FR-1039). Returns each
@@ -1114,7 +1132,7 @@ fn both_routes(leaf: &str) -> (String, String) {
 #[test]
 #[trace("TC-3039", "FR-400-AC-13")]
 #[trace("TC-3039", "FR-931-AC-13")]
-#[ignore = "QSL-2562: case binder names on the reader-backed read and package-route case printing not implemented yet"]
+#[ignore = "QSL-2627: tl_lowering over a selected checked package is not implemented yet"]
 fn case_binders_match_across_the_source_and_package_routes() {
     for leaf in [
         "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
@@ -1137,7 +1155,7 @@ fn case_binders_match_across_the_source_and_package_routes() {
 /// `ieee_operand_0` around a comparison prints as written. Both routes agree.
 #[test]
 #[trace("TC-3039", "FR-931-AC-14")]
-#[ignore = "QSL-2562: IEEE ordering composition printing not implemented yet"]
+#[ignore = "QSL-2628: a float literal in a temporal clause refuses invalid_package at compile; canonical.rs unit tests cover the printer shape"]
 fn the_checker_ieee_operand_binder_never_prints() {
     const A: &str = "float64(bits: 0x3ff0000000000000)";
     const Z: &str = "float64(bits: 0x0000000000000000)";
@@ -1170,9 +1188,12 @@ fn the_checker_ieee_operand_binder_never_prints() {
 /// local read; no parameter node name begins with `ieee_operand`.
 #[test]
 #[trace("TC-3039", "FR-397-AC-29")]
-#[ignore = "QSL-2562: `#ieee_operand` checker binder name not implemented yet"]
 fn the_checker_names_its_ieee_operand_binders_with_a_hash() {
-    for (body, binders) in [("-p < -q", 2), ("-p < q", 1), ("p < q", 0)] {
+    for (body, levels) in [
+        ("-p < -q", vec![2, 3]),
+        ("-p < q", vec![2]),
+        ("p < q", vec![]),
+    ] {
         let unit = format!(
             "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n\
@@ -1190,10 +1211,49 @@ fn the_checker_names_its_ieee_operand_binders_with_a_hash() {
         )
         .unwrap();
         fsl_command::command::compile(&compile).expect("the unit compiles");
-        let package = std::fs::read_to_string(directory.path().join("package.json")).unwrap();
-        // The name is one text literal node however many binders share it.
-        assert_eq!(package.contains("\"#ieee_operand\""), binders > 0, "{body}");
-        assert!(!package.contains("\"ieee_operand_"), "{body}");
+        let package: Value =
+            serde_json::from_slice(&std::fs::read(directory.path().join("package.json")).unwrap())
+                .unwrap();
+        // Every parameter node's `name` and `level` members.
+        let mut parameters = Vec::new();
+        let nodes = package["semantic_graph"]["nodes"].as_array().unwrap();
+        for node in nodes
+            .iter()
+            .filter(|node| node["semantic_form"] == "parameter")
+        {
+            let member = |name: &str| {
+                node["body"]["members"]
+                    .as_array()
+                    .and_then(|members| members.iter().find(|member| member["name"] == name))
+                    .map(|member| member["value"]["value"].clone())
+            };
+            parameters.push((member("name"), member("level")));
+        }
+        // The binders bind the operand expressions, so a one-operand binder
+        // fails the count and the levels.
+        let mut hashed = parameters
+            .iter()
+            .filter(|(name, _)| name.as_ref().is_some_and(|name| name == "#ieee_operand"))
+            .map(|(_, level)| {
+                level
+                    .as_ref()
+                    .and_then(Value::as_str)
+                    .and_then(|level| level.parse::<u64>().ok())
+            })
+            .collect::<Vec<_>>();
+        hashed.sort_unstable();
+        assert_eq!(
+            hashed,
+            levels.iter().copied().map(Some).collect::<Vec<_>>(),
+            "{body}: {parameters:?}"
+        );
+        assert!(
+            !parameters.iter().any(|(name, _)| name
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.starts_with("ieee_operand"))),
+            "{body}: {parameters:?}"
+        );
     }
 }
 
@@ -1700,4 +1760,49 @@ fn a_fairness_constraint_over_a_lasso_settles_missing_fairness_premise() {
         "{value}"
     );
     assert!(value.get("tl_lowering").is_none(), "{value}");
+}
+
+/// FR-931-AC-13 over leaves with no model field read (the package route of
+/// `tl_lowering` is not implemented yet): each
+/// `case` and `let` binder prints under its declared name, arms print in
+/// member declaration order, `_` is an ordinary binder, and renaming a binder
+/// renames the label.
+#[test]
+#[trace("TC-3039", "FR-931-AC-13")]
+fn case_binders_print_under_their_declared_names_without_a_model_read() {
+    let leaf = |binders: [&str; 8]| {
+        let [k, r, h, x, a, b, w, m] = binders;
+        format!(
+            "holds((let {k} = 3 in case Shape::Rect({k}, 1) {{ Circle({r}): {r} <= {k}; \
+             Rect(_, {h}): case Shape::Circle({h}) {{ Circle({x}): {x} + {k} <= 4; \
+             Rect({a}, {b}): false; Empty: true; }}; Empty: true; }}) and (case Shape::Rect(1, 2) \
+             {{ Empty: true; Rect({w}, {m}): {w} + {m} <= 4; Circle(z): z <= 2; }}))"
+        )
+    };
+    let from_source = source_only(&leaf(["k", "r", "h", "x", "a", "b", "w", "m"]));
+    let key = from_source
+        .strip_prefix("holds((let k = 3 in case ")
+        .and_then(|rest| rest.split_once("::Rect("))
+        .map(|(key, _)| key.to_owned())
+        .unwrap_or_else(|| panic!("{from_source}"));
+    assert!(
+        key.starts_with("ix://") && key.ends_with("/Shape"),
+        "{from_source}"
+    );
+    assert_eq!(
+        from_source,
+        format!(
+            "holds((let k = 3 in case {key}::Rect(k, 1) {{ Circle(r): r <= k; \
+             Rect(_, h): case {key}::Circle(h) {{ Circle(x): x + k <= 4; Rect(a, b): false; \
+             Empty: true; }}; Empty: true; }}) and (case {key}::Rect(1, 2) \
+             {{ Circle(z): z <= 2; Rect(w, m): w + m <= 4; Empty: true; }}))"
+        )
+    );
+    let renamed = leaf(["kk", "rr", "hh", "xx", "aa", "bb", "ww", "mm"]);
+    let renamed_source = source_only(&renamed);
+    assert_ne!(renamed_source, from_source);
+    assert!(
+        renamed_source.contains("Rect(ww, mm): ww + mm <= 4"),
+        "{renamed_source}"
+    );
 }

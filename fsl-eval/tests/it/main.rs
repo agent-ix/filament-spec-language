@@ -51,6 +51,7 @@ mod footprints;
 mod hyper_tuple;
 mod ieee_node_charges;
 mod ieee_ordering_route_parity;
+mod package_binder_names;
 mod inherited_attributes;
 mod int_arithmetic_expected_type;
 mod kernel_refusal_payloads;

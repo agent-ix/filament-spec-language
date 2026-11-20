@@ -472,7 +472,9 @@ impl<'g> Expander<'g> {
                                 .ok_or(unsupported)?;
                             values.push(value.clone());
                         }
-                        NodeKind::Let { slot, value, body } => {
+                        NodeKind::Let {
+                            slot, value, body, ..
+                        } => {
                             pending.push(Task::BindLet {
                                 function,
                                 body: node.at(*body),

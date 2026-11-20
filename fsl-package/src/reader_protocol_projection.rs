@@ -2123,7 +2123,15 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 body_locals.extend(binder.map(|binder| (binder, slot)));
                 let body = self.project_argument(id, body, context, &body_locals)?;
                 self.grow_frame(context, slot.saturating_add(1));
-                Ok((NodeKind::Let { slot, value, body }, vec![value, body]))
+                Ok((
+                    NodeKind::Let {
+                        slot,
+                        name: name.as_ref().to_owned(),
+                        value,
+                        body,
+                    },
+                    vec![value, body],
+                ))
             }
             Some("filament.op.function.call") => {
                 let callee = arguments
@@ -2410,6 +2418,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     NodeKind::Query {
                         visit,
                         slot,
+                        name: name.as_ref().to_owned(),
                         source,
                         body,
                     },
@@ -2813,9 +2822,17 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             };
             let mut arm_locals = locals.clone();
             let mut arm_slots = Vec::with_capacity(binders.len());
+            let mut arm_names = Vec::with_capacity(binders.len());
             for binder in binders {
                 let target = reference_target(binder)
                     .ok_or_else(|| fault("reader-union-case-binder-has-identity"))?;
+                // FR-400: the declared name is the parameter node's `name`.
+                let declared = self
+                    .index
+                    .node(target)
+                    .and_then(|node| parameter_name(&node.body))
+                    .ok_or_else(|| fault("reader-union-case-binder-has-name"))?;
+                arm_names.push(declared.to_owned());
                 arm_slots.push(next_slot);
                 arm_locals.insert(target.clone(), next_slot);
                 next_slot = next_slot
@@ -2830,6 +2847,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             arms.push(CaseArm {
                 member,
                 binders: arm_slots,
+                names: arm_names,
                 body,
             });
         }
