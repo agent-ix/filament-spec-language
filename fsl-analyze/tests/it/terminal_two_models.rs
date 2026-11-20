@@ -949,9 +949,10 @@ fn a_subject_reads_only_the_terminals_of_its_own_identities() {
             "test/vault",
         );
         assert!(is_deadlock(&outcome), "{terminals}: {outcome:?}");
-        let reading = fsl_route::deadlock::SubjectReading::read(world.package.graph(), |identity| {
-            identity == "test/vault"
-        });
+        let reading =
+            fsl_route::deadlock::SubjectReading::read(world.package.graph(), |identity| {
+                identity == "test/vault"
+            });
         assert!(!reading.opted_out(), "{terminals}");
         assert!(reading.anchor().is_ok(), "{terminals}");
     }
@@ -1167,9 +1168,14 @@ fn a_vault_only_deadlock_item_settles_refuted_and_replays_on_both_routes() {
         let (_, value) = crate::derived_request::settled(&record);
         assert_eq!(value, fsl_replay::TerminalValue::Refuted, "{record:?}");
         let found = record.model_check.expect("EN-1's record");
-        let counterexample = found.counterexample.expect("the refutation's counterexample");
+        let counterexample = found
+            .counterexample
+            .expect("the refutation's counterexample");
         assert!(
-            matches!(counterexample.kind, fsl_replay::CounterexampleKind::Deadlock),
+            matches!(
+                counterexample.kind,
+                fsl_replay::CounterexampleKind::Deadlock
+            ),
             "{:?}",
             counterexample.kind
         );
@@ -1253,5 +1259,113 @@ fn an_uncovered_identitys_invariant_is_refused_and_its_snapshot_admitted() {
     assert!(
         matches!(outcome, Err(ModelCheckRefusal::RequiresBound(_))),
         "{outcome:?}"
+    );
+}
+
+/// The items the document entry settles for `world` over the request's
+/// `items`, or over FR-620's default items when there are none.
+fn settled_items(world: &Two, items: Option<serde_json::Value>) -> Vec<serde_json::Value> {
+    use fsl_analyze::analyze::document::{
+        resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
+    };
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the manifests register");
+    let mut registry = fsl_route::Registry::new();
+    for descriptor in engines.registrations() {
+        registry
+            .register(descriptor.clone())
+            .expect("a registered backend");
+    }
+    let selections: Option<Vec<ItemSelection>> =
+        items.map(|items| serde_json::from_value(items).expect("the items are selections"));
+    let binding = world.binding();
+    let units = [world.package.graph().source().clone()];
+    let resolved = resolve_items(
+        &world.package,
+        &SubjectSelection::default(),
+        selections.as_deref(),
+        &registry,
+        &units,
+        &binding,
+        &AnalyzeLimits::unbounded(),
+    );
+    settle_run(
+        AnalyzeRun {
+            package: &world.package,
+            binding,
+            provision: SourceProvision::single(
+                world.package.graph().source(),
+                world.text.as_bytes(),
+            ),
+            items: resolved,
+            engines: &engines,
+            limits: AnalyzeLimits::unbounded(),
+        },
+        &crate::analyze_cli_support::Fr290,
+        &Cancel::new(),
+    )
+    .map(|settled| settled.items)
+    .expect("a settled run")
+}
+
+/// The request item that names the deadlock-freedom item of the model `V`.
+fn deadlock_of_vault() -> serde_json::Value {
+    serde_json::json!([{"claim": "V", "temporal": {"item_kind": "deadlock-freedom"}}])
+}
+
+/// FR-124-AC-12, TC-519 step 11: a request whose subject reads one identity
+/// of a unit that selects two models derives the deadlock-freedom item for
+/// that identity, so the item settles `refuted` with the one-step deadlock,
+/// by the item the request names and by FR-620's default items alike.
+#[trace("TC-519", "FR-124-AC-12")]
+#[test]
+fn a_subject_reading_one_identity_derives_the_deadlock_item_of_that_identity() {
+    let world = two_models("").reading_vault_only();
+    for items in [Some(deadlock_of_vault()), None] {
+        let settled = settled_items(&world, items.clone());
+        let [item] = settled.as_slice() else {
+            panic!("{items:?}: one derived item: {settled:?}");
+        };
+        assert_eq!(item["record"]["result"], "refuted", "{item}");
+        assert_eq!(item["replay"]["reproduced"], true, "{item}");
+        assert_eq!(
+            item["counterexample"]["prefix"].as_array().map(Vec::len),
+            Some(1),
+            "the vault deadlocks after one step: {item}"
+        );
+    }
+}
+
+/// FR-124-AC-12: another selection's `terminal any` is no opt-out of the
+/// item of the identity the subject reads, so the item is still written and
+/// still refuted.
+#[trace("TC-519", "FR-124-AC-12")]
+#[test]
+fn another_identitys_terminal_any_does_not_opt_the_read_identity_out() {
+    let world = two_models(OTHER_ANY).reading_vault_only();
+    for items in [Some(deadlock_of_vault()), None] {
+        let settled = settled_items(&world, items.clone());
+        let [item] = settled.as_slice() else {
+            panic!("{items:?}: one derived item: {settled:?}");
+        };
+        assert_eq!(item["record"]["result"], "refuted", "{item}");
+    }
+}
+
+/// FSpec FR-368-AC-22: a subject that reads both identities has no anchor for
+/// a derived item, so the item the request names settles `unsupported` and
+/// FR-620's default items write none.
+#[trace("TC-431", "FR-368-AC-22")]
+#[test]
+fn a_subject_reading_both_identities_has_no_derived_item() {
+    let world = two_models("");
+    let settled = settled_items(&world, Some(deadlock_of_vault()));
+    let [item] = settled.as_slice() else {
+        panic!("one item: {settled:?}");
+    };
+    assert_eq!(item["record"]["result"], "unsupported", "{item}");
+    assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
+    assert!(
+        settled_items(&world, None).is_empty(),
+        "the default items write none"
     );
 }

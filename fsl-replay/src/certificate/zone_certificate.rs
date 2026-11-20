@@ -33,6 +33,10 @@
 //! 6. `admitted`: a path of such edges from an initial node to a quiescent
 //!    node, a terminal node under a tick source, or a cycle that lets time
 //!    advance (`WitnessFails`, at its last node).
+//!    A liveness certificate whose claim leaves no divergent run in its own
+//!    product carries the subject's product, read by no claim, past its
+//!    instances (the admission instance), and `admitted` walks that; no
+//!    component, fairness or non-Zeno reading counts its nodes.
 //!
 //! The first failure is the rejection. A node no edge reaches from an
 //! initial node is read nowhere and checked for nothing.
@@ -1428,7 +1432,7 @@ impl<O> Checker<'_, '_, O> {
                     None => windowed || live.is_some() || node.automaton_state == 0,
                 }
                 && match (live, node.product) {
-                    (Some(live), Some(mark)) => mark.instance < live.instances.len(),
+                    (Some(live), Some(mark)) => mark.instance <= live.instances.len(),
                     (None, None) => true,
                     _ => false,
                 }
