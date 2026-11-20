@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Small independent counter systems, rendered through the source and library APIs.
 
-use super::value::VALUE_HEADER;
 use crate::world::{Model, Operation};
 use proptest::prelude::{BoxedStrategy, Strategy};
+
+const MODEL_HEADER: &str =
+    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n";
 
 /// Independent description of a finite product of saturating counters.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -55,7 +57,7 @@ impl SmallModel {
 
     /// Standalone native object/operation declarations, with an admitted precondition.
     pub fn source(&self) -> String {
-        format!("{VALUE_HEADER}object Counter {{ value: Int[0, {}]; population counters; operation inc() modifies self.value; }}\npre Enabled using v on Counter::inc {{ self.value <= {} }}\npost Advances using v on Counter::inc {{ {} }}\n", self.maximum, self.maximum, self.post())
+        format!("{MODEL_HEADER}object Counter {{ value: Int[0, {}]; population counters; operation inc() modifies self.value; }}\npre Enabled using v on Counter::inc {{ self.value <= {} }}\npost Advances using v on Counter::inc {{ {} }}\n", self.maximum, self.maximum, self.post())
     }
 
     /// The same domain and transition relation as the benchmark library representation.
