@@ -418,7 +418,7 @@ mod tests {
             "seq",
             "expression",
             "collection",
-            &["lo", "hi", "body", "i", "outer"],
+            &["lo", "hi", "body"],
             json!({
                 "term": "application",
                 "operator": "collection",

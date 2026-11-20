@@ -256,7 +256,7 @@ fn a_foreign_equality_witness_refuses_unjoined() {
         format!(
             "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n\
-             function e using v(n: Int[0, 9]): Boolean pure {{ {body} }}\n"
+             function e using v(n: Integer): Boolean pure {{ {body} }}\n"
         )
     };
     let own = tempfile::tempdir().unwrap();
