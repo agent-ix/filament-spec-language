@@ -40,3 +40,4 @@ mod syntax_messages;
 mod taskset;
 mod terminal_declaration;
 mod time_declaration;
+mod value_declarations;

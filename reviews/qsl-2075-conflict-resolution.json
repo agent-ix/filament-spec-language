@@ -1,0 +1,21 @@
+{
+  "format": "fsl-mechanical-merge-receipt/v1",
+  "ticket": "QSL-2075",
+  "pull_request": 3149,
+  "previous_pr_head": "c58eacd05cc3a6e03874afdae279f5cb28b6589f",
+  "incorporated_main": "c8a82c9923fb81dc98f2dc3dce19e8522788784e",
+  "merge_commit": "1da3eba34397e3a558d7de23b02fd11d21d92c55",
+  "conflicted_files": ["fsl-cst/tests/it/main.rs"],
+  "resolution": "Retain the additive value_declarations registration together with the current-main and accepted hybrid/synthesis/time registrations.",
+  "reviewed_value_case_edits": false,
+  "manual_product_semantic_changes": false,
+  "accepted_corpus_oracles_and_strict_owners_preserved": true,
+  "previous_gate_head": "39c57459d8f07c94099e2d44830ced51a9578b75",
+  "previous_gate": {"passed": 323, "failed": 0, "ignored": 19},
+  "new_tests_lint_review_or_gate_runs": 0,
+  "notes": [
+    "Root reported that the previous exact-head admin merge made no mutation because GitHub could not create a clean merge commit.",
+    "Only the actual registration conflict was resolved; the reviewed and gated value cases remain unchanged.",
+    "The earlier component receipt is preserved at its actual head, without claiming a fresh gate on the main move."
+  ]
+}
