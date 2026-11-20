@@ -202,6 +202,9 @@ const RAMP: &str = "hybrid Ramp using p {\n\
      temporal NestedLow using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 0 and q.v < 1 / 8) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [0, 5] always [0, 1] holds(h.v >= 2 and h.v <= 2 + 4 * v0) }\n\
+     temporal Deep using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [2, 9] always [1, 6] eventually [0, 1] holds(h.v >= 4 and h.v <= 4 + 12 * v0) }\n\
      temporal NestedHeld using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v >= 1 / 4 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [0, 5] always [0, 1] holds(h.v >= 2 and h.v <= 2 + 4 * v0) }\n";
@@ -282,11 +285,11 @@ fn the_activation_scan_is_charged_to_the_meter() {
     let phase = check(PHASE);
     let phase_trace = phase_lasso();
     let cases = [
-        (&shuttle, "Cap", &lasso, 2062),
-        (&shuttle, "Range", &lasso, 1614),
+        (&shuttle, "Cap", &lasso, 1215),
+        (&shuttle, "Range", &lasso, 900),
         (&shuttle, "Past", &lasso, 45),
         (&shuttle, "Origin", &lasso, 35),
-        (&ramp, "Nested", &ramp_trace, 96789),
+        (&ramp, "Nested", &ramp_trace, 9224),
         (&phase, "Twice", &phase_trace, 70),
     ];
     for (graph, name, trace, expected) in cases {
@@ -305,4 +308,28 @@ fn the_activation_scan_is_charged_to_the_meter() {
             "{name}"
         );
     }
+}
+
+/// FR-450-AC-12 (budget): three nested windows over a tau-dependent atom.
+/// The atom `4 <= v <= 4 + 12 tau` holds on `[4, 4 + 12 tau]` of a ramp that
+/// ends at time 40, so `eventually [0, 1]` holds at `[3, 4 + 12 tau]`,
+/// `always [1, 6]` at `[2, 12 tau - 2]`, and `eventually [2, 9]` from `tau`
+/// needs `12 tau - 2 >= tau + 2`, that is `tau >= 4/11`. The obligation is
+/// false for `tau` in `(0, 4/11)`, so the claim is reproduced. Shifted copies
+/// are made of the polynomials read, not of the window lines (which already
+/// hold their differences), and that keeps the decision within 400,000 work
+/// units; with every line copied it exhausts that meter.
+#[trace("TC-1221", "FR-450-AC-12")]
+#[test]
+fn three_nested_windows_are_decided_within_a_moderate_meter() {
+    let graph = check(RAMP);
+    let trace = HybridTrace {
+        end: Some(before(n(40), &[n(40), n(0)])),
+        ..ramp_trace()
+    };
+    let mut meter = HybridReplayMeter::new(400_000);
+    assert_eq!(
+        super::super::exact_replay(&graph, claim(&graph, "Deep"), &trace, &mut meter),
+        Ok(reproduced_formula(&trace))
+    );
 }

@@ -48,3 +48,32 @@ What is right:
 | FND-007 | low | `each_time` raises `ActivationInfimum` for any non-activation and non-capture record in an open tau-cell, including an atom undefined at a fixed t that does not move with tau. The variant doc claims only tau-moving instants. The behaviour is conservative, but the doc understates the gap. | fsl-replay/src/hybrid_replay/exact/activation.rs:529-541, fsl-replay/src/hybrid_replay.rs:389-395 |
 | FND-008 | low | Some scan work is uncharged: `roots_in` for every projected polynomial at every sample, and the re-partition on every fixpoint pass. `formula_signal`'s per-cell work is charged as one batch per segment before the call. | fsl-replay/src/hybrid_replay/exact/activation.rs:419-428, fsl-replay/src/hybrid_replay/exact/activation.rs:454-481 |
 | FND-009 | low | `cargo fmt --check` flags the widened `pub(super) fn partition` line (104 chars). The PR body says rustfmt is clean. | fsl-replay/src/hybrid_replay/signal.rs:102 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | low | The shifted copies include the lines themselves: `moved` takes every polynomial with positive x-degree, so each window-offset line and each segment-end line is copied once per offset difference. That puts O(offsets x shifts) extra lines into a projection whose cost is pairwise. In reviewer probes, five formulas (three or four nested windows, `and` across branches, `until` inside `eventually`) exhausted 3,000,000 work units even under a single-instant guard `q.v = k/12`. The shifted lines duplicate offsets already present (`x - tau - (c - s)`), so they could be filtered out of `moved`. | fsl-replay/src/hybrid_replay/exact/activation.rs:398-407 |
+
+## Dispositions
+
+Round 1, head 83965af6ab28295a586474584ef2beeefd16736c (fix commit 83965af6ab plus a merge of main).
+
+Reviewer verification this round:
+- Probe 1 (the Ramp nested-window claim) is now the regression test `nested_windows_over_tau_dependent_atoms_cut_where_two_roots_are_a_width_apart`, which passes.
+- Grid oracle, run in the review worktree only and never pushed. Model `Ramp`, end time 40, atoms `A = 4 <= v <= 4 + 12 v0` and `B` (two tau-dependent intervals). Eight formulas: three and four nested windows, `and` across branches with different nesting, `eventually [2, 9] always [1, 6]`, `until [1, 5]` inside `eventually`, and `always eventually`. Each full claim (guard `0 < q.v < 1`) was compared with 11 single-instant claims (guard `q.v = k/12`). Wherever the full claim was decided, it agreed with the grid: four reproduced, each with false grid points. The other four exhausted 3,000,000 units, which is FND-010. No counterexample was found.
+- Why the difference set suffices: an edge of a nested truth set is a root plus one window end per level, and the offsets enumerate every sum with zero or one end per level. Two edges compared at any level therefore differ by a difference of two offsets, plus that level's width, which is itself a difference of offsets.
+- Mutation: deleting each of the nine charge sites in turn (activation.rs:130, 339, 360, 379, 408 projection closure, 458, 493, 512, 515) makes `the_activation_scan_is_charged_to_the_meter` fail every time.
+- Gates: `-p fsl-replay --lib hybrid` 72 passed. `hybrid_requests::` 11 passed, 12 ignored, every ignore naming QSL-2531 or QSL-2532. `hybrid_provider::` 8 passed. `-p fsl-hybrid-reference --lib` 3 passed. Clippy reports nothing in the diff; the hit at hybrid_requests.rs:915 is the pre-existing :906 moved down. rustfmt is clean on the touched fsl-replay files.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Every read polynomial with positive x-degree is also read shifted by each nonzero difference of the window offsets (`Poly2::shifted`), so the projection now holds the resultants for two roots a window width apart. The Ramp repro is now Reproduced, and the grid oracle found no further counterexample. |
+| FND-002 | fixed | The `on origin` captures now read a copy of the first segment whose values are the solution evaluated at its start. The regression test `an_origin_capture_over_a_moving_dwell_is_read_at_the_first_position` gives Reproduced and NotReproduced as expected. The guard is now evaluated before the captures, which matches FSpec FR-193 "Activations and captures": an obligation exists only where `g` holds. |
+| FND-003 | fixed | The test now pins exact unit counts for six claims and checks that one unit below each count is exhausted. Deleting any of the nine charge sites fails it. |
+| FND-004 | fixed | Retagged `FR-450-AC-12`. This is the nearest binding: no FR-450 AC covers activation-scan metering, and this follows the precedent of #3119 FND-003. |
+| FND-005 | deferred | The test stays tagged FR-1019-AC-14. FR-1019-AC-15 cannot be built under FR-447's first-appearance variable order (gap-analysis FND-002). The coordinator is raising the arch fix, and the tag moves to AC-15 when AC-15 is amended. |
+| FND-006 | fixed | The doc and the TEMPORARY comment now cite QSL-2690. The PR body still says QSL-2529; that is tracked under gap-analysis FND-003. |
+| FND-007 | fixed | The variant doc now states both triggers exactly, including an atom with no value whether or not its instant moves with tau. |
+| FND-008 | fixed | The scan charges each fixpoint pass and each root isolation. The module doc lists exactly what is left uncharged: arithmetic on one polynomial and sorting the cuts. |
+| FND-009 | fixed | `partition` is wrapped by rustfmt, and `cargo fmt --check` is clean on signal.rs. |

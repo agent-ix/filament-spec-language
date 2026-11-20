@@ -390,16 +390,20 @@ impl<'a, 'c> Decider<'a, 'c> {
             }
         }
         let mut set = self.lines.clone();
+        let mut fresh: Vec<Poly2> = Vec::new();
         for poly in read {
-            if !set.contains(&poly) {
-                set.push(poly);
+            if !set.contains(&poly) && !fresh.contains(&poly) {
+                fresh.push(poly);
             }
         }
-        let moved: Vec<Poly2> = set
+        // The shifted copies are of the polynomials read, never of the
+        // lines: a shifted line is a line already present.
+        let moved: Vec<Poly2> = fresh
             .iter()
             .filter(|poly| poly.degree().is_some_and(|degree| degree > 0))
             .flat_map(|poly| self.shifts.iter().map(|shift| poly.shifted(shift)))
             .collect();
+        set.extend(fresh);
         for poly in moved {
             if !set.contains(&poly) {
                 set.push(poly);
