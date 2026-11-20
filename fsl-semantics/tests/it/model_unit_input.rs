@@ -254,3 +254,42 @@ record Row { value: Integer; operation update(); }
     assert_eq!(span.start.byte, operation);
     assert_eq!(span.end.byte, operation + "operation".len());
 }
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_a_bounded_native_type_alias() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/scalars";
+type Small = Int[0, 3];
+object Item { value: Small; }
+population items: Item;
+"#;
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "scalar-model"),
+        "scalar.fsl",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("source metadata admitted");
+    let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+        .expect("the scalar alias model compiles");
+    let document: serde_json::Value =
+        serde_json::from_slice(compiled.bytes()).expect("compiled document is JSON");
+    assert_eq!(document["types"][0]["scalar"], "integer");
+    assert_eq!(
+        document["types"][0]["constraints"][0]["operands"]["value"],
+        "0"
+    );
+    assert_eq!(
+        document["types"][0]["constraints"][1]["operands"]["value"],
+        "3"
+    );
+    let packages =
+        package_input([source.as_bytes()]).expect("compiled alias becomes package input");
+    admit(
+        "example/scalars",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the compiled scalar alias");
+}

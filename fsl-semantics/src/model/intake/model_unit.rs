@@ -197,8 +197,11 @@ pub fn compile_model_unit(
     let mut types = Vec::new();
     let mut populations = Vec::new();
     let mut object_names = std::collections::BTreeSet::new();
+    let mut declaration_names = std::collections::BTreeSet::new();
     let mut population_names = std::collections::BTreeSet::new();
     let mut references = Vec::new();
+    let mut has_object_type = false;
+    let mut has_value_type = false;
     let mut index = cursor;
     while index < tokens.len() {
         let declaration_start = index;
@@ -216,7 +219,9 @@ pub fn compile_model_unit(
                         "invalid object declaration",
                     )]);
                 };
-                if !object_names.insert(object.name.clone()) {
+                let unique_object = object_names.insert(object.name.clone());
+                let unique_declaration = declaration_names.insert(object.name.clone());
+                if !unique_object || !unique_declaration {
                     return Err(vec![diagnostic(
                         parsed,
                         CompleteCode::AmbiguousDeclaration,
@@ -227,6 +232,7 @@ pub fn compile_model_unit(
                 }
                 references.extend(object.relationship_targets.iter().cloned());
                 types.push(object.wire);
+                has_object_type = true;
                 index = next;
             }
             Some("population") | Some("open") | Some("symmetric") => {
@@ -255,6 +261,31 @@ pub fn compile_model_unit(
                     )]);
                 }
                 populations.push(population);
+                index = next;
+            }
+            Some("type") => {
+                let Some((value_type, name, next)) =
+                    read_scalar_alias(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::UnsupportedConstruct,
+                        CompleteCause::DeclarationForm,
+                        tokens[declaration_start].span,
+                        "only scalar native type aliases are supported by model-unit compilation",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(value_type);
+                has_value_type = true;
                 index = next;
             }
             Some("record") => {
@@ -330,8 +361,11 @@ pub fn compile_model_unit(
     }
     let _ = limits;
     let mut meanings = Vec::new();
-    if !types.is_empty() {
+    if has_object_type {
         meanings.push(("object_type", "filament.meaning.model.object-type/v1"));
+    }
+    if has_value_type {
+        meanings.push(("value_type", "filament.meaning.model.value-type/v1"));
     }
     if !populations.is_empty() {
         meanings.push(("population", "filament.meaning.model.population/v1"));
@@ -634,6 +668,101 @@ fn read_object(
         },
         index,
     ))
+}
+
+fn read_scalar_alias(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "=" {
+        return None;
+    }
+    index += 1;
+    let native = tokens.get(index)?.text.as_str();
+    let scalar = match native {
+        "Int" | "Integer" => "integer",
+        "Boolean" => "boolean",
+        "Text" => "text",
+        _ => return None,
+    };
+    index += 1;
+    let mut bounds = Vec::new();
+    if tokens.get(index).is_some_and(|token| token.text == "[") {
+        index += 1;
+        let lower = signed_integer(tokens, &mut index)?;
+        if tokens.get(index)?.text != "," {
+            return None;
+        }
+        index += 1;
+        let upper = signed_integer(tokens, &mut index)?;
+        if tokens.get(index)?.text != "]" {
+            return None;
+        }
+        index += 1;
+        bounds.extend([("min", lower), ("max", upper)]);
+    }
+    if tokens.get(index)?.text != ";" {
+        return None;
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    let identity = format!("ix://{package}/{name}");
+    let applies_to = match native {
+        "Int" | "Integer" => "ix://filament/native/Integer",
+        "Boolean" => "ix://filament/native/Boolean",
+        "Text" => "ix://filament/native/Text",
+        _ => return None,
+    };
+    let constraints = bounds
+        .into_iter()
+        .map(|(keyword, value)| {
+            let constraint_identity = format!("{identity}/constraints/{keyword}");
+            json!({
+                "identity": constraint_identity,
+                "keyword": keyword,
+                "operands": {"value": value},
+                "appliesTo": applies_to,
+                "diagnosticCode": format!("bound.{keyword}"),
+                "origin": source_origin(parsed, Span { start, end }),
+            })
+        })
+        .collect::<Vec<_>>();
+    Some((
+        json!({
+            "identity": identity,
+            "displayName": identity,
+            "kind": {"module": package, "name": "value_type"},
+            "roles": [],
+            "origin": source_origin(parsed, Span { start, end }),
+            "extensions": [], "unknownPolicy": "reject", "scalar": scalar,
+            "constraints": constraints,
+        }),
+        name,
+        index,
+    ))
+}
+
+fn signed_integer(tokens: &[Token], index: &mut usize) -> Option<String> {
+    let negative = tokens.get(*index)?.text == "-";
+    if negative {
+        *index += 1;
+    }
+    let digits = tokens.get(*index)?.text.as_str();
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    *index += 1;
+    Some(if negative {
+        format!("-{digits}")
+    } else {
+        digits.to_owned()
+    })
 }
 
 fn read_multiplicity(
