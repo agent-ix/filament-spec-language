@@ -1083,6 +1083,143 @@ fn run_clause_reports_not_a_predicate_for_an_integer_function() {
     assert_eq!(report.disposition.stage(), ClauseRunStage::Select);
 }
 
+/// TC-2951 / FR-867-AC-4: a selected integer function keeps its typed
+/// diagnostic in the outcome item, and its native result is accepted by the
+/// strict public reader.
+#[trace("TC-2951", "FR-867-AC-4")]
+#[test]
+fn integer_function_claim_refusal_round_trips_with_typed_diagnostic() {
+    let label = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "integer-claim-snapshot".to_owned(),
+    };
+    let bytes = snapshot_bytes(&label, &[]);
+    let mut request = request(ClauseRunSelection::Function {
+        name: "seven".to_owned(),
+        arguments: Vec::new(),
+        snapshot: label,
+        snapshot_path: None,
+    });
+    request.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself"),
+        bytes,
+    );
+    let report = run_clause(request).expect("the claim selection is formed");
+
+    let item = crate::OutcomeItem::from_clause_run(crate::RequestIndex::new(0), "seven", &report)
+        .expect("a refusal is an outcome item");
+    let item = serde_json::to_value(item).expect("the item serializes");
+    assert_eq!(
+        item["diagnostic"],
+        json!({
+            "code": "ill_typed",
+            "cause": "type-mismatch",
+            "detail": {
+                "function": "seven",
+                "expected": "Boolean",
+                "actual": "Integer",
+            },
+        })
+    );
+
+    let native = crate::spine::write_clause_run_result(&report).expect("the refusal serializes");
+    let value: serde_json::Value = serde_json::from_slice(&native).expect("valid result JSON");
+    assert_eq!(
+        value["disposition"]["refusal"]["fields"],
+        json!({"name": "seven"})
+    );
+    assert!(
+        value["disposition"]["refusal"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("seven") && message.contains("Integer")),
+        "the refusal message names the selection and its type: {value}"
+    );
+    assert!(
+        matches!(
+            crate::spine::read_native_run_result(&native),
+            Ok(crate::spine::NativeRunResult::Clause(_))
+        ),
+        "the strict reader accepts the typed selection refusal"
+    );
+}
+
+/// TC-2951 / FR-867-AC-4: an unknown function selection round-trips through
+/// the strict native result reader with its catalog name intact.
+#[trace("TC-2951", "FR-867-AC-4")]
+#[test]
+fn unknown_function_claim_refusal_round_trips_with_name() {
+    let label = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "unknown-claim-snapshot".to_owned(),
+    };
+    let bytes = snapshot_bytes(&label, &[]);
+    let mut request = request(ClauseRunSelection::Function {
+        name: "nope".to_owned(),
+        arguments: Vec::new(),
+        snapshot: label,
+        snapshot_path: None,
+    });
+    request.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself"),
+        bytes,
+    );
+    let report = run_clause(request).expect("the claim selection is formed");
+
+    let native = crate::spine::write_clause_run_result(&report).expect("the refusal serializes");
+    let value: serde_json::Value = serde_json::from_slice(&native).expect("valid result JSON");
+    assert_eq!(
+        value["disposition"]["refusal"]["fields"],
+        json!({"name": "nope"})
+    );
+    assert!(
+        matches!(
+            crate::spine::read_native_run_result(&native),
+            Ok(crate::spine::NativeRunResult::Clause(_))
+        ),
+        "the strict reader accepts the unknown function selection"
+    );
+}
+
+/// TC-2951 / FR-867-AC-4: a Boolean function selection remains a tested item.
+#[trace("TC-2951", "FR-867-AC-4")]
+#[test]
+fn boolean_function_claim_round_trips_as_tested() {
+    let label = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "boolean-claim-snapshot".to_owned(),
+    };
+    let bytes = snapshot_bytes(&label, &[]);
+    let mut request = request(ClauseRunSelection::Function {
+        name: "isPositive".to_owned(),
+        arguments: vec![ClauseArgument {
+            parameter: "n".to_owned(),
+            value: ClauseArgumentValue::Integer(5),
+        }],
+        snapshot: label,
+        snapshot_path: None,
+    });
+    request.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself"),
+        bytes,
+    );
+    let report = run_clause(request).expect("the claim selection is formed");
+
+    let item = crate::OutcomeItem::from_clause_run(crate::RequestIndex::new(0), "isPositive", &report)
+        .expect("a successful claim is an outcome item");
+    assert_eq!(item.result(), crate::ItemLabel::Tested);
+    let item = serde_json::to_value(item).expect("the tested item serializes");
+    assert!(item.get("diagnostic").is_none());
+
+    let native = crate::spine::write_clause_run_result(&report).expect("the result serializes");
+    assert!(matches!(
+        crate::spine::read_native_run_result(&native),
+        Ok(crate::spine::NativeRunResult::Clause(_))
+    ));
+}
+
 /// [`ClauseRunRefusal::EmptySource`]: an empty unit refuses before any
 /// stage runs. Not one of FR-109's own AC rows (`ClauseRunRefusal` is only
 /// for a request that cannot be formed, distinct from every `ClauseRunReport`
