@@ -15,7 +15,7 @@ located at the checker's location of that position on both routes, read on
 the package route from the package's `body_locations` rows, including where
 lowering reshaped the body, and that clause function bodies carry their rows.
 
-Scope: FR-531-AC-36, FR-531-AC-37, FR-531-AC-38, FR-531-AC-39.
+Scope: FR-531-AC-36, FR-531-AC-37, FR-531-AC-38, FR-531-AC-39, FR-531-AC-40.
 
 ## Test Procedure
 
@@ -38,6 +38,11 @@ Scope: FR-531-AC-36, FR-531-AC-37, FR-531-AC-38, FR-531-AC-39.
    clause function's `body_locations` rows, admit the bytes, then remove the
    second `sqrt`'s row and refuse them, and refuse them again with the
    carrier emptied.
+8. Emit FR-531-AC-40's unit (`ConfigVersion` a source object type, its
+   `SourceOwner` identity `I`), read the clause function's rows' `name`,
+   search the bytes for `ix://source/`, then evaluate the clause function at
+   `size`'s pre-state on both routes, once to completion and once under every
+   `work_units` limit below its spend.
 
 Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
 `an_ordering_over_square_roots_charges_the_same_on_both_routes` (steps 1 to 3),
@@ -45,7 +50,8 @@ Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
 `every_flag_raising_ieee_operation_is_located_alike_on_both_routes` (step 5),
 `a_denied_charge_in_a_body_is_located_alike_on_both_routes` (step 6);
 `tests/it/dispatch_emission.rs`
-`a_clause_function_body_carries_its_location_rows` (step 7).
+`a_clause_function_body_carries_its_location_rows` (step 7) and a new
+`a_source_clause_function_is_named_alike_on_both_routes` (step 8).
 
 ## Expected Results
 
@@ -67,3 +73,7 @@ Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
   `Body` owner, the `sqrt` rows at `[0]` and `[1]` equal to the checked
   graph's locations, no row for any `size` body; admitted, then refused at
   `/checked_term_data/body_locations` without the row.
+- Step 8: every row's `name` is one `F` beginning `ix://I/`; no byte holds
+  `ix://source/`; two inexact `IeeeFlags` losses at `Body { function: F,
+  index: k }` paths `[0]` and `[1]` on both routes, the same `F` and `k`;
+  equal `Evaluation.location` at every limit.
