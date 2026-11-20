@@ -33,6 +33,7 @@ use fsl_analyze::analyze::document::Negotiate;
 use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
 use fsl_foundation::{Code, Diagnostic, Source};
+use fsl_replay::spine::SpineLimits;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
 use settle::Settle;
 use std::{
@@ -3545,6 +3546,7 @@ fn prepare_run_bytes_with_sources(
             source,
             integer_division,
             library_integer_division,
+            overrides.limits.copied().unwrap_or_default(),
             overrides.observation.copied(),
         )
     })();
@@ -3661,6 +3663,7 @@ fn prepare_complete_run(
     source: FormalSource,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
+    stage_limits: SpineLimits,
     observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<PreparedRun> {
     if let Some(member) = &request.tl_lowering {
@@ -3776,7 +3779,7 @@ fn prepare_complete_run(
             packages,
             dependencies,
             extension_catalog,
-            limits: overrides.limits.copied().unwrap_or_default(),
+            limits: stage_limits,
             call: spine_call,
             integer_division,
             requirements,

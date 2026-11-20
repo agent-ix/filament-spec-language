@@ -737,8 +737,62 @@ fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
     assert_eq!(outcome["category"], "incomplete");
     assert_eq!(outcome["diagnostics"][0]["code"], "resource_exhausted");
     assert!(outcome["diagnostics"][0].to_string().contains("s1.nodes"));
+    assert!(
+        outcome["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("limit 1 reached")),
+        "the typed limit names configured bound 1: {outcome}"
+    );
     assert_eq!(negotiate.negotiations.load(Ordering::SeqCst), 0);
     assert_eq!(seen.lock().unwrap().settle_calls, 0);
+
+    let default_limits = fsl_replay::spine::SpineLimits::default();
+    let default_overrides = command::RequestOverrides {
+        limits: Some(&default_limits),
+        ..command::RequestOverrides::default()
+    };
+    let default_seen = Arc::new(Mutex::new(Seen::default()));
+    let default_result = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        limits,
+        &default_overrides,
+        &Fr290,
+        vec![recording_provider(
+            &default_seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect("the provider run with default caller limits settles its items");
+    let (default_document, default_outcome) = documents(&default_result);
+
+    let ac1_seen = Arc::new(Mutex::new(Seen::default()));
+    let ac1_result = command::run_with_providers(
+        &request,
+        &Fr290,
+        vec![recording_provider(
+            &ac1_seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &fsl_analyze::provider::ProviderOptions::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("FR-961-AC-1 result");
+    let (ac1_document, ac1_outcome) = documents(&ac1_result);
+    assert_eq!(
+        default_document, ac1_document,
+        "the default-limit result equals AC-1"
+    );
+    assert_eq!(
+        default_outcome, ac1_outcome,
+        "the default-limit outcome equals AC-1"
+    );
+    assert_eq!(
+        default_seen.lock().unwrap().settle_calls,
+        1,
+        "the default-bound provider run settles every item"
+    );
 }
 
 /// FR-961-AC-4, FR-961-AC-5: negative cases of the run-side entry: a repeated
