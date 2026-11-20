@@ -16,10 +16,9 @@ use serde_json::{json, Value as Json};
 
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
-    CompileRefusal, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ReachedLimit, ReplayRefusal,
+    IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
+    ReachedLimit,
 };
-use fsl_semantics::check::{CheckCause, ProtocolConstruct, ProtocolReferenceCause};
 
 use crate::fill::{
     attempt, compiled, contracts, json_of, projections, protocol, reachable, sc_system, Reached,
@@ -1550,10 +1549,9 @@ fn a_post_test_repeat_reads_the_latest_body_binder() {
     assert_eq!(projections(&reached), expected);
 }
 
-/// The package emitter still reports its separate nested-repeat wire gap.
-/// This does not replace TC-651's direct in-memory runtime coverage above.
+/// FR-880-AC-8: a repeat that steps only through a nested repeat compiles.
 #[test]
-fn nested_repeat_emission_reports_its_unavailable_wire_form() {
+fn nested_repeat_emission_is_admitted() {
     let run = format!(
         "sequence Main {{ repeat Outer by w visible () max 2 while {{ true }} \
          sequence OuterBody {{ repeat Inner by w visible () max 1 while {{ true }} {} \
@@ -1563,25 +1561,7 @@ fn nested_repeat_emission_reports_its_unavailable_wire_form() {
         touch("F"),
     );
     let body = contracts("self.v = 0") + &protocol("P", "", &run, "d");
-    let error = compiled(&body).expect_err("the checked-package writer does not emit this form");
-    let refusal = match error {
-        ReplayRefusal::Recompile { refusal, .. } => *refusal,
-        ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => *refusal,
-        other => panic!("expected a checked-stage refusal, got {other:?}"),
-    };
-    let CompileRefusal::Check { refusals, .. } = refusal else {
-        panic!("expected the protocol check refusal, got {refusal:?}");
-    };
-    assert!(
-        refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
-            CheckCause::ProtocolReference(cause)
-                if matches!(cause.as_ref(), ProtocolReferenceCause::NotEmitted {
-                    construct: ProtocolConstruct::RepeatStepsThroughRepeat
-                })
-        )),
-        "{refusals:?}"
-    );
+    compiled(&body).unwrap_or_else(|error| panic!("the checked package is admitted: {error:?}"));
 }
 
 /// FR-286-AC-14: a `send` step of a protocol counterexample is written with

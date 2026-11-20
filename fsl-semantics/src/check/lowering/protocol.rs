@@ -299,7 +299,7 @@ impl ProtocolInput<'_> {
                 // A repeat does not guarantee its own completion: even when
                 // its body performs an action, an always-true guard can keep
                 // it from returning control to an enclosing repeat.
-                K::Repeat => false,
+                K::Repeat => child(0),
                 K::Branch | K::Case => child(0),
                 K::Sequence => (0..control.children.len()).any(child),
                 K::Choice => (0..control.children.len()).all(child),

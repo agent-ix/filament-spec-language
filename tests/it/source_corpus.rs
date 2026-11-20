@@ -5,7 +5,7 @@ use filament_exact::Cancel;
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -784,45 +784,39 @@ const REQUIRED_FLIPS_BY_CASE: &[(&str, &str)] = &[
     ("rem-1989", "QSL-1989"),
     ("div-profile-select", "QSL-1989"),
     ("div-profile-using", "QSL-1989"),
-    ("conv-text-num", "G-024"),
+    ("conv-text-num", "none"),
     ("float-conv-eq-2004", "QSL-2004"),
-    ("fn-param-named-set-2006", "QSL-2006"),
+    ("fn-param-named-set-2006", "none"),
     ("int-eq-sum-1986", "QSL-1986"),
-    ("null-primary-bad", "G-009"),
-    ("opt-Some-result", "G-026"),
-    ("opt-some", "G-026"),
+    ("null-primary-bad", "none"),
+    ("opt-Some-result", "none"),
+    ("opt-some", "none"),
     ("opt-lowercase-some", "none"),
     ("tup-index", "G-025"),
     ("map-type-src", "G-027"),
     ("obj-src-record", "G-028"),
     ("obj-src-enum", "G-028"),
-    ("obj-src-decimal", "G-028"),
-    ("obj-src-float", "G-028"),
-    ("obj-src-qty", "G-028"),
-    ("qty-scalar-mult", "G-022"),
+    ("obj-src-decimal", "none"),
+    ("obj-src-float", "none"),
+    ("obj-src-qty", "none"),
+    ("qty-scalar-mult", "none"),
     ("qty-carried", "none"),
     ("qty-carried-order", "none"),
     ("qty-affine", "none"),
     ("float-conv-alias-eq", "QSL-2004"),
     ("float-conv-alias-onesided", "QSL-2004"),
     ("float-conv-inline-onesided", "QSL-2004"),
-    ("no-profile-unit", "G-001"),
+    ("no-profile-unit", "none"),
 ];
 
 const EXPECTED_FLIP_COUNTS: &[(&str, usize)] = &[
-    ("G-001", 1),
-    ("G-009", 1),
-    ("G-022", 1),
-    ("G-024", 1),
     ("G-025", 1),
-    ("G-026", 2),
     ("G-027", 1),
-    ("G-028", 5),
+    ("G-028", 2),
     ("QSL-1965", 1),
     ("QSL-1986", 1),
     ("QSL-1989", 4),
     ("QSL-2004", 4),
-    ("QSL-2006", 1),
     ("QSL-2008", 1),
 ];
 
@@ -1730,8 +1724,10 @@ fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
     let directory = tempfile::tempdir().unwrap();
     let unit = format!(
         "{}temporal Q using t0 over (c: M::Counter) clock \"model-steps\" on origin {{ always holds(c.value <= 3) }}\n",
-        std::str::from_utf8(include_bytes!("../../fsl-conformance/cases/counter-step.native"))
-            .unwrap()
+        std::str::from_utf8(include_bytes!(
+            "../../fsl-conformance/cases/counter-step.native"
+        ))
+        .unwrap()
     );
     write_case(
         directory.path(),

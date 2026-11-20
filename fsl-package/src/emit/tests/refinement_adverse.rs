@@ -9,14 +9,10 @@
 //! FR-375-AC-21 reader joins (`admission_corpus.rs`).
 
 use filament_semantic_value::checking::CheckMode;
-use filament_semantic_value::location::{
-    ExpressionLocation as Location, ExpressionOwner as Origin,
-};
 use fsl_foundation::Code;
-use fsl_semantics::check::{CheckCause, CheckRefusal, ProtocolConstruct};
+use fsl_semantics::check::{CheckCause, CheckRefusal};
 
-use super::admission_corpus::{protocol_rows_running, rows_refinement, MAPS, PROTOCOL_ROWS};
-use super::protocol_reference::not_emitted;
+use super::admission_corpus::{MAPS, rows_refinement};
 use super::*;
 
 /// The refusals of `unit` over `documents`, which must not check.
@@ -74,71 +70,5 @@ fn rows_without_a_node_form_refuse_the_refinement_at_its_declaration() {
             declaration.starts_with("refinement R using") && declaration.ends_with('}'),
             "{case}: {declaration}"
         );
-    }
-}
-
-/// A concrete protocol clause that holds a construct with no node form
-/// leaves the refinement's class catalog unkeyed: the clause refuses
-/// `unsupported_construct`/`not-yet-implemented` at its declaration naming
-/// the construct, and the refinement refuses with the same cause, located
-/// at its first step row naming the clause. Repeat variants with node forms
-/// are covered by positive emission tests; this is the one
-/// reader-withheld nested-repeat case.
-#[trace("FR-375-AC-23", "FR-092-AC-18", "TC-310", "TC-1021")]
-#[test]
-fn a_refinement_over_an_unwritten_clause_refuses_naming_the_construct() {
-    let event =
-        |name: &str, binder: &str| format!("event {name} by w as ({binder}: Boolean) {{ true }};");
-    let cases: [(ProtocolConstruct, String, Vec<&str>); 1] = [(
-        ProtocolConstruct::RepeatStepsThroughRepeat,
-        format!(
-            "sequence Main {{ repeat Loop by w visible () while {{ true }} \
-             sequence Outer {{ repeat Inner by w visible () while {{ true }} \
-             sequence Step {{ {} }} }} }}",
-            event("T", "t")
-        ),
-        vec!["step C::Impl::T -> stutter;"],
-    )];
-    for (construct, run, extra) in cases {
-        let mut rows: Vec<&str> = PROTOCOL_ROWS.to_vec();
-        rows.extend(extra);
-        let (unit, documents) = protocol_rows_running(&run, &rows);
-        let unit = unit.replacen(
-            "protocol Impl",
-            "record Ack { ok: Boolean; }\n\
-             protocol Impl",
-            1,
-        );
-        let found = refusals(&unit, &documents);
-        let [clause, refinement] = &found[..] else {
-            panic!("{construct:?}: two refusals: {found:#?}");
-        };
-        let expected = not_emitted(construct);
-        assert_eq!(clause.cause, expected, "{construct:?}");
-        assert_eq!(
-            clause.location,
-            Location::root(Origin::TypeDeclaration {
-                name: "protocol Impl".to_owned()
-            }),
-            "{construct:?}"
-        );
-        for refusal in [clause, refinement] {
-            assert_eq!(
-                (refusal.cause.code(), refusal.cause.cause()),
-                (Code::UnsupportedConstruct, Some("not-yet-implemented")),
-                "{construct:?}"
-            );
-        }
-        let CheckCause::Refinement(refused) = &refinement.cause else {
-            panic!("{construct:?}: {refinement:?}");
-        };
-        assert_eq!(refused.refinement, "R", "{construct:?}");
-        assert!(
-            matches!(&refused.cause, fsl_semantics::check::RefinementCause::Check(cause) if *cause == expected),
-            "{construct:?}: {refused:?}"
-        );
-        // Located at the first step row that names the clause's classes.
-        let row = spelled(&unit, refused.span.start, refused.span.end);
-        assert_eq!(row, PROTOCOL_ROWS[0], "{construct:?}");
     }
 }

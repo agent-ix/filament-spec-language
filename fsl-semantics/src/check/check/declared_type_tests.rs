@@ -185,6 +185,27 @@ fn declared_type_semantics_keep_success_and_missing_type_location() {
     ] {
         assert_eq!(typer.check_declared_type(&ty, &location), Ok(()));
     }
+    let ieee = ValueType::Float(filament_exact::FloatType::exact(
+        filament_exact::IeeeWidth::Binary64,
+    ));
+    let ty = ValueType::collection(CollectionType::new(CollectionKind::Set, ieee, None));
+    let expected = CheckRefusal::from_ill_typed(
+        &location,
+        filament_exact::IllTyped {
+            cause: IllTypedCause::OperatorIneligible,
+        },
+    );
+    assert_eq!(
+        typer.check_declared_type(&ty, &location),
+        Err(expected.clone())
+    );
+    // Both unordered collection layers prohibit the nested IEEE element;
+    // the outer layer retains the owner's first-refusal priority.
+    let competing = ValueType::collection(CollectionType::new(CollectionKind::Bag, ty, None));
+    assert_eq!(
+        typer.check_declared_type(&competing, &location),
+        Err(expected)
+    );
     for ty in [
         ValueType::Composite(key("Missing")),
         ValueType::Reference(object("Missing")),
