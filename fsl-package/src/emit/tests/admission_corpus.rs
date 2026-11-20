@@ -840,6 +840,18 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
     const NO_TAG: &str = "lowering builds no node of this tag";
     &[
         (
+            K::ScalarType(ScalarTypeForm::ClockReference),
+            "FSL lowers no clock-reference type node",
+        ),
+        (
+            K::Expression(ExpressionForm::PlaceReference),
+            "FSL lowers no place-reference expression node",
+        ),
+        (
+            K::Claim(ClaimForm::ValueValidity),
+            "FSL lowers no value-validity claim node",
+        ),
+        (
             K::ScalarType(ScalarTypeForm::BoundedQuantity),
             "lowering refuses a bounded quantity type: no checked type node carries one",
         ),
@@ -3116,32 +3128,11 @@ fn step_rows_carry_their_source_regions_by_ordinal() {
     }
 }
 
-/// The refusals of [`rows_refinement`] over `rows`, which must not check.
-fn refused_rows(rows: &str, operations: &[&str]) -> Vec<fsl_semantics::check::CheckCause> {
-    let (unit, documents) = rows_refinement(rows, operations);
-    let packages =
-        fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
-    assemble_with_models(unit.as_bytes(), &packages)
-        .expect("the unit assembles")
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-        )
-        .map(|_| ())
-        .expect_err("the refinement is not emitted")
-        .into_iter()
-        .map(|refusal| refusal.cause)
-        .collect()
-}
-
-/// A row whose expression reads a whole concrete population or builds a
-/// `seq` has no node form (STD-493), like a `history` row: the
-/// refinement refuses `RefinementNotEmitted` naming it, never a fault or a
-/// malformed package.
-#[trace("FR-375-AC-21", "TC-310")]
+/// A whole concrete population read and a `seq` expression each emit a
+/// refinement field mapping admitted by the strict reader.
+#[trace("FSpec-FR-375-AC-21", "FSpec-TC-310")]
 #[test]
-fn whole_population_and_seq_rows_are_not_emitted() {
+fn whole_population_and_seq_rows_are_emitted_and_read_back() {
     for field in [
         "versionNumber = count(s in C::config_history where s.versionNumber = 1);",
         "versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber \
@@ -3151,13 +3142,24 @@ fn whole_population_and_seq_rows_are_not_emitted() {
             "population A::config_history from C::config_history;\n\
              object A::ConfigVersion from C::ConfigVersion {{ {field} }}"
         );
-        let refusals = refused_rows(&rows, &[]);
+        let (emitted, _) = emit_rows(&rows, &[]);
+        let node = refinement_node(&emitted.emission);
+        assert_eq!(
+            node["body"]["objects"][0]["fields"][0]["name"],
+            "versionNumber"
+        );
+        assert_eq!(
+            node["body"]["objects"][0]["fields"][0]["expression"]["term"],
+            "reference"
+        );
         assert!(
-            matches!(
-                &refusals[..],
-                [fsl_semantics::check::CheckCause::RefinementNotEmitted { name, .. }] if name == "R"
-            ),
-            "{field}: {refusals:?}"
+            emitted.emission.omitted.is_empty(),
+            "{field}: no omitted refinement"
+        );
+        let admitted = read(&emitted);
+        assert!(
+            admitted.is_ok(),
+            "{field}: the rows read back: {admitted:?}"
         );
     }
 }

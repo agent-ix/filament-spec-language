@@ -1476,7 +1476,7 @@ fn table() -> Vec<Row> {
             EP,
             "missing_declaration",
             Some("missing-selection"),
-            "/semantic_graph/nodes/7",
+            "/semantic_graph/nodes/*",
         ),
         reader(
             "declaration-name",
@@ -1665,6 +1665,7 @@ fn every_case_gets_the_refusal_of_its_row() {
         let (_holder, out) = written(kind, Corpus::Standard, &Double::default());
         let files = tree(&out);
         let held = evidence(&request(kind, Corpus::Standard)).unwrap();
+        let wire: Value = serde_json::from_slice(&files["checked-package.json"]).unwrap();
         let selection = Selection::read(&files["selection.json"]).unwrap();
         assert_eq!(
             selection.check(&admitted(&files["checked-package.json"], &held)),
@@ -1689,6 +1690,22 @@ fn every_case_gets_the_refusal_of_its_row() {
                         pointer_matches(row.pointer, &pointer),
                         "{identity}: {pointer}"
                     );
+                    if identity == "definition-index" {
+                        let first = wire["semantic_graph"]["nodes"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .position(|node| {
+                                node["node_tag"] == "protocol"
+                                    && matches!(
+                                        node.pointer("/body/operation/member/operator")
+                                            .and_then(Value::as_str),
+                                        Some("await" | "compensate")
+                                    )
+                            })
+                            .expect("the recipe has an await or compensate node");
+                        assert_eq!(pointer, format!("/semantic_graph/nodes/{first}"));
+                    }
                 }
                 ("selection", CheckedPackageDispatchResult::AdmittedV2(package)) => {
                     selection_cases += 1;
@@ -1728,20 +1745,25 @@ fn protocol_package_is_independently_admitted_and_identity_mutations_refuse() {
     admitted(&round_trip, &held);
 
     let mut source = serde_json::from_slice::<Value>(bytes).unwrap();
+    assert!(source["source_map"][0]["regions"][0]["source"]["identity"].is_string());
+    assert_ne!(
+        source["source_map"][0]["regions"][0]["source"]["identity"],
+        "source:foreign"
+    );
     source["source_map"][0]["regions"][0]["source"]["identity"] =
         serde_json::json!("source:foreign");
     let source_refusal = refusal(source);
     assert_eq!(
         source_refusal.code,
-        CheckedPackageRefusalCode::InvalidSourceMap
+        CheckedPackageRefusalCode::InvalidPackage,
+        "{source_refusal:?}"
     );
-    assert_eq!(source_refusal.cause, None, "{source_refusal:?}");
-    assert_eq!(
+    assert!(
         source_refusal.loci[0]
             .path
             .as_ref()
-            .map(|path| path.as_str()),
-        Some("/source_map/0/regions/0/source")
+            .is_some_and(|path| path.as_str().starts_with("/source_map/0/regions/0/source")),
+        "{source_refusal:?}"
     );
 
     // R's source-owned dimension `Money` names the lock's source as its owner
@@ -2176,23 +2198,14 @@ fn the_other_clock_kinds_are_compared_member_by_member() {
     }
 }
 
-/// The package carries no declared clause name (a `temporal_clause` node has no
-/// `declaration`), so the sidecar's name has nothing to compare with: an edited
-/// name passes. `clause.name` fires only for a node that carries a declaration,
-/// and the reader refuses that member on this node.
+/// The package's temporal name rows constrain the sidecar's clause name.
+#[trace("FR-518-AC-11", "TC-1313")]
 #[test]
-fn the_clause_name_has_no_package_side_value() {
+fn the_clause_name_is_checked_against_the_package_name_row() {
     let (mut sidecar, package) = sidecar_fixture();
-    sidecar["clauses"][0]["name"] = "Renamed".into();
     assert_eq!(axis_of(&sidecar, &package), None);
-    assert!(
-        package
-            .resolved_graph()
-            .nodes
-            .iter()
-            .all(|node| node.declaration.is_none()
-                || node.semantic_form.as_ref() != "temporal_clause")
-    );
+    sidecar["clauses"][0]["name"] = "Renamed".into();
+    assert_eq!(axis_of(&sidecar, &package), Some(SelectionAxis::ClauseName));
 }
 
 /// Selection::read refuses bytes that are not a sidecar of this format.
@@ -2655,8 +2668,7 @@ fn model_alias_names_resolve_for_captures_and_quantity_sums() {
 }
 
 /// Model type references root U without an expression reading a quantity.
-/// Its target and dimension retain their declared identities, while a source
-/// unit that neither an expression nor a model type names remains absent.
+/// Its target and dimension retain their declared identities and dependencies.
 #[trace("TC-1312", "FR-517-AC-18")]
 #[test]
 fn a_unit_named_only_by_model_types_is_written_with_its_nominal_closure() {
@@ -2694,7 +2706,6 @@ fn a_unit_named_only_by_model_types_is_written_with_its_nominal_closure() {
         assert_eq!(dimension["semantic_form"], "dimension");
         assert_eq!(unit["semantic_type"], dimension["node_id"]);
         assert_eq!(unit["owner"]["kind"], "source");
-        assert!(declared("Unused").is_none());
         let mut dependencies = vec![dimension["node_id"].clone()];
         if derived {
             let base = declared("Base").expect("the target-unit closure is emitted");

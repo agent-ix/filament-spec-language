@@ -55,3 +55,13 @@ The restored operation test exercises emission and strict read-back and is activ
 ## Publication
 
 Pre-PR branch and SHA are recorded above. Posting awaits a real PR number for the reviewer's required marker format. Exact inherited Codex model variant is unknown.
+
+## Supplemental Dispositions — Round 1
+
+PASS, no findings. This confined supplement covers only the delta from 38edb9318c468841a58285a62f9f6acfd2291b1a to 128108371d85b0b500aa170f6bae366c8c3b2c8c for public PR filament-spec-language#3189. The original pre-PR metadata and finding placeholder remain historical; no original finding was rewritten. This supplement supersedes the earlier exclusion of the now-added ignored-reason guard.
+
+Examined xtask/src/ignored_reason_tests.rs, its test-only registration in xtask/src/lib.rs, and the reason/oracle changes in fsl-package/src/emit/tests/protocol_graph.rs. The syn visitor recurses through nested cfg_attr attributes, rejects missing or unowned ignore values, and accepts a syntactically valid IR/QSL/STD ticket or a make target present in CI_CHECKS with a nonempty recipe. Both fixtures exercise the actual checker. The repository guard scans the intended package, seam, and handoff test sources through existing source discovery/parsing helpers and is registered in the ordinary xtask library suite. No duplicate parser or source vendoring is introduced.
+
+The FIFO-key cases now assert current positive behavior using lower_with/lower_package, including successful strict IR admission and the existing independent Read::Verified result. Their QSL-1142 ignores explicitly retain pending checker/IR parity; they are not counted as executed evidence. The redundant obsolete quantity-refusal test and its unused refusal helper were removed; unstable-key negative coverage is preserved. Relevant examined contracts are FR-881-AC-2 (S3 admits the channel exactly when the FSpec FR-726 reader admits it) and FR-880-AC-10 (the listed bounded, quantity, composite, and model-owned keys compile and every package is admitted).
+
+Accepted author receipts without rerun: two checker fixtures passed; the repository guard first exposed exactly four orphaned reasons, then passed after the reason/oracle corrections. No ignored reader-gap tests were run and no coverage completion is claimed for them. No tests, builds, lints, gates, matrix, upstream audit, or repeat full review ran in this supplemental pass. Plan completion: not assessed. The final aggregate gate remains pending with the coder. No existing defect dispositions were needed because the original review had no findings.
