@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the reference provider's proofs, refutations, class refusal, options, budgets, guard handling, placement and coexistence with the provider path. Scope: FR-1019-AC-1 to AC-12, AC-14 and AC-15. Tests live in `fsl-analyze/tests/it/hybrid_reference.rs`, tagged `#[trace("TC-2869", "FR-1019-AC-n")]`.
+Verify the reference provider's proofs, refutations, class refusal, options, budgets, guard handling, placement and coexistence with the provider path. Scope: FR-1019-AC-1 to AC-12 and AC-14 to AC-16. Tests live in `fsl-analyze/tests/it/hybrid_reference.rs`, tagged `#[trace("TC-2869", "FR-1019-AC-n")]`.
 
 ## Test Procedure
 
@@ -28,6 +28,7 @@ Verify the reference provider's proofs, refutations, class refusal, options, bud
 10. Analyze the one-mode `Coast` model.
 11. Analyze the `Grow` model with flow `v' = v`.
 12. Read the workspace manifests.
+13. Read `SlowEnough`'s jump step and check its certificate rule by rule; analyze `Drop` under `clock "model-steps"` and `Fork` under `model-time`.
 
 ## Expected Results
 
@@ -45,3 +46,4 @@ Verify the reference provider's proofs, refutations, class refusal, options, bud
 - Step 10: `refuted` with `end` at time 3.
 - Step 11: `refuted` through an accepted `validated-witness`.
 - Step 12: the layer-H dependency rule holds.
+- Step 13: `from` `{"dwell": 0, "transition": 0}`, accepted; `Drop` `proved`, `jumps` 1, `exhaustive` holding `jumps`, `certified`, with its depth-1 dwell; `Fork` `proved`, `certified`, with two jump steps.
