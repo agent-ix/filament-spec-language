@@ -93,6 +93,7 @@ admitted, and each item adds the stage that settled it:
 | A request document refused before any source is read (malformed `native-analyze/1`, an unreadable file) | `null` |
 | A source or compile refusal of the program | the refusing stage, `S1` to `S4` (`S3` for a checker refusal, FR-624-AC-2) |
 | A request-level refusal after linking: a snapshot or binding that does not fit the linked package (FR-624-AC-3) | `S4` |
+| The strict reader's refusal of the compiled package's read-back on the source route (FR-940 "A refused read of the compiled package") | `S4` |
 | A document whose items are all settled by a disposition before any engine ran (an unknown claim, an unregistered backend) | `S4` |
 | An item settled by a negotiated backend, or by its negotiation's `unsupported` disposition | `S6b` |
 | An item settled by an FSL in-process engine (EN-1 to EN-7, the zone search): `proved`, `measured`, `incomplete` at a budget, `inconclusive` (an unknown verdict or a rejected certificate) | `S6c` |

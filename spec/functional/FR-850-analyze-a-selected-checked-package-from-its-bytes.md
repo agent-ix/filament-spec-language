@@ -190,7 +190,11 @@ member is the same as the source route gives.
   equality with the source route holds over every directory the writer
   produces. The bytes-only library entry keeps FR-531's per-call rule: a
   `BareSupply` whose `equality` is `None` is refused only by a slot call that
-  reaches an equality application (FR-533).
+  reaches an equality application (FR-533). A `native-run/1` request that
+  selects a package file rather than a directory names its witness file in
+  the `package` member's `equality` (FR-1039); that file is admitted by the
+  same `ReadEqualityRows::read`, and without it a package that holds an
+  equality application refuses with this code and exit.
 - A denied native join charge SHALL refuse the request
   `stage_limit_exceeded`, naming its setting `i2.work_units` or
   `i2.native_join_storage` (FR-531 "The native join budget"), exit 20,
