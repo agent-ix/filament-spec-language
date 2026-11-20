@@ -123,12 +123,10 @@ fn finite_window(case: &Case, levels: [i64; 3], missing: bool) -> std::path::Pat
 fn finite_window_clause_reaches_indeterminate_and_violation() {
     let case = Case::new();
     let open = plain(&finite_window(&case, [0, 0, 0], true));
-    assert_eq!(open.exit, 11, "{}", open.document);
-    assert!(
-        open.document.to_string().contains("indeterminate"),
-        "{}",
-        open.document
-    );
+    let document = open.expect("monitor", "indeterminate", 11);
+    let item = &document["items"][0];
+    assert_eq!(item["result"], "indeterminate", "{document}");
+    assert_eq!(item["cause"]["kind"], "missing-valuation", "{document}");
     let held = plain(&finite_window(&case, [0, 0, 1], false));
     assert_eq!(held.exit, 0, "{}", held.document);
     let failed = plain(&finite_window(&case, [0, 0, 0], false));
@@ -151,18 +149,27 @@ fn an_unknown_function_refuses_missing_declaration() {
     );
 }
 
-/// FR-100-AC-4, FR-286-AC-18: an out-of-range argument and a wrong value
-/// kind each refuse `invalid_runtime_input` at stage `call`, exit 20.
+/// FR-100-AC-4: an out-of-range argument (`invalid-value`) and a wrong value
+/// kind (`wrong-value-kind`) each refuse `invalid_runtime_input`, exit 20.
 #[test]
-#[trace("FR-100-AC-4", "FR-286-AC-18")]
+#[trace("FR-100-AC-4")]
 fn call_defects_refuse_invalid_runtime_input() {
-    for (function, arguments) in [
-        ("IsPacked", vec![("n", json!({"integer": "11"}))]),
-        ("IsPacked", vec![("n", json!({"boolean": true}))]),
+    for (function, arguments, cause) in [
+        (
+            "IsPacked",
+            vec![("n", json!({"integer": "11"}))],
+            "invalid-value",
+        ),
+        (
+            "IsPacked",
+            vec![("n", json!({"boolean": true}))],
+            "wrong-value-kind",
+        ),
     ] {
         let (_case, path) = packing(function, &arguments);
         let outcome = plain(&path);
-        outcome.refused("execute", 20, "invalid_runtime_input");
+        let diagnostic = outcome.refused("execute", 20, "invalid_runtime_input");
+        assert_eq!(diagnostic["cause"], cause, "{diagnostic}");
     }
 }
 
@@ -185,11 +192,11 @@ fn an_exhausted_call_budget_exits_22() {
     outcome.expect("execute", "incomplete", 22);
 }
 
-/// `--request-bytes` and `--dependent-bytes` (FR-312): one byte under the
+/// `--request-bytes` and `--dependent-bytes` (FR-026-AC-4): one byte under the
 /// request or source size stops at intake with exit 22 naming the ceiling;
 /// the exact size runs.
 #[test]
-#[trace("FR-312", "FR-869-AC-1")]
+#[trace("FR-026-AC-4")]
 fn request_and_dependent_byte_ceilings_are_reached_and_raised() {
     let (_case, path) = remaining();
     let request_size = std::fs::metadata(&path).unwrap().len() as usize;

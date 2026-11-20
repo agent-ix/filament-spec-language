@@ -78,6 +78,11 @@ analyze member:
   every required item settled `proved` or `measured`.
 - `registry`: the backends the request negotiated against (FR-635).
 
+A whole-request refusal, which settles no item, is still an `analyze`
+document: it carries an empty `aggregate` (`status` `complete`, `gaps` `[]`,
+the aggregate over zero items) and an empty `registry` (`[]`), so it
+validates against FR-286's published schema.
+
 A `simulation` item carries FR-634's members in place of `record`,
 `certificate`, `counterexample`, `replay` and `axes`.
 

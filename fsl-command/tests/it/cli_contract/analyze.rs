@@ -149,6 +149,10 @@ fn an_unknown_claim_is_an_invalid_request_item() {
         document["items"][0]["record"]["settled_by"], "disposition",
         "{document}"
     );
+    assert!(
+        document["items"][0]["record"].get("backend").is_none(),
+        "{document}"
+    );
     assert_eq!(
         document["aggregate"]["gaps"][0]["result"], "invalid-request",
         "{document}"
@@ -180,13 +184,16 @@ fn an_ill_typed_program_refuses() {
         source.as_bytes(),
         &request(json!([{"claim": "WithinCapacity"}])),
     );
-    analyze(&path).expect("analyze", "refusal", 20);
+    let outcome = analyze(&path);
+    let diagnostic = outcome.refused("analyze", 20, "ill_typed");
+    assert!(diagnostic["details"].is_null(), "{diagnostic}");
 }
 
-/// FR-312: the request byte ceiling one byte short stops at intake, exit 22;
-/// at the exact size the request runs.
+/// FR-624-AC-6: the request byte ceiling one byte short stops at intake, exit 22
+/// naming `request_bytes` and `--request-bytes`; at the exact size the request
+/// runs.
 #[test]
-#[trace("FR-312")]
+#[trace("FR-624-AC-6")]
 fn request_byte_ceiling_is_reached_and_raised() {
     let (_case, path) = counter(
         SOURCE.as_bytes(),
@@ -204,6 +211,11 @@ fn request_byte_ceiling_is_reached_and_raised() {
         &Cancel::new(),
     );
     over.expect("analyze", "incomplete", 22);
+    let text = over.document.to_string();
+    assert!(
+        text.contains("request_bytes") && text.contains("--request-bytes"),
+        "{text}"
+    );
     let fits = analyze_under(
         &path,
         limits(size),

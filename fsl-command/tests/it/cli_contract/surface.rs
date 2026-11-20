@@ -110,12 +110,12 @@ fn version(arguments: &[&str]) -> (u8, Value) {
     }
 }
 
-/// FR-661-AC-1, AC-3: `version` accepts exactly `--format json` and `--kind`
+/// FR-287: `version` accepts exactly `--format json` and `--kind`
 /// with one of the five inventory lists, each alone and together; an
 /// unknown option, a repeated option, an option without its value, a
 /// format other than `json` and an unknown list each refuse, exit 20.
 #[test]
-#[trace("FR-661-AC-1", "FR-661-AC-3")]
+#[trace("FR-287")]
 fn version_accepts_exactly_its_documented_options() {
     let lists = ["editions", "profiles", "families", "features", "consumers"];
     let (exit, whole) = version(&[]);

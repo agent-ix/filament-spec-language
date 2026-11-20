@@ -133,6 +133,27 @@ fn malformed_and_truncated_records_are_refusal_events() {
         "{events:?}"
     );
 
+    // The good records give the events and summary of the stream without the
+    // bad record: record numbers after it shift down by one.
+    let clean = monitor(
+        &path,
+        &[records(&[2], false), records(&[9, 3], true)].concat(),
+    );
+    let (clean_events, clean_summary) = clean.completed(10);
+    let good: Vec<Value> = events
+        .iter()
+        .filter(|event| event["category"] != "refusal")
+        .cloned()
+        .map(|mut event| {
+            if event["record"].as_u64() > Some(1) {
+                event["record"] = json!(event["record"].as_u64().unwrap_or(0) - 1);
+            }
+            event
+        })
+        .collect();
+    assert_eq!(good, clean_events, "events");
+    assert_eq!(summary["clauses"], clean_summary["clauses"], "summary");
+
     let mut truncated = records(&[2, 4], false);
     truncated.extend_from_slice(b"{\"observation\": {\"sam");
     let stream = monitor(&path, &truncated);
@@ -188,11 +209,9 @@ fn a_cancelled_stream_exits_22() {
     let cancel = Cancel::new();
     cancel.cancel(CancelCause::Requested);
     let stream = monitor_under(&path, &records(&[2, 4], false), &cancel);
-    let exit = match &stream {
-        super::Stream::Lines { exit, .. } => *exit,
-        super::Stream::Refused(outcome) => outcome.exit,
-    };
-    assert_eq!(exit, 22, "{stream:?}");
+    let (events, summary) = stream.completed(22);
+    assert!(events.is_empty(), "{events:?}");
+    assert_eq!(summary["cancelled"], "requested", "{summary}");
 }
 
 /// FR-001: invalid UTF-8 in the program, and a missing, a directory and an

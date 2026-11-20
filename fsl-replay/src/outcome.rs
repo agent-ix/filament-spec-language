@@ -2329,6 +2329,8 @@ pub struct OutcomeDocument {
     diagnostics: Vec<OutcomeDiagnostic>,
     result: Option<OutcomeResult>,
     requirements: Option<Box<RequirementItems>>,
+    /// An `analyze` refusal: written with an empty `aggregate` and `registry` (FR-621).
+    empty_analyze_members: bool,
 }
 
 /// The settled requirement items of an `execute` call (FR-963): one FR-621
@@ -2341,7 +2343,13 @@ struct RequirementItems {
 
 impl Serialize for OutcomeDocument {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let fields = if self.requirements.is_some() { 9 } else { 8 };
+        let fields = if self.requirements.is_some() {
+            9
+        } else if self.empty_analyze_members {
+            10
+        } else {
+            8
+        };
         let mut document = serializer.serialize_struct("OutcomeDocument", fields)?;
         document.serialize_field("format", &self.format)?;
         document.serialize_field("operation", &self.operation)?;
@@ -2364,6 +2372,12 @@ impl Serialize for OutcomeDocument {
         document.serialize_field("result", &self.result)?;
         if let Some(requirements) = &self.requirements {
             document.serialize_field("registry", &requirements.registry)?;
+        } else if self.empty_analyze_members {
+            document.serialize_field("registry", &[(); 0])?;
+            document.serialize_field(
+                "aggregate",
+                &serde_json::json!({"status": "complete", "gaps": []}),
+            )?;
         }
         document.end()
     }
@@ -2412,6 +2426,7 @@ impl OutcomeDocument {
             diagnostics: Vec::new(),
             result: None,
             requirements: None,
+            empty_analyze_members: false,
         }
     }
 
@@ -2481,6 +2496,15 @@ impl OutcomeDocument {
     #[must_use]
     pub fn with_diagnostics(mut self, diagnostics: Vec<OutcomeDiagnostic>) -> Self {
         self.diagnostics = diagnostics;
+        self
+    }
+
+    /// This `analyze` document of a whole-request refusal, written with the
+    /// empty `aggregate` (no gaps) and empty `registry` FR-621 requires of
+    /// every `analyze` document, so it validates against the published schema.
+    #[must_use]
+    pub fn with_empty_analyze_members(mut self) -> Self {
+        self.empty_analyze_members = self.operation == Operation::Analyze;
         self
     }
 

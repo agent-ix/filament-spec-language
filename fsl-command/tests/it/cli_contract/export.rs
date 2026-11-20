@@ -111,7 +111,12 @@ fn output_override_beside_an_output_member_refuses() {
         ..RequestOverrides::default()
     };
     let outcome = export(&path, &overrides);
-    assert_eq!(outcome.exit, 20, "{}", outcome.document);
+    let refusal = outcome.refused("export", 20, "invalid-request");
+    let text = refusal.to_string();
+    assert!(
+        text.contains("output") && text.contains("--output"),
+        "{refusal}"
+    );
     assert!(!target.exists());
     assert!(!case.path("member.tla").exists());
 }
@@ -156,7 +161,12 @@ fn the_output_byte_limit_is_reached_through_the_override() {
         ..RequestOverrides::default()
     };
     let outcome = export(&path, &overrides);
-    assert_eq!(outcome.exit, 20, "{}", outcome.document);
+    let refusal = outcome.refused("export", 20, "invalid-request");
+    let text = refusal.to_string();
+    assert!(
+        text.contains("limits") && text.contains("export.output_bytes"),
+        "{refusal}"
+    );
 }
 
 /// FR-255: a `limits` entry that is not a setting name refuses
@@ -168,12 +178,8 @@ fn an_unknown_limit_name_refuses() {
     unknown["limits"] = json!({"output_bytes": 1});
     let (_case, path) = braking(COUNTER.as_bytes(), unknown);
     let outcome = plain(&path);
-    assert_eq!(outcome.exit, 20, "{}", outcome.document);
-    assert!(
-        outcome.document.to_string().contains("invalid-request"),
-        "{}",
-        outcome.document
-    );
+    let refusal = outcome.refused("export", 20, "invalid-request");
+    assert!(refusal.to_string().contains("output_bytes"), "{refusal}");
 }
 
 /// FR-001: invalid UTF-8 in the program, and a missing, a directory and an

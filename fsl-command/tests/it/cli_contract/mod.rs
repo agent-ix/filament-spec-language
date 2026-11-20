@@ -115,13 +115,7 @@ impl Outcome {
     pub(crate) fn expect(&self, operation: &str, category: &str, exit: u8) -> &Value {
         let document = &self.document;
         assert_eq!(self.exit, exit, "exit: {document}");
-        // An `analyze` refusal written by `RunError::outcome_document` carries no
-        // `aggregate` or `registry`, which the published schema requires of every
-        // `analyze` document: reported as an open spec question (FR-621, FR-286).
-        let analyze_refusal = operation == "analyze" && document.get("aggregate").is_none();
-        if !analyze_refusal {
-            assert_outcome_schema(document);
-        }
+        assert_outcome_schema(document);
         assert_eq!(document["format"], "filament-outcome/1", "{document}");
         assert_eq!(document["operation"], operation, "{document}");
         assert_eq!(document["category"], category, "{document}");

@@ -176,15 +176,6 @@ fn export_documents_are_deterministic_and_order_free() {
         }
         super::export::counter_request(&case, super::export::COUNTER.as_bytes(), member)
     };
-    |limits: Option<Value>| {
-        let mut member = json!({"profile": "filament.output.tla2/v1",
-            "obligations": ["SlowEnough"], "minimum_fidelity": "any"});
-        if let Some(limits) = limits {
-            member["limits"] = limits;
-        }
-        json!({"format": "native-run/1", "request": {"models": [], "program": program(),
-            "export": member}})
-    };
     for (value, exit) in [
         (request(None), 0),
         (request(Some(json!({"output_bytes": 1}))), 20),
