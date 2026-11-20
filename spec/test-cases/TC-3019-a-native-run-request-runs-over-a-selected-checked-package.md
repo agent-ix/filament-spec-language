@@ -20,8 +20,10 @@ FR-1039-AC-6.
 1. Compile `half` (`-7 div 2`) with `integer_division` `floor`, delete the
    source, and call it from the package file; repeat with `integer_division`;
    send a request with neither `program` nor `package`.
-2. Run `Pick` from the handoff directory and from the package file; send a
-   `clause` member over the package file.
+2. Run `Pick` from the handoff directory and from the package file with its
+   `equality` file; run it from the package file alone, with another
+   unit's `equality.json`, and as `{directory, equality}`; send a `clause`
+   member over the package file.
 3. Send a missing file, a v1 document, a package with an unknown member, no
    `models` entry for a spine-model package, and a spine `models` entry for
    the value package.
@@ -44,8 +46,13 @@ FR-1039-AC-6.
 
 - Step 1: `-4`; `invalid-request` naming `integer_division`, no file opened;
   `invalid-request` naming `program`.
-- Step 2: the source route's outcomes; `invalid-request` with `requires`
-  `directory`.
+- Step 2: `candidate` 7, exit 0, from `{directory}` and from `{file,
+  equality}`; `{file}` alone refuses `invalid_package`/`missing-file` at
+  `/request/package/equality`, exit 20, with no synthesis outcome; the
+  foreign witness refuses `invalid_package`/`refused-file` (`Unjoined`);
+  `{directory, equality}` refuses `invalid-request` naming
+  `package.equality`; the `clause` member refuses `invalid-request` with
+  `requires` `directory`.
 - Step 3: each refusal at stage `request`, exit 20, at its row's locus; the
   v1 document refuses `unknown_wire`/`unsupported-wire` at
   `/request/package/contract_version`.

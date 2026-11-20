@@ -13,7 +13,7 @@ relationships:
 Verify that analysis from source decides every item family over its compiled
 package, that a selected package reaches the source-checked evaluators through
 their package forms with equal records, and that the package route settles every item
-family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6 and FR-940-AC-18.
+family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21 and FR-940-AC-22: a source run whose compiled package the strict reader refuses on read-back or at a replay settles as the reader's typed refusal.
 
 ## Test Procedure
 
@@ -29,9 +29,15 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6 and FR-940-AC
 4. Overwrite the hyper Counter unit's source with bytes that are not a native
    unit, delete the handoff directory's `sources/`, and analyze `Equal`
    (FR-940-AC-16) through the `package` selection; check its certificate.
+5. Analyze the Counter program over source with a binding whose `packages`
+   leave out `test/counter`, and again with it supplied.
+6. Analyze `AtMostTwo` and `ReachThree` over source with the replay's
+   `ReplayPackage` byte ceiling below the emission's length, and again with a
+   test-only emitter that fails at the replay's emission.
 
-Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3) and
-`fsl-analyze/tests/it/hyper_wire.rs` (step 4).
+Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3),
+`fsl-analyze/tests/it/hyper_wire.rs` (step 4) and
+`fsl-analyze/tests/it/package_refusal_route.rs` (steps 5 and 6).
 
 ## Expected Results
 
@@ -42,3 +48,9 @@ Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3) and
   refused directories settle no item and compile no source.
 - Step 4: `Equal` settles `proved` with the source route's record, and the
   certificate is accepted with no source present.
+- Step 5: `missing_import`/`missing-selection` naming `test/counter`, `details.path`
+  under `/semantic_graph/nodes/`, `items` `[]`, `last_stage` `S4`, exit 20,
+  never `runtime_invariant`; with the package supplied, exit 0.
+- Step 6: `resource_exhausted`, category incomplete, exit 22, never
+  `package-emission`; with the failing emitter, the item settles `failed` with
+  `analyze`/`package-emission`.

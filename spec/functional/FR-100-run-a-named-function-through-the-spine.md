@@ -288,8 +288,9 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   builds `fsl-replay` with `quire-extraction` in its default build, so the
   driver's `run` verb always reaches this mode ([FR-662](FR-662-check-every-native-fence-of-a-markdown-specification.md)).
 - `package`: an optional closed selection of an existing `filament.checked-package/v2`
-  artifact, in place of `program`: `{file}`, a package file, or `{directory}`,
-  an FR-517 handoff directory. When present, FR-027's strict package reader
+  artifact, in place of `program`: `{file}` or `{file, equality}`, a
+  package file and optionally the path of its equality witness file
+  (FR-1039), or `{directory}`, an FR-517 handoff directory. When present, FR-027's strict package reader
   admits and executes that package without fallback to source compilation,
   as FR-945 states for a `call` and FR-1039 for every run member; the
   package's `lock` and name rows stand in for the program header, its

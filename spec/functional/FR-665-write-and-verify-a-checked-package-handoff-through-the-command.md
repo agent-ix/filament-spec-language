@@ -107,6 +107,32 @@ the sidecar, otherwise refusal carrying the reader's typed refusal or the
   sidecar records, with the typed refusal the reader or `Selection::check`
   gives.
 
+### The locus of an `inspect --handoff` refusal
+
+The handoff directory is an input the caller names by path, not an FR-001
+artifact, so an `inspect --handoff <directory>` refusal names its position
+with FR-095's `Locus::Input`, written as FR-267's `input` locus, and never
+with an `artifact` locus. The refusal's document is operation `inspect`,
+category refusal, exit 20, with one diagnostic whose `code` is the
+`checked_handoff::Error` code name (`handoff-read`, `handoff-sidecar`,
+`handoff-reader`, `handoff-read-back-differs`, and the others of
+`Error::code_name`). Its `operand` SHALL be `<directory>` exactly as the
+caller wrote it, and its `member` and `pointer` SHALL be:
+
+| Defect | `member` | `pointer` |
+| --- | --- | --- |
+| the directory does not exist, is not a directory or cannot be read | `null` | `null` |
+| a file `verify` reads (`selection.json`, `checked-package.json`, or a `sources/` or `models/` file the sidecar lists) is missing, unreadable, not a regular file or above its byte ceiling (`handoff-read`, `handoff-label`) | that file's path relative to the directory | `null` |
+| `selection.json` does not parse as a sidecar (`handoff-sidecar`) | `selection.json` | `null`; `/format` when its `format` is another format's |
+| the strict reader refuses `checked-package.json` (`handoff-reader`) | `checked-package.json` | the reader's pointer; `null` for a defect of the byte stream |
+| the admitted package departs from the sidecar on a `SelectionAxis` (`handoff-read-back-differs`) | `selection.json` | `null` |
+| any other refusal of the read-back (a recompile of the listed sources, a library that cannot be admitted as evidence, the native join budget) | `null` | `null` |
+
+Today `fsl_command::command::inspect_handoff` writes every one of these as
+`OutcomeLocus::Artifact { pointer: "/" }`; that is the one site that emits
+an `artifact` locus for a handoff-owned file, and each row above replaces
+it.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -115,6 +141,7 @@ the sidecar, otherwise refusal carrying the reader's typed refusal or the
 | FR-665-AC-2 | `verify` over AC-1's directory returns category success with operation `inspect`; over a copy whose `selection.json` names one node count more it refuses with the `SelectionRefusal` axis of that count; over a copy whose `checked-package.json` has one changed byte it refuses with the strict reader's typed refusal. | Test (TC-1748) |
 | FR-665-AC-3 | AC-1's request without `native_join`, with `corpus` `"all"`, and with an unknown member `digest` each refuse `invalid-request` at stage `request` naming the member and write no directory; AC-1's request run a second time refuses naming the existing `handoff` path and leaves its files unchanged. | Test (TC-1748) |
 | FR-665-AC-4 | A handoff request over `tests/fixtures/parent.native` with `execution_points` `{"CanAttempt": {"kind": "pre", "operation": "attempt"}}` writes a directory whose `selection.json` records that object, and the same request with `execution_points` absent records `{}`; with `{"CanAttempt": {"kind": "loop", "name": "x"}}` it refuses `invalid-request` at stage `request` at `/handoff/execution_points/CanAttempt`, exit 20; with `{"Missing": {"kind": "pre", "operation": "attempt"}}` it refuses `missing_declaration`/`missing-name` at stage `check` at the unit's source-start region (FR-104-AC-15); neither writes a directory. | Test (TC-2627) |
+| FR-665-AC-5 | `inspect --handoff handoff` over AC-1's directory with `selection.json` removed writes operation `inspect`, category refusal, exit 20, one diagnostic with code `handoff-read` and `locus` exactly `{"kind": "input", "member": "selection.json", "operand": "handoff", "pointer": null}`, never an `artifact` locus; written `inspect --handoff ./handoff/`, the same refusal's `operand` is `./handoff/`. `inspect --handoff absent`, naming no directory, gives `locus` `{"kind": "input", "member": null, "operand": "absent", "pointer": null}`. AC-2's copy with one node count more gives code `handoff-read-back-differs` with `member` `selection.json`, `pointer` `null`; AC-2's copy with one changed byte of `checked-package.json` gives code `handoff-reader` with `member` `checked-package.json` and `pointer` the strict reader's pointer (or `null` when the reader names none). | Test (TC-1748) |
 
 ## Dependencies
 
