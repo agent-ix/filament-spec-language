@@ -24,6 +24,7 @@ use ix_trace_rs::trace;
 
 #[path = "../../../tests/support/ring_queue.rs"]
 mod ring_queue;
+mod evaluator_closure_cases;
 
 use ring_queue::{
     all_rows, check_over, checked, checked_over, key, node, queue_spec, ranged, ring_is_queue,

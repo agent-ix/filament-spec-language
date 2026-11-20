@@ -37,6 +37,7 @@ use serde_json::{Value as Json, json};
 mod mbt_generate;
 #[path = "mbt_shrink.rs"]
 mod mbt_shrink;
+mod evaluator_closure_cases;
 #[path = "model_simulation/model_based_run.rs"]
 mod model_based_run;
 #[path = "model_simulation/reference_literals.rs"]

@@ -35,6 +35,7 @@ use fsl_semantics::model::type_invariant::ClauseRole;
 use serde_json::{json, Value};
 
 use crate::tc235_business_meaning_runtime::{lifecycle_document_ref, lifecycle_identity};
+mod evaluator_closure_cases;
 use crate::tc235_k2::{
     clause, declaration, field, id, mutate_k2, operation, origin, type_named_mut, PACKAGE,
 };
