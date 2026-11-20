@@ -1320,7 +1320,8 @@ impl RunError {
                 self.outcome_message(),
             )]),
             RunCause::ExportRequest { path, cause, .. }
-            | RunCause::PlanRequest { path, cause, .. } => {
+            | RunCause::PlanRequest { path, cause, .. }
+            | RunCause::ModelBasedTestRequest { path, cause } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         Some(*cause),

@@ -381,7 +381,7 @@ pub(super) fn prepare(
         .iter()
         .enumerate()
         .map(|(index, model)| {
-            if !super::is_domain_package(model) {
+            if !super::is_model_input_format(model) {
                 return Err(invalid("models", "expected semantic-ir/2.0.0"));
             }
             intake.source(&model.source, &format!("models[{index}].source"))
