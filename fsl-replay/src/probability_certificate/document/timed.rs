@@ -1001,15 +1001,36 @@ fn enumerate_digital_deadline(
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-        let clocked_steps = timed
-            .steps(&current.timed)
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-        let given_actions = actions
+        let mut given_choices = Vec::with_capacity(actions.len());
+        for action in &actions {
+            if let Some(support) = discrete_delay(system, &action.identity.operation) {
+                let (choice, admitted_edges) = digital_discrete_delay_choice(
+                    system,
+                    timed,
+                    predicate,
+                    binding,
+                    &current,
+                    action,
+                    support,
+                    &caps,
+                    key_scale,
+                    deadline,
+                    limits,
+                    cancel,
+                    meter,
+                    storage,
+                    &mut reached,
+                    &mut pending,
+                )?;
+                edges = edges.saturating_add(admitted_edges);
+                given_choices.push(Some(choice));
+            } else {
+                given_choices.push(None);
+            }
+        }
+        let given_actions = given_choices
             .iter()
-            .filter(|action| {
-                discrete_delay(system, &action.identity.operation).is_some()
-                    && digital_action_enabled(system, action, &clocked_steps)
-            })
+            .filter(|choice| choice.as_ref().is_some_and(|edges| !edges.is_empty()))
             .count();
         if given_actions > 1 {
             return Err(ProbabilityDocumentError::Unsupported);
@@ -1035,31 +1056,9 @@ fn enumerate_digital_deadline(
                 charge_work(meter, cancel, 1)?;
             }
         }
-        for action in actions {
+        for (action, given_choice) in actions.into_iter().zip(given_choices) {
             charge_work(meter, cancel, 1)?;
-            if let Some(support) = discrete_delay(system, &action.identity.operation) {
-                if !digital_action_enabled(system, &action, &clocked_steps) {
-                    continue;
-                }
-                let (choice, admitted_edges) = digital_discrete_delay_choice(
-                    system,
-                    timed,
-                    predicate,
-                    binding,
-                    &current,
-                    &action,
-                    support,
-                    &caps,
-                    key_scale,
-                    deadline,
-                    limits,
-                    cancel,
-                    meter,
-                    storage,
-                    &mut reached,
-                    &mut pending,
-                )?;
-                edges = edges.saturating_add(admitted_edges);
+            if let Some(choice) = given_choice {
                 if !choice.is_empty() {
                     choices.push(choice);
                 }
@@ -1830,25 +1829,6 @@ fn discrete_delay(system: &ModelSystem<'_>, operation: &str) -> Option<Vec<(Rati
             fsl_semantics::check::DelayDistribution::Discrete(values) => Some(values.clone()),
             _ => None,
         })
-}
-
-fn digital_action_enabled(
-    system: &ModelSystem<'_>,
-    action: &fsl_eval::simulation::model::Action,
-    clocked_steps: &[(fsl_eval::simulation::model::GuardedStep, TimedState)],
-) -> bool {
-    action.draws.iter().any(|draw| {
-        draw.successors.iter().any(|(transition, discrete_post)| {
-            clocked_steps.iter().any(|(step, timed_post)| {
-                step.transition() == transition
-                    && system
-                        .state_key(timed_post.discrete())
-                        .ok()
-                        .zip(system.state_key(discrete_post).ok())
-                        .is_some_and(|(left, right)| left.0 == right.0)
-            })
-        })
-    })
 }
 
 #[allow(clippy::too_many_arguments)]

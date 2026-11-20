@@ -1658,17 +1658,7 @@ impl<'c> Builder<'_, '_, 'c> {
     ) -> Step<Vec<Planned>> {
         let mut planned = Vec::new();
         let enabled = self.enabled(local, &state.model, &state.clocks)?;
-        if enabled
-            .iter()
-            .any(|action| self.given(&action.identity.operation).is_some())
-        {
-            self.every_discrete_moves(at, state, local, &enabled, &mut planned)?;
-        } else {
-            self.running_delays(at, state, local, &mut planned)?;
-            for action in enabled {
-                self.identity_edges(at, state, &action, one(), &mut planned)?;
-            }
-        }
+        self.every_discrete_moves(at, state, local, &enabled, &mut planned)?;
         if planned.is_empty() {
             self.time_locked.push(at);
         }
