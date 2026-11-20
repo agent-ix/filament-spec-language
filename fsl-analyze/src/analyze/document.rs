@@ -1583,6 +1583,9 @@ fn resolve_one(
     let protocol_deadlock = protocol_claim
         && kind == Capability::GlobalConformance
         && item_kind == ItemKind::DeadlockFreedom;
+    let protocol_temporal_deadlock = protocol_claim
+        && kind == Capability::TemporalSatisfaction
+        && item_kind == ItemKind::DeadlockFreedom;
     let applies = protocol_deadlock
         || crate::claim_family::claim_family(package, item_kind, &claim)
             .is_some_and(|family| kind.applies_to_declaration(family));
@@ -1708,7 +1711,7 @@ fn resolve_one(
         .subject
         .clone()
         .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
-    let protocol = if protocol_deadlock || protocol_analysis_kind {
+    let protocol = if protocol_deadlock || protocol_temporal_deadlock || protocol_analysis_kind {
         let owner = package.graph().protocols().iter().find(|protocol| {
             package
                 .graph()
