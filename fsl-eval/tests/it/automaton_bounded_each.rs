@@ -183,9 +183,9 @@ fn grid(profile: &str, activation: &str, guarded: bool) {
     }
 }
 
-/// FR-338-AC-10 against FR-327: an `on origin` bounded clause under the
+/// FR-338-AC-6 against FR-327: an `on origin` bounded clause under the
 /// false extension.
-#[trace("TC-525", "FR-338-AC-10")]
+#[trace("TC-525", "FR-338-AC-6")]
 #[test]
 fn the_origin_translation_agrees_with_the_evaluator_over_every_short_trace() {
     grid(EVENT, "on origin", false);
@@ -199,19 +199,19 @@ fn the_each_translation_agrees_with_the_evaluator_over_every_short_trace() {
     grid(EVENT, "on each (q: Counter)", false);
 }
 
-/// FR-338-AC-10 against FR-327: a guarded `on each` clause, activating at
+/// FR-338-AC-6 against FR-327: a guarded `on each` clause, activating at
 /// the positions its condition holds.
-#[trace("TC-525", "FR-338-AC-10")]
+#[trace("TC-525", "FR-338-AC-6")]
 #[test]
 fn the_guarded_each_translation_agrees_with_the_evaluator_over_every_short_trace() {
     grid(EVENT, "on each (q: Counter) when (c.level = 1)", true);
 }
 
-/// FR-338-AC-10 against FR-329: an infinite-trace bounded clause stutters
+/// FR-338-AC-6 against FR-329: an infinite-trace bounded clause stutters
 /// its last real letter, so an open `always` window holds exactly when that
 /// letter satisfies the atom, and an open `eventually` window meets exactly
 /// when it does.
-#[trace("TC-525", "FR-338-AC-10")]
+#[trace("TC-525", "FR-338-AC-6")]
 #[test]
 fn the_infinite_translation_agrees_with_the_evaluator_over_every_short_lasso() {
     grid(INFINITE, "on origin", false);

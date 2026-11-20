@@ -862,6 +862,36 @@ fn overlapping_each_activations_keep_the_earlier_deadline() {
     );
 }
 
+/// FR-338-AC-28: a state with the same window entry twice in its slot is no
+/// state of the translation, whose windows merge to one per slot.
+#[trace("TC-525", "FR-338-AC-28")]
+#[test]
+fn an_each_key_that_duplicates_its_window_entry_is_rejected() {
+    let clause = each("eventually[0,2] holds(c.value >= 2)", is_at_least_two);
+    let full = proved_and_accepted(
+        &clause,
+        &[
+            (0, open(2)),
+            (1, open(1)),
+            (2, BoundedState::Idle),
+            (3, BoundedState::Idle),
+        ],
+    );
+    let entry = r#"[[],"positive","deadline","1"]"#;
+    let doubled = |key: &str| key.replace(entry, &format!("{entry},{entry}"));
+    let mut twice = full.clone();
+    twice.states.retain(|held| *held != clause.at(1, open(1)));
+    twice.states.push(clause.edited(1, open(1), doubled));
+    twice.states.sort();
+    assert_eq!(
+        check(&clause.request(), &twice),
+        rejected(
+            CertificateRule::ShapeMismatch,
+            clause.edited(1, open(1), doubled)
+        )
+    );
+}
+
 /// FR-338-AC-10: `on each always[0,0] holds(c.value <= 3)` activates at
 /// every position and requires only that one, so each state is `Open(0)`,
 /// restored by the next activation after the step out of it discharges the
@@ -1060,4 +1090,47 @@ fn a_guarded_each_extent_discharges_at_its_boundary() {
             clause.at(2, BoundedState::Idle)
         )
     );
+}
+
+/// FR-338-AC-10 (guarded `on each`), FR-337: the producer keeps `Open { 0 }`
+/// and `Idle` apart at a model state reached both ways. The counter goes
+/// `0 -inc-> 1 -setTo-> 3` and `0 -setTo-> 3`; `on each when (q.value = 0)
+/// always[0,1] holds(c.value >= 0)` activates at 0 only, so `3` is read
+/// `Open { 0 }` by the direct step and `Idle` by the two-step path. Merging
+/// the two by the general monitor state left a certificate its own checker
+/// refused `SuccessorMissing`; the proof is accepted and settles proved.
+#[trace("TC-525", "FR-338-AC-10")]
+#[test]
+fn a_guarded_each_window_reached_two_ways_is_one_certificate_the_checker_accepts() {
+    fn always_true(_: i64) -> Option<bool> {
+        Some(true)
+    }
+    let contract = "pre Step using v on M::Counter::inc { self.value = 0 }\n\
+         post Stepped using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n\
+         pre Jump using v on M::Counter::setTo { (self.value = 0 or self.value = 1) and n = 3 }\n\
+         post Jumped using v on M::Counter::setTo { self.value = n }\n";
+    let clause = Bounded {
+        fixture: crate::lasso_replay::bounded_fixture_over(
+            crate::counter::document_with_ranged_parameter(),
+            contract,
+            "on each (q: M::Counter) when (q.value = 0)",
+            "always[0,1] holds(c.value >= 0)",
+        ),
+        letters: Condition {
+            atoms: Letters { atom: always_true },
+            when: is_zero,
+        },
+    };
+    let outcome = clause.run();
+    let held = certificate(&outcome);
+    let request = clause.request();
+    assert_eq!(check(&request, &held), TemporalCertificateCheck::Accepted);
+    let record = settle_model_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &request,
+        &Cancel::new(),
+        |_| panic!("a proof replays nothing"),
+    );
+    assert_eq!(record.label, ResultLabel::Proved);
 }

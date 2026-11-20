@@ -379,7 +379,7 @@ struct Node<State, Transition> {
 /// A product state's key: the model state's key bytes, the monitor state of
 /// each instance and, where it decides which later positions the claim
 /// reads, the counted distance (see [`Run::product`]).
-type ProductKey = (Vec<u8>, Vec<StateId>, usize);
+type ProductKey = (Vec<u8>, Vec<StateId>, usize, Vec<BoundedState>);
 
 /// Why the run ended before its frontier emptied.
 enum Finish {
@@ -2265,11 +2265,14 @@ impl<S: SubjectSystem> Run<'_, S> {
                             permutation,
                             boundary: false,
                         };
-                        let (after, _, bad) = self.advance(&node, &before)?;
+                        let (after, canonical, bad) = self.advance(&node, &before)?;
                         bad.is_some()
-                            || !self
-                                .known
-                                .contains_key(&self.product(key, after, node.distance))
+                            || !self.known.contains_key(&self.product(
+                                key,
+                                after,
+                                node.distance,
+                                &canonical,
+                            ))
                     }
                     Some(_) => true,
                     None => false,
@@ -2362,6 +2365,7 @@ impl<S: SubjectSystem> Run<'_, S> {
                         key.clone(),
                         after.clone(),
                         node.distance,
+                        &canonical,
                     )),
             );
             readings.push((after, canonical, bad));
@@ -2643,7 +2647,13 @@ impl<S: SubjectSystem> Run<'_, S> {
     /// distance decides which later positions it reads, so a state reached
     /// at two distances up to the horizon is two product states; otherwise
     /// the distance is not part of the key.
-    fn product(&self, key: Vec<u8>, monitor: Vec<StateId>, distance: usize) -> ProductKey {
+    fn product(
+        &self,
+        key: Vec<u8>,
+        monitor: Vec<StateId>,
+        distance: usize,
+        canonical: &[BoundedState],
+    ) -> ProductKey {
         let reach = match self.item {
             Item::Clause {
                 counting: Counting::ByKind,
@@ -2660,7 +2670,10 @@ impl<S: SubjectSystem> Run<'_, S> {
             } => usize::try_from(*last).map_or(usize::MAX, |last| last.saturating_add(1)),
             Item::Clause { .. } | Item::Deadlock | Item::Race | Item::Invariant { .. } => 0,
         };
-        (key, monitor, distance.min(reach))
+        // The canonical bounded state is part of the key: the general monitor
+        // state alone merges `Open { remaining: 0 }` with `Idle`, which the
+        // closure checker keeps apart (FR-338).
+        (key, monitor, distance.min(reach), canonical.to_vec())
     }
 
     /// Create the product state of `node`'s model state reached with the
@@ -2680,7 +2693,7 @@ impl<S: SubjectSystem> Run<'_, S> {
             None => self.advance(&node, before)?,
         };
         node.monitor = after;
-        let product = self.product(key, node.monitor.clone(), node.distance);
+        let product = self.product(key, node.monitor.clone(), node.distance, &canonical);
         let target = self.known.get(&product).copied();
         self.note_uncounted_edge(&node, target.unwrap_or(self.nodes.len()));
         if bad.is_none() && target.is_some() {
