@@ -694,6 +694,10 @@ pub enum AnalyzeRefusal {
     /// Source bytes named by the package were not provided.
     #[error("the analyze source provision did not admit: {0}")]
     Provision(ProvisionRefusal),
+    /// The strict reader refused the package the run compiled: the reader's
+    /// own code, cause and pointer, never an internal failure.
+    #[error("the package the run compiled is not admitted: {}", .0.label())]
+    Package(fsl_package::PackageAdmissionRefusal),
 }
 
 /// The deadline stated by the frontend, which owns its timer.
@@ -814,6 +818,26 @@ impl AnalyzeRefusal {
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
                     .with_last_stage(Some(OutcomeStage::S4))
+            }
+            Self::Package(refusal) => {
+                let mut diagnostic = OutcomeDiagnostic::new(
+                    refusal.cause.as_deref(),
+                    refusal.code.as_str(),
+                    None,
+                    self.to_string(),
+                );
+                if let Some(pointer) = &refusal.pointer {
+                    diagnostic = diagnostic.with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(pointer.clone()),
+                    )])));
+                }
+                OutcomeDocument::new(
+                    Operation::Analyze,
+                    Some(OutcomeStage::S4),
+                    refusal.code.category(),
+                )
+                .with_diagnostics(vec![diagnostic])
             }
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
