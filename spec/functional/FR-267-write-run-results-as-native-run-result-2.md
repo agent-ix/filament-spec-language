@@ -222,10 +222,11 @@ not the declared `{package, node}` form.
 ### Refusal locus wire
 
 `disposition.refusal.locus`, when the refusal record assigns a locus, is
-exactly one closed object tagged by `kind`, and `kind` is one of the five
+exactly one closed object tagged by `kind`, and `kind` is one of the six
 rows below. The set is closed because it is the whole set of positions a
 refusal can name: a source unit (FR-095, FR-096), an identified artifact
-(FR-095) or a JSON input document (FR-663). The writer SHALL write each
+(FR-095), a JSON input document (FR-663) or another input the caller named
+by path (FR-095 `Locus::Input`). The writer SHALL write each
 refusal's locus under the row of its typed locus, and the strict reader
 SHALL restore the same typed locus. The same tagged forms are the `locus`
 of every `filament-outcome/1` diagnostic (FR-286, FR-663), so a locus reads
@@ -238,6 +239,7 @@ the same way in either document.
 | `occurrence` | `occurrence`, the display form of a kernel occurrence key | the regions the occurrence resolves to through the package source map (FR-095 `Locus::Occurrence`) |
 | `artifact` | `identity`, a closed `{authority, identity}` object holding the artifact's FR-001 labels (FR-095's artifact identity; no digest of the artifact is written); `pointer`, an RFC 6901 pointer into it | a position in an identified artifact, which names no source region (FR-095 `Locus::Artifact`) |
 | `document` | `document`, a closed `{authority, identity}` object or `null`; `path`, a string or `null`; `pointer`, an RFC 6901 pointer; `object`, a closed `{population, key}` object or `null`; `member`, a string or `null` | the failing member, or the object holding a missing member, of a JSON input document (FR-663) |
+| `input` | `operand`, the operand string exactly as the caller wrote it; `member`, the path of the member file relative to a directory operand with `/` separators, or `null`; `pointer`, an RFC 6901 pointer into the member file (or the file operand), or `null` | a position in a caller-named input that is not an FR-001 artifact, which names no source region (FR-095 `Locus::Input`) |
 
 A `document` locus SHALL always carry all five members. `document` is
 `null` only when the document carries no FR-001 labels or they could not be read, `path` is
@@ -245,6 +247,11 @@ A `document` locus SHALL always carry all five members. `document` is
 `null` when the failing member belongs to no snapshot object, and `member`
 is `null` when the refusal names no member. Its `pointer` is the pointer
 into the document the refusal names, never a pointer into another document.
+
+An `input` locus SHALL always carry all three members. `member` is `null`
+exactly when the position is the operand itself, and `pointer` is `null`
+exactly when the position is the whole member file or operand (FR-095).
+The `inspect --handoff` refusals FR-665 lists SHALL carry an `input` locus.
 
 These refusals of a JSON input document SHALL carry a `document` locus:
 
@@ -268,11 +275,13 @@ Such a refusal SHALL NOT be written as an `artifact` locus or with no
 locus: an input document is named by its FR-001 labels and path, not by an
 artifact identity, and the `object` and `member` it names would be lost.
 
-A refusal with no position in any document, such as an unreadable file,
-keeps FR-663's `null` locus.
+A refusal with no position in any document, such as an unreadable request
+or input document file, keeps FR-663's `null` locus; a refusal of a
+caller-named input that is not a JSON input document, such as a missing
+member file of a handoff directory, carries an `input` locus.
 
 The reader SHALL refuse a `locus`, naming `disposition.refusal.locus` and
-the failing member, whose `kind` is absent, not a string or outside the five
+the failing member, whose `kind` is absent, not a string or outside the six
 rows; that lacks a member its row lists; that carries a member its row does
 not list; that holds `null` in a member its row does not make nullable; that
 holds a value of another JSON type; or whose `pointer` is not an RFC 6901
@@ -479,7 +488,7 @@ condition is false; the reader refuses `null` or a default in its place.
 | Refusal | `code` | FR-096, FR-115 | Catalog code | Validate catalog code |
 | Refusal | `cause` | FR-096, FR-115 | Catalog cause when assigned | Restore cause or absence |
 | Refusal | `fields` | FR-096, FR-115 | Catalog field-name to rendered-string map when assigned | Restore all fields or absence |
-| Refusal | `locus` | FR-096, FR-109, FR-663 | One tagged form of **Refusal locus wire** when assigned | Restore the typed locus or absence; refuse a kind outside the five |
+| Refusal | `locus` | FR-096, FR-109, FR-663 | One tagged form of **Refusal locus wire** when assigned | Restore the typed locus or absence; refuse a kind outside the six |
 | Refusal | `frame_witness` | FR-115, FR-267 | Complete frame witness only for evaluated Frame violation | Restore typed witness; reject other placements |
 | Outcome | `kind` | FR-100 | Exact completed, refused, undefined or incomplete tag | Select FR-100 variant |
 | Outcome | `value` | FR-100 | Completed value's tagged form | Restore exact value |
@@ -644,6 +653,7 @@ disposition kinds the document carries are the ones FSpec FR-352 registers.
 | FR-267-AC-25 | Through `command::run`, FR-663-AC-3's run whose snapshot object `child` lacks `parent`, the same run with an unknown member `extra` on `child`, and FR-868-AC-1's runs whose snapshot `model` carries `version` and carries `digest` each write a `native-run-result/2` document at stage `admit` whose `disposition.refusal.locus` has `kind` `document`, the snapshot's labels, its path, the pointer FR-663 or this requirement states (`/model/version` and `/model/digest` for the header runs, with `object` `null` and `member` `version` or `digest`), the header runs keeping `field` `model.version` or `model.digest` beside the locus `member`; `read_native_run_result` accepts each document and restores a refusal with the same `code`, `cause`, `fields` and an equal `document` locus. A healthy run over the same snapshot reads back with no refusal. | Test (TC-3081) |
 | FR-267-AC-26 | The reader refuses AC-25's missing-member document, naming `disposition.refusal.locus`, with `kind` set to `snapshot`, with `kind` removed, with `member` removed, with an added member `line`, with `pointer` set to `child` (not an RFC 6901 pointer), and with `pointer` set to `null`; and refuses a `region` locus carrying `pointer`, an `artifact` locus without `identity`, and an `artifact` locus carrying `digest` beside `identity` and `pointer`; an `artifact` locus `{"kind": "artifact", "identity": {"authority": "agent-ix", "identity": "test:parent"}, "pointer": "/declarations/0"}` reads back equal. The same document with `object` and `member` set to `null` reads. | Test (TC-3081) |
 | FR-267-AC-27 | Through `command::run`, the AC-25 run whose snapshot replaces the payload object of a field of `child` with one whose `kind` is the JSON number `1` refuses `invalid_runtime_input`/`wrong-value-kind` (FR-106 payload check 1) with a `document` locus: the snapshot's labels and path, `pointer` to that `kind` member, `object` `{config_history, child}` and `member` `kind`; it reads back equal. A replay request whose member names no member of its package refuses with a `document` locus whose `pointer` is that request member and whose `member` is its name, never an `artifact` locus; an absent request file keeps a `null` locus. | Test (TC-3081) |
+| FR-267-AC-29 | A locus `{"kind": "input", "member": "selection.json", "operand": "handoff", "pointer": null}` in AC-25's refused document reads back equal, and so does `{"kind": "input", "member": null, "operand": "handoff", "pointer": null}`; the reader refuses, naming `disposition.refusal.locus`, an `input` locus without `member`, one without `pointer`, one whose `operand` is `null`, one carrying `identity` beside its three members, and one whose `pointer` is `selection` (not an RFC 6901 pointer); a locus whose `kind` is `file` is refused as outside the six rows. | Test (TC-3081) |
 
 ## Dependencies
 

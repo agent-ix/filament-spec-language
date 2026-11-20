@@ -14,7 +14,7 @@ Verify the `terminal` declaration's forms and refusals, the classification of
 terminal states as intended or deadlocked, and the request writer's
 deadlock-freedom item with its per-model opt-out.
 
-Scope: FR-124-AC-1 to FR-124-AC-3 and FR-124-AC-5 to FR-124-AC-11.
+Scope: FR-124-AC-1 to FR-124-AC-3 and FR-124-AC-5 to FR-124-AC-12.
 
 ## Test Procedure
 
@@ -55,6 +55,15 @@ exactly when every counter is at 3, and `terminal any`.
     and of the two declarations; FR-380-AC-7's bounded `PM` model under `M`
     and `N` with the kernel-refused `Done` and `Stop` `when { false }`, then
     `when { true }`; the two-identity unit; then `when { true }` alone.
+11. On both routes, over the two-identity vault unit (`V` on `test/vault`,
+    `N` on `test/vault-other`): write and run the request of a subject that
+    reads `test/vault` only with `Stop` `when { false }` on `V` and `Halt`
+    `any` on `N`, then with no declaration on `V` and `Halt` on `N`, then
+    with `Halt` `any` on `V`, then with `Stop` on `V` and the undefined
+    `Done` on `N`; write the request of a subject that reads both
+    identities; build the deadlock-freedom item through
+    `deadlock_model_item` over that subject with undefined `Done` on `V`
+    and `Stop` `when { false }` on `N`.
 
 Tag the tests `#[trace("TC-519", "FR-124-AC-n")]`.
 
@@ -92,3 +101,12 @@ Tag the tests `#[trace("TC-519", "FR-124-AC-n")]`.
   `inconclusive`, `undecided-successor`, naming `Done`'s key; with
   `when { true }`: `proved`. Two identities: `unsupported`, no request item.
   `when { true }` alone: every terminal state intended.
+- Step 11: both routes agree. Subject over `test/vault` only: one
+  deadlock-freedom item, `refuted` with a deadlock counterexample ending at
+  `l = 1` (not intended on account of `N`'s `Halt`); the same without a
+  declaration on `V`; no item with `Halt` on `V`; `refuted` with the deadlock
+  counterexample and no `UndefinedEvaluation` with `Done` on `N`. Subject
+  over both identities: `unsupported`,
+  `unsupported_projection`/`unsupported-requested-capability`, no request
+  item. Library item: `refuted`, `UndefinedEvaluation`, naming
+  (`test/vault`, 0).

@@ -47,8 +47,9 @@ layer-4 I2 reader builds the package source map from a verified
   below.
 - `PackageSourceMap`: occurrence key → ordered, non-empty regions, carried
   by the I2 reader's verified outcome.
-- `Locus`: `Region(SourceRegion)`, `Occurrence(Location)` or
-  `Artifact{identity, pointer}`, with an RFC 6901 `JsonPointer`.
+- `Locus`: `Region(SourceRegion)`, `Occurrence(Location)`,
+  `Artifact{identity, pointer}` or `Input{operand, member, pointer}`, with an
+  RFC 6901 `JsonPointer`.
 
 ## Behavior
 
@@ -85,12 +86,34 @@ tag whose node the package does not map SHALL refuse with an unknown-node
 cause, and a tag of a mapped node at an unmapped role and ordinal with an
 unknown-occurrence cause.
 
-### A locus names a region, an occurrence or an artifact position
+### A locus names a region, an occurrence, an artifact position or a caller input
 
 A `Locus::Region` SHALL denote its own region, a `Locus::Occurrence` the
 regions its location resolves to through the package source map, and a
-`Locus::Artifact` no source region. An artifact locus's pointer SHALL be an
-RFC 6901 JSON pointer.
+`Locus::Artifact` and a `Locus::Input` no source region. An artifact
+locus's pointer SHALL be an RFC 6901 JSON pointer.
+
+- A `Locus::Artifact`'s `identity` SHALL be the FR-001 `{authority,
+  identity}` labels under which the artifact was asked for, and never a
+  digest of its bytes or a path.
+- A `Locus::Input` names a position in an input the caller named by path on
+  the command line or in a request, where that input is not an FR-001
+  artifact: it has no `{authority, identity}` labels to name it by, such as
+  the handoff directory `inspect --handoff <directory>` reads (FR-665).
+  `operand` SHALL be the operand exactly as the caller wrote it, not
+  resolved, normalized or made absolute. `member` SHALL be `None` when the
+  position is the operand itself, and, for a directory operand, the path of
+  the member file relative to the operand, with `/` separators, as the
+  directory's own layout names it (for example `selection.json` or
+  `sources/source:spine.native`). `pointer` SHALL be `None` when the
+  position is the whole operand or member file (a missing or unreadable
+  file, a directory that cannot be read, a file that does not parse), and
+  otherwise the RFC 6901 pointer into the member file (or into the operand,
+  when it is a file).
+- A refusal located in a caller input that is an FR-001 artifact SHALL keep
+  `Locus::Artifact`, and a refusal of a JSON input document FR-663 locates
+  keeps FR-267's `document` locus; `Locus::Input` is for the rest.
+- A `Locus::Input` is written on the wire as FR-267's `input` locus.
 
 ## Acceptance Criteria
 
@@ -102,6 +125,7 @@ RFC 6901 JSON pointer.
 | FR-095-AC-4 | A location tag of a mapped occurrence resolves to its regions; a tag naming a node the map does not hold refuses with the unknown-node cause, and one naming a mapped node at an unmapped ordinal with the unknown-occurrence cause. A wire whose `source_map` entry names a node absent from its semantic graph refuses at the read as `invalid_source_map`. | Test (TC-421) |
 | FR-095-AC-5 | A region locus denotes exactly its region; an occurrence locus denotes the two regions its mapped key holds, and an unmapped one refuses with the map's unknown-occurrence cause; an artifact locus refuses as naming no source region. | Test (TC-422) |
 | FR-095-AC-6 | `""`, `/`, `/source_map/0/regions` and `/a~1b/c~0d` parse as JSON pointers and keep their text; `source_map` refuses for a missing leading `/`, and `/a~2b` and `/a~` refuse for the `~` at byte 2. | Test (TC-422) |
+| FR-095-AC-7 | `Locus::Input{operand: "./out/handoff", member: Some("selection.json"), pointer: None}` refuses `regions` as naming no source region, as an artifact locus does, and keeps `operand` `./out/handoff` byte for byte (not `out/handoff` and not an absolute path); written on the wire it is exactly `{"kind": "input", "member": "selection.json", "operand": "./out/handoff", "pointer": null}`, and `Locus::Input{operand: "pkg.json", member: None, pointer: Some("/lock")}` is exactly `{"kind": "input", "member": null, "operand": "pkg.json", "pointer": "/lock"}`. `Locus::Artifact` over the package asked for as `{authority: "agent-ix", identity: "spine"}` at `/lock` is written with `identity` `{"authority": "agent-ix", "identity": "spine"}`, and no member of it holds a digest or a path. | Test (TC-422) |
 
 ## Dependencies
 

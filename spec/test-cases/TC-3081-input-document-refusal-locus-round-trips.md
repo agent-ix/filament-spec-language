@@ -14,7 +14,7 @@ relationships:
 
 Verify that a snapshot or model-header refusal written as `native-run-result/2`
 carries a `document` locus that the strict reader reads back, and that the
-reader keeps the locus kind set closed. Scope: FR-267-AC-25, FR-267-AC-26, FR-267-AC-27.
+reader keeps the locus kind set closed. Scope: FR-267-AC-25 to FR-267-AC-27 and FR-267-AC-29.
 
 ## Test Procedure
 
@@ -35,6 +35,8 @@ reader keeps the locus kind set closed. Scope: FR-267-AC-25, FR-267-AC-26, FR-26
 7. Run the snapshot whose `child` field payload object has `kind` `1`.
 8. Run a replay request whose member names no member of its package, and a
    run with an absent request file.
+9. Read step 1's document with its locus replaced by each `input` locus of
+   FR-267-AC-29, and by each defective `input` locus and the `file` kind.
 
 Tag the tests `#[trace("TC-3081", "<AC id>")]`.
 
@@ -55,3 +57,5 @@ Tag the tests `#[trace("TC-3081", "<AC id>")]`.
   `member` `kind`; it reads back equal.
 - Step 8: the replay refusal carries a `document` locus at the request member,
   never `artifact`; the absent-file refusal carries a `null` locus.
+- Step 9: the two `input` loci read back equal; each defective one and the
+  `file` kind are refused naming `disposition.refusal.locus`.
