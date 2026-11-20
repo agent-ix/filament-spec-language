@@ -625,7 +625,6 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
 /// claim occurrence, and FR-489 sends those operation-contract items through
 /// `contract-checker` instead of settling an unknown claim.
 #[trace("TC-2702", "FR-489-AC-2")]
-#[trace("TC-2725", "FR-968-AC-2")]
 #[test]
 fn named_operation_clauses_resolve_over_a_package() {
     for (name, clause) in [
