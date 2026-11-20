@@ -53,6 +53,12 @@ Wrong or overclaimed tags:
 | --- | --- | --- | --- |
 | FND-008 | low | FSpec-FR-640-AC-11 is tagged on `the_reader_refuses_a_claim_statement_that_breaks_rule_7`, but two of its stated cases are unasserted: the `quantity` `5` typed at the unit node of `s` refused `invalid-value` (rule 7.3), and the `time tick send period 1 ms unit ms` `Rpc` model admitting `within 5 ms`. The new timed tests use a `dense` source and assert only Verified reads. | fsl-package/src/emit/tests/probabilistic.rs:2672-2770,2775-2790 |
 
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | medium | `claims_that_differ_only_in_an_interval_keep_their_identities_when_reordered` is tagged `#[trace("TC-1288", "FR-498-AC-6")]`. FR-498-AC-6 is the reward binding of `duration`/`P95`/delay forms and says nothing about reordering. Gap FND-002 removed this same tag because it inflated the matrix for an AC deferred to QSL-2641, and this round adds it back. The reorder rule belongs to the FR-498 statement, AC-1 (permutations) and FSpec FR-640-AC-3, which the test already carries. | fsl-package/src/emit/tests/probabilistic.rs:3016-3019 |
+
 ## Dispositions
 
 | FND | outcome | reason |
@@ -64,3 +70,6 @@ Wrong or overclaimed tags:
 | FND-005 | fixed | Tags moved to FSpec-FR-640-AC-10 and AC-11. |
 | FND-006 | fixed | Added elapsed, expected_elapsed, quantity window and reward-unit bound tests; residual AC-11 cases are FND-008. |
 | FND-007 | deferred | Spec conflict with FR-940-AC-9 named in the PR body; a spec question, out of scope for this code PR. |
+| FND-003 | fixed | a_lone_claim_path_moves_with_the_interval_of_its_event (tagged FR-498-AC-7) asserts always[0,3] and always[1,2] move A's id; the AC-7 path test adds both events and P95's 5 ms vs 6 ms; the AC-7 tag left the timed spelling test (round 2). |
+| FND-004 | fixed | claims_that_differ_only_in_an_interval_keep_their_identities_when_reordered permutes A (always[0,2]) and B (always[0,3]) and asserts equal ids; its wrong AC-6 tag is FND-009 (round 2). |
+| FND-008 | still-open | Tick case fixed (a_time_window_over_a_tick_model_is_a_quantity_at_the_model_unit, Verified). The wrong-unit case is not AC-11's: the_reader_refuses_a_quantity_typed_at_the_wrong_unit retypes the quantity to the subject's model-root node and expects ill_typed/operator-ineligible at `type`, while FSpec FR-640-AC-11 types the quantity 5 at the unit node of `s` and expects invalid-value at the literal (round 2). |

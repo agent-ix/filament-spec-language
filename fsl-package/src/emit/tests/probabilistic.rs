@@ -3013,7 +3013,7 @@ fn a_lone_claim_path_moves_with_the_interval_of_its_event() {
 /// FSpec FR-640-AC-3 and FSL FR-498 reordering: two claims whose events
 /// differ only in an interval keep their identities whichever order they are
 /// declared in.
-#[trace("TC-1288", "FR-498-AC-6")]
+#[trace("TC-1288", "FR-498-AC-1")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
 #[test]
 fn claims_that_differ_only_in_an_interval_keep_their_identities_when_reordered() {
