@@ -8,12 +8,15 @@
 //! each clause is the same conjunction compared with `true`, which is no
 //! equation and no bound, so it is enumerated.
 
+use filament_exact::{Integer, Value};
+use filament_semantic_value::model_transition::ModelTransition;
 use ix_trace_rs::trace;
 use serde_json::json;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::application::{Applications, OperationRef};
 use super::super::walk::{rows_of, Budget};
-use super::super::{explore_model, ModelSystem};
+use super::super::{explore_model, ModelSystem, StepEffect};
 use crate::simulation::expansion::ExpansionLimit;
 use crate::simulation::explore::{Limits, Outcome};
 use crate::simulation::sampled::world::{initial, Model, Operation, World, BOOLEAN};
@@ -228,6 +231,30 @@ fn cell(post: &str, enumerated: bool) -> World {
 /// The `Cell` at `b` with the queries `queries` and `set()`'s clause
 /// `post A { post }`, or its enumerated reference form.
 fn cell_with(post: &str, enumerated: bool, b: u32, queries: &[Query]) -> World {
+    cell_with_bounds(post, enumerated, 3, 1, b, queries)
+}
+
+/// A Cell fixture with a caller-selected A domain and initial values.
+fn cell_with_bounds(
+    post: &str,
+    enumerated: bool,
+    max_a: u32,
+    a: u32,
+    b: u32,
+    queries: &[Query],
+) -> World {
+    cell_with_precondition(post, enumerated, max_a, a, b, queries, None)
+}
+
+fn cell_with_precondition(
+    post: &str,
+    enumerated: bool,
+    max_a: u32,
+    a: u32,
+    b: u32,
+    queries: &[Query],
+    precondition: Option<&str>,
+) -> World {
     let ident = |name: &str| format!("ix://{PACKAGE}/{name}");
     let post = if enumerated {
         format!("({post}) = true")
@@ -253,6 +280,11 @@ fn cell_with(post: &str, enumerated: bool, b: u32, queries: &[Query]) -> World {
             )
         })
         .collect();
+    if let Some(precondition) = precondition {
+        body.push_str(&format!(
+            "pre Range using v on M::Cell::set {{ {precondition} }}\n"
+        ));
+    }
     body.push_str(&format!("post A using v on M::Cell::set {{ {post} }}\n"));
     let results: Vec<(&str, &str)> = queries
         .iter()
@@ -264,14 +296,212 @@ fn cell_with(post: &str, enumerated: bool, b: u32, queries: &[Query]) -> World {
             object: "Cell",
             population: "cells",
             key: "k1",
-            integers: vec![("A", 0, 3), ("B", 0, 99)],
+            integers: vec![("A", 0, i64::from(max_a)), ("B", 0, 99)],
             fields: vec![("a", ident("A")), ("b", ident("B"))],
             operations,
             body,
-            initial: json!({"a": {"integer": "1"}, "b": {"integer": b.to_string()}}),
+            initial: json!({"a": {"integer": a.to_string()}, "b": {"integer": b.to_string()}}),
         },
         &results,
     )
+}
+
+/// Compare actual canonical successors, transition identities and effects,
+/// without depending on the candidate generator's iteration order.
+type ApplicationView = BTreeMap<Vec<u8>, (ModelTransition, Option<StepEffect>)>;
+
+fn keyed_applications(system: &ModelSystem<'_>, applications: &Applications) -> ApplicationView {
+    let keyed: BTreeMap<_, _> = applications
+        .successors
+        .iter()
+        .map(|applied| {
+            let effect = applied
+                .state
+                .reached_by()
+                .expect("a completed assignment records its step effect");
+            (
+                system.state_key(&applied.state).expect("a canonical key").0,
+                (applied.transition.clone(), Some(effect.clone())),
+            )
+        })
+        .collect();
+    assert_eq!(
+        keyed.len(),
+        applications.successors.len(),
+        "the original fixture has no duplicate state keys"
+    );
+    keyed
+}
+
+fn integer_field(state: &super::super::ModelSimState, name: &str) -> Integer {
+    let Value::Integer(value) = crate::simulation::sampled::world::field(state, name) else {
+        panic!("{name} is an integer field")
+    };
+    value
+}
+
+#[trace("FR-120-AC-29")]
+#[test]
+fn direct_swap_reads_both_pre_values_and_observes_the_candidate_budget_boundary() {
+    let post = "self.a = pre(self.b) and self.b = pre(self.a)";
+    let solved = cell_with_bounds(post, false, 99, 3, 5, &[]);
+    let general = cell_with_bounds(post, true, 99, 3, 5, &[]);
+    let solved_system = solved.system();
+    let general_system = general.system();
+    let (fast, fast_charge) = apply(&solved_system, "set");
+    let (full, full_charge) = apply(&general_system, "set");
+    assert_eq!(fast_charge, 2);
+    assert_eq!(full_charge, 10_001);
+    assert_eq!(fast.successors.len(), 1);
+    let state = &fast.successors[0].state;
+    assert_eq!(integer_field(state, "a"), Integer::from(5_i64));
+    assert_eq!(integer_field(state, "b"), Integer::from(3_i64));
+    assert_eq!(
+        keyed_applications(&solved_system, &fast),
+        keyed_applications(&general_system, &full)
+    );
+    assert!(fast.findings.is_empty());
+    assert!(full.findings.is_empty());
+    for (budget, completes) in [(1, false), (2, true)] {
+        let system = solved.system_within(budget);
+        let expansion = system.successors(&initial(&system));
+        if completes {
+            assert_eq!(
+                expansion.expect("the exact charge fits").successors.len(),
+                1
+            );
+        } else {
+            let stopped = expansion.expect_err("one missing candidate charge must stop");
+            assert_eq!(stopped.limit, Some(ExpansionLimit::MaxCandidates));
+            assert_eq!(
+                stopped.cause,
+                filament_semantic_value::catalog::CatalogCode::new(
+                    "resource_exhausted",
+                    "insufficient-next-charge"
+                )
+            );
+        }
+    }
+}
+
+#[trace("FR-120-AC-30")]
+#[test]
+#[ignore = "QSL-2703: the required unguarded increment source is refused at S3 before simulation"]
+fn direct_partial_assignment_preserves_all_unsolved_values_and_effects() {
+    let post = "self.a = pre(self.a) + 1";
+    let solved = cell_with_bounds(post, false, 99, 3, 5, &[]);
+    let general = cell_with_bounds(post, true, 99, 3, 5, &[]);
+    assert_partial_assignment(solved, general);
+}
+
+/// FR-577 permits the explicit precondition to prove the increment's range;
+/// the post remains a direct assignment in both generator comparisons.
+#[trace("FR-120-AC-30")]
+#[test]
+fn guarded_partial_assignment_preserves_unsolved_values_effects_and_charges() {
+    let post = "self.a = pre(self.a) + 1";
+    let solved = cell_with_precondition(post, false, 99, 3, 5, &[], Some("self.a <= 98"));
+    let general = cell_with_precondition(post, true, 99, 3, 5, &[], Some("self.a <= 98"));
+    assert_partial_assignment(solved, general);
+}
+
+fn assert_partial_assignment(solved: World, general: World) {
+    let solved_system = solved.system();
+    let general_system = general.system();
+    let (fast, fast_charge) = apply(&solved_system, "set");
+    let (full, full_charge) = apply(&general_system, "set");
+    assert_eq!(fast_charge, 101);
+    assert_eq!(full_charge, 10_001);
+    assert_eq!(fast.successors.len(), 100);
+    let bs: BTreeSet<_> = fast
+        .successors
+        .iter()
+        .map(|applied| {
+            assert_eq!(integer_field(&applied.state, "a"), Integer::from(4_i64));
+            let Value::Integer(b) = crate::simulation::sampled::world::field(&applied.state, "b")
+            else {
+                panic!("b is an integer")
+            };
+            b
+        })
+        .collect();
+    assert_eq!(bs, (0_i64..100).map(Integer::from).collect());
+    assert_eq!(
+        keyed_applications(&solved_system, &fast),
+        keyed_applications(&general_system, &full)
+    );
+    assert!(fast.findings.is_empty());
+    assert!(full.findings.is_empty());
+    let system = general.system_within(300);
+    assert_eq!(
+        system
+            .successors(&initial(&system))
+            .expect_err("the enumerated form cannot fit300")
+            .limit,
+        Some(ExpansionLimit::MaxCandidates)
+    );
+    let system = solved.system_within(300);
+    assert_eq!(
+        system
+            .successors(&initial(&system))
+            .expect("the solved form fits300")
+            .successors
+            .len(),
+        100
+    );
+}
+
+#[trace("FR-120-AC-30")]
+#[test]
+#[ignore = "QSL-2703: the unguarded bounded increment source is refused at S3"]
+fn direct_assignment_and_its_reference_preserve_full_canonical_exploration() {
+    let post = "self.a = pre(self.a) + 1";
+    let solved = cell_with_bounds(post, false, 3, 0, 5, &[]);
+    let general = cell_with_bounds(post, true, 3, 0, 5, &[]);
+    assert_increment_exploration(solved, general);
+}
+
+#[trace("FR-120-AC-30")]
+#[test]
+fn guarded_assignment_and_reference_preserve_full_canonical_exploration() {
+    let post = "self.a = pre(self.a) + 1";
+    let solved = cell_with_precondition(post, false, 3, 0, 5, &[], Some("self.a <= 2"));
+    let general = cell_with_precondition(post, true, 3, 0, 5, &[], Some("self.a <= 2"));
+    assert_increment_exploration(solved, general);
+}
+
+fn assert_increment_exploration(solved: World, general: World) {
+    let explore = |world: &World| {
+        explore_model(&world.system(), 10_000, Limits::default(), || false)
+            .expect("the finite Cell family admits")
+    };
+    let fast = explore(&solved);
+    let full = explore(&general);
+    assert_eq!(fast, full);
+    let Outcome::Exhaustive(stats) = fast.outcome else {
+        panic!("the bounded increment family must finish")
+    };
+    assert_eq!(stats.states, 301);
+    assert_eq!(stats.transitions, 20_100);
+    assert_eq!(stats.depth, 3);
+    assert!(fast.findings.is_empty());
+}
+
+#[trace("FR-120-AC-31")]
+#[test]
+#[ignore = "QSL-2703: the bound-exceeding assignment source has the same unresolved S3 admission contract"]
+fn an_out_of_domain_direct_assignment_has_no_successor_or_finding() {
+    let post = "self.a = pre(self.b) + 1";
+    let solved = cell_with_bounds(post, false, 99, 3, 99, &[]);
+    let general = cell_with_bounds(post, true, 99, 3, 99, &[]);
+    let (fast, fast_charge) = apply(&solved.system(), "set");
+    let (full, full_charge) = apply(&general.system(), "set");
+    assert_eq!(fast_charge, 1);
+    assert_eq!(full_charge, 10_001);
+    assert!(fast.successors.is_empty());
+    assert!(full.successors.is_empty());
+    assert!(fast.findings.is_empty());
+    assert!(full.findings.is_empty());
 }
 
 /// The one finding a candidate of `applications` records for the

@@ -21,10 +21,15 @@ use fsl_replay::{
 use ix_trace_rs::trace;
 
 use crate::hyper_projected::{aligned, IDLE, MID_OPERATION};
-use crate::hyper_witness::{members, ExhaustedExistential, GUARDED, GUARDED_CLAUSE};
+use crate::hyper_witness::{
+    members, ExhaustedExistential, GUARDED_CLAUSE, KERNEL_DIV_FUNCTION, KERNEL_GUARDED,
+    KERNEL_MOD_FUNCTION,
+};
 use crate::hyper_world::{
     busy_of, high, low, non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS,
 };
+
+mod certificate_boundary_cases;
 
 /// The counterexample of `world`'s run.
 fn refuted(world: &World) -> HyperCounterexample {
@@ -219,8 +224,14 @@ fn a_lockstep_counterexample_on_which_the_body_holds_is_inconclusive() {
 fn an_undefined_match_counterexample_replays_to_its_value() {
     let divided = "match { a.step.op = b.step.op and \
          a.step.Vault::step.i = b.step.Vault::step.i and \
-         (if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i) else 0) = 0 }";
-    let world = World::new(Vault::Secure, false, &STARTS, &non_interference(divided));
+         (if present(a.step.Vault::step.i) then q(value(a.step.Vault::step.i)) else 0) = 0 }";
+    let world = World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &non_interference(divided),
+        KERNEL_MOD_FUNCTION,
+    );
     let counterexample = refuted(&world);
     let HyperCounterexampleKind::Undefined(claimed) = counterexample.kind.clone() else {
         panic!("expected an undefined-evaluation counterexample");
@@ -551,9 +562,15 @@ fn a_witness_set_emptied_by_a_refused_match_reproduces_nothing() {
 #[trace("TC-608")]
 #[test]
 fn a_witness_set_emptied_by_an_undefined_match_reproduces_nothing() {
-    let divided = " and (if present(b.step.Vault::step.i) then 1 mod value(b.step.Vault::step.i) \
+    let divided = " and (if present(b.step.Vault::step.i) then q(value(b.step.Vault::step.i)) \
                    else 0) = 0";
-    let world = World::new(Vault::Leaky, false, &STARTS, &opaque(divided));
+    let world = World::new_with_kernel_function(
+        Vault::Leaky,
+        false,
+        &STARTS,
+        &opaque(divided),
+        KERNEL_MOD_FUNCTION,
+    );
     no_value_settlement(world.replay(&exhausted()));
 }
 
@@ -565,7 +582,13 @@ fn a_witness_set_emptied_by_an_undefined_match_reproduces_nothing() {
 #[trace("TC-608")]
 #[test]
 fn a_witness_set_that_lost_a_member_to_an_undefined_contract_reproduces_nothing() {
-    let world = World::new(GUARDED, false, &STARTS, GUARDED_CLAUSE);
+    let world = World::new_with_kernel_function(
+        KERNEL_GUARDED,
+        false,
+        &STARTS,
+        GUARDED_CLAUSE,
+        KERNEL_DIV_FUNCTION,
+    );
     let system = ModelSystem::new(world.subject().simulation).expect("the subject admits");
     let initial = system.initial()[1].clone();
     let (first, after) = take(&world, &initial, 0);
@@ -610,8 +633,14 @@ impl fsl_eval::hyper::StepMatch for UniversalOnly<'_> {
 /// `step(0)`, and an existential one that divides by `b`'s input.
 fn divided_over_a_universal_match() -> World {
     let divided = " and (if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 \
-                   and (if present(b.step.Vault::step.i) then 1 mod value(b.step.Vault::step.i) else 0) = 0";
-    World::new(Vault::Secure, false, &STARTS, &opaque(divided))
+                   and (if present(b.step.Vault::step.i) then q(value(b.step.Vault::step.i)) else 0) = 0";
+    World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &opaque(divided),
+        KERNEL_MOD_FUNCTION,
+    )
 }
 
 /// FR-183 "Undefined evaluation" for an HP-3 clause: `μ_U` is read over the
@@ -878,15 +907,16 @@ fn an_undefined_witness_path_through_a_rejected_existential_step_is_not_reproduc
 #[trace("TC-608")]
 #[test]
 fn a_witness_set_computed_past_a_universal_contract_with_no_value_reproduces_nothing() {
-    let world = World::new(
+    let world = World::new_with_kernel_function(
         Vault::Custom(
             "post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n\
-             pre Guard using v on V::Vault::reset { 1 div self.h >= 0 }\n\
+             pre Guard using v on V::Vault::reset { q(self.h) >= 0 }\n\
              post Reset using v on V::Vault::reset { self.l = 0 }\n",
         ),
         true,
         &STARTS,
         &opaque(""),
+        KERNEL_DIV_FUNCTION,
     );
     let system = ModelSystem::new(world.subject().simulation).expect("the subject admits");
     let (step, _) = take(&world, &system.initial()[0], 0);
@@ -956,7 +986,7 @@ fn a_witness_set_beside_a_step_whose_universal_match_is_undefined_reproduces_not
     ));
 }
 
-/// The vault of [`GUARDED`] whose guard is refused rather than undefined where
+/// The vault of [`crate::hyper_witness::GUARDED`] whose guard is refused rather than undefined where
 /// `l = 1` and `h = 1`: a protocol reference is a clause no stage evaluates
 /// (FR-308), and the guard reaches it only there.
 const REFUSED: Vault = Vault::Custom(

@@ -17,6 +17,8 @@ use fsl_semantics::model::intake::meaning;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
+mod behavior_boundaries;
+
 use crate::model_operations::{
     admit_and_assemble_with_profiles, config_unit_with_profiles, operation,
     version_number_value_type, wire_construct, wire_envelope, wire_field, wire_type,

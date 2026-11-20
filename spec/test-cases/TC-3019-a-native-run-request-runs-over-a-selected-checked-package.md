@@ -13,7 +13,7 @@ relationships:
 Verify that a package-only `native-run/1` request runs from the package's
 own records, never reads or compiles source, and refuses a package that
 cannot run with the code and locus stated. Scope: FR-1039-AC-1 to
-FR-1039-AC-6.
+FR-1039-AC-7.
 
 ## Test Procedure
 
@@ -43,7 +43,12 @@ FR-1039-AC-6.
 6. Compile FR-931-AC-1's `Low` unit to a package file with a handoff,
    remove the source, and send the `tl_lowering` members of FR-1039-AC-6 over
    `{file, equality}`; send the same
-   members over the source.
+   members over the source; send FR-1039-AC-6's `cross_evaluate` request
+   over `{file, equality}` and over the handoff `{directory}`.
+7. Remove the `Low` package's `temporal_clause_names`; separately set the
+   `Low` node's `temporal_profile` law to `filament.temporal.unknown/v1`;
+   send `{"clause": "Low"}` over each. Compile FR-931-AC-16's unit to a
+   package and send `{"clause": "Low"}` over it and over the source.
 
 ## Expected Results
 
@@ -72,4 +77,12 @@ FR-1039-AC-6.
   `/request/package/semantic_graph/nodes/{n}/body`, with no item settled.
 - Step 6: each `tl_lowering` record over the package equals the source
   route's byte for byte; each refusal has the code, member and exit
-  FR-1039-AC-6 states; none is the not-implemented refusal.
+  FR-1039-AC-6 states; none is the not-implemented refusal; each record
+  carries the members FR-1039-AC-6 lists; the `cross_evaluate` request
+  refuses `invalid-request` with `requires` `directory` over
+  `{file, equality}` and returns the source record over `{directory}`.
+- Step 7: `invalid_package`/`invalid-value` at
+  `/request/package/temporal_clause_names` and `unknown_profile`/
+  `unsupported-selection` at `/request/package/semantic_graph/nodes/{n}/body/operation/laws/0/definition`, each at stage `request`, exit 20, no
+  record; FR-931-AC-16's package record equals the source record byte for
+  byte, its atom `count<ix://I/Small>`.

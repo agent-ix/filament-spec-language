@@ -17,6 +17,7 @@ use ix_trace_rs::trace;
 const MODEL: &[u8] = include_bytes!("../../../tests/fixtures/spine-model.semantic-ir.json");
 
 mod acceptance;
+mod behavior_boundaries;
 
 fn protocol_value(value: SuppliedValue) -> fsl_eval::value::ProtocolSuppliedValue {
     value.into()

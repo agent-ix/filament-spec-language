@@ -55,6 +55,8 @@ mod call_replay_context_items;
 mod call_requirements_items;
 mod check_imports;
 mod checked_clause_kind_unique;
+#[cfg(feature = "checked-handoff")]
+mod checker_value_boundaries;
 mod clock_derivation;
 mod clock_reach;
 mod clock_selection;
@@ -83,6 +85,7 @@ mod export_temporal_lowering;
 mod extension_forms;
 mod extension_s1_parse;
 mod family_outcome_layering;
+mod forms_package_contracts;
 mod first_rule_readme;
 mod formal_source;
 mod formatter_identity;
