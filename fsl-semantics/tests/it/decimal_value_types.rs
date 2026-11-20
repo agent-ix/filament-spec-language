@@ -305,7 +305,7 @@ fn with_value_alias_construct(document: &mut Value) {
             "kind": {"module": "test/decimal", "name": "value_alias"},
             "moduleVersion": "1.0.0",
             "construct": {
-                "identity": "none", "shape": "alias", "members": {},
+                "identity": "none", "shape": "alias", "members": {"target": "required"},
                 "meaning": "filament.meaning.model.value-type/v1",
             },
         }));
@@ -318,7 +318,7 @@ fn cash_value_type() -> Value {
     json!({
         "identity": identity, "displayName": "Cash",
         "kind": {"module": "test/decimal", "name": "value_alias"},
-        "roles": [], "constraints": [],
+        "roles": [], "constraints": [], "extensions": [],
         "target": "ix://filament/native/Decimal",
         "origin": {"generated": {
             "generatorIdentity": identity, "generatorVersion": "1.0.0",
