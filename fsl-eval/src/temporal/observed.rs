@@ -188,7 +188,8 @@ pub fn evaluate_observed_timed(
         positions,
         shape,
     );
-    let trace = match (loop_start, through) {
+    let represented = stamps.len();
+    let trace = match (loop_start.clone(), through) {
         (Some((start, delay)), None) => super::TimedTrace::lasso(stamps, start, delay),
         (Some(_), Some(_)) => Err(TemporalRefusal::Fault(InternalFault::new(
             "temporal.timed",
@@ -198,16 +199,27 @@ pub fn evaluate_observed_timed(
         (None, None) => super::TimedTrace::new(stamps),
     };
     let result = trace.and_then(|trace| {
-        let count = match clause.clause().activation() {
-            fsl_semantics::check::Activation::Origin => 1,
-            fsl_semantics::check::Activation::Each { .. } => trace.stamps().len(),
+        let activation_positions: Vec<usize> = match (
+            clause.clause().activation(),
+            loop_start.as_ref(),
+        ) {
+            (fsl_semantics::check::Activation::Origin, _) => vec![0],
+            (fsl_semantics::check::Activation::Each { .. }, Some((start, _))) => {
+                (0..usize::try_from(*start).unwrap_or(usize::MAX))
+                    .chain(
+                        (0..represented.saturating_sub(usize::try_from(*start).unwrap_or(0)))
+                            .map(|offset| represented.saturating_add(offset)),
+                    )
+                    .collect()
+            }
+            (fsl_semantics::check::Activation::Each { .. }, None) => (0..represented).collect(),
         };
         let guarded = matches!(
             clause.clause().activation(),
             fsl_semantics::check::Activation::Each { guarded: true }
         );
         let mut pending = false;
-        for index in 0..count {
+        for index in activation_positions {
             let at = TemporalPosition::new(u64::try_from(index).unwrap_or(u64::MAX));
             if guarded {
                 match letters.activation(at, meter) {
