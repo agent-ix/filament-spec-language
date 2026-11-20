@@ -48,10 +48,10 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
     RecordSlot, Visit,
 };
-use fsl_foundation::Span;
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
 };
+use fsl_foundation::Span;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -72,8 +72,8 @@ use super::refusal::{
     IdentityObserving, KeyFault, Obligation, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
-use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
-use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
+use crate::value::definition::{admit_ieee_profile, AdmittedIeeeProfile, DefinitionRole};
+use crate::value::enumeration::{mint_variant_id, AdmittedEnumDeclaration};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_exact::EffectiveId;
@@ -90,8 +90,8 @@ use filament_exact::{Value, ValueType};
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration, TypeEnvironment,
-    admits_equality_conversion,
+    admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
+    FieldDeclaration, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -99,8 +99,8 @@ use filament_semantic_value::location::{
 };
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
-    IdentifiedUnit, QuantityOperation, QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
-    check_comparable, evaluate_quantity_unit, result_unit,
+    check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
+    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -2695,6 +2695,7 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType, location: &Location) -> N
         equality_producer: None,
         field_population: None,
         equality_range_context: None,
+        type_argument: None,
     }
 }
 
@@ -2853,6 +2854,7 @@ impl Typer<'_> {
                         equality_producer: None,
                         field_population: None,
                         equality_range_context: None,
+                        type_argument: None,
                     });
                 }
             }
@@ -2889,6 +2891,7 @@ impl Typer<'_> {
                     equality_producer: None,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 })
             }
             (ValueType::Int(source), ValueType::Int(target))
@@ -2905,6 +2908,7 @@ impl Typer<'_> {
                     equality_producer: None,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 })
             }
             _ => Err(mismatch(&node.location)),
@@ -3203,7 +3207,11 @@ impl<'a> Typer<'a> {
 
     /// The declared name of `slot` (FR-400 "Canonical read projections"). A slot
     /// bound without a recorded name is an internal fault, never an empty name.
-    pub(crate) fn slot_name(&self, slot: Slot, location: &Location) -> Result<String, CheckRefusal> {
+    pub(crate) fn slot_name(
+        &self,
+        slot: Slot,
+        location: &Location,
+    ) -> Result<String, CheckRefusal> {
         self.slot_names.get(slot).cloned().ok_or_else(|| {
             refuse(
                 location,
@@ -5340,6 +5348,7 @@ impl<'a> Typer<'a> {
                     equality_producer: None,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 });
             }
             return Ok(typed);

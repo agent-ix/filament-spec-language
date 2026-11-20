@@ -16,6 +16,7 @@ use fsl_semantics::check::{CheckedNode, NodeId};
 struct ExpressionNode {
     kind: NodeKind<usize, CheckedLiteral>,
     value_type: ValueType,
+    type_argument: Option<String>,
 }
 
 #[derive(Default)]
@@ -24,6 +25,7 @@ pub(super) struct CanonicalRows {
     functions: BTreeMap<usize, String>,
     record_fields: BTreeMap<NodeKey, Vec<String>>,
     union_members: BTreeMap<NodeKey, Vec<String>>,
+    type_arguments: BTreeMap<String, String>,
 }
 
 /// A checked expression arena with children remapped to its own indices.
@@ -67,6 +69,7 @@ impl CheckedExpression {
                 ExpressionNode {
                     kind,
                     value_type: node.value_type().clone(),
+                    type_argument: node.type_argument().map(str::to_owned),
                 }
             })
             .collect();
@@ -145,6 +148,14 @@ impl CheckedExpression {
 }
 
 impl CanonicalRows {
+    fn aggregate_type_argument(&self, node: &ExpressionNode) -> String {
+        node.type_argument
+            .as_ref()
+            .and_then(|name| self.type_arguments.get(name))
+            .cloned()
+            .unwrap_or_else(|| self.type_argument(&node.value_type))
+    }
+
     fn type_argument(&self, value_type: &ValueType) -> String {
         let mut spellings = fsl_semantics::model::spelling::SourceSpellings::default();
         for (key, declaration) in &self.declarations {
@@ -531,7 +542,7 @@ impl Printer<'_> {
                     Visit::Only => "only",
                 };
                 let type_argument = matches!(visit, Visit::Count | Visit::Sum | Visit::Only)
-                    .then(|| rows.type_argument(&node.value_type));
+                    .then(|| rows.aggregate_type_argument(node));
                 let (source, body, population_where, is_population) = match self
                     .expression
                     .nodes
@@ -601,7 +612,7 @@ impl Printer<'_> {
             } => {
                 let (source, _) = planned(0)?;
                 let (step, _) = planned(if identity.is_some() { 2 } else { 1 })?;
-                let type_argument = rows.type_argument(&node.value_type);
+                let type_argument = rows.aggregate_type_argument(node);
                 match identity {
                     Some(_) => {
                         let (identity, _) = planned(1)?;
@@ -918,6 +929,7 @@ pub(super) fn source_labels(
         functions: valuation.canonical_functions.clone(),
         record_fields: valuation.canonical_record_fields.clone(),
         union_members: valuation.canonical_union_members.clone(),
+        type_arguments: valuation.canonical_type_arguments.clone(),
     };
     valuation
         .checked_conditions
@@ -1047,6 +1059,7 @@ mod tests {
         nodes.push(ExpressionNode {
             kind,
             value_type: ValueType::Boolean,
+            type_argument: None,
         });
         nodes.len() - 1
     }
@@ -1056,7 +1069,11 @@ mod tests {
         kind: NodeKind<usize, CheckedLiteral>,
         value_type: ValueType,
     ) -> usize {
-        nodes.push(ExpressionNode { kind, value_type });
+        nodes.push(ExpressionNode {
+            kind,
+            value_type,
+            type_argument: None,
+        });
         nodes.len() - 1
     }
 
@@ -1410,6 +1427,44 @@ mod tests {
                 expected
             );
         }
+    }
+
+    /// FR-931-AC-16: a named scalar aggregate argument keeps its declaration
+    /// identity while an otherwise identical structural type stays structural.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-16")]
+    fn aggregate_type_alias_keeps_its_source_identity() {
+        let bounded = ValueType::Int(
+            IntegerInterval::new(Integer::from(0_i64), Integer::from(4_i64)).unwrap(),
+        );
+        let mut nodes = Vec::new();
+        let source = ordinary(&mut nodes, NodeKind::Local(0));
+        let body = typed(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+            ValueType::Boolean,
+        );
+        let root = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Count,
+                slot: 1,
+                name: "x".to_owned(),
+                source,
+                body,
+            },
+            bounded,
+        );
+        nodes[root].type_argument = Some("Small".to_owned());
+        let expression = CheckedExpression { nodes, root };
+        let rows = CanonicalRows {
+            type_arguments: BTreeMap::from([("Small".to_owned(), "ix://I/Small".to_owned())]),
+            ..CanonicalRows::default()
+        };
+        assert_eq!(
+            expression.render(&["xs".to_owned()], &rows).unwrap(),
+            "count<ix://I/Small>(x in xs: true)"
+        );
     }
 
     /// FR-931-AC-16: fold and reduce take their printed type from the checked

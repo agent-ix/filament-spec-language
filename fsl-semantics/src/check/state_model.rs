@@ -251,6 +251,7 @@ impl FamilyContract for StateModelFamily {
                 equality_producer: None,
                 field_population: None,
                 equality_range_context: None,
+                type_argument: None,
             }))
         };
         let checked = (|| -> Result<Checked, CheckRefusal> {
@@ -614,8 +615,8 @@ impl FamilyContract for StateModelFamily {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::check::DispatchOperation;
     use crate::check::family::fixtures::{empty_scope, root_location};
+    use crate::check::DispatchOperation;
     use crate::family::{DiagnosticSink, ScopeStack, StageLimits};
     use ix_trace_rs::trace;
 
@@ -628,10 +629,7 @@ mod tests {
         scope.dispatch_operations.push(DispatchOperation {
             receiver_type: receiver.clone(),
             member: "note".to_owned(),
-            parameters: vec![
-                ValueType::Integer,
-                ValueType::option(ValueType::Integer),
-            ],
+            parameters: vec![ValueType::Integer, ValueType::option(ValueType::Integer)],
             required_arity: 1,
             result: ValueType::Boolean,
             selected_operation_owner: receiver.clone(),
@@ -678,11 +676,15 @@ mod tests {
             let Err(refusal) = check_dispatch_arity(arity) else {
                 panic!("invalid arity {arity} must be refused");
             };
-            assert!(matches!(
-                &refusal.cause,
-                CheckCause::StateModel(model)
-                    if model.cause == CheckCause::IllTyped(IllTypedCause::TypeMismatch)
-            ), "arity {arity} was refused as {:?}", refusal.cause);
+            assert!(
+                matches!(
+                    &refusal.cause,
+                    CheckCause::StateModel(model)
+                        if model.cause == CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+                ),
+                "arity {arity} was refused as {:?}",
+                refusal.cause
+            );
         }
     }
 
@@ -737,11 +739,9 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message, "existing diagnostic");
         assert_eq!(entries[1].scope, "enclosing");
-        assert!(
-            entries[1]
-                .message
-                .contains("node limit=37, meter admissions=3")
-        );
+        assert!(entries[1]
+            .message
+            .contains("node limit=37, meter admissions=3"));
         assert_eq!(scopes.path(), "enclosing");
     }
 
