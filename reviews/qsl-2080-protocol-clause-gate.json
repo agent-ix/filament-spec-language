@@ -1,0 +1,20 @@
+{
+  "ticket": "QSL-2080",
+  "reviewed_code_head": "847b6cfc28b793261798626e7139e1c426d8e901",
+  "tested_head": "ad27d55e8489dec577185534b18b33035af8ba4e",
+  "scope": "Complete fsl-semantics protocol-clause library subsystem",
+  "command": "CARGO_TARGET_DIR=$PWD/target CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test --locked -p fsl-semantics --lib check::protocol_clause:: -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+  "exit_code": 0,
+  "passed": 73,
+  "failed": 0,
+  "ignored": 1,
+  "filtered_out": 877,
+  "ignored_owner": "QSL-2222",
+  "ignored_counted_as_coverage": false,
+  "new_source_tests_passed": 10,
+  "scope_notes": [
+    "Replicated-role checks cover source admission, population resolution and checked metadata, not runtime FR-208-AC-1.",
+    "No unrelated semantic package, workspace, proof, product-binary or blocked lint gate ran.",
+    "Trailing gate receipt is data only; source and review artifacts match the tested head."
+  ]
+}
