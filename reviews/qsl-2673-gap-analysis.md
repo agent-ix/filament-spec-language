@@ -39,3 +39,13 @@ Matrix static statuses: 4,532 tagged; 1,169 untagged; 219 tagged-by-ignored-test
 `quire coverage` reports 5,450 untracked symbols, 21,503 diagnostics, and a Rust binding census of 12,620 candidates / 12,093 tagged / 11,624 bound. The dominant diagnostic is `trace-id-outside-marker` (21,092). A source scan found no `todo!` or `unimplemented!` in production Rust; the suspicious `todo!` matches were documentation examples. The changed tests contain behavioral assertions, and the changed production paths have owning requirements FR-283, FR-642, FR-643, and FR-644. No unowned behavior or hollow stub was found in the changed surface.
 
 Reverse-gap inspection covered the changed timed evaluator, trace decoder, monitor admission/evaluation route, incremental-session state access, command stream position accounting, and associated tests. Semantic review was skipped; it was not requested. Plan completion: not assessed.
+
+## Dispositions
+
+### Round 1
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | Arch's standing scope freeze parks owed-test sweeps; the missing FR-643-AC-10 timed-session coverage is not assigned to this PR. No ticket was created. |
+| FND-002 | deferred | Arch's standing scope freeze parks owed-test sweeps; repository-wide ignored-only criteria are outside this PR's assigned scope. No ticket was created. |
+| FND-003 | deferred | Arch's standing scope freeze parks traceability sweeps; repository-wide untracked symbols/diagnostics are outside this PR's assigned scope. No ticket was created. |

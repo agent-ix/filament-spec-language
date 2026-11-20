@@ -26,3 +26,19 @@ The code review used the supplied focused passing checks: `fsl-analyze --test it
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | medium | The new timed monitor integration test is tagged to the timestamped finite-window criterion FR-283-AC-15, although it tests `TraceInput::Timed`, timed clock authentication, and the timed `through` boundary; the tag does not cover the timed trace criterion. | fsl-analyze/tests/it/monitor_inputs.rs:860 |
+
+## Dispositions
+
+### Round 1
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The timed trace test now carries the owning timed-trace criteria and no longer claims the unrelated timestamped-trace criterion. |
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: fixed
+    reason: "At PR head bbbec6dde30dbacfc17ae55b7988161792b6b33f, the test tag was corrected to TC-1664 and FR-642-AC-1 / FR-642-AC-2; FR-283-AC-15 was removed."
+    after_excerpt: '#[trace("TC-1664", "FR-642-AC-1", "FR-642-AC-2")]'
+```
