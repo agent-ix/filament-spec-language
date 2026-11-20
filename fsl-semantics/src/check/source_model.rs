@@ -881,7 +881,9 @@ fn scalar_type(
                     }
                 }
                 filament_exact::ValueType::Text(text) => ScalarValueDomain::Text(text),
-                filament_exact::ValueType::Decimal(decimal) => ScalarValueDomain::Decimal(decimal),
+                filament_exact::ValueType::Decimal(decimal) => {
+                    ScalarValueDomain::Decimal(decimal.clone())
+                }
                 _ => return Err(unsupported()),
             };
             let key = node_key(identity, &format!("{owner}-{site}-type"));

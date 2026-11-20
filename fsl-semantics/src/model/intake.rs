@@ -3535,7 +3535,7 @@ fn canonical_rational(text: &str) -> Option<filament_exact::Rational> {
 /// alias narrows; a policy-carrying node starts from the precision domain.
 #[ix_trace_rs::string_edge]
 fn read_decimal_value_type(
-    package: &str,
+    _package: &str,
     node: &str,
     ctx: &NodeCtx<'_>,
     at: &str,
