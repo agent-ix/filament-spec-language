@@ -833,17 +833,68 @@ pub fn compile_model_unit(
     let constructs = meanings
         .into_iter()
         .map(|(name, meaning)| {
+            let members = match name {
+                "object_type" => json!({"identityFields": "required"}),
+                "record_value_type" => json!({"identityFields": "optional"}),
+                "tuple_type" => json!({"positions": "required"}),
+                "variant_type" => json!({"variants": "required"}),
+                "event_type" => json!({
+                    "identityFields": "optional",
+                    "occurrenceField": "required",
+                }),
+                "namespace" => json!({"members": "required", "vocabulary": "required"}),
+                "interface" => json!({
+                    "featureOrder": "required",
+                    "fields": "optional",
+                    "operations": "optional",
+                    "supertypes": "optional",
+                }),
+                "part" => json!({
+                    "declaredType": "required",
+                    "fields": "forbidden",
+                    "multiplicity": "required",
+                    "operations": "forbidden",
+                    "owner": "required",
+                }),
+                "port" => json!({
+                    "direction": "required",
+                    "fields": "forbidden",
+                    "interfaceType": "required",
+                    "multiplicity": "required",
+                    "operations": "forbidden",
+                    "owner": "required",
+                }),
+                "connection" => json!({
+                    "fields": "forbidden",
+                    "flowDirection": "required",
+                    "operations": "forbidden",
+                    "sourceEnd": "required",
+                    "targetEnd": "required",
+                }),
+                "allocation" => json!({
+                    "fields": "forbidden",
+                    "operations": "forbidden",
+                    "sourceElement": "required",
+                    "targetElement": "required",
+                }),
+                "machine" => json!({"states": "required", "transitions": "required"}),
+                "process" => json!({"identityFields": "required", "steps": "required"}),
+                "store" => json!({"persists": "required"}),
+                "population" => json!({}),
+                _ => json!({}),
+            };
             json!({
                 "kind": {"module": identity, "name": name},
                 "moduleVersion": "1.0.0",
                 "construct": {
                     "identity": "none",
-                    "shape": if name == "interface" { "interface" } else { "record" },
-                    "members": if name == "interface" {
-                        json!({"featureOrder": "required", "fields": "optional", "operations": "optional", "supertypes": "optional"})
-                    } else {
-                        json!({})
+                    "shape": match name {
+                        "interface" => "interface",
+                        "tuple_type" => "tuple",
+                        "variant_type" => "enumeration",
+                        _ => "record",
                     },
+                    "members": members,
                     "meaning": meaning
                 },
             })
@@ -1074,7 +1125,11 @@ fn read_object(
                         "identity": option_identity,
                         "displayName": format!("Option<{inner}>"),
                         "kind": "option",
+                        "roles": [],
                         "inner": type_ref(&inner, package),
+                        "constraints": [],
+                        "extensions": [],
+                        "unknownPolicy": "reject",
                         "origin": source_origin(parsed, Span { start: member_start, end: tokens[index - 1].span.end }),
                     }));
                     type_reference = Some(option_identity);
@@ -1547,6 +1602,8 @@ fn read_systems_interface(
             field["multiplicity"]["unique"] = json!(false);
         }
     }
+    interface.wire.as_object_mut()?.remove("identityFields");
+    interface.wire.as_object_mut()?.remove("relationships");
     let features = interface.wire["fields"]
         .as_array()?
         .iter()
@@ -1614,8 +1671,6 @@ fn read_systems_part(
             "kind": {"module": package, "name": "part"},
             "roles": [], "origin": source_origin(parsed, Span { start, end }),
             "constraints": [], "extensions": [], "unknownPolicy": "reject",
-            "fields": [], "operations": [], "relationships": [], "supertypes": [],
-            "identityFields": [],
             "owner": format!("ix://{package}/{owner}"),
             "declaredType": format!("ix://{package}/{declared_type}"),
             "multiplicity": {"lower": lower, "upper": upper, "ordered": ordered, "unique": unique},
@@ -1666,8 +1721,6 @@ fn read_systems_port(
             "kind": {"module": package, "name": "port"},
             "roles": [], "origin": source_origin(parsed, Span { start, end }),
             "constraints": [], "extensions": [], "unknownPolicy": "reject",
-            "fields": [], "operations": [], "relationships": [], "supertypes": [],
-            "identityFields": [],
             "owner": format!("ix://{package}/{owner}"),
             "interfaceType": format!("ix://{package}/{interface_type}"),
             "direction": direction,
@@ -1730,8 +1783,6 @@ fn read_systems_connection(
             "kind": {"module": package, "name": "connection"},
             "roles": [], "origin": source_origin(parsed, Span { start, end }),
             "constraints": [], "extensions": [], "unknownPolicy": "reject",
-            "fields": [], "operations": [], "relationships": [], "supertypes": [],
-            "identityFields": [],
             "sourceEnd": source_end, "targetEnd": target_end,
             "flowDirection": if operator == "->" { "source-to-target" } else { "bidirectional" },
         }),
@@ -1784,8 +1835,6 @@ fn read_systems_allocation(
             "kind": {"module": package, "name": "allocation"},
             "roles": [], "origin": source_origin(parsed, Span { start, end }),
             "constraints": [], "extensions": [], "unknownPolicy": "reject",
-            "fields": [], "operations": [], "relationships": [], "supertypes": [],
-            "identityFields": [],
             "sourceElement": source,
             "targetElement": format!("ix://{package}/{target}"),
         }),
@@ -2029,8 +2078,25 @@ fn read_unit(
         return None;
     }
     index += 1;
-    let scale = tokens.get(index)?.text.clone();
+    if tokens.get(index)?.text != "rational" || tokens.get(index + 1)?.text != "(" {
+        return None;
+    }
+    index += 2;
+    let numerator = signed_integer(tokens, &mut index)?;
+    if tokens.get(index)?.text != "," {
+        return None;
+    }
     index += 1;
+    let denominator = signed_integer(tokens, &mut index)?;
+    if tokens.get(index)?.text != ")" {
+        return None;
+    }
+    index += 1;
+    let scale = if denominator == "1" {
+        numerator
+    } else {
+        format!("{numerator}/{denominator}")
+    };
     if tokens.get(index)?.text != ";" {
         return None;
     }
@@ -2383,7 +2449,7 @@ fn read_population(
     }
     let end = tokens.get(index)?.span.end;
     index += 1;
-    let identity = format!("ix://{package}/{name}");
+    let identity = format!("ix://{package}/population/{name}");
     Some((
         json!({
             "identity": identity, "displayName": identity,

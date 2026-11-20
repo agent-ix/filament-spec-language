@@ -18,7 +18,10 @@ domain \"example/shop\";
 object Order identity (id) {
   id: Int[0, 999];
   total: Int[0, 100];
-  operation pay(): Boolean modifies self.total;
+  operation pay(): Boolean modifies self.total {
+    pre CanPay { self.total > 0 };
+    post Paid { self.total = pre(self.total) - 1 };
+  }
   invariant Nonnegative { self.total >= 0 };
 }
 population orders: Order;
@@ -111,7 +114,7 @@ fn a_model_unit_for_another_identity_is_refused_wrong_model_selection() {
     let packages = package_input([SHOP.as_bytes()]).expect("the model unit compiles");
     let refusal =
         selected_unit_declarations("example/other", &packages).expect_err("the identities differ");
-    assert!(refusal.contains("WrongModelSelection"), "{refusal}");
+    assert!(refusal.contains("MissingSelection"), "{refusal}");
 }
 
 #[trace("FR-710-AC-6", "TC-2998")]
@@ -168,8 +171,11 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         operation["frame"]["modifies_receiver"][0],
         "ix://example/shop/Order/total"
     );
-    assert_eq!(operation["pre"], serde_json::json!([]));
-    assert_eq!(operation["post"], serde_json::json!([]));
+    assert_eq!(operation["pre"][0]["text"], "self.total > 0");
+    assert_eq!(
+        operation["post"][0]["text"],
+        "self.total = pre(self.total) - 1"
+    );
     assert!(operation["origin"].is_object());
     assert_eq!(order["clauses"].as_array().unwrap().len(), 1);
     assert_eq!(order["clauses"][0]["clauseId"], "Nonnegative");
@@ -363,7 +369,7 @@ object Node { }
 fn an_operation_on_a_record_refuses_as_an_unsupported_construct() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/records";
-record Row { value: Integer; operation update(); }
+record Row { amount: Integer; operation update(); }
 "#;
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", "record-operation-model"),
@@ -425,7 +431,7 @@ fn a_model_unit_compiles_a_bounded_native_type_alias() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/scalars";
 type Small = Int[0, 3];
-object Item { value: Small; }
+object Item { amount: Small; }
 population items: Item;
 "#;
     let parsed = fsl_cst::parse(
@@ -516,7 +522,7 @@ union Mark { Circle(Integer), Blank }
 fn a_model_unit_compiles_and_admits_a_map_type() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/maps";
-map Index = Map<Text, Integer>[0, 4];
+map Index = Map<Text[0, 8; nfc], Integer>[0, 4];
 "#;
     let packages = package_input([source.as_bytes()]).expect("map model unit compiles");
     let (_, document) = admit(
@@ -540,7 +546,7 @@ fn a_model_unit_compiles_and_admits_dimensions_and_units() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/units";
 dimension Length;
-unit m: Length = 1;
+unit m: Length = rational(1, 1);
 "#;
     let packages = package_input([source.as_bytes()]).expect("unit model compiles");
     let compiled: serde_json::Value =
@@ -560,7 +566,7 @@ unit m: Length = 1;
 fn a_model_unit_compiles_and_admits_an_event_type() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/events";
-event Placed { at: Timestamp; occurs at; }
+event Placed { timestamp: Integer; occurs timestamp; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("event model compiles");
     let (_, document) = admit(
@@ -584,7 +590,7 @@ fn a_model_unit_compiles_and_admits_a_namespace() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/namespaces";
 object Node { value: Integer; }
-namespace Terms { members Node; term node = "a node"; }
+namespace Terms { members Node; term node_term = "a node"; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("namespace model compiles");
     let (_, document) = admit(
@@ -671,8 +677,8 @@ allocate Alloc from pump to pump;
 fn a_model_unit_compiles_and_admits_a_state_machine() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/machines";
-event Placed { at: Timestamp; occurs at; }
-machine Gate { open: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
+event Placed { timestamp: Integer; occurs timestamp; }
+machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("state machine model compiles");
     let (_, document) = admit(
@@ -695,7 +701,7 @@ machine Gate { open: Boolean; operation toggle(); states (Open, Shut); transitio
 fn a_model_unit_compiles_and_admits_a_process() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/processes";
-event Placed { at: Timestamp; occurs at; }
+event Placed { timestamp: Integer; occurs timestamp; }
 process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("process model compiles");
@@ -720,7 +726,7 @@ fn a_model_unit_compiles_and_admits_a_persistence_interface() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/stores";
 object Node { value: Integer; }
-store Nodes persists Node { operation save(n: Reference<Node>); }
+store Nodes persists Node { operation write_record(record: Reference<Node>); }
 "#;
     let packages = package_input([source.as_bytes()]).expect("store model compiles");
     let (_, document) = admit(
@@ -807,9 +813,9 @@ record Point { x: Integer; }
 tuple Pair(Integer, Boolean);
 enum Tier { Gold, Standard }
 union Mark { Circle(Integer), Blank }
-map Index = Map<Text, Integer>[0, 4];
+map Index = Map<Text[0, 8; nfc], Integer>[0, 4];
 dimension Length;
-unit m: Length = 1;
+unit m: Length = rational(1, 1);
 object Node identity (id) {
   id: Int[0, 9];
   note: Option<Text>;
@@ -821,11 +827,11 @@ object Node identity (id) {
   }
   invariant Bounded { self.id >= 0 };
 }
-event Placed { at: Timestamp; occurs at; }
-machine Gate { open: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
+event Placed { timestamp: Integer; occurs timestamp; }
+machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
 process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
-store Nodes persists Node { operation save(n: Reference<Node>); }
-namespace Terms { members Node, Gate; term node = "a node"; }
+store Nodes persists Node { operation write_record(record: Reference<Node>); }
+namespace Terms { members Node, Gate; term node_term = "a node"; }
 population nodes: Node;
 open symmetric population peers: Node;
 interface Pump { rate: Integer; operation start(); }
