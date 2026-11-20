@@ -24,6 +24,37 @@ fn run_items(
     let path = counter_request_with(ws, "", request);
     ws.write("program.fsl", source.as_bytes());
     ws.write("population.json", traces.to_string().as_bytes());
+
+    // FR-640 requires an explicit clock selection for the finite event-position
+    // domain binder. Native analyze source requests do not carry compile-time
+    // clock selections, so compile this fixture to a handoff with `t` selected
+    // and run the analyzed item against that package.
+    let analyze_request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("analyze request is written"))
+            .expect("analyze request JSON");
+    let compile_request = json!({
+        "format": "native-compile/1",
+        "request": {
+            "models": analyze_request["request"]["models"],
+            "program": analyze_request["request"]["program"],
+            "clocks": {"t": {"kind": "event_position", "sequence_authority": "obs"}},
+            "handoff": {
+                "directory": "handoff",
+                "package_name": "analyze-unit",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}
+            }
+        }
+    });
+    let compile_path = ws.write("compile.json", compile_request.to_string().as_bytes());
+    fsl_command::command::compile(&compile_path)
+        .expect("finite hyper package compiles with its clock selection");
+    let mut analyze_request = analyze_request;
+    let members = analyze_request["request"]
+        .as_object_mut()
+        .expect("native-analyze request members");
+    members.remove("program");
+    members.insert("package".to_owned(), json!({"directory": "handoff"}));
+    ws.write("analyze.json", analyze_request.to_string().as_bytes());
     let run = analyze(&path);
     assert!(
         run.item(0).is_object(),
