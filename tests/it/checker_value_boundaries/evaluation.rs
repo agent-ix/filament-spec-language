@@ -182,3 +182,68 @@ fn recursively_built_record_values_compare_clone_and_drop_at_real_depth() {
         drop(value);
     }).unwrap().join().unwrap();
 }
+
+#[test]
+#[trace("FR-650-AC-10", "TC-1231")]
+fn duration_wire_payloads_keep_exact_magnitudes_and_require_the_declared_unit() {
+    use filament_exact::Cancel;
+    use filament_semantic_value::supplied_stop::SuppliedLimits;
+    use fsl_replay::spine::{self, Call, CallOutcome, CallValue, SpineLimits, WireArgument};
+    use fsl_semantics::model::intake::PackageInput;
+    use serde_json::json;
+    let source = format!("{}dimension Time; unit s : Time = rational(1,1); unit ms : Time = rational(1,1000) * s; function offset using v(d: Quantity<s>): Quantity<s> pure {{ d + rational(1,4) s }}",super::HEADER);
+    let invoke = |numerator: i64, denominator: i64, unit: &str| {
+        let mut call = Call::new(
+            "offset".into(),
+            vec![],
+            limits(100_000),
+            SuppliedLimits::default(),
+        );
+        call.wire_arguments.push(WireArgument {parameter:"d".into(),value:json!({
+            "kind":"quantity","unit":unit,"magnitude":{"kind":"rational","numerator":numerator.to_string(),"denominator":denominator.to_string()}
+        })});
+        spine::run(
+            fsl_foundation::SourceIdentity::new("boundary-tests", "original:duration-payload"),
+            "duration-payload".into(),
+            "duration.native",
+            source.as_bytes(),
+            &PackageInput::default(),
+            &DependencyInput::default(),
+            SpineLimits::default(),
+            &call,
+            &ObjectEnvironment::default(),
+            &Cancel::new(),
+        )
+    };
+    for (n, d, expected_n, expected_d) in [
+        (-1_i64, 4_i64, 0_i64, 1_i64),
+        (0, 1, 1, 4),
+        (7, 4, 2, 1),
+        (99_999_999, 4, 25_000_000, 1),
+    ] {
+        let outcome = invoke(n, d, "s").expect("canonical Time payload admits");
+        let CallOutcome::Completed(CallValue::Written(value)) = outcome else {
+            panic!("quantity call must complete: {outcome:?}")
+        };
+        assert_eq!(
+            value,
+            json!({"kind":"quantity","unit":"s","magnitude":{"kind":"rational","numerator":expected_n.to_string(),"denominator":expected_d.to_string()}})
+        );
+    }
+    let error = invoke(1, 4, "ms").unwrap_err();
+    assert_eq!(
+        error.code(),
+        fsl_foundation::Code::InvalidRuntimeInput,
+        "{error:?}"
+    );
+    let spine::RunRefusal::Argument {
+        position,
+        ref defect,
+    } = *error
+    else {
+        panic!("unit mismatch is a typed argument defect: {error:?}")
+    };
+    assert_eq!(position, 0);
+    assert_eq!(defect.cause.to_string(), "wrong-value-kind");
+    assert_eq!(error.details().unwrap().get("path"), Some(&json!("/unit")));
+}
