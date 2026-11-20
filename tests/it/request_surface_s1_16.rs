@@ -2002,16 +2002,16 @@ fn declaring_low(declarations: &str, leaf: &str) -> String {
 #[test]
 #[trace("TC-2601", "FR-931-AC-16")]
 fn a_named_count_type_argument_prints_its_alias_key_on_both_routes() {
-    let items = "sequence[c.versionNumber, 1, 2, 3]";
+    let items = "sequence[c.versionNumber, c.versionNumber]";
     let identity = "test:s1-16:unit.native";
     for (declarations, argument, printed) in [
-        ("type Small = Int[0, 4];", "Small", format!("ix://{identity}/Small")),
+        ("type Small = Int[0, 2];", "Small", format!("ix://{identity}/Small")),
         (
-            "type Small = Tiny;\ntype Tiny = Int[0, 4];",
+            "type Small = Tiny;\ntype Tiny = Int[0, 2];",
             "Small",
             format!("ix://{identity}/Small"),
         ),
-        ("type Small = Int[0, 4];", "Int[0, 4]", "Int[0, 4]".to_owned()),
+        ("type Small = Int[0, 2];", "Int[0, 2]", "Int[0, 2]".to_owned()),
     ] {
         let leaf = format!("holds(count<{argument}>(x in {items}: x > 1) >= 1)");
         let unit = declaring_low(declarations, &leaf);

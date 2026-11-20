@@ -187,18 +187,19 @@ fn a_package_that_cannot_run_refuses_at_the_request() {
 /// FR-1039 `{file, equality}` (TC-3019): the equality file is read through
 /// `ReadEqualityRows::read` against the admitted package, and each row of
 /// "A package that cannot run" for the member refuses at the request.
+#[cfg(feature = "checked-handoff")]
 #[test]
 #[trace("TC-3019", "FR-1039-AC-6")]
 fn a_file_selection_reads_the_equality_file_beside_it() {
     let (holder, _request, _files) =
-        super::bare_equality::handoff(super::bare_equality::tc1070::SOURCE);
+        crate::bare_equality::handoff(crate::bare_equality::tc1070::SOURCE);
     let directory = holder.path();
     std::fs::copy(
         directory.join("handoff/checked-package.json"),
         directory.join("package.json"),
     )
     .unwrap();
-    std::fs::write(directory.join("other-format.json"), r#"{"format":"x/1"}"#).unwrap();
+    std::fs::write(directory.join("other-format.json"), r#"{"format":"x/1","applications":[],"facts":[],"source_units":[]}"#).unwrap();
     std::fs::write(directory.join("garbage.json"), "not json").unwrap();
     let models = json!([{"format": "semantic-ir/2.0.0", "source": source("model.json")}]);
     let lower = json!({"clause": "Nothing"});

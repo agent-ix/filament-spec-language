@@ -3170,6 +3170,51 @@ fn seq_rows_are_emitted_and_read_back() {
     assert_field_row_reads_back("versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber;");
 }
 
+/// FSpec FR-322 `seq` (QSL-2729): `seq(i in lo .. hi: e)` lowers to
+/// `filament.op.collection.seq [ref(lo), ref(hi), binding i]`, never through
+/// `map`, and every `integer_range` node's body is exactly its two integer
+/// literals, so its identity is `[.., min, {operand: Integer}, <lo>, max, <hi>]`.
+#[trace("FR-375-AC-21", "TC-310")]
+#[test]
+fn a_seq_row_lowers_over_its_bounds_with_literal_integer_ranges() {
+    let rows = "population A::config_history from C::config_history;\n\
+         object A::ConfigVersion from C::ConfigVersion { versionNumber = \
+         if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber; }";
+    let (emitted, _) = emit_rows(rows, &[]);
+    let wire = wire(&emitted.emission);
+    let nodes = nodes(&wire);
+    let seqs: Vec<_> = nodes
+        .iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.collection.seq")
+        .collect();
+    assert_eq!(seqs.len(), 1, "one seq application");
+    let arguments = seqs[0]["body"]["arguments"].as_array().unwrap();
+    assert_eq!(arguments.len(), 3, "{}", seqs[0]);
+    assert_eq!(arguments[0]["term"], "reference");
+    assert_eq!(arguments[1]["term"], "reference");
+    assert_eq!(arguments[2]["term"], "binding");
+    assert!(
+        nodes
+            .iter()
+            .all(|node| node["body"]["operation"]["identity"] != "filament.op.collection.map"),
+        "seq does not lower through map"
+    );
+    let ranges: Vec<_> = nodes
+        .iter()
+        .filter(|node| {
+            node["node_tag"] == "bounded_domain" && node["semantic_form"] == "integer_range"
+        })
+        .collect();
+    assert!(!ranges.is_empty());
+    for range in ranges {
+        let members = range["body"]["members"].as_array().unwrap();
+        assert_eq!(members.len(), 2, "{range}");
+        for member in members {
+            assert_eq!(member["value"]["term"], "literal", "{range}");
+        }
+    }
+}
+
 /// FSpec FR-341 row binders (SR-1735002 FND-002): over an operation with a
 /// Boolean parameter `flag`, a step row binds `self` at level 0 and `flag`
 /// at level 1, each a `parameter` node, whether the row passes `flag`,
