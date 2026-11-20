@@ -535,7 +535,7 @@ pub(super) fn run_bytes(
     }
     let node = serde_json::to_value(&claim.declaration).map_err(super::RunCause::Output)?;
     let checked_package = compiled.checked.package();
-    let meter = std::cell::RefCell::new(filament_exact::Meter::new(super::call_accounting(
+    let mut meter = std::cell::RefCell::new(filament_exact::Meter::new(super::call_accounting(
         &selection.accounting,
     )));
     let mut evaluation_error = None;
