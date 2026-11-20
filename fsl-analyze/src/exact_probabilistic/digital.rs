@@ -44,6 +44,7 @@ use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
 use serde_json::{Value as JsonValue, json};
 
+use super::unbounded::{Choice, Graph, maximal_end_components_from, same_action};
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MonitorState, MonitorVerdict,
     PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction,
@@ -2496,74 +2497,63 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- the finished product --------------------------------------------------
 
-    /// FR-204 TA-5: a reachable cycle of discrete moves is Zeno.
-    fn zero_delay_cycle(&self) -> Option<Vec<usize>> {
+    /// FR-924: find a maximal end component whose *whole scheduler action*
+    /// takes zero time and whose positive-probability support remains inside
+    /// the candidate. A raw edge SCC is insufficient: it mistakes a leaky
+    /// cycle for a closed zero-time component.
+    fn zero_delay_component(&self) -> Option<Vec<usize>> {
         let count = self.nodes.len();
-        let mut successors: Vec<Vec<usize>> = vec![Vec::new(); count];
-        for (edge, zero) in self.edges.iter().zip(&self.zero_delay) {
-            if *zero {
-                successors[edge.from.index()].push(edge.to.index());
-            }
-        }
-        // Iterative Tarjan.
-        let mut index_of = vec![usize::MAX; count];
-        let mut low = vec![0_usize; count];
-        let mut on_stack = vec![false; count];
-        let mut stack: Vec<usize> = Vec::new();
-        let mut next = 0_usize;
-        for root in 0..count {
-            if index_of[root] != usize::MAX {
-                continue;
-            }
-            let mut work: Vec<(usize, usize)> = vec![(root, 0)];
-            while let Some((node, cursor)) = work.pop() {
-                if cursor == 0 {
-                    index_of[node] = next;
-                    low[node] = next;
-                    next += 1;
-                    stack.push(node);
-                    on_stack[node] = true;
-                }
-                if let Some(&to) = successors[node].get(cursor) {
-                    work.push((node, cursor + 1));
-                    if index_of[to] == usize::MAX {
-                        work.push((to, 0));
-                    } else if on_stack[to] {
-                        low[node] = low[node].min(index_of[to]);
-                    }
+        let product = ProbProduct {
+            states: self.nodes.iter().map(|node| node.key.clone()).collect(),
+            kind: ProductKind::Mdp,
+            edges: self.edges.clone(),
+            initial: Vec::new(),
+            decided: Vec::new(),
+            labels: Vec::new(),
+            fairness_operations: Vec::new(),
+            fairness: Vec::new(),
+        };
+        let mut choices = Vec::with_capacity(count);
+        for state in product.ids() {
+            let mut groups: Vec<(ProductAction, Vec<&ProbEdge>, bool)> = Vec::new();
+            for (edge_index, edge) in self.edges.iter().enumerate() {
+                if edge.from != state || edge.probability.is_zero() {
                     continue;
                 }
-                if low[node] == index_of[node] {
-                    let mut component = Vec::new();
-                    while let Some(member) = stack.pop() {
-                        on_stack[member] = false;
-                        component.push(member);
-                        if member == node {
-                            break;
-                        }
-                    }
-                    let cyclic = component.len() > 1
-                        || component
-                            .first()
-                            .is_some_and(|member| successors[*member].contains(member));
-                    if cyclic {
-                        component.sort_unstable();
-                        return Some(component);
-                    }
-                }
-                if let Some((parent, _)) = work.last() {
-                    low[*parent] = low[*parent].min(low[node]);
+                let zero = self.zero_delay.get(edge_index).copied().unwrap_or(false);
+                if let Some((_, edges, all_zero)) = groups
+                    .iter_mut()
+                    .find(|(action, _, _)| same_action(action, &edge.choice))
+                {
+                    edges.push(edge);
+                    *all_zero &= zero;
+                } else {
+                    groups.push((edge.choice.clone(), vec![edge], zero));
                 }
             }
+            choices.push(
+                groups
+                    .into_iter()
+                    .filter(|(_, _, all_zero)| *all_zero)
+                    .map(|(_, edges, _)| Choice { edges })
+                    .collect(),
+            );
         }
-        None
+        let graph = Graph {
+            product: &product,
+            choices,
+        };
+        maximal_end_components_from(&graph, (0..count).collect())
+            .ok()?
+            .into_iter()
+            .next()
     }
 
     fn finish(
         self,
         initial: Vec<(u32, Option<ModelInstance>, ProbStateId)>,
     ) -> Result<ProbProduct, ProductRefusal> {
-        if let Some(cycle) = self.zero_delay_cycle() {
+        if let Some(cycle) = self.zero_delay_component() {
             return Err(ProductRefusal::ZeroDelayCycle {
                 states: cycle
                     .into_iter()
