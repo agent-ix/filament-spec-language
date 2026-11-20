@@ -106,7 +106,7 @@ fn a_package_run_selects_its_form_by_the_member() {
     compile(directory.path(), PICK, json!({}));
     for package in [
         json!({"directory": "handoff"}),
-        json!({"file": "package.json"}),
+        json!({"file": "package.json", "equality": "handoff/equality.json"}),
     ] {
         let (exit, value) = run(
             directory.path(),
@@ -119,6 +119,17 @@ fn a_package_run_selects_its_form_by_the_member() {
             "{value}"
         );
     }
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"file": "package.json"},
+            "synthesis": {"declaration": "Pick"}}),
+    );
+    assert_eq!(
+        exit, 20,
+        "a package with equality decisions needs its witness: {value}"
+    );
+    names(&value, "Equality(Missing)");
+    assert!(value.get("synthesis").is_none(), "{value}");
     let (exit, value) = run(
         directory.path(),
         json!({"models": [], "package": {"file": "package.json"},
