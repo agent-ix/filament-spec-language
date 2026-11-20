@@ -194,6 +194,27 @@ fn tc_3121_unit() -> Unit {
     )
 }
 
+fn tc_3121_run(
+    clause: &str,
+    snapshot: Snapshot,
+    self_key: &str,
+) -> crate::spine::ClauseRunReport {
+    let (selection, snapshots) = selection(clause, snapshot, self_key);
+    let document = config_version_domain_document();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let mut request = config_version_request_for(
+        tc_3121_unit_text(),
+        packages,
+        "tc-3121-witness.native",
+        ClauseRunSelection::Clause(selection),
+    );
+    request.snapshots = snapshots;
+    request.accounting = default_accounting(1_000_000);
+    let function_modes = BTreeMap::from([("z".to_owned(), CheckMode::Kernel)]);
+    super::super::run_clause_with_function_modes(request, &[], &function_modes)
+        .expect("a well-formed TC-3121 request always reports")
+}
+
 fn tc_3121_version_unit_text() -> String {
     let mut unit = tc_3121_unit_text();
     unit.push_str(
@@ -241,10 +262,12 @@ fn version_advances_replay_case(
     Vec<(DocumentRef, Vec<u8>)>,
 ) {
     let (pre, pre_bytes) = document_ref_and_bytes("tc-3121-pre", |label| {
-        config_version_snapshot(label, root_pre, child_pre)
+        let objects = version_objects(root_pre, child_pre);
+        super::frame::snapshot(label, "pre", &objects)
     });
     let (post, post_bytes) = document_ref_and_bytes("tc-3121-post", |label| {
-        config_version_snapshot(label, root_post, child_post)
+        let objects = version_objects(root_post, child_post);
+        super::frame::snapshot(label, "post", &objects)
     });
     let (invocation, invocation_bytes) = document_ref_and_bytes("tc-3121-invocation", |label| {
         let mut value: serde_json::Value = serde_json::from_slice(&config_version_invocation_bytes(
@@ -281,13 +304,15 @@ fn version_advances_clause_report(
     self_key: &str,
     result: bool,
 ) -> crate::spine::ClauseRunReport {
-    let (pre, pre_bytes) = document_ref_and_bytes("tc-3121-run-pre", |label| {
-        config_version_snapshot(label, root_pre, child_pre)
+    let (pre, pre_bytes) = document_ref_and_bytes("tc-3121-pre", |label| {
+        let objects = version_objects(root_pre, child_pre);
+        super::frame::snapshot(label, "pre", &objects)
     });
-    let (post, post_bytes) = document_ref_and_bytes("tc-3121-run-post", |label| {
-        config_version_snapshot(label, root_post, child_post)
+    let (post, post_bytes) = document_ref_and_bytes("tc-3121-post", |label| {
+        let objects = version_objects(root_post, child_post);
+        super::frame::snapshot(label, "post", &objects)
     });
-    let (invocation, invocation_bytes) = document_ref_and_bytes("tc-3121-run-invocation", |label| {
+    let (invocation, invocation_bytes) = document_ref_and_bytes("tc-3121-invocation", |label| {
         let mut value: serde_json::Value = serde_json::from_slice(&config_version_invocation_bytes(
             label, &pre, &post, self_key,
         ))
@@ -311,6 +336,16 @@ fn version_advances_clause_report(
     let function_modes = BTreeMap::from([("z".to_owned(), CheckMode::Kernel)]);
     super::super::run_clause_with_function_modes(request, &[], &function_modes)
         .expect("the VersionAdvances invocation reports")
+}
+
+fn version_objects(root_version: i64, child_version: Option<i64>) -> Vec<serde_json::Value> {
+    match child_version {
+        Some(child_version) => vec![
+            super::frame::object("root", root_version, None),
+            super::frame::object("child", child_version, Some("root")),
+        ],
+        None => vec![super::frame::object("root", root_version, None)],
+    }
 }
 
 fn comparison_witness_unit_text() -> String {
@@ -2079,7 +2114,7 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
     let repeated = derive();
     assert_eq!(record, repeated);
 
-    let report = run("MatchesParent", Snapshot::High, "mid");
+    let report = tc_3121_run("MatchesParent", Snapshot::High, "mid");
     let native_record = report
         .witness
         .as_ref()
@@ -2116,15 +2151,23 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
     )
     .expect("the public AllBelow derivation completes")
     .expect("AllBelow has a decisive quantifier record");
-    let all_report = run("AllBelow", Snapshot::High, "mid");
+    let all_report = tc_3121_run("AllBelow", Snapshot::High, "mid");
     assert_eq!(
         all_report.witness.as_ref(),
         Some(&all_record),
         "the public entry returns FR-265-AC-1's quantifier record"
     );
+    let (all_replay_wire, all_replay_envelope) = replay_case(
+        &unit,
+        "AllBelow",
+        Snapshot::High,
+        "mid",
+        Some(all_record.clone()),
+        witness_source(),
+    );
     let all_replay = replay_state_clause(
-        all_wire,
-        &all_envelope,
+        all_replay_wire,
+        &all_replay_envelope.expect("the quantifier-record envelope reconstructs"),
         crate::ReplayLimits::default(),
     )
     .unwrap();
@@ -2567,7 +2610,7 @@ fn tc_3121_public_derivation_refused_and_exhausted_cases_keep_metadata() {
         None,
         witness_source(),
     );
-    let need = run("MatchesParent", Snapshot::High, "mid")
+    let need = tc_3121_run("MatchesParent", Snapshot::High, "mid")
         .usage
         .evaluation_admissions;
     wire.accounting_limits = default_accounting(need.saturating_sub(1));

@@ -67,7 +67,7 @@ pub(super) fn unit_for_with_function_modes(
         &DependencyInput::default(),
         SpineLimits::default(),
         crate::spine::ComposeModes {
-            check_mode: None,
+            check_mode: Some(filament_semantic_value::checking::CheckMode::Linked),
             function_modes,
         },
     )

@@ -10,7 +10,7 @@ use filament_checked::node::{Connective, ConnectiveOrigin, NodeKind, Visit};
 use filament_eval::FamilyOutcome;
 use filament_exact::{Outcome, Value};
 use filament_semantic_value::catalog::InternalFault;
-use filament_semantic_value::location::ExpressionLocation;
+use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{CheckedGraph, CheckedNode, CheckedStateClause};
 
@@ -117,13 +117,32 @@ pub fn derive_state_clause_witness(
         .and_then(|observations| observations.post.as_ref())
         .map(|post| post.out_of_range.clone())
         .unwrap_or_default();
+    let clause_location = prepared.target.segments().first().and_then(|name| {
+        let graph = prepared.compiled.checked.package().graph();
+        graph
+            .state_clauses()
+            .iter()
+            .position(|clause| clause.name() == name.as_str())
+            .map(|index| {
+                ExpressionLocation::root(ExpressionOwner::StateClause {
+                    clause: name.as_str().to_owned(),
+                    index,
+                })
+            })
+    });
     let report = prepared.check.report;
-    classify_with_range_violations(range_violations, report.disposition, report.witness)
+    classify_with_range_violations(
+        range_violations,
+        report.disposition,
+        report.witness,
+        clause_location,
+    )
 }
 
 fn classify_clause_outcome(
     disposition: ClauseDisposition,
     witness: Option<SeparatingWitnessRecord>,
+    enclosing_clause_expression: Option<ExpressionLocation>,
 ) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
     match disposition {
         ClauseDisposition::Admit(failure)
@@ -155,6 +174,12 @@ fn classify_clause_outcome(
                     )))
                 },
                 |expression| {
+                    let expression = match (&expression.origin, &enclosing_clause_expression) {
+                        (ExpressionOwner::Body { .. }, Some(clause_expression)) => {
+                            clause_expression.clone()
+                        }
+                        _ => expression,
+                    };
                     Err(DerivationRefusal::Undefined {
                         expression,
                         cause: reason,
@@ -191,7 +216,7 @@ mod tests {
     #[test]
     fn in_crate_fault_disposition_remains_a_derivation_fault() {
         let fault = InternalFault::new("S6a", "checked-program-invariant");
-        let error = classify_clause_outcome(ClauseDisposition::EvaluateFault(fault), None)
+        let error = classify_clause_outcome(ClauseDisposition::EvaluateFault(fault), None, None)
             .expect_err("an in-crate fault is a typed derivation refusal");
         assert_eq!(error.code(), Code::RuntimeInvariant.as_str());
         assert!(matches!(error, DerivationRefusal::Fault(_)));
@@ -232,6 +257,7 @@ mod tests {
             vec![range_violation.clone()],
             ClauseDisposition::EvaluateFault(fault),
             None,
+            None,
         )
         .expect_err("range admission takes precedence over clause evaluation");
         assert!(matches!(
@@ -258,6 +284,7 @@ mod tests {
                 location: Some(location.clone()),
             }),
             None,
+            None,
         )
         .expect_err("an undefined evaluation has no witness");
         assert_eq!(error.code(), Code::UndefinedExpression.as_str());
@@ -274,11 +301,12 @@ fn classify_with_range_violations(
     range_violations: Vec<OutOfRange>,
     disposition: ClauseDisposition,
     witness: Option<SeparatingWitnessRecord>,
+    enclosing_clause_expression: Option<ExpressionLocation>,
 ) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
     if !range_violations.is_empty() {
         return Err(DerivationRefusal::RangeViolation(range_violations));
     }
-    classify_clause_outcome(disposition, witness)
+    classify_clause_outcome(disposition, witness, enclosing_clause_expression)
 }
 
 /// FR-265's output for a clause that completed a Boolean: the basis, and
