@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
 use serde_json::Value;
+use serde_json::value::RawValue;
 
 use super::{
     Basis, CallLocationRead, CallLocationWire, Category, DeclarationKeyRead, DispositionRead,
@@ -1855,7 +1855,7 @@ pub(super) fn validate_temporal(
                     return Err(invalid(
                         "disposition.outcome.code",
                         "expected a refusal catalog code",
-                    ))
+                    ));
                 }
             };
             if value.category != category {

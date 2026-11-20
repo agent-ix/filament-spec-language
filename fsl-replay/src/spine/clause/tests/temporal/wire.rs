@@ -4,12 +4,12 @@
 //! `native-run-result/2` with its `disposition.temporal` row and read back
 //! by the strict reader; each edit the ACs list refuses naming the member.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 use crate::spine::{
-    read_native_run_result, write_clause_run_result, IndeterminateReasonRead, NativeRunResult,
-    TemporalIndeterminateReason, TemporalRecord,
+    IndeterminateReasonRead, NativeRunResult, TemporalIndeterminateReason, TemporalRecord,
+    read_native_run_result, write_clause_run_result,
 };
 
 fn document(report: &ClauseRunReport) -> Value {
