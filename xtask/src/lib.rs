@@ -55,6 +55,9 @@ mod ci_feature_lane_tests;
 
 #[cfg(test)]
 mod ci_spec_validation_tests;
+
+#[cfg(test)]
+mod ignored_reason_tests;
 pub use error::{Error, Result};
 
 /// What a command produced: the text it writes to stdout and the exit code

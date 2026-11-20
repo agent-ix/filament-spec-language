@@ -1207,8 +1207,8 @@ mod tests {
     /// `Capability::__SeamProbe` has no row in `applies_to_declaration`, so
     /// the `fsl-semantics` probe build fails with `E0004` at exactly that
     /// function, while the same package builds clean with no probe cfg.
-    /// Ignored in the default run because `make seam-probe` (in `CI_CHECKS`)
-    /// runs the same builds and comparison; run it with `--ignored`.
+    /// Ignored in the default run; `make seam-probe` (in `CI_CHECKS`)
+    /// selects and executes this test with `--ignored --exact`.
     #[ix_trace_rs::trace("TC-1302", "FR-507-AC-6")]
     #[test]
     #[ignore = "slow: runs under make seam-probe (CI_CHECKS)"]

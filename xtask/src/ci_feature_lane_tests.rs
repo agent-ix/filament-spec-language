@@ -231,6 +231,35 @@ fn expected(root: &str, commands: &[&[&str]]) -> String {
 
 const DEEP_THREADS: &str = "--test-threads=3";
 
+#[test]
+#[trace("TC-1302", "FR-507-AC-6")]
+fn seam_probe_executes_only_the_capability_applicability_test() {
+    let recipe = Recipe::new();
+    let calls = recipe.run(&["seam-probe"], Some("seam target"), &[]);
+    assert_eq!(
+        calls,
+        expected(
+            "seam target",
+            &[
+                &["run", "--package", "xtask", "--", "seam-probe"],
+                &[
+                    "test",
+                    "--locked",
+                    "--package",
+                    "xtask",
+                    "--lib",
+                    "seam_probe::tests::a_capability_variant_with_no_applicable_family_entry_does_not_compile",
+                    "--",
+                    "--ignored",
+                    "--exact",
+                    "--test-threads=1",
+                ],
+            ],
+        ),
+        "the Make recipe must execute the selected ignored test, without --no-run",
+    );
+}
+
 const DEEP_CASES: [&str; 5] = [
     "formatter_identity::deep_sum_source_generator_keeps_format_identity",
     "formatter_identity::deep_else_if_source_generator_keeps_format_identity",
@@ -333,7 +362,7 @@ fn aggregate_ci_disables_incremental_metadata_and_debug_symbols() {
     );
     assert_eq!(
         fs::read_to_string(recipe.directory.path().join("calls")).unwrap(),
-        "\trun\t--locked\t--package\txtask\t--\tci\n",
+        "\trun\t--locked\t--package\txtask\t--\tpin-check\n\trun\t--locked\t--package\txtask\t--\tci\n",
         "the optimization preserves the aggregate Cargo command"
     );
 }
@@ -548,8 +577,18 @@ fn aggregate_reaches_default_then_all_features_without_changing_recipe_order() {
         .iter()
         .flat_map(|target| ["-o", *target])
         .collect();
+    let calls = recipe.run(&["ci-internal"], Some("caller target"), &overrides);
+    let layering_root = calls
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix(
+                "caller target\trun\t--package\txtask\t--\trefinement\tgenerate-layering\t",
+            )
+        })
+        .expect("the aggregate generates its layering corpus");
+    assert!(Path::new(layering_root).is_absolute());
     assert_eq!(
-        recipe.run(&["ci-internal"], Some("caller target"), &overrides),
+        calls,
         expected("caller target/ci-default-features", DEFAULT_COMMANDS)
             + &expected("caller target/ci-all-features", ALL_COMMANDS)
             + &deep_calls("caller target/ci-default-features")
@@ -563,6 +602,37 @@ fn aggregate_reaches_default_then_all_features_without_changing_recipe_order() {
                     "--",
                     "canonical-types"
                 ]]
+            )
+            + &expected(
+                "caller target",
+                &[
+                    &[
+                        "run",
+                        "--locked",
+                        "--package",
+                        "xtask",
+                        "--",
+                        "facade-tests"
+                    ],
+                    &[
+                        "run",
+                        "--package",
+                        "xtask",
+                        "--",
+                        "refinement",
+                        "generate-layering",
+                        layering_root
+                    ],
+                    &[
+                        "run",
+                        "--package",
+                        "xtask",
+                        "--",
+                        "refinement",
+                        "layering-check",
+                        layering_root
+                    ],
+                ]
             )
     );
 }
@@ -650,10 +720,8 @@ fn real_workspace_decisions_keep_every_package_whose_compile_changes() {
         verdict("filament-spec-language"),
         &Verdict::Run(KeepReason::OwnFeatures)
     );
-    assert_eq!(
-        verdict("fsl-source"),
-        &Verdict::Run(KeepReason::OwnFeatures)
-    );
+    // Its extraction feature is already enabled by the default consumers.
+    assert_eq!(verdict("fsl-source"), &Verdict::Skip);
     // The benchmark's counters feature is enabled only by the all-features lane.
     assert_eq!(verdict("fsl-bench"), &Verdict::Run(KeepReason::OwnFeatures));
 }
