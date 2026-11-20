@@ -1002,6 +1002,7 @@ dependencies = [
  "fsl-replay",
  "fsl-semantics",
  "ix-trace-rs",
+ "serde_json",
 ]
 
 [[package]]

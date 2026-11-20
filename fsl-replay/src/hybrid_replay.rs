@@ -40,11 +40,14 @@ use fsl_semantics::check::{
 };
 
 pub use certificate::{
+    box_advance, box_hull, box_tube, box_within, Fired, HybridBox, InitialHull, ModelReader,
+    ReadStop,
     check_certificate, read_certificate, Acceptance, CertificateOutcome, CertificateRefusal,
     Decisive, Expect, HybridCertificate, ProofCoverage, RefusalCode, Rejection,
     Rule as HybridCertificateRule,
 };
 pub use class::polynomial_class_gap;
+pub use interval::{Interval, Tri};
 pub use expand::{ExpansionGap, TermLocus};
 pub use fsl_foundation::diagnostic::JsonPointer;
 pub use real::{ExactReal, Root};

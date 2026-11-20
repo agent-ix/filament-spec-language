@@ -4,15 +4,18 @@
 //! `fsl-replay` defines so this crate sits below `fsl-analyze` with no
 //! dependency cycle.
 //!
-//! Implemented: the class check (a model outside it answers `Unsupported`,
-//! located), and the option domains `check_options` refuses. The flowpipe
-//! method of FR-1019 "Method" is not implemented: a model inside the class is
-//! answered `solver-inconclusive` with no trace, a result FR-250 settles as
-//! `inconclusive` and which never proves or refutes. The answer names no
-//! method, since none ran. FR-751's certificate checker is QSL-2531, so
-//! nothing here is certified.
+//! The class check answers a model outside the class `Unsupported`, located;
+//! `check_options` refuses an option value outside its domain; a model inside
+//! the class goes to the flowpipe solver of FR-1019 "Method" (`solver`), whose
+//! `proved` answers carry a certificate the solver's own `check_certificate`
+//! accepted and whose refutations carry a trace exact replay reproduces or a
+//! validated witness (`refute`). The core checks every certificate again.
 
+mod arith;
 mod options;
+mod refute;
+mod solver;
+mod wire;
 
 use std::collections::BTreeMap;
 
@@ -44,7 +47,7 @@ const CLASS_WORK_UNITS: u64 = 1_000_000;
 pub struct ReferenceProvider;
 
 impl HybridProvider for ReferenceProvider {
-    fn solve(&self, request: &HybridSolveRequest<'_>, _cancel: &Cancel) -> HybridAnswer {
+    fn solve(&self, request: &HybridSolveRequest<'_>, cancel: &Cancel) -> HybridAnswer {
         // Expanding a call is no Picard attempt, so the class check has a
         // bound of its own and spends none of `hybrid.max_solver_steps`.
         let mut meter = HybridReplayMeter::new(CLASS_WORK_UNITS);
@@ -53,10 +56,11 @@ impl HybridProvider for ReferenceProvider {
                 verdict: HybridVerdict::Unsupported(construct),
                 certificate: None,
             },
-            // In the class, or a class check that could not finish (its own
-            // bound spent, or no body for a call): nothing is proved or
-            // refuted.
-            Ok(None) | Err(_) => HybridAnswer::solved(SolverResult {
+            Ok(None) => solver::solve(request, cancel),
+            // A class check that could not finish (its own bound spent, or no
+            // body for a call) leaves the class unestablished: nothing is
+            // proved or refuted.
+            Err(_) => HybridAnswer::solved(SolverResult {
                 method: SolverMethod::Unclassified,
                 outcome: SolverOutcome::Unknown(None),
                 coverage: SolverCoverage::Inductive,

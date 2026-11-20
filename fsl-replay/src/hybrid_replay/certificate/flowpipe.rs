@@ -164,17 +164,17 @@ fn contains(time: &(Rational, Rational), need: &Interval) -> bool {
 
 /// The narrowed jump time `N` of the transition `t` of dwell `dwell`
 /// (FSpec FR-652 "Following transitions").
-fn narrowed(
+pub(super) fn narrowed_over(
     machine: &mut Machine<'_, '_>,
     mx: &ModelX,
-    lay: &Layout,
-    dwell: &Dwell,
+    mode_index: usize,
     transition: usize,
+    first_bx: &Bx,
+    s_first: &(Rational, Rational),
     horizon: &Rational,
 ) -> Result<Option<Option<Interval>>, Stop> {
-    let mode = &mx.modes[dwell.mode];
+    let mode = &mx.modes[mode_index];
     let guard = &mode.transitions[transition].guard;
-    let first = &lay.st[dwell.first];
     let mut list = Vec::new();
     conjuncts(guard, &mut list);
     for conjunct in list {
@@ -204,14 +204,14 @@ fn narrowed(
         {
             continue;
         }
-        let r = machine.num(rate, &first.bx)?;
+        let r = machine.num(rate, first_bx)?;
         if r.contains_zero() {
             continue;
         }
-        let value = machine.num(c, &first.bx)?;
-        let numerator = value.add(&first.bx[x].neg());
+        let value = machine.num(c, first_bx)?;
+        let numerator = value.add(&first_bx[x].neg());
         let quotient = numerator.div(&r);
-        let shifted = quotient.add(&interval_of(&lay.s[dwell.first]));
+        let shifted = quotient.add(&interval_of(s_first));
         let window = Interval {
             lower: Some(zero()),
             upper: Some(horizon.clone()),
@@ -219,6 +219,26 @@ fn narrowed(
         return Ok(Some(shifted.intersect(&window)));
     }
     Ok(None)
+}
+
+/// The narrowed jump time of dwell `dwell`'s transition `transition`.
+fn narrowed(
+    machine: &mut Machine<'_, '_>,
+    mx: &ModelX,
+    lay: &Layout,
+    dwell: &Dwell,
+    transition: usize,
+    horizon: &Rational,
+) -> Result<Option<Option<Interval>>, Stop> {
+    narrowed_over(
+        machine,
+        mx,
+        dwell.mode,
+        transition,
+        &lay.st[dwell.first].bx,
+        &lay.s[dwell.first],
+        horizon,
+    )
 }
 
 pub(super) fn check(
@@ -285,29 +305,10 @@ pub(super) fn check(
     for (k, step) in lay.st.iter().enumerate() {
         let at = step_pointer(k);
         let mode = &mx.modes[step.mode];
-        for exp in mode.rates.iter().chain(std::iter::once(&mode.invariant)) {
-            if !machine.defined(exp, &step.ap).at(&at)?.is_yes() {
-                return reject(Rule::Picard, at);
-            }
-        }
-        let rates = machine.rates(mode, &step.ap).at(&at)?;
-        let region = tube(&step.bx, &step.h, &rates);
-        let holds = if mode.admitted {
-            match machine.contract(&[&mode.invariant], region).at(&at)? {
-                None => true,
-                Some(contracted) => within(&contracted, &step.ap),
-            }
-        } else {
-            let mut strict = true;
-            for rate in &mode.rates {
-                if !machine.strictly_decided(rate, &step.ap, false).at(&at)? {
-                    strict = false;
-                    break;
-                }
-            }
-            strict && within(&region, &step.ap)
-        };
-        if !holds {
+        if !machine
+            .picard_holds(mode, &step.bx, &step.ap, &step.h)
+            .at(&at)?
+        {
             return reject(Rule::Picard, at);
         }
     }

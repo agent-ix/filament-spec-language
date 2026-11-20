@@ -2691,6 +2691,11 @@ impl ClaimItem {
                 json!({"limits": {"max_cases": max_cases.get()}}),
             );
         }
+        if let Some(ItemForm::Hybrid(hybrid)) = &self.form {
+            if !hybrid.options.is_empty() {
+                item.insert("options".to_owned(), json!(hybrid.options));
+            }
+        }
         if let Some(protocol) = &self.options.protocol_analysis {
             if let Some(root) = &protocol.assessed_root {
                 item.insert("assessed_root".to_owned(), root.clone());

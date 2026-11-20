@@ -23,16 +23,21 @@ use super::{HybridReplayMeter, HybridReplayRefusal};
 
 /// A closed interval of the reals, either end absent when unbounded.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Interval {
-    pub(crate) lower: Option<Rational>,
-    pub(crate) upper: Option<Rational>,
+pub struct Interval {
+    /// The lower end, absent when unbounded below.
+    pub lower: Option<Rational>,
+    /// The upper end, absent when unbounded above.
+    pub upper: Option<Rational>,
 }
 
 /// A three-valued truth value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Tri {
+pub enum Tri {
+    /// Definitely true.
     True,
+    /// Definitely false.
     False,
+    /// Neither.
     Unknown,
 }
 
@@ -104,14 +109,16 @@ impl Extended {
 }
 
 impl Interval {
-    pub(crate) fn point(value: Rational) -> Self {
+    /// The one-point interval.
+    pub fn point(value: Rational) -> Self {
         Self {
             lower: Some(value.clone()),
             upper: Some(value),
         }
     }
 
-    pub(crate) fn whole() -> Self {
+    /// The whole line.
+    pub fn whole() -> Self {
         Self {
             lower: None,
             upper: None,
@@ -148,7 +155,8 @@ impl Interval {
         }
     }
 
-    pub(super) fn add(&self, other: &Self) -> Self {
+    /// The sum.
+    pub fn add(&self, other: &Self) -> Self {
         let both = |a: &Option<Rational>, b: &Option<Rational>| match (a, b) {
             (Some(a), Some(b)) => Some(a.add(b)),
             _ => None,
@@ -159,14 +167,16 @@ impl Interval {
         }
     }
 
-    pub(super) fn neg(&self) -> Self {
+    /// The negation.
+    pub fn neg(&self) -> Self {
         Self {
             lower: self.upper.as_ref().map(Rational::neg),
             upper: self.lower.as_ref().map(Rational::neg),
         }
     }
 
-    pub(super) fn mul(&self, other: &Self) -> Self {
+    /// The product.
+    pub fn mul(&self, other: &Self) -> Self {
         let products = [
             self.low().mul(&other.low()),
             self.low().mul(&other.high()),
@@ -181,11 +191,13 @@ impl Interval {
         }
     }
 
-    pub(super) fn contains_zero(&self) -> bool {
+    /// Whether 0 lies in the interval.
+    pub fn contains_zero(&self) -> bool {
         self.low().sign() != Ordering::Greater && self.high().sign() != Ordering::Less
     }
 
-    pub(super) fn div(&self, divisor: &Self) -> Self {
+    /// The quotient, the whole line when the divisor contains 0.
+    pub fn div(&self, divisor: &Self) -> Self {
         if divisor.contains_zero() {
             return Self::whole();
         }
@@ -201,7 +213,8 @@ impl Interval {
         self.mul(&inverse)
     }
 
-    pub(super) fn hull(&self, other: &Self) -> Self {
+    /// The interval hull.
+    pub fn hull(&self, other: &Self) -> Self {
         let lower = match (&self.lower, &other.lower) {
             (Some(a), Some(b)) => Some(a.clone().min(b.clone())),
             _ => None,
@@ -214,7 +227,7 @@ impl Interval {
     }
 
     /// The intersection, `None` when empty.
-    pub(super) fn intersect(&self, other: &Self) -> Option<Self> {
+    pub fn intersect(&self, other: &Self) -> Option<Self> {
         let lower = match (&self.lower, &other.lower) {
             (Some(a), Some(b)) => Some(a.clone().max(b.clone())),
             (a, b) => a.clone().or_else(|| b.clone()),

@@ -47,7 +47,6 @@ fn one(claim: &str) -> Value {
 /// flowpipe covering horizon 10 with one jump.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-1")]
-#[ignore = "QSL-2534 remaining: the flowpipe solver is not implemented, and `certified` needs the FR-751 checker (QSL-2531)"]
 fn the_reference_provider_proves_slow_enough() {
     let item = reference("ref-1", &braking_pair(), one("SlowEnough"));
     let record = &item["record"];
@@ -71,7 +70,6 @@ fn the_reference_provider_proves_slow_enough() {
 /// box's lower corner, which replays exactly, the same on every run.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-2")]
-#[ignore = "QSL-2534: the reference provider's candidate point trace is not implemented yet"]
 fn the_reference_provider_refutes_too_slow_deterministically() {
     let first = reference("ref-2a", &braking_pair(), one("TooSlow"));
     assert_eq!(first["record"]["result"], "refuted", "{first}");
@@ -270,7 +268,6 @@ fn the_reference_provider_publishes_its_descriptor() {
 /// `hybrid.max_solver_steps`.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-6")]
-#[ignore = "QSL-2534 remaining: the flowpipe solver's Picard step budget is not implemented yet"]
 fn the_reference_provider_stops_at_its_step_budget() {
     let item = reference(
         "ref-6b",
@@ -291,7 +288,6 @@ fn the_reference_provider_stops_at_its_step_budget() {
 /// FR-1019-AC-7: coarse options still prove and change the request.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-7")]
-#[ignore = "QSL-2534 remaining: coarse options prove only once the flowpipe solver and QSL-2531 certification land"]
 fn coarse_options_still_prove_and_change_the_request() {
     let default = reference("ref-7a", &braking_pair(), one("SlowEnough"));
     let coarse = reference(
@@ -371,7 +367,6 @@ fn an_out_of_domain_or_unknown_option_settles_invalid_request() {
 /// `Moving` box crosses below `v = 0`.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-8")]
-#[ignore = "QSL-2534: the reference flowpipe's guard handling is not implemented yet"]
 fn the_flowpipe_stops_at_the_guard_and_jumps_once() {
     let item = reference("ref-8", &braking_pair(), one("SlowEnough"));
     let steps = item["certificate"]["form"]["steps"]
@@ -399,7 +394,6 @@ fn the_flowpipe_stops_at_the_guard_and_jumps_once() {
 /// enclosure of the two modes' hulls.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-9")]
-#[ignore = "QSL-2534 remaining: the inductive enclosure is not implemented, and `certified` needs the FR-751 checker (QSL-2531)"]
 fn a_claim_with_no_horizon_is_proved_inductively() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
     let item = reference("ref-9", &unit, one("Bounded"));
@@ -422,7 +416,6 @@ fn a_claim_with_no_horizon_is_proved_inductively() {
 /// the trace's `end`.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-10")]
-#[ignore = "QSL-2534: the reference provider's `end`-cut traces are not implemented yet"]
 fn a_violation_in_a_final_dwell_is_cut_by_end() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile p = \"filament.temporal.infinite-trace/v1\";\n\
@@ -449,7 +442,6 @@ fn a_violation_in_a_final_dwell_is_cut_by_end() {
 /// `validated-witness` the core accepts.
 #[test]
 #[trace("TC-2869", "FR-1019-AC-11")]
-#[ignore = "QSL-2534 remaining: the validated witness is not produced yet, and its acceptance needs the FR-751 checker (QSL-2531)"]
 fn a_cyclic_polynomial_flow_refutes_through_a_validated_witness() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile p = \"filament.temporal.infinite-trace/v1\";\n\
@@ -539,7 +531,6 @@ fn the_reference_crate_sits_in_layer_h() {
 /// verdicts with no provider configured.
 #[test]
 #[trace("TC-2997", "FR-1019-AC-13")]
-#[ignore = "QSL-2534: `examples/hybrid-braking/` and the reference provider are not implemented yet"]
 fn the_hybrid_braking_examples_reach_verdicts() {
     let examples = workspace_root().join("examples/hybrid-braking");
     let slow = analyze_with_providers(
@@ -558,4 +549,99 @@ fn the_hybrid_braking_examples_reach_verdicts() {
     assert_eq!(fast["record"]["result"], "refuted", "{fast}");
     assert_eq!(fast["record"]["backend"], REFERENCE, "{fast}");
     assert_eq!(fast["replay"]["reproduced"], true, "{fast}");
+}
+
+const PRELUDE: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile p = \"filament.temporal.infinite-trace/v1\";\n";
+
+fn temporal(model: &str, name: &str, activation: &str, body: &str) -> String {
+    format!(
+        "{PRELUDE}{model}\ntemporal {name} using p over (h: {}) clock \"model-time\" \
+         {activation} {{ {body} }}\n",
+        model
+            .strip_prefix("hybrid ")
+            .and_then(|rest| rest.split_whitespace().next())
+            .expect("a hybrid declaration"),
+    )
+}
+
+fn never_proved(name: &str, unit: &str, claim: &str) -> Value {
+    let item = reference(name, unit, one(claim));
+    assert_ne!(item["record"]["result"], "proved", "{item}");
+    item
+}
+
+/// Soundness (FSpec FR-652-AC-20): a zero-length closing step never proves
+/// the false claim over `Z`, whose behaviour has `x = 2t`.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-1")]
+fn a_zero_length_closing_step_never_proves_a_false_claim() {
+    let unit = temporal(
+        "hybrid Z using p { initial { mode M when { x = 0 }; } \
+         mode M invariant { x >= 0 and x <= 100 } flow { x' = 2; } }",
+        "False",
+        "on origin",
+        "always [0, 10] holds(h.x <= 0)",
+    );
+    let item = never_proved("ref-z", &unit, "False");
+    assert_eq!(item["record"]["result"], "refuted", "{item}");
+}
+
+/// Soundness (FSpec FR-652-AC-21): an atom reading the `on each` subject has
+/// no sound reading over one box, so the false claim is never proved.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-9")]
+fn an_atom_reading_the_activation_subject_is_never_proved() {
+    let unit = temporal(
+        "hybrid Sw using p { initial { mode A when { x = 0 }; } \
+         mode A invariant { x = 0 } flow { x' = 0; } \
+         transition to B when { x = 0 } reset { x = 10 }; \
+         mode B invariant { x = 10 } flow { x' = 0; } }",
+        "Same",
+        "on each (q: Sw)",
+        "always holds(h.x = q.x)",
+    );
+    never_proved("ref-sw", &unit, "Same");
+}
+
+/// Soundness (FSpec FR-652-AC-22): a jump after a closing dwell's first
+/// step is still followed, so the false claim over `Late` is never proved.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-1")]
+fn a_jump_after_the_first_step_of_a_closing_dwell_is_followed() {
+    let unit = temporal(
+        "hybrid Late using p { initial { mode A when { x = 1 and y = 0 }; } \
+         mode A invariant { x = 1 and y = 0 } flow { x' = 0; y' = 0; } \
+         transition to B when { y = 0 } reset { x = 0 }; \
+         mode B invariant { x >= 0 and x <= 100 and y = 0 } flow { x' = 1; y' = 0; } }",
+        "Stays",
+        "on origin",
+        "always [5, 10] holds(h.x >= 1)",
+    );
+    never_proved("ref-late", &unit, "Stays");
+}
+
+/// Soundness: a claim false only after the last step a step budget allows is
+/// never proved; the run is `incomplete`, and with the budget lifted the
+/// violation at time 15 is found.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-6")]
+fn a_claim_false_beyond_the_last_step_is_never_proved() {
+    let unit = temporal(
+        "hybrid Ramp using p { initial { mode R when { x = 0 and w = 0 }; } \
+         mode R invariant { x >= 0 and x <= 100 and w = 0 } flow { x' = 1; w' = 0; } }",
+        "Far",
+        "on origin",
+        "always [0, 20] holds(h.x <= 15)",
+    );
+    let (_, cut) = first_item(
+        "ref-far-cut",
+        &unit,
+        json!([{"claim": "Far", "hybrid": {"limits": {"max_solver_steps": 3}}}]),
+        json!({}),
+        reference_providers(),
+    );
+    assert_eq!(cut["record"]["result"], "incomplete", "{cut}");
+    let full = never_proved("ref-far", &unit, "Far");
+    assert_eq!(full["record"]["result"], "refuted", "{full}");
 }

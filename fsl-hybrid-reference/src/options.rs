@@ -84,3 +84,57 @@ pub fn check(options: &BTreeMap<String, String>) -> Result<(), OptionRefusal> {
     }
     Ok(())
 }
+
+/// The method settings of one request, each option read with its published
+/// default when absent.
+#[derive(Clone, Debug)]
+pub struct Settings {
+    /// `precision_bits`: every enclosure bound is a multiple of `2^-bits`.
+    pub bits: u32,
+    /// `step`: the flowpipe's initial time step.
+    pub step: filament_exact::Rational,
+    /// `refine_depth`: how often a step is halved or a box bisected.
+    pub refine_depth: u32,
+}
+
+fn integer(text: &str) -> filament_exact::Integer {
+    text.parse().unwrap_or_else(|_| filament_exact::Integer::zero())
+}
+
+fn rational_of(text: &str) -> filament_exact::Rational {
+    use filament_exact::{Integer, Rational};
+    let (numerator, denominator) = if let Some((n, d)) = text.split_once('/') {
+        (integer(n), integer(d))
+    } else if let Some((whole, fraction)) = text.split_once('.') {
+        let scale = Integer::power_of_ten(fraction.len() as u64);
+        let n = integer(&format!("{whole}{fraction}"));
+        (n, scale)
+    } else {
+        (integer(text), Integer::one())
+    };
+    Rational::new(numerator, denominator)
+        .unwrap_or_else(|_| Rational::from_integer(Integer::one()))
+}
+
+impl Settings {
+    /// The settings of `options`, which `check` admitted.
+    pub fn read(options: &BTreeMap<String, String>) -> Self {
+        let value = |name: &str| {
+            options.get(name).map_or_else(
+                || {
+                    OPTION_DEFAULTS
+                        .iter()
+                        .find(|(option, _)| *option == name)
+                        .map_or("", |(_, default)| *default)
+                },
+                String::as_str,
+            )
+        };
+        let small = |name: &str| value(name).trim_start_matches('0').parse().unwrap_or(0);
+        Self {
+            bits: small("precision_bits"),
+            step: rational_of(value("step")),
+            refine_depth: small("refine_depth"),
+        }
+    }
+}

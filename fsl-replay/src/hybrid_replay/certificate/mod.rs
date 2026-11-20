@@ -21,9 +21,14 @@ mod claim;
 mod flowpipe;
 mod inductive;
 mod machine;
+mod reader;
 mod wire;
 mod witness;
 
+pub use reader::{
+    box_advance, box_hull, box_tube, box_within, Fired, HybridBox, InitialHull, ModelReader,
+    ReadStop,
+};
 pub use wire::{read_certificate, CertificateRefusal, Expect, HybridCertificate, RefusalCode};
 
 use machine::{Machine, Stop};

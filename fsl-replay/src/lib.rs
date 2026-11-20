@@ -232,9 +232,12 @@ pub use hybrid::{
     SolverOutcome, SolverResult, SolverStop, UnsupportedConstruct,
 };
 pub use hybrid_replay::{
+    box_advance, box_hull, box_tube, box_within, Fired as HybridFired, HybridBox,
+    InitialHull as HybridInitialHull, Interval as HybridInterval, ModelReader as HybridModelReader,
+    ReadStop as HybridReadStop, Tri as HybridTri,
     check_certificate as check_hybrid_certificate, read_certificate as read_hybrid_certificate,
     Acceptance as HybridCertificateAcceptance, CertificateOutcome as HybridCertificateOutcome,
-    CertificateRefusal as HybridCertificateRefusal, Decisive as HybridDecisive,
+    CertificateRefusal as HybridCertificateRefusal, Decisive as HybridDecisive, Expect as HybridCertificateExpect,
     HybridCertificate, HybridCertificateRule, ProofCoverage as HybridProofCoverage,
     Rejection as HybridCertificateRejection,
     admit as admit_hybrid_trace, exact_replay, static_replay, ExactCheck, ExactGap, ExactInterval,
