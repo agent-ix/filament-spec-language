@@ -932,6 +932,8 @@ pub struct DispatchOperation {
     pub member: String,
     /// The declared parameter types, in order.
     pub parameters: Vec<ValueType>,
+    /// Minimum number of positional arguments accepted by this signature.
+    pub required_arity: usize,
     /// The declared result type.
     pub result: ValueType,
     /// The declaring model type selected for this operation family.
@@ -2603,6 +2605,31 @@ fn mismatch(location: &Location) -> CheckRefusal {
     CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch)
 }
 
+fn operand_mismatch(
+    location: &Location,
+    operator: fsl_forms::BinaryOperator,
+    left_type: ValueType,
+    right_type: ValueType,
+) -> CheckRefusal {
+    CheckRefusal {
+        location: location.clone(),
+        cause: CheckCause::OperandTypeMismatch {
+            operator,
+            left_type: Box::new(left_type),
+            right_type: Box::new(right_type),
+        },
+    }
+}
+
+fn ordering_binary_operator(operator: OrderingOperator) -> fsl_forms::BinaryOperator {
+    match operator {
+        OrderingOperator::Less => fsl_forms::BinaryOperator::Less,
+        OrderingOperator::LessOrEqual => fsl_forms::BinaryOperator::LessOrEqual,
+        OrderingOperator::Greater => fsl_forms::BinaryOperator::Greater,
+        OrderingOperator::GreaterOrEqual => fsl_forms::BinaryOperator::GreaterOrEqual,
+    }
+}
+
 /// Whether the steps `path` read the clock place whose steps are `steps`: a
 /// union case is the field read after its union field, and a selector is a
 /// slot step. Each selector's index in `path` comes back, in order.
@@ -3172,6 +3199,22 @@ impl<'a> Typer<'a> {
     /// The name each slot was bound under, indexed by slot.
     pub(crate) fn slot_names(&self) -> &[String] {
         &self.slot_names
+    }
+
+    /// The declared name of `slot` (FR-400 "Canonical read projections"). A slot
+    /// bound without a recorded name is an internal fault, never an empty name.
+    pub(crate) fn slot_name(&self, slot: Slot, location: &Location) -> Result<String, CheckRefusal> {
+        self.slot_names.get(slot).cloned().ok_or_else(|| {
+            refuse(
+                location,
+                CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "S3",
+                        "checked-binding-slot-has-a-declared-name",
+                    ),
+                ))),
+            )
+        })
     }
 
     /// Seed this typing pass with the checked graph's retained compound
@@ -3825,6 +3868,29 @@ impl<'a> Typer<'a> {
         {
             return Err(ineligible(location));
         }
+        let mismatch_operator = match operator {
+            EqualityOperator::Equal => fsl_forms::BinaryOperator::Equal,
+            EqualityOperator::NotEqual => fsl_forms::BinaryOperator::NotEqual,
+        };
+        if matches!(&left.node.value_type, ValueType::Float(_))
+            || matches!(&right.node.value_type, ValueType::Float(_))
+        {
+            let same_float_type = matches!(
+                (&left.node.value_type, &right.node.value_type),
+                (ValueType::Float(left), ValueType::Float(right)) if left == right
+            );
+            if !same_float_type
+                || left.conversion_target.is_some()
+                || right.conversion_target.is_some()
+            {
+                return Err(operand_mismatch(
+                    location,
+                    mismatch_operator,
+                    left.node.value_type.clone(),
+                    right.node.value_type.clone(),
+                ));
+            }
+        }
         if let (ValueType::Float(left_type), ValueType::Float(right_type)) =
             (&left.node.value_type, &right.node.value_type)
         {
@@ -4091,10 +4157,20 @@ impl<'a> Typer<'a> {
         let (ValueType::Float(left_type), ValueType::Float(right_type)) =
             (&left.value_type, &right.value_type)
         else {
-            return Err(mismatch(location));
+            return Err(operand_mismatch(
+                location,
+                ordering_binary_operator(operator),
+                left.value_type.clone(),
+                right.value_type.clone(),
+            ));
         };
         if left_type != right_type {
-            return Err(mismatch(location));
+            return Err(operand_mismatch(
+                location,
+                ordering_binary_operator(operator),
+                left.value_type.clone(),
+                right.value_type.clone(),
+            ));
         }
         // Each operand is evaluated once and read by every part of the
         // composition: an operand that is not already a slot read or a
@@ -4107,7 +4183,7 @@ impl<'a> Typer<'a> {
             }
             let value_type = operand.value_type.clone();
             let value = this.push(operand);
-            let slot = this.fresh_slot("ieee_operand");
+            let slot = this.fresh_slot("#ieee_operand");
             bindings.push((slot, value));
             this.push(node(NodeKind::Local(slot), value_type, location))
         };
@@ -4171,7 +4247,12 @@ impl<'a> Typer<'a> {
         for (slot, value) in bindings.into_iter().rev() {
             let body = self.push(composed);
             composed = node(
-                NodeKind::Let { slot, value, body },
+                NodeKind::Let {
+                    slot,
+                    name: self.slot_name(slot, location)?,
+                    value,
+                    body,
+                },
                 ValueType::Boolean,
                 location,
             );
@@ -4180,11 +4261,12 @@ impl<'a> Typer<'a> {
     }
 
     /// A slot that no source name can read, for a value the checker binds
-    /// itself.
+    /// itself. Its declared name is the fixed text `name`, which begins with
+    /// `#` so no source identifier can take it (FR-397 "Operand binders").
     fn fresh_slot(&mut self, name: &str) -> Slot {
         let slot = self.slots;
         self.slots = self.slots.saturating_add(1);
-        self.slot_names.push(format!("{name}_{slot}"));
+        self.slot_names.push(name.to_owned());
         slot
     }
 
@@ -5501,14 +5583,29 @@ impl<'a> Typer<'a> {
                     location,
                 ))
             }
-            (ValueType::Rational(_) | ValueType::Decimal(_), ValueType::Decimal(decimal))
-                if !admits_equality_conversion(&operand.value_type, target, &self.units) =>
-            {
-                Ok(node(
-                    NodeKind::ConvertDecimal(self.push(operand), decimal.clone()),
-                    target.clone(),
-                    location,
-                ))
+            (
+                ValueType::Integer
+                | ValueType::Int(_)
+                | ValueType::Rational(_)
+                | ValueType::Decimal(_),
+                ValueType::Integer
+                | ValueType::Int(_)
+                | ValueType::Rational(_)
+                | ValueType::Decimal(_),
+            ) => {
+                use super::numeric_conversion::{classify, Class};
+                let class = classify(&operand.value_type, target).ok_or_else(|| {
+                    CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
+                })?;
+                let kind =
+                    if let (Class::ScaleReduction, ValueType::Decimal(decimal)) = (class, target) {
+                        NodeKind::ConvertDecimal(self.push(operand), decimal.clone())
+                    } else {
+                        let converted =
+                            EqualityOperand::converted(operand.value_type.clone(), target.clone());
+                        NodeKind::ConvertScalar(converted, self.push(operand))
+                    };
+                Ok(node(kind, target.clone(), location))
             }
             (
                 ValueType::Quantity(_) | ValueType::CarriedQuantity(_),
@@ -5703,6 +5800,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit: Visit::Map,
                         slot,
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -5728,6 +5826,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit: Visit::Filter,
                         slot,
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -5745,6 +5844,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit,
                         slot,
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },

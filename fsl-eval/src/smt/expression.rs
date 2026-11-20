@@ -275,7 +275,9 @@ impl<'r, 'a> Reader<'r, 'a> {
                 .flatten()
                 .map(Encoded::total)
                 .ok_or_else(|| self.refuse(node, "binding with no value")),
-            NodeKind::Let { slot, value, body } => {
+            NodeKind::Let {
+                slot, value, body, ..
+            } => {
                 let bound = self.operand(node, *value, depth)?;
                 if self.slots.len() <= *slot {
                     self.slots.resize(*slot + 1, None);

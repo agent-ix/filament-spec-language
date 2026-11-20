@@ -83,6 +83,7 @@ mod model_systems_resolve;
 mod model_unit_input;
 mod moved_item_paths;
 mod named_population;
+mod narrowing_conversions;
 mod native_literals;
 mod native_scalar_equality;
 mod native_snapshot_values;

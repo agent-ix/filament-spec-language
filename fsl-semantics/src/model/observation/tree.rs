@@ -383,6 +383,8 @@ fn native_object(object: Object<'_>, nested: bool) -> NativeObject {
         Some(Some("quantity")) => RawNativeKind::Known(NativeKind::Quantity),
         Some(Some("rational")) => RawNativeKind::Known(NativeKind::Rational),
         Some(Some("decimal")) => RawNativeKind::Known(NativeKind::Decimal),
+        Some(Some("float32")) => RawNativeKind::Known(NativeKind::Float32),
+        Some(Some("float64")) => RawNativeKind::Known(NativeKind::Float64),
         Some(Some(_)) => RawNativeKind::Unknown,
     };
     let members = object

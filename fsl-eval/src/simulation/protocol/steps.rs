@@ -860,6 +860,126 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         })
     }
 
+    /// Whether every checked relationship premise holds for this candidate
+    /// event binding in the same observed state as its constraint (FR-731).
+    pub(super) fn related_admits(
+        &self,
+        instance: &Instance,
+        path: &ThreadPath,
+        node: ProtocolNodeId,
+        slot: Option<usize>,
+        record: Option<&Value>,
+        observed: &ModelSimState,
+        findings: &mut Vec<ModelFinding>,
+    ) -> Result<bool, ExpansionStop> {
+        let Some(clauses) = self.program.related.get(&node) else {
+            return Ok(true);
+        };
+        let text = self.program.text(node)?;
+        let observation = self.model.observation_of(observed)?;
+        for clause in clauses {
+            let mut frame = self.frame(instance, path, node);
+            if let (Some(slot), Some(record)) = (slot, record) {
+                if let Some(entry) = frame.get_mut(slot) {
+                    *entry = Some(record.clone());
+                }
+            }
+            let first = self.evaluate_value_in(clause.ends[0], frame.clone(), &observation)?;
+            let second = self.evaluate_value_in(clause.ends[1], frame, &observation)?;
+            let source = match first {
+                Ok(Value::Reference(reference)) => reference,
+                Ok(_) => return Ok(false),
+                Err(outcome) => {
+                    findings.push(undetermined(text, outcome));
+                    return Ok(false);
+                }
+            };
+            let target = match second {
+                Ok(Value::Reference(reference)) => reference,
+                Ok(_) => return Ok(false),
+                Err(outcome) => {
+                    findings.push(undetermined(text, outcome));
+                    return Ok(false);
+                }
+            };
+            let holds = observed.state().extents.iter().any(|extent| {
+                extent.relationship == clause.relationship
+                    && extent
+                        .instances
+                        .iter()
+                        .any(|pair| pair.0 == source && pair.1 == target)
+            });
+            if !holds {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The first relationship premise that rejects `transition` at `state`.
+    /// Replay uses this only after expansion reports that the transition is
+    /// not enabled, so a node-constraint or control-flow refusal keeps its
+    /// ordinary cause instead of being mislabeled as a relationship failure.
+    pub fn related_by_failure(
+        &self,
+        state: &ProtocolState<M>,
+        transition: &ProtocolTransition,
+    ) -> Option<String> {
+        let path = transition.node()?;
+        let thread = transition.thread()?;
+        let (node, control) = self
+            .program
+            .controls
+            .iter()
+            .find(|(_, control)| control.text == path)?;
+        let node = *node;
+        let clauses = self.program.related.get(&node)?;
+        let instance = state.instances.get(&thread.instance)?;
+        let observation = self.model.observation_of(&state.model).ok()?;
+        let mut frame = self.frame(instance, thread, node);
+        if let (Some(slot), Some(record)) = (
+            self.program.binder_of.get(&node).copied(),
+            transition.binder_record(),
+        ) {
+            if let Some(entry) = frame.get_mut(slot) {
+                *entry = Some(record.clone());
+            }
+        }
+        for clause in clauses {
+            let first = self
+                .evaluate_value_in(clause.ends[0], frame.clone(), &observation)
+                .ok()?;
+            let second = self
+                .evaluate_value_in(clause.ends[1], frame.clone(), &observation)
+                .ok()?;
+            let (Ok(Value::Reference(source)), Ok(Value::Reference(target))) = (first, second)
+            else {
+                return self
+                    .protocol
+                    .relationships
+                    .iter()
+                    .find(|relationship| relationship.key == clause.relationship)
+                    .map(|relationship| relationship.name.clone());
+            };
+            let holds = state.model.state().extents.iter().any(|extent| {
+                extent.relationship == clause.relationship
+                    && extent
+                        .instances
+                        .iter()
+                        .any(|pair| pair.0 == source && pair.1 == target)
+            });
+            if !holds {
+                return self
+                    .protocol
+                    .relationships
+                    .iter()
+                    .find(|relationship| relationship.key == clause.relationship)
+                    .map(|relationship| relationship.name.clone());
+            }
+        }
+        None
+    }
+
     /// ST-2: for a domain `event` or `commit` node, one step per record of
     /// its type that satisfies its constraint; the binder is bound and the
     /// model state is unchanged.
@@ -1019,6 +1139,17 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     record.constraint,
                     record.slot,
                     &value,
+                    &observed,
+                    &mut gathered.findings,
+                )? {
+                    continue;
+                }
+                if !self.related_admits(
+                    instance,
+                    path,
+                    node,
+                    Some(record.slot),
+                    Some(&value),
                     &observed,
                     &mut gathered.findings,
                 )? {
@@ -1775,6 +1906,17 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         continue;
                     }
                 }
+            }
+            if !self.related_admits(
+                instance,
+                path,
+                node,
+                self.program.binder_of.get(&node).copied(),
+                bound.as_ref().and_then(|bound| bound.value.as_ref()),
+                observed.state(),
+                &mut gathered.findings,
+            )? {
+                continue;
             }
             // ST-1 binds every attempt binder to the record (receiver,
             // arguments, result). With no result of the binder's type the

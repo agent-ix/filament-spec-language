@@ -80,7 +80,12 @@ impl BodyFactory for ActionFactory {
 struct ActionBody(Action);
 
 impl Body for ActionBody {
-    fn resume(&mut self, input: Resume, _meter: &mut Meter) -> Result<Transition, BodyFailure> {
+    fn resume(
+        &mut self,
+        input: Resume,
+        _context: &mut filament_eval::LiveContext,
+        _meter: &mut Meter,
+    ) -> Result<Transition, BodyFailure> {
         assert!(matches!(input, Resume::Start(_)));
         match &self.0 {
             Action::MembershipFalse {

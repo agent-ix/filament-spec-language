@@ -204,7 +204,9 @@ impl<'n, N: ReadNode<'n>> Walk<'n, N> {
                 children.push(visit(*operand));
                 Exit::Pass
             }
-            NodeKind::Let { slot, value, body } => {
+            NodeKind::Let {
+                slot, value, body, ..
+            } => {
                 children.extend([visit(*value), Step::Let(*slot, node.at(*body), ambient)]);
                 Exit::Pass
             }
@@ -220,6 +222,7 @@ impl<'n, N: ReadNode<'n>> Walk<'n, N> {
                 source,
                 step,
                 identity,
+                ..
             } => {
                 children.extend([
                     visit(*source),

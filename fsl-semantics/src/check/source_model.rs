@@ -649,6 +649,7 @@ fn operation_record(
                 ),
                 value_type,
                 multiplicity,
+                presence: filament_exact::Presence::Required,
             }),
             Err(error) => errors.push(error),
         }

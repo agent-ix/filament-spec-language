@@ -23,7 +23,11 @@ const BUMP_CLAUSES: &str = "\
     post ParamUnderPre using v on Config::ConfigVersion::bump { \
     pre(self.versionNumber = expectedVersion) }\n";
 
-fn bump_operation() -> serde_json::Value {
+const OPTIONAL_BUMP_CLAUSES: &str = "\
+    pre OptionalPresent using v on Config::ConfigVersion::bump { \
+    present(expectedVersion) }\n";
+
+fn bump_operation(presence: &str) -> serde_json::Value {
     let config_version = config_version_type();
     let operation_identity = format!("{config_version}/bump");
     let parameter_identity = format!("{operation_identity}/expectedVersion");
@@ -34,7 +38,7 @@ fn bump_operation() -> serde_json::Value {
             "identity": parameter_identity,
             "name": "expectedVersion",
             "typeRef": version_number_type(),
-            "presence": "required",
+            "presence": presence,
             "nullable": false,
             "defaultKind": "none",
             "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
@@ -65,14 +69,25 @@ fn bump_operation() -> serde_json::Value {
 }
 
 fn bump_unit_and_packages() -> (String, fsl_semantics::model::intake::PackageInput) {
-    let document = config_version_domain_document_with_operations(vec![bump_operation()]);
+    let document = config_version_domain_document_with_operations(vec![bump_operation("required")]);
     let (unit, packages) = config_version_unit_and_packages_for(document);
     (format!("{unit}{BUMP_CLAUSES}"), packages)
+}
+
+fn optional_bump_unit_and_packages() -> (String, fsl_semantics::model::intake::PackageInput) {
+    let document = config_version_domain_document_with_operations(vec![bump_operation("optional")]);
+    let (unit, packages) = config_version_unit_and_packages_for(document);
+    (format!("{unit}{OPTIONAL_BUMP_CLAUSES}"), packages)
 }
 
 fn bump_request(selection: ClauseRunSelection) -> ClauseRunRequest {
     let (unit, packages) = bump_unit_and_packages();
     config_version_request_for(unit, packages, "invocation-parameters.native", selection)
+}
+
+fn optional_bump_request(selection: ClauseRunSelection) -> ClauseRunRequest {
+    let (unit, packages) = optional_bump_unit_and_packages();
+    config_version_request_for(unit, packages, "optional-invocation-parameters.native", selection)
 }
 
 /// The documents of one `bump` invocation: `child` at 1 before and 2 after,
@@ -133,6 +148,25 @@ fn run_bump(
     run_clause(request).expect("a well-formed request always reports")
 }
 
+fn run_optional_bump(
+    input: BumpInvocation,
+    selection: impl FnOnce(DocumentRef) -> ClauseRunSelection,
+) -> super::super::ClauseRunReport {
+    let mut request = optional_bump_request(selection(input.invocation));
+    request.snapshots.extend(input.snapshots);
+    request.invocations.extend(input.invocations);
+    run_clause(request).expect("a well-formed optional invocation always reports")
+}
+
+fn run_optional_presence(input: BumpInvocation) -> super::super::ClauseRunReport {
+    run_optional_bump(input, |invocation| {
+        ClauseRunSelection::Clause(config_version_invocation_selection(
+            "OptionalPresent",
+            invocation,
+        ))
+    })
+}
+
 fn run_clause_over(input: BumpInvocation, clause: &str) -> super::super::ClauseRunReport {
     run_bump(input, |invocation| {
         ClauseRunSelection::Clause(config_version_invocation_selection(clause, invocation))
@@ -174,6 +208,47 @@ fn pre_over_an_expression_holding_a_parameter_keeps_the_parameter_value() {
         "ParamUnderPre",
     );
     assert!(!boolean_disposition(&other_value.disposition));
+}
+
+/// FSpec FR-106-AC-71: an optional operation argument accepts present,
+/// explicit absent, and omission (which binds the same absent value); a bare
+/// value has the wrong kind. Required parameters remain mandatory.
+#[trace("FSpec-FR-106-AC-71")]
+#[test]
+fn optional_operation_parameters_admit_present_absent_and_omitted_values() {
+    let present = run_optional_presence(bump_invocation(2, |document| {
+        document["parameters"] = json!({
+            "expectedVersion": {"present": {"integer": "1"}}
+        });
+    }));
+    assert!(boolean_disposition(&present.disposition));
+
+    let explicit_absent = run_optional_presence(bump_invocation(2, |document| {
+        document["parameters"] = json!({"expectedVersion": {"absent": {}}});
+    }));
+    let omitted = run_optional_presence(bump_invocation(2, |document| {
+        document["parameters"] = json!({});
+    }));
+    assert!(!boolean_disposition(&explicit_absent.disposition));
+    assert!(!boolean_disposition(&omitted.disposition));
+
+    let bare = run_optional_presence(bump_invocation(2, |document| {
+        document["parameters"] = json!({"expectedVersion": {"integer": "1"}});
+    }));
+    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &bare.disposition else {
+        panic!("expected a wrong-kind admission refusal, got {:?}", bare.disposition);
+    };
+    assert_eq!(record.catalog.cause(), "wrong-value-kind");
+
+    let required = run_bump(bump_invocation(2, |document| {
+        document["parameters"] = json!({});
+    }), |invocation| {
+        ClauseRunSelection::Clause(config_version_invocation_selection("PreMatches", invocation))
+    });
+    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &required.disposition else {
+        panic!("expected a missing-member refusal, got {:?}", required.disposition);
+    };
+    assert_eq!(record.catalog.cause(), "missing-member");
 }
 
 fn bump_frame_selection(invocation: DocumentRef) -> ClauseRunSelection {

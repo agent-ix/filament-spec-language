@@ -1677,10 +1677,10 @@ fn a_reward_a_claim_names_is_one_the_model_declares() {
     };
     assert_eq!(*bound, Bound::AtLeast(ratio(1, 2)));
     assert_eq!(fraction.window, 10);
-    assert!(matches!(
-        fraction.weight.as_ref(),
-        Some(Weighting::Reward(ref weight)) if weight.as_str() == "latency"
-    ));
+    assert_eq!(
+        fraction.weight.as_ref().map(|weight| weight.as_str()),
+        Some("latency")
+    );
     let duration = checked(&weighted("duration"));
     let ProbForm::MeanOfFraction { fraction, .. } = &claim_of(&duration).form else {
         panic!("a checked duration-weighted fraction");
@@ -1689,17 +1689,24 @@ fn a_reward_a_claim_names_is_one_the_model_declares() {
         fraction.weight.as_ref(),
         Some(Weighting::Reward(weight)) if weight.as_str() == "duration"
     ));
-    for unknown in ["nothing"] {
-        assert_eq!(
-            located(&weighted(unknown)),
-            [(
-                Code::MissingDeclaration,
-                Some("missing-name"),
-                unknown.to_owned()
-            )],
-            "{unknown}"
-        );
-    }
+    assert_eq!(
+        located(&weighted("nothing")),
+        [(
+            Code::MissingDeclaration,
+            Some("missing-name"),
+            "nothing".to_owned()
+        )]
+    );
+    // FR-186: `delay` is the delay weighting, never a reward lookup; it has no
+    // emitted form until QSL-2551, so it is a typed refusal at its name.
+    assert_eq!(
+        located(&weighted("delay")),
+        [(
+            Code::InvalidProbabilisticModel,
+            Some("delay-weighting-unsupported"),
+            "delay".to_owned()
+        )]
+    );
     let long_run = |weight: &str| {
         service(
             None,

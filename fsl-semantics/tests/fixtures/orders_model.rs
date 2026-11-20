@@ -89,6 +89,7 @@ pub fn operation(
                 key: key(&format!("{owner}/{name}/{parameter}")),
                 value_type: ValueTypeRef::Native(NativeValueType::Integer),
                 multiplicity: one(),
+                presence: filament_exact::Presence::Required,
             })
             .into_iter()
             .collect(),

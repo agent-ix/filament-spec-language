@@ -133,6 +133,7 @@ fn query_over(
                 key: key(&format!("{name}/{parameter}")),
                 value_type: ValueTypeRef::Native(NativeValueType::Integer),
                 multiplicity: one(),
+                presence: filament_exact::Presence::Required,
             })
             .collect(),
         result: Some(OperationResult {

@@ -2068,6 +2068,9 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     "{message}: the time-valued position of claim `{claim}` does not match its \
                      model's time type"
                 ),
+                ProbabilisticCause::DelayWeightingUnsupported { claim, .. } => format!(
+                    "{message}: claim `{claim}` is weighted by delay, which has no emitted form yet"
+                ),
                 ProbabilisticCause::UnresolvedProfile { claim, alias, .. } => {
                     format!("{message}: claim `{claim}` uses `{alias}`, which names no profile")
                 }

@@ -669,6 +669,7 @@ fn seq_lowers_as_a_map_over_its_integer_range() {
         vec![ValueType::Integer; 3],
         |ids| NodeKind::Seq {
             slot: 0,
+            name: "i".to_owned(),
             low: ids[0],
             high: ids[1],
             body: ids[2],

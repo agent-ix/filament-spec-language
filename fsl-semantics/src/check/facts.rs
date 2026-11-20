@@ -6,8 +6,9 @@
 //! stable path `p`, `contains(c, v)` for stable paths `c` and `v` (or a
 //! literal map key `v`), and an
 //! integer ordering or equality between a stable integer path (or
-//! `size(p)`) and an integer literal. A comparison of two
-//! non-literal operands yields no fact. The walk and every guard-fact helper
+//! `size(p)`) and an integer literal, and two-path sum or difference bounds.
+//! Other non-literal comparisons yield only the accepted difference facts.
+//! The walk and every guard-fact helper
 //! it calls run on the walker toolkit, and each path's facts are persistent
 //! (one trie path more than its parent's), so no depth of typed expression is
 //! a limit and no chain of nested guards copies facts per level (ADR-030
@@ -22,6 +23,7 @@ use std::marker::PhantomData;
 use std::ops::ControlFlow;
 use std::rc::Rc;
 
+mod conversions;
 mod persistent;
 
 use self::persistent::PersistentMap;
@@ -70,6 +72,8 @@ pub(crate) struct StablePath {
 enum Subject {
     Value(StablePath),
     Size(StablePath),
+    /// An unordered pair of distinct integer paths, stored in path order.
+    Sum(StablePath, StablePath),
 }
 
 /// The facts proved on one reachable path. Each is a persistent map, so a
@@ -633,6 +637,8 @@ pub(crate) struct Definedness<'a> {
     /// body, so one table serves every path of the walk and no `let` copies
     /// the facts of the paths above it.
     aliases: BTreeMap<Slot, StablePath>,
+    /// Exact numeric literals bound by a `let`, used for membership proofs.
+    numeric_literals: BTreeMap<Slot, Value>,
     /// The facts a walk begins with: a postcondition's transferred
     /// precondition facts (FR-577), empty elsewhere.
     initial: Facts,
@@ -658,6 +664,7 @@ impl<'a> Definedness<'a> {
             observations: None,
             components: None,
             aliases: BTreeMap::new(),
+            numeric_literals: BTreeMap::new(),
             initial: Facts::default(),
             mode: CheckMode::Linked,
         }
@@ -809,11 +816,44 @@ impl<'a> Definedness<'a> {
             NodeKind::Size(operand) => self
                 .stable_path(node.at(*operand), facts)
                 .map(Subject::Size),
+            NodeKind::Arithmetic(Arithmetic::Add, _, _) => {
+                let (_, left, right) = self.term_paths(node, facts)?;
+                Some(if left < right {
+                    Subject::Sum(left, right)
+                } else {
+                    Subject::Sum(right, left)
+                })
+            }
             _ if matches!(node.value_type(), ValueType::Integer | ValueType::Int(_)) => {
                 self.range_path(node, facts).map(Subject::Value)
             }
             _ => None,
         }
+    }
+
+    /// The operands of exactly one sum or difference of distinct integer
+    /// paths. No nested arithmetic or repeated path establishes a term fact.
+    fn term_paths(
+        &self,
+        node: CheckedNode<'_>,
+        facts: &Facts,
+    ) -> Option<(Arithmetic, StablePath, StablePath)> {
+        let NodeKind::Arithmetic(operator @ (Arithmetic::Add | Arithmetic::Subtract), left, right) =
+            node.kind()
+        else {
+            return None;
+        };
+        let path = |operand| {
+            let mut operand = Self::through_conversion(node.at(operand));
+            while let NodeKind::Coerce(inner, _) = operand.kind() {
+                operand = Self::through_conversion(operand.at(*inner));
+            }
+            is_integer(operand)
+                .then(|| self.range_path(operand, facts))
+                .flatten()
+        };
+        let (left, right) = (path(*left)?, path(*right)?);
+        (left != right).then_some((*operator, left, right))
     }
 
     /// The interval `node` lies in under `facts`, evaluated bottom up on the
@@ -868,9 +908,18 @@ impl<'a> Definedness<'a> {
         literal: &Integer,
         facts: &Rc<Facts>,
     ) -> Option<Rc<Facts>> {
-        let Some(key) = self.subject(subject, facts) else {
+        let key = self.subject(subject, facts);
+        let difference = self
+            .term_paths(subject, facts)
+            .filter(|(operator, _, _)| *operator == Arithmetic::Subtract);
+        if key.is_none() && difference.is_none() {
             return Some(Rc::clone(facts));
-        };
+        }
+        if matches!(relation, Relation::NotEqual)
+            && (matches!(key, Some(Subject::Sum(_, _))) || difference.is_some())
+        {
+            return Some(Rc::clone(facts));
+        }
         let current = self.interval(subject, facts);
         let one = Integer::one();
         let refined = match relation {
@@ -907,12 +956,23 @@ impl<'a> Definedness<'a> {
             return None;
         }
         let mut facts = Facts::clone(facts);
-        if let (Relation::NotEqual, true, Subject::Value(path)) =
+        if let (Relation::NotEqual, true, Some(Subject::Value(path))) =
             (relation, literal.is_zero(), &key)
         {
             facts.nonzero.insert(path.clone(), ());
         }
-        facts.intervals.insert(key, refined.proved());
+        if let Some(key) = key {
+            facts.intervals.insert(key, refined.proved());
+        } else if let Some((_, left, right)) = difference {
+            if let End::Finite(upper) = refined.upper {
+                facts
+                    .differences
+                    .insert((left.clone(), right.clone()), upper);
+            }
+            if let End::Finite(lower) = refined.lower {
+                facts.differences.insert((right, left), lower.neg());
+            }
+        }
         Some(Rc::new(facts))
     }
 
@@ -956,6 +1016,10 @@ impl<'a> Definedness<'a> {
                 return (Some(Rc::clone(facts)), Some(Rc::clone(facts)));
             }
         };
+        // A two-path disequality establishes no fact on either outcome.
+        if matches!(relation, Relation::NotEqual) && self.term_paths(subject, facts).is_some() {
+            return (Some(Rc::clone(facts)), Some(Rc::clone(facts)));
+        }
         (
             self.relate(subject, relation, &literal, facts),
             self.relate(subject, relation.negated(), &literal, facts),
@@ -1194,6 +1258,7 @@ impl<'a> Definedness<'a> {
             slot: binder,
             source,
             body,
+            ..
         } = filter.kind()
         else {
             return None;
@@ -1405,7 +1470,12 @@ impl<'a> Definedness<'a> {
                     children.push(DefinedNode::Walk(node.at(*right), under));
                 }
             }
-            NodeKind::Let { slot, value, body } => {
+            NodeKind::Let {
+                slot, value, body, ..
+            } => {
+                if let Some(value) = self.numeric_literal(node.at(*value)) {
+                    self.numeric_literals.insert(*slot, value);
+                }
                 if let Some(path) = self.stable_path(node.at(*value), facts) {
                     self.aliases.insert(*slot, path);
                 }
@@ -1454,6 +1524,9 @@ impl<'a> Definedness<'a> {
 
     fn discharge_node(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), CheckRefusal> {
         match node.kind() {
+            NodeKind::ConvertScalar(_, operand) => {
+                self.discharge_conversion(node, node.at(*operand), facts)
+            }
             NodeKind::Coerce(operand, target) => {
                 let proved = self.interval(node.at(*operand), facts);
                 let required = Interval::of_domain(target);
@@ -1996,13 +2069,26 @@ impl<'n> filament_walk::Walk for IntervalWalk<'_, '_, '_, 'n> {
         };
         let leaf = match node.kind() {
             NodeKind::Arithmetic(operator, left, right) => {
-                children.push(node.at(*left));
-                children.push(node.at(*right));
+                let term = definedness.term_paths(node, facts).is_some();
+                let operand = |id| {
+                    let operand = node.at(id);
+                    if term {
+                        Definedness::through_conversion(operand)
+                    } else {
+                        operand
+                    }
+                };
+                children.push(operand(*left));
+                children.push(operand(*right));
                 let bound = match operator {
                     Arithmetic::Subtract => {
                         definedness.difference_interval(node.at(*left), node.at(*right), facts)
                     }
-                    Arithmetic::Add | Arithmetic::Multiply => None,
+                    Arithmetic::Add => definedness
+                        .subject(node, facts)
+                        .and_then(|key| facts.intervals.get(&key))
+                        .map(Interval::of_proved),
+                    Arithmetic::Multiply => None,
                 };
                 return ControlFlow::Continue(IntervalFrame::Arithmetic(*operator, bound));
             }
@@ -2293,6 +2379,7 @@ fn rekey(facts: &Facts, parameters: usize, shift: usize) -> Facts {
     let subject = |subject: Subject| match subject {
         Subject::Value(inner) => path(inner).map(Subject::Value),
         Subject::Size(inner) => path(inner).map(Subject::Size),
+        Subject::Sum(left, right) => Some(Subject::Sum(path(left)?, path(right)?)),
     };
     let mut kept = Facts::default();
     for (key, interval) in facts.intervals.entries() {

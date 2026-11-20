@@ -1036,7 +1036,12 @@ mod tests {
         child: Option<NodeKey>,
     }
     impl Body for HostBody {
-        fn resume(&mut self, input: Resume, _meter: &mut Meter) -> Result<Transition, BodyFailure> {
+        fn resume(
+            &mut self,
+            input: Resume,
+            _context: &mut filament_eval::LiveContext,
+            _meter: &mut Meter,
+        ) -> Result<Transition, BodyFailure> {
             Ok(match input {
                 Resume::Start(arguments) => match self.child.clone() {
                     Some(callee) => Transition::Call(ChildRequest {
@@ -1644,6 +1649,7 @@ mod tests {
             fn resume(
                 &mut self,
                 input: Resume,
+                _context: &mut filament_eval::LiveContext,
                 _meter: &mut Meter,
             ) -> Result<Transition, BodyFailure> {
                 match input {
@@ -1941,7 +1947,12 @@ mod tests {
         site: Location,
     }
     impl Body for SitedBody {
-        fn resume(&mut self, input: Resume, _meter: &mut Meter) -> Result<Transition, BodyFailure> {
+    fn resume(
+        &mut self,
+        input: Resume,
+        _context: &mut filament_eval::LiveContext,
+        _meter: &mut Meter,
+    ) -> Result<Transition, BodyFailure> {
             Ok(match (input, self.callee.clone()) {
                 (Resume::Start(arguments), Some(callee)) => Transition::Call(ChildRequest {
                     callee,

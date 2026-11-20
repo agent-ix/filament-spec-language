@@ -18,6 +18,21 @@ use filament_semantic_value::call::WrongSnapshotCause;
 use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
 use fsl_semantics::model::observation::AdmissionRecord;
 
+/// An exact rational cannot be placed in unbounded `Integer`. Unlike a
+/// bounded target, it has no interval for a kernel domain-refusal payload.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NonintegralNarrowing;
+
+impl CatalogCoded for NonintegralNarrowing {
+    fn catalog_code(&self) -> CatalogCode {
+        CatalogCode::new("undefined_expression", "unproved-range")
+    }
+
+    fn catalog_fields(&self) -> Option<BTreeMap<&'static str, String>> {
+        Some(BTreeMap::new())
+    }
+}
+
 /// A typed unsupported construct refused before an evaluator invents
 /// semantics for it.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -227,6 +227,7 @@ fn operation(
             key: key(&format!("{owner}/{name}/{parameter}")),
             value_type: ValueTypeRef::Package(key(parameter_type)),
             multiplicity: mult(1, Some(1)),
+            presence: filament_exact::Presence::Required,
         }],
         result: None,
         effect: OperationEffect::default(),

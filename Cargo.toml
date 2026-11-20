@@ -22,12 +22,12 @@ filament-walk = { git = "https://github.com/agent-ix/filament-walk", tag = "v0.1
 # repository so IR, RT and CG depend on it without the FSL repo. Only
 # `fsl-semantics` requests `construct` in its manifest; Cargo unifies the
 # feature across the workspace build.
-filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "6689fa06123ed46793734b6b5059c8cdef85027d" }
+filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "fa2b722080f3a37e85e85e646590a40d5fcf5756" }
 # ADR-011 §6.1 layer E: the shared evaluation-core interface (FR-262, FR-401),
 # its own repository so RT and CG depend on it without the FSL repo.
-filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "6689fa06123ed46793734b6b5059c8cdef85027d" }
+filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "fa2b722080f3a37e85e85e646590a40d5fcf5756" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "a4dc3944048258b24ccf2942a12fb1075eb127dd" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "c214657926c0ff8fccf0bd8f36c9b906aa908f6c" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "5f67eb4c3abac582753901675d36eac91e093b1d" }
 

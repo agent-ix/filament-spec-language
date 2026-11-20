@@ -573,7 +573,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 [[package]]
 name = "filament-checked"
 version = "0.1.6"
-source = "git+https://github.com/agent-ix/filament-eval?rev=6689fa06123ed46793734b6b5059c8cdef85027d#6689fa06123ed46793734b6b5059c8cdef85027d"
+source = "git+https://github.com/agent-ix/filament-eval?rev=fa2b722080f3a37e85e85e646590a40d5fcf5756#fa2b722080f3a37e85e85e646590a40d5fcf5756"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -586,7 +586,7 @@ dependencies = [
 [[package]]
 name = "filament-contract-model"
 version = "0.1.2"
-source = "git+https://github.com/agent-ix/filament-contract-ir?rev=a4dc3944048258b24ccf2942a12fb1075eb127dd#a4dc3944048258b24ccf2942a12fb1075eb127dd"
+source = "git+https://github.com/agent-ix/filament-contract-ir?rev=c214657926c0ff8fccf0bd8f36c9b906aa908f6c#c214657926c0ff8fccf0bd8f36c9b906aa908f6c"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -612,7 +612,7 @@ dependencies = [
 [[package]]
 name = "filament-eval"
 version = "0.1.6"
-source = "git+https://github.com/agent-ix/filament-eval?rev=6689fa06123ed46793734b6b5059c8cdef85027d#6689fa06123ed46793734b6b5059c8cdef85027d"
+source = "git+https://github.com/agent-ix/filament-eval?rev=fa2b722080f3a37e85e85e646590a40d5fcf5756#fa2b722080f3a37e85e85e646590a40d5fcf5756"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",

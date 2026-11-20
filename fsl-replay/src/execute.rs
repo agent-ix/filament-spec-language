@@ -104,6 +104,7 @@ mod value_parity;
 pub use value_parity::{replay_value_parity, ValueParityReport, ValueParityResult};
 
 mod state_clause;
+pub(crate) use state_clause::prepare_state_clause;
 pub use state_clause::{replay_state_clause, ClauseIdentityMismatch, StateClauseReplayResult};
 #[cfg(test)]
 pub(crate) use state_clause::{separate, settle_separation, stopped_reason, SeparationOutcome};

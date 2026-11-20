@@ -234,6 +234,7 @@ impl Walk<'_, '_, '_> {
                     slot,
                     source: from,
                     body,
+                    ..
                 },
             ) => {
                 let mut kept = Vec::new();
@@ -254,6 +255,7 @@ impl Walk<'_, '_, '_> {
                     slot,
                     source: from,
                     body: mapped,
+                    ..
                 },
             ) => {
                 let mut out = Vec::new();

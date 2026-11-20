@@ -539,6 +539,7 @@ pub use witness::{
     QuantityMagnitude, ReplaySource, ValueTextError, Witness, WitnessBinding, WitnessEnvelope,
     WitnessField, WitnessPacket, WitnessRefusal, WitnessSlot, WitnessValue, WitnessValueType,
 };
+pub use witness::{derive_state_clause_witness, DerivationRefusal};
 pub use witness_entry_name::witness_entry_name;
 // FR-116: the FR-106 document, object and FR-115 frame witness types a
 // frame counterexample and its replay result carry, re-exported so CG can
