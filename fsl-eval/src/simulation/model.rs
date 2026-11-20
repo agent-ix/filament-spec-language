@@ -2149,6 +2149,17 @@ impl TransitionSystem for ModelRunView<'_, '_> {
             None => self.system.successors(state),
         }
     }
+
+    fn state_findings(
+        &self,
+        state: &Self::State,
+    ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+        self.system.state_findings(state)
+    }
+
+    fn stopped_findings(&self, state: &Self::State, stop: ExpansionStop) -> Vec<Self::Finding> {
+        self.system.stopped_findings(state, stop)
+    }
 }
 
 /// The identity limits `explore_model` and `sample_model` encode under.
