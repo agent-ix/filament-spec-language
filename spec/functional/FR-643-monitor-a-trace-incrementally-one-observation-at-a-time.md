@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-641
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-194
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-642
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-644
@@ -96,6 +98,7 @@ pub struct MonitorObservation<'a> {
     pub position: MonitorPosition<'a>,
     pub stamp: Option<MonitorStamp>,
     pub order_key: Option<TimestampedOrderKey>,
+    pub missing: &'a [TimestampedMissingValuation],
 }
 
 pub enum MonitorPosition<'a> { Snapshot(&'a [u8]), Sample(&'a str) }
@@ -115,6 +118,17 @@ still report (FR-820 `cited()`). Together the two bound every part of the
 session's state that grows with the trace. `assert_through` is the `Timed`
 kind's completeness assertion: FR-642's `through`, the stamp up to which the
 recording is complete.
+
+`missing` is a borrowed slice of the existing
+`TimestampedMissingValuation { position: u64, atom: u64 }` entries of
+[FR-641](FR-641-carry-every-temporal-trace-kind-and-the-progress-ledger-on-the-run-request.md).
+An empty slice marks no valuation absent. Each entry's `position` is the
+zero-based observation index assigned by this accepted `step`, not a stamp or
+counted-call number. Its `atom` has the same checked-clause formula-node meaning
+as the batch request, including the aggregate atom of
+[FR-194](FR-194-evaluate-window-aggregates-in-monitors.md). The observation still
+supplies an admissible snapshot or complete record sample; `missing` marks
+absent atom evidence rather than removing fields from that input.
 
 ### Decision: the accepted shape of the public API
 
@@ -195,6 +209,21 @@ spine APIs rather than a first sketch, and are accepted as its contract:
     member of the report: category, truth, disposition, counterexample or
     witness, settlement and positions. They do not cover `usage`, which
     reports the session's own incremental work, not a batch run's.
+- **Missing valuations.** On a `Timestamped` observation, the session SHALL
+  carry the supplied `missing` entries into the clause evaluation with the same
+  meaning and atom admission as the batch monitor over the selected clauses.
+  Every entry SHALL name the observation index being appended; an entry naming
+  an earlier or later observation, or an atom the equivalent batch request
+  refuses, SHALL refuse `invalid_runtime_input`/`invalid-value` naming `missing`
+  and leave the session unchanged. On every other kind, a nonempty `missing`
+  slice SHALL refuse the same way. An empty slice preserves existing behavior.
+  A window reading a marked member SHALL give the batch result
+  `MissingValuation`, including its position and atom, rather than omitting the
+  member or reporting a quantile over the other values
+  ([FR-194](FR-194-evaluate-window-aggregates-in-monitors.md), AC-17).
+  Progress assertions, checkpoint/resume and subsequent steps SHALL preserve
+  these absences for every retained window; "Batch equality", "Atomic steps"
+  and "Finality" apply unchanged.
 - **Usage.** Each clause report's `usage` SHALL be a closed object with
   exactly two members, `cumulative` and `step`, each one FR-109
   `ClauseRunUsage` (the admission work and the evaluation meter's charges,
@@ -387,6 +416,9 @@ spine APIs rather than a first sketch, and are accepted as its contract:
 | FR-643-AC-10 | In a `Timed` session of FR-642's `Ack` (`always (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`): with `req` at 0 and `ack` at 250, `Ack` settles `violation` at position 0 at the `ack` step, the stamp 250 having passed the window `[0, 200]`; with `req` at 0 and no further observation it stays `Pending` until `assert_through(250)`, which settles `violation` at position 0 with `Settlement` `{step: "2", trigger: "decided", basis: "closed-scope", horizon: "250", position: "0", through: "250"}`; with `req` at 0, `ack` at 150 and `assert_through(300)` it stays `Pending`, and `finish` returns `pending` for it, the unbounded `always` reading positions the recording does not hold (FR-642-AC-2). The bounded `Bound` (`always[0 ms, 300 ms] (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`) over `req` at 0, `ack` at 150 and `assert_through(500)` stays `Pending` until `finish`, which returns `success`. `assert_through(100)` after a stamp 150 refuses `timed-through-before-last-stamp`; `assert_through(250)` after `assert_through(300)` refuses `timed-stamps-decrease`; after `assert_through(300)`, an observation stamped 260, and one stamped 300, each refuse `timed-stamps-decrease`; each refusal leaves the session unchanged, and `assert_through` on a `Finite` session refuses `invalid-request` naming `through`. | Test (TC-2324) |
 | FR-643-AC-11 | A `Finite` session with `retained_identities` 3 over levels 0, 0, 2, 0: `Never` settles `violation` at step 3 citing three positions, and at step 4 `Below` settles `incomplete` naming `monitor.retained_identities`, its state dropped, while `Never` keeps its settled report; a further observation leaves `Below`'s report unchanged. | Test (TC-2324) |
 | FR-643-AC-12 | In a `Finite` session over `always holds(c.value <= 1)` and `c.value` 0, 1, 1, each report's `usage` has exactly the members `cumulative` and `step`, each one FR-109 `ClauseRunUsage` (admission work and evaluation meter charges); after each counted call `step` is that call's charge and `cumulative` is the sum of the `step` values so far; every other member equals `B(k)`. With a per-step work limit one unit below the second call's `step`, the clause settles `incomplete` with `trigger` `limit` at the second call while a first call within the limit is unaffected. | Test (TC-2628) |
+
+| FR-643-AC-13 | Feed FR-194-AC-17's timestamped observations one at a time, marking the aggregate atom absent with `{position: 18, atom: A}` on observation 18, then assert its closed progress complete through 300000. Each pending report equals the corresponding batch prefix with the same `missing` entries; the final report is `indeterminate` with `MissingValuation { position: 18, atom: A }`, never `invalid-value` or a quantile over the other values. A checkpoint immediately after observation 18, resumed before observation 19 and the progress assertion, gives the same reports and ledger as the uninterrupted session. With no missing entries, the same observations give FR-194-AC-13's violation. | Test |
+| FR-643-AC-14 | At next observation index 1, a missing entry whose position is 0 or 2, or whose atom is not a `holds` or aggregate node admitted by the selected clauses' batch run, refuses `invalid_runtime_input`/`invalid-value` naming `missing`. A nonempty missing slice on a `Finite`, `Progressed` or `Timed` session refuses likewise. Each refusal leaves checkpoint bytes and observation/count-call indices unchanged; the corrected observation is accepted at index 1. An empty slice is accepted wherever the same observation without absences is accepted. | Test |
 
 ## Dependencies
 

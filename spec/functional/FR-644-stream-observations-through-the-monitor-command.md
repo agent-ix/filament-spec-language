@@ -89,11 +89,14 @@ The request file, a closed JSON envelope `{"format": "native-monitor/1",
 The record stream is JSON Lines: one closed JSON object per line, each exactly
 one of
 
-- `{"observation": P, "stamp": S, "order_key": {"authority": A, "key": Z}}`: one
+- `{"observation": P, "stamp": S, "order_key": {"authority": A, "key": Z}, "missing": [M, ...]}`: one
   position, `P` an FR-641 position (an `observations` key, an inline snapshot
   document object `{"snapshot": {...}}`, or `{"sample": R}`), `S` an integer tick
   or an exact rational string as the kind requires, `stamp` and `order_key`
-  optional as the kind allows;
+  optional as the kind allows; `missing` optional on a `timestamped` observation
+  only, absent meaning an empty list, each `M` exactly FR-641's closed
+  `{"position": N, "atom": N}` entry (non-negative JSON integers representable
+  in `u64`), passed to FR-643 unchanged;
 - `{"progress": G}`: a progress assertion (FR-641's `G`);
 - `{"through": X}`: for the `timed` kind only, FR-642's completeness stamp,
   FR-643's `assert_through`;
@@ -220,6 +223,18 @@ monitor is most likely to also prove over its model.
   the batch disposition over the records that decided it, and a clause
   settled on a limit carries its `incomplete` limit report instead, which no
   batch run produces (FR-643 "Settlement").
+- The observation reader SHALL reject a `missing` value that is `null` or not
+  an array, and an entry with an unknown, duplicate, absent or `null` member,
+  or a `position` or `atom` of the wrong JSON type or outside `u64`, as a
+  malformed record naming the offending member (for example
+  `missing[0].atom`). The reader SHALL likewise refuse a repeated top-level
+  `missing` member. These refusals produce the existing `invalid-request` refusal event
+  at stage `request`, leave the session unchanged and allow the next record.
+  The reader SHALL refuse a `missing` member on a non-observation record as
+  an unknown member. When an observation is not `timestamped`, the reader SHALL
+  refuse its `missing` member, even for an empty array. Position and atom admission remains the
+  session's rule in
+  [FR-643](FR-643-monitor-a-trace-incrementally-one-observation-at-a-time.md).
 - A malformed record (not one closed object of the forms above, an observation
   key `observations` lacks, a stamp of the wrong form for the kind) SHALL produce
   a `filament.monitor-event/1` with `category` `refusal`, `invalid-request`,
@@ -309,6 +324,9 @@ is its own RFC 8785 re-encoding, and validates each event line against
 | FR-644-AC-10 | AC-8's request whose item names the unregistered backend `fsl.absent` settles that item `invalid-request` `unknown-backend` in the summary's `items`, calls no provider, still streams every record with AC-1's events, and exits 20; AC-8's request with a provider answering `unknown` settles the item `inconclusive` `solver-inconclusive` and exits 10 (the violation outranks it), and with every clause successful exits 22; two providers of one `BackendId` refuse `invalid-request` naming `providers`, exit 20, before any record is read and with no event. | Test (TC-2984) |
 | FR-644-AC-11 | AC-8's request with `cancel` fired before `monitor` is called settles the item `incomplete` with cause `cancelled{requested}` and sends no provider request; the driver's `fsl monitor monitor.json --provider-config providers.json --input records.jsonl` over AC-8's request and a configured test plugin writes AC-8's events and a summary carrying its `items`, and does not refuse `--provider-config`. | Test (TC-2984) |
 | FR-644-AC-12 | Every line of `fsl-command/tests/fixtures/monitor-golden/` equals the canonical encoding of the event or summary its stream gives, is its own RFC 8785 re-encoding, and validates against `MONITOR_EVENT_SCHEMA_1` or `MONITOR_SUMMARY_SCHEMA_1`. AC-7's record-2 event fails validation with `settlement` removed (an error at the root pointer, keyword `required`), with `/settlement/trigger` set to `"decide"` (an error at `/settlement/trigger`) and with a member `extra` added (an error at the root pointer); AC-7's record-0 event with a `settlement` added fails at the root pointer; AC-2's refusal event validates, and fails with `/disposition/member` removed (an error at `/disposition`) and with `clause` set to a clause name while its `disposition` stays the request refusal (an error at `/disposition`); AC-6's `through` refusal event validates; AC-7's summary with a `ledger` added fails, and AC-8's summary with `registry` removed fails, each at the root pointer. | Test (TC-3115) |
+
+| FR-644-AC-13 | Stream FR-643-AC-13's timestamped observations with `missing: [{"position": 18, "atom": A}]` on observation 18. Events and final summary match the session and batch reports, including `MissingValuation { position: 18, atom: A }` and exit 11. An omitted `missing` and `missing: []` give identical events and summary for the same timestamped stream. | Test |
+| FR-644-AC-14 | Between good timestamped observations, supply records with `missing: null`, a non-array value, entries with absent, unknown, duplicate or null members, negative, fractional, string or overflowing-u64 `position` or `atom`, and a duplicate top-level `missing`. Each yields one stage-`request` `invalid-request` refusal event naming the member and changes no session state; subsequent good records give the events and final clause reports of the stream without the refused records. A `missing` member on a progress record, or on a non-timestamped observation even as `[]`, is likewise refused naming `missing`. | Test |
 
 ## Dependencies
 
