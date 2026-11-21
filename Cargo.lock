@@ -661,6 +661,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "filament-mltl"
+version = "0.1.0"
+source = "git+https://github.com/agent-ix/filament-mltl?rev=94f3eb20927d70bbdc8af72e7b0333485e9c583f#94f3eb20927d70bbdc8af72e7b0333485e9c583f"
+dependencies = [
+ "filament-observation",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tl-mltl",
+ "tl-syntax",
+]
+
+[[package]]
 name = "filament-observation"
 version = "0.1.1"
 source = "git+https://github.com/agent-ix/filament-observation?rev=1e356f99358aaf0f9bbc42dd3451c44cc61a4d06#1e356f99358aaf0f9bbc42dd3451c44cc61a4d06"
@@ -874,6 +888,8 @@ dependencies = [
  "filament-contract-model",
  "filament-eval",
  "filament-exact",
+ "filament-mltl",
+ "filament-observation",
  "filament-semantic-value",
  "fsl-analyze",
  "fsl-cst",
@@ -2663,7 +2679,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tl-mltl"
 version = "0.4.1"
-source = "git+https://github.com/agent-ix/tl-mltl?rev=d8457736d431b1401802e81581d43a715a227549#d8457736d431b1401802e81581d43a715a227549"
+source = "git+https://github.com/agent-ix/tl-mltl?rev=06cda7776a3566ae90e223c3bc286c254618d39a#06cda7776a3566ae90e223c3bc286c254618d39a"
 dependencies = [
  "serde",
  "serde_json",
@@ -2674,7 +2690,7 @@ dependencies = [
 [[package]]
 name = "tl-syntax"
 version = "0.4.0"
-source = "git+https://github.com/agent-ix/tl-syntax.git?tag=v0.4.0#9607722f24ac1978b5e0e0ceeb0cb2a828e10177"
+source = "git+https://github.com/agent-ix/tl-syntax.git?rev=9f7b1c868df605cb6e885291db95a948cd08829c#9f7b1c868df605cb6e885291db95a948cd08829c"
 dependencies = [
  "serde",
  "serde_json",
