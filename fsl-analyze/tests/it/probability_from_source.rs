@@ -482,7 +482,7 @@ fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
 #[ix_trace_rs::trace("TC-2167", "FR-186-AC-10")]
 #[ix_trace_rs::trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2151: the on-each claim `E` is refused invalid_capability/unknown-claim instead of settling"]
+#[ignore = "QSL-2151: the on-each claim `E` settles as an internal-failure (runtime_invariant, established-invariant-broken) instead of the expected per-instance verdict"]
 fn probabilistic_on_each_settles_per_instance() {
     let claim = "probabilistic E using inf on M under Even \
          on each (k: M::Msg) when (not k.delivered) \
@@ -548,7 +548,7 @@ fn run_from(name: &str, claims: &str, start: Vec<u8>, items: Value) -> Value {
 #[ix_trace_rs::trace("TC-2485", "FR-875-AC-1")]
 #[ix_trace_rs::trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2151: the on-each claim `E` is refused invalid_capability/unknown-claim instead of settling"]
+#[ignore = "QSL-2151: the on-each claim `E` settles as an internal-failure (runtime_invariant, established-invariant-broken) instead of the expected per-instance verdict"]
 fn probabilistic_on_each_empty_population() {
     let document = run_from(
         "on-each-empty",
@@ -566,7 +566,7 @@ fn probabilistic_on_each_empty_population() {
 #[ix_trace_rs::trace("TC-2486", "FR-875-AC-2")]
 #[ix_trace_rs::trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2151: the on-each claim `E` is refused invalid_capability/unknown-claim instead of settling"]
+#[ignore = "QSL-2151: the on-each claim `E` settles as an internal-failure (runtime_invariant, established-invariant-broken) instead of the expected per-instance verdict"]
 fn probabilistic_on_each_never_activating_instance_is_vacuous() {
     let start = || link_start(&[("m", false), ("n", true)]);
     let proved = run_from(
@@ -594,7 +594,7 @@ fn probabilistic_on_each_never_activating_instance_is_vacuous() {
 /// instance in key order, and a rerun gives the same item.
 #[ix_trace_rs::trace("TC-2487", "FR-875-AC-3")]
 #[test]
-#[ignore = "QSL-2151: the on-each claim `E` is refused invalid_capability/unknown-claim instead of settling"]
+#[ignore = "QSL-2151: the on-each claim `E` settles as an internal-failure (runtime_invariant, established-invariant-broken) instead of the expected per-instance verdict"]
 fn probabilistic_on_each_names_first_failing_instance() {
     let once = || {
         run_from(

@@ -138,7 +138,6 @@ fn library_units_share_the_request_clocks() {
 
 #[trace("TC-2212", "FR-640-AC-10", "FSpec-TC-1661", "FSpec-FR-322-AC-452")]
 #[test]
-#[ignore = "QSL-2274: the library-clock program is refused invalid_syntax (unexpected-token) at compile, so the package cannot record its libraries' clock selections"]
 fn the_program_package_records_its_library_clock_selections() {
     let directory = tempfile::tempdir().unwrap();
     let library = "language \"ix:native\" edition \"1-draft\";\n\
