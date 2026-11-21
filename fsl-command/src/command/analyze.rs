@@ -346,7 +346,7 @@ fn run_package(
         engines: &engines,
         limits,
     };
-    let settled = with_deadline(cancel, deadline_ms, || {
+    let mut settled = with_deadline(cancel, deadline_ms, || {
         settle_package_run(run, negotiate, cancel)
     })
     .map_err(|failure| match failure {
@@ -365,6 +365,12 @@ fn run_package(
             super::identity_cause(error)
         }
     })?;
+    settled
+        .bind_effect_decisions(items.as_deref().unwrap_or_default(), &documents)
+        .map_err(|failure| match failure {
+            AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
+            AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+        })?;
     Ok(RunResult {
         exit_code: settled.exit_code,
         value: NativeResult::analyze_document(settled.document),
@@ -963,14 +969,25 @@ pub(super) fn settle_items<'u>(
         engines: settle.engines,
         limits: routed.limits,
     };
-    with_deadline(settle.cancel, routed.deadline_ms, || {
+    let mut settled = with_deadline(settle.cancel, routed.deadline_ms, || {
         settle_run(run, settle.negotiate, settle.cancel)
     })
     .map_err(|error| match error {
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
         AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
         AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
-    })
+    })?;
+    settled
+        .bind_effect_decisions(
+            routed.items.as_deref().unwrap_or_default(),
+            &routed.documents,
+        )
+        .map_err(|error| match error {
+            AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
+            AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+            AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
+        })?;
+    Ok(settled)
 }
 
 /// Run `work` with `cancel` cancelled for `deadline` once `deadline_ms`
@@ -1300,6 +1317,8 @@ fn read_run_members(
 /// `population` belong to a global-conformance item, and FR-634's
 /// `simulation` member to a simulation item alone.
 pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
+    fsl_analyze::analyze::document::effect_decision::selections(items.unwrap_or_default())
+        .map_err(|error| invalid(&error.pointer, error.message))?;
     for (position, item) in items.unwrap_or_default().iter().enumerate() {
         if item.kind.as_deref() == Some(fsl_semantics::check::Capability::Composition.to_wire()) {
             if let Some(premises) = &item.premises {
@@ -1390,8 +1409,40 @@ pub(super) fn read_documents(
 ) -> Result<DocumentProvision> {
     let mut documents = DocumentProvision::new();
     let mut recording_documents = std::collections::BTreeSet::new();
+    let selected =
+        fsl_analyze::analyze::document::effect_decision::selections(items.unwrap_or_default())
+            .map_err(|error| invalid(&error.pointer, error.message))?;
+    let mut receipt_documents = std::collections::BTreeMap::new();
+    for (item, entries) in selected.iter().enumerate() {
+        for (position, reference) in entries.iter().enumerate() {
+            receipt_documents
+                .entry(reference)
+                .or_insert((item, position));
+        }
+    }
     for (position, document) in selections.iter().enumerate() {
         let bytes = intake.file(&document.file, intake.remaining)?;
+        // Receipt identities are provision metadata, so even malformed JSON
+        // reaches the receipt reader without an uncharged second file read.
+        let wrapper = document.identity.as_ref().and_then(|value| {
+            serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                value.clone(),
+            )
+            .ok()
+        });
+        if let Some((reference, (item, selector))) = wrapper
+            .as_ref()
+            .and_then(|reference| receipt_documents.get_key_value(reference))
+        {
+            fsl_analyze::analyze::document::effect_decision::validate(
+                &bytes, *item, *selector, reference,
+            )
+            .map_err(|error| {
+                RunCause::AnalyzeRefused(Box::new(
+                    fsl_analyze::analyze::AnalyzeRefusal::EffectDecision(error),
+                ))
+            })?;
+        }
         let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
             invalid(
                 &format!("/documents/{position}"),
@@ -1500,6 +1551,14 @@ pub(super) fn read_documents(
                     "recording {{{}, {}}} does not name a provisioned protocol recording",
                     recording.authority, recording.identity,
                 ),
+            ));
+        }
+    }
+    for (reference, (item, selector)) in receipt_documents {
+        if !documents.contains_key(&reference.reference()) {
+            return Err(invalid(
+                &format!("/items/{item}/effect_decisions/{selector}"),
+                "effect decision names no provisioned document",
             ));
         }
     }

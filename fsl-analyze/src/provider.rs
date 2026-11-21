@@ -91,6 +91,10 @@ pub fn run(
         }
         Err(failure) => {
             let (cause, diagnostic) = match failure {
+                StageFailure::Refused(AnalyzeRefusal::EffectDecision(refusal)) => (
+                    Some(ProofRefusalCause::InvalidInput),
+                    CatalogCode::new("invalid_runtime_input", refusal.cause().as_str()),
+                ),
                 StageFailure::Refused(AnalyzeRefusal::Provision(refusal)) => (
                     Some(ProofRefusalCause::IncompleteInput),
                     refusal.catalog_code(),
