@@ -594,7 +594,8 @@ fn a_malformed_float_rounding_node_is_refused_at_admission() {
         read_with(&emission, &evidence),
         Read::Verified { .. }
     ));
-    let edits: [(&str, fn(&mut Value)); 2] = [
+    type Edit = (&'static str, fn(&mut Value));
+    let edits: [Edit; 2] = [
         ("an uncatalogued rounding mode", |node| {
             node["body"]["members"][0]["value"]["value"] = json!("sideways");
         }),

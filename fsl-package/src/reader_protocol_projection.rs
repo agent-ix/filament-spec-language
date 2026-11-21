@@ -4109,6 +4109,24 @@ impl UnsupportedView {
     }
 }
 
+/// The effective identity a print walk gives the model object type whose
+/// declaration node is `key`: the original declaration key alone.
+fn print_effective_id(key: &NodeKey) -> filament_exact::EffectiveId {
+    let node = key
+        .view()
+        .path()
+        .filter_map(|segment| match segment {
+            filament_exact::PathSegmentView::Text(text) => Some(text),
+            filament_exact::PathSegmentView::Node(_) => None,
+        })
+        .last()
+        .unwrap_or_default();
+    filament_exact::EffectiveId::new(
+        None,
+        filament_exact::OriginalDeclarationKey::new(key.package(), node),
+    )
+}
+
 #[cfg(test)]
 mod order_tests {
     use super::*;
@@ -4268,22 +4286,4 @@ mod order_tests {
             "missing-type-representation"
         );
     }
-}
-
-/// The effective identity a print walk gives the model object type whose
-/// declaration node is `key`: the original declaration key alone.
-fn print_effective_id(key: &NodeKey) -> filament_exact::EffectiveId {
-    let node = key
-        .view()
-        .path()
-        .filter_map(|segment| match segment {
-            filament_exact::PathSegmentView::Text(text) => Some(text),
-            filament_exact::PathSegmentView::Node(_) => None,
-        })
-        .last()
-        .unwrap_or_default();
-    filament_exact::EffectiveId::new(
-        None,
-        filament_exact::OriginalDeclarationKey::new(key.package(), node),
-    )
 }
