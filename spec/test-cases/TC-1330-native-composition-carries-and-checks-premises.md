@@ -29,8 +29,7 @@ build the settlement request from those results. Then:
    `Producer` clause, a safety guarantee, and a same-named `Sends` from a
    third package (FR-530-AC-2).
 4. Add the mutual dependency under each of the four rules, with and without a
-   registered provider; then select the lattice-declaring profile and offer a
-   `proved` fixed-point result (FR-530-AC-4, FR-530-AC-5).
+   registered provider (FR-530-AC-4; AC-5 is withdrawn).
 5. Run FSpec TC-983 case 5 (FR-530-AC-6).
 6. Add a discharge record naming no pool entry, one whose pool entry is over
    another subject, and one naming an `inconclusive` result (FR-530-AC-7).
@@ -59,7 +58,7 @@ the tests `#[trace("TC-1330", "<AC id>")]` and `#[trace("FSpec-TC-983")]` or
    slot.
 4. Each item `unsupported`, `unsupported-requested-capability`, kind
    `composition`, form `fixed-point`, both guarantees in edge order, with no slot
-   read, no provider called and no `fixed-point` slot; the same with the profile.
+   read, no provider called and no `fixed-point` slot.
 5. FSpec TC-983 case 5's five distinct outcomes.
 6. The first two refused `invalid_runtime_input`/`invalid-value` at the
    record; the third discharges nothing.

@@ -29,6 +29,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-177
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1044
+    type: references
 ---
 # FR-530: Carry and check liveness dependencies and fairness premises in native composition
 
@@ -142,20 +146,22 @@ the package's other items settle unchanged.
 
 ### Settlement and outcomes
 
-Before the slots, the item settles by FSpec FR-492 "Interface mismatch": decided
-from the declaration alone, never from a supplied result, in one reason-major
-order, every `absent` mismatch over its `rely` and `liveness-dependency` slots
-in ascending slot order and only when there is none every `weaker` mismatch in
-the same order, the first found settles the item `refuted`, basis
-`decisive-counterexample`, with `mismatch` `{component, interface, premise,
-reason}`, no cause, certification or conclusion, and `slots` the complete slot
-outcome list in slot order. A declared interface that is present and not weaker
-whose premise a supplied result does not discharge (absent, `tested`,
-`inconclusive`, another subject, kind or clause, or not `proved`) is never a
-mismatch. The item otherwise settles by FSpec FR-492 "Decision order", writing FSpec FR-489's
+After the cycle answer above, which comes first, and before the slots, the
+planner SHALL decide an interface mismatch by FSpec FR-492 "Interface
+mismatch", from the declaration alone and never from a supplied result. The
+order is reason-major: every `absent` mismatch over the `rely` and
+`liveness-dependency` slots in ascending slot order, and only when there is none
+every `weaker` mismatch over the same slots in the same order. The first mismatch
+found SHALL settle the item `refuted`, basis `decisive-counterexample`, with
+`mismatch` `{component, interface, premise, reason}`, no cause, certification or
+conclusion, and `slots` the complete slot outcome list in slot order. A declared
+interface that is present and not weaker, whose premise a supplied result does
+not discharge (absent, `tested`, `inconclusive`, another subject, kind or
+clause, or not `proved`), is never a mismatch.
+The item otherwise settles by FSpec FR-492 "Decision order", writing FSpec FR-489's
 premise discharge record: per slot, the discharging pool entry or supplied
-constraint, the subject, the relation (`identity`, `fairness-implication`,
-`assumption` or `fixed-point`), its certification and extent. A premise
+constraint, the subject, the relation (`identity`, `fairness-implication` or
+`assumption`), its certification and extent. A premise
 discharged by a `trusted` plugin result settles `proved` with certification
 `trusted`; a `rely` or liveness-dependency premise whose only discharger is
 an environment record is `inconclusive`, `premise-unproved` with `result`
@@ -174,7 +180,7 @@ and Quoin consumes the result without validating the theorem anew.
 | FR-530-AC-2 | The discharge record names, for each slot, its discharger; a supplied guarantee over another subject, a weaker clause, a guarantee of another kind and a same-named guarantee of another package each leave the slot undischarged and, the declared interface being present and not weaker, the item `inconclusive`, `premise-unproved`, naming it and never `refuted`. | Test (TC-1330) |
 | FR-530-AC-3 | A `Producer`/`Consumer` fixture whose relies, dependencies and fairness are each discharged settles `proved`, `decisive-witness`, under `assume-guarantee` with the discharge record. | Test (TC-1330) |
 | FR-530-AC-4 | A mutual liveness dependency in a well-formed declaration under each of the four rules settles the composition item `unsupported`, basis `unavailable`, `unsupported_projection`/`unsupported-requested-capability` naming the kind `composition`, the form `fixed-point` and both guarantees in edge order, before any slot is read and before any planner or provider settlement runs, with or without a registered provider; no guarantee of the pair is used as an assumption and no pool, discharge entry or provider result makes it `proved`. | Test (TC-1330) |
-| FR-530-AC-5 | The same pair under a profile that declares FR-176's lattice settles as AC-4 does: no `fixed-point` slot is derived, no supplied `fixed-point` result or slot is read or admitted as a discharger, and the item is never `proved`. | Test (TC-1330) |
+| FR-530-AC-5 | **Withdrawn (QSL-2739).** The criterion settled a mutual dependency under a profile declaring FR-176's lattice with a `fixed-point` slot; FSpec FR-489 defines no way a profile declares the lattice and withdrew its matching criterion, so no source unit can select one and no `fixed-point` slot is derived. AC-4 holds for every cycle under all four rules; no replacement. | Withdrawn |
 | FR-530-AC-6 | A `trusted` plugin discharger, an assumption-only premise, an unsupported rule (`interface` with no composition-capable backend), a failed component check and an exhausted `max_work` settle `proved`/`trusted`, `inconclusive`/`premise-unproved`, `unsupported`, `inconclusive`/`premise-unproved` and `incomplete`, each with its own trust basis and extent. | Test (TC-1330) |
 | FR-530-AC-7 | A discharge record naming no pool entry, or a pool entry over another subject, is refused `invalid_runtime_input`/`invalid-value` at the record; one naming an `inconclusive` result discharges nothing. | Test (TC-1330) |
 | FR-530-AC-8 | Admission refuses a forged or reordered slot and a premise result whose obligation identity, computed with the slot's declaration-derived `assumptions`, is not its slot's; an unrelated supported item of the same package settles unchanged in every case. | Test (TC-1330) |
