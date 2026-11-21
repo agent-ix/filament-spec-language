@@ -44,3 +44,17 @@ Plan completion: not assessed
 - FR-187-AC-5 (examined): wire negative reward refuses naming `n = 0`.
 - Mutation reasoning (not executed): on old main `PackageModelInput::of` returns `PendingPackageForm::Form{Reward}` and the tests' `unwrap_or_else` panics; with read rewards dropped from `DeclaredReward::of`, admission is `Ok` and both `let Err(..) else panic` arms fire.
 - Sibling failure `a_malformed_source_operation_identity_is_refused_at_the_row` panics inside `ReadIdentityRows::read` (fsl-package/src/bare.rs), outside this diff.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | The canonical-order test puts both rewards on one operation, so it orders by name alone. The operation-key half of the (operation key, name) order, with negative rewards on two operations, is untested across routes | fsl-eval/src/simulation/model/probabilistic/tests.rs:1007-1020 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Package-route step rewards are backed by `the_package_route_gives_the_rewards_of_a_two_parameter_reward_as_the_source_route_does` (two parameters, 18 steps, equal to the source route) |
+| FND-002 | fixed | `both_routes_refuse_the_same_first_of_several_negative_rewards` checks that two negative rewards give the same record on both routes |
+| FND-003 | fixed | The AC-5 test is now a distinct case: `gap = m - n` over two parameters, refused at `n = 1, m = 0` past non-negative vectors. That vector also catches a swapped argument binding, which would give `n = 0, m = 1`. A package emitted with S3's sign check disabled and read back from wire bytes is what TC-2064 asks for at the wire boundary, so hand-assembling the nodes would only duplicate the emitter |
