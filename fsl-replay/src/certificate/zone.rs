@@ -7,8 +7,12 @@
 //! share no implementation: this module holds its own bound encoding, its
 //! own closure, its own operations and the aLU coverage test, so a fault in
 //! the engine's DBM cannot be masked by the same fault here. It is kept
-//! small on purpose; its Kani harnesses (`proofs`) check it for overflow
-//! freedom and for agreement with a reference implementation.
+//! small on purpose; its Kani harnesses (`proofs`) check the matrix
+//! operations they name for overflow freedom and for agreement with a
+//! reference implementation. The task-product operations (`subtract_bounded`,
+//! `constrain_diagonal`, `region_normalize`, `region_covers`) are not Kani
+//! harnessed; they are tested against hand-computed vectors and point-wise
+//! definitions (`region_tests`).
 //!
 //! # Encoding
 //!
@@ -192,6 +196,13 @@ pub enum ZoneError {
     #[error("clock {clock} has a negative ceiling")]
     NegativeCeiling {
         /// The clock whose ceiling is negative.
+        clock: usize,
+    },
+    /// A zone that admits a negative clock value, which refined regions
+    /// (over non-negative valuations) do not cover.
+    #[error("clock {clock} may be negative in a zone read as non-negative")]
+    NegativeClockValue {
+        /// The clock that may be negative.
         clock: usize,
     },
     /// A matrix whose cell count is not its dimension squared.
@@ -817,6 +828,27 @@ enum Place<W> {
     Saturated,
 }
 
+/// The outcome of a region-coverage test.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Coverage {
+    /// Every region the successor meets lies in the target.
+    Covered,
+    /// Some region the successor meets is not in the target.
+    NotCovered,
+    /// The work budget or a cancel ended the test first. Never covered.
+    Exhausted,
+}
+
+/// What the caller knows of a coverage target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetShape {
+    /// Nothing: test each region the successor meets.
+    Arbitrary,
+    /// The target is a union of whole refined regions, so coverage is plain
+    /// inclusion.
+    UnionOfRegions,
+}
+
 /// A refined region in the making and the part of the zone inside it.
 type Cut<W> = (Zone<W>, Zone<W>);
 
@@ -923,20 +955,99 @@ impl<W: Exact> Zone<W> {
     /// relation. A region is its own and only normal form, so normalizing
     /// each result again returns it unchanged.
     ///
+    /// The zone must hold only non-negative clock values, as every zone
+    /// made by [`Zone::zero`], [`Zone::universe`] and the operations here
+    /// does; a zone read by [`Zone::from_matrix`] that admits a negative
+    /// clock is refused rather than silently cut at 0.
+    ///
     /// The result can hold one zone per region, so its size is exponential
-    /// in the clock count in the worst case.
+    /// in the clock count in the worst case; [`Zone::region_covers`] stops
+    /// early and takes a work budget.
     ///
     /// # Errors
     ///
     /// [`ZoneError::ExtrapolationLength`] for ceilings not one per clock,
-    /// [`ZoneError::NegativeCeiling`] for a negative ceiling, and
+    /// [`ZoneError::NegativeCeiling`] for a negative ceiling,
     /// [`ZoneError::NotDiagonal`] or [`ZoneError::ClockOutOfRange`] for a
-    /// predicate that is not over two distinct real clocks of the zone.
+    /// predicate that is not over two distinct real clocks of the zone, and
+    /// [`ZoneError::NegativeClockValue`] for a zone admitting a negative
+    /// clock.
     pub fn region_normalize(
         &self,
         ceilings: &[W],
         diagonals: &[DiagonalPredicate<W>],
     ) -> Result<Vec<Self>, ZoneError> {
+        let mut regions = Vec::new();
+        self.walk_regions(ceilings, diagonals, &mut || true, &mut |region| {
+            regions.push(region.clone());
+            Ok(true)
+        })?;
+        regions.sort();
+        regions.dedup();
+        Ok(regions)
+    }
+
+    /// Whether this canonical zone, closed under the refined-region
+    /// relation, is included in canonical `target`: every refined region
+    /// this zone meets lies wholly in `target` (FR-418's coverage of a
+    /// successor by its target node).
+    ///
+    /// With [`TargetShape::Arbitrary`] the regions are walked one at a time
+    /// and the walk stops at the first region `target` does not include.
+    /// With [`TargetShape::UnionOfRegions`] the caller states that `target`
+    /// is a union of whole regions (the checker establishes it for a
+    /// certificate node's zone), and the answer is the plain inclusion of
+    /// `self` in `target`, with no region walked. Stating it of a target
+    /// that is not such a union can accept a successor whose closure is
+    /// not covered.
+    ///
+    /// `charge` is called once per elementary step, before it; when it
+    /// returns `false` the test stops with [`Coverage::Exhausted`], which
+    /// is never an acceptance. A work budget and a cancel flag both fit.
+    ///
+    /// # Errors
+    ///
+    /// [`ZoneError::DimensionMismatch`] for zones of different dimensions,
+    /// and those of [`Zone::region_normalize`].
+    pub fn region_covers(
+        &self,
+        target: &Self,
+        ceilings: &[W],
+        diagonals: &[DiagonalPredicate<W>],
+        shape: TargetShape,
+        charge: &mut dyn FnMut() -> bool,
+    ) -> Result<Coverage, ZoneError> {
+        self.check_dim(target)?;
+        self.check_regions(ceilings, diagonals)?;
+        if self.is_empty() {
+            return Ok(Coverage::Covered);
+        }
+        if shape == TargetShape::UnionOfRegions {
+            if !charge() {
+                return Ok(Coverage::Exhausted);
+            }
+            return Ok(if target.includes(self)? {
+                Coverage::Covered
+            } else {
+                Coverage::NotCovered
+            });
+        }
+        let flow = self.walk_regions(ceilings, diagonals, charge, &mut |region| {
+            target.includes(region)
+        })?;
+        Ok(match flow {
+            Flow::Continue => Coverage::Covered,
+            Flow::Stop => Coverage::NotCovered,
+            Flow::Exhausted => Coverage::Exhausted,
+        })
+    }
+
+    /// The checks `region_normalize` and `region_covers` share.
+    fn check_regions(
+        &self,
+        ceilings: &[W],
+        diagonals: &[DiagonalPredicate<W>],
+    ) -> Result<(), ZoneError> {
         let clocks = self.dim.saturating_sub(1);
         if ceilings.len() != clocks {
             return Err(ZoneError::ExtrapolationLength {
@@ -959,136 +1070,222 @@ impl<W: Exact> Zone<W> {
                 });
             }
         }
-        if self.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Each clock's integer part and zero-fraction class.
-        let start = (Self::universe(self.dim), self.clone());
-        let mut placed: Vec<(Cut<W>, Vec<Place<W>>)> = vec![(start, Vec::new())];
-        for clock in 1..self.dim {
-            let ceiling = &ceilings[clock - 1];
-            let mut next = Vec::new();
-            for (pair, places) in &placed {
-                let zone = &pair.1;
-                let lowest = match zone.bound(0, clock)? {
-                    Some((c, _)) if c.negated() > W::of(0) => c.negated(),
-                    _ => W::of(0),
-                };
-                let highest = zone.bound(clock, 0)?.map(|(c, _)| c);
-                let mut k = if lowest < *ceiling {
-                    lowest
-                } else {
-                    ceiling.clone()
-                };
-                loop {
-                    let mut push = |pair: (Self, Self), place: Place<W>| {
-                        let mut places = places.clone();
-                        places.push(place);
-                        next.push((pair, places));
-                    };
-                    let minus = k.negated();
-                    if let Some(whole) =
-                        Self::narrowed(pair, &[(clock, 0, &k, false), (0, clock, &minus, false)])?
-                    {
-                        push(whole, Place::Whole);
-                    }
-                    if k >= *ceiling {
-                        let below = ceiling.negated();
-                        if let Some(above) = Self::narrowed(pair, &[(0, clock, &below, true)])? {
-                            push(above, Place::Saturated);
-                        }
-                        break;
-                    }
-                    let upper = k.plus(&W::of(1));
-                    if let Some(open) =
-                        Self::narrowed(pair, &[(0, clock, &minus, true), (clock, 0, &upper, true)])?
-                    {
-                        push(open, Place::Open(k.clone()));
-                    }
-                    if highest.as_ref().is_some_and(|u| k >= *u) {
-                        break;
-                    }
-                    k = upper;
+        if !self.is_empty() {
+            for clock in 1..self.dim {
+                // `0 - x_k ≺ c` with `c > 0` or `(0, <=)` loosened admits a
+                // negative `x_k`.
+                if tighter(&zero_le(), self.cell(0, clock)) {
+                    return Err(ZoneError::NegativeClockValue { clock });
                 }
             }
-            placed = next;
         }
-
-        // The order of the fractional parts of the clocks strictly between
-        // two integers: `frac(x_a) ≺ frac(x_b)` is `x_a - x_b ≺ k_a - k_b`.
-        let mut ordered = Vec::new();
-        for (pair, places) in placed {
-            let open: Vec<(usize, &W)> = places
-                .iter()
-                .enumerate()
-                .filter_map(|(k, place)| match place {
-                    Place::Open(base) => Some((k + 1, base)),
-                    _ => None,
-                })
-                .collect();
-            let mut pieces = vec![pair];
-            for (position, &(a, base_a)) in open.iter().enumerate() {
-                for &(b, base_b) in &open[position + 1..] {
-                    let gap = base_a.minus(base_b);
-                    let mut split = Vec::new();
-                    for piece in &pieces {
-                        let minus = gap.negated();
-                        split.extend(Self::narrowed(piece, &[(a, b, &gap, true)])?);
-                        split.extend(Self::narrowed(
-                            piece,
-                            &[(a, b, &gap, false), (b, a, &minus, false)],
-                        )?);
-                        split.extend(Self::narrowed(piece, &[(b, a, &minus, true)])?);
-                    }
-                    pieces = split;
-                }
-            }
-            ordered.extend(pieces);
-        }
-
-        // The truth of every declared diagonal predicate.
-        let mut regions = ordered;
-        for predicate in diagonals {
-            let mut split = Vec::new();
-            for pair in &regions {
-                let (l, r) = (predicate.left, predicate.right);
-                let (value, minus) = (&predicate.value, predicate.value.negated());
-                split.extend(Self::narrowed(pair, &[(l, r, value, predicate.strict)])?);
-                split.extend(Self::narrowed(pair, &[(r, l, &minus, !predicate.strict)])?);
-            }
-            regions = split;
-        }
-        let mut regions: Vec<Self> = regions.into_iter().map(|(region, _)| region).collect();
-        regions.sort();
-        regions.dedup();
-        Ok(regions)
+        Ok(())
     }
 
-    /// Whether this canonical zone, closed under the refined-region
-    /// relation, is included in canonical `target`: every refined region
-    /// this zone meets lies wholly in `target` (FR-418's coverage of a
-    /// successor by its target node). When `target` is a union of whole
-    /// regions this is plain inclusion of `self` in `target`.
-    ///
-    /// # Errors
-    ///
-    /// [`ZoneError::DimensionMismatch`] for zones of different dimensions,
-    /// and those of [`Zone::region_normalize`].
-    pub fn region_covers(
+    /// Visit each refined region the zone meets, depth first, until the
+    /// visitor answers `false` or `charge` does.
+    fn walk_regions(
         &self,
-        target: &Self,
         ceilings: &[W],
         diagonals: &[DiagonalPredicate<W>],
-    ) -> Result<bool, ZoneError> {
-        self.check_dim(target)?;
-        let regions = self.region_normalize(ceilings, diagonals)?;
-        for region in &regions {
-            if !target.includes(region)? {
-                return Ok(false);
+        charge: &mut dyn FnMut() -> bool,
+        visit: &mut dyn FnMut(&Self) -> Result<bool, ZoneError>,
+    ) -> Result<Flow, ZoneError> {
+        self.check_regions(ceilings, diagonals)?;
+        if self.is_empty() {
+            return Ok(Flow::Continue);
+        }
+        let mut walker = Walker {
+            dim: self.dim,
+            ceilings,
+            diagonals,
+            charge,
+            visit,
+        };
+        walker.clock(1, (Self::universe(self.dim), self.clone()), Vec::new())
+    }
+}
+
+/// How a walk over regions ended.
+enum Flow {
+    /// Every region was visited.
+    Continue,
+    /// The visitor asked to stop.
+    Stop,
+    /// The work budget ran out.
+    Exhausted,
+}
+
+/// A narrowing step's outcome.
+enum Narrow<W: Exact> {
+    /// The zone part became empty.
+    Empty,
+    /// The work budget ran out before the step.
+    Spent,
+    /// The narrowed region and zone part.
+    Cut(Cut<W>),
+}
+
+/// The depth-first walk of the refined regions a zone meets: each clock's
+/// class, then the fractional order of the open clocks, then each diagonal's
+/// truth.
+struct Walker<'a, W: Exact> {
+    dim: usize,
+    ceilings: &'a [W],
+    diagonals: &'a [DiagonalPredicate<W>],
+    charge: &'a mut dyn FnMut() -> bool,
+    visit: &'a mut dyn FnMut(&Zone<W>) -> Result<bool, ZoneError>,
+}
+
+impl<W: Exact> Walker<'_, W> {
+    fn narrow(
+        &mut self,
+        cut: &Cut<W>,
+        bounds: &[(usize, usize, &W, bool)],
+    ) -> Result<Narrow<W>, ZoneError> {
+        if !(self.charge)() {
+            return Ok(Narrow::Spent);
+        }
+        Ok(match Zone::narrowed(cut, bounds)? {
+            Some(narrowed) => Narrow::Cut(narrowed),
+            None => Narrow::Empty,
+        })
+    }
+
+    /// Continue into the clock classes from one class of `clock`.
+    fn class(
+        &mut self,
+        clock: usize,
+        narrowed: Narrow<W>,
+        places: &[Place<W>],
+        place: Place<W>,
+    ) -> Result<Flow, ZoneError> {
+        match narrowed {
+            Narrow::Empty => Ok(Flow::Continue),
+            Narrow::Spent => Ok(Flow::Exhausted),
+            Narrow::Cut(cut) => {
+                let mut places = places.to_vec();
+                places.push(place);
+                self.clock(clock + 1, cut, places)
             }
         }
-        Ok(true)
+    }
+
+    /// Choose the class of `clock` and each later clock.
+    fn clock(
+        &mut self,
+        clock: usize,
+        cut: Cut<W>,
+        places: Vec<Place<W>>,
+    ) -> Result<Flow, ZoneError> {
+        if clock == self.dim {
+            return self.fractions(&places, cut);
+        }
+        let ceiling = self.ceilings[clock - 1].clone();
+        let meet = &cut.1;
+        let lowest = match meet.bound(0, clock)? {
+            Some((c, _)) if c.negated() > W::of(0) => c.negated(),
+            _ => W::of(0),
+        };
+        let highest = meet.bound(clock, 0)?.map(|(c, _)| c);
+        let mut k = if lowest < ceiling {
+            lowest
+        } else {
+            ceiling.clone()
+        };
+        loop {
+            let minus = k.negated();
+            let whole = self.narrow(&cut, &[(clock, 0, &k, false), (0, clock, &minus, false)])?;
+            match self.class(clock, whole, &places, Place::Whole)? {
+                Flow::Continue => {}
+                stopped => return Ok(stopped),
+            }
+            if k >= ceiling {
+                let below = ceiling.negated();
+                let above = self.narrow(&cut, &[(0, clock, &below, true)])?;
+                return self.class(clock, above, &places, Place::Saturated);
+            }
+            let upper = k.plus(&W::of(1));
+            let open = self.narrow(&cut, &[(0, clock, &minus, true), (clock, 0, &upper, true)])?;
+            match self.class(clock, open, &places, Place::Open(k.clone()))? {
+                Flow::Continue => {}
+                stopped => return Ok(stopped),
+            }
+            if highest.as_ref().is_some_and(|u| k >= *u) {
+                return Ok(Flow::Continue);
+            }
+            k = upper;
+        }
+    }
+
+    /// The order of the fractional parts of the clocks strictly between two
+    /// integers: `frac(x_a) ≺ frac(x_b)` is `x_a - x_b ≺ k_a - k_b`.
+    fn fractions(&mut self, places: &[Place<W>], cut: Cut<W>) -> Result<Flow, ZoneError> {
+        let open: Vec<(usize, &W)> = places
+            .iter()
+            .enumerate()
+            .filter_map(|(k, place)| match place {
+                Place::Open(base) => Some((k + 1, base)),
+                _ => None,
+            })
+            .collect();
+        let mut pairs = Vec::new();
+        for (position, &(a, base_a)) in open.iter().enumerate() {
+            for &(b, base_b) in &open[position + 1..] {
+                pairs.push((a, b, base_a.minus(base_b)));
+            }
+        }
+        self.pair(&pairs, cut)
+    }
+
+    fn pair(&mut self, pairs: &[(usize, usize, W)], cut: Cut<W>) -> Result<Flow, ZoneError> {
+        let Some(((a, b, gap), rest)) = pairs.split_first() else {
+            return self.diagonal(0, cut);
+        };
+        let minus = gap.negated();
+        let orders: [&[(usize, usize, &W, bool)]; 3] = [
+            &[(*a, *b, gap, true)],
+            &[(*a, *b, gap, false), (*b, *a, &minus, false)],
+            &[(*b, *a, &minus, true)],
+        ];
+        for bounds in orders {
+            match self.narrow(&cut, bounds)? {
+                Narrow::Empty => {}
+                Narrow::Spent => return Ok(Flow::Exhausted),
+                Narrow::Cut(next) => match self.pair(rest, next)? {
+                    Flow::Continue => {}
+                    stopped => return Ok(stopped),
+                },
+            }
+        }
+        Ok(Flow::Continue)
+    }
+
+    fn diagonal(&mut self, index: usize, cut: Cut<W>) -> Result<Flow, ZoneError> {
+        let Some(predicate) = self.diagonals.get(index) else {
+            return Ok(if (self.visit)(&cut.0)? {
+                Flow::Continue
+            } else {
+                Flow::Stop
+            });
+        };
+        let (l, r) = (predicate.left, predicate.right);
+        let (value, minus) = (&predicate.value, predicate.value.negated());
+        let truths: [&[(usize, usize, &W, bool)]; 2] = [
+            &[(l, r, value, predicate.strict)],
+            &[(r, l, &minus, !predicate.strict)],
+        ];
+        for bounds in truths {
+            match self.narrow(&cut, bounds)? {
+                Narrow::Empty => {}
+                Narrow::Spent => return Ok(Flow::Exhausted),
+                Narrow::Cut(next) => match self.diagonal(index + 1, next)? {
+                    Flow::Continue => {}
+                    stopped => return Ok(stopped),
+                },
+            }
+        }
+        Ok(Flow::Continue)
     }
 }
 
