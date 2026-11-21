@@ -967,14 +967,14 @@ fn a_guarded_invariant_clause_is_read_from_its_activating_positions() {
     assert!(certificate.states.is_empty(), "{certificate:?}");
 }
 
-/// FR-127 ADR-018 V-1: a TP-3 clause over `on each` has no canonical
-/// translation, so its proof carries an empty certificate, which the core
-/// checker cannot admit and the settlement map settles `failed`, never
-/// `proved`. Over the Counter subject, `on each always (p implies
-/// eventually[0,2] p)` holds with `p` true at every value.
-#[trace("TC-521", "FR-127-AC-1", "FR-338-AC-29")]
+/// FR-127 and FR-338-AC-30: a TP-3 clause over an unguarded `on each` carries
+/// a closure certificate keyed by its monitor's configurations, which the core
+/// checker accepts, and the settlement map settles `proved`, `Certified`; the
+/// empty certificate is no proof of it. Over the Counter subject, `on each
+/// always (p implies eventually[0,2] p)` holds with `p` true at every value.
+#[trace("TC-521", "FR-127-AC-1", "FR-338-AC-30")]
 #[test]
-fn an_on_each_past_or_interval_proof_never_settles_proved() {
+fn an_on_each_past_or_interval_proof_settles_certified() {
     let activation = each("Counter");
     let world = counter_world(
         INFINITE,
@@ -995,7 +995,7 @@ fn an_on_each_past_or_interval_proof_never_settles_proved() {
     let fsl_replay::ProofCertificate::Closure(certificate) = certificate else {
         panic!("a safety clause holds with a closure: {certificate:?}");
     };
-    assert!(certificate.states.is_empty(), "{certificate:?}");
+    assert!(!certificate.states.is_empty(), "{certificate:?}");
     let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&world.package);
     let request = CertificateRequest {
         temporal_clock_selections: &temporal_clock_selections,
@@ -1013,7 +1013,13 @@ fn an_on_each_past_or_interval_proof_never_settles_proved() {
         &Cancel::new(),
         |_| panic!("a proof replays nothing"),
     );
-    assert_eq!(record.value, TerminalValue::Failed);
+    assert_eq!(
+        record.value,
+        TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::Exhaustive,
+            certification: fsl_replay::Certification::Certified,
+        }
+    );
 }
 
 /// FR-126-AC-16: a `when` condition with no value at a position the monitor

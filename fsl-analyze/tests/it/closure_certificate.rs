@@ -23,6 +23,7 @@ use fsl_eval::automaton::{
     translate, Letter, Monitor, SafetyState, SafetyStates, SafetyTranslation, StateContext,
     SubjectKind, TranslationRefusal,
 };
+use fsl_eval::model_subject::ModelLetters;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_package::CheckedPackage;
@@ -46,6 +47,7 @@ use crate::counter::{
 use crate::fill::tcb_01_event_position_selection;
 
 mod certificate_boundary_cases;
+mod tp3_each;
 
 const GUARDED: &str = "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.value) >= 0 }\n\
                        post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
@@ -84,7 +86,7 @@ fn world_with_mode(body: &str, start: &[(&'static str, i64)], check_mode: CheckM
 pub(crate) struct Invariant {
     package: CheckedPackage,
     clause: CheckedTemporalClause,
-    letters: Letters,
+    letters: Box<dyn ModelLetters>,
     identity: ClauseIdentity,
 }
 
@@ -108,6 +110,16 @@ impl World {
         clause: CheckedTemporalClause,
         atom: fn(i64) -> Option<bool>,
     ) -> Invariant {
+        self.declared_with(package, clause, Box::new(Letters { atom }))
+    }
+
+    /// [`World::declared`] read through `letters`.
+    fn declared_with(
+        &self,
+        package: CheckedPackage,
+        clause: CheckedTemporalClause,
+        letters: Box<dyn ModelLetters>,
+    ) -> Invariant {
         let identity = ClauseIdentity::resolve(
             &package,
             &self.documents.packages,
@@ -120,7 +132,7 @@ impl World {
         Invariant {
             package,
             clause,
-            letters: Letters { atom },
+            letters,
             identity,
         }
     }
@@ -262,7 +274,7 @@ impl Invariant {
     fn item(&self) -> ModelCheckItem<'_> {
         ModelCheckItem::Clause {
             clause: &self.clause,
-            letters: &self.letters,
+            letters: &*self.letters,
         }
     }
 
@@ -688,7 +700,7 @@ fn a_request_whose_clause_root_does_not_resolve_settles_failed() {
     let other = others.remove(0);
     let foreign = ModelCheckItem::Clause {
         clause: &other,
-        letters: &invariant.letters,
+        letters: &*invariant.letters,
     };
     let request = invariant.request_with(&world, foreign, UNLIMITED);
     let unresolved = ClauseRootRefusal::Undeclared {
@@ -971,15 +983,14 @@ fn a_certificate_for_a_violated_tp3_clause_is_rejected_bad_state() {
 }
 
 /// A TP-3 clause is keyed by its monitor only where the subject kind is
-/// stated as ordinary: `instances_for` with `Ordinary` builds the monitored
-/// translation, with `Protocol` the clause has no translation (a protocol
-/// subject's non-progress search is not part of it), and `instances`, which
-/// states no subject kind, builds none either, so no core acceptance rests on
-/// the engine's own gate.
+/// stated: `instances_for` with `Ordinary` or with `Protocol` builds the
+/// monitored translation, each under its own key algebra (FR-338-AC-31), and
+/// `instances`, which states no subject kind, builds none, so no core
+/// acceptance rests on the engine's own gate.
 #[trace("TC-525", "FR-338-AC-29")]
-#[trace("TC-525")]
+#[trace("TC-525", "FR-338-AC-31")]
 #[test]
-fn a_tp3_clause_is_monitored_only_under_an_explicit_ordinary_subject() {
+fn a_tp3_clause_is_monitored_only_under_a_stated_subject_kind() {
     let world = world(CONTRACT, &[("c", 0)]);
     let claim = world.invariant(
         "always (holds(c.value <= 1) or once[1,1] holds(c.value <= 1))",
@@ -989,25 +1000,23 @@ fn a_tp3_clause_is_monitored_only_under_an_explicit_ordinary_subject() {
     let system = world.system();
     let item = claim.item();
     let cancel = Cancel::new();
-    let ordinary = item
-        .instances_for(&request.subject, &system, &[], &cancel, SubjectKind::Ordinary, 64)
-        .expect("an ordinary subject translates");
-    assert!(matches!(
-        ordinary[0].translation,
-        Translation::Monitored(_)
-    ));
-    for refused in [
-        item.instances_for(&request.subject, &system, &[], &cancel, SubjectKind::Protocol, 64),
-        item.instances(&request.subject, &system, &[], &cancel),
-    ] {
+    for kind in [SubjectKind::Ordinary, SubjectKind::Protocol] {
+        let instances = item
+            .instances_for(&request.subject, &system, &[], &cancel, kind, 64)
+            .expect("a stated subject kind translates");
         assert!(
-            matches!(
-                refused,
-                Err(ItemRefusal::Translation(TranslationRefusal::NotTranslated(_)))
-            ),
-            "{refused:?}"
+            matches!(instances[0].translation, Translation::Monitored(_)),
+            "{kind:?}"
         );
     }
+    let refused = item.instances(&request.subject, &system, &[], &cancel);
+    assert!(
+        matches!(
+            refused,
+            Err(ItemRefusal::Translation(TranslationRefusal::NotTranslated(_)))
+        ),
+        "{refused:?}"
+    );
 }
 
 /// A loop-proof item is decided over a protocol subject only: the public

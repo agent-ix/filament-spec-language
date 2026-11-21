@@ -2062,6 +2062,19 @@ const TRANSFER_DECLARATIONS: &str =
      on origin { always (holds(c.value = 1) implies eventually holds(c.value = 2)) }\n\
      temporal AtMostTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
      on origin { always holds(c.value <= 2) }\n\
+     temporal PrevSafeEach using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on each (q: Spec::Counter) { holds(c.value = 1) implies once[1,1] holds(c.value = 0) }\n\
+     temporal SoonTwoEach using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on each (q: Spec::Counter) { holds(c.value = 1) implies eventually[0,2] holds(c.value = 2) }\n\
+     temporal PrevSafeWhen using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on each (q: Spec::Counter) when (c.value >= 1) \
+     { holds(c.value = 1) implies once[1,1] holds(c.value = 0) }\n\
+     temporal PrevJumpEach using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on each (q: Spec::Counter) { holds(c.value = 2) implies once[1,1] holds(c.value = 0) }\n\
+     temporal PrevStutterEach using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on each (q: Spec::Counter) { holds(c.value = 2) implies once[1,1] holds(c.value = 1) }\n\
+     temporal OlderDebtEach using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on each (q: Spec::Counter) { holds(c.value <= 1) implies eventually[0,1] holds(c.value = 2) }\n\
      temporal BoundedTwo using ev over (c: Spec::Counter) clock \"model-steps\" \
      on origin { eventually[0,2] holds(c.value = 2) }\n\
      temporal OverThird using inf over (c: Third::Counter) clock \"model-steps\" \
@@ -2154,12 +2167,20 @@ fn transfer_run_over(
     supply_spec: bool,
     closure_unit: bool,
 ) -> (u8, Value) {
+    transfer_run_declaring(members, supply_spec, &transfer_declarations(closure_unit))
+}
+
+/// [`transfer_run_over`] over a unit with `declarations`.
+fn transfer_run_declaring(
+    members: &[(&str, Value)],
+    supply_spec: bool,
+    declarations: &str,
+) -> (u8, Value) {
     use crate::support::refinement_cas::{self, Variant};
     let directory = tempfile::tempdir().unwrap();
-    let declarations = transfer_declarations(closure_unit);
     let unit = refinement_cas::unit_text(
         &refinement_cas::packages(Variant::CAS),
-        &declarations,
+        declarations,
         Variant::CAS,
     );
     std::fs::write(directory.path().join("unit.native"), unit).unwrap();
@@ -2185,6 +2206,10 @@ fn transfer_run_over(
         (
             "spec-0.json",
             counter_snapshot(refinement_cas::SPEC, json!({"value": zero})),
+        ),
+        (
+            "spec-1.json",
+            counter_snapshot(refinement_cas::SPEC, json!({"value": {"integer": "1"}})),
         ),
         (
             "third-0.json",
@@ -2414,6 +2439,142 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
         "{value}"
     );
     assert_ne!(past["cause"]["type"], "transfer-not-preserving", "{value}");
+}
+
+/// FR-1030-AC-8 (TC-2920 step 8): the `on each` clauses `PrevSafeEach`,
+/// `SoonTwoEach` and the guarded `PrevSafeWhen`, whose activation at position
+/// 1 reads position 0 as its previous position, transfer through the
+/// step-for-step `ThirdRefinesSpec` with no `premises`: slot 1 settles
+/// `proved`, `certified` by the core checker's acceptance of the closure
+/// certificate, and each transfer is `proved`, `decisive-witness`, with both
+/// premise identities.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-8")]
+fn an_on_each_previous_and_interval_clause_transfers_certified() {
+    let (exit, value) = transfer_run_over(
+        &[(
+            "refinement_transfer",
+            transfer_member(
+                "ThirdRefinesSpec",
+                ("Spec", "Third"),
+                &["PrevSafeEach", "SoonTwoEach", "PrevSafeWhen"],
+            ),
+        )],
+        true,
+        true,
+    );
+    assert_eq!(exit, 0, "{value}");
+    for clause in ["PrevSafeEach", "SoonTwoEach", "PrevSafeWhen"] {
+        let result = transfer(&value, clause);
+        assert_eq!(result["value"], "proved", "{value}");
+        assert_eq!(result["basis"], "decisive-witness", "{value}");
+        assert_eq!(result["slots"][1]["value"], "proved", "{value}");
+        assert_eq!(result["slots"][1]["certification"], "certified", "{value}");
+        assert_eq!(
+            result["transfer"]["premises"].as_array().map(Vec::len),
+            Some(2),
+            "{value}"
+        );
+    }
+}
+
+/// FR-1030-AC-9 (TC-2920 step 9): `PrevJumpEach` is violated at position 2,
+/// whose previous position holds 1; `PrevStutterEach` at the repeated terminal
+/// state, as AC-5 reads it; `OlderDebtEach` by the position-0 activation, whose
+/// earlier deadline passes at position 1 although the position-1 activation is
+/// met at position 2. Each transfer through `ThirdRefinesSpec` settles
+/// `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-9")]
+fn a_violated_on_each_clause_refutes_its_premise() {
+    let (exit, value) = transfer_run_over(
+        &[(
+            "refinement_transfer",
+            transfer_member(
+                "ThirdRefinesSpec",
+                ("Spec", "Third"),
+                &["PrevJumpEach", "PrevStutterEach", "OlderDebtEach"],
+            ),
+        )],
+        true,
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    for clause in ["PrevJumpEach", "PrevStutterEach", "OlderDebtEach"] {
+        let result = transfer(&value, clause);
+        assert_eq!(result["value"], "inconclusive", "{value}");
+        assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
+        assert_eq!(result["cause"]["premise"], 1, "{value}");
+        assert_eq!(result["cause"]["result"], "refuted", "{value}");
+        assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
+    }
+}
+
+/// FR-1030-AC-10 (TC-2920 step 10): `PrevSafeEach` through `ThirdRefinesSpec`
+/// with `abstract.initial` naming a snapshot whose `value` is 1 settles the
+/// refinement premise `refuted` (`InitialNotAbstract`), not
+/// `transfer-not-preserving`, which is the outcome of a refinement that is not
+/// step-for-step: the transfer settles `inconclusive`, `premise-unproved`
+/// naming slot 0 with `result` `refuted`, `step_for_step.holds` `true`.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-10")]
+fn a_broken_initial_mapping_refutes_the_refinement_premise_not_the_transfer() {
+    let mut member = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafeEach"]);
+    member["abstract"]["initial"] = json!(["spec-1"]);
+    member["observations"]["spec-1"] = json!("spec-1.json");
+    let (exit, value) = transfer_run_over(&[("refinement_transfer", member)], true, true);
+    assert_eq!(exit, 22, "{value}");
+    assert_eq!(
+        value["refinement_transfer"]["refinement"]["step_for_step"]["holds"], true,
+        "{value}"
+    );
+    let result = transfer(&value, "PrevSafeEach");
+    assert_eq!(result["value"], "inconclusive", "{value}");
+    assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
+    assert_eq!(result["cause"]["premise"], 0, "{value}");
+    assert_eq!(result["cause"]["result"], "refuted", "{value}");
+    assert_eq!(result["slots"][0]["value"], "refuted", "{value}");
+}
+
+/// FR-1031-AC-5 (TC-2921 step 5): a request whose `refinement` declares a
+/// protocol abstract subject (`abstract Spec::Twice`), with `abstract.model`
+/// `Spec`, refuses at stage `select`, `invalid_runtime_input`/`invalid-value`
+/// at `/refinement_transfer/abstract/model`, exit 20, with `details`
+/// `{"declared": "Spec::Twice", "given": "Spec"}`, and settles no premise and no
+/// transfer: it is never settled as an ordinary model subject.
+#[test]
+#[trace("TC-2921", "FR-1031-AC-5")]
+fn a_protocol_abstract_subject_is_refused_not_settled_as_a_model() {
+    let declarations = format!(
+        "profile p = \"filament.protocol.finite-global/v1\";\n{}\
+         protocol Twice using p over (c: Spec::Counter) on origin {{\n\
+         role w on Spec::Counter; scheduling adversarial;\n\
+         run sequence Main {{ }}\n\
+         finish Done as (d: Boolean) {{ true }};\n\
+         }}\n\
+         refinement CasTwice using inf abstract Spec::Twice concrete Impl {{}}\n",
+        transfer_declarations(true)
+    );
+    let (exit, value) = transfer_run_declaring(
+        &[(
+            "refinement_transfer",
+            transfer_member("CasTwice", ("Spec", "Impl"), &["PrevSafe"]),
+        )],
+        true,
+        &declarations,
+    );
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "select");
+    names(&value, "invalid-value");
+    names(&value, "/refinement_transfer/abstract/model");
+    let details = if value["details"].is_object() {
+        &value["details"]
+    } else {
+        &value["error"]["details"]
+    };
+    assert_eq!(details["declared"], "Spec::Twice", "{value}");
+    assert_eq!(details["given"], "Spec", "{value}");
+    assert!(value.get("refinement_transfer").is_none(), "{value}");
 }
 
 /// FR-1030-AC-3: complete certified premise results are consumed without
