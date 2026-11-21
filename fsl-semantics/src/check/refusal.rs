@@ -3149,6 +3149,14 @@ pub enum CheckCause {
     /// time invariant body or another clock-reading declaration (FR-230
     /// "Clock-reading declarations"), located at the call.
     ClockReadingCall(String),
+    /// Distinct original clock declarations with one normalized scoped path.
+    DuplicateClockDeclaration(
+        Box<crate::model::clock_reference::normalization::ClockDeclarationCollision>,
+    ),
+    /// Complete clock ownership context with competing original declarations.
+    AmbiguousClockDeclaration(
+        Box<crate::model::clock_reference::normalization::ClockDeclarationAmbiguity>,
+    ),
     /// `missing_declaration` / `missing-name` for a qualified source name.
     MissingQualifiedName(fsl_forms::NameForm),
     /// `missing_declaration` / `missing-name` for a bare unit name the
@@ -3897,6 +3905,7 @@ impl CheckCause {
             Self::ExecutionPointBinding(_) => Code::InvalidModelBinding,
             Self::ClockReadingCall(_) => Code::InvalidTimedModel,
             Self::AmbiguousName { .. }
+            | Self::AmbiguousClockDeclaration(_)
             | Self::AmbiguousMember(_)
             | Self::AmbiguousQualified(_)
             | Self::ReservedSlotName(_) => Code::AmbiguousDeclaration,
@@ -3913,7 +3922,9 @@ impl CheckCause {
             | Self::InvalidDispatchDeclaration(_)
             | Self::NodePreimage(_)
             | Self::EmptyReferenceLiteralKey { .. } => Code::InvalidPackage,
-            Self::DuplicateVerificationStep { .. } => Code::ConflictingDeclaration,
+            Self::DuplicateVerificationStep { .. } | Self::DuplicateClockDeclaration(_) => {
+                Code::ConflictingDeclaration
+            }
             Self::VerificationPlanBoundZero { .. } => Code::InvalidModelBinding,
             Self::VerificationPlanInapplicableMethod { .. } => Code::InvalidModelBinding,
             Self::UnrepresentableBound => Code::UnrepresentableConstraint,
@@ -3993,6 +4004,7 @@ impl CheckCause {
             Self::ExecutionPointBinding(_) => Some("malformed-declaration"),
             Self::ClockReadingCall(_) => Some("clock-read-outside-constraint"),
             Self::AmbiguousName { .. }
+            | Self::AmbiguousClockDeclaration(_)
             | Self::AmbiguousMember(_)
             | Self::AmbiguousQualified(_)
             | Self::ReservedSlotName(_) => Some("ambiguous-name"),
@@ -4011,7 +4023,9 @@ impl CheckCause {
             Self::SumCase(cause) => Some(cause.tag()),
             Self::ResourceExhausted(cause) => Some(cause.kind.setting().kind().catalog_cause()),
             Self::DefinitionCycle { .. } => Some("definition-cycle"),
-            Self::DuplicateVerificationStep { .. } => Some("duplicate-declaration"),
+            Self::DuplicateVerificationStep { .. } | Self::DuplicateClockDeclaration(_) => {
+                Some("duplicate-declaration")
+            }
             Self::VerificationPlanBoundZero { .. } => Some("malformed-declaration"),
             Self::VerificationPlanInapplicableMethod { .. } => Some("inapplicable-kind"),
             Self::InvalidDispatchDeclaration(_) => Some("invalid-value"),
