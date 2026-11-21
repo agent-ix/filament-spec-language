@@ -242,6 +242,11 @@ pub(super) fn admit(
             error.supplied_format.unwrap_or_default(),
         )
     })?;
+    let manifest_identities: Vec<_> = manifest
+        .dependencies
+        .iter()
+        .map(|row| row.identity.clone())
+        .collect();
     let mut pending = BTreeMap::new();
     for row in manifest.dependencies {
         let file = format!("{}/checked-package.json", row.directory);
@@ -426,13 +431,15 @@ pub(super) fn admit(
     let package =
         fsl_package::admit_checked_package_with_evidence(&bytes, &evidence, limits, &mut budget)
             .map_err(|error| package_failure("checked-package.json", error))?;
-    for dependency in &dependencies {
-        if !visited.contains(&dependency.identity) {
-            let index = dependencies
-                .iter()
-                .map(|entry| &entry.identity)
-                .filter(|identity| *identity < &dependency.identity)
-                .count();
+    let mut reachable = BTreeSet::new();
+    let mut selected: Vec<_> = package.direct_dependencies().collect();
+    while let Some(dependency) = selected.pop() {
+        if reachable.insert(dependency.name()) {
+            selected.extend(dependency.direct_dependencies());
+        }
+    }
+    for (index, identity) in manifest_identities.iter().enumerate() {
+        if !reachable.contains(identity.as_str()) {
             return Err(refusal(
                 "dependencies.json",
                 "invalid-value",
