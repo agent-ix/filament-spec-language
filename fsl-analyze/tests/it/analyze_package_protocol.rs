@@ -60,7 +60,7 @@ fn parallel_request(ws: &Workspace, run: &str) -> std::path::PathBuf {
     let body = format!(
         "{}{}",
         crate::fill::contracts("false"),
-        crate::fill::protocol("Flow", "", run, "d")
+        crate::fill::protocol("Flow", "role a on M::Cell;", run, "d")
     );
     let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
     let mut documents = crate::fill::Documents::new();
@@ -75,7 +75,10 @@ fn parallel_request(ws: &Workspace, run: &str) -> std::path::PathBuf {
         "temporal": {"item_kind": "deadlock-freedom", "subject": {"protocol": {
             "protocol": "Flow",
             "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
-            "roles": {"w": {"type": "model-binding", "selection": "test/fill"}}
+            "roles": {
+                "w": {"type": "model-binding", "selection": "test/fill"},
+                "a": {"type": "model-binding", "selection": "test/fill"}
+            }
         }}}}]}),
     )
 }
@@ -84,7 +87,7 @@ fn parallel_attempts(join: &str) -> String {
     format!(
         "parallel Both {{ branch Machine {} branch Assemble {} }} {join};",
         crate::fill::attempt("Reserved", "setTwo", "TwoPre, TwoPost", "reserved", "true"),
-        crate::fill::attempt("Assembled", "touch", "TouchPre", "assembled", "true")
+        "attempt Assembled by a on M::Cell::touch contracts [TouchPre] as (assembled: Boolean) { true };"
     )
 }
 
@@ -115,10 +118,14 @@ fn package_parallel_any_preserves_outstanding_and_joined_labels() {
             "proved",
         ),
         ("all", "join all [Machine, Assemble]", "refuted"),
-        ("default-all", "join all", "refuted"),
+        ("all-ready", "join all [Machine, Assemble]", "proved"),
     ] {
         let ws = Workspace::new(&format!("package-parallel-any-{name}"));
-        let path = parallel_request(&ws, &parallel_attempts(join));
+        let mut run = parallel_attempts(join);
+        if name == "all-ready" {
+            run = run.replace("TwoPre, TwoPost", "TwoPost");
+        }
+        let path = parallel_request(&ws, &run);
         let source = analyze(&path);
         assert_eq!(label(&source.item(0)), expected, "{}", source.document());
         let (package_path, _) = package_request(&ws, &path);
@@ -144,7 +151,7 @@ fn package_parallel_any_cancels_nested_running_branches() {
         let ready = crate::fill::attempt("Ready", "touch", "TouchPre", "r", "true");
         let run = format!(
             "parallel Outer {{ branch fast {ready} branch nested parallel Inner {{ \
-             branch left {blocked} branch right {} }} join all; \
+             branch left {blocked} branch right {} }} join all [left, right]; \
              }} join any [fast] outstanding {outstanding};",
             crate::fill::attempt("Other", "setTwo", "TwoPre, TwoPost", "o", "true")
         );
