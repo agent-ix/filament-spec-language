@@ -6081,7 +6081,7 @@ fn rekey_timed_model_nodes(
 /// Resolve original producer keys only through the timed substitutions the
 /// writer actually applied. The shared index keeps its one key per final node
 /// so consumers that reverse it never choose between identity aliases.
-fn equality_node_ids_after_timed_rekey(
+fn producer_node_ids_after_timed_rekey(
     emitted: &HashMap<NodeKey, CheckedNodeId>,
     substitutions: &[(NodeKey, NodeKey)],
 ) -> Result<HashMap<NodeKey, CheckedNodeId>, EmitRefusal> {
@@ -7480,6 +7480,8 @@ fn emit_package_inner(
         &mut schedulability_claim_rows,
         &foreign,
     )?;
+    let producer_node_ids =
+        producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
     let WrittenTemporalRows {
         bindings: temporal_bindings,
         names: temporal_clause_names,
@@ -7488,36 +7490,35 @@ fn emit_package_inner(
     } = temporal_binding_rows(
         graph,
         &emitted_node_ids,
+        &producer_node_ids,
         &nodes,
         &source_map,
         temporal_selections,
     )?;
-    let equality_node_ids =
-        equality_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
     let claim_names = claim_name_rows(
         graph,
         ids,
         &emitted_node_ids,
-        &equality_node_ids,
+        &producer_node_ids,
         &nodes,
         &source_map,
     )?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
-        &equality_node_ids,
+        &producer_node_ids,
         &source_map,
         &omitted_keys,
     )?;
     let equality_fact_witness_rows = equality_fact_witness_rows(
         graph,
-        &equality_node_ids,
+        &producer_node_ids,
         &nodes,
         &equality_producer_identity_rows,
     )?;
     let checked_term_data = checked_term_data(
         graph,
         &emitted_node_ids,
-        &equality_node_ids,
+        &producer_node_ids,
         &selected_model_enum_member_rows,
         &equality_producer_identity_rows,
         &nodes,
@@ -9117,6 +9118,7 @@ struct WrittenTemporalRows {
 fn temporal_binding_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    producer_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
     selections: &[TemporalClockSelection],
@@ -9155,7 +9157,7 @@ fn temporal_binding_rows(
         let clause = temporal.clause();
         let profile = clause.profile();
         let declaration_key = temporal.identity();
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(&declaration_key)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9238,7 +9240,7 @@ fn temporal_binding_rows(
             }
         }
         let declaration_key = temporal.identity();
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(&declaration_key)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9284,7 +9286,7 @@ fn temporal_binding_rows(
         // `hyperproperty` node at its `claim` occurrence, one per quantifier
         // in quantifier order, never on the body wrapper. Each trace selects
         // its own clock configuration (FR-640).
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(occurrence.node())
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9361,7 +9363,7 @@ fn temporal_binding_rows(
         let clock = &selection.clock;
         let clock_name = hyper.domain_clock();
         validate_temporal_clock(&source, span, clock_name, clock)?;
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(&identity)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9422,7 +9424,7 @@ fn temporal_binding_rows(
                 .nodes
                 .get(&awaited.node)
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
-            let declaration = emitted_node_ids
+            let declaration = producer_node_ids
                 .get(node_key)
                 .cloned()
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9553,7 +9555,7 @@ fn temporal_binding_rows(
     // A hybrid claim is a temporal clause node too (FR-447), and its
     // declared name belongs to its claim occurrence like any clause's.
     for site in graph.hybrid_claim_sites() {
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(&site.identity)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
