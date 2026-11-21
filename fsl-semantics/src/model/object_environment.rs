@@ -32,9 +32,100 @@ pub struct ReferenceOccurrence {
     pub population: NodeKey,
 }
 
-/// Immutable sparse occurrence storage shared by admission, reads and call
-/// frames. An unattributed value has no backing allocation.
-pub type ReferenceOrigins = Option<Arc<[ReferenceOccurrence]>>;
+/// A typed subtree whose raw element positions cannot authenticate the
+/// positions of the resulting canonical collection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnavailableReferenceOrigin {
+    /// The affected subtree's original value-relative path.
+    pub path: Vec<PathStep>,
+    /// The existing collection construct that prevents positional attribution.
+    pub collection: filament_exact::CollectionKind,
+}
+
+/// The original admitted value root, retained when helpers forward a value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReferenceOriginLocus {
+    /// The explicitly selected receiver.
+    Receiver,
+    /// An operation parameter, by its admitted declaration name.
+    Parameter(String),
+    /// The operation result.
+    Result,
+    /// A field of an explicitly attributed population occurrence.
+    ObjectField {
+        /// Actual declared holder population.
+        population: NodeKey,
+        /// Holder's local key.
+        owner: String,
+        /// Actual declared field.
+        field: FieldRef,
+    },
+    /// A field of the observation's explicitly attached state-machine context.
+    ContextField {
+        /// The context reference created by that observation's admission.
+        owner: ObjectReference,
+        /// Actual declared field.
+        field: FieldRef,
+    },
+}
+
+/// Immutable flat occurrence metadata shared by admission and call frames.
+/// Empty ordinary values allocate no backing; unavailable subtrees never
+/// acquire a population from another occurrence's membership.
+#[derive(Clone, Debug, Default)]
+pub struct ReferenceOrigins {
+    references: Option<Arc<[ReferenceOccurrence]>>,
+    unavailable: Option<Arc<[UnavailableReferenceOrigin]>>,
+    locus: Option<Arc<ReferenceOriginLocus>>,
+}
+
+impl ReferenceOrigins {
+    /// Move the existing admission walk's validated facts into shared storage.
+    pub fn from_parts(
+        references: Vec<ReferenceOccurrence>,
+        unavailable: Vec<UnavailableReferenceOrigin>,
+    ) -> Self {
+        Self {
+            references: (!references.is_empty()).then(|| references.into()),
+            unavailable: (!unavailable.is_empty()).then(|| unavailable.into()),
+            locus: None,
+        }
+    }
+
+    /// Move an exact occurrence list into shared storage.
+    pub fn from_occurrences(references: Vec<ReferenceOccurrence>) -> Self {
+        Self::from_parts(references, Vec::new())
+    }
+
+    /// Retain the value root once, without copying its occurrence paths.
+    pub fn with_locus(mut self, locus: ReferenceOriginLocus) -> Self {
+        if !self.is_empty() {
+            self.locus = Some(Arc::new(locus));
+        }
+        self
+    }
+
+    /// Exact occurrence facts outside unavailable subtrees.
+    pub fn occurrences(&self) -> &[ReferenceOccurrence] {
+        self.references.as_deref().unwrap_or(&[])
+    }
+
+    /// Subtrees that require the existing typed unsupported result when used
+    /// as the source of a clock owner.
+    pub fn unavailable(&self) -> &[UnavailableReferenceOrigin] {
+        self.unavailable.as_deref().unwrap_or(&[])
+    }
+
+    /// The original binding or field, independent of a helper's frame names.
+    pub fn locus(&self) -> Option<&ReferenceOriginLocus> {
+        self.locus.as_deref()
+    }
+
+    /// Whether the value has neither exact facts nor unavailable subtrees.
+    pub fn is_empty(&self) -> bool {
+        self.references.is_none() && self.unavailable.is_none()
+    }
+}
 
 /// [`ObjectEnvironment::with_population`]'s refusal: `population_id` is
 /// already recorded under a binding that does not equal the one this call

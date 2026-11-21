@@ -2048,15 +2048,15 @@ pub(super) fn bind_clause<'a>(
             })?;
         bindings.push(value);
     }
-    let mut reference_origins: Vec<ReferenceOrigins> = vec![None; bindings.len()];
+    let mut reference_origins: Vec<ReferenceOrigins> =
+        vec![ReferenceOrigins::default(); bindings.len()];
     if let Some(population) = &observations.self_population {
-        reference_origins[0] = Some(
-            vec![ProtocolReferenceOccurrence {
+        reference_origins[0] =
+            ReferenceOrigins::from_occurrences(vec![ProtocolReferenceOccurrence {
                 path: Vec::new(),
                 population: population.clone(),
-            }]
-            .into(),
-        );
+            }])
+            .with_locus(fsl_semantics::model::object_environment::ReferenceOriginLocus::Receiver);
     }
     let pre = observations
         .pre
