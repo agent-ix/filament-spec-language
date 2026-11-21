@@ -580,7 +580,7 @@ fn package_await_false_match_keeps_timeout_enabled() {
 }
 
 /// Source checking and strict package admission reject ineligible Await matches.
-#[trace("TC-2958", "FR-218-AC-35", "FR-383-AC-7")]
+#[trace("TC-2958", "FR-218-AC-35", "FR-383-AC-7", "FR-850")]
 #[test]
 fn package_await_ineligible_matches_refuse_in_both_routes() {
     use filament_contract_model::{
@@ -739,16 +739,33 @@ fn package_await_ineligible_matches_refuse_in_both_routes() {
                     if form.as_ref() == kind),
             "{refusal:?}"
         );
-        let invalid_package = analyze(&package_path).document();
+        let native_path = refusal
+            .loci
+            .first()
+            .and_then(|locus| locus.path.as_ref())
+            .expect("the native refusal names its Await control")
+            .as_str();
+        let package_run = analyze(&package_path);
+        assert_eq!(package_run.exit, 20);
+        let invalid_package = package_run.document();
+        // Source checking and the native reader retain their semantic refusal.
+        // FR-850's artifact boundary classifies rejected package bytes while
+        // preserving that reader's cause and original pointer.
+        assert_eq!(invalid_package["category"], "refusal", "{invalid_package}");
         assert_eq!(
-            invalid_package["diagnostics"][0]["code"], invalid_source["diagnostics"][0]["code"],
+            invalid_package["diagnostics"][0]["code"], "invalid_package",
             "{invalid_package}"
         );
         assert_eq!(
-            invalid_package["diagnostics"][0]["cause"], invalid_source["diagnostics"][0]["cause"],
+            invalid_package["diagnostics"][0]["cause"], "declaration-form",
+            "{invalid_package}"
+        );
+        assert_eq!(
+            invalid_package["diagnostics"][0]["details"]["path"], native_path,
             "{invalid_package}"
         );
         assert_eq!(invalid_package["items"], json!([]), "{invalid_package}");
+        assert_eq!(invalid_package["registry"], json!([]), "{invalid_package}");
     }
 }
 

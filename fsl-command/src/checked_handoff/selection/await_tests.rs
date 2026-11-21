@@ -214,6 +214,11 @@ fn await_binding_identity_and_clock_departures_are_named() {
     ] {
         let mut changed = sidecar.clone();
         changed["awaits"][0][member] = value;
+        if member == "node" {
+            // Keep the wrong-node expectation readable: duplicating the other
+            // row's (node, occurrence) would be a distinct read-time defect.
+            changed["awaits"].as_array_mut().unwrap().truncate(1);
+        }
         departure(&changed, &package, axis, Some("await Flow::WaitZ"));
     }
     let mut non_await = sidecar.clone();
