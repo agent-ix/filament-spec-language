@@ -3418,13 +3418,15 @@ fn equality_fact_witness_rows(
         let mut add = |key: &NodeKey,
                        fact: EqualityFactWitness,
                        value_type: Option<filament_exact::ValueType>| {
-            // Original model keys name the selected document, while their
-            // emitted structural nodes belong to this package. Locality is
-            // established by that final node, not the opaque original key.
+            // A selected Exact identity can name a declaration of a
+            // dependency package. IR's typed equality reader accepts only
+            // package-local structural facts, so rows whose key belongs to
+            // another package than the application are the one deliberate
+            // omission; every package-local key must still resolve.
+            if key.package() != row.application().package() {
+                return Ok(());
+            }
             let Some(structural_node) = emitted_node_ids.get(key).cloned() else {
-                if key.package() != row.application().package() {
-                    return Ok(());
-                }
                 return Err(EmitRefusal::MissingEqualityIdentityContext {
                     application: row.application().clone(),
                 });
@@ -3433,9 +3435,6 @@ fn equality_fact_witness_rows(
                 .iter()
                 .find(|node| node.node_id == structural_node)
             else {
-                if key.package() != row.application().package() {
-                    return Ok(());
-                }
                 return Err(EmitRefusal::MissingEqualityIdentityContext {
                     application: row.application().clone(),
                 });

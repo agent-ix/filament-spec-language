@@ -270,8 +270,11 @@ Payload-free selected model enum declarations and all their members SHALL be
 available through the three required identities/5 channels of FR-531. The native
 package-local join authenticates their complete canonical shapes before use,
 including selected declarations no slot reads. Enum literals SHALL retain the
-original variant and its canonical rank; source and bare calls SHALL return the
-same value and semantic charge sequence. An unrelated declaration whose runtime
+original variant and its canonical rank; source and bare enum-returning calls SHALL return the
+same value and semantic charge sequence. Enum equality and inequality remain
+unmet until the native equality reader admits held selected-model declaration
+facts independently of their original document package, and the consuming
+operation projection uses those admitted decisions. An unrelated declaration whose runtime
 projection is unsupported SHALL NOT erase an authenticated model enum. Payload-
 bearing model variants, including Clock payloads, remain outside this enum path.
 
