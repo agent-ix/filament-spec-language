@@ -196,7 +196,7 @@ fn exact_scalar_division_keeps_the_quantity_unit_and_charges() {
         ChargePoint::UnitResultRetain,
     ];
     for (name, numerator, denominator) in [
-        ("quotient", 3, 2),
+        ("quotient", 3_i64, 2_i64),
         ("rational_factor", 6, 1),
         ("decimal_factor", 2, 1),
         ("positive", 3, 4),
