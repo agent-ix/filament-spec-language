@@ -1251,6 +1251,18 @@ fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Resu
             value.numerator(),
             value.denominator()
         )),
+        Value::Quantity(value) => {
+            let unit = value
+                .unit()
+                .declared_key()
+                .ok_or_else(|| "checked literal has no canonical expression spelling".to_owned())?;
+            Ok(format!(
+                "rational({}, {}) {}",
+                value.magnitude().numerator(),
+                value.magnitude().denominator(),
+                canonical_identity(unit)?
+            ))
+        }
         Value::Decimal(value) => Ok(format!(
             "decimal({}, {})",
             value.representation().coefficient(),
@@ -1274,7 +1286,7 @@ fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Resu
 mod tests {
     use super::*;
     use filament_checked::node::ConnectiveOrigin;
-    use filament_exact::{IeeeValue, Integer, IntegerInterval};
+    use filament_exact::{IeeeValue, Integer, IntegerInterval, Quantity, Rational, UnitId};
     use ix_trace_rs::trace;
 
     fn ordinary(nodes: &mut Vec<ExpressionNode>, kind: NodeKind<usize, CheckedLiteral>) -> usize {
@@ -1375,6 +1387,60 @@ mod tests {
 
     fn render(nodes: Vec<ExpressionNode>, root: usize) -> Result<String, String> {
         CheckedExpression { nodes, root }.render(&[], &CanonicalRows::default())
+    }
+
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-11", "FR-931-AC-12")]
+    fn quantity_literals_keep_exact_magnitudes_and_unit_declaration_identities() {
+        for (package, numerator, denominator, expected) in [
+            (
+                "example/config-version",
+                6_i64,
+                4_i64,
+                "rational(3, 2) ix://example/config-version/unit/ms",
+            ),
+            (
+                "example/config-version",
+                6,
+                -4,
+                "rational(-3, 2) ix://example/config-version/unit/ms",
+            ),
+            (
+                "example/config-version",
+                0,
+                7,
+                "rational(0, 1) ix://example/config-version/unit/ms",
+            ),
+            (
+                "another/clock",
+                3000,
+                1,
+                "rational(3000, 1) ix://another/clock/unit/ms",
+            ),
+        ] {
+            let unit = UnitId::declared(
+                NodeKey::new(
+                    package,
+                    vec![
+                        filament_exact::PathSegment::Text("unit".into()),
+                        filament_exact::PathSegment::Text("ms".into()),
+                    ],
+                    0,
+                )
+                .unwrap(),
+            );
+            let quantity = Quantity::new(
+                Rational::new(Integer::from(numerator), Integer::from(denominator)).unwrap(),
+                unit.clone(),
+            );
+            let mut nodes = Vec::new();
+            let root = typed(
+                &mut nodes,
+                NodeKind::Literal(CheckedLiteral(Value::Quantity(quantity))),
+                ValueType::Quantity(unit),
+            );
+            assert_eq!(render(nodes, root).unwrap(), expected);
+        }
     }
 
     const A: u64 = 0x3ff0_0000_0000_0000;
