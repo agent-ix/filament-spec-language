@@ -2522,6 +2522,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
             .collect::<Vec<_>>();
         let slot_supply::AdmittedSupply {
             mut frame,
+            reference_origins,
             unavailable,
             binder_slots,
         } = slot_supply::admit_slot_supply(
@@ -2553,6 +2554,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                     meter,
                     self.graph().dispatch_tables(),
                 )
+                .with_reference_origins(reference_origins)
             };
         }
         // FR-390-AC-16: a reader-backed view evaluates every slot root, of

@@ -199,6 +199,7 @@ pub fn evaluate_selected_protocol_slot(
     };
     let AdmittedSupply {
         mut frame,
+        reference_origins,
         unavailable,
         binder_slots,
     } = admit_slot_supply(&host, &sources, slot.frame_len(), supply)?;
@@ -221,6 +222,7 @@ pub fn evaluate_selected_protocol_slot(
         meter,
         &[],
     )
+    .with_reference_origins(reference_origins)
     .run_protocol_frame(
         ReaderNode::root(&projection),
         frame,

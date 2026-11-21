@@ -80,6 +80,7 @@ pub(super) trait SlotHost {
 /// The frame a slot's supply admits to.
 pub(super) struct AdmittedSupply {
     pub(super) frame: Vec<Option<Value>>,
+    pub(super) reference_origins: Vec<Vec<super::protocol_slot::ProtocolReferenceOccurrence>>,
     pub(super) unavailable:
         std::collections::BTreeMap<usize, (NodeKey, filament_semantic_value::catalog::CatalogCode)>,
     pub(super) binder_slots: std::collections::BTreeMap<usize, NodeKey>,
@@ -128,6 +129,7 @@ pub(super) fn admit_slot_supply(
         }
     }
     let mut frame = vec![None; frame_len];
+    let mut reference_origins = vec![Vec::new(); frame_len];
     let mut unavailable = std::collections::BTreeMap::new();
     let binder_slots = sources
         .iter()
@@ -392,6 +394,7 @@ pub(super) fn admit_slot_supply(
                     }
                 }
                 frame[index] = Some(value.clone());
+                reference_origins[index] = supplied.references.clone();
             }
             SuppliedValue::Unavailable(cause) => {
                 if let Some(metadata) = supplied.references.first() {
@@ -412,6 +415,7 @@ pub(super) fn admit_slot_supply(
     }
     Ok(AdmittedSupply {
         frame,
+        reference_origins,
         unavailable,
         binder_slots,
     })

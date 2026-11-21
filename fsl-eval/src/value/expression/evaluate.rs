@@ -21,6 +21,7 @@ use super::causes::{
     ObjectFieldIllTyped, ProtocolClauseSnapshot, UnsupportedConstruct,
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
+use super::protocol_slot::ProtocolReferenceOccurrence;
 use super::s6a::separation::{
     locatable, occurrence_at, ComparisonReport, InvocationBinding, Provenance, RuntimeValuePath,
     Separation, SeparationStep, StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim,
@@ -565,6 +566,7 @@ struct PoppedArguments {
     values: Vec<Value>,
     provenance: Vec<bool>,
     owners: Vec<Owner>,
+    reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
 }
 
 /// One live occurrence for the call frame plus all occurrences retained by
@@ -770,6 +772,7 @@ struct DispatchGuard<N> {
     node: N,
     /// The owner of each dispatched argument, receiver first.
     owners: Vec<Owner>,
+    reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
 }
 
 /// Which population an `allInstances`/`lookup` reads: the ambient post
@@ -873,10 +876,16 @@ pub(crate) struct Machine<'a, 'm, N> {
     function_case_limit_reached: Option<&'m mut bool>,
     dispatch_tables: &'a [DispatchTable],
     values: Vec<Value>,
+    /// Explicit admitted population origins, parallel to the value stack.
+    value_reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
+    /// Root binder origins supplied by admission, consumed by its first frame.
+    root_reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
     /// FR-125: whether each stack value is still the absent-key parameter
     /// being forwarded as a reference, rather than read by an operation.
     value_guard_provenance: Vec<bool>,
     frames: Vec<Vec<Option<Value>>>,
+    /// Explicit occurrence origins parallel to every frame and slot.
+    frame_reference_origins: Vec<Vec<Vec<ProtocolReferenceOccurrence>>>,
     /// Live occurrence charge retained for each call frame while it is on
     /// the stack; ordinary clause and expression roots retain zero or their
     /// separately admitted expression-root charge.
@@ -1173,8 +1182,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             function_case_limit_reached: None,
             dispatch_tables,
             values: Vec::new(),
+            value_reference_origins: Vec::new(),
+            root_reference_origins: Vec::new(),
             value_guard_provenance: Vec::new(),
             frames: Vec::new(),
+            frame_reference_origins: Vec::new(),
             frame_live_occurrences: Vec::new(),
             live_occurrences_limit: SessionLimits::default().live_occurrences,
             live_occurrences: 0,
@@ -1206,6 +1218,16 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// model subject that owns the current state.
     pub(crate) fn with_reference_bindings(mut self, bindings: &'a ReferenceBindings) -> Self {
         self.reference_bindings = Some(bindings);
+        self
+    }
+
+    /// Retain the population metadata already validated beside root values.
+    /// An empty list means no explicit origin, never an inferred population.
+    pub(crate) fn with_reference_origins(
+        mut self,
+        origins: Vec<Vec<ProtocolReferenceOccurrence>>,
+    ) -> Self {
+        self.root_reference_origins = origins;
         self
     }
 
@@ -1522,7 +1544,15 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 *slot = true;
             }
         }
-        self.push_frame_owned(frame, provenance, Vec::new(), occurrences, enforce_limit)
+        let origins = std::mem::take(&mut self.root_reference_origins);
+        self.push_frame_owned(
+            frame,
+            provenance,
+            Vec::new(),
+            origins,
+            occurrences,
+            enforce_limit,
+        )
     }
 
     fn push_frame(&mut self, frame: Vec<Option<Value>>, provenance: Vec<bool>) {
@@ -1530,6 +1560,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         if let Some(tracked) = self.owners.as_mut() {
             tracked.push_frame(Vec::new(), frame.len());
         }
+        let mut origins = std::mem::take(&mut self.root_reference_origins);
+        origins.resize_with(frame.len(), Vec::new);
+        self.frame_reference_origins.push(origins);
         self.frames.push(frame);
         self.frame_guard_provenance.push(provenance);
         self.frame_live_occurrences.push(0);
@@ -1541,6 +1574,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         frame: Vec<Option<Value>>,
         mut provenance: Vec<bool>,
         owners: Vec<Owner>,
+        mut reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
         next_charge: Integer,
         enforce_limit: bool,
     ) -> Result<(), Halt> {
@@ -1569,10 +1603,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             (occurrences, total.unwrap_or(u64::MAX))
         };
         provenance.resize(frame.len(), false);
+        reference_origins.resize_with(frame.len(), Vec::new);
         if let Some(tracked) = self.owners.as_mut() {
             tracked.push_frame(owners, frame.len());
         }
         self.frames.push(frame);
+        self.frame_reference_origins.push(reference_origins);
         self.frame_guard_provenance.push(provenance);
         self.frame_live_occurrences.push(occurrences);
         self.live_occurrences = total;
@@ -1726,7 +1762,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 return self.stopped(at.stop, at.location.as_ref());
             }
         };
-        if !self.values.is_empty() || !self.value_guard_provenance.is_empty() {
+        if !self.values.is_empty()
+            || !self.value_guard_provenance.is_empty()
+            || !self.value_reference_origins.is_empty()
+        {
             return Err(InternalFault::new("S6a", "evaluation-result-stack-invalid"));
         }
         Ok(Evaluation {
@@ -1883,6 +1922,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 
     /// [`Self::pop`] with the owner of the popped value.
     fn pop_owned(&mut self) -> Result<(Value, Owner), Halt> {
+        let (value, owner, _) = self.pop_owned_with_origins()?;
+        Ok((value, owner))
+    }
+
+    fn pop_owned_with_origins(
+        &mut self,
+    ) -> Result<(Value, Owner, Vec<ProtocolReferenceOccurrence>), Halt> {
         let value = self
             .values
             .pop()
@@ -1892,15 +1938,19 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .pop()
             .ok_or_else(|| invariant("evaluation-provenance-stack-underflow"))?;
         let owner = self.pop_owners(1)?.first().copied().unwrap_or(Owner::None);
+        let origins = self
+            .value_reference_origins
+            .pop()
+            .ok_or_else(|| invariant("evaluation-reference-origin-stack-underflow"))?;
         if provenance {
             return Err(self.absent_key_halt(&value)?);
         }
-        Ok((value, owner))
+        Ok((value, owner, origins))
     }
 
     /// Pop a value while preserving whether it forwards the absent-key
     /// parameter through a let binding, lookup reference, or helper argument.
-    fn pop_forwarded(&mut self) -> Result<(Value, bool), Halt> {
+    fn pop_forwarded(&mut self) -> Result<(Value, bool, Vec<ProtocolReferenceOccurrence>), Halt> {
         let value = self
             .values
             .pop()
@@ -1910,7 +1960,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .pop()
             .ok_or_else(|| invariant("evaluation-provenance-stack-underflow"))?;
         self.pop_owners(1)?;
-        Ok((value, provenance))
+        let origins = self
+            .value_reference_origins
+            .pop()
+            .ok_or_else(|| invariant("evaluation-reference-origin-stack-underflow"))?;
+        Ok((value, provenance, origins))
     }
 
     fn absent_key_halt(&self, value: &Value) -> Result<Halt, Halt> {
@@ -1933,8 +1987,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     }
 
     fn push_value(&mut self, value: Value, provenance: bool) {
+        self.push_value_with_origins(value, provenance, Vec::new());
+    }
+
+    fn push_value_with_origins(
+        &mut self,
+        value: Value,
+        provenance: bool,
+        origins: Vec<ProtocolReferenceOccurrence>,
+    ) {
         self.values.push(value);
         self.value_guard_provenance.push(provenance);
+        self.value_reference_origins.push(origins);
         if let Some(owners) = self.owners.as_mut() {
             owners.push_value();
         }
@@ -1981,21 +2045,34 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 
     /// [`Self::pop_many`] with the owner of each popped value.
     fn pop_many_owned(&mut self, count: usize) -> Result<(Vec<Value>, Vec<Owner>), Halt> {
-        let start = self
-            .values
-            .len()
-            .checked_sub(count)
-            .ok_or_else(|| invariant("evaluation-value-stack-underflow"))?;
-        let values = self.values.split_off(start);
-        let provenance = self.value_guard_provenance.split_off(start);
-        let owners = self.pop_owners(count)?;
+        let (values, owners, _) = self.pop_many_owned_with_origins(count)?;
+        Ok((values, owners))
+    }
+
+    fn pop_many_owned_with_origins(
+        &mut self,
+        count: usize,
+    ) -> Result<
+        (
+            Vec<Value>,
+            Vec<Owner>,
+            Vec<Vec<ProtocolReferenceOccurrence>>,
+        ),
+        Halt,
+    > {
+        let PoppedArguments {
+            values,
+            provenance,
+            owners,
+            reference_origins,
+        } = self.pop_many_forwarded(count)?;
         if let Some(index) = provenance.iter().position(|provenance| *provenance) {
             let reference = values
                 .get(index)
                 .ok_or_else(|| invariant("forwarded-value-missing"))?;
             return Err(self.absent_key_halt(reference)?);
         }
-        Ok((values, owners))
+        Ok((values, owners, reference_origins))
     }
 
     fn pop_many(&mut self, count: usize) -> Result<Vec<Value>, Halt> {
@@ -2013,6 +2090,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             values: self.values.split_off(start),
             provenance: self.value_guard_provenance.split_off(start),
             owners,
+            reference_origins: self.value_reference_origins.split_off(start),
         })
     }
 
@@ -2200,11 +2278,26 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         value: Value,
         provenance: bool,
     ) -> Result<(), Halt> {
+        self.bind_with_origins(slot, value, provenance, Vec::new())
+    }
+
+    fn bind_with_origins(
+        &mut self,
+        slot: Slot,
+        value: Value,
+        provenance: bool,
+        origins: Vec<ProtocolReferenceOccurrence>,
+    ) -> Result<(), Halt> {
         if let Some(trail) = self.trail.as_mut() {
             trail.element_paths.remove(&slot);
         }
         *self.slot(slot)? = Some(value);
         *self.frame_provenance_slot(slot)? = provenance;
+        *self
+            .frame_reference_origins
+            .last_mut()
+            .and_then(|frame| frame.get_mut(slot))
+            .ok_or_else(|| invariant("evaluation-local-reference-origin-unbound"))? = origins;
         let owner = self.step_owner();
         self.set_slot_owner(slot, owner)
     }
@@ -2467,8 +2560,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 Ok(())
             }
             Task::Bind(slot) => {
-                let (value, provenance) = self.pop_forwarded()?;
-                self.bind_with_provenance(slot, value, provenance)
+                let (value, provenance, origins) = self.pop_forwarded()?;
+                self.bind_with_origins(slot, value, provenance, origins)
             }
             Task::Select(node) => self.select_arm(node),
             Task::ChargeElement(_) => charge_element(self.meter).map_err(Into::into),
@@ -2479,6 +2572,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.frame_guard_provenance
                     .pop()
                     .ok_or_else(|| invariant("evaluation-return-provenance-frame-missing"))?;
+                self.frame_reference_origins
+                    .pop()
+                    .ok_or_else(|| invariant("evaluation-return-reference-origin-frame-missing"))?;
                 self.pop_live_frame()?;
                 self.pop_frame_owners()?;
                 Ok(())
@@ -2490,6 +2586,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     failure,
                     node,
                     owners,
+                    reference_origins,
                 } = *guard;
                 let holds = self.pop_boolean()?;
                 self.frames
@@ -2498,6 +2595,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.frame_guard_provenance
                     .pop()
                     .ok_or_else(|| invariant("evaluation-return-provenance-frame-missing"))?;
+                self.frame_reference_origins
+                    .pop()
+                    .ok_or_else(|| invariant("evaluation-return-reference-origin-frame-missing"))?;
                 self.pop_live_frame()?;
                 self.pop_frame_owners()?;
                 if !holds {
@@ -2520,7 +2620,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
                 frame.resize(callable.slots.max(frame.len()), None);
                 let provenance = vec![false; frame.len()];
-                self.push_frame_owned(frame, provenance, owners, next_charge, true)?;
+                self.push_frame_owned(
+                    frame,
+                    provenance,
+                    owners,
+                    reference_origins,
+                    next_charge,
+                    true,
+                )?;
                 self.tasks.push(Task::ObserveApplication(node));
                 self.tasks.push(Task::Return);
                 self.tasks.push(Task::Eval(callable.body));
@@ -2589,7 +2696,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .clone()
             .ok_or_else(|| invariant("evaluation-local-value-unbound"))?;
         let provenance = self.slot_has_guard_provenance(slot)?;
-        self.push_value(value, provenance);
+        let origins = self
+            .frame_reference_origins
+            .last()
+            .and_then(|frame| frame.get(slot))
+            .ok_or_else(|| invariant("evaluation-local-reference-origin-unbound"))?
+            .clone();
+        self.push_value_with_origins(value, provenance, origins);
         Ok(())
     }
 
@@ -3671,6 +3784,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     values: arguments,
                     provenance,
                     owners: argument_owners,
+                    reference_origins,
                 } = self.pop_many_forwarded(arguments_len)?;
                 let next_charge = frame_occurrences(&arguments);
                 charge_call(self.meter)?;
@@ -3679,7 +3793,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 frame.resize(callable.slots.max(frame.len()), None);
                 let mut frame_provenance = provenance;
                 frame_provenance.resize(frame.len(), false);
-                self.push_frame_owned(frame, frame_provenance, argument_owners, next_charge, true)?;
+                self.push_frame_owned(
+                    frame,
+                    frame_provenance,
+                    argument_owners,
+                    reference_origins,
+                    next_charge,
+                    true,
+                )?;
                 // shared-grammar.md: "self, result and pre(...) are ...
                 // unavailable ... inside a reusable predicate" -- a callee's
                 // own body is never anchored by its caller's `pre(..)`, so
@@ -3719,6 +3840,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     values: arguments,
                     provenance,
                     owners: argument_owners,
+                    reference_origins,
                 } = self.pop_many_forwarded(arguments_len)?;
                 let next_charge = frame_occurrences(&arguments);
                 charge_call(self.meter)?;
@@ -3727,7 +3849,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 frame.resize(callable.slots.max(frame.len()), None);
                 let mut frame_provenance = provenance;
                 frame_provenance.resize(frame.len(), false);
-                self.push_frame_owned(frame, frame_provenance, argument_owners, next_charge, true)?;
+                self.push_frame_owned(
+                    frame,
+                    frame_provenance,
+                    argument_owners,
+                    reference_origins,
+                    next_charge,
+                    true,
+                )?;
                 let previous = self.enter(PackageContext {
                     world: World::Checked {
                         scope: library.scope(),
@@ -4013,7 +4142,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 members,
             } = node.at(*population).kind() =>
             {
-                let (reference, _) = self.pop_forwarded()?;
+                let (reference, _, _) = self.pop_forwarded()?;
                 self.named_lookup(node, population, members, *absence, reference)?
             }
             NodeKind::AllInstances { population } => {
@@ -4038,7 +4167,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 absence,
                 population,
             } => {
-                let (reference_value, _) = self.pop_forwarded()?;
+                let (reference_value, _, _) = self.pop_forwarded()?;
                 let Value::Population(population_id) = self.pop()? else {
                     return Err(invariant("query-population-value-expected"));
                 };
@@ -4086,13 +4215,19 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 arguments,
                 ..
             } => {
-                let (arguments, argument_owners) = self.pop_many_owned(arguments.len())?;
-                let (Value::Reference(reference), receiver_owner) = self.pop_owned()? else {
+                let (arguments, argument_owners, argument_origins) =
+                    self.pop_many_owned_with_origins(arguments.len())?;
+                let (Value::Reference(reference), receiver_owner, receiver_origins) =
+                    self.pop_owned_with_origins()?
+                else {
                     return Err(invariant("dispatch-reference-value-expected"));
                 };
                 let mut full_owners = Vec::with_capacity(argument_owners.len() + 1);
                 full_owners.push(receiver_owner);
                 full_owners.extend(argument_owners);
+                let mut full_origins = Vec::with_capacity(argument_origins.len() + 1);
+                full_origins.push(receiver_origins);
+                full_origins.extend(argument_origins);
                 let subtype = reference.object_type();
                 // The exact call site that produced this node (`check.rs`'s
                 // `dispatch_call`), never re-derived by searching
@@ -4136,6 +4271,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             frame,
                             provenance,
                             full_owners.clone(),
+                            full_origins.clone(),
                             next_charge,
                             true,
                         )?;
@@ -4149,6 +4285,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             ),
                             node,
                             owners: full_owners,
+                            reference_origins: full_origins,
                         })));
                         self.tasks.push(Task::Eval(callable.body));
                         return Ok(());
@@ -4163,7 +4300,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             full_arguments.into_iter().map(Some).collect();
                         frame.resize(callable.slots.max(frame.len()), None);
                         let provenance = vec![false; frame.len()];
-                        self.push_frame_owned(frame, provenance, full_owners, next_charge, true)?;
+                        self.push_frame_owned(
+                            frame,
+                            provenance,
+                            full_owners,
+                            full_origins,
+                            next_charge,
+                            true,
+                        )?;
                         self.tasks.push(Task::ObserveApplication(node));
                         self.tasks.push(Task::Return);
                         self.tasks.push(Task::Eval(callable.body));
