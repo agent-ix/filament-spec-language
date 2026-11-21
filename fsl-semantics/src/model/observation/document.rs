@@ -1291,12 +1291,19 @@ impl<'a> References<'a> {
     }
 
     fn check_typed_closure(
-        &self,
+        &mut self,
         raw: &SnapshotValue,
         value_type: &filament_exact::ValueType,
     ) -> Result<(), AdmissionRecord> {
         let mut refs = Vec::new();
-        collect_object_references(raw, value_type, self.views, self.types, &mut refs);
+        collect_object_references(
+            raw,
+            value_type,
+            self.views,
+            self.types,
+            &mut self.record_keys,
+            &mut refs,
+        );
         self.check_named_closure(refs)
     }
 
@@ -2870,11 +2877,11 @@ fn collect_object_references(
     value_type: &filament_exact::ValueType,
     views: &[ModelView],
     types: &TypeEnvironment,
+    records: &mut Option<BTreeMap<String, filament_exact::NodeKey>>,
     into: &mut Vec<(String, String)>,
 ) {
     use filament_exact::ValueType;
     let mut pending = vec![(raw.form(), value_type.clone())];
-    let mut records = None;
     while let Some((form, value_type)) = pending.pop() {
         match (form, &value_type) {
             (RawForm::Reference(reference), ValueType::Reference(target)) => {
@@ -3768,6 +3775,7 @@ fn admit_contexts<'t>(
                 value_type,
                 references.views,
                 types,
+                &mut references.record_keys,
                 &mut found_references,
             );
             context_references.extend(found_references.into_iter().map(|(population, key)| {
@@ -3887,6 +3895,7 @@ pub(super) fn parameter_populations(
     parameters: &[(String, SnapshotValue)],
 ) -> Vec<String> {
     let mut named = Vec::new();
+    let mut records = None;
     for (name, value_type) in operation.parameters() {
         if !holds_references(value_type) {
             continue;
@@ -3895,7 +3904,7 @@ pub(super) fn parameter_populations(
             continue;
         };
         let mut refs = Vec::new();
-        collect_object_references(raw, value_type, views, types, &mut refs);
+        collect_object_references(raw, value_type, views, types, &mut records, &mut refs);
         for (population, _) in refs {
             if !named.contains(&population) && find_population(views, &population).is_some() {
                 named.push(population);
@@ -3971,6 +3980,7 @@ pub(super) fn check_population_completeness(
         required.insert(name.to_owned());
     }
     required.extend(parameter_populations.iter().cloned());
+    let mut records = None;
     loop {
         let mut grew = false;
         for name in required.clone() {
@@ -3999,6 +4009,7 @@ pub(super) fn check_population_completeness(
                         field.field().value_type(),
                         views,
                         types,
+                        &mut records,
                         &mut refs,
                     );
                     for (population, _) in refs {
