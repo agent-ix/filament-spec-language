@@ -323,7 +323,9 @@ pub fn replay_probabilistic_undefined(
             &mut transition_count,
             cancel,
             step::ActionRefusal::UnsupportedDraw,
-            |post| Ok((key_of(system, reference, post, limits, cancel)? == expected).then_some(())),
+            |post, _, _, _| {
+                Ok((key_of(system, reference, post, limits, cancel)? == expected).then_some(()))
+            },
         )?;
         mass = bounded::arithmetic(
             filament_exact::RationalArithmetic::Multiply(&mass, &probability),

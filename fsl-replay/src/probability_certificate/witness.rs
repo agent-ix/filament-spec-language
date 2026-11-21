@@ -13,6 +13,7 @@ use fsl_eval::simulation::model::{
 use fsl_package::CheckedPackage;
 
 mod bounded;
+mod measure;
 mod step;
 mod undefined;
 pub use undefined::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
@@ -228,6 +229,17 @@ fn replay_probabilistic_witness_impl(
             _ => ProbabilityWitnessError::Graph(error),
         },
     )?;
+    if matches!(
+        &claim.form,
+        ProbForm::Quantile { .. }
+            | ProbForm::MeanOfFraction { .. }
+            | ProbForm::Probability {
+                event: fsl_semantics::check::Event::Compare { .. },
+                ..
+            }
+    ) {
+        return measure::replay(system, claim, witness, limits, cancel);
+    }
     if matches!(claim.form, ProbForm::Probability { .. }) {
         return bounded::replay(system, claim, witness, limits, cancel);
     }

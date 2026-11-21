@@ -1657,3 +1657,56 @@ fn charge(storage: &mut u64, bound: u64, bytes: u64) -> Result<(), ProbabilityDo
     *storage = actual;
     Ok(())
 }
+
+/// Resolve the shared terminal payoff, actual reward descriptor and operator
+/// from the checked claim. Producers use this same selection as the checker;
+/// only the graph construction and backward induction belong to the engine.
+#[allow(clippy::too_many_arguments)]
+pub fn measure_probability_objective(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    payoff: MeasurePayoffKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<
+    (
+        MeasurePayoff,
+        Option<ProbabilityRewardObjective>,
+        ProbabilityObjective,
+    ),
+    ProbabilityDocumentError,
+> {
+    let selected = plan(system, claim, payoff, limits, cancel, meter, storage)?;
+    Ok((
+        selected.payoff,
+        selected.objective.reward,
+        selected.objective.optimization,
+    ))
+}
+
+pub(in crate::probability_certificate) struct ReplayControl<'a> {
+    pub(in crate::probability_certificate) control: MeasurePlan<'a>,
+    pub(in crate::probability_certificate) predicates: Vec<&'a CheckedPredicate>,
+    pub(in crate::probability_certificate) payoff: MeasurePayoff,
+    pub(in crate::probability_certificate) reward: Option<ProbabilityRewardObjective>,
+}
+#[allow(clippy::too_many_arguments)]
+pub(in crate::probability_certificate) fn replay_control<'a>(
+    system: &ModelSystem<'_>,
+    claim: &'a CheckedProbabilisticClaim,
+    kind: MeasurePayoffKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<ReplayControl<'a>, ProbabilityDocumentError> {
+    let plan = plan(system, claim, kind, limits, cancel, meter, storage)?;
+    Ok(ReplayControl {
+        control: plan.control,
+        predicates: plan.predicates,
+        payoff: plan.payoff,
+        reward: plan.objective.reward,
+    })
+}

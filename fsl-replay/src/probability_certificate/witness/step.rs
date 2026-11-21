@@ -62,8 +62,60 @@ pub(super) fn replay<T>(
     edges: &mut usize,
     cancel: &Cancel,
     action_refusal: ActionRefusal,
-    mut project: impl FnMut(&ModelSimState) -> Result<Option<T>, ProbabilityWitnessError>,
+    mut project: impl FnMut(
+        &ModelSimState,
+        &[(filament_exact::Identifier, SemanticValue)],
+        &mut filament_exact::Meter,
+        &mut u64,
+    ) -> Result<Option<T>, ProbabilityWitnessError>,
 ) -> Result<(Rational, ModelSimState, T), ProbabilityWitnessError> {
+    if matches!(step.choice, ProductAction::TerminalStutter) {
+        if step.action.is_some()
+            || step.transition.is_some()
+            || step.draw.is_some()
+            || step.elapsed != rational(0)
+        {
+            return Err(ProbabilityWitnessError::Refused);
+        }
+        let mut issue = None;
+        let distributions = model_distributions(system, state, workload, cancel, &mut |failure| {
+            issue = Some(failure)
+        })
+        .map_err(|error| {
+            issue.map_or(ProbabilityWitnessError::Graph(error), |issue| {
+                ProbabilityWitnessError::Build(Box::new(issue))
+            })
+        })?;
+        if !distributions.is_empty()
+            || system.state_key(state).ok().map(|(bytes, _)| bytes)
+                != system.state_key(&step.post).ok().map(|(bytes, _)| bytes)
+        {
+            return Err(ProbabilityWitnessError::Refused);
+        }
+        let rewards = system
+            .input()
+            .probabilistic
+            .rewards()
+            .iter()
+            .map(|reward| {
+                Ok((
+                    filament_exact::Identifier::new(reward.name())
+                        .map_err(|_| ProbabilityWitnessError::Refused)?,
+                    SemanticValue::Integer(Integer::zero()),
+                ))
+            })
+            .collect::<Result<Vec<_>, ProbabilityWitnessError>>()?;
+        let Some(projected) = project(state, &rewards, meter, storage)? else {
+            return Err(ProbabilityWitnessError::Refused);
+        };
+        *edges = edges
+            .checked_add(1)
+            .ok_or(ExactProbabilityGraphError::TooManyEdges)?;
+        if *edges > limits.model.limits.max_transitions {
+            return Err(ExactProbabilityGraphError::EdgeLimitReached.into());
+        }
+        return Ok((rational(1), state.clone(), projected));
+    }
     let ProductAction::Identity(schedule) = &step.choice else {
         return Err(ProbabilityWitnessError::Refused);
     };
@@ -94,7 +146,7 @@ pub(super) fn replay<T>(
                 && candidate.transition == TransitionId::Operation(transition.clone())
                 && same_values(&candidate.random, draw)
             {
-                candidates.push((candidate.probability, candidate.post));
+                candidates.push((candidate.probability, candidate.post, candidate.rewards));
             }
         }
     } else {
@@ -112,19 +164,23 @@ pub(super) fn replay<T>(
                 }
                 for (candidate_transition, post) in candidate_draw.successors {
                     if candidate_transition == *transition {
-                        candidates.push((candidate_draw.probability.clone(), post));
+                        candidates.push((
+                            candidate_draw.probability.clone(),
+                            post,
+                            candidate_draw.rewards.clone(),
+                        ));
                     }
                 }
             }
         }
     }
     let mut matched = None;
-    for (probability, post) in candidates {
+    for (probability, post, rewards) in candidates {
         bounded::visit(meter, cancel)?;
         if post.anchor() != step.post.anchor() || post.reached_by() != step.post.reached_by() {
             continue;
         }
-        if let Some(projected) = project(&post)? {
+        if let Some(projected) = project(&post, &rewards, meter, storage)? {
             if matched.is_some() {
                 return Err(ExactProbabilityGraphError::UnsupportedDraw.into());
             }

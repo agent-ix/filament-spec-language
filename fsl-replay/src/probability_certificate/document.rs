@@ -7,11 +7,12 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 
-mod measure;
+pub(super) mod measure;
 pub use measure::{
     conditional_measure_probability_certificate, measure_probability_certificate_document,
-    measure_probability_product_key, read_measure_probability_certificate,
-    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
+    measure_probability_objective, measure_probability_product_key,
+    read_measure_probability_certificate, write_measure_probability_certificate, MeasurePayoffKind,
+    MeasureProbabilityDocument,
 };
 mod fairness;
 #[cfg(feature = "test-support")]

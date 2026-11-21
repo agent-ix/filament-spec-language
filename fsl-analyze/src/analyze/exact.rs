@@ -10,6 +10,7 @@
 
 mod candidate;
 mod long_run;
+mod measure;
 mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
@@ -836,6 +837,17 @@ fn run(
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    if matches!(
+        &request.claim.form,
+        ProbForm::Quantile { .. }
+            | ProbForm::MeanOfFraction { .. }
+            | ProbForm::Probability {
+                event: Event::Compare { .. },
+                ..
+            }
+    ) {
+        return measure::run(request, cancel, tamper, tamper_witness);
+    }
     if matches!(&request.claim.form, ProbForm::MeanTime { .. }) {
         return run_timed_mean(request, cancel, tamper);
     }
@@ -1959,6 +1971,49 @@ fn replay_refutation(
         }
         Err(_) => return broken(),
     };
+    replay_produced_witness(
+        system,
+        claim,
+        product,
+        produced,
+        initial,
+        binding,
+        monitor,
+        limits,
+        cancel,
+        subject,
+        tamper,
+        producer_meter,
+        producer_storage,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_produced_witness(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    product: &ProbProduct,
+    produced: crate::exact_probabilistic::ProducedWitness,
+    initial: crate::exact_probabilistic::ProbStateId,
+    binding: Option<&ObjectReference>,
+    monitor: Option<&fsl_eval::automaton::QualifiedBoundedMonitor>,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    mut producer_meter: filament_exact::Meter,
+    mut producer_storage: u64,
+) -> EngineReport {
+    use crate::exact_probabilistic::ProductAction;
+    let measure = matches!(
+        &claim.form,
+        ProbForm::Quantile { .. }
+            | ProbForm::MeanOfFraction { .. }
+            | ProbForm::Probability {
+                event: Event::Compare { .. },
+                ..
+            }
+    );
     let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
         return not_yet();
     };
@@ -2054,7 +2109,7 @@ fn replay_refutation(
                     return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
                 }
             }
-            if matches!(&step.action, ProductAction::TerminalStutter) {
+            if !measure && matches!(&step.action, ProductAction::TerminalStutter) {
                 // Qualified replay derives false extension at an actual leaf;
                 // closure consumes no model step or draw.
                 continue;
@@ -2096,6 +2151,7 @@ fn replay_refutation(
                     if !matches!(
                         &choice,
                         fsl_replay::ProductAction::PostState(_)
+                            | fsl_replay::ProductAction::TerminalStutter
                             | fsl_replay::ProductAction::UnitDelay
                             | fsl_replay::ProductAction::EnterIdleDelay
                             | fsl_replay::ProductAction::IdleDelay
@@ -2232,7 +2288,7 @@ fn replay_refutation(
                 .map(|(_, steps)| ProbabilityWitnessPath { steps }),
         );
     }
-    if monitor.is_some() {
+    if monitor.is_some() || measure {
         // A finite-horizon policy only needs entries for represented choices.
         // The unbounded producer retains its continuation policy contract.
         let mut used = std::collections::BTreeSet::new();
@@ -2262,10 +2318,20 @@ fn replay_refutation(
     match replay_probabilistic_witness(package, system, &item, &witness, limits, cancel) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let scope = package.graph().scope();
+            let quantile_bound;
             let wire = fsl_replay::probabilistic_wire(
                 &witness,
                 match &claim.form {
-                    ProbForm::Reach { bound, .. } | ProbForm::Probability { bound, .. } => bound,
+                    ProbForm::Reach { bound, .. }
+                    | ProbForm::Probability { bound, .. }
+                    | ProbForm::MeanOfFraction { bound, .. } => bound,
+                    ProbForm::Quantile { q, threshold, .. } => {
+                        quantile_bound = match threshold {
+                            Bound::AtMost(_) => Bound::AtLeast(q.clone()),
+                            Bound::AtLeast(_) => Bound::AtMost(q.clone()),
+                        };
+                        &quantile_bound
+                    }
                     _ => return not_yet(),
                 },
                 scope.types(),

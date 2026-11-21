@@ -442,7 +442,7 @@ pub use probability_certificate::{
     CyclicMdpProbabilityPhase, RewardProbabilityPhase,
 };
 pub use probability_certificate::{
-    MeasurePayoffKind, MeasureProbabilityDocument, measure_probability_product_key, measure_probability_certificate_document, conditional_measure_probability_certificate, read_measure_probability_certificate, write_measure_probability_certificate,
+    MeasurePayoffKind, MeasureProbabilityDocument, measure_probability_product_key, measure_probability_objective, measure_probability_certificate_document, conditional_measure_probability_certificate, read_measure_probability_certificate, write_measure_probability_certificate,
     admit_expected_reward_certificate_subject, check_claim_exact_reachability,
     check_probability_certificate_document, check_probability_certificate_package,
     check_probability_certificate_source, claim_binding,
