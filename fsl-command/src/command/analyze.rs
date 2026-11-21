@@ -1443,27 +1443,74 @@ pub(super) fn read_documents(
                 ))
             })?;
         }
-        let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
-            invalid(
-                &format!("/documents/{position}"),
-                format!("{} is not a JSON document: {error}", document.file),
-            )
-        })?;
-        let format = parsed.get("format").and_then(serde_json::Value::as_str);
-        let declared_identity = match parsed.get("identity") {
-            Some(value) => Some(
-                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
-                    value.clone(),
-                )
-                .map_err(|error| {
-                    invalid(
-                        &format!("/documents/{position}/identity"),
-                        format!("document identity is malformed: {error}"),
-                    )
-                })?,
-            ),
-            None => None,
-        };
+        let (format, identity_bytes) =
+            if fsl_analyze::analyze::document::effect_decision::is_receipt(&bytes) {
+                // Opaque receipt objects never enter a recursive Value parser,
+                // even when no item selected this provisioned receipt.
+                let arena =
+                    quire_canonical::read(&bytes, u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+                        .map_err(|error| {
+                        invalid(&format!("/documents/{position}"), error.to_string())
+                    })?;
+                let root = arena.root();
+                let format = root.get("format").and_then(|node| match node.node() {
+                    quire_canonical::Node::String(value) => Some(value.to_owned()),
+                    _ => None,
+                });
+                let identity_bytes = root
+                    .get("identity")
+                    .map(|node| {
+                        quire_canonical::to_vec(
+                            &node,
+                            quire_canonical::Limits::new(
+                                u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                            ),
+                        )
+                    })
+                    .transpose()
+                    .map_err(|error| {
+                        invalid(
+                            &format!("/documents/{position}/identity"),
+                            error.to_string(),
+                        )
+                    })?;
+                (format, identity_bytes)
+            } else {
+                let parsed: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|error| {
+                        invalid(
+                            &format!("/documents/{position}"),
+                            format!("{} is not a JSON document: {error}", document.file),
+                        )
+                    })?;
+                let format = parsed
+                    .get("format")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                let identity_bytes = parsed
+                    .get("identity")
+                    .map(serde_json::to_vec)
+                    .transpose()
+                    .map_err(|error| {
+                        invalid(
+                            &format!("/documents/{position}/identity"),
+                            error.to_string(),
+                        )
+                    })?;
+                (format, identity_bytes)
+            };
+        let declared_identity = identity_bytes
+            .as_deref()
+            .map(|bytes| {
+                serde_json::from_slice::<fsl_analyze::analyze::document::DocumentSelection>(bytes)
+                    .map_err(|error| {
+                        invalid(
+                            &format!("/documents/{position}/identity"),
+                            format!("document identity is malformed: {error}"),
+                        )
+                    })
+            })
+            .transpose()?;
         let stated_identity = match &document.identity {
             Some(value) => Some(
                 serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
@@ -1478,7 +1525,7 @@ pub(super) fn read_documents(
             ),
             None => None,
         };
-        if format == Some("filament.state.snapshot/v1") && document.identity.is_some() {
+        if format.as_deref() == Some("filament.state.snapshot/v1") && document.identity.is_some() {
             return Err(invalid(
                 &format!("/documents/{position}/identity"),
                 "a supplied snapshot uses its declared identity and cannot state a wrapper identity",
@@ -1505,7 +1552,7 @@ pub(super) fn read_documents(
             authority: identity.authority.clone(),
             identity: identity.identity.clone(),
         };
-        if format == Some("filament.protocol-recording/1") {
+        if format.as_deref() == Some("filament.protocol-recording/1") {
             recording_documents.insert((reference.authority.clone(), reference.identity.clone()));
         }
         if documents.insert(reference, bytes).is_some() {

@@ -5,10 +5,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use filament_semantic_value::catalog::{CatalogCode, Category};
-use fsl_foundation::canonical_json;
 use fsl_replay::{OutcomeDiagnostic, TerminalRecord};
 use fsl_semantics::model::observation::DocumentProvision;
-use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use quire_canonical::{Encode, Node, NodeRef};
 use serde_json::{Map, Value};
 
 use super::{DocumentSelection, ItemSelection, SettledRun};
@@ -16,13 +15,16 @@ use super::{DocumentSelection, ItemSelection, SettledRun};
 /// Recognize the existing receipt document family when assembling formal
 /// premises. Admission still validates the complete selected bytes separately.
 pub(crate) fn is_receipt(bytes: &[u8]) -> bool {
-    #[derive(serde::Deserialize)]
-    struct Version<'a> {
-        #[serde(borrow)]
-        contract_version: &'a str,
-    }
-    serde_json::from_slice::<Version<'_>>(bytes)
-        .is_ok_and(|document| document.contract_version == "filament.effect-decision/v1")
+    quire_canonical::read(bytes, u64::try_from(bytes.len()).unwrap_or(u64::MAX)).is_ok_and(
+        |document| {
+            document
+                .root()
+                .get("contract_version")
+                .is_some_and(|version| {
+                    matches!(version.node(), Node::String("filament.effect-decision/v1"))
+                })
+        },
+    )
 }
 
 /// Existing FR-272 causes admitted by the receipt reader.
@@ -196,39 +198,21 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
             ..at.clone()
         },
     };
-    // IgnoredAny checks JSON syntax without converting its number domain or
-    // materializing values. A syntactically valid unrepresentable number is
-    // invalid-value, rather than a malformed-json refusal selected from prose.
-    let mut syntax = serde_json::Deserializer::from_slice(bytes);
-    if serde::Deserialize::deserialize(&mut syntax)
-        .map(|_: serde::de::IgnoredAny| ())
-        .and_then(|()| syntax.end())
-        .is_err()
-    {
-        return Err(malformed(ReceiptCause::MalformedJson, ""));
-    }
-    let mut duplicate = None;
-    let mut domain_pointer = None;
-    let mut decoder = serde_json::Deserializer::from_slice(bytes);
-    let parsed = UniqueValue {
-        pointer: String::new(),
-        duplicate: &mut duplicate,
-        domain_pointer: &mut domain_pointer,
-    }
-    .deserialize(&mut decoder);
-    let value = match parsed {
-        Ok(value) if decoder.end().is_ok() => value,
-        _ => {
-            return Err(match duplicate {
-                Some(pointer) => malformed(ReceiptCause::DuplicateMember, &pointer),
-                None => malformed(
-                    ReceiptCause::InvalidValue,
-                    domain_pointer.as_deref().unwrap_or(""),
-                ),
-            })
+    // The existing intake has already paid for every byte of this slice.
+    // The shared arena reader, encoder and destructor all use explicit stacks.
+    let bound = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let document = quire_canonical::read(bytes, bound).map_err(|error| match error {
+        quire_canonical::ReadError::DuplicateName { pointer, .. } => {
+            malformed(ReceiptCause::DuplicateMember, &pointer)
         }
-    };
-    let Some(object) = value.as_object() else {
+        quire_canonical::ReadError::NumberOutOfRange { pointer, .. } => {
+            malformed(ReceiptCause::InvalidValue, &pointer)
+        }
+        quire_canonical::ReadError::Malformed { .. } => malformed(ReceiptCause::MalformedJson, ""),
+        _ => malformed(ReceiptCause::InvalidValue, ""),
+    })?;
+    let root = document.root();
+    let Node::Object(members) = root.node() else {
         return Err(malformed(ReceiptCause::WrongValueKind, ""));
     };
     const FIELDS: &[&str] = &[
@@ -241,8 +225,9 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
         "lineage",
         "effect_observation",
     ];
+    let object: BTreeMap<_, _> = members.collect();
     for name in object.keys() {
-        if !FIELDS.contains(&name.as_str()) {
+        if !FIELDS.contains(name) {
             return Err(malformed(
                 ReceiptCause::UnknownMember,
                 &format!("/{}", token(name)),
@@ -250,51 +235,149 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
         }
     }
     for name in &FIELDS[..7] {
-        if !object.contains_key(*name) {
+        if !object.contains_key(name) {
             return Err(malformed(ReceiptCause::MissingMember, &format!("/{name}")));
         }
     }
-    for (name, member) in object {
-        let valid_kind = match name.as_str() {
-            "contract_version" | "idempotency_key" => member.is_string(),
-            _ => member.is_object(),
+    for (name, member) in &object {
+        let valid = match *name {
+            "contract_version" | "idempotency_key" => matches!(member.node(), Node::String(_)),
+            _ => matches!(member.node(), Node::Object(_)),
         };
-        if !valid_kind {
+        if !valid {
             return Err(malformed(ReceiptCause::WrongValueKind, &format!("/{name}")));
         }
     }
-    if value["contract_version"] != "filament.effect-decision/v1" {
+    if !object.get("contract_version").is_some_and(|version| {
+        matches!(version.node(), Node::String("filament.effect-decision/v1"))
+    }) {
         return Err(malformed(ReceiptCause::InvalidValue, "/contract_version"));
     }
-    let canonical = canonical_json::encode(&value).map_err(|error| match error {
-        canonical_json::CanonicalJsonError::UnsafeInteger { pointer, .. } => {
-            malformed(ReceiptCause::InvalidValue, &pointer)
-        }
-        canonical_json::CanonicalJsonError::Serialize(_)
-        | canonical_json::CanonicalJsonError::Encode(_) => {
-            malformed(ReceiptCause::InvalidValue, "")
-        }
-    })?;
+    if let Some(pointer) = invalid_integer(root) {
+        return Err(malformed(ReceiptCause::InvalidValue, &pointer));
+    }
+    let canonical = quire_canonical::to_vec(&document, quire_canonical::Limits::new(bound))
+        .map_err(|_| malformed(ReceiptCause::InvalidValue, ""))?;
     if canonical != bytes {
         return Err(malformed(ReceiptCause::InvalidValue, ""));
     }
-    let encode = |value: &Value| {
-        canonical_json::encode(value).map_err(|_| malformed(ReceiptCause::InvalidValue, ""))
+    let required = |name: &str| {
+        object
+            .get(name)
+            .copied()
+            .ok_or_else(|| malformed(ReceiptCause::MissingMember, &format!("/{name}")))
     };
-    // The complete decision already contains the canonical operation and
-    // parameter-ordered typed arguments; include those explicitly in FR-329's key.
-    let key = encode(&Value::Array(vec![
-        value["decision"].clone(),
-        value["authority_grant"].clone(),
-        value["idempotency_key"].clone(),
-        value["decision"]["operation"].clone(),
-        value["decision"]["arguments"].clone(),
-    ]))?;
+    let decision = required("decision")?;
+    let encode = |node: NodeRef<'_>| {
+        quire_canonical::to_vec(&node, quire_canonical::Limits::new(bound))
+            .map_err(|_| malformed(ReceiptCause::InvalidValue, ""))
+    };
+    // FR-329's five key components borrow the arena. No opaque JSON subtree
+    // is converted to Value, recursively cloned or repaired into acceptance.
+    let key = RequestKey {
+        decision,
+        grant: required("authority_grant")?,
+        key: required("idempotency_key")?,
+    };
+    let key = quire_canonical::to_vec(
+        &key,
+        quire_canonical::Limits::new(bound.saturating_mul(2).saturating_add(16)),
+    )
+    .map_err(|_| malformed(ReceiptCause::InvalidValue, ""))?;
     Ok(Receipt {
-        decision: encode(&value["decision"])?,
+        decision: encode(decision)?,
         key,
-        effect_request: encode(&value["effect_request"])?,
+        effect_request: encode(required("effect_request")?)?,
     })
+}
+
+struct RequestKey<'d> {
+    decision: NodeRef<'d>,
+    grant: NodeRef<'d>,
+    key: NodeRef<'d>,
+}
+
+impl Encode for RequestKey<'_> {
+    fn encode_into<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_array()?;
+        for member in [
+            Some(self.decision),
+            Some(self.grant),
+            Some(self.key),
+            self.decision.get("operation"),
+            self.decision.get("arguments"),
+        ] {
+            match member {
+                Some(member) => member.encode_into(writer)?,
+                None => writer.null()?,
+            }
+        }
+        writer.end_array()
+    }
+}
+
+/// Check the existing exact JSON integer domain without allocating a copy
+/// of the path for every node or recursing through opaque object contents.
+fn invalid_integer(root: NodeRef<'_>) -> Option<String> {
+    enum Task<'d> {
+        Value(NodeRef<'d>),
+        Member(&'d str, NodeRef<'d>),
+        Index(usize, NodeRef<'d>),
+        Leave(usize),
+    }
+    let mut tasks = vec![Task::Value(root)];
+    let mut pointer = String::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Member(name, node) => {
+                let previous = pointer.len();
+                pointer.push('/');
+                pointer.push_str(&token(name));
+                tasks.push(Task::Leave(previous));
+                tasks.push(Task::Value(node));
+            }
+            Task::Index(index, node) => {
+                let previous = pointer.len();
+                pointer.push('/');
+                pointer.push_str(&index.to_string());
+                tasks.push(Task::Leave(previous));
+                tasks.push(Task::Value(node));
+            }
+            Task::Leave(length) => pointer.truncate(length),
+            Task::Value(node) => match node.node() {
+                Node::Number(number)
+                    if number.value().fract() == 0.0
+                        && number.value().abs() > 9_007_199_254_740_991.0 =>
+                {
+                    return Some(pointer)
+                }
+                Node::Object(members) => {
+                    tasks.extend(
+                        members
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .map(|(name, node)| Task::Member(name, node)),
+                    );
+                }
+                Node::Array(items) => {
+                    tasks.extend(
+                        items
+                            .enumerate()
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .map(|(index, node)| Task::Index(index, node)),
+                    );
+                }
+                Node::Null | Node::Bool(_) | Node::Number(_) | Node::String(_) => {}
+            },
+        }
+    }
+    None
 }
 
 /// Validate paid-for receipt bytes before any item consumes a document.
@@ -365,14 +448,24 @@ impl SettledRun {
             };
             let mut occurrences: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
             // Prefix transitions are events; persistent state copies are not.
-            for step in &counterexample.prefix {
+            for (position, step) in counterexample.prefix.iter().enumerate() {
                 if let Some(record) = step
                     .transition
                     .recommendation_document()
                     .map_err(|_| super::AnalyzeDocumentError::Fault)?
                 {
                     let count = occurrences.entry(record).or_default();
-                    *count = count.saturating_add(1);
+                    if counterexample
+                        .lasso
+                        .as_ref()
+                        .is_some_and(|lasso| !lasso.terminal_stutter && position >= lasso.entry)
+                    {
+                        // The prefix holds one traversal of this native cycle.
+                        // Its recommendation event occurs on every traversal.
+                        *count = 2;
+                    } else {
+                        *count = count.saturating_add(1);
+                    }
                 }
             }
             for (position, document) in entries.iter().enumerate() {
@@ -494,88 +587,4 @@ impl SettledRun {
 
 fn token(name: &str) -> String {
     name.replace('~', "~0").replace('/', "~1")
-}
-
-struct UniqueValue<'a> {
-    pointer: String,
-    duplicate: &'a mut Option<String>,
-    domain_pointer: &'a mut Option<String>,
-}
-
-impl<'de> DeserializeSeed<'de> for UniqueValue<'_> {
-    type Value = Value;
-    fn deserialize<D: serde::Deserializer<'de>>(self, decoder: D) -> Result<Value, D::Error> {
-        let Self {
-            pointer,
-            duplicate,
-            domain_pointer,
-        } = self;
-        let result = decoder.deserialize_any(UniqueValue {
-            pointer: pointer.clone(),
-            duplicate,
-            domain_pointer: &mut *domain_pointer,
-        });
-        if result.is_err() && domain_pointer.is_none() {
-            *domain_pointer = Some(pointer);
-        }
-        result
-    }
-}
-
-impl<'de> Visitor<'de> for UniqueValue<'_> {
-    type Value = Value;
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a JSON value")
-    }
-    fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Value, E> {
-        Ok(Value::Bool(value))
-    }
-    fn visit_unit<E: serde::de::Error>(self) -> Result<Value, E> {
-        Ok(Value::Null)
-    }
-    fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Value, E> {
-        Ok(Value::Number(value.into()))
-    }
-    fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Value, E> {
-        Ok(Value::Number(value.into()))
-    }
-    fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Value, E> {
-        serde_json::Number::from_f64(value)
-            .map(Value::Number)
-            .ok_or_else(|| E::custom("invalid JSON number"))
-    }
-    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Value, E> {
-        Ok(Value::String(value.to_owned()))
-    }
-    fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Value, E> {
-        Ok(Value::String(value))
-    }
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
-        let mut values = Vec::new();
-        while let Some(value) = seq.next_element_seed(UniqueValue {
-            pointer: format!("{}/{}", self.pointer, values.len()),
-            duplicate: self.duplicate,
-            domain_pointer: self.domain_pointer,
-        })? {
-            values.push(value);
-        }
-        Ok(Value::Array(values))
-    }
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
-        let mut values = Map::new();
-        while let Some(name) = map.next_key::<String>()? {
-            let pointer = format!("{}/{}", self.pointer, token(&name));
-            if values.contains_key(&name) {
-                *self.duplicate = Some(pointer);
-                return Err(serde::de::Error::custom("duplicate JSON member"));
-            }
-            let value = map.next_value_seed(UniqueValue {
-                pointer,
-                duplicate: self.duplicate,
-                domain_pointer: self.domain_pointer,
-            })?;
-            values.insert(name, value);
-        }
-        Ok(Value::Object(values))
-    }
 }

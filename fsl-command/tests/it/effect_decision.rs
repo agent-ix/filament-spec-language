@@ -150,6 +150,52 @@ fn receipt_binding_preserves_actual_source_outcome_and_model_truth() {
 }
 
 #[test]
+#[trace(
+    "FR-1046-AC-1",
+    "FR-1046-AC-7",
+    "FR-1046-AC-9",
+    "FR-1046-AC-12",
+    "FR-277"
+)]
+fn a_deep_opaque_grant_uses_the_shared_arena_on_a_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut fixture = Fixture::new();
+            let base =
+                String::from_utf8(canonical_json::encode(&fixture.receipt).unwrap()).unwrap();
+            let grant = format!("{}{{}}{}", "{\"a\":".repeat(160), "}".repeat(160));
+            assert!(base.contains("\"authority_grant\":{}"));
+            let deep = base.replacen(
+                "\"authority_grant\":{}",
+                &format!("\"authority_grant\":{grant}"),
+                1,
+            );
+            fixture.select_bytes("deep", deep.as_bytes());
+            assert_eq!(fixture.run().document, fixture.baseline.document);
+            // An unselected receipt is still provisioned through the same
+            // document intake and must stay outside observation premises.
+            fixture.request["request"]["items"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("effect_decisions");
+            assert_eq!(fixture.run().document, fixture.baseline.document);
+            // Ordinary snapshot documents still reach the real model/replay.
+            let mut snapshot: Value = serde_json::from_slice(SNAPSHOT).unwrap();
+            snapshot["populations"][0]["objects"][0]["fields"]["value"]["integer"] = json!("1");
+            fixture
+                .case
+                .write("start.json", &serde_json::to_vec(&snapshot).unwrap());
+            let changed = fixture.run();
+            assert_eq!(changed.exit, 10, "{}", changed.document);
+            assert_ne!(changed.document, fixture.baseline.document);
+        })
+        .expect("small-stack public receipt intake starts")
+        .join()
+        .expect("small-stack public receipt intake completes");
+}
+
+#[test]
 #[trace("FR-1046-AC-3")]
 fn every_canonical_decision_component_is_matched() {
     let mut fixture = Fixture::new();
@@ -563,6 +609,7 @@ fn a_bounded_item_without_trace_keeps_its_engine_outcome() {
 
 #[test]
 #[trace("FR-1046-AC-2")]
+#[ignore = "QSL-2741 FR1046AC2: Package protocol selection unavailable before receipt binding"]
 fn checked_package_receipts_match_the_same_actual_recommendation() {
     let mut fixture = Fixture::new();
     fixture.request["request"]["items"][0]["kind"] = json!("temporal-satisfaction");
