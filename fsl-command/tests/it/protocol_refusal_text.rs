@@ -248,6 +248,19 @@ fn an_inverted_delivery_interval_refuses_type_mismatch_at_the_interval() {
         )),
         "{refusals:?}"
     );
+    assert!(
+        !refusals
+            .iter()
+            .any(|refusal| matches!(&refusal.cause, CheckCause::UnsupportedFeature { .. })),
+        "a refused protocol is not also unsupported: {refusals:?}"
+    );
+    let headline = refusals.first().expect("one refusal at least");
+    assert_eq!(
+        (headline.cause.code().as_str(), headline.cause.cause()),
+        ("ill_typed", Some("type-mismatch")),
+        "{refusals:?}"
+    );
+    assert_eq!(failure.refusal.code().as_str(), "ill_typed");
     let start = unit.find("[4, 3]").expect("the interval") as u64;
     let region = region.as_ref().expect("the refusal has a subject region");
     assert_eq!((region.start(), region.end()), (start, start + "[4, 3]".len() as u64));
