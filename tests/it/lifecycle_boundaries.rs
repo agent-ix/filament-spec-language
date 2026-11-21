@@ -297,7 +297,6 @@ fn emission_cancellation_at_its_first_charge_produces_no_package() {
 
 #[test]
 #[trace("FR-276-AC-2")]
-#[ignore = "QSL-2720: S3 checking continues charging after its deadline; strict next-charge oracle"]
 fn a_deadline_from_another_thread_stops_two_hundred_thousand_declarations_at_the_next_charge() {
     let mut text = "language \"ix:native\" edition \"1-draft\";\n\
         profile v = \"filament.value.complete/v1\";\n"
