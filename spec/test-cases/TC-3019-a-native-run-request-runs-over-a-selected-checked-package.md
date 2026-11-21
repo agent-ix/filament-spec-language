@@ -86,6 +86,12 @@ semantics. Scope: FR-1039-AC-1 to AC-12, FR-100-AC-23 and FR-026-AC-8.
 
 The carrier and resource cases for steps 8 and 9 are:
 
+For retained host failures, assert the outer `native-run-result/2.code`
+separately from any native diagnostic code. The formal constructor refusal
+has outer `invalid-identifier` and `details.code` `invalid_identifier`;
+the file failure has outer `io-error` and its existing path/OS-code details.
+The native catalog's underscore spellings are unchanged.
+
 | Input variation | Expected diagnostic and point of failure |
 | --- | --- |
 | `sources` is `null`, `{}`, a string or a number | `invalid-request`, stage `request`, exit 20, `/request/sources`, before selected-file I/O |
@@ -93,10 +99,10 @@ The carrier and resource cases for steps 8 and 9 are:
 | entry is `null`, scalar or a positional array | same code/stage/exit, `/request/sources/0`, before I/O |
 | independently omit each of the five required fields, add `text`, or repeat each field | same code/stage/exit, naming `/request/sources/0/<field>`, before I/O |
 | non-string `file`, `authority`, `identity` or `document`; non-integer, negative, null or above-u64 `formal_revision` | same code/stage/exit, naming that field, before I/O |
-| invalid formal document, or `formal_revision` zero | existing `invalid_identifier`, stage `request`, exit 20, naming the constructor-invalid field, before I/O |
+| invalid formal document, or `formal_revision` zero | outer `invalid-identifier`, stage `request`, exit 20, naming the constructor-invalid field, before I/O; constructor `details.code` remains `invalid_identifier` |
 | second entry repeats the first native pair, despite different path or formal metadata | `invalid-request`, stage `request`, exit 20, `/request/sources/1`, before I/O |
 | `program` beside either empty or non-empty `sources` | `invalid-request`, stage `request`, exit 20, `/request/sources`, before I/O |
-| valid package/model inputs, unavailable explicitly selected source | `io_error`, stage `file`, exit 20, retaining its file path |
+| valid package/model inputs, unavailable explicitly selected source | outer `io-error`, stage `file`, exit 20, retaining its file path |
 | invalid UTF-8, BOM, NUL or a blank native label in selected source | unchanged FR-001 source/S0 diagnostic, exit 20, including original offered-source details |
 | request JSON at `request_bytes`, then one byte over | at the bound, run; over it, `resource_exhausted`, incomplete, exit 22, naming `request_bytes` and its configured value |
 | dependent file bytes including sources at `dependent_bytes`, then one byte over | at the bound, run; over it, `resource_exhausted`, incomplete, exit 22, naming `dependent_bytes` and its configured value |
