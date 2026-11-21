@@ -59,6 +59,10 @@ pub struct TaskLiveJob {
     pub slot: u64,
     /// Pending, ready or running.
     pub phase: TaskJobPhase,
+    /// Whether the job has received service. Its service clock is live
+    /// exactly then, and a DBM cannot tell a live clock at zero from a dead
+    /// one, so the key states it.
+    pub started: bool,
     /// The execution allowance available to the job.
     pub allowance: AllowancePhase,
     /// The source operation that activated the job.
@@ -272,6 +276,7 @@ impl TaskProductKey {
                     high_allowance: job.allowance == AllowancePhase::Hi,
                     ready: job.phase != TaskJobPhase::Pending,
                     running: job.phase == TaskJobPhase::Running,
+                    started: Some(job.started),
                     release: &job.release,
                 })
                 .collect(),
@@ -330,6 +335,7 @@ mod tests {
             rank,
             slot,
             phase,
+            started: false,
             allowance: AllowancePhase::Lo,
             release: release(),
         }
@@ -370,7 +376,7 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "{}|0:=;1:-;|0:0:1:l:r:x:{{\"arguments\":[],\"operation\":\"\\\"Task::release\\\"\",\"receiver\":null,\"type\":\"transition\"}}|0:1:0:l:r:-:{{\"arguments\":[],\"operation\":\"\\\"Task::release\\\"\",\"receiver\":null,\"type\":\"transition\"}}|q:0.1l.",
+                "{}|0:=;1:-;|0:0:1:l:r:x:-:{{\"arguments\":[],\"operation\":\"\\\"Task::release\\\"\",\"receiver\":null,\"type\":\"transition\"}}|0:1:0:l:r:-:-:{{\"arguments\":[],\"operation\":\"\\\"Task::release\\\"\",\"receiver\":null,\"type\":\"transition\"}}|q:0.1l.",
                 source().hex()
             )
         );
@@ -467,6 +473,21 @@ mod tests {
             )),
             TaskProductKeyRefusal::QueueMismatch
         );
+    }
+
+    /// A started job and an unstarted one differ only in a flag no DBM holds,
+    /// so the key carries it (ruling U2).
+    #[test]
+    fn the_started_flag_is_part_of_the_key() {
+        let started = |flag: bool| {
+            let mut live = job(0, 0, 0, TaskJobPhase::Ready);
+            live.started = flag;
+            TaskProductKey::new(source(), control(vec![live], vec![(0, 0)]))
+                .expect("key")
+                .octets()
+                .expect("octets")
+        };
+        assert_ne!(started(true), started(false));
     }
 
     /// Two pending changes for one job are not a function of the job.

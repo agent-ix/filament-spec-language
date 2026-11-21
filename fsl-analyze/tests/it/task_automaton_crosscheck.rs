@@ -26,7 +26,7 @@ fn sources(set: &str, tasks: &[&str]) -> String {
         .collect()
 }
 
-fn world_for(set: &str, tasks: &[&str], declarations: &str) -> World {
+pub(crate) fn world_for(set: &str, tasks: &[&str], declarations: &str) -> World {
     let operations: Vec<(String, &[&str])> = tasks
         .iter()
         .map(|task| (format!("fire_{task}"), &["phase"][..]))

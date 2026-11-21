@@ -270,6 +270,9 @@ pub enum ModelCheckLimit {
     ZoneMaxAutomatonStates,
     /// EN-6's `max_zone_bytes`; setting `zone_check.max_zone_bytes`.
     ZoneMaxZoneBytes,
+    /// FSpec FR-418's checker work limit `max_check_work`; setting
+    /// `zone_check.max_check_work`.
+    ZoneMaxCheckWork,
     /// FSpec FR-415's `max_task_product_work`: product nodes a bounded
     /// task-product search expands; setting `temporal.limits.max_task_product_work`.
     TaskProductWork,
@@ -345,6 +348,7 @@ impl ModelCheckLimit {
             Self::ZoneMaxSymbolicTransitions => "max_symbolic_transitions",
             Self::ZoneMaxAutomatonStates => "max_automaton_states",
             Self::ZoneMaxZoneBytes => "max_zone_bytes",
+            Self::ZoneMaxCheckWork => "max_check_work",
             Self::TaskProductWork => "max_task_product_work",
             Self::MaxClocks => "max_clocks",
             Self::IdentityInputBytes => "input_bytes",
@@ -396,6 +400,7 @@ impl ModelCheckLimit {
             Self::ZoneMaxSymbolicTransitions => "zone_check.max_symbolic_transitions",
             Self::ZoneMaxAutomatonStates => "zone_check.max_automaton_states",
             Self::ZoneMaxZoneBytes => "zone_check.max_zone_bytes",
+            Self::ZoneMaxCheckWork => "zone_check.max_check_work",
             Self::TaskProductWork => "temporal.limits.max_task_product_work",
             Self::MaxClocks => "model_check.max_clocks",
             Self::IdentityInputBytes => "identity.input_bytes",
@@ -647,6 +652,7 @@ mod tests {
                 ("max_automaton_states", "zone_check.max_automaton_states")
             }
             ModelCheckLimit::ZoneMaxZoneBytes => ("max_zone_bytes", "zone_check.max_zone_bytes"),
+            ModelCheckLimit::ZoneMaxCheckWork => ("max_check_work", "zone_check.max_check_work"),
             ModelCheckLimit::TaskProductWork => (
                 "max_task_product_work",
                 "temporal.limits.max_task_product_work",
@@ -705,6 +711,7 @@ mod tests {
             ModelCheckLimit::ZoneMaxSymbolicTransitions,
             ModelCheckLimit::ZoneMaxAutomatonStates,
             ModelCheckLimit::ZoneMaxZoneBytes,
+            ModelCheckLimit::ZoneMaxCheckWork,
             ModelCheckLimit::TaskProductWork,
             ModelCheckLimit::MaxClocks,
             ModelCheckLimit::IdentityInputBytes,
