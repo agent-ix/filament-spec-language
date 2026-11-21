@@ -99,17 +99,27 @@ fn an_unread_binder_is_a_dependency_and_its_annotation_is_part_of_the_identity()
              {{ let y: {annotation} = x in true }}\n"
         )
     };
-    let narrow = emitted_wire(&source("Int[0, 1000]"));
-    let wide = emitted_wire(&source("Int[0, 2000]"));
-    let narrow_let = the_let(&narrow);
+    let let_key = |annotation: &str| {
+        let (_, package) = package_from_text(&source(annotation));
+        let key = package
+            .graph()
+            .semantic_graph()
+            .nodes()
+            .find(|node| node.semantic_form() == "let")
+            .expect("the let node")
+            .key()
+            .clone();
+        key
+    };
+    let wire = emitted_wire(&source("Int[0, 1000]"));
     assert_eq!(
-        dependent_parameters(&narrow, narrow_let, "y").len(),
+        dependent_parameters(&wire, the_let(&wire), "y").len(),
         1,
         "the unread binder is a dependency"
     );
     assert_ne!(
-        narrow_let["node_id"],
-        the_let(&wide)["node_id"],
+        let_key("Int[0, 1000]"),
+        let_key("Int[0, 2000]"),
         "the binder's annotation is part of the let's identity"
     );
 }
@@ -121,7 +131,7 @@ fn an_unread_binder_is_a_dependency_and_its_annotation_is_part_of_the_identity()
 fn each_ieee_operand_let_depends_on_its_binder_node() {
     let wire = emitted_wire(
         "function f using v(p: Float64[nearest-even], q: Float64[nearest-even]): Boolean pure \
-         { p < q }\n",
+         { -p < -q }\n",
     );
     let lets: Vec<_> = nodes(&wire)
         .iter()
