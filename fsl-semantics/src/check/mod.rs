@@ -1031,6 +1031,7 @@ pub struct CheckedGraph {
     /// FR-230: the checked timed model of each time source, in time-source
     /// order.
     timed_models: Vec<TimedModel>,
+    clock_declaration_table: crate::model::clock_reference::normalization::ClockDeclarationTable,
     /// FR-135 to FR-137: every checked refinement, in declaration order.
     refinements: Vec<CheckedRefinement>,
     /// FR-304: the unit's `abstraction` declarations, in declaration order,
@@ -1228,6 +1229,7 @@ impl DebugWith for CheckedGraph {
             type_invariants,
             terminals,
             timed_models,
+            clock_declaration_table,
             refinements,
             abstractions,
             model_names,
@@ -1357,6 +1359,7 @@ impl DebugWith for CheckedGraph {
             .field("type_invariants", &With(type_invariants, table))
             .field("terminals", &terminals)
             .field("timed_models", &Seq(timed_models, table))
+            .field("clock_declaration_table", clock_declaration_table)
             .field("refinements", &Seq(refinements, table))
             .field("abstractions", &abstractions)
             .field("model_names", &model_names)
@@ -8575,6 +8578,7 @@ impl PackageDeclarations {
             type_invariants,
             terminals,
             timed_models,
+            clock_declaration_table: Default::default(),
             refinements,
             abstractions: self.abstractions,
             guarantee_forms: self.guarantees,
@@ -8650,6 +8654,7 @@ impl PackageDeclarations {
             attempt_spans: regions.attempt_spans,
             abstraction: None,
         };
+        graph.check_clock_declaration_table()?;
         // FR-304: the unit's `abstraction` declarations check to the one
         // relation the package carries.
         match graph.check_declared_abstraction() {
@@ -9525,6 +9530,83 @@ impl CheckedGraph {
             &self.source_packages,
         )
         .with_clock_places(&self.timed_models)
+        .with_clock_declaration_table(&self.clock_declaration_table)
+    }
+
+    /// The complete clock declaration table validated before S3 publication.
+    pub fn clock_declaration_table(
+        &self,
+    ) -> &crate::model::clock_reference::normalization::ClockDeclarationTable {
+        &self.clock_declaration_table
+    }
+
+    fn check_clock_declaration_table(&mut self) -> Result<(), Vec<CheckRefusal>> {
+        use crate::model::clock_reference::normalization::{
+            ClockDeclarationResolutionError, ClockDeclarationTable, SourceDeclarations,
+        };
+
+        if self.timed_models.is_empty() {
+            return Ok(());
+        }
+        let internal = |fault| {
+            vec![CheckRefusal {
+                location: root(Origin::Expression),
+                cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+            }]
+        };
+        let declarations = SourceDeclarations::from_graph(self).map_err(internal)?;
+        let mut entries = Vec::new();
+        let mut locations = BTreeMap::new();
+        for model in &self.timed_models {
+            let Some(index) = self
+                .time_sources
+                .iter()
+                .position(|source| model.is_timed_by(source))
+            else {
+                return Err(internal(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "clock-declaration-table",
+                        "checked-clock-model-has-its-time-source",
+                    ),
+                ));
+            };
+            let location = root(Origin::TypeDeclaration {
+                name: time_source_origin(index),
+            });
+            let resolution = |error| {
+                vec![CheckRefusal {
+                    location: location.clone(),
+                    cause: match error {
+                        ClockDeclarationResolutionError::Ambiguous(ambiguity) => {
+                            CheckCause::AmbiguousClockDeclaration(Box::new(ambiguity))
+                        }
+                        ClockDeclarationResolutionError::Fault(fault) => {
+                            CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault)))
+                        }
+                    },
+                }]
+            };
+            for clock in model.clocks() {
+                if clock.slots().any(|shape| shape.map) {
+                    continue;
+                }
+                let template = declarations.clock_template(clock).map_err(resolution)?;
+                let origin = declarations.clock_origin(clock).map_err(resolution)?;
+                locations.insert(origin.clone(), location.clone());
+                entries.push((template, origin));
+            }
+        }
+        self.clock_declaration_table = ClockDeclarationTable::from_entries(entries)
+            .map_err(|collision| {
+                vec![CheckRefusal {
+                    location: locations
+                        .remove(&collision.second)
+                        .unwrap_or_else(|| root(Origin::Expression)),
+                    cause: CheckCause::DuplicateClockDeclaration(Box::new(collision)),
+                }]
+            })?
+            .with_source_declarations(declarations);
+        Ok(())
     }
 
     /// ADR-011 §2.4: the selection of each domain package this package was
