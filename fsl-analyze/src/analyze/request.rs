@@ -692,8 +692,8 @@ pub(crate) fn simulation<'a>(
 }
 
 enum ProbabilityWork<'a> {
-    Exact(Box<crate::exact_probabilistic::ProductRequest<'a>>),
-    Statistical(Box<crate::statistical::StatisticalRequest<'a>>),
+    Exact(crate::exact_probabilistic::ProductRequest<'a>),
+    Statistical(crate::statistical::StatisticalRequest<'a>),
 }
 
 fn probability_work<'a>(
@@ -714,19 +714,19 @@ fn probability_work<'a>(
         .find(|claim| claim.occurrence() == Some(occurrence));
     match (claim, form.evidence, form.limits) {
         (Some(claim), EvidenceKind::Exact, ProbabilisticLimits::Exact(exact)) => Some(
-            ProbabilityWork::Exact(Box::new(crate::exact_probabilistic::ProductRequest {
+            ProbabilityWork::Exact(crate::exact_probabilistic::ProductRequest {
                 subject: fsl_eval::model_subject::ModelSubject {
                     simulation,
                     proof_bounds: Vec::new(),
                 },
                 claim,
                 limits: exact,
-            })),
+            }),
         ),
         (Some(claim), EvidenceKind::Statistical, ProbabilisticLimits::Statistical(statistical)) => {
             match (form.method, form.seed, &form.sampler) {
                 (Some(method), Some(seed), Some(sampler)) => Some(ProbabilityWork::Statistical(
-                    Box::new(crate::statistical::StatisticalRequest {
+                    crate::statistical::StatisticalRequest {
                         subject: fsl_eval::model_subject::ModelSubject {
                             simulation,
                             proof_bounds: Vec::new(),
@@ -741,7 +741,7 @@ fn probability_work<'a>(
                             .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES),
                         symmetry: form.symmetry.clone(),
                         timed_sampling: form.timed_sampling.unwrap_or_default(),
-                    }),
+                    },
                 )),
                 _ => None,
             }
@@ -1246,10 +1246,10 @@ fn work<'a>(
         {
             match probability_work(analysis, binding, &item.claim, form, limits) {
                 Some(ProbabilityWork::Exact(request)) => {
-                    super::exact_probabilistic_item(item.request_index, *request)
+                    super::exact_probabilistic_item(item.request_index, request)
                 }
                 Some(ProbabilityWork::Statistical(request)) => {
-                    super::statistical_item(item.request_index, *request)
+                    super::statistical_item(item.request_index, request)
                 }
                 None => absent(),
             }
