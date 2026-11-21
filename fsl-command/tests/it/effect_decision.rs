@@ -553,6 +553,39 @@ fn receipt_bytes_use_the_exact_aggregate_dependent_allowance() {
 }
 
 #[test]
+#[trace("FR-1046-AC-7", "FR-1046-AC-8")]
+fn unselected_receipt_metadata_uses_the_existing_closed_identity() {
+    let mut fixture = Fixture::new();
+    let reference = json!({"authority": "receipt-authority", "identity": "metadata"});
+    let mut receipt = fixture.receipt.clone();
+    receipt["identity"] = reference.clone();
+    fixture
+        .case
+        .write("metadata.json", &canonical_json::encode(&receipt).unwrap());
+    fixture.request["request"]["documents"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"file": "metadata.json", "identity": reference}));
+    assert_eq!(fixture.run().document, fixture.baseline.document);
+    for identity in [
+        json!({"authority": {}, "identity": "metadata"}),
+        json!({"authority": "receipt-authority"}),
+        json!({"authority": "receipt-authority", "identity": "metadata", "extra": {}}),
+    ] {
+        receipt["identity"] = identity;
+        fixture
+            .case
+            .write("metadata.json", &canonical_json::encode(&receipt).unwrap());
+        let outcome = fixture.run();
+        assert_eq!(outcome.exit, 20, "{}", outcome.document);
+        assert!(outcome
+            .bytes
+            .windows(b"/documents/0/identity".len())
+            .any(|window| window == b"/documents/0/identity"));
+    }
+}
+
+#[test]
 #[trace("FR-1046-AC-4", "FR-1046-AC-10")]
 fn equal_actual_recommendations_in_other_items_do_not_change_local_matching() {
     let mut fixture = Fixture::new();

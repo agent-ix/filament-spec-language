@@ -1171,7 +1171,20 @@ impl AnalyzeRefusal {
                     .with_diagnostics(vec![refusal.diagnostic()])
             }
             Self::Document(failure) => {
-                refusal_document(Operation::Analyze, failure, failure.to_string())
+                // A reader/encoder stop is a native command outcome, not an
+                // O-17 evaluation refusal record. In particular allocation
+                // failure is incomplete (22), even though category_of files
+                // resource_exhausted refusal records under Refusal (20).
+                let category = match failure {
+                    AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => {
+                        fsl_foundation::Code::from_code(record.catalog.code())
+                            .map_or(Category::InternalFailure, |code| code.category())
+                    }
+                    AdmissionFailure::Fault(fault) => fault.category(),
+                };
+                let document = refusal_document(Operation::Analyze, failure, failure.to_string());
+                OutcomeDocument::new(Operation::Analyze, None, category)
+                    .with_diagnostics(document.diagnostics().to_vec())
             }
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())

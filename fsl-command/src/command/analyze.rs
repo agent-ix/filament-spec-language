@@ -41,6 +41,30 @@ fn receipt_failure(
     }
 }
 
+fn receipt_identity(
+    node: quire_canonical::NodeRef<'_>,
+    pointer: &str,
+) -> std::result::Result<fsl_analyze::analyze::document::DocumentSelection, RunCause> {
+    let malformed = || invalid(pointer, "document identity is malformed");
+    let quire_canonical::Node::Object(members) = node.node() else {
+        return Err(malformed());
+    };
+    // DocumentSelection is a closed pair of strings. Extract only that
+    // fixed-depth shape; opaque receipt objects never enter serde's walker
+    // or an encoder with a pre-canonical, input-derived ceiling.
+    let mut value = serde_json::Map::new();
+    for (name, node) in members {
+        if !matches!(name, "authority" | "identity") {
+            return Err(malformed());
+        }
+        let quire_canonical::Node::String(text) = node.node() else {
+            return Err(malformed());
+        };
+        value.insert(name.to_owned(), serde_json::Value::String(text.to_owned()));
+    }
+    serde_json::from_value(serde_json::Value::Object(value)).map_err(|_| malformed())
+}
+
 #[cfg(test)]
 mod receipt_failure_tests {
     use super::*;
@@ -1486,7 +1510,7 @@ pub(super) fn read_documents(
             )
             .map_err(receipt_failure)?;
         }
-        let (format, identity_bytes) = if let Some(arena) =
+        let (format, declared_identity) = if let Some(arena) =
             fsl_analyze::analyze::document::effect_decision::receipt_document(&bytes)
                 .map_err(receipt_failure)?
         {
@@ -1497,17 +1521,11 @@ pub(super) fn read_documents(
                 quire_canonical::Node::String(value) => Some(value.to_owned()),
                 _ => None,
             });
-            let identity_bytes = root
+            let identity = root
                 .get("identity")
-                .map(|node| {
-                    fsl_analyze::analyze::document::effect_decision::metadata_bytes(
-                        node,
-                        bytes.len(),
-                    )
-                })
-                .transpose()
-                .map_err(receipt_failure)?;
-            (format, identity_bytes)
+                .map(|node| receipt_identity(node, &format!("/documents/{position}/identity")))
+                .transpose()?;
+            (format, identity)
         } else {
             let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
                 invalid(
@@ -1519,30 +1537,22 @@ pub(super) fn read_documents(
                 .get("format")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned);
-            let identity_bytes = parsed
+            let identity = parsed
                 .get("identity")
-                .map(serde_json::to_vec)
+                .map(|value| {
+                    serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                        value.clone(),
+                    )
+                })
                 .transpose()
                 .map_err(|error| {
                     invalid(
                         &format!("/documents/{position}/identity"),
-                        error.to_string(),
+                        format!("document identity is malformed: {error}"),
                     )
                 })?;
-            (format, identity_bytes)
+            (format, identity)
         };
-        let declared_identity = identity_bytes
-            .as_deref()
-            .map(|bytes| {
-                serde_json::from_slice::<fsl_analyze::analyze::document::DocumentSelection>(bytes)
-                    .map_err(|error| {
-                        invalid(
-                            &format!("/documents/{position}/identity"),
-                            format!("document identity is malformed: {error}"),
-                        )
-                    })
-            })
-            .transpose()?;
         let stated_identity = match &document.identity {
             Some(value) => Some(
                 serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(

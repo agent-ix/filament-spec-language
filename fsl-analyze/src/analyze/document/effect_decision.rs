@@ -147,18 +147,6 @@ fn whole_encoder_failure(error: quire_canonical::Error, at: &ReceiptLocation) ->
     }
 }
 
-/// Encode document metadata after classification without a recursive JSON walk.
-///
-/// # Errors
-/// Allocation remains a resource failure. Derived local denials are invariants.
-pub fn metadata_bytes(node: NodeRef<'_>, input_bytes: usize) -> Result<Vec<u8>, ReceiptError> {
-    quire_canonical::to_vec(
-        &node,
-        quire_canonical::Limits::new(u64::try_from(input_bytes).unwrap_or(u64::MAX)),
-    )
-    .map_err(encoder_failure)
-}
-
 /// Existing FR-272 causes admitted by the receipt reader.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReceiptCause {
