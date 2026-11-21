@@ -588,10 +588,11 @@ pub use protocol_slots::{
 };
 pub use refusal::{
     AliasKind, AmbiguousMember, AmbiguousQualified, ArmFault, ChannelEnd, CheckCause, CheckRefusal,
-    CheckingLimitKind, CheckingStage, ClockSelectionFault, DispatchFunctionRole, DispatchLinkCause,
-    DispatchSubtypeFailure, ExcludedClauseForm, ExecutionPointRefusal, IdentityForm, IdentityNode,
-    IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
-    MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
+    CheckingLimitKind, CheckingStage, ClockSelectionFault, DimensionClassProjectionRefusal,
+    DispatchFunctionRole, DispatchLinkCause, DispatchSubtypeFailure, ExcludedClauseForm,
+    ExecutionPointRefusal, IdentityForm, IdentityNode, IdentityObserving,
+    InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation, MemberCandidate,
+    NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
     ProtocolAnchorCause, ProtocolCheckRefusal, ProtocolConstruct, ProtocolReferenceCause,
     ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ReservedSlotName,
     ShadowedDeclaration, SlotKind, SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect,
@@ -2404,7 +2405,7 @@ impl PackageDeclarations {
                 vec![CheckRefusal {
                     location: root(Origin::Expression),
                     cause: CheckCause::InternalFault(Box::new(KeyFault::DimensionClassProjection(
-                        refusal,
+                        DimensionClassProjectionRefusal { shared: refusal },
                     ))),
                 }]
             })?;
