@@ -484,9 +484,9 @@ pub(super) fn recipe(kind: &str) -> Built {
     recipe_naming(kind, None)
 }
 
-/// The package of recipe R of `kind` whose clocks all name the unit `unit`,
+/// The package of recipe R of `kind` whose clocks all name the unit `clock_unit`,
 /// when given.
-pub(super) fn recipe_naming(kind: &str, unit: Option<&str>) -> Built {
+pub(super) fn recipe_naming(kind: &str, clock_unit: Option<&str>) -> Built {
     let emit_request = handoff_request(kind, Corpus::None).emit;
     let read = |path: &Path| std::fs::read(path).expect("a recipe file");
     let source = read(&emit_request.source);
@@ -518,7 +518,7 @@ pub(super) fn recipe_naming(kind: &str, unit: Option<&str>) -> Built {
         .collect();
     let clocks: Vec<_> = clocks
         .into_iter()
-        .map(|(clause, clock)| (clause, with_unit(clock, unit)))
+        .map(|(clause, clock)| (clause, with_unit(clock, clock_unit)))
         .collect();
     emit(unit, &clocks, packages)
 }
