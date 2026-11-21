@@ -2342,6 +2342,7 @@ fn run_program_batch_with_compile(
                         model_limits: compiled.model_limits,
                     },
                     &call,
+                    &compiled.program.emitted,
                     &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
                     &fsl_eval::execution::SuppliedBackends::default(),
                     &fsl_eval::execution::PrepareLimits::default(),

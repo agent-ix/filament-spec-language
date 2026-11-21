@@ -1382,7 +1382,7 @@ pub(crate) fn relationship_call_outcome(
             ResourceKind::RequiredRelationships => "max_required_relationships",
         })),
         AdmissionOutcome::Refused { cause } => {
-            let (cause_name, fields) = relationship_refusal(&cause);
+            let (cause_name, fields) = relationship_refusal(&cause, producer);
             Some(CallOutcome::Refused(CallRefusal::Record {
                 code: CatalogCode::new("invalid_runtime_input", cause_name),
                 fields,
@@ -1423,72 +1423,73 @@ fn required_relationship_json(
     producer: &filament_observation::AdmittedStaticBundle,
 ) -> String {
     #[derive(serde::Serialize)]
-    struct Revision<'a> {
-        namespace: &'a str,
-        value: &'a str,
+    struct Revision {
+        namespace: String,
+        value: String,
     }
     #[derive(serde::Serialize)]
-    struct Digest<'a> {
-        label: &'a str,
-        value: &'a str,
+    struct Digest {
+        label: String,
+        value: String,
     }
     #[derive(serde::Serialize)]
-    struct Authority<'a> {
-        bundle_identity: &'a str,
-        bundle_revision: Revision<'a>,
-        digest: Digest<'a>,
+    struct Authority {
+        bundle_identity: String,
+        bundle_revision: Revision,
+        digest: Digest,
     }
     #[derive(serde::Serialize)]
-    struct Subject<'a> {
-        authority: Authority<'a>,
-        subject_kind: &'a str,
+    struct Subject {
+        authority: Authority,
+        subject_kind: String,
         authority_local_object_identity: String,
     }
     #[derive(serde::Serialize)]
-    struct Slot<'a> {
-        declaration_identity: &'a str,
-        authority: Authority<'a>,
-        interface_version: &'a str,
-        source: Subject<'a>,
-        target: Subject<'a>,
+    struct Slot {
+        declaration_identity: String,
+        authority: Authority,
+        interface_version: String,
+        source: Subject,
+        target: Subject,
     }
 
     let subject = |subject: &filament_observation::QualifiedSubject| {
         let key = subject.authority();
         Subject {
             authority: Authority {
-                bundle_identity: &key.bundle_identity,
+                bundle_identity: key.bundle_identity.clone(),
                 bundle_revision: Revision {
-                    namespace: &key.bundle_revision.namespace,
-                    value: &key.bundle_revision.value,
+                    namespace: key.bundle_revision.namespace.clone(),
+                    value: key.bundle_revision.value.clone(),
                 },
                 digest: Digest {
-                    label: &key.digest.label,
-                    value: &key.digest.value,
+                    label: key.digest.label.clone(),
+                    value: key.digest.value.clone(),
                 },
             },
             subject_kind: std::str::from_utf8(subject.kind().as_bytes())
-                .expect("request subject kinds were decoded from UTF-8 text"),
+                .expect("request subject kinds were decoded from UTF-8 text")
+                .to_owned(),
             authority_local_object_identity: lower_hex(subject.identity().as_bytes()),
         }
     };
     let value = Slot {
-        declaration_identity: required.declaration_identity(),
+        declaration_identity: required.declaration_identity().to_owned(),
         authority: {
             let key = producer.key();
             Authority {
-                bundle_identity: &key.bundle_identity,
+                bundle_identity: key.bundle_identity.clone(),
                 bundle_revision: Revision {
-                    namespace: &key.bundle_revision.namespace,
-                    value: &key.bundle_revision.value,
+                    namespace: key.bundle_revision.namespace.clone(),
+                    value: key.bundle_revision.value.clone(),
                 },
                 digest: Digest {
-                    label: &key.digest.label,
-                    value: &key.digest.value,
+                    label: key.digest.label.clone(),
+                    value: key.digest.value.clone(),
                 },
             }
         },
-        interface_version: producer.interface_version(),
+        interface_version: producer.interface_version().to_owned(),
         source: subject(required.source()),
         target: subject(required.target()),
     };
@@ -1507,6 +1508,7 @@ fn lower_hex(bytes: &[u8]) -> String {
 
 fn relationship_refusal(
     refusal: &filament_observation::RefusalCause,
+    producer: &filament_observation::AdmittedStaticBundle,
 ) -> (&'static str, BTreeMap<&'static str, String>) {
     use filament_observation::{
         OwnerArtifact, ReferenceComponent, ReferenceRefusal, RefusalCause, SelectionField,
@@ -1565,11 +1567,11 @@ fn relationship_refusal(
         ),
         RefusalCause::RelationshipConflict { required } => (
             "relationship-conflict",
-            BTreeMap::from([("required", required_relationship_json(required))]),
+            BTreeMap::from([("required", required_relationship_json(required, producer))]),
         ),
         RefusalCause::AmbiguousRelationship { required } => (
             "ambiguous-relationship",
-            BTreeMap::from([("required", required_relationship_json(required))]),
+            BTreeMap::from([("required", required_relationship_json(required, producer))]),
         ),
         RefusalCause::ClockMismatch { record } => (
             "clock-mismatch",

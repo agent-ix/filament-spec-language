@@ -87,8 +87,8 @@ struct RecordParts {
 #[derive(Clone, Debug)]
 struct RequiredParts {
     declaration_identity: String,
-    source: QualifiedSubject,
-    target: QualifiedSubject,
+    source: SubjectParts,
+    target: SubjectParts,
 }
 
 impl RelationshipSelection {
@@ -115,7 +115,7 @@ impl RelationshipSelection {
         let producer_value = member(root, "producer", "/call/relationships")?;
         let producer_bytes = serde_json::to_vec(producer_value).map_err(|_| ReadError {
             path: "/call/relationships/producer".to_owned(),
-            reason: "expected a Producer interface 1.2 bundle",
+            reason: "expected a Producer interface 1.2 bundle".to_owned(),
         })?;
         let producer =
             StaticProducerBundle::admit_json(&producer_bytes).map_err(|error| ReadError {
@@ -801,20 +801,15 @@ fn read_record(value: &Value, path: &str) -> ReadResult<RecordParts> {
     let causal_relationship_identity = if causal.is_null() {
         None
     } else {
-        Some(
-            filament_observation::RelationshipIdentity::new(
-                decode_hex(text(
-                    causal,
-                    &format!("{path}/causal_relationship_identity"),
-                )?)
-                .map_err(|_| {
-                    error(
-                        &format!("{path}/causal_relationship_identity"),
-                        "expected lowercase hexadecimal bytes",
-                    )
-                })?,
+        let causal_text = text(causal, &format!("{path}/causal_relationship_identity"))?;
+        let causal_bytes = decode_hex(&causal_text).ok_or_else(|| {
+            error(
+                &format!("{path}/causal_relationship_identity"),
+                "expected lowercase hexadecimal bytes",
             )
-            .map_err(|_| {
+        })?;
+        Some(
+            filament_observation::RelationshipIdentity::new(causal_bytes).map_err(|_| {
                 error(
                     &format!("{path}/causal_relationship_identity"),
                     "expected non-empty identity bytes",
