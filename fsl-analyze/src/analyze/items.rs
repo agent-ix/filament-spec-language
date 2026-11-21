@@ -1093,6 +1093,33 @@ pub(crate) fn admission(failure: &AdmissionFailure) -> Refusal {
     }
 }
 
+/// Preserve a package parameter's projection refusal and admitted locus.
+pub(super) fn package_parameter_type_refusal(
+    package: &str,
+    node: &fsl_package::CheckedNodeId,
+    failure: &fsl_package::BareSelectionFailure,
+) -> Refusal {
+    let mut detail = serde_json::Map::new();
+    detail.insert("fact".to_owned(), serde_json::json!("parameter-type"));
+    detail.insert("node".to_owned(), serde_json::json!(node));
+    match failure.clone().into_view(package) {
+        Ok(view) => {
+            let (code, cause) = view.catalog();
+            detail.insert("package".to_owned(), serde_json::json!(view.package()));
+            detail.insert("reason".to_owned(), serde_json::json!(view.reason().name()));
+            detail.insert("locus".to_owned(), serde_json::json!(view.locus().key()));
+            Refusal::UnsupportedWithDetail(CatalogCode::new(code, cause), detail)
+        }
+        Err(failure) => {
+            detail.insert(
+                "selection".to_owned(),
+                serde_json::json!(format!("{failure:?}")),
+            );
+            Refusal::FailedWithDetail(BROKEN, detail)
+        }
+    }
+}
+
 fn symmetry() -> Refusal {
     Refusal::Declined(
         ProofRefusalCause::InvalidInput,
@@ -1189,6 +1216,11 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
             "role",
             role.clone(),
         ),
+        ModelCheckRefusal::Protocol(ProtocolRefusal::PackageParameterType {
+            package,
+            node,
+            failure,
+        }) => package_parameter_type_refusal(package, node, failure),
         // Engine defects, and refusals whose types name no catalog code
         // (a spec point for STD-444's follow-up): `failed` with the
         // broken-invariant diagnostic.

@@ -70,6 +70,31 @@ fn repeat_request(ws: &Workspace, controls: &str, finish: &str) -> std::path::Pa
     )
 }
 
+fn decimal_capture_request(ws: &Workspace, controls: &str, finish: &str) -> std::path::PathBuf {
+    channel_capture_request(
+        ws,
+        controls,
+        finish,
+        "capture zero: Decimal[0, 0; 0, 0; exact] = decimal(0, 0);",
+    )
+}
+
+fn channel_capture_request(
+    ws: &Workspace,
+    controls: &str,
+    finish: &str,
+    capture: &str,
+) -> std::path::PathBuf {
+    let path = repeat_request(ws, controls, finish);
+    let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("the Decimal capture unit");
+    let unit = unit.replace(
+        "role Planning on M::Cell;",
+        &format!("{capture} role Planning on M::Cell;"),
+    );
+    ws.write("program.fsl", unit.as_bytes());
+    path
+}
+
 fn repeat_parity(ws: &Workspace, path: &std::path::Path) -> Value {
     let source = analyze(path);
     let source_document = source.document();
@@ -137,6 +162,52 @@ fn package_repeat_reads_the_earlier_receive_on_entry_and_revisit() {
             assert_eq!(item["replay"]["reproduced"], true, "{item}");
         }
     }
+}
+
+/// A Decimal capture's exact type projects independently of Repeat execution.
+#[trace("TC-2958", "FR-531", "FR-390", "FR-940-AC-6")]
+#[test]
+fn package_decimal_capture_empty_run_preserves_source_result() {
+    let ws = Workspace::new("package-decimal-capture-empty-run");
+    let item = repeat_parity(&ws, &decimal_capture_request(&ws, "", "closing"));
+    assert_eq!(label(&item), "proved", "{item}");
+}
+
+/// An enclosing optional Decimal keeps its original unsupported type projection.
+#[trace("TC-2958", "FR-531", "FR-390", "FR-940-AC-6")]
+#[test]
+fn package_decimal_capture_nested_type_preserves_projection_refusal() {
+    let ws = Workspace::new("package-decimal-capture-nested-type");
+    let path = channel_capture_request(
+        &ws,
+        "",
+        "closing",
+        "capture nested: Option<Decimal[0, 0; 0, 0; exact]> = absent;",
+    );
+    let source = analyze(&path);
+    assert!(
+        source.item(0).get("record").is_some(),
+        "{}",
+        source.document()
+    );
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let (package_path, _) = package_request(&ws, &path);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before type refusal");
+    let package = analyze(&package_path);
+    let item = package.item(0);
+    assert_eq!(package.exit, 21, "{}", package.document());
+    let diagnostic = &item["record"]["diagnostic"];
+    assert_eq!(diagnostic["code"], "unknown_required_feature", "{item}");
+    assert_eq!(diagnostic["cause"], "unsupported-feature", "{item}");
+    assert_eq!(diagnostic["detail"]["fact"], "parameter-type", "{item}");
+    assert_eq!(
+        diagnostic["detail"]["reason"], "missing-type-representation",
+        "{item}"
+    );
+    assert!(!diagnostic["detail"]["node"].is_null(), "{item}");
+    assert!(!diagnostic["detail"]["locus"].is_null(), "{item}");
+    assert!(item.get("exploration").is_none(), "{item}");
+    assert!(item.get("counterexample").is_none(), "{item}");
 }
 
 /// A bounded repeat executes its body at most max times and then its authored exhaustion.
@@ -215,17 +286,11 @@ fn package_repeat_blocked_attempt_preserves_replay_refusal() {
             repeat_attempt("Remachined", "again", constraint)
         );
         let request = |ws: &Workspace| {
-            let path = repeat_request(ws, &controls, "closing");
             if scenario == "undefined" {
-                let unit = std::fs::read_to_string(ws.path("program.fsl"))
-                    .expect("the undefined-guard unit");
-                let unit = unit.replace(
-                    "role Planning on M::Cell;",
-                    "capture zero: Decimal[0, 0; 0, 0; exact] = decimal(0, 0); role Planning on M::Cell;",
-                );
-                ws.write("program.fsl", unit.as_bytes());
+                decimal_capture_request(ws, &controls, "closing")
+            } else {
+                repeat_request(ws, &controls, "closing")
             }
-            path
         };
         let ws = Workspace::new(&format!("package-repeat-{scenario}"));
         let item = repeat_parity(&ws, &request(&ws));

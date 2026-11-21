@@ -152,6 +152,16 @@ impl Unsupported {
 /// Why [`ProtocolSystem::new`] built no system (FR-205 "Subject").
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProtocolRefusal {
+    /// A package binder's exact type has its original projection refusal.
+    #[error("package parameter type projection failed at {node:?}: {failure:?}")]
+    PackageParameterType {
+        /// The package whose admitted binder is being read.
+        package: String,
+        /// The admitted binder whose type could not be projected.
+        node: fsl_package::CheckedNodeId,
+        /// The original typed selection or projection refusal.
+        failure: Box<fsl_package::BareSelectionFailure>,
+    },
     /// The request names a protocol that is not a protocol clause of the
     /// package (`invalid_runtime_input`/`invalid-value`).
     #[error("invalid_runtime_input/invalid-value: no protocol {protocol}")]
@@ -1609,6 +1619,15 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 PackageProgramRefusal::RepeatProof { .. } => {
                     ProtocolRefusal::Unsupported(Unsupported::PackageRepeatProof)
                 }
+                PackageProgramRefusal::ParameterType {
+                    package,
+                    node,
+                    failure,
+                } => ProtocolRefusal::PackageParameterType {
+                    package,
+                    node,
+                    failure,
+                },
                 _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
             })?;
         if let Some(binding) = subject.capacities.first() {

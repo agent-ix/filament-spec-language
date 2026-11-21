@@ -391,6 +391,55 @@ pub(crate) fn float_rounding_type(
     Ok(ValueType::Float(FloatType::new(width, rounding)))
 }
 
+/// The exact Decimal type declared by an admitted `decimal_range` node.
+///
+/// # Errors
+///
+/// A named fault when an admitted range has a missing or invalid member.
+pub(crate) fn decimal_range_type(
+    package: &CheckedPackageV2,
+    id: &CheckedNodeId,
+) -> Result<ValueType, InternalFault> {
+    let fault = |invariant| InternalFault::new("FR-390", invariant);
+    if !matches!(
+        package.node_kind(id),
+        Some(CheckedNodeKind::BoundedDomain(
+            BoundedDomainForm::DecimalRange
+        ))
+    ) {
+        return Err(fault("reader-decimal-type-is-a-decimal-range"));
+    }
+    let body = package
+        .term(id)
+        .ok_or_else(|| fault("reader-decimal-range-node-is-admitted"))?;
+    let member = |name| {
+        bound(body, name)
+            .and_then(text)
+            .map_err(|_| fault("reader-decimal-range-has-typed-members"))
+    };
+    let integer = |name| {
+        member(name)?
+            .parse::<Integer>()
+            .map_err(|_| fault("reader-decimal-range-coefficient-is-an-integer"))
+    };
+    let scale = |name| {
+        member(name)?
+            .parse::<u64>()
+            .map_err(|_| fault("reader-decimal-range-scale-is-a-nonnegative-integer"))
+    };
+    let rounding = RoundingMode::from_code(member("rounding")?)
+        .ok_or_else(|| fault("reader-decimal-range-rounding-is-catalogued"))?;
+    DecimalType::new(
+        integer("coefficient_min")?,
+        integer("coefficient_max")?,
+        scale("scale_min")?,
+        scale("scale_max")?,
+        rounding,
+    )
+    .map(ValueType::Decimal)
+    .map_err(|_| fault("reader-decimal-range-bounds-are-valid"))
+}
+
 // ---------------------------------------------------------- body navigation
 
 /// The members of the aggregate `term`.
@@ -775,9 +824,6 @@ impl Reader<'_> {
         let literal = |name: &str| -> Result<Integer, HybridReadError> {
             shape(text(bound(self.body(node)?, name)?)?.parse().ok())
         };
-        let scale = |name: &str| -> Result<u64, HybridReadError> {
-            Ok(number(bound(self.body(node)?, name)?)? as u64)
-        };
         match kind {
             CheckedNodeKind::ScalarType(ScalarTypeForm::Boolean) => Ok(ValueType::Boolean),
             CheckedNodeKind::ScalarType(ScalarTypeForm::Integer) => Ok(ValueType::Integer),
@@ -798,20 +844,7 @@ impl Reader<'_> {
                 )?))
             }
             CheckedNodeKind::BoundedDomain(BoundedDomainForm::DecimalRange) => {
-                let rounding = shape(RoundingMode::from_code(text(bound(
-                    self.body(node)?,
-                    "rounding",
-                )?)?))?;
-                Ok(ValueType::Decimal(shape(
-                    DecimalType::new(
-                        literal("coefficient_min")?,
-                        literal("coefficient_max")?,
-                        scale("scale_min")?,
-                        scale("scale_max")?,
-                        rounding,
-                    )
-                    .ok(),
-                )?))
+                decimal_range_type(self.package, id).map_err(HybridReadError::Fault)
             }
             CheckedNodeKind::BoundedDomain(BoundedDomainForm::FloatRounding) => {
                 let rounding = shape(RoundingMode::from_code(text(bound(

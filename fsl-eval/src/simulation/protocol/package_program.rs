@@ -301,6 +301,16 @@ pub enum PackageProgramRefusal {
     /// The package form lacks a model-evaluator identity for a referenced node.
     #[error("the package has no evaluator identity for node {0:?}")]
     MissingIdentity(fsl_package::CheckedNodeId),
+    /// A binder's exact type could not be read from the admitted package.
+    #[error("package parameter type projection failed at {node:?}: {failure:?}")]
+    ParameterType {
+        /// The package whose admitted binder is being read.
+        package: String,
+        /// The admitted binder whose type could not be projected.
+        node: fsl_package::CheckedNodeId,
+        /// The original typed selection or projection refusal.
+        failure: Box<fsl_package::BareSelectionFailure>,
+    },
     /// The evaluator cannot expose the admitted binders of a selected slot.
     #[error("the package has no admitted binder inventory for slot {node:?}.{member}")]
     MissingSlotBinders {
@@ -479,7 +489,11 @@ impl<'a> PackageProtocolProgram<'a> {
                 let value_type = input
                     .evaluator
                     .package_protocol_parameter_type(binder)
-                    .ok_or_else(|| PackageProgramRefusal::MissingIdentity(binder.clone()))?;
+                    .map_err(|failure| PackageProgramRefusal::ParameterType {
+                        package: admitted.name().to_owned(),
+                        node: binder.clone(),
+                        failure: Box::new(failure),
+                    })?;
                 let initializer = input
                     .evaluator
                     .package_protocol_slot(&clause.node_id, "captures", Some(index))
@@ -827,7 +841,11 @@ impl<'a> PackageProtocolProgram<'a> {
                     input
                         .evaluator
                         .package_protocol_parameter_type(binder)
-                        .ok_or_else(|| PackageProgramRefusal::MissingIdentity(binder.clone()))
+                        .map_err(|failure| PackageProgramRefusal::ParameterType {
+                            package: admitted.name().to_owned(),
+                            node: binder.clone(),
+                            failure: Box::new(failure),
+                        })
                 })
                 .transpose()?;
             controls.insert(
@@ -900,7 +918,11 @@ impl<'a> PackageProtocolProgram<'a> {
         let over_type = input
             .evaluator
             .package_protocol_parameter_type(&over)
-            .ok_or_else(|| PackageProgramRefusal::MissingIdentity(over.clone()))?;
+            .map_err(|failure| PackageProgramRefusal::ParameterType {
+                package: admitted.name().to_owned(),
+                node: over.clone(),
+                failure: Box::new(failure),
+            })?;
         let finish_binder = form.finish.binder.clone();
         let finish_binder_key = input
             .evaluator
@@ -909,7 +931,11 @@ impl<'a> PackageProtocolProgram<'a> {
         let finish_binder_type = input
             .evaluator
             .package_protocol_parameter_type(&finish_binder)
-            .ok_or_else(|| PackageProgramRefusal::MissingIdentity(finish_binder.clone()))?;
+            .map_err(|failure| PackageProgramRefusal::ParameterType {
+                package: admitted.name().to_owned(),
+                node: finish_binder.clone(),
+                failure: Box::new(failure),
+            })?;
         Ok(Self {
             terminal,
             captures,

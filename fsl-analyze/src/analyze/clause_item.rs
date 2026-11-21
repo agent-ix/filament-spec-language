@@ -1153,6 +1153,15 @@ impl<'a> PackageProtocolWork<'a> {
                             detail,
                         ));
                     }
+                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::ParameterType {
+                        package,
+                        node,
+                        failure,
+                    }) => {
+                        return EngineReport::Refused(
+                            super::items::package_parameter_type_refusal(&package, &node, &failure),
+                        );
+                    }
                     Err(_) => {
                         return EngineReport::Refused(Refusal::Declined(
                             fsl_replay::ProofRefusalCause::InvalidInput,
