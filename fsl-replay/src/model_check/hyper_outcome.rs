@@ -71,6 +71,17 @@ pub enum BoundCovers {
     Moves,
 }
 
+/// The complete scope a reduced holding hyper run established.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HyperReducedScope {
+    /// The infinite product, whose core closure certificates are required
+    /// unless a selected key symmetry has no core checker.
+    Product,
+    /// Every orbit of closed finite execution tuples (FR-173), requiring no
+    /// infinite-product closure certificate.
+    ClosedExecutions,
+}
+
 /// One EN-1 run's outcome over an HP-1, HP-2, HP-3 or HP-6 item.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HyperOutcome {
@@ -90,6 +101,9 @@ pub enum HyperOutcome {
     HoldsReduced {
         /// Each object binding's independently checkable reduced product.
         certificates: Vec<crate::ProductClosureCertificate>,
+        /// The run exhaustively read a quotient of closed finite executions
+        /// (FR-173), which requires no infinite-product closure certificate.
+        scope: HyperReducedScope,
         /// The applied reductions: a key symmetry, then the copy group's swap.
         reductions: Vec<AppliedReduction>,
         /// The run's counts.

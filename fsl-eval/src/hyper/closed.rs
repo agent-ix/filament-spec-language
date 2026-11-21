@@ -26,7 +26,9 @@ use crate::temporal::{
 };
 
 use crate::simulation::model::{ModelSimState, ModelSystem};
-use crate::simulation::{EncodingRefusal, ExpansionStop, StateKey, TransitionSystem};
+use crate::simulation::{
+    ConstraintValue, EncodingRefusal, ExpansionStop, StateKey, TransitionSystem,
+};
 
 /// One step of a closed execution: the transition taken and its post-state's
 /// state key.
@@ -98,6 +100,35 @@ pub enum ClosedStop {
     Cancelled,
 }
 
+/// Closed executions retained under a state constraint. A boundary is the
+/// concrete predecessor prefix at which a successor was cut, never a closed
+/// execution on which the body may be decided.
+pub struct ConstrainedClosedExecutions {
+    /// Terminal or horizon-covering executions whose states satisfy the constraint.
+    pub complete: Vec<ClosedExecution>,
+    /// Predecessor prefixes with a cut successor, or a cut initial state.
+    pub boundaries: Vec<ClosedExecution>,
+}
+
+/// Why constrained enumeration cannot establish its finite scope.
+pub enum ConstrainedClosedStop {
+    /// The ordinary finite enumeration stopped.
+    Enumeration(ClosedStop),
+    /// A component's constraint has no value.
+    Undefined(crate::temporal::UndefinedCause),
+}
+
+enum EnumerationStop<E> {
+    Enumeration(ClosedStop),
+    Constraint(E),
+}
+
+impl<E> From<ClosedStop> for EnumerationStop<E> {
+    fn from(stop: ClosedStop) -> Self {
+        Self::Enumeration(stop)
+    }
+}
+
 /// The body's horizon (ADR-014 TR-4): the greatest sum of interval upper
 /// bounds along a path from the root. `None` for a body with an operator that
 /// has no finite upper bound (an event-position body has none: FR-326 refuses
@@ -164,23 +195,82 @@ pub fn closed_executions(
     skips: &BTreeSet<String>,
     cancel: &Cancel,
 ) -> Result<Vec<ClosedExecution>, ClosedStop> {
+    match enumerate_closed(system, horizon, limit, skips, cancel, |_| {
+        Ok::<_, std::convert::Infallible>(true)
+    }) {
+        Ok(found) => Ok(found.complete),
+        Err(EnumerationStop::Enumeration(stop)) => Err(stop),
+        Err(EnumerationStop::Constraint(never)) => match never {},
+    }
+}
+
+/// Enumerate the same concrete finite paths as [`closed_executions`], pruning
+/// a successor before retaining it when `constraint` is false. Cut predecessor
+/// prefixes are kept separately, so pruning cannot manufacture a terminal trace.
+///
+/// # Errors
+///
+/// The enumeration stop or undefined constraint that prevents a complete scope.
+pub fn constrained_closed_executions(
+    system: &ModelSystem<'_>,
+    horizon: u64,
+    limit: usize,
+    skips: &BTreeSet<String>,
+    constraint: &str,
+    cancel: &Cancel,
+) -> Result<ConstrainedClosedExecutions, ConstrainedClosedStop> {
+    enumerate_closed(system, horizon, limit, skips, cancel, |state| match system
+        .constraint_value(state, constraint)
+    {
+        Ok(ConstraintValue::Holds) => Ok(true),
+        Ok(ConstraintValue::Boundary) => Ok(false),
+        Ok(ConstraintValue::Undefined { cause, .. }) => {
+            Err(ConstrainedClosedStop::Undefined(cause))
+        }
+        Err(stop) => Err(ConstrainedClosedStop::Enumeration(ClosedStop::Expansion(
+            stop,
+        ))),
+    })
+    .map_err(|stop| match stop {
+        EnumerationStop::Enumeration(stop) => ConstrainedClosedStop::Enumeration(stop),
+        EnumerationStop::Constraint(stop) => stop,
+    })
+}
+
+fn enumerate_closed<E>(
+    system: &ModelSystem<'_>,
+    horizon: u64,
+    limit: usize,
+    skips: &BTreeSet<String>,
+    cancel: &Cancel,
+    mut allowed: impl FnMut(&ModelSimState) -> Result<bool, E>,
+) -> Result<ConstrainedClosedExecutions, EnumerationStop<E>> {
     let depth = usize::try_from(horizon).unwrap_or(usize::MAX);
     let mut complete = Vec::new();
+    let mut boundaries = Vec::new();
     for (index, initial) in system.initial().into_iter().enumerate() {
-        let mut open = vec![ClosedExecution {
+        let execution = ClosedExecution {
             initial: index,
             states: vec![initial],
             steps: Vec::new(),
-        }];
+        };
+        if !allowed(&execution.states[0]).map_err(EnumerationStop::Constraint)? {
+            boundaries.push(execution);
+            if boundaries.len() > limit {
+                return Err(ClosedStop::Executions { limit }.into());
+            }
+            continue;
+        }
+        let mut open = vec![execution];
         while let Some(execution) = open.pop() {
             if cancel.poll() {
-                return Err(ClosedStop::Cancelled);
+                return Err(ClosedStop::Cancelled.into());
             }
             let Some(last) = execution.states.last() else {
                 continue;
             };
             if execution.steps.len() > limit {
-                return Err(ClosedStop::Executions { limit });
+                return Err(ClosedStop::Executions { limit }.into());
             }
             let successors = if execution.visible_steps() >= depth {
                 Vec::new()
@@ -192,8 +282,8 @@ pub fn closed_executions(
             };
             if successors.is_empty() {
                 complete.push(execution);
-                if complete.len() > limit {
-                    return Err(ClosedStop::Executions { limit });
+                if complete.len().saturating_add(boundaries.len()) > limit {
+                    return Err(ClosedStop::Executions { limit }.into());
                 }
                 continue;
             }
@@ -207,7 +297,12 @@ pub fn closed_executions(
             }
             keyed.sort_by(|left, right| left.0.cmp(&right.0));
             // The stack pops the last pushed first, so push in reverse order.
+            let mut boundary = false;
             for (_, transition, next, post_state) in keyed.into_iter().rev() {
+                if !allowed(&next).map_err(EnumerationStop::Constraint)? {
+                    boundary = true;
+                    continue;
+                }
                 let mut states = execution.states.clone();
                 states.push(next);
                 let mut steps = execution.steps.clone();
@@ -222,9 +317,18 @@ pub fn closed_executions(
                     steps,
                 });
             }
+            if boundary {
+                boundaries.push(execution);
+                if complete.len().saturating_add(boundaries.len()) > limit {
+                    return Err(ClosedStop::Executions { limit }.into());
+                }
+            }
         }
     }
-    Ok(complete)
+    Ok(ConstrainedClosedExecutions {
+        complete,
+        boundaries,
+    })
 }
 
 /// What reading a tuple of closed executions settles (FR-173 "Event-position
