@@ -4178,7 +4178,7 @@ fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
                     order_key: None,
                 });
                 missing.extend(entries);
-                let batch = batch_over(
+                let batch = qsl_2750_batch_over(
                     &world,
                     "MissingQuantile",
                     &qsl_2750_trace(observed.clone(), missing.clone(), assertion),
@@ -4189,7 +4189,7 @@ fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
                 }
                 assertion = progress(index);
                 let step = session.assert_progress(assertion, &cancel).unwrap();
-                let batch = batch_over(
+                let batch = qsl_2750_batch_over(
                     &world,
                     "MissingQuantile",
                     &qsl_2750_trace(observed.clone(), missing.clone(), assertion),
@@ -4206,7 +4206,7 @@ fn qsl_2750_missing_window_matches_batch_and_checkpoint() {
                 execution: ProgressClosure::Closed,
             };
             let step = session.assert_progress(assertion, &cancel).unwrap();
-            let batch = batch_over(
+            let batch = qsl_2750_batch_over(
                 &world,
                 "MissingQuantile",
                 &qsl_2750_trace(observed, missing, assertion),
@@ -4374,7 +4374,7 @@ fn qsl_2750_uncovered_reordering(world: &World) {
         });
         missing.extend(entries);
         inputs.push((stamp, text));
-        let batch = batch_over(
+        let batch = qsl_2750_batch_over(
             world,
             "MissingQuantile",
             &qsl_2750_trace(observed.clone(), missing.clone(), initial),
@@ -4427,7 +4427,7 @@ fn qsl_2750_uncovered_reordering(world: &World) {
         execution: ProgressClosure::Closed,
     };
     let step = session.assert_progress(covered, &cancel).unwrap();
-    let batch = batch_over(
+    let batch = qsl_2750_batch_over(
         world,
         "MissingQuantile",
         &qsl_2750_trace(observed, missing, covered),
@@ -4586,7 +4586,7 @@ fn qsl_2750_late_values_do_not_settle_early(world: &World) {
             stamp,
             order_key: None,
         });
-        let batch = batch_over(
+        let batch = qsl_2750_batch_over(
             world,
             "MissingQuantile",
             &qsl_2750_trace(observed.clone(), Vec::new(), default),
@@ -4599,7 +4599,7 @@ fn qsl_2750_late_values_do_not_settle_early(world: &World) {
         if index == 0 {
             // The first value would refute a completed trace, but no such
             // completeness has been asserted on the live session.
-            let closed = batch_over(
+            let closed = qsl_2750_batch_over(
                 world,
                 "MissingQuantile",
                 &qsl_2750_trace(observed.clone(), Vec::new(), covered),
@@ -4612,7 +4612,7 @@ fn qsl_2750_late_values_do_not_settle_early(world: &World) {
         }
     }
     let step = session.assert_progress(covered, &cancel).unwrap();
-    let batch = batch_over(
+    let batch = qsl_2750_batch_over(
         world,
         "MissingQuantile",
         &qsl_2750_trace(observed, Vec::new(), covered),
@@ -4625,4 +4625,33 @@ fn qsl_2750_late_values_do_not_settle_early(world: &World) {
     qsl_2750_assert_status(&step.statuses[0].1, &batch, &mut frozen);
     let finished = session.finish(&cancel).unwrap();
     qsl_2750_assert_finished(&finished.records[0], &batch, &frozen);
+}
+
+/// The session authenticates its clock selections when it opens; its batch
+/// oracle supplies that same proving-package context on every prefix.
+fn qsl_2750_batch_over(world: &World, name: &str, trace: &TraceInput) -> ClauseRunReport {
+    let cancel = Cancel::new();
+    let authentication = spine::authenticate_emission(
+        world.unit.package(),
+        &world.selections,
+        &world.packages,
+        &SpineLimits::default(),
+        &cancel,
+    )
+    .expect("the fixture's same temporal selections authenticate");
+    run_package_temporal(&PackageTemporalRequest {
+        package: world.unit.package(),
+        packages: &world.packages,
+        model_limits: ModelNormalizationLimits::default(),
+        snapshots: &DocumentProvision::new(),
+        observation_limits: ObservationLimits::default(),
+        accounting: UNLIMITED,
+        name,
+        trace,
+        over: None,
+        ledger: None,
+        sources: &world.sources,
+        authentication: Some(authentication.temporal()),
+        cancel: &cancel,
+    })
 }
