@@ -2467,13 +2467,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
             Some("filament.op.collection.sequence") => {
                 let value_type = self.value_type(id)?;
-                let ValueType::Collection(collection_type) = value_type else {
+                let ValueType::Collection(collection_type) = &value_type else {
                     return Err(fault("reader-sequence-has-collection-type").into());
                 };
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;
                 Ok((
                     NodeKind::Collection {
-                        collection_type: *collection_type,
+                        collection_type: (**collection_type).clone(),
                         elements: children.clone(),
                     },
                     children,
