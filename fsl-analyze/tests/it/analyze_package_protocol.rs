@@ -114,7 +114,7 @@ fn package_repeat_reads_the_earlier_receive_on_entry_and_revisit() {
             + "receive Inspected via Release of Handed as (seen: M::Attempt) { seen.n = 0 };"
             + &format!(
                 "repeat Again by Machining visible (seen.n) while {{ {guard} }} {}",
-                repeat_attempt("Remachined", "again", "again")
+                repeat_attempt("Remachined", "again", "true")
             );
         let path = channel_request(
             &ws,
@@ -147,8 +147,8 @@ fn package_repeat_maximum_enters_the_stepful_exhausted_continuation() {
         let ws = Workspace::new(&format!("package-repeat-maximum-{maximum}"));
         let controls = format!(
             "repeat Again by Machining visible () max {maximum} while {{ true }} {} exhausted {}",
-            repeat_attempt("Remachined", "again", "again"),
-            repeat_attempt("Exhausted", "out", "out")
+            repeat_attempt("Remachined", "again", "true"),
+            repeat_attempt("Exhausted", "out", "true")
         );
         let item = repeat_parity(&ws, &repeat_request(&ws, &controls, "false"));
         assert_eq!(label(&item), "refuted", "{item}");
@@ -173,9 +173,22 @@ fn package_repeat_post_test_false_guard_executes_once() {
     let ws = Workspace::new("package-repeat-post-test");
     let controls = format!(
         "repeat Again by Machining visible (again) while {{ again }} {}",
-        repeat_attempt("Remachined", "again", "not again")
+        crate::fill::attempt(
+            "Remachined",
+            "flag",
+            "FlagPre, FlagPost",
+            "again",
+            "not again"
+        )
+        .replace(" by w ", " by Machining ")
     );
-    let item = repeat_parity(&ws, &repeat_request(&ws, &controls, "false"));
+    let path = repeat_request(&ws, &controls, "false");
+    let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("the post-test unit");
+    ws.write(
+        "program.fsl",
+        format!("{unit}\n{}", crate::fill::contracts("false")).as_bytes(),
+    );
+    let item = repeat_parity(&ws, &path);
     assert_eq!(label(&item), "refuted", "{item}");
     let prefix = item["counterexample"]["prefix"]
         .as_array()
@@ -195,7 +208,7 @@ fn package_repeat_post_test_false_guard_executes_once() {
 fn package_repeat_blocked_attempt_preserves_replay_refusal() {
     for (scenario, guard, constraint) in [
         ("blocked", "true", "false"),
-        ("undefined", "6 mod 0 = 0", "again"),
+        ("undefined", "6 mod 0 = 0", "true"),
     ] {
         let controls = format!(
             "repeat Again by Machining visible () while {{ {guard} }} {}",
@@ -259,7 +272,7 @@ fn package_repeat_proof_refuses_before_execution() {
     let ws = Workspace::new("package-repeat-proof");
     let controls = format!(
         "repeat Again by Machining visible () invariant {{ true }} variant {{ 1 }} while {{ false }} {}",
-        repeat_attempt("Remachined", "again", "again")
+        repeat_attempt("Remachined", "again", "true")
     );
     let path = repeat_request(&ws, &controls, "closing");
     let source = analyze(&path);
