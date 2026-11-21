@@ -3263,7 +3263,7 @@ fn package_clause_model_violations_match_source_decisive_locations() {
 /// the quantifier which supplied the actual false element.
 #[test]
 #[trace("TC-840", "FR-330-AC-12")]
-fn package_clause_decisive_walk_reaches_the_quantifier_through_branches() {
+fn package_remainder_decisive_walk_reaches_the_quantifier_through_branches() {
     let unit = bump_low().replace(LOW_BODY,
         "holds(if c.versionNumber >= 0 then (true and forall(n in sequence[3, c.versionNumber, 5]: n > 0)) else true)");
     package_clause_selection_outcomes(
@@ -3272,6 +3272,34 @@ fn package_clause_decisive_walk_reaches_the_quantifier_through_branches() {
         false,
         SelectionObjects::Present,
     );
+}
+
+/// FR-931 keeps canonical text and first-formula-use numbering even when
+/// structural atoms repeat and their authored whitespace differs.
+#[test]
+#[trace("TC-2601", "FR-931-AC-11", "FR-931-AC-18")]
+fn package_remainder_tl_atoms_keep_canonical_text_and_first_occurrence_ids() {
+    let unit = bump_low().replace(LOW_BODY,
+        "holds( ( c.versionNumber<=2 ) ) and (holds(c.versionNumber<1) or holds(c.versionNumber <= 2))");
+    let directory = bump_directory(&unit, &["a"], true);
+    let member = json!({"clause": "Low"});
+    let expected = run(&unit, true, ("tl_lowering", member.clone()));
+    assert_eq!(expected.0, 0, "{}", expected.1);
+    let models = compile_handoff(directory.path(), &unit);
+    let actual = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+        "models": models, "package": {"directory": "handoff"}, "tl_lowering": member }}),
+    );
+    assert_eq!(actual, expected);
+    assert_eq!(
+        actual.1["tl_lowering"]["atoms"],
+        json!({
+        "p0": "holds(c.versionNumber <= 2)", "p1": "holds(c.versionNumber < 1)" })
+    );
+    let formula = actual.1["tl_lowering"]["formula"].as_str().unwrap();
+    assert_eq!(formula.matches("p0").count(), 2, "{formula}");
+    assert_eq!(formula.matches("p1").count(), 1, "{formula}");
 }
 
 /// FR-1039 Outputs: timed record samples share the snapshot timed evaluator,
