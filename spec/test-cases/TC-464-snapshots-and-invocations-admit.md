@@ -103,7 +103,7 @@ their document identity.
    and one canonical normalized declared path, as the one-view positive.
 10. Exercise FR-230-AC-45's canonicality and kind-change controls on both
     routes. Admit the exact delimiter-bearing vector of FR-230-AC-43;
-    separately supply its uppercase-hex, zero-padded selector,
+    separately supply its uppercase-hex, zero-padded `pathPosition` `"01"`,
     whitespace-JSON and extra-component variants. Restore the valid
     model and capture `x`'s actual reference. Remove and re-add precisely
     the same authenticated field declaration with unchanged path and kind,

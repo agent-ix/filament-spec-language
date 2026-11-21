@@ -477,9 +477,10 @@ what each such position means.
   **Presence is derived.** `present(p)` is the derived Boolean predicate of
   FSpec FR-415 "Presence is derived" and FR-322 "Timed-model nodes" (Presence),
   FR-322-AC-155 to FR-322-AC-157, not a field. The checker SHALL resolve it
-  through the place identity of "Place identity" (the authenticated outer
-  universe, owner local key, declared scope, normalized typed path and tagged
-  slot indices) and SHALL NOT declare an `Option<Boolean>`
+  through the place identity of "Place identity" (the original population
+  declaration descriptor `P`, owner local key, declared scope, normalized
+  typed path and tagged slot indices), with the outer K2 universe retained
+  only as validation context, and SHALL NOT declare an `Option<Boolean>`
   or any other member for it, so no model's declaration identity changes for
   holding an `Option<Clock>`. `p` MAY name a place of another object
   (`present(other.v)`, evaluated at `other`) and the element bound by a
@@ -1124,6 +1125,10 @@ what each such position means.
   > AC-43/AC-45/AC-49 are target obligations, currently unmet. STEP1's
   > `place/v1` implementation is not evidence for them; FR-106's unchanged
   > raw-admission boundary remains in force until implementation and proof.
+  > Every FR-230 criterion depending on raw Clock-reference admission also
+  > remains unmet under that boundary, including AC-62's snapshot-identity
+  > clause. Its independent non-admission clauses retain their own acceptance
+  > obligations.
 - **Clock constraints on a type.** A package constraint whose `appliesTo` is the clock type
   (`ix://filament/native/Clock` itself or an alias of it) is a **clock constraint**. The keywords
   admitted are `max`, with `operands.value` an exact non-negative rational number of the model's
