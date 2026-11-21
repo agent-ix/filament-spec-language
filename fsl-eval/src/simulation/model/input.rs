@@ -564,7 +564,35 @@ impl<'p> PackageModelInput<'p> {
         packages: &fsl_semantics::model::intake::PackageInput,
         normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
     ) -> Result<Self, PendingPackageForm> {
-        if let Some((form, node)) = package.first_unread_model_form() {
+        Self::of_trace_input(package, packages, normalization, false)
+    }
+
+    /// Build the model world for supplied timed observations, without simulating time.
+    /// Timed roots remain read through their admitted model-time joins by trace authentication.
+    ///
+    /// # Errors
+    ///
+    /// Refuses the same unsupported forms as [`Self::of`], except timed model roots.
+    pub fn of_timed_trace(
+        package: &'p BarePackage<'p>,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    ) -> Result<Self, PendingPackageForm> {
+        Self::of_trace_input(package, packages, normalization, true)
+    }
+
+    fn of_trace_input(
+        package: &'p BarePackage<'p>,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        timed_trace: bool,
+    ) -> Result<Self, PendingPackageForm> {
+        let unread = if timed_trace {
+            package.first_unread_timed_trace_form()
+        } else {
+            package.first_unread_model_form()
+        };
+        if let Some((form, node)) = unread {
             return Err(PendingPackageForm::Form {
                 form,
                 node: node.clone(),
@@ -696,7 +724,7 @@ impl<'p> PackageModelInput<'p> {
     }
 
     /// [`Self::temporal_clause`] for a run that reads the clause over a trace
-    /// or a model's behaviours rather than checking it: any untimed profile
+    /// or a model's behaviours rather than checking it: every profile
     /// and the clause's step intervals are read, since the evaluator reads
     /// each from the clause itself. A clause with captures is still refused,
     /// as the package-route letters do not read them yet.
@@ -730,7 +758,7 @@ impl<'p> PackageModelInput<'p> {
         if let ValueType::Reference(object) = &form.over.1 {
             form.populations = self.model.overlapping_populations(object.clone());
         }
-        CheckedTemporalClause::of_package_form(form, self.world.types(), position_limit)
+        CheckedTemporalClause::of_package_run_form(form, self.world.types(), position_limit)
             .map_err(PendingClauseForm::Build)
     }
 
@@ -936,6 +964,17 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
+    /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
+    fn evaluate_model_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
     /// FR-940: the `when` guard of the temporal clause `clause`, keyed by
     /// its node, over `objects`, on either route.
     ///
@@ -949,6 +988,24 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
+
+    /// Evaluate a model behaviour's activation guard with FR-107 model-read accounting.
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
+    /// Reference literals reachable from the clause's projected conditions and guard.
+    /// An unread condition retains its evaluator refusal when evaluated.
+    fn temporal_reference_literals(
+        &self,
+        clause: &CheckedTemporalClause,
+        key: &NodeKey,
+    ) -> Vec<(EffectiveId, Vec<u8>)>;
 
     /// FR-940: `invocation` against the operation frame `frame`, keyed by
     /// its node, on either route. The package route reads the frame's
@@ -1475,6 +1532,26 @@ impl ModelEvaluator for CheckedPackage {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_holds(
+            self,
+            atom,
+            over,
+            captures,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
     fn evaluate_guard(
         &self,
         clause: &NodeKey,
@@ -1483,6 +1560,59 @@ impl ModelEvaluator for CheckedPackage {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_guard(self, clause, over, objects, meter)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_guard(
+            self,
+            clause,
+            over,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
+    fn temporal_reference_literals(
+        &self,
+        clause: &CheckedTemporalClause,
+        key: &NodeKey,
+    ) -> Vec<(EffectiveId, Vec<u8>)> {
+        let mut literals = BTreeSet::new();
+        if let Some(node) = self
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|node| node.identity() == *key)
+        {
+            for (index, formula) in clause.formula().nodes().iter().enumerate() {
+                if matches!(formula, fsl_semantics::check::FormulaNode::Holds { .. }) {
+                    if let Some((condition, _)) =
+                        node.condition(FormulaNodeId::from_arena_index(index))
+                    {
+                        super::reference_bindings::collect_literals(
+                            self.graph(),
+                            condition,
+                            &mut literals,
+                        );
+                    }
+                }
+            }
+            if let Some((guard, _)) = node.guard() {
+                super::reference_bindings::collect_literals(self.graph(), guard, &mut literals);
+            }
+        }
+        literals
+            .into_iter()
+            .map(|literal| (literal.object_type, literal.identity))
+            .collect()
     }
 
     fn evaluate_frame(
@@ -1915,6 +2045,26 @@ impl ModelEvaluator for BarePackage<'_> {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_holds(
+            self,
+            atom,
+            over,
+            captures,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
     fn evaluate_guard(
         &self,
         clause: &NodeKey,
@@ -1923,6 +2073,56 @@ impl ModelEvaluator for BarePackage<'_> {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_guard(self, clause, over, objects, meter)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_guard(
+            self,
+            clause,
+            over,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
+    fn temporal_reference_literals(
+        &self,
+        clause: &CheckedTemporalClause,
+        key: &NodeKey,
+    ) -> Vec<(EffectiveId, Vec<u8>)> {
+        let mut literals = BTreeSet::new();
+        let mut collect = |projection: &fsl_package::ReaderProtocolProjection| {
+            let mut index = 0;
+            while let Some(kind) = projection.kind(index) {
+                if let filament_checked::node::NodeKind::ReferenceLiteral {
+                    object_type,
+                    identity,
+                } = kind
+                {
+                    literals.insert((object_type.clone(), identity.clone()));
+                }
+                index += 1;
+            }
+        };
+        for (index, formula) in clause.formula().nodes().iter().enumerate() {
+            if matches!(formula, fsl_semantics::check::FormulaNode::Holds { .. }) {
+                if let Ok(term) = self.project_holds(key, index) {
+                    collect(term.projection());
+                }
+            }
+        }
+        if let Ok(Some(term)) = self.project_guard(key) {
+            collect(term.projection());
+        }
+        literals.into_iter().collect()
     }
 
     fn evaluate_frame(

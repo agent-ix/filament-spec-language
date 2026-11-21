@@ -131,6 +131,44 @@ pub struct AuthenticatedBinding {
 }
 
 impl TraceBinding {
+    /// Authenticate model-time from the admitted timed model's unit, without a clock row.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first differing profile, clock name, configuration or unit.
+    pub fn authenticate_model_time(
+        &self,
+        selection: &ClauseSelection<'_>,
+        unit: &str,
+    ) -> Result<AuthenticatedBinding, BindingMismatch> {
+        let expected_profile = &selection.profile.definition.identity;
+        if self.profile != *expected_profile {
+            return Err(differs(
+                MismatchedDimension::Profile,
+                self.profile.to_string(),
+                expected_profile.to_string(),
+            ));
+        }
+        if self.clock_name.as_ref() != "model-time" {
+            return Err(differs(
+                MismatchedDimension::Clock,
+                self.clock_name.to_string(),
+                "model-time".to_owned(),
+            ));
+        }
+        let clock = ClockConfiguration::Timed { unit: unit.into() };
+        if let Some(mismatch) = parameters_mismatch(&self.parameters, &clock) {
+            return Err(mismatch);
+        }
+        Ok(AuthenticatedBinding {
+            package: selection.declaration.package.clone(),
+            declaration: selection.declaration.clone(),
+            profile: selection.profile.definition.clone(),
+            clock_name: "model-time".into(),
+            clock,
+        })
+    }
+
     /// Compare this binding with the clause's selection, before any position,
     /// stamp or meter is touched.
     ///

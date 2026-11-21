@@ -2591,6 +2591,8 @@ fn check_formula<S: SubjectSystem>(
 /// behaviour supplied as a request, not as a counterexample to settle.
 #[derive(Debug)]
 pub struct ModelTraceRun {
+    /// The original package call failure, before the letter engine boundary.
+    pub call_failure: Option<filament_eval::CallFailure>,
     /// What the FR-329 (or FR-328, for a finite prefix) evaluator returned.
     pub outcome: Result<TemporalOutcome, fsl_eval::temporal::TemporalRefusal>,
     /// The decisive atom of a violation, found on the same evaluator.
@@ -2682,6 +2684,7 @@ pub fn evaluate_model_trace(
         _ => None,
     };
     Ok(ModelTraceEnd::Evaluated(Box::new(ModelTraceRun {
+        call_failure: letters.take_call_failure(),
         outcome,
         decisive,
         observation,

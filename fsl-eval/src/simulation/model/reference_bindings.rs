@@ -43,7 +43,7 @@ pub(crate) enum ReferenceBinding {
 
 /// One immutable subject's reference-literal decisions.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ReferenceBindings(BTreeMap<ReferenceLiteralKey, ReferenceBinding>);
+pub struct ReferenceBindings(BTreeMap<ReferenceLiteralKey, ReferenceBinding>);
 
 impl ReferenceBindings {
     pub(crate) fn created_for_footprints(
@@ -70,6 +70,36 @@ impl ReferenceBindings {
             object_type: object_type.clone(),
             identity: identity.to_vec(),
         })
+    }
+
+    /// Extend the model's decisions with the admitted literals of one package clause.
+    pub(super) fn with_literals(
+        &self,
+        literals: Vec<(EffectiveId, Vec<u8>)>,
+        model: &StateModel,
+        types: &TypeEnvironment,
+        populations: &[StatePopulation],
+        universes: &BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
+        initial: &[ModelSimState],
+    ) -> Result<Self, fsl_semantics::model::observation::AdmissionFailure> {
+        let literals = literals
+            .into_iter()
+            .map(|(object_type, identity)| ReferenceLiteralKey {
+                object_type,
+                identity,
+            })
+            .collect();
+        let mut extended = self.0.clone();
+        extended.extend(resolve_literals(
+            literals,
+            &BTreeSet::new(),
+            model,
+            types,
+            populations,
+            universes,
+            initial,
+        )?);
+        Ok(Self(extended))
     }
 
     /// Resolve every checked reference literal against the validated subject

@@ -965,6 +965,13 @@ fn compare_binding(
                 timestamp_unit: got,
             },
         ) if want != got => Err(refused(SelectionAxis::ClockTimestampUnit)),
+        (C::Timed { unit: want }, C::Timed { unit: got }) => {
+            if want == got {
+                Ok(())
+            } else {
+                Err(refused(SelectionAxis::ClockUnit))
+            }
+        }
         (C::EventPosition { .. }, C::EventPosition { .. })
         | (C::TimestampedEvent { .. }, C::TimestampedEvent { .. }) => Ok(()),
         _ => Err(refused(SelectionAxis::ClockKind)),

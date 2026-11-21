@@ -837,7 +837,11 @@ fn an_undefined_on_each_guard_writes_its_guard_locus() {
         Some(1)
     );
     let record = read(&value).expect("the guard document reads");
-    let Some(TemporalRecord::Undefined { counterexample, .. }) = record.temporal() else {
+    let Some(TemporalRecord::Undefined {
+        counterexample: Some(counterexample),
+        ..
+    }) = record.temporal()
+    else {
         panic!("an undefined row");
     };
     assert_eq!(
