@@ -877,6 +877,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         let world = self.world().map_err(|failure| refusal(self, failure))?;
@@ -893,6 +894,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             meter,
             &[],
         )
+        .with_reference_bindings(reference_bindings)
         .run(
             ReaderNode::root(term.projection()),
             term.projection().frame_slots(),
@@ -980,6 +982,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         let world = self.world().map_err(|failure| refusal(self, failure))?;
@@ -999,6 +1002,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             meter,
             &[],
         )
+        .with_reference_bindings(reference_bindings)
         .run(
             ReaderNode::root(term.projection()),
             term.projection().frame_slots(),

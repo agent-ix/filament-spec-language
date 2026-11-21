@@ -948,6 +948,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
@@ -971,8 +972,17 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
+
+    /// Reference literals reachable from the clause's projected conditions and guard.
+    /// An unread condition retains its evaluator refusal when evaluated.
+    fn temporal_reference_literals(
+        &self,
+        clause: &CheckedTemporalClause,
+        key: &NodeKey,
+    ) -> Vec<(EffectiveId, Vec<u8>)>;
 
     /// FR-940: `invocation` against the operation frame `frame`, keyed by
     /// its node, on either route. The package route reads the frame's
@@ -1418,9 +1428,18 @@ impl ModelEvaluator for CheckedPackage {
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_model_holds(self, atom, over, captures, objects, meter)
+        CheckedPackageEvaluation::evaluate_model_holds(
+            self,
+            atom,
+            over,
+            captures,
+            objects,
+            reference_bindings,
+            meter,
+        )
     }
 
     fn evaluate_guard(
@@ -1438,9 +1457,52 @@ impl ModelEvaluator for CheckedPackage {
         clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_model_guard(self, clause, over, objects, meter)
+        CheckedPackageEvaluation::evaluate_model_guard(
+            self,
+            clause,
+            over,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
+    fn temporal_reference_literals(
+        &self,
+        clause: &CheckedTemporalClause,
+        key: &NodeKey,
+    ) -> Vec<(EffectiveId, Vec<u8>)> {
+        let mut literals = BTreeSet::new();
+        if let Some(node) = self
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|node| node.identity() == *key)
+        {
+            for (index, formula) in clause.formula().nodes().iter().enumerate() {
+                if matches!(formula, fsl_semantics::check::FormulaNode::Holds { .. }) {
+                    if let Some((condition, _)) =
+                        node.condition(FormulaNodeId::from_arena_index(index))
+                    {
+                        super::reference_bindings::collect_literals(
+                            self.graph(),
+                            condition,
+                            &mut literals,
+                        );
+                    }
+                }
+            }
+            if let Some((guard, _)) = node.guard() {
+                super::reference_bindings::collect_literals(self.graph(), guard, &mut literals);
+            }
+        }
+        literals
+            .into_iter()
+            .map(|literal| (literal.object_type, literal.identity))
+            .collect()
     }
 
     fn evaluate_frame(
@@ -1863,9 +1925,18 @@ impl ModelEvaluator for BarePackage<'_> {
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_model_holds(self, atom, over, captures, objects, meter)
+        CheckedPackageEvaluation::evaluate_model_holds(
+            self,
+            atom,
+            over,
+            captures,
+            objects,
+            reference_bindings,
+            meter,
+        )
     }
 
     fn evaluate_guard(
@@ -1883,9 +1954,49 @@ impl ModelEvaluator for BarePackage<'_> {
         clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_model_guard(self, clause, over, objects, meter)
+        CheckedPackageEvaluation::evaluate_model_guard(
+            self,
+            clause,
+            over,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
+    fn temporal_reference_literals(
+        &self,
+        clause: &CheckedTemporalClause,
+        key: &NodeKey,
+    ) -> Vec<(EffectiveId, Vec<u8>)> {
+        let mut literals = BTreeSet::new();
+        let mut collect = |projection: &fsl_package::ReaderProtocolProjection| {
+            let mut index = 0;
+            while let Some(kind) = projection.kind(index) {
+                if let filament_checked::node::NodeKind::ReferenceLiteral {
+                    object_type,
+                    identity,
+                } = kind
+                {
+                    literals.insert((object_type.clone(), identity.clone()));
+                }
+                index += 1;
+            }
+        };
+        for (index, formula) in clause.formula().nodes().iter().enumerate() {
+            if matches!(formula, fsl_semantics::check::FormulaNode::Holds { .. }) {
+                if let Ok(term) = self.project_holds(key, index) {
+                    collect(term.projection());
+                }
+            }
+        }
+        if let Ok(Some(term)) = self.project_guard(key) {
+            collect(term.projection());
+        }
+        literals.into_iter().collect()
     }
 
     fn evaluate_frame(

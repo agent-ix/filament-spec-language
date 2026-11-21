@@ -205,7 +205,18 @@ impl<'a> ModelSystem<'a> {
                 )
                 .map_err(LettersRefusal::ReferenceBindingsAdmission)?
             }
-            _ => self.reference_bindings.clone(),
+            (ClauseSource::Package { clause, key }, _) => self
+                .reference_bindings
+                .with_literals(
+                    self.evaluator().temporal_reference_literals(clause, key),
+                    &self.model,
+                    self.types,
+                    &self.populations,
+                    &self.universes,
+                    &self.initial,
+                )
+                .map_err(LettersRefusal::ReferenceBindingsAdmission)?,
+            (ClauseSource::Source(_), None) => self.reference_bindings.clone(),
         };
         Ok(ClauseLetters {
             system: self,
@@ -271,6 +282,7 @@ impl ClauseLetters<'_, '_> {
                             Value::Reference(bound),
                             captures,
                             &observed.observation.environment,
+                            &self.reference_bindings,
                             meter,
                         )
                         .map_err(call_stop)?
@@ -617,6 +629,7 @@ impl ModelLetters for ClauseLetters<'_, '_> {
                             key,
                             Value::Reference(bound),
                             &observed.observation.environment,
+                            &self.reference_bindings,
                             meter,
                         )
                         .map_err(call_stop)?

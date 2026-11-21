@@ -473,8 +473,12 @@ fn run_model(
             admitted,
         );
     };
-    let Ok(letters) = system.package_clause_letters(clause, key) else {
-        return fault("model-clause-has-letters");
+    let letters = match system.package_clause_letters(clause, key) {
+        Ok(letters) => letters,
+        Err(fsl_eval::simulation::model::LettersRefusal::ReferenceBindingsAdmission(failure)) => {
+            return stopped(ClauseDisposition::Admit(failure), admitted);
+        }
+        Err(_) => return fault("model-clause-has-letters"),
     };
     let payload = behaviour_payload(prefix, repeat, *terminal_stutter, instance);
     let evaluated = match evaluate_model_trace(&system, &payload, clause, &letters, accounting) {

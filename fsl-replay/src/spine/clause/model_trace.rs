@@ -19,16 +19,16 @@ use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_eval::temporal::DecisiveStop;
 use fsl_eval::value::ObservationIdentity;
 use fsl_semantics::check::{FormulaNode, TemporalClauseNode};
-use fsl_semantics::model::observation::{AdmissionUsage, admit_trace_snapshot};
+use fsl_semantics::model::observation::{admit_trace_snapshot, AdmissionUsage};
 use serde::Deserialize;
 
-use super::temporal::{OverObject, TraceInput, decisive_over, observed_disposition, refused};
+use super::temporal::{decisive_over, observed_disposition, refused, OverObject, TraceInput};
 use super::trace_refusal::{ClauseSite, TraceSite};
 use super::{ClauseDisposition, ClauseRunUsage, CompiledRun};
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::{CounterexampleKind, Lasso, TemporalCounterexample};
-use crate::model_check::limits::{ModelCheckLimit, ReachedLimit, meter_bound};
-use crate::model_check::replay::{ModelTraceEnd, ModelTraceRun, evaluate_model_trace};
+use crate::model_check::limits::{meter_bound, ModelCheckLimit, ReachedLimit};
+use crate::model_check::replay::{evaluate_model_trace, ModelTraceEnd, ModelTraceRun};
 use crate::spine::TemporalVerdict;
 
 /// What a model-arm run reports besides its disposition.
@@ -245,6 +245,9 @@ pub(super) fn run_model(
     };
     let letters = match system.clause_letters(node) {
         Ok(letters) => letters,
+        Err(fsl_eval::simulation::model::LettersRefusal::ReferenceBindingsAdmission(failure)) => {
+            return stopped(ClauseDisposition::Admit(failure), admitted);
+        }
         Err(_) => return fault("model-clause-has-letters"),
     };
     let payload = behaviour_payload(prefix, repeat, *terminal_stutter, instance);

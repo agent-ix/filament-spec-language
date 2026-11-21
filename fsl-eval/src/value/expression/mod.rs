@@ -1544,6 +1544,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
@@ -1586,6 +1587,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
@@ -2631,6 +2633,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         over: Value,
         captures: &[Value],
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         let (clause, condition, slots) = source_condition(self.graph(), atom)?;
@@ -2644,6 +2647,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
             meter,
             self.graph().dispatch_tables(),
         )
+        .with_reference_bindings(reference_bindings)
         .run(condition, slots, holds_bindings(clause, over, captures))
         .map_err(CallFailure::Fault)
     }
@@ -2718,6 +2722,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         let (guard, slots) = source_clause(self.graph(), clause)?
@@ -2735,6 +2740,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
             meter,
             self.graph().dispatch_tables(),
         )
+        .with_reference_bindings(reference_bindings)
         .run(guard, slots, vec![over.clone(), over])
         .map_err(CallFailure::Fault)
     }
