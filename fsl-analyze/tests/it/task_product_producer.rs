@@ -195,6 +195,18 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
             .expect("delay and horizon write unchanged"),
         delay
     );
+    let mut delay_part = delay.clone();
+    delay_part["edges"]
+        .as_array_mut()
+        .expect("edges")
+        .last_mut()
+        .expect("delay")["part"] = json!(0);
+    assert!(ZoneCertificate::from_wire_with_source(
+        &delay_part,
+        built.obligation.clone(),
+        product.source()
+    )
+    .is_err());
     assert!(matches!(
         verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Rejected(_))

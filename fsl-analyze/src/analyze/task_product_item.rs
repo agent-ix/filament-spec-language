@@ -610,12 +610,19 @@ fn prove<'a>(
     let Ok(identity) = fsl_replay::certificate_identity_wire(claim, model) else {
         return fault();
     };
-    let Some((wire, read)) = crate::zone_check::read_back_unchanged_with_source(
-        &built,
-        identity,
-        claim,
-        product.source(),
-    ) else {
+    let transported = if built.task_product.as_ref().is_some_and(|member| {
+        member.time_progress.method == fsl_replay::TaskClosureMethod::ClosedNoReleaseProduct
+    }) {
+        crate::zone_check::read_back_unchanged_with_source(
+            &built,
+            identity,
+            claim,
+            product.source(),
+        )
+    } else {
+        crate::zone_check::read_back_unchanged(&built, identity, claim)
+    };
+    let Some((wire, read)) = transported else {
         return fault();
     };
     let verdict = fsl_replay::check_zone_certificate(

@@ -2,9 +2,12 @@
 //! The FSpec FR-418 JSON of a task-product `ZoneCertificate` (AC-6 to AC-11).
 //!
 //! Only the members a task-product certificate carries are written and read:
-//! `identity`, `scale`, `bounds` (empty), `nodes`, `edges`, `initials`,
+//! `identity`, `scale`, `bounds`, `nodes`, `edges`, `initials`,
 //! `admitted` and `task_product`. A certificate with another member is
 //! refused, never written partially.
+//! A no-release source certificate supplies its original timed-source context
+//! to name every LU clock with the owner's canonical `clock_place` encoding.
+//! Source guard parts, horizon fragments and delay-only edges are retained.
 //!
 //! The wire `admitted` is `{start, edges}`: the path of certificate edges the
 //! witness follows. The typed witness also names its divergent target, which
@@ -449,6 +452,10 @@ impl<O> ZoneCertificate<O> {
             } else {
                 (Some(source_transition(transition, &at_transition)?), None)
             };
+            if source_step.is_none() && task.is_none() && edge.contains_key("part") {
+                return refuse(&child(&at, "part"), TaskProductShapeReason::NotCanonical)
+                    .map_err(Into::into);
+            }
             edges.push(CertEdge {
                 from: usize::try_from(count(member(edge, "node"), &child(&at, "node"))?)
                     .unwrap_or(usize::MAX),
