@@ -863,7 +863,7 @@ fn scalar_type(
             Some(_) => Err(unsupported()),
             None => Err(missing(&name.name, form.span)),
         },
-        TypeFormHead::Builtin(BuiltinType::Int | BuiltinType::Text) => {
+        TypeFormHead::Builtin(BuiltinType::Int | BuiltinType::Text | BuiltinType::Decimal) => {
             let resolved = resolve_form(&NoNames, form).map_err(|error| AssemblyError {
                 cause: AssemblyCause::IllFormedBounds(error.fault),
                 span: error.span,
@@ -881,6 +881,9 @@ fn scalar_type(
                     }
                 }
                 filament_exact::ValueType::Text(text) => ScalarValueDomain::Text(text),
+                filament_exact::ValueType::Decimal(ref decimal) => {
+                    ScalarValueDomain::Decimal(decimal.clone())
+                }
                 _ => return Err(unsupported()),
             };
             let key = node_key(identity, &format!("{owner}-{site}-type"));

@@ -2705,6 +2705,7 @@ fn model_value_type(
                         .map_err(|_| Unmapped::Unsupported)?,
                 ),
                 ScalarValueDomain::Text(text) => ValueType::Text(*text),
+                ScalarValueDomain::Decimal(decimal) => ValueType::Decimal(decimal.clone()),
                 ScalarValueDomain::Rational {
                     domain: Some(domain),
                     unit: None,
@@ -2731,6 +2732,11 @@ fn model_value_type(
                 ScalarValueDomain::Native(NativeValueType::Timestamp) => ValueType::Timestamp,
                 ScalarValueDomain::Native(NativeValueType::Bytes) => ValueType::Bytes,
                 ScalarValueDomain::Native(NativeValueType::JsonObject) => ValueType::JsonObject,
+                // A value type bound to native Decimal by `target` carries no
+                // policy, so it has no checked type, as the bare native has none.
+                ScalarValueDomain::Native(NativeValueType::Decimal) => {
+                    return Err(Unmapped::Untyped(String::new()));
+                }
                 ScalarValueDomain::Native(_) => return Err(Unmapped::Unsupported),
             },
             Some(DomainPackageRecord::OptionType(option)) => {

@@ -625,7 +625,14 @@
             }
           ],
           "returns": {
-            "typeRef": "ix://test/decimal/Soc"
+            "typeRef": "ix://test/decimal/Soc",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
           },
           "pre": [],
           "post": [],
