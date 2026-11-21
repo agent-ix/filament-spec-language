@@ -857,9 +857,9 @@ impl DocumentGraphs {
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 Err(AnalyzeRefusal::Package(refusal))
             }
-            Err(crate::provider::NotAdmitted::Other) => {
-                Err(AnalyzeRefusal::Emission(GraphUnavailable::NotEmitted))
-            }
+            Err(crate::provider::NotAdmitted::Other(refusal)) => Err(AnalyzeRefusal::Emission(
+                GraphUnavailable::of_not_admitted(refusal),
+            )),
         }
     }
 }
