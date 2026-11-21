@@ -2153,7 +2153,7 @@ fn resolve_one(
                 }
             }
             (Some(_), _) if protocol_analysis_kind => {
-                return invalid_member(index, name, "temporal.subject.protocol");
+                return invalid_member(index, name, "temporal.subject.protocol")
             }
             (Some(_), _) => return invalid_value(index, name, "temporal.subject.protocol"),
             (None, _) => None,
