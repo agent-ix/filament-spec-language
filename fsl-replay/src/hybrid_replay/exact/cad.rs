@@ -220,18 +220,19 @@ impl Polynomial {
         }
     }
 
-    fn univariate(&self) -> Poly {
+    fn univariate(&self, meter: &mut HybridReplayMeter) -> Result<Poly> {
         let degree = self.degree(0).unwrap_or(0);
-        Poly::new(
-            (0..=degree)
-                .map(|i| {
-                    self.0
-                        .get(&if i == 0 { vec![] } else { vec![i] })
-                        .cloned()
-                        .unwrap_or_else(zero)
-                })
-                .collect(),
-        )
+        let mut coefficients = Vec::new();
+        for i in 0..=degree {
+            meter.charge_by(self.size())?;
+            coefficients.push(
+                self.0
+                    .get(&if i == 0 { vec![] } else { vec![i] })
+                    .cloned()
+                    .unwrap_or_else(zero),
+            );
+        }
+        Ok(Poly::new(coefficients))
     }
 }
 
@@ -282,9 +283,8 @@ impl<'a> Kernel<'a> {
             return Ok(Ordering::Equal);
         }
         if depth == 0 {
-            return self
-                .time
-                .sign_with(&p.univariate(), &mut |w| self.meter.charge_by(w));
+            let p = p.univariate(self.meter)?;
+            return self.time.sign_with(&p, &mut |w| self.meter.charge_by(w));
         }
         if p.degree(depth) == Some(0) {
             return self.sign_over(p, depth - 1);
@@ -764,7 +764,11 @@ pub(super) fn project(
         }
         set = projected;
     }
-    Ok((levels, set.iter().map(Polynomial::univariate).collect()))
+    let mut time = Vec::new();
+    for p in &set {
+        time.push(p.univariate(meter)?);
+    }
+    Ok((levels, time))
 }
 
 #[cfg(test)]
