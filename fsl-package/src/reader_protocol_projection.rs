@@ -1783,7 +1783,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     pending.push(self.callee(callee)?);
                 }
             }
-            if has_form(node, WireTag::Function, WireForm::PureFunction) {
+            if matches!(
+                self.index.admitted.node_kind(&id),
+                Some(filament_contract_model::CheckedNodeKind::Function(
+                    filament_contract_model::FunctionForm::PureFunction
+                        | filament_contract_model::FunctionForm::Predicate
+                ))
+            ) {
                 declarations.push((owner, id));
             }
         }
