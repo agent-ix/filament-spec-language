@@ -4365,7 +4365,6 @@ fn price_witness_paths(
         memo.insert(key, value.clone());
         Ok(value)
     }
-    }
     // The choices and the mass a set of paths selects. `None` when a path is
     // not a distinct walk to the forbidden decided state (a Parity case).
     let solve = |paths: &[usize]| -> Result<
