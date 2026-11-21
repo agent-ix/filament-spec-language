@@ -629,9 +629,9 @@ pub enum UnavailabilityCause {
     },
     /// FR-182 V-8: an SMT hyper encoding is outside its supported fragment.
     UnsupportedSmtFragment,
-    /// FR-192: a drawn step of an EN-4 run broke the Markov condition
+    /// FR-187: a drawn step of an EN-4 or EN-5 run broke the Markov condition
     /// (ADR-024 PM-3). Wire cause `not-markov`.
-    NotMarkov,
+    NotMarkov(Box<fsl_eval::simulation::model::NotMarkov>),
     /// FR-192: a choice's scaled weight total exceeds `2^256`, so no draw is
     /// accepted (FSpec FR-181-AC-14). Wire cause `total-above-draw-range`,
     /// `total` a decimal string.
@@ -773,7 +773,7 @@ impl UnavailabilityCause {
             | Self::StatisticalRequest(_) => NegotiationOutcome::UnsupportedRequestedCapability
                 .code()
                 .cause(),
-            Self::NotMarkov => "not-markov",
+            Self::NotMarkov(_) => "not-markov",
             Self::TotalAboveDrawRange { .. } => "total-above-draw-range",
             Self::NotStochastic { .. } => "not-stochastic",
             Self::TimeLockedSample { .. } => "time-locked-sample",
@@ -801,7 +801,7 @@ impl UnavailabilityCause {
             Self::SolverAbsent
             | Self::BackendAbsent
             | Self::Disposition
-            | Self::NotMarkov
+            | Self::NotMarkov(_)
             | Self::TotalAboveDrawRange { .. }
             | Self::NotStochastic { .. }
             | Self::TimeLockedSample { .. }
@@ -1394,6 +1394,17 @@ impl ReportedInconclusiveCause {
 }
 
 impl TerminalValue {
+    fn invalid_not_markov(&self) -> bool {
+        matches!(
+            self,
+            Self::Unsupported(UnavailabilityCause::NotMarkov(cause))
+                if cause.post_states == 1
+                    || u64::try_from(cause.post_state_examples.len()).ok()
+                        != Some(cause.post_states.min(2))
+                    || cause.post_state_examples.windows(2).any(|pair| pair[0] >= pair[1])
+        )
+    }
+
     /// Map this value to its ADR-013 O-16 category. Exhaustive with no `_`
     /// arm; a further `TerminalValue` variant fails this match to compile
     /// rather than silently falling into an existing row (FR-069's
@@ -1906,6 +1917,7 @@ impl TerminalRecord {
     }
 
     /// Build an unsupported record with the producing backend identity.
+    /// Malformed NotMarkov evidence settles as an internal failure.
     pub fn unsupported(
         request_index: RequestIndex,
         backend: BackendId,
@@ -2194,6 +2206,12 @@ impl TerminalRecord {
         backend: BackendId,
         value: TerminalValue,
     ) -> Self {
+        let invalid_not_markov = value.invalid_not_markov();
+        let value = if invalid_not_markov {
+            TerminalValue::Failed
+        } else {
+            value
+        };
         // An `unsupported` record settled by disposition carries the FR-272
         // diagnostic (FR-286); a caller that builds one without a
         // diagnostic gets the generic capability diagnostic, never a record
@@ -2207,7 +2225,14 @@ impl TerminalRecord {
             backend: Some(backend),
             value,
             replay: None,
-            diagnostic: disposed.then(|| NegotiationOutcome::UnsupportedRequestedCapability.code()),
+            diagnostic: if invalid_not_markov {
+                Some(CatalogCode::new(
+                    "runtime_invariant",
+                    "established-invariant-broken",
+                ))
+            } else {
+                disposed.then(|| NegotiationOutcome::UnsupportedRequestedCapability.code())
+            },
             disposition_detail: disposed.then(serde_json::Map::new),
             diagnostic_detail: None,
             disposed,
@@ -2224,12 +2249,18 @@ impl TerminalRecord {
         reason = "used by fsl-replay's crate-local outcome fixtures"
     )]
     pub(crate) fn from_value(request_index: RequestIndex, value: TerminalValue) -> Self {
+        let invalid_not_markov = value.invalid_not_markov();
         Self {
             request_index,
             backend: None,
-            value,
+            value: if invalid_not_markov {
+                TerminalValue::Failed
+            } else {
+                value
+            },
             replay: None,
-            diagnostic: None,
+            diagnostic: invalid_not_markov
+                .then(|| CatalogCode::new("runtime_invariant", "established-invariant-broken")),
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: None,

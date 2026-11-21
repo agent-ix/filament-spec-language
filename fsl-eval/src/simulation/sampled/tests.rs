@@ -229,6 +229,7 @@ fn a_non_unique_post_state_stops_the_sample() {
         panic!("NotMarkov: {result:?}");
     };
     assert_eq!(not_markov.post_states, 2);
+    assert_drawn_identity(&world, &not_markov);
 }
 
 /// A terminal state continues on stutter steps (ADR-018 SM-4): `Link`
@@ -275,6 +276,54 @@ fn an_identity_with_no_post_state_stops_the_sample() {
     };
     assert_eq!(not_markov.post_states, 0);
     assert_eq!(not_markov.random.len(), 1);
+    assert_drawn_identity(&world, &not_markov);
+}
+
+/// Both one-parameter sampling refusal fixtures retain the actually drawn
+/// operation, receiver and Boolean argument without requiring a successor.
+fn assert_drawn_identity(world: &World, not_markov: &crate::simulation::model::NotMarkov) {
+    let drawn = &not_markov.drawn_transition;
+    assert_eq!(drawn.operation(), not_markov.transition.operation);
+    let receiver =
+        crate::simulation::model::reference_canonical_text(&not_markov.transition.receiver)
+            .expect("the receiver has canonical text");
+    assert_eq!(drawn.receiver(), Some(receiver.as_str()));
+    let [Value::Boolean(random)] = not_markov.random.as_slice() else {
+        panic!("one Boolean draw: {:?}", not_markov.random);
+    };
+    assert_eq!(
+        drawn.arguments(),
+        &[format!(r#"{{"type":"boolean","value":{random}}}"#)]
+    );
+    let system = world.system();
+    let actions = system
+        .enabled_actions(&initial(&system))
+        .expect("expands")
+        .expect("decided");
+    let action = actions
+        .iter()
+        .find(|action| action.identity == not_markov.transition)
+        .expect("the actually sampled scheduled identity");
+    let draw = action
+        .draws
+        .iter()
+        .find(|draw| same_values(&draw.random, &not_markov.random))
+        .expect("the actual sampled draw");
+    let expected = draw
+        .successors
+        .iter()
+        .take(2)
+        .map(|(_, post)| {
+            system
+                .canonical_state_key(post)
+                .expect("an actual post-state")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(not_markov.post_state_examples, expected);
+    assert_eq!(
+        not_markov.post_state_examples.len(),
+        draw.successors.len().min(2)
+    );
 }
 
 /// A terminal state's stutter step carries every reward of the model at 0.

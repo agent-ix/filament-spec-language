@@ -1100,6 +1100,19 @@ fn a_draw_with_several_post_states_leads_to_an_intermediate_state() {
         panic!("a workload needs one post-state");
     };
     assert_eq!(loose.post_states, 2);
+    let mut expected_posts = product
+        .outgoing(healthy.to)
+        .iter()
+        .map(|edge| {
+            fsl_eval::simulation::StateKey::from_canonical_bytes(
+                product.states[edge.to.index()].model.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    expected_posts.sort();
+    assert_eq!(loose.post_state_examples, expected_posts);
+    assert_eq!(loose.post_state_examples.len(), 2);
+    assert_ne!(loose.post_state_examples[0], loose.post_state_examples[1]);
     assert!(loose.transition.operation.contains("tick"));
     assert_eq!(
         loose.random.iter().map(boolean_of).collect::<Vec<_>>(),
@@ -1112,6 +1125,7 @@ fn a_draw_with_several_post_states_leads_to_an_intermediate_state() {
             panic!("{claim}: a draw with no post-state is not Markov");
         };
         assert_eq!(none.post_states, 0, "{claim}");
+        assert!(none.post_state_examples.is_empty(), "{claim}");
         assert_eq!(
             none.random.iter().map(boolean_of).collect::<Vec<_>>(),
             [true],

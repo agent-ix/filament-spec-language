@@ -137,7 +137,7 @@ pub(super) fn build<'s, 'a>(
 /// (ADR-028 TA-1, FR-204).
 fn resolve_choice(
     representative: Option<&ScheduledIdentity>,
-    taken: &Enabled,
+    taken: &Enabled<'_>,
     delay: u64,
 ) -> ProductAction {
     ProductAction::WorkloadResolve {
@@ -571,7 +571,8 @@ struct Local {
 }
 
 /// A draw of an enabled identity: its enabled post-states.
-struct EnabledDraw {
+struct EnabledDraw<'local> {
+    transition: &'local filament_semantic_value::model_transition::ModelTransition,
     random: Vec<Value>,
     probability: Rational,
     rewards: Vec<(Identifier, Value)>,
@@ -579,9 +580,9 @@ struct EnabledDraw {
 }
 
 /// A scheduled identity enabled at a digital state.
-struct Enabled {
+struct Enabled<'local> {
     identity: ScheduledIdentity,
-    draws: Vec<EnabledDraw>,
+    draws: Vec<EnabledDraw<'local>>,
 }
 
 struct Resolution {
@@ -915,12 +916,12 @@ impl<'c> Builder<'_, '_, 'c> {
 
     /// The scheduled identities enabled at `clocks` with their enabled
     /// post-states (ADR-026 TS-2 with integer clocks).
-    fn enabled(
+    fn enabled<'local>(
         &mut self,
-        local: &Local,
+        local: &'local Local,
         model: &ModelSimState,
         clocks: &[u64],
-    ) -> Step<Vec<Enabled>> {
+    ) -> Step<Vec<Enabled<'local>>> {
         let valuation = self.valuation(clocks)?;
         let mut found = Vec::new();
         for action in &local.actions {
@@ -950,6 +951,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     posts.push((post.clone(), self.digital(&reset)?));
                 }
                 draws.push(EnabledDraw {
+                    transition: &draw.transition,
                     random: draw.random.clone(),
                     probability: draw.probability.clone(),
                     rewards: draw.rewards.clone(),
@@ -967,8 +969,10 @@ impl<'c> Builder<'_, '_, 'c> {
                 return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                     state,
                     transition: action.identity.clone(),
+                    drawn_transition: blocked.transition.clone(),
                     random: blocked.random.clone(),
                     post_states: 0,
+                    post_state_examples: Vec::new(),
                 }))
                 .into());
             }
@@ -978,6 +982,24 @@ impl<'c> Builder<'_, '_, 'c> {
             });
         }
         Ok(found)
+    }
+
+    /// Retain model-state evidence from the actual filtered draw. Filtering
+    /// preserves the source draw's distinct canonical model-state order.
+    fn not_markov_post_keys(&self, posts: &[(ModelSimState, Vec<u64>)]) -> Step<Vec<StateKey>> {
+        let mut keys: Vec<StateKey> = Vec::with_capacity(posts.len().min(2));
+        for (model, _) in posts.iter().take(2) {
+            self.poll()?;
+            let (_, key) = self
+                .system
+                .state_key(model)
+                .map_err(|_| fault("state-key-encodes"))?;
+            if keys.last().is_some_and(|previous| previous >= &key) {
+                return Err(fault("filtered-post-model-keys-are-distinct-and-ordered").into());
+            }
+            keys.push(key);
+        }
+        Ok(keys)
     }
 
     // -- keys and truths ---------------------------------------------------
@@ -1816,7 +1838,7 @@ impl<'c> Builder<'_, '_, 'c> {
         at: usize,
         state: &DState,
         local: &Rc<Local>,
-        enabled: &[Enabled],
+        enabled: &[Enabled<'_>],
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
         let trajectory = self.trajectory(state)?;
@@ -1960,7 +1982,7 @@ impl<'c> Builder<'_, '_, 'c> {
         &mut self,
         at: usize,
         state: &DState,
-        action: &Enabled,
+        action: &Enabled<'_>,
         share: Rational,
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
@@ -2504,8 +2526,11 @@ impl<'c> Builder<'_, '_, 'c> {
                         return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                             state,
                             transition: identity.clone(),
+                            drawn_transition: draw.transition.clone(),
                             random: draw.random.clone(),
-                            post_states: u32::try_from(draw.posts.len()).unwrap_or(u32::MAX),
+                            post_states: u64::try_from(draw.posts.len())
+                                .expect("supported targets have at most 64-bit usize"),
+                            post_state_examples: self.not_markov_post_keys(&draw.posts)?,
                         }))
                         .into());
                     };

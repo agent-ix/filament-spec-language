@@ -340,6 +340,79 @@ fn discrete_delays_under_a_workload_are_a_chain() {
     ));
 }
 
+/// A digital refusal reports its actual filtered model posts, rather than
+/// the larger discrete successor set before the reset invariants are applied.
+#[trace("TC-639", "FR-204-AC-3", "FR-187-AC-3")]
+#[test]
+fn not_markov_evidence_uses_the_actual_filtered_digital_posts() {
+    use fsl_eval::simulation::TransitionSystem;
+
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&retx_document(&[("send", &["late", "x", "phase"])]))
+            .expect("the timed fixture is JSON");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(timed_world::wire_field("y", "ix://filament/native/Clock"));
+    let document = serde_json::to_vec(&document).expect("serializes");
+    // The unreset y advances to 1 ms while x resets to zero. Upper bounds
+    // are the admitted invariant syntax, so y <= 0 removes phases 2 and 3.
+    let body = retx_body(
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 1 ms: 1 };\n\
+         workload One on M { weight Call::send = 1; }\n\
+         time invariant Filter when { self.phase >= 2 } { self.y <= 0 ms }\n",
+        &deadline_claim("Under", "under One", ">= 0.99", "eventually"),
+    );
+    let world = timed_world::world(&document, PROFILES, &body);
+    let ProductRefusal::NotMarkov(cause) = refusal(&world, "Under") else {
+        panic!("two filtered model posts still break the Markov condition");
+    };
+    assert_eq!(cause.post_states, 2);
+    let system = world.system();
+    let [initial] = <[_; 1]>::try_from(system.initial()).expect("one initial model state");
+    let actions = system.actions(&initial).expect("expands").expect("decided");
+    let draw = actions
+        .iter()
+        .flat_map(|action| &action.draws)
+        .find(|draw| draw.transition == cause.drawn_transition)
+        .expect("the actual draw identified by the refusal");
+    assert_eq!(
+        draw.successors.len(),
+        4,
+        "phase is unconstrained by the postcondition"
+    );
+    let expected = draw
+        .successors
+        .iter()
+        .filter(|(_, post)| {
+            let phase = post
+                .state()
+                .populations
+                .values()
+                .flat_map(|population| population.values())
+                .flat_map(|object| &object.fields)
+                .find(|(key, _)| key.node.ends_with("/phase"))
+                .map(|(_, value)| value)
+                .expect("a phase field");
+            let filament_exact::Value::Integer(phase) = phase else {
+                panic!("an integer phase: {phase:?}");
+            };
+            phase < &Integer::from(2_u64)
+        })
+        .map(|(_, post)| {
+            system
+                .state_key(post)
+                .expect("an actual model post-state")
+                .1
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(expected.len(), 2, "unreset y rules out phase 2 and 3");
+    assert_eq!(cause.post_state_examples, expected);
+    assert_ne!(cause.post_state_examples[0], cause.post_state_examples[1]);
+}
+
 /// FR-204-AC-3 (TC-639): delay admission is scoped to the selected subject
 /// model, so its own distribution is refused while another model's is ignored.
 #[trace("FR-204-AC-3", "TC-639")]
