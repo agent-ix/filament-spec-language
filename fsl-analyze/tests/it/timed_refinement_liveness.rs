@@ -1044,6 +1044,7 @@ fn guarded_poll(abstract_guard: &str, hidden: bool) -> Refining {
         "step M::Call::send -> A::Call::send(self);",
         "step M::Call::send -> A::Call::send(self);\n\
          step M::Call::poll -> A::Call::poll(self);\n\
+         assume fair weak M::Call::poll;\n\
          ensure fair weak A::Call::send;",
     );
     let world = refining(
