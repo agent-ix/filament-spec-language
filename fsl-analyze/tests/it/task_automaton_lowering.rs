@@ -800,7 +800,14 @@ fn an_en6_only_registry_keeps_unnamed_schedule_requests_bounded() {
         .expect("the real EN-6 descriptor");
     let selections: Vec<ItemSelection> =
         serde_json::from_value(json!([{"claim": "PairFp"}])).expect("a claim-only request");
-    for selections in [Some(selections.as_slice()), None] {
+    let named: Vec<ItemSelection> =
+        serde_json::from_value(json!([{"claim": "PairFp", "backend": "en-6"}]))
+            .expect("an explicit EN-6 request");
+    for (selections, backend_named) in [
+        (Some(selections.as_slice()), false),
+        (Some(named.as_slice()), true),
+        (None, false),
+    ] {
         let resolved = resolve_items(
             &world.package,
             &SubjectSelection::default(),
@@ -822,7 +829,7 @@ fn an_en6_only_registry_keeps_unnamed_schedule_requests_bounded() {
         assert_eq!(item.extent, ExtentClassification::Bounded);
         assert_eq!(item.candidates.len(), 1);
         assert_eq!(item.candidates[0].id().as_str(), "en-6");
-        assert!(item.backend.is_none(), "the caller named no backend");
+        assert_eq!(item.backend.is_some(), backend_named);
     }
 }
 
