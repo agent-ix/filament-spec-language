@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub(super) struct Inputs<'a, 'p> {
     pub(super) nodes: &'a Nodes<'p>,
-    pub(super) graph: &'a fsl_semantics::check::wire_id::WireGraph<'p>,
+    pub(super) graph: &'a fsl_semantics::check::wire_id::WireGraph,
 }
 
 struct NodeBytes<'a>(&'a filament_exact::NodeKey);
@@ -177,11 +177,7 @@ fn expression(
                     {
                         return Err(pending(root, "hyper-normal-form-operation"));
                     }
-                    if read.mode.is_some()
-                        || !read.laws.is_empty()
-                        || !read.constraints.is_empty()
-                        || !read.leaves.is_empty()
-                    {
+                    if read.mode.is_some() || !read.laws.is_empty() || !read.leaves.is_empty() {
                         return Err(pending(root, "hyper-normal-form-metadata"));
                     }
                     let member = match read.member {
@@ -206,6 +202,31 @@ fn expression(
                             identity.as_bytes().to_vec(),
                             member,
                             inputs.key(result_type, claim)?,
+                            encode(
+                                b"constraints",
+                                &read
+                                    .constraints
+                                    .iter()
+                                    .map(|constraint| {
+                                        encode(
+                                            format!("{:?}", constraint.kind).as_bytes(),
+                                            &[
+                                                constraint
+                                                    .operands
+                                                    .iter()
+                                                    .flat_map(|operand| operand.to_be_bytes())
+                                                    .collect(),
+                                                constraint
+                                                    .family
+                                                    .as_deref()
+                                                    .unwrap_or_default()
+                                                    .as_bytes()
+                                                    .to_vec(),
+                                            ],
+                                        )
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
                         ],
                     );
                     pending_work.push(Work::Finish {

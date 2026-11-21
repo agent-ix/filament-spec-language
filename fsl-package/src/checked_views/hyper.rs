@@ -269,12 +269,28 @@ impl BarePackage<'_> {
                         graph.key(expression).map_err(|_| malformed(claim))?,
                         0,
                     ));
+                    let regions: Vec<_> = package
+                        .source_map()
+                        .iter()
+                        .filter(|source| {
+                            source.node_id == *entry.node
+                                && source.role == CheckedOccurrenceRole::Expression
+                        })
+                        .flat_map(|source| &source.regions)
+                        .filter(|region| {
+                            region.source == row.declaration_region.source
+                                && region.start >= row.declaration_region.start
+                                && region.end <= row.declaration_region.end
+                        })
+                        .collect();
+                    let region = match regions.as_slice() {
+                        [only] => *only,
+                        _ => &row.declaration_region,
+                    };
                     PackageFormulaNode::Holds {
                         span: fsl_foundation::Span {
-                            start: usize::try_from(row.declaration_region.start)
-                                .map_err(|_| malformed(claim))?,
-                            end: usize::try_from(row.declaration_region.end)
-                                .map_err(|_| malformed(claim))?,
+                            start: usize::try_from(region.start).map_err(|_| malformed(claim))?,
+                            end: usize::try_from(region.end).map_err(|_| malformed(claim))?,
                         },
                     }
                 }

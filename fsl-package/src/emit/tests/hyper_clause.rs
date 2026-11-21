@@ -920,6 +920,8 @@ fn a_universal_package_hyper_form_rebuilds_equal_from_emitted_facts() {
         assert_eq!(rebuilt.aliases(), source.aliases());
         assert_eq!(rebuilt.parameters(), source.parameters());
         assert_eq!(rebuilt.quantifiers(), source.quantifiers());
+        assert_eq!(rebuilt.body(), source.body());
+        assert_eq!(rebuilt.operators(), source.operators());
         assert_eq!(
             rebuilt.form(),
             Some(&fsl_semantics::check::HyperForm::Universal)
@@ -930,7 +932,7 @@ fn a_universal_package_hyper_form_rebuilds_equal_from_emitted_facts() {
             [vec!["a".to_owned(), "b".to_owned()]]
         );
         assert_eq!(rebuilt.copy_group().generators[0].atoms, [0]);
-        assert_eq!(rebuilt.occurrence(), Some(root.occurrence()));
+        assert_eq!(rebuilt.assembled_occurrence(), Some(root.occurrence()));
         for (index, node) in rebuilt.body().nodes().iter().enumerate() {
             if matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }) {
                 let atom = fsl_semantics::check::FormulaNodeId::from_arena_index(index);
@@ -942,17 +944,28 @@ fn a_universal_package_hyper_form_rebuilds_equal_from_emitted_facts() {
     });
 }
 
-/// Names and levels alone do not belong to I2's hyper read; the package
-/// form refuses an unknown trace and duplicate atom-slot levels.
+/// The form refuses an unknown trace after strict admission. The pinned
+/// reader itself refuses duplicate slot levels before a form can be read.
 #[trace("FR-940-AC-19")]
 #[test]
-fn a_package_hyper_form_refuses_unknown_traces_and_duplicate_slot_levels() {
+fn a_package_hyper_form_refuses_unknown_traces_and_the_reader_refuses_duplicate_levels() {
     for defect in ["unknown-trace", "duplicate-level"] {
         let built = build(INFINITE, &["V"], PACKAGE_EQUAL);
         let mut changed = built.wire.clone();
         let nodes = changed["semantic_graph"]["nodes"]
             .as_array_mut()
             .expect("nodes");
+        let zero_level = binding(
+            &nodes
+                .iter()
+                .find(|node| {
+                    node["semantic_form"] == "parameter"
+                        && text(binding(&node["body"], "name")) == "slot_sc_sa"
+                })
+                .expect("a slot")["body"],
+            "level",
+        )
+        .clone();
         let target = nodes
             .iter_mut()
             .find(|node| {
@@ -965,22 +978,29 @@ fn a_package_hyper_form_refuses_unknown_traces_and_duplicate_slot_levels() {
         } else {
             "level"
         };
-        let value = if defect == "unknown-trace" {
-            "slot_sc_sz"
-        } else {
-            "0"
-        };
-        target["body"]["members"]
+        let member = target["body"]["members"]
             .as_array_mut()
             .expect("parameter members")
             .iter_mut()
             .find(|member| member["name"] == field)
-            .expect("slot member")["value"]["value"] = json!(value);
-        assert_eq!(
-            strict_verdict(&built, &changed),
-            None,
-            "strict reader admits {defect}"
-        );
+            .expect("slot member");
+        if defect == "unknown-trace" {
+            member["value"]["value"] = json!("slot_sc_sz");
+        } else {
+            // Keep the integer literal's admitted type as well as its value.
+            member["value"] = zero_level;
+        }
+        if defect == "duplicate-level" {
+            assert_eq!(
+                strict_verdict(&built, &changed),
+                Some((
+                    "InvalidSemanticGraph".to_owned(),
+                    "/semantic_graph/nodes/11/body/members/1".to_owned(),
+                ))
+            );
+            continue;
+        }
+        assert_eq!(strict_verdict(&built, &changed), None);
         let mut evidence = read_evidence(&built.emission);
         for document in &built.documents {
             evidence
