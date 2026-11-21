@@ -766,7 +766,7 @@ impl CheckedHyperClause {
             .map(ValueType::Reference)
             .collect();
         let domains = classify_domains(&roots.iter().collect::<Vec<_>>(), types, position_limit)
-            .map_err(|_| Domains)?;
+            .map_err(Domains)?;
         let identity = HyperIdentity {
             aliases: aliases.clone(),
             parameters: parameters.clone(),

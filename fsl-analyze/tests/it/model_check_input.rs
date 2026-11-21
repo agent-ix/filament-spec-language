@@ -104,6 +104,56 @@ fn the_package_route_input_builds_the_source_route_model_system() {
     assert!(over_bytes.source_package().is_none());
 }
 
+/// An operation parameter resolves its unit from authenticated source declarations.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn package_operation_parameters_read_admitted_unit_names() {
+    let mut model: serde_json::Value = serde_json::from_slice(&document(true)).expect("model JSON");
+    let counter = model["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|node| node["identity"] == "ix://test/counter/Counter")
+        .expect("Counter");
+    let set_to = counter["operations"]
+        .as_array_mut()
+        .expect("operations")
+        .iter_mut()
+        .find(|operation| operation["name"] == "setTo")
+        .expect("setTo");
+    set_to["params"][0]["typeRef"] = serde_json::json!("ix://filament/unit/ms");
+    let model = serde_json::to_vec(&model).expect("model bytes");
+    let (package, _) = package_with_clauses(
+        &model,
+        "dimension Time;\nunit ms : Time = rational(1, 1);\n",
+        &[],
+    );
+    let documents = Documents::new(model);
+    let handoff = handoff(&package, &documents);
+    let bare = bare(&handoff);
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the admitted unit names rebuild quantity-parameter operations");
+    let source = ModelCheckInput::source(&package);
+    assert_eq!(input.input().operations, source.operations);
+    let parameter = source
+        .types
+        .object_types()
+        .flat_map(|object| source.operations.declared_by(object.key()).iter())
+        .find(|operation| operation.name() == "setTo")
+        .expect("setTo remains declared");
+    assert!(
+        matches!(
+            &parameter.parameters()[0].1,
+            filament_exact::ValueType::Quantity(_)
+        ),
+        "{parameter:?}"
+    );
+}
+
 /// The class of each state `system` reaches from its initial states, in
 /// breadth-first order.
 fn terminal_classes(

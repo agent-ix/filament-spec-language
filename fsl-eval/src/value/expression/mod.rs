@@ -1583,10 +1583,15 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     ) -> Result<Evaluation, CallFailure>;
 
     /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
+    /// With `absent_population`, `over` is a reference to an absent instance:
+    /// constants evaluate normally, field reads are undefined and lookup retains
+    /// the key's population provenance (FR-125).
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -1627,10 +1632,13 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     ) -> Result<Evaluation, CallFailure>;
 
     /// Evaluate a model behaviour's activation guard with FR-107 model-read accounting.
+    /// `absent_population` applies the same absent key to both over and trigger
+    /// binders, at the slots their checked form actually reads (FR-125).
     fn evaluate_model_guard(
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -2672,10 +2680,12 @@ impl CheckedPackageEvaluation for CheckedPackage {
         .map_err(CallFailure::Fault)
     }
 
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -2683,7 +2693,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
     ) -> Result<Evaluation, CallFailure> {
         let (clause, condition, slots) = source_condition(self.graph(), atom)?;
         let reads = std::collections::BTreeMap::new();
-        Machine::with_pre(
+        let mut machine = Machine::with_pre(
             self.graph().scope(),
             self.graph(),
             objects,
@@ -2692,9 +2702,22 @@ impl CheckedPackageEvaluation for CheckedPackage {
             meter,
             self.graph().dispatch_tables(),
         )
-        .with_reference_bindings(reference_bindings)
-        .run(condition, slots, holds_bindings(clause, over, captures))
-        .map_err(CallFailure::Fault)
+        .with_reference_bindings(reference_bindings);
+        if let Some(population) = absent_population {
+            let Value::Reference(key) = &over else {
+                return Err(CallFailure::Fault(InternalFault::new(
+                    "FR-125",
+                    "absent-model-over-is-reference",
+                )));
+            };
+            machine = machine.with_absent_key(0, population.to_owned(), key.clone());
+            if clause.clause().trigger().is_some() {
+                machine = machine.with_absent_key(1, population.to_owned(), key.clone());
+            }
+        }
+        machine
+            .run(condition, slots, holds_bindings(clause, over, captures))
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_holds_traced(
@@ -2766,6 +2789,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -2776,7 +2800,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                 CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
             })?;
         let reads = std::collections::BTreeMap::new();
-        Machine::with_pre(
+        let mut machine = Machine::with_pre(
             self.graph().scope(),
             self.graph(),
             objects,
@@ -2785,9 +2809,21 @@ impl CheckedPackageEvaluation for CheckedPackage {
             meter,
             self.graph().dispatch_tables(),
         )
-        .with_reference_bindings(reference_bindings)
-        .run(guard, slots, vec![over.clone(), over])
-        .map_err(CallFailure::Fault)
+        .with_reference_bindings(reference_bindings);
+        if let Some(population) = absent_population {
+            let Value::Reference(key) = &over else {
+                return Err(CallFailure::Fault(InternalFault::new(
+                    "FR-125",
+                    "absent-model-over-is-reference",
+                )));
+            };
+            for slot in [0, 1] {
+                machine = machine.with_absent_key(slot, population.to_owned(), key.clone());
+            }
+        }
+        machine
+            .run(guard, slots, vec![over.clone(), over])
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_hyper_holds(
