@@ -23,19 +23,24 @@ use filament_exact::{
     EffectiveId, Identifier, Integer, Meter, ObjectReference, Outcome, Quantity, Rational, Value,
     ValueType,
 };
+use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::check::{CheckedProbabilisticModel, Reward, Workload};
+use fsl_semantics::check::{
+    CheckedProbabilisticModel, ProbabilisticOperation, ReadReward, Reward, Workload,
+};
 use fsl_semantics::model::observation::AdmissionFailure;
 
 use super::contracts::{verdict, Verdict};
 use super::domain::{Domain, Odometer};
 use super::encode::{value_enc, values_equal, Typing};
 use super::frames::{identity_bytes, text_of};
+use super::input::PackageRewards;
 use super::walk::{exhausted, expand_enabled, stop};
 use super::{refused, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::StateKey;
+use crate::value::ProjectedReward;
 
 /// A transition identity without its random arguments (ADR-024 PM-2): the
 /// operation, the receiver and the non-random arguments.
@@ -289,11 +294,16 @@ pub(super) struct Tables {
     /// Every reward name of the model, ascending, with the zero of its type
     /// (the type of its first declaration).
     names: Vec<(Identifier, Value)>,
+    /// Every reward of the model in canonical order.
+    rewards: Vec<RewardSlot>,
 }
 
 impl Tables {
     /// The tables of `model`.
-    pub(super) fn of(model: &CheckedProbabilisticModel) -> Result<Self, AdmissionFailure> {
+    pub(super) fn of(
+        model: &CheckedProbabilisticModel,
+        read_rewards: Option<&PackageRewards>,
+    ) -> Result<Self, AdmissionFailure> {
         let mut random: BTreeMap<(EffectiveId, String), Vec<RandomSupport>> = BTreeMap::new();
         for parameter in model.random_parameters() {
             let operation = parameter.operation();
@@ -317,10 +327,20 @@ impl Tables {
             supports.sort_by_key(|support| support.position);
         }
         let mut names: BTreeMap<String, Value> = BTreeMap::new();
-        for reward in model.rewards() {
+        // A package route's read rewards are projected one for one.
+        if read_rewards.map_or(0, PackageRewards::len) != model.read_rewards().len() {
+            return Err(super::fault("reward-projections"));
+        }
+        let rewards = DeclaredReward::order(model, read_rewards);
+        for reward in rewards
+            .iter()
+            .filter_map(|slot| DeclaredReward::at(*slot, model, read_rewards))
+        {
             if !names.contains_key(reward.name()) {
-                let zero =
-                    zero_of(reward.value_type()).ok_or_else(|| super::fault("reward-type"))?;
+                let value_type = reward
+                    .value_type()
+                    .ok_or_else(|| super::fault("reward-type"))?;
+                let zero = zero_of(value_type).ok_or_else(|| super::fault("reward-type"))?;
                 names.insert(reward.name().to_owned(), zero);
             }
         }
@@ -332,7 +352,11 @@ impl Tables {
                     .map_err(|_| super::fault("reward-name"))
             })
             .collect::<Result<_, _>>()?;
-        Ok(Self { random, names })
+        Ok(Self {
+            random,
+            names,
+            rewards,
+        })
     }
 
     /// The random parameter at `position` of the operation `name` that
@@ -353,6 +377,104 @@ impl Tables {
         self.random
             .get(&(declaring, name.to_owned()))
             .map_or(&[], Vec::as_slice)
+    }
+}
+
+/// A reward of the model as its route holds it: the source route's checked
+/// expression, or the record the package route reads back from a `reward`
+/// node, whose expression is a clause function of the package projected once.
+#[derive(Clone, Copy)]
+enum DeclaredReward<'m> {
+    Source(&'m Reward),
+    Read {
+        reward: &'m ReadReward,
+        projected: &'m PackageRewards,
+        index: usize,
+    },
+}
+
+/// Where a reward sits in its route's declarations.
+#[derive(Clone, Copy)]
+enum RewardSlot {
+    Source(usize),
+    Read(usize),
+}
+
+impl<'m> DeclaredReward<'m> {
+    /// Every reward of `model` in canonical order: by operation key, then
+    /// name. A package carries no declaration order, so both routes order
+    /// their rewards alike, and a model with several negative rewards
+    /// refuses at the same one on either.
+    fn order(
+        model: &'m CheckedProbabilisticModel,
+        read: Option<&'m PackageRewards>,
+    ) -> Vec<RewardSlot> {
+        let mut slots: Vec<RewardSlot> = (0..model.rewards().len())
+            .map(RewardSlot::Source)
+            .collect();
+        if read.is_some() {
+            slots.extend((0..model.read_rewards().len()).map(RewardSlot::Read));
+        }
+        slots.sort_by(|left, right| {
+            let (left, right) = (
+                Self::at(*left, model, read),
+                Self::at(*right, model, read),
+            );
+            match (left, right) {
+                (Some(left), Some(right)) => (left.operation().key(), left.name())
+                    .cmp(&(right.operation().key(), right.name())),
+                _ => std::cmp::Ordering::Equal,
+            }
+        });
+        slots
+    }
+
+    /// The reward at `slot`.
+    fn at(
+        slot: RewardSlot,
+        model: &'m CheckedProbabilisticModel,
+        read: Option<&'m PackageRewards>,
+    ) -> Option<Self> {
+        match slot {
+            RewardSlot::Source(index) => model.rewards().get(index).map(Self::Source),
+            RewardSlot::Read(index) => Some(Self::Read {
+                reward: model.read_rewards().get(index)?,
+                projected: read?,
+                index,
+            }),
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::Source(reward) => reward.name(),
+            Self::Read { reward, .. } => &reward.name,
+        }
+    }
+
+    fn operation(&self) -> &ProbabilisticOperation {
+        match self {
+            Self::Source(reward) => reward.operation(),
+            Self::Read { reward, .. } => &reward.operation,
+        }
+    }
+
+    /// The operation's parameters, each with its type, in slot order.
+    fn parameters(&self) -> &[(String, ValueType)] {
+        match self {
+            Self::Source(reward) => reward.parameters(),
+            Self::Read { reward, .. } => &reward.parameters,
+        }
+    }
+
+    /// The type of the value the reward computes.
+    fn value_type(&self) -> Option<&ValueType> {
+        match self {
+            Self::Source(reward) => Some(reward.value_type()),
+            Self::Read {
+                projected, index, ..
+            } => projected.reward(*index).map(ProjectedReward::value_type),
+        }
     }
 }
 
@@ -413,10 +535,17 @@ impl ModelSystem<'_> {
         }
     }
 
+    /// Every reward of the model, in canonical order.
+    fn declared_rewards(&self) -> impl Iterator<Item = DeclaredReward<'_>> {
+        self.probabilistic.rewards.iter().filter_map(|slot| {
+            DeclaredReward::at(*slot, self.declarations(), self.input.read_rewards)
+        })
+    }
+
     /// The reward `reward` evaluated on `arguments`.
     fn reward_value_with_cancel(
         &self,
-        reward: &Reward,
+        reward: DeclaredReward<'_>,
         arguments: Vec<Value>,
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<Value, ExpansionStop> {
@@ -424,10 +553,18 @@ impl ModelSystem<'_> {
         if let Some(cancel) = cancel {
             meter = meter.with_cancel(cancel.clone());
         }
-        let evaluation = self
-            .evaluator()
-            .evaluate_reward(reward, arguments, &mut meter)
-            .map_err(|_| stop(BROKEN))?;
+        let evaluation = match reward {
+            DeclaredReward::Source(reward) => self
+                .evaluator()
+                .evaluate_reward(reward, arguments, &mut meter),
+            DeclaredReward::Read {
+                projected, index, ..
+            } => projected
+                .reward(index)
+                .ok_or(InternalFault::new("FR-187", "reward-is-projected"))
+                .and_then(|reward| reward.evaluate(projected.world(), arguments, &mut meter)),
+        }
+        .map_err(|_| stop(BROKEN))?;
         if let filament_eval::FamilyOutcome::Evaluated(Outcome::Completed(value)) =
             &evaluation.outcome
         {
@@ -455,7 +592,7 @@ impl ModelSystem<'_> {
             .names
             .iter()
             .map(|(reward_name, zero)| {
-                let declared = self.declarations().rewards().iter().find(|reward| {
+                let declared = self.declared_rewards().find(|reward| {
                     reward.operation().declaring() == declaring
                         && reward.operation().name() == name
                         && reward.name() == reward_name.as_str()
@@ -492,7 +629,7 @@ impl ModelSystem<'_> {
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<(), AdmissionFailure> {
         let mut budget = 0u64;
-        for reward in self.declarations().rewards() {
+        for reward in self.declared_rewards() {
             let operation = reward.operation();
             let domains: Option<Vec<Domain>> = reward
                 .parameters()

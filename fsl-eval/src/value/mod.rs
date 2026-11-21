@@ -103,7 +103,9 @@ pub use expression::{
     evaluate_state_predicate_with, evaluate_terminal_predicate, input_refusal_code, refusal_record,
     supplied_stop_cause, supplied_stop_code, undefined_contract_code,
 };
-pub use expression::{PackageOperations, bare_evaluate_frame};
+pub use expression::{
+    PackageOperations, ProjectedReward, bare_evaluate_frame,
+};
 
 #[cfg(test)]
 mod map_order_tests {
