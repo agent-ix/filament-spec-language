@@ -1287,7 +1287,7 @@ fn native_invocation_gate_precedes_contract_evaluation() {
         NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
     };
     let world = native_plan_world(
-        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Counter { value: Int[0,3]; operation apply(): Boolean modifies self.value; } population counters: Counter;",
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,3]; object Counter { value: ValueRange; operation apply(): Boolean modifies self.value; } population counters: Counter;",
         "post Applied using v on M::Counter::apply { self.value = pre(self.value) + 1 }\n",
         &[("c", json!({"value":{"integer":"0"}}))]);
     let system = world_system(&world);
@@ -1327,7 +1327,7 @@ fn rejected_native_frame_trials_do_not_become_extra_invocations() {
     };
     let mut charges = Vec::new();
     for upper in [1, 3] {
-        let model = format!("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Counter {{ value: Int[0,{upper}]; operation apply(): Boolean modifies self.value; }} population counters: Counter;");
+        let model = format!("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,{upper}]; object Counter {{ value: ValueRange; operation apply(): Boolean modifies self.value; }} population counters: Counter;");
         let world = native_plan_world(
             &model,
             "post Applied using v on M::Counter::apply { self.value = 1 }\n",
@@ -1376,7 +1376,7 @@ fn native_invocations_follow_operation_receiver_and_typed_argument_order() {
         NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
     };
     let world = native_plan_world(
-        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Counter { value: Int[0,0]; operation zeta(amount: Int[2,10]); operation alpha(amount: Int[2,10]); } population counters: Counter;",
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,0]; type ArgumentRange = Int[2,10]; object Counter { value: ValueRange; operation zeta(amount: ArgumentRange); operation alpha(amount: ArgumentRange); } population counters: Counter;",
         "", &[("9",json!({"value":{"integer":"0"}})),("10",json!({"value":{"integer":"0"}}))]);
     let system = ModelSystem::new(world.subject(&["9", "10"], UNLIMITED).simulation)
         .expect("both native receivers admit");
@@ -1431,7 +1431,7 @@ fn native_outcomes_keep_all_results_in_result_then_state_order() {
         NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
     };
     let world = native_plan_world(
-        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Counter { value: Int[0,2]; operation choose(): Boolean modifies self.value; } population counters: Counter;",
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,2]; object Counter { value: ValueRange; operation choose(): Boolean modifies self.value; } population counters: Counter;",
         "post Chosen using v on M::Counter::choose { (not result and self.value >= 1) or (result and self.value <= 1) }\n",
         &[("c",json!({"value":{"integer":"0"}}))]);
     let system = world_system(&world);
@@ -1470,7 +1470,7 @@ fn native_outcomes_keep_all_results_in_result_then_state_order() {
 fn native_replay_and_certificate_bind_each_multiple_outcome_ordinal() {
     use fsl_analyze::plan_search::replay;
     let world = native_plan_world(
-        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Counter { value: Int[0,2]; operation choose(): Boolean modifies self.value; } population counters: Counter;",
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,2]; object Counter { value: ValueRange; operation choose(): Boolean modifies self.value; } population counters: Counter;",
         "post Chosen using v on M::Counter::choose { (not result and self.value >= 1) or (result and self.value <= 1) }\n",
         &[("c",json!({"value":{"integer":"0"}}))]);
     let system = world_system(&world);
@@ -1555,7 +1555,7 @@ fn native_replay_and_certificate_bind_each_multiple_outcome_ordinal() {
 fn native_replay_refuses_single_outcome_ordinals_and_wrong_receivers() {
     use fsl_analyze::plan_search::replay;
     let world = native_plan_world(
-        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Counter { value: Int[0,1]; operation settle() modifies self.value; } object Other { value: Int[0,1]; } population counters: Counter;",
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,1]; object Counter { value: ValueRange; operation settle() modifies self.value; } object Other { value: ValueRange; } population counters: Counter;",
         "post Set using v on M::Counter::settle { self.value = 1 }\n",
         &[("c",json!({"value":{"integer":"0"}}))]);
     let system = world_system(&world);
@@ -1630,7 +1630,7 @@ fn native_outcome_collection_names_its_retained_value_limit() {
     };
     use fsl_eval::simulation::ExpansionLimit;
     let world = native_plan_world(
-        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Counter { value: Int[0,1]; operation choose(): Boolean modifies self.value; } population counters: Counter;",
+        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,1]; object Counter { value: ValueRange; operation choose(): Boolean modifies self.value; } population counters: Counter;",
         "", &[("c",json!({"value":{"integer":"0"}}))]);
     for bound in [6, 21] {
         let system = world_system(&world);

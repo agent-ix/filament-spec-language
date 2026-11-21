@@ -2510,7 +2510,7 @@ fn a_plan_goal_reads_finite_arguments_and_step_before_and_after() {
 domain "example/config-version";
 type Amount = Int[0,3];
 object ConfigVersion {
-  versionNumber: Int[0,3];
+  versionNumber: Amount;
   parent: ConfigVersion?;
   operation assign(amount: Amount, accepted: Boolean): Boolean modifies self.versionNumber;
 }
