@@ -251,7 +251,6 @@ type ExpectedType = Box<dyn Fn(&CheckedGraph) -> ValueType>;
 /// collection types the destination multiplicity gives; none refuses.
 #[trace("TC-1901", "FR-363-AC-7")]
 #[test]
-#[ignore = "QSL-2179: navigation over unbounded and ordered relationship ends not implemented yet"]
 fn unbounded_and_ordered_ends_navigate_to_their_collection_types() {
     let cases: [(&str, &str, ExpectedType); 6] = [
         (
@@ -331,7 +330,6 @@ fn unbounded_and_ordered_ends_navigate_to_their_collection_types() {
 /// `unsupported_construct`.
 #[trace("TC-1901", "FR-363-AC-4")]
 #[test]
-#[ignore = "QSL-2179: navigation over a multiplicity-less end refuses ill_typed/operator-ineligible not implemented yet"]
 fn a_multiplicity_less_end_refuses_as_operator_ineligible() {
     assert_one_refusal(
         check_invariant(multiplicity_package(), "Order", "size(self.notes) >= 0"),
@@ -345,7 +343,6 @@ fn a_multiplicity_less_end_refuses_as_operator_ineligible() {
 /// multiplicity-less end of the receiver's own type checks as `Boolean`.
 #[trace("TC-1903", "FR-365-AC-3")]
 #[test]
-#[ignore = "QSL-2179: reaches over unbounded, ordered and multiplicity-less ends not implemented yet"]
 fn reaches_admits_every_destination_multiplicity() {
     for end in ["later", "ranked", "bare"] {
         let body = format!("not reaches(self, self, {end})");

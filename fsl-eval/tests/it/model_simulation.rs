@@ -2633,7 +2633,7 @@ fn float_snapshot(world: &mut World, name: &str, overrides: Json) -> DocumentRef
 
 #[trace("TC-3006", "FR-056-AC-60")]
 #[test]
-#[ignore = "QSL-2176: float model fields explored by their IEEE bits, with a float equation solved by numericEqual, not implemented yet"]
+#[ignore = "QSL-2176: the explored float model yields no IEEE-bits state where the test expects [13830554455654793216] (model_simulation.rs:2647)"]
 fn a_float_field_model_explores_by_its_ieee_bits() {
     let mut world = float_world();
     let one = float_start(&mut world, "one", "3ff0000000000000");

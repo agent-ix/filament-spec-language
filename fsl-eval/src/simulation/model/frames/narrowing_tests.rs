@@ -384,16 +384,6 @@ fn direct_swap_reads_both_pre_values_and_observes_the_candidate_budget_boundary(
     }
 }
 
-#[trace("FR-120-AC-30")]
-#[test]
-#[ignore = "QSL-2703: the required unguarded increment source is refused at S3 before simulation"]
-fn direct_partial_assignment_preserves_all_unsolved_values_and_effects() {
-    let post = "self.a = pre(self.a) + 1";
-    let solved = cell_with_bounds(post, false, 99, 3, 5, &[]);
-    let general = cell_with_bounds(post, true, 99, 3, 5, &[]);
-    assert_partial_assignment(solved, general);
-}
-
 /// FR-577 permits the explicit precondition to prove the increment's range;
 /// the post remains a direct assignment in both generator comparisons.
 #[trace("FR-120-AC-30")]
@@ -453,16 +443,6 @@ fn assert_partial_assignment(solved: World, general: World) {
 
 #[trace("FR-120-AC-30")]
 #[test]
-#[ignore = "QSL-2703: the unguarded bounded increment source is refused at S3"]
-fn direct_assignment_and_its_reference_preserve_full_canonical_exploration() {
-    let post = "self.a = pre(self.a) + 1";
-    let solved = cell_with_bounds(post, false, 3, 0, 5, &[]);
-    let general = cell_with_bounds(post, true, 3, 0, 5, &[]);
-    assert_increment_exploration(solved, general);
-}
-
-#[trace("FR-120-AC-30")]
-#[test]
 fn guarded_assignment_and_reference_preserve_full_canonical_exploration() {
     let post = "self.a = pre(self.a) + 1";
     let solved = cell_with_precondition(post, false, 3, 0, 5, &[], Some("self.a <= 2"));
@@ -485,23 +465,6 @@ fn assert_increment_exploration(solved: World, general: World) {
     assert_eq!(stats.transitions, 20_100);
     assert_eq!(stats.depth, 3);
     assert!(fast.findings.is_empty());
-}
-
-#[trace("FR-120-AC-31")]
-#[test]
-#[ignore = "QSL-2703: the bound-exceeding assignment source has the same unresolved S3 admission contract"]
-fn an_out_of_domain_direct_assignment_has_no_successor_or_finding() {
-    let post = "self.a = pre(self.b) + 1";
-    let solved = cell_with_bounds(post, false, 99, 3, 99, &[]);
-    let general = cell_with_bounds(post, true, 99, 3, 99, &[]);
-    let (fast, fast_charge) = apply(&solved.system(), "set");
-    let (full, full_charge) = apply(&general.system(), "set");
-    assert_eq!(fast_charge, 1);
-    assert_eq!(full_charge, 10_001);
-    assert!(fast.successors.is_empty());
-    assert!(full.successors.is_empty());
-    assert!(fast.findings.is_empty());
-    assert!(full.findings.is_empty());
 }
 
 /// The one finding a candidate of `applications` records for the

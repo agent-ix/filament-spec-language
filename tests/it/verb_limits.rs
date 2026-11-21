@@ -11,7 +11,7 @@ use serde_json::json;
 /// FR-869-AC-1: a request file one byte over 1 MiB.
 #[test]
 #[trace("TC-2461", "FR-869-AC-1")]
-#[ignore = "QSL-2190: compile's request_bytes refusal naming --request-bytes is not implemented yet"]
+#[ignore = "QSL-2190: compile exhausts at status 22 (resource_exhausted) instead of the request_bytes refusal naming --request-bytes (status 20)"]
 fn a_compile_request_over_its_ceiling_names_the_option() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::copy(
