@@ -6,27 +6,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fsl_eval::hyper::{ClosedExecution, ParameterBinding, Tuples};
-use fsl_eval::simulation::{Permutation, StateKey};
+use fsl_eval::simulation::Permutation;
 use fsl_replay::{HyperOutcome, ModelCheckLimit};
 
 use super::super::{exhausted, fault, reduce, widen, Run, Totals};
 use crate::model_check::ModelCheckRefusal;
 
-/// A concrete path and whether its last position is a cut predecessor,
-/// rather than a terminal or horizon-covering closed execution.
-pub(super) struct Execution {
-    pub(super) path: ClosedExecution,
-    pub(super) boundary: bool,
-}
-
 /// A path's actual state and incoming step at each position. An absent
 /// incoming step distinguishes the initial position from every real step.
-type Position = (StateKey, Option<(Vec<u8>, bool)>);
+type Position = (Vec<u8>, Option<(Vec<u8>, bool)>);
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 struct PathKey {
     positions: Vec<Position>,
-    boundary: bool,
 }
 
 /// Joint positions compare the component keys in quantifier order. A terminal
@@ -34,12 +26,16 @@ struct PathKey {
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct TupleKey {
     positions: Vec<Vec<Option<Position>>>,
-    boundaries: Vec<Option<usize>>,
 }
 
 pub(super) struct Representative {
     pub(super) picked: Vec<usize>,
-    pub(super) boundary: Option<TupleKey>,
+    pub(super) orbit: Vec<Vec<usize>>,
+}
+
+pub(super) struct Quotient {
+    pub(super) representatives: Vec<Representative>,
+    paths: Vec<Vec<PathKey>>,
 }
 
 impl Run<'_, '_> {
@@ -48,10 +44,10 @@ impl Run<'_, '_> {
     /// silently discard a tuple or produce a false proof.
     pub(super) fn closed_quotient(
         &self,
-        lists: &[Vec<Execution>],
+        lists: &[Vec<ClosedExecution>],
         instance: &[ParameterBinding],
         totals: &mut Totals,
-    ) -> Result<Result<Vec<Representative>, HyperOutcome>, ModelCheckRefusal> {
+    ) -> Result<Result<Quotient, HyperOutcome>, ModelCheckRefusal> {
         let mut paths = Vec::with_capacity(lists.len());
         let mut lookups = Vec::with_capacity(lists.len());
         for (subject, list) in lists.iter().enumerate() {
@@ -143,30 +139,15 @@ impl Run<'_, '_> {
                 next += 1;
             }
             let mut least = None;
-            let mut boundary = None;
-            for member in orbit {
-                let key = self.closed_tuple_key(&member, &paths, None)?;
+            for member in &orbit {
+                let key = self.closed_tuple_key(member, &paths, None)?;
                 if least.as_ref().is_none_or(|(known, _)| key < *known) {
                     least = Some((key, member.clone()));
-                }
-                let at = member
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(component, index)| {
-                        let path = &paths[self.slots[component]][*index];
-                        path.boundary.then_some(path.positions.len() - 1)
-                    })
-                    .min();
-                if let Some(at) = at {
-                    let key = self.closed_tuple_key(&member, &paths, Some(at))?;
-                    if boundary.as_ref().is_none_or(|known| key < *known) {
-                        boundary = Some(key);
-                    }
                 }
             }
             represented.extend(seen);
             let (key, picked) = least.ok_or_else(|| fault("a-closed-orbit-has-a-member"))?;
-            canonical.insert(key, Representative { picked, boundary });
+            canonical.insert(key, Representative { picked, orbit });
             if canonical.len() > self.request.limits.limits.max_states {
                 return Ok(Err(exhausted(
                     ModelCheckLimit::MaxStates,
@@ -175,7 +156,28 @@ impl Run<'_, '_> {
                 )));
             }
         }
-        Ok(Ok(canonical.into_values().collect()))
+        Ok(Ok(Quotient {
+            representatives: canonical.into_values().collect(),
+            paths,
+        }))
+    }
+
+    /// The least concrete predecessor prefix under the same diagonal and
+    /// copy action, independent of which component's successor was cut.
+    pub(super) fn closed_boundary_key(
+        &self,
+        representative: &Representative,
+        quotient: &Quotient,
+        at: usize,
+    ) -> Result<TupleKey, ModelCheckRefusal> {
+        let mut least = None;
+        for member in &representative.orbit {
+            let key = self.closed_tuple_key(member, &quotient.paths, Some(at))?;
+            if least.as_ref().is_none_or(|known| key < *known) {
+                least = Some(key);
+            }
+        }
+        least.ok_or_else(|| fault("a-closed-boundary-orbit-has-a-predecessor"))
     }
 
     /// Charge both tuple enumeration and generator applications. The finite
@@ -203,15 +205,15 @@ impl Run<'_, '_> {
     fn closed_path_key(
         &self,
         subject: usize,
-        execution: &Execution,
+        execution: &ClosedExecution,
         permutation: &Permutation,
     ) -> Result<PathKey, ModelCheckRefusal> {
         let system = self
             .systems
             .get(subject)
             .ok_or_else(|| fault("a-closed-path-has-a-subject"))?;
-        let mut positions = Vec::with_capacity(execution.path.states.len());
-        for (position, state) in execution.path.states.iter().enumerate() {
+        let mut positions = Vec::with_capacity(execution.states.len());
+        for (position, state) in execution.states.iter().enumerate() {
             let state = system
                 .permute(state, permutation)
                 .map_err(|_| fault("a-closed-key-permutation-preserves-state-encoding"))?;
@@ -221,7 +223,7 @@ impl Run<'_, '_> {
                 .0;
             let incoming = position
                 .checked_sub(1)
-                .and_then(|index| execution.path.steps.get(index))
+                .and_then(|index| execution.steps.get(index))
                 .map(|step| {
                     let transition = system
                         .permute_transition(&step.transition, permutation)
@@ -237,10 +239,7 @@ impl Run<'_, '_> {
         if positions.is_empty() {
             return Err(fault("a-closed-path-has-an-initial-state"));
         }
-        Ok(PathKey {
-            positions,
-            boundary: execution.boundary,
-        })
+        Ok(PathKey { positions })
     }
 
     fn closed_tuple_key(
@@ -277,19 +276,6 @@ impl Run<'_, '_> {
                     .collect()
             })
             .collect();
-        // A boundary identifies its predecessor, independently of which
-        // component or how many successors were cut there.
-        let boundaries = if through.is_some() {
-            Vec::new()
-        } else {
-            components
-                .iter()
-                .map(|path| path.boundary.then_some(path.positions.len() - 1))
-                .collect()
-        };
-        Ok(TupleKey {
-            positions,
-            boundaries,
-        })
+        Ok(TupleKey { positions })
     }
 }

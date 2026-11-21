@@ -31,10 +31,11 @@ use std::collections::BTreeSet;
 
 use filament_exact::LimitKind;
 use fsl_eval::hyper::{
-    closed_executions, constrained_closed_executions, horizon, judge_closed_tuple, search_partner,
-    ClosedExecution, ClosedInputs, ClosedStop, ClosedVerdict, ConstrainedClosedStop,
-    ParameterBinding, PartnerSearch, Tuples,
+    closed_executions, horizon, judge_closed_tuple, match_closed_step, search_partner,
+    ClosedExecution, ClosedInputs, ClosedStop, ClosedVerdict, MatchReading, ParameterBinding,
+    PartnerSearch, Tuples,
 };
+use fsl_eval::simulation::ConstraintValue;
 use fsl_replay::{
     AppliedReduction, HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep,
     HyperTrace, IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark,
@@ -43,7 +44,6 @@ use fsl_replay::{
 
 use super::{exhausted, fault, stopped, widen, Ending, HyperRefusal, Run, Totals};
 use crate::model_check::ModelCheckRefusal;
-use reduction::Execution;
 
 /// What reading one tuple or searching one universal tuple ended with.
 enum Reading {
@@ -52,6 +52,14 @@ enum Reading {
     /// The tuple is a counterexample at this position.
     Refuted(u64),
     /// The run ended with this outcome.
+    Ended(HyperOutcome),
+}
+
+enum ConstraintReading {
+    Allowed,
+    Unmatched,
+    Cut(usize),
+    Stopped(ClosedVerdict),
     Ended(HyperOutcome),
 }
 
@@ -177,52 +185,16 @@ impl Run<'_, '_> {
         let selected = self.symmetric || self.request.reductions.constraint.is_some();
         let mut lists = Vec::with_capacity(self.systems.len());
         for (subject, system) in self.systems.iter().enumerate() {
-            let found = if let Some(constraint) = &self.request.reductions.constraint {
-                constrained_closed_executions(
-                    system,
-                    depth,
-                    limits.max_states,
-                    &BTreeSet::new(),
-                    constraint,
-                    self.cancel,
-                )
-            } else {
-                closed_executions(
-                    system,
-                    depth,
-                    limits.max_states,
-                    &BTreeSet::new(),
-                    self.cancel,
-                )
-                .map(|complete| fsl_eval::hyper::ConstrainedClosedExecutions {
-                    complete,
-                    boundaries: Vec::new(),
-                })
-                .map_err(ConstrainedClosedStop::Enumeration)
-            };
-            let found = match found {
-                Ok(found) => found,
-                Err(ConstrainedClosedStop::Enumeration(stop)) => {
-                    return self.closed_stop(stop, subject, &totals);
-                }
-                Err(ConstrainedClosedStop::Undefined(cause)) => {
-                    return Err(HyperRefusal::ConstraintUndefined { cause }.into());
-                }
-            };
-            lists.push(
-                found
-                    .complete
-                    .into_iter()
-                    .map(|path| Execution {
-                        path,
-                        boundary: false,
-                    })
-                    .chain(found.boundaries.into_iter().map(|path| Execution {
-                        path,
-                        boundary: true,
-                    }))
-                    .collect::<Vec<_>>(),
-            );
+            match closed_executions(
+                system,
+                depth,
+                limits.max_states,
+                &BTreeSet::new(),
+                self.cancel,
+            ) {
+                Ok(found) => lists.push(found),
+                Err(stop) => return self.closed_stop(stop, subject, &totals),
+            }
         }
         totals.depth = depth;
         let clause = self.request.clause;
@@ -230,13 +202,13 @@ impl Run<'_, '_> {
         let mut reductions = Vec::new();
         let mut boundaries = BTreeSet::new();
         for instance in instances {
-            let tuples = if selected {
+            let mut quotient = if selected {
                 match self.closed_quotient(&lists, instance, &mut totals)? {
-                    Ok(tuples) => tuples,
+                    Ok(quotient) => Some(quotient),
                     Err(outcome) => return Ok(outcome),
                 }
             } else {
-                Vec::new()
+                None
             };
             let inputs = ClosedInputs {
                 clause,
@@ -249,13 +221,14 @@ impl Run<'_, '_> {
             let lens = self.slots.iter().map(|slot| lists[*slot].len()).collect();
             let ordinary = Tuples::over(lens).map(|picked| reduction::Representative {
                 picked,
-                boundary: None,
+                orbit: Vec::new(),
             });
-            let tuples: Box<dyn Iterator<Item = reduction::Representative>> = if selected {
-                Box::new(tuples.into_iter())
-            } else {
-                Box::new(ordinary)
-            };
+            let tuples: Box<dyn Iterator<Item = reduction::Representative>> =
+                if let Some(quotient) = &mut quotient {
+                    Box::new(std::mem::take(&mut quotient.representatives).into_iter())
+                } else {
+                    Box::new(ordinary)
+                };
             for representative in tuples {
                 if self.cancel.poll() {
                     return self.cancelled(&totals);
@@ -270,12 +243,35 @@ impl Run<'_, '_> {
                     }
                     totals.edges += 1;
                 }
-                if let Some(boundary) = representative.boundary {
-                    // Each instance has its own product; identical state bytes
-                    // under two distinct object bindings are distinct boundaries.
-                    boundaries.insert((Self::instance_of(instance), boundary));
-                    totals.boundary = widen(boundaries.len());
-                    continue;
+                let mut tuple = Vec::with_capacity(representative.picked.len());
+                for (variable, index) in representative.picked.iter().enumerate() {
+                    let execution = self
+                        .slots
+                        .get(variable)
+                        .and_then(|slot| lists.get(*slot))
+                        .and_then(|list| list.get(*index))
+                        .ok_or_else(|| fault("a-reduced-closed-representative-is-a-real-tuple"))?;
+                    tuple.push(execution);
+                }
+                match self.closed_constraint(&inputs, &tuple, &totals)? {
+                    ConstraintReading::Allowed => {}
+                    ConstraintReading::Unmatched => continue,
+                    ConstraintReading::Ended(outcome) => return Ok(outcome),
+                    ConstraintReading::Stopped(verdict) => {
+                        match self.stopped_reading(verdict, &totals)? {
+                            Reading::Ended(outcome) => return Ok(outcome),
+                            _ => return Err(fault("a-stopped-constraint-ends-the-item")),
+                        }
+                    }
+                    ConstraintReading::Cut(at) => {
+                        let quotient = quotient
+                            .as_ref()
+                            .ok_or_else(|| fault("a-constraint-has-a-closed-quotient"))?;
+                        let boundary = self.closed_boundary_key(&representative, quotient, at)?;
+                        boundaries.insert((Self::instance_of(instance), boundary));
+                        totals.boundary = widen(boundaries.len());
+                        continue;
+                    }
                 }
                 if totals.states >= widen(limits.max_states) {
                     return Ok(exhausted(
@@ -285,19 +281,6 @@ impl Run<'_, '_> {
                     ));
                 }
                 totals.states += 1;
-                let mut tuple = Vec::with_capacity(representative.picked.len());
-                for (variable, index) in representative.picked.iter().enumerate() {
-                    let execution = self
-                        .slots
-                        .get(variable)
-                        .and_then(|slot| lists.get(*slot))
-                        .and_then(|list| list.get(*index))
-                        .ok_or_else(|| fault("a-reduced-closed-representative-is-a-real-tuple"))?;
-                    if execution.boundary {
-                        return Err(fault("a-boundary-prefix-is-never-read-as-a-closed-trace"));
-                    }
-                    tuple.push(&execution.path);
-                }
                 match self.tuple_reading(
                     judge_closed_tuple(&inputs, &tuple),
                     &mut matched,
@@ -351,6 +334,69 @@ impl Run<'_, '_> {
             reductions,
             stats: totals.stats(),
         })
+    }
+
+    /// Only component enumeration precedes this product admission. At a joint
+    /// position the entering match is read before its constraint, exactly as
+    /// in the infinite product. A cut names the concrete predecessor prefix;
+    /// no body evaluation reads the excluded state as a terminal trace.
+    fn closed_constraint(
+        &self,
+        inputs: &ClosedInputs<'_>,
+        tuple: &[&ClosedExecution],
+        totals: &Totals,
+    ) -> Result<ConstraintReading, ModelCheckRefusal> {
+        let Some(constraint) = &self.request.reductions.constraint else {
+            return Ok(ConstraintReading::Allowed);
+        };
+        let positions = tuple
+            .iter()
+            .map(|path| path.states.len())
+            .max()
+            .unwrap_or(0);
+        for position in 0..positions {
+            if position > 0 && !inputs.clause.mu_universal().is_empty() {
+                match match_closed_step(inputs, tuple, tuple.len(), position, false) {
+                    Ok(MatchReading::Holds) => {}
+                    Ok(MatchReading::Fails) => return Ok(ConstraintReading::Unmatched),
+                    Ok(_) => {
+                        return Ok(ConstraintReading::Stopped(ClosedVerdict::MatchUndetermined))
+                    }
+                    Err(verdict) => return Ok(ConstraintReading::Stopped(verdict)),
+                }
+            }
+            let mut cut = false;
+            for (component, path) in tuple.iter().enumerate() {
+                let Some(state) = path.states.get(position) else {
+                    continue;
+                };
+                let system = self
+                    .slots
+                    .get(component)
+                    .and_then(|slot| self.systems.get(*slot))
+                    .ok_or_else(|| fault("a-closed-constraint-has-a-component-system"))?;
+                match system.constraint_value(state, constraint) {
+                    Ok(ConstraintValue::Holds) => {}
+                    Ok(ConstraintValue::Boundary) => cut = true,
+                    Ok(ConstraintValue::Undefined { cause, .. }) => {
+                        return Err(HyperRefusal::ConstraintUndefined { cause }.into());
+                    }
+                    Err(stop) => {
+                        let ending = self.expansion_ending(Some(component), stop)?;
+                        return match ending {
+                            Ending::Complete => Err(fault("a-stopped-constraint-expansion-stops")),
+                            Ending::Stopped(cause, limit, count) => Ok(ConstraintReading::Ended(
+                                stopped(cause, limit, count, totals),
+                            )),
+                        };
+                    }
+                }
+            }
+            if cut {
+                return Ok(ConstraintReading::Cut(position.saturating_sub(1)));
+            }
+        }
+        Ok(ConstraintReading::Allowed)
     }
 
     /// The reading of an HP-2 tuple's verdict.
