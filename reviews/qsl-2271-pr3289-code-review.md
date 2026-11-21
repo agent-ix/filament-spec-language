@@ -151,7 +151,27 @@ Checked source namespace resolution and protocol declaration ownership against d
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-002 | still-open | Newly exposed malformed-subject branches differ from source at frozen 5d3de7a. Align the new deadlock route with source while retaining race behavior, and verify both absent and mismatched protocol subjects. |
+| FND-002 | fixed | The DeadlockFreedom-only guard returns shared invalid_value for missing and mismatched protocol subjects before the old race-path branches. Verified statically at 49f66b3. |
+| FND-003 | still-open | Valid package requests fail S4 admission; the round-2 delta does not change that path. Runtime parity and the new invalid-subject test remain unverified. |
 
 ## Round 1 verdict
 
 CONDITIONAL; not mergeable while FND-002 remains open. No other defect found in the bounded fix delta.
+
+## Disposition round 2 scope
+
+Reviewed only the executable delta 5d3de7a37ee2986b05109eb3701851392e3460c0..49f66b37fbcc62139af3e520f8e7b5c1eb08faed. The added guard recognizes only DeadlockFreedom and returns the shared invalid_value helper for absent or mismatched protocol subjects. The race route retains its prior branches. The added three-case malformed-subject test checks category refusal, exact invalid_runtime_input/invalid-value diagnostic with member, absence of exploration, exit 20, and full source/package item parity after deleting the source file.
+
+FND-002 is fixed by static inspection: the new guard precedes both differing old branches and matches source document.rs:2100-2119. No runtime pass is claimed. The new invalid-subject test also constructs the package through package_request/package_selection and analyzes that package; it crosses S4 admission before reaching the resolver. Thus its assertions cannot verify the guard until admission succeeds. The capacity case is supplementary existing-helper coverage, not evidence of execution here.
+
+New runtime evidence supplied by the lead: all four valid terminal tests at 5d3de7a failed on the package route before items, last_stage S4, code unknown_required_feature, cause unsupported-feature, details.reason missing-type-representation. Source records were valid. Evidence: /tmp/protocol-3289-fix1-inbox.txt. This round changes only resolver guarding and a test, so it does not repair that earlier admission failure. Root cause is being traced by the coder; this review does not infer its location or waive the failure. No Cargo, runtime, matrix or full gate was run in this review round. QSL-2271 remains In Progress.
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | high | The valid terminal parity fixtures still refuse on package S4 admission with unknown_required_feature/unsupported-feature, reason missing-type-representation, and empty items, while the same source requests settle proved/refuted/inconclusive. Draco reports 0 of 4 focused tests passed at 5d3de7a; the round-2 selector guard does not change admission or package materialization. Root cause remains under investigation. | fsl-analyze/tests/it/analyze_package_protocol.rs:105 |
+
+## Round 2 verdict
+
+FAIL; not mergeable. FND-002 is statically fixed; FND-003 blocks runtime acceptance.

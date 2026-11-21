@@ -177,3 +177,15 @@ Checked source namespace resolution and protocol declaration ownership against d
 ## Round 1 verdict
 
 CONDITIONAL: no new bounded reverse-gap or hollow-assertion defect found. Matrix/full-tree assurance remains unassessed, and runtime evidence remains pending. Code-review SR-1795253271046542315 FND-002 records the malformed-subject record discrepancy; it is not duplicated here.
+
+## Disposition round 2 scope
+
+Reviewed only the executable delta 5d3de7a37ee2986b05109eb3701851392e3460c0..49f66b37fbcc62139af3e520f8e7b5c1eb08faed. The added guard recognizes only DeadlockFreedom and returns the shared invalid_value helper for absent or mismatched protocol subjects. The race route retains its prior branches. The added three-case malformed-subject test checks category refusal, exact invalid_runtime_input/invalid-value diagnostic with member, absence of exploration, exit 20, and full source/package item parity after deleting the source file.
+
+FND-002 is fixed by static inspection: the new guard precedes both differing old branches and matches source document.rs:2100-2119. No runtime pass is claimed. The new invalid-subject test also constructs the package through package_request/package_selection and analyzes that package; it crosses S4 admission before reaching the resolver. Thus its assertions cannot verify the guard until admission succeeds. The capacity case is supplementary existing-helper coverage, not evidence of execution here.
+
+New runtime evidence supplied by the lead: all four valid terminal tests at 5d3de7a failed on the package route before items, last_stage S4, code unknown_required_feature, cause unsupported-feature, details.reason missing-type-representation. Source records were valid. Evidence: /tmp/protocol-3289-fix1-inbox.txt. This round changes only resolver guarding and a test, so it does not repair that earlier admission failure. Root cause is being traced by the coder; this review does not infer its location or waive the failure. No Cargo, runtime, matrix or full gate was run in this review round. QSL-2271 remains In Progress.
+
+## Round 2 verdict
+
+CONDITIONAL: no additional bounded reverse-gap or assertion defect found. The package admission/runtime failure is recorded once as code-review SR-1795253271046542315 FND-003; repository matrix/full-tree assurance remains unassessed. No test runtime success is claimed.

@@ -84,10 +84,24 @@ fn terminal_request(
     let mut documents = crate::fill::Documents::new();
     documents.start("s0", &[("c", 0)]);
     let snapshots: Vec<Vec<u8>> = documents.snapshots.values().cloned().collect();
+    // Select the terminal fixture's domain closure; the shared Fill corpus also
+    // contains unrelated variant and compensation record declarations.
+    let mut model: Value =
+        serde_json::from_slice(&crate::fill::document()).expect("the Fill model is JSON");
+    model["types"]
+        .as_array_mut()
+        .expect("model types")
+        .retain(|node| {
+            matches!(
+                node["identity"].as_str(),
+                Some("ix://test/fill/Level" | "ix://test/fill/Cell" | "ix://test/fill/Idle")
+            )
+        });
+    let model = serde_json::to_vec(&model).expect("the terminal model serializes");
     crate::analyze_cli_support::request_over(
         ws,
         &unit,
-        &crate::fill::document(),
+        &model,
         &snapshots,
         json!({"items": [{"claim": "Flow", "kind": "temporal-satisfaction",
         "temporal": {"item_kind": "deadlock-freedom", "subject": {"protocol": {
