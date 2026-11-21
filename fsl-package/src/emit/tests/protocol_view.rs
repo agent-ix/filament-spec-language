@@ -356,11 +356,10 @@ fn the_protocol_view_lists_the_nodes_the_checked_clause_rebuilds() {
         protocol.channels.len(),
         "one queue per channel"
     );
-    assert!(
-        view.queues()
-            .iter()
-            .all(|id| node(package, id).declaration.is_none())
-    );
+    assert!(view
+        .queues()
+        .iter()
+        .all(|id| node(package, id).declaration.is_none()));
     assert_eq!(
         sorted(names(view.compensations())),
         sorted(
