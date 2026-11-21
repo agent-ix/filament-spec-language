@@ -441,6 +441,16 @@ fn malformed_receipt_causes_and_pointers_are_preserved_before_matching() {
     let mut noncanonical = bytes.clone();
     noncanonical.push(b'\n');
     cases.push((noncanonical, "invalid-value", "\"\""));
+    // Canonical numeric spelling is longer than the complete input, so the
+    // whole-document encoder's input-derived ceiling is reached. This is
+    // noncanonical data, never a caller resource ceiling or a host fault.
+    let expanding = String::from_utf8(canonical_json::encode(&fixture.receipt).unwrap())
+        .unwrap()
+        .replace(
+            "\"authority_grant\":{}",
+            "\"authority_grant\":{\"scale\":1e5}",
+        );
+    cases.push((expanding.into_bytes(), "invalid-value", "\"\""));
     let text = String::from_utf8(bytes)
         .unwrap()
         .replace("\"lineage\":{}", "\"lineage\":{},\"lineage\":{}");

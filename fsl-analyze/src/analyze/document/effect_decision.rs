@@ -6,7 +6,7 @@ use std::fmt;
 
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_replay::{OutcomeDiagnostic, TerminalRecord};
-use fsl_semantics::model::observation::DocumentProvision;
+use fsl_semantics::model::observation::{AdmissionFailure, AdmissionRecord, DocumentProvision};
 use quire_canonical::{Encode, Node, NodeRef};
 use serde_json::{Map, Value};
 
@@ -16,17 +16,147 @@ use super::{DocumentSelection, ItemSelection, SettledRun};
 /// premises. Admission still validates the complete selected bytes separately.
 /// Command document intake uses the same classifier to keep opaque receipt
 /// contents out of its ordinary document metadata decoder.
-pub fn is_receipt(bytes: &[u8]) -> bool {
-    quire_canonical::read(bytes, u64::try_from(bytes.len()).unwrap_or(u64::MAX)).is_ok_and(
-        |document| {
-            document
-                .root()
-                .get("contract_version")
-                .is_some_and(|version| {
-                    matches!(version.node(), Node::String("filament.effect-decision/v1"))
-                })
-        },
+///
+/// # Errors
+/// Propagates resource and invariant failures; they never select another parser.
+pub fn is_receipt(bytes: &[u8]) -> Result<bool, ReceiptError> {
+    receipt_document(bytes).map(|document| document.is_some())
+}
+
+/// Recognize a receipt and retain its iterative arena for metadata extraction.
+/// Malformed ordinary documents retain their original admission path.
+///
+/// # Errors
+/// Propagates resource and invariant failures without an ordinary-parser fallback.
+pub fn receipt_document(bytes: &[u8]) -> Result<Option<quire_canonical::Document>, ReceiptError> {
+    classify(quire_canonical::read(
+        bytes,
+        u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+    ))
+}
+
+fn classify(
+    read: Result<quire_canonical::Document, quire_canonical::ReadError>,
+) -> Result<Option<quire_canonical::Document>, ReceiptError> {
+    match read {
+        Ok(document) => Ok(document
+            .root()
+            .get("contract_version")
+            .is_some_and(|version| {
+                matches!(version.node(), Node::String("filament.effect-decision/v1"))
+            })
+            .then_some(document)),
+        Err(
+            quire_canonical::ReadError::Malformed { .. }
+            | quire_canonical::ReadError::DuplicateName { .. }
+            | quire_canonical::ReadError::NumberOutOfRange { .. },
+        ) => Ok(None),
+        Err(error) => Err(reader_failure(error)),
+    }
+}
+
+/// Receipt data refusal, allocator failure, or an established local invariant.
+/// Local derived ceilings carry no caller setting or budget authority.
+#[derive(Debug, thiserror::Error)]
+pub enum ReceiptError {
+    /// A typed input-data refusal.
+    #[error(transparent)]
+    Refusal(#[from] ReceiptRefusal),
+    /// The shared reader or encoder could not allocate these bytes.
+    #[error("effect-decision allocation failed requesting {requested} bytes")]
+    Allocation {
+        /// Bytes requested by the failed allocator operation.
+        requested: usize,
+    },
+    /// An established derived bound or shared-reader/encoder invariant failed.
+    #[error("effect-decision canonical invariant failed")]
+    Fault,
+}
+
+fn allocation_failure(requested: usize) -> AdmissionFailure {
+    AdmissionFailure::Incomplete(Box::new(AdmissionRecord {
+        catalog: fsl_foundation::diagnostic::ALLOCATION_FAILED,
+        fields: BTreeMap::from([("requested", requested.to_string())]),
+        path: Vec::new(),
+        kernel: None,
+    }))
+}
+
+impl ReceiptError {
+    /// Preserve the existing analyze resource or internal-failure domain.
+    pub fn into_analyze_error(self) -> super::AnalyzeDocumentError {
+        match self {
+            Self::Refusal(refusal) => super::AnalyzeDocumentError::Refused(
+                super::super::AnalyzeRefusal::EffectDecision(refusal),
+            ),
+            Self::Allocation { requested } => super::AnalyzeDocumentError::Refused(
+                super::super::AnalyzeRefusal::Document(allocation_failure(requested)),
+            ),
+            Self::Fault => super::AnalyzeDocumentError::Fault,
+        }
+    }
+
+    /// Preserve classifier failures while assembling native replay premises.
+    pub(crate) fn into_replay_error(self) -> fsl_replay::ReplayRefusal {
+        match self {
+            Self::Allocation { requested } => {
+                fsl_replay::ReplayRefusal::Admission(allocation_failure(requested))
+            }
+            Self::Refusal(_) | Self::Fault => fsl_replay::ReplayRefusal::Fault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "analyze",
+                    "receipt-classification",
+                ),
+            ),
+        }
+    }
+}
+
+fn reader_failure(error: quire_canonical::ReadError) -> ReceiptError {
+    match error {
+        quire_canonical::ReadError::Allocation { requested } => {
+            ReceiptError::Allocation { requested }
+        }
+        // read() was given the already-paid slice length, not a caller budget
+        // or reservation. A denial here has no known caller limit to report.
+        _ => ReceiptError::Fault,
+    }
+}
+
+fn encoder_failure(error: quire_canonical::Error) -> ReceiptError {
+    match error {
+        quire_canonical::Error::Allocation { requested } => ReceiptError::Allocation { requested },
+        _ => ReceiptError::Fault,
+    }
+}
+
+fn whole_encoder_failure(error: quire_canonical::Error, at: &ReceiptLocation) -> ReceiptError {
+    match error {
+        // Before canonicality is established, canonical spelling can grow
+        // beyond the input (1e5 -> 100000). This cap is not a caller limit.
+        quire_canonical::Error::Limit(limit)
+            if limit.kind == quire_canonical::LimitKind::CanonicalBytes =>
+        {
+            ReceiptRefusal::Malformed {
+                cause: ReceiptCause::InvalidValue,
+                location: at.clone(),
+            }
+            .into()
+        }
+        error => encoder_failure(error),
+    }
+}
+
+/// Encode document metadata after classification without a recursive JSON walk.
+///
+/// # Errors
+/// Allocation remains a resource failure. Derived local denials are invariants.
+pub fn metadata_bytes(node: NodeRef<'_>, input_bytes: usize) -> Result<Vec<u8>, ReceiptError> {
+    quire_canonical::to_vec(
+        &node,
+        quire_canonical::Limits::new(u64::try_from(input_bytes).unwrap_or(u64::MAX)),
     )
+    .map_err(encoder_failure)
 }
 
 /// Existing FR-272 causes admitted by the receipt reader.
@@ -192,13 +322,15 @@ struct Receipt {
     effect_request: Vec<u8>,
 }
 
-fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
-    let malformed = |cause, pointer: &str| ReceiptRefusal::Malformed {
-        cause,
-        location: ReceiptLocation {
-            pointer: pointer.to_owned(),
-            ..at.clone()
-        },
+fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptError> {
+    let malformed = |cause, pointer: &str| {
+        ReceiptError::Refusal(ReceiptRefusal::Malformed {
+            cause,
+            location: ReceiptLocation {
+                pointer: pointer.to_owned(),
+                ..at.clone()
+            },
+        })
     };
     // The existing intake has already paid for every byte of this slice.
     // The shared arena reader, encoder and destructor all use explicit stacks.
@@ -211,7 +343,7 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
             malformed(ReceiptCause::InvalidValue, &pointer)
         }
         quire_canonical::ReadError::Malformed { .. } => malformed(ReceiptCause::MalformedJson, ""),
-        _ => malformed(ReceiptCause::InvalidValue, ""),
+        error => reader_failure(error),
     })?;
     let root = document.root();
     let Node::Object(members) = root.node() else {
@@ -259,7 +391,7 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
         return Err(malformed(ReceiptCause::InvalidValue, &pointer));
     }
     let canonical = quire_canonical::to_vec(&document, quire_canonical::Limits::new(bound))
-        .map_err(|_| malformed(ReceiptCause::InvalidValue, ""))?;
+        .map_err(|error| whole_encoder_failure(error, at))?;
     if canonical != bytes {
         return Err(malformed(ReceiptCause::InvalidValue, ""));
     }
@@ -271,8 +403,7 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
     };
     let decision = required("decision")?;
     let encode = |node: NodeRef<'_>| {
-        quire_canonical::to_vec(&node, quire_canonical::Limits::new(bound))
-            .map_err(|_| malformed(ReceiptCause::InvalidValue, ""))
+        quire_canonical::to_vec(&node, quire_canonical::Limits::new(bound)).map_err(encoder_failure)
     };
     // FR-329's five key components borrow the arena. No opaque JSON subtree
     // is converted to Value, recursively cloned or repaired into acceptance.
@@ -285,7 +416,7 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
         &key,
         quire_canonical::Limits::new(bound.saturating_mul(2).saturating_add(16)),
     )
-    .map_err(|_| malformed(ReceiptCause::InvalidValue, ""))?;
+    .map_err(encoder_failure)?;
     Ok(Receipt {
         decision: encode(decision)?,
         key,
@@ -397,7 +528,7 @@ pub fn validate(
     item: usize,
     position: usize,
     document: &DocumentSelection,
-) -> Result<(), ReceiptRefusal> {
+) -> Result<(), ReceiptError> {
     read(bytes, &location(item, position, document, "")).map(|_| ())
 }
 
@@ -425,12 +556,8 @@ impl SettledRun {
                 let bytes = documents
                     .get(&document.reference())
                     .ok_or(super::AnalyzeDocumentError::Fault)?;
-                let receipt =
-                    read(bytes, &location(item, position, document, "")).map_err(|error| {
-                        super::AnalyzeDocumentError::Refused(
-                            super::super::AnalyzeRefusal::EffectDecision(error),
-                        )
-                    })?;
+                let receipt = read(bytes, &location(item, position, document, ""))
+                    .map_err(ReceiptError::into_analyze_error)?;
                 receipts.insert(document, receipt);
             }
         }
@@ -595,4 +722,166 @@ impl SettledRun {
 
 fn token(name: &str) -> String {
     name.replace('~', "~0").replace('/', "~1")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn at() -> ReceiptLocation {
+        location(
+            0,
+            0,
+            &DocumentSelection {
+                authority: "receipt-authority".to_owned(),
+                identity: "receipt".to_owned(),
+            },
+            "",
+        )
+    }
+
+    fn assert_allocation(error: ReceiptError, requested: usize) {
+        let super::super::AnalyzeDocumentError::Refused(refusal) = error.into_analyze_error()
+        else {
+            panic!("allocation must remain a typed resource refusal");
+        };
+        let document = refusal.document();
+        assert_eq!(document.category().exit_code(), 22);
+        let value = serde_json::to_value(document).unwrap();
+        assert_eq!(value["last_stage"], Value::Null);
+        assert_eq!(value["diagnostics"][0]["code"], "resource_exhausted");
+        assert_eq!(value["diagnostics"][0]["cause"], "allocation-failed");
+        assert_eq!(
+            value["diagnostics"][0]["details"],
+            serde_json::json!({"requested": requested.to_string()})
+        );
+    }
+
+    #[test]
+    #[trace("FR-259", "FR-1046-AC-7")]
+    fn canonical_allocation_errors_retain_the_requested_bytes() {
+        // Typed boundary projection, not a claim to force host OOM. These are
+        // the exact shared-library failures at reader/classifier and encoder
+        // boundaries; whole, component and key sites use these adapters.
+        assert_allocation(
+            reader_failure(quire_canonical::ReadError::Allocation { requested: 417 }),
+            417,
+        );
+        assert_allocation(
+            classify(Err(quire_canonical::ReadError::Allocation {
+                requested: 418,
+            }))
+            .unwrap_err(),
+            418,
+        );
+        assert_allocation(
+            whole_encoder_failure(quire_canonical::Error::Allocation { requested: 419 }, &at()),
+            419,
+        );
+        assert_allocation(
+            encoder_failure(quire_canonical::Error::Allocation { requested: 420 }),
+            420,
+        );
+        let replay = classify(Err(quire_canonical::ReadError::Allocation {
+            requested: 421,
+        }))
+        .unwrap_err()
+        .into_replay_error();
+        assert_eq!(replay.code().as_str(), "resource_exhausted");
+        assert_eq!(replay.cause(), Some("allocation-failed"));
+        let fsl_replay::ReplayRefusal::Admission(AdmissionFailure::Incomplete(record)) = replay
+        else {
+            panic!("replay must retain allocation evidence");
+        };
+        assert_eq!(
+            record.fields,
+            BTreeMap::from([("requested", "421".to_owned())])
+        );
+    }
+
+    struct Deny;
+    impl quire_canonical::Reservation for Deny {
+        fn reserve(&mut self, _: usize) -> Result<(), quire_canonical::ReservationDenied> {
+            Err(quire_canonical::ReservationDenied)
+        }
+    }
+
+    #[test]
+    #[trace("FR-259", "FR-277")]
+    fn classifier_resource_denials_never_choose_an_ordinary_parser() {
+        let bytes = br#"{"contract_version":"filament.effect-decision/v1"}"#;
+        let error = quire_canonical::read_with_reservation(bytes, bytes.len() as u64, &mut Deny)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            quire_canonical::ReadError::ReservationDenied { .. }
+        ));
+        // The production classifier has no caller reservation. An unexpected
+        // denial is an invariant, never Ok(None) or a fabricated caller limit.
+        let error = classify(Err(error)).unwrap_err();
+        assert!(matches!(
+            error.into_analyze_error(),
+            super::super::AnalyzeDocumentError::Fault
+        ));
+        let error = quire_canonical::read_bounded(bytes, bytes.len() as u64, 0).unwrap_err();
+        assert!(matches!(error, quire_canonical::ReadError::Limit(_)));
+        assert!(matches!(
+            classify(Err(error)).unwrap_err().into_replay_error(),
+            fsl_replay::ReplayRefusal::Fault(_)
+        ));
+        assert!(receipt_document(bytes).unwrap().is_some());
+        assert!(receipt_document(b"{").unwrap().is_none());
+        assert!(
+            receipt_document(br#"{"format":"filament.state.snapshot/v1"}"#)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    #[trace("FR-259", "FR-1046-AC-7")]
+    fn derived_encoder_caps_distinguish_noncanonical_input_from_invariants() {
+        let document = quire_canonical::read(b"1e5", 3).unwrap();
+        let error =
+            quire_canonical::to_vec(&document, quire_canonical::Limits::new(3)).unwrap_err();
+        let ReceiptError::Refusal(refusal) = whole_encoder_failure(error, &at()) else {
+            panic!("expanding noncanonical spelling is input data");
+        };
+        assert_eq!(refusal.cause(), ReceiptCause::InvalidValue);
+
+        let document =
+            quire_canonical::read(br#"{"arguments":[],"operation":{},"value":true}"#, 100).unwrap();
+        let root = document.root();
+        let key = RequestKey {
+            decision: root,
+            grant: root,
+            key: root,
+        };
+        // Generate real component and key encoder denials at the shared
+        // boundary. Such denials after whole canonicality are internal faults.
+        for error in [
+            quire_canonical::to_vec(&root, quire_canonical::Limits::new(0)).unwrap_err(),
+            quire_canonical::to_vec(&key, quire_canonical::Limits::new(0)).unwrap_err(),
+        ] {
+            assert!(matches!(error, quire_canonical::Error::Limit(_)));
+            assert!(matches!(
+                encoder_failure(error).into_analyze_error(),
+                super::super::AnalyzeDocumentError::Fault
+            ));
+        }
+        let mut bytes = Vec::new();
+        let mut deny = Deny;
+        let mut writer = quire_canonical::Writer::with_reservation(
+            &mut bytes,
+            quire_canonical::Limits::new(100),
+            &mut deny,
+        );
+        let error = root.encode_into(&mut writer).unwrap_err();
+        assert!(matches!(
+            error,
+            quire_canonical::Error::ReservationDenied { .. }
+        ));
+        assert!(matches!(encoder_failure(error), ReceiptError::Fault));
+    }
 }

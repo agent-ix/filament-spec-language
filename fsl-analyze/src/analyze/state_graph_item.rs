@@ -1504,7 +1504,7 @@ fn replay_instance(
         object_environment: None,
         declared_domains: Vec::new(),
         byte_provision,
-        documents: read.binding.replay_documents().cloned().collect(),
+        documents: read.binding.replay_documents()?,
     };
     let timed = (digital || certificate.is_some())
         .then(|| read.package().and_then(super::timed_item::timed_model))

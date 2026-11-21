@@ -652,7 +652,7 @@ pub(super) fn request_and_envelope<T: Clone + fsl_eval::simulation::SubjectTrans
         object_environment: None,
         declared_domains: Vec::new(),
         byte_provision,
-        documents: binding.replay_documents().cloned().collect(),
+        documents: binding.replay_documents()?,
     };
     let envelope = WitnessEnvelope::reconstruct(
         WitnessPacket {
@@ -735,7 +735,7 @@ pub(crate) fn replay_protocol_over(
         object_environment: None,
         declared_domains: Vec::new(),
         byte_provision: inputs.provision.wire_entries(),
-        documents: inputs.binding.replay_documents().cloned().collect(),
+        documents: inputs.binding.replay_documents()?,
     };
     let envelope = WitnessEnvelope::reconstruct(
         WitnessPacket {

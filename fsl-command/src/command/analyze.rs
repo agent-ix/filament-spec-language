@@ -31,6 +31,52 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
     }
 }
 
+fn receipt_failure(
+    error: fsl_analyze::analyze::document::effect_decision::ReceiptError,
+) -> RunCause {
+    match error.into_analyze_error() {
+        AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
+        AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+        AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
+    }
+}
+
+#[cfg(test)]
+mod receipt_failure_tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    #[test]
+    #[trace("FR-259", "FR-1046-AC-7")]
+    fn receipt_resource_and_invariant_errors_keep_public_command_categories() {
+        use fsl_analyze::analyze::document::effect_decision::ReceiptError;
+        // Typed failure-boundary projection; host allocator exhaustion is
+        // deliberately not induced. This is the actual intake error adapter.
+        let error = RunError {
+            cause: receipt_failure(ReceiptError::Allocation { requested: 8193 }),
+            sources: crate::Sources::default(),
+        };
+        assert_eq!(error.category().exit_code(), 22);
+        let document =
+            serde_json::to_value(error.outcome_document(fsl_replay::Operation::Analyze)).unwrap();
+        assert_eq!(document["diagnostics"][0]["code"], "resource_exhausted");
+        assert_eq!(document["diagnostics"][0]["cause"], "allocation-failed");
+        assert_eq!(
+            document["diagnostics"][0]["details"],
+            serde_json::json!({"requested": "8193"})
+        );
+        assert_eq!(document["last_stage"], serde_json::Value::Null);
+        let error = RunError {
+            cause: receipt_failure(ReceiptError::Fault),
+            sources: crate::Sources::default(),
+        };
+        assert_eq!(error.category().exit_code(), 30);
+        let document =
+            serde_json::to_value(error.outcome_document(fsl_replay::Operation::Analyze)).unwrap();
+        assert_eq!(document["diagnostics"][0]["code"], "runtime_invariant");
+    }
+}
+
 fn validate_activated_population(
     position: usize,
     population: &serde_json::Value,
@@ -1438,68 +1484,53 @@ pub(super) fn read_documents(
             fsl_analyze::analyze::document::effect_decision::validate(
                 &bytes, *item, *selector, reference,
             )
-            .map_err(|error| {
-                RunCause::AnalyzeRefused(Box::new(
-                    fsl_analyze::analyze::AnalyzeRefusal::EffectDecision(error),
-                ))
-            })?;
+            .map_err(receipt_failure)?;
         }
-        let (format, identity_bytes) =
-            if fsl_analyze::analyze::document::effect_decision::is_receipt(&bytes) {
-                // Opaque receipt objects never enter a recursive Value parser,
-                // even when no item selected this provisioned receipt.
-                let arena =
-                    quire_canonical::read(&bytes, u64::try_from(bytes.len()).unwrap_or(u64::MAX))
-                        .map_err(|error| {
-                        invalid(&format!("/documents/{position}"), error.to_string())
-                    })?;
-                let root = arena.root();
-                let format = root.get("format").and_then(|node| match node.node() {
-                    quire_canonical::Node::String(value) => Some(value.to_owned()),
-                    _ => None,
-                });
-                let identity_bytes = root
-                    .get("identity")
-                    .map(|node| {
-                        quire_canonical::to_vec(
-                            &node,
-                            quire_canonical::Limits::new(
-                                u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-                            ),
-                        )
-                    })
-                    .transpose()
-                    .map_err(|error| {
-                        invalid(
-                            &format!("/documents/{position}/identity"),
-                            error.to_string(),
-                        )
-                    })?;
-                (format, identity_bytes)
-            } else {
-                let parsed: serde_json::Value =
-                    serde_json::from_slice(&bytes).map_err(|error| {
-                        invalid(
-                            &format!("/documents/{position}"),
-                            format!("{} is not a JSON document: {error}", document.file),
-                        )
-                    })?;
-                let format = parsed
-                    .get("format")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned);
-                let identity_bytes = parsed
-                    .get("identity")
-                    .map(serde_json::to_vec)
-                    .transpose()
-                    .map_err(|error| {
-                        invalid(
-                            &format!("/documents/{position}/identity"),
-                            error.to_string(),
-                        )
-                    })?;
-                (format, identity_bytes)
-            };
+        let (format, identity_bytes) = if let Some(arena) =
+            fsl_analyze::analyze::document::effect_decision::receipt_document(&bytes)
+                .map_err(receipt_failure)?
+        {
+            // Opaque receipt objects never enter a recursive Value parser,
+            // even when no item selected this provisioned receipt.
+            let root = arena.root();
+            let format = root.get("format").and_then(|node| match node.node() {
+                quire_canonical::Node::String(value) => Some(value.to_owned()),
+                _ => None,
+            });
+            let identity_bytes = root
+                .get("identity")
+                .map(|node| {
+                    fsl_analyze::analyze::document::effect_decision::metadata_bytes(
+                        node,
+                        bytes.len(),
+                    )
+                })
+                .transpose()
+                .map_err(receipt_failure)?;
+            (format, identity_bytes)
+        } else {
+            let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+                invalid(
+                    &format!("/documents/{position}"),
+                    format!("{} is not a JSON document: {error}", document.file),
+                )
+            })?;
+            let format = parsed
+                .get("format")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            let identity_bytes = parsed
+                .get("identity")
+                .map(serde_json::to_vec)
+                .transpose()
+                .map_err(|error| {
+                    invalid(
+                        &format!("/documents/{position}/identity"),
+                        error.to_string(),
+                    )
+                })?;
+            (format, identity_bytes)
+        };
         let declared_identity = identity_bytes
             .as_deref()
             .map(|bytes| {

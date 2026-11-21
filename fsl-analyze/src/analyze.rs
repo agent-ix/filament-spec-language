@@ -664,12 +664,16 @@ pub struct SubjectBinding<'a> {
 impl SubjectBinding<'_> {
     /// Formal replay premises exclude descriptive effect-decision receipts.
     /// The original provision remains available for item-local receipt binding.
-    fn replay_documents(&self) -> impl Iterator<Item = &Vec<u8>> {
-        self.packages.values().chain(
-            self.snapshots
-                .values()
-                .filter(|bytes| !document::effect_decision::is_receipt(bytes)),
-        )
+    fn replay_documents(&self) -> Result<Vec<Vec<u8>>, fsl_replay::ReplayRefusal> {
+        let mut documents: Vec<_> = self.packages.values().cloned().collect();
+        for bytes in self.snapshots.values() {
+            if !document::effect_decision::is_receipt(bytes)
+                .map_err(document::effect_decision::ReceiptError::into_replay_error)?
+            {
+                documents.push(bytes.clone());
+            }
+        }
+        Ok(documents)
     }
 }
 
@@ -1010,6 +1014,9 @@ pub enum AnalyzeRefusal {
     /// FR-1046 canonical receipt admission refused the selected document.
     #[error(transparent)]
     EffectDecision(document::effect_decision::ReceiptRefusal),
+    /// A document reader or encoder failed before subject binding.
+    #[error("the analyze document could not be admitted: {0}")]
+    Document(AdmissionFailure),
     /// FR-120 did not admit the subject binding.
     #[error("the analyze subject binding did not admit: {0:?}")]
     Binding(AdmissionFailure),
@@ -1162,6 +1169,9 @@ impl AnalyzeRefusal {
             Self::EffectDecision(refusal) => {
                 OutcomeDocument::new(Operation::Analyze, None, Category::Refusal)
                     .with_diagnostics(vec![refusal.diagnostic()])
+            }
+            Self::Document(failure) => {
+                refusal_document(Operation::Analyze, failure, failure.to_string())
             }
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
