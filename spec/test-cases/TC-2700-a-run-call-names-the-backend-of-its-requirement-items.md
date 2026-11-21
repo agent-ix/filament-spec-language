@@ -17,7 +17,8 @@ Verify that `call.requirements` asks for settlement and names each item's backen
 1. Run `sq` with `x = 3` and `requirements` `{}`, and without `requirements`.
 2. Run it with `{"backend": "value-checker"}`, `{"backend": "fsl.absent"}` and `{"backend": "fsl.absent", "items": [{"claim": C}]}`.
 3. Run each malformed `requirements` of FR-960-AC-3 and an entry naming no item of `sq`.
-. Run `sq` naming the first item by the claim its outcome reports (held), by that claim in FSpec FR-331's structural spelling, and by a held entry beside a structural entry for the second item.
+4. Run with an option `value-checker` does not publish.
+5. Run `sq` naming the first item by the claim its outcome reports (held), by that claim in FSpec FR-331's structural spelling, and by a held entry beside a structural entry for the second item.
 6. Name the first item's claim in both spellings in two entries.
 7. Replace an index segment of the held claim by `{"node": 999999}`, `{"node": "3"}` and `{"node": -1}`.
 8. Name a held claim whose occurrence ordinal is 99.
