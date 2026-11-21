@@ -156,7 +156,7 @@ pub(super) fn hyper_item<'a>(
                     .collect::<Vec<_>>();
                 let certificate = fsl_replay::ProductClosureRequest {
                     package,
-                    clause,
+                    clause: fsl_replay::ProductClosureClause::Hyper(clause),
                     subjects: &subjects,
                     meter: limits.accounting,
                 };
@@ -264,7 +264,7 @@ fn single(
     }];
     let request = fsl_replay::ProductClosureRequest {
         package,
-        clause,
+        clause: fsl_replay::ProductClosureClause::Hyper(clause),
         subjects: &subjects,
         meter: limits.accounting,
     };
@@ -381,13 +381,8 @@ pub(super) fn relation_item<'a>(
                     meter: limits.accounting,
                     emit: limits.emit,
                 };
-                let mut distinct: Vec<&String> = Vec::new();
-                for alias in relation.execution_aliases() {
-                    if !distinct.contains(&alias) {
-                        distinct.push(alias);
-                    }
-                }
-                let subjects = distinct
+                let subjects: Vec<_> = relation
+                    .aliases()
                     .iter()
                     .map(|_| ModelSubject {
                         simulation: simulation.clone(),
@@ -398,7 +393,7 @@ pub(super) fn relation_item<'a>(
                     ModelRelationCheckRequest {
                         relation,
                         package,
-                        subjects,
+                        subjects: subjects.clone(),
                         limits: form.limits,
                         max_depth: form.max_depth,
                         meter: limits.accounting,
@@ -417,7 +412,8 @@ pub(super) fn relation_item<'a>(
                     ..RunStats::default()
                 };
                 let outcome = match outcome {
-                    ModelRelationOutcome::Holds { stats } => HyperOutcome::HoldsUnchecked {
+                    ModelRelationOutcome::Holds { certificate, stats } => HyperOutcome::Holds {
+                        certificates: vec![certificate],
                         stats: counts(stats),
                     },
                     ModelRelationOutcome::Refuted {
@@ -440,7 +436,9 @@ pub(super) fn relation_item<'a>(
                         stats,
                     } => HyperOutcome::Stopped {
                         cause: match cancel.cause() {
-                            Some(source) if limit.is_none() => IncompleteCause::Cancelled { source },
+                            Some(source) if limit.is_none() => {
+                                IncompleteCause::Cancelled { source }
+                            }
                             _ => IncompleteCause::ResourceExhausted,
                         },
                         limit,
@@ -453,17 +451,23 @@ pub(super) fn relation_item<'a>(
                     },
                 };
                 let mut systems = Vec::with_capacity(relation.executions().len());
-                for _ in relation.executions() {
-                    match ModelSystem::new(simulation.clone()) {
+                for alias in relation.execution_aliases() {
+                    match ModelSystem::for_alias(simulation.clone(), alias) {
                         Ok(system) => systems.push(system),
                         Err(failure) => return EngineReport::Refused(admission(&failure)),
                     }
                 }
+                let certificate = fsl_replay::ProductClosureRequest {
+                    package,
+                    clause: fsl_replay::ProductClosureClause::Relation(relation),
+                    subjects: &subjects,
+                    meter: limits.accounting,
+                };
                 let settled = settle_hyper_check(
                     &outcome,
                     &form.limits,
                     &form.requested_limits,
-                    None,
+                    Some(&certificate),
                     cancel,
                     |payload| {
                         replay_model_relation_tuple(

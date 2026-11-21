@@ -1474,7 +1474,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
     use filament_exact::Cancel;
     use fsl_replay::{
         check_product_closure, CertificateLocus, CertificateMember, CertificateRule, HyperOutcome,
-        ModelCheckLimits, ProductClosureRequest, TemporalCertificateCheck,
+        ModelCheckLimits, ProductClosureRequest,
     };
     let world = World::new(
         Vault::Secure,
@@ -1492,7 +1492,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
     let subjects = vec![world.subject()];
     let request = ProductClosureRequest {
         package: &world.package,
-        clause: &world.clause,
+        clause: fsl_replay::ProductClosureClause::Hyper(&world.clause),
         subjects: &subjects,
         meter: crate::counter::UNLIMITED,
     };
@@ -1500,7 +1500,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
         check_product_closure(&request, proof, limits, &cancel).expect("core check")
     };
     let proof = certificates.first().expect("one instance certificate");
-    assert_eq!(proof.closure.len(), 6);
+    assert_eq!(product_members(&proof).len(), 6);
     let repeated = world
         .run(ModelCheckLimits::default(), &cancel)
         .expect("repeat search");
@@ -1512,32 +1512,41 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
         }
     );
     let limits = ModelCheckLimits::default();
-    assert_eq!(checked(proof, &limits), TemporalCertificateCheck::Accepted);
-    assert_eq!(checked(proof, &limits), TemporalCertificateCheck::Accepted);
+    assert_eq!(
+        checked(proof, &limits),
+        fsl_replay::ProductClosureCheck::Accepted
+    );
+    assert_eq!(
+        checked(proof, &limits),
+        fsl_replay::ProductClosureCheck::Accepted
+    );
     let mut malformed = proof.clone();
     malformed.components = None;
     assert!(
-        matches!(checked(&malformed, &limits), TemporalCertificateCheck::Rejected(rejection)
+        matches!(checked(&malformed, &limits), fsl_replay::ProductClosureCheck::Rejected(rejection)
         if rejection.rule == CertificateRule::Malformed
             && rejection.at == CertificateLocus::CertificateMember(CertificateMember::Components))
     );
     let mut duplicate = proof.clone();
-    duplicate.closure.insert(0, duplicate.closure[0].clone());
+    let first = product_members(&duplicate)[0].clone();
+    product_members_mut(&mut duplicate).insert(0, first);
     assert!(
-        matches!(checked(&duplicate, &limits), TemporalCertificateCheck::Rejected(rejection)
+        matches!(checked(&duplicate, &limits), fsl_replay::ProductClosureCheck::Rejected(rejection)
         if rejection.rule == CertificateRule::Malformed)
     );
     let mut unsorted = proof.clone();
-    unsorted.closure.swap(0, 1);
+    product_members_mut(&mut unsorted).swap(0, 1);
     assert_eq!(
         checked(&unsorted, &limits),
-        TemporalCertificateCheck::Rejected(fsl_replay::CertificateRejection {
+        fsl_replay::ProductClosureCheck::Rejected(fsl_replay::CertificateRejection {
             rule: CertificateRule::Malformed,
-            at: CertificateLocus::HyperProductState(unsorted.closure[1].0.clone()),
+            at: CertificateLocus::HyperProductState(product_members(&unsorted)[1].0.clone()),
         })
     );
     let components = proof.components.as_ref().expect("universal partition");
-    assert!(proof.closure.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(product_members(&proof)
+        .windows(2)
+        .all(|pair| pair[0] < pair[1]));
     assert!(components
         .iter()
         .all(|component| component.states.windows(2).all(|pair| pair[0] < pair[1])));
@@ -1546,7 +1555,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
         .states
         .push(components[0].states[0].clone());
     assert!(
-        matches!(checked(&overlapping, &limits), TemporalCertificateCheck::Rejected(rejection)
+        matches!(checked(&overlapping, &limits), fsl_replay::ProductClosureCheck::Rejected(rejection)
         if rejection.rule == CertificateRule::NotPartition)
     );
     let mut bad_witness = proof.clone();
@@ -1554,15 +1563,14 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
         component.witness = fsl_replay::ComponentWitness::MissingAcceptance { set: u32::MAX };
     }
     assert!(
-        matches!(checked(&bad_witness, &limits), TemporalCertificateCheck::Rejected(rejection)
+        matches!(checked(&bad_witness, &limits), fsl_replay::ProductClosureCheck::Rejected(rejection)
         if rejection.rule == CertificateRule::WitnessFails)
     );
     let mut backward = proof.clone();
     // Each secure SCC contains the two public outputs. Splitting its cycle
     // into singleton components makes a backward edge unavoidable.
     backward.components = Some(
-        proof
-            .closure
+        product_members(&proof)
             .iter()
             .map(|state| fsl_replay::Component {
                 states: vec![state.clone()],
@@ -1571,7 +1579,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
             .collect(),
     );
     assert!(
-        matches!(checked(&backward, &limits), TemporalCertificateCheck::Rejected(rejection)
+        matches!(checked(&backward, &limits), fsl_replay::ProductClosureCheck::Rejected(rejection)
         if rejection.rule == CertificateRule::BackwardEdge)
     );
     let mut alternative_order = proof.clone();
@@ -1582,15 +1590,15 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
         .reverse();
     assert_eq!(
         checked(&alternative_order, &limits),
-        TemporalCertificateCheck::Accepted
+        fsl_replay::ProductClosureCheck::Accepted
     );
     // Removing a reached non-initial state must fail closure before the
     // component partition is examined.
     let mut successor_missing = false;
-    for index in 0..proof.closure.len() {
+    for index in 0..product_members(&proof).len() {
         let mut missing = proof.clone();
-        missing.closure.remove(index);
-        if matches!(checked(&missing, &limits), TemporalCertificateCheck::Rejected(rejection)
+        product_members_mut(&mut missing).remove(index);
+        if matches!(checked(&missing, &limits), fsl_replay::ProductClosureCheck::Rejected(rejection)
             if rejection.rule == CertificateRule::SuccessorMissing)
         {
             successor_missing = true;
@@ -1601,9 +1609,9 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
         "a non-initial member must be required by closure"
     );
     let mut missing = proof.clone();
-    missing.closure.clear();
+    product_members_mut(&mut missing).clear();
     assert!(
-        matches!(checked(&missing, &limits), TemporalCertificateCheck::Rejected(rejection)
+        matches!(checked(&missing, &limits), fsl_replay::ProductClosureCheck::Rejected(rejection)
         if rejection.rule == CertificateRule::InitialMissing)
     );
     let tight = ModelCheckLimits {
@@ -1615,10 +1623,13 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
     };
     assert_eq!(
         checked(proof, &tight),
-        TemporalCertificateCheck::Stopped(fsl_replay::IncompleteCause::LimitReached {
-            limit: fsl_replay::ModelCheckLimit::MaxStates,
-            value: 1,
-        })
+        fsl_replay::ProductClosureCheck::Stopped {
+            cause: fsl_replay::IncompleteCause::LimitReached {
+                limit: fsl_replay::ModelCheckLimit::MaxStates,
+                value: 1,
+            },
+            tuple: None
+        }
     );
 }
 
@@ -1646,7 +1657,7 @@ fn hyper_product_missing_components_precedes_recomputation_for_both_forms() {
         let subjects = [world.subject()];
         let request = ProductClosureRequest {
             package: &world.package,
-            clause: &world.clause,
+            clause: fsl_replay::ProductClosureClause::Hyper(&world.clause),
             subjects: &subjects,
             meter: UNLIMITED,
         };
@@ -1661,11 +1672,11 @@ fn hyper_product_missing_components_precedes_recomputation_for_both_forms() {
         };
         for empty in [false, true] {
             if empty {
-                proof.closure.clear();
+                product_members_mut(&mut proof).clear();
             }
             assert_eq!(
                 check_product_closure(&request, &proof, &limits, &cancel).expect("core check"),
-                TemporalCertificateCheck::Rejected(CertificateRejection {
+                fsl_replay::ProductClosureCheck::Rejected(CertificateRejection {
                     rule: CertificateRule::Malformed,
                     at: CertificateLocus::CertificateMember(CertificateMember::Components),
                 }),
@@ -1697,7 +1708,7 @@ fn hyper_product_rejection_and_checker_stop_never_settle_certified() {
     let subjects = [world.subject()];
     let request = ProductClosureRequest {
         package: &world.package,
-        clause: &world.clause,
+        clause: fsl_replay::ProductClosureClause::Hyper(&world.clause),
         subjects: &subjects,
         meter: UNLIMITED,
     };
@@ -1713,7 +1724,7 @@ fn hyper_product_rejection_and_checker_stop_never_settle_certified() {
         HyperOutcome::HoldsReduced { certificates, .. } => certificates,
         other => panic!("copy-swap proof: {other:?}"),
     };
-    certificates[0].closure.clear();
+    product_members_mut(&mut certificates[0]).clear();
     let record = settle(&forged, &limits);
     assert!(matches!(
         record.value,
@@ -1807,19 +1818,19 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
             .map(|binding| (binding.parameter.clone(), binding.instance.key.clone()))
             .collect(),
         reduction: None,
-        closure,
+        closure: fsl_replay::ProductClosure::Product(closure),
         components: None,
     };
     let subjects = [subject];
     let request = ProductClosureRequest {
         package: &world.package,
-        clause: &world.clause,
+        clause: fsl_replay::ProductClosureClause::Hyper(&world.clause),
         subjects: &subjects,
         meter: UNLIMITED,
     };
     assert!(
         matches!(check_product_closure(&request, &proof, &limits, &cancel).expect("check"),
-        TemporalCertificateCheck::Rejected(rejection) if rejection.rule == CertificateRule::ViolatingMember)
+        fsl_replay::ProductClosureCheck::Rejected(rejection) if rejection.rule == CertificateRule::ViolatingMember)
     );
     let initial = product
         .initial()
@@ -1827,13 +1838,13 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         .map(|state| product_state_key(&product.key(state)).expect("initial key"))
         .collect::<std::collections::BTreeSet<_>>();
     assert!(
-        proof.closure.len() > initial.len(),
+        product_members(&proof).len() > initial.len(),
         "the product has non-initial successors"
     );
-    proof.closure.retain(|key| initial.contains(key));
+    product_members_mut(&mut proof).retain(|key| initial.contains(key));
     assert!(
         matches!(check_product_closure(&request, &proof, &limits, &cancel).expect("check"),
-        TemporalCertificateCheck::Rejected(rejection) if rejection.rule == CertificateRule::SuccessorMissing)
+        fsl_replay::ProductClosureCheck::Rejected(rejection) if rejection.rule == CertificateRule::SuccessorMissing)
     );
 }
 
@@ -1903,23 +1914,41 @@ fn hyper_product_leaky_closure_rejects_the_secure_partition() {
     let leaky = World::new(Vault::Leaky, false, &STARTS, &declaration);
     let explored = leaky.explore();
     proof.reduction = None;
-    proof.closure = explored
+    *product_members_mut(&mut proof) = explored
         .graph
         .states()
         .iter()
         .map(|member| ProductStateKey(StateKey::from_canonical_bytes(member.key.clone())))
         .collect();
-    proof.closure.sort();
-    assert!(proof.closure.len() > secure.explore().graph.states().len());
+    product_members_mut(&mut proof).sort();
+    assert!(product_members(&proof).len() > secure.explore().graph.states().len());
     let subjects = [leaky.subject()];
     let request = ProductClosureRequest {
         package: &leaky.package,
-        clause: &leaky.clause,
+        clause: fsl_replay::ProductClosureClause::Hyper(&leaky.clause),
         subjects: &subjects,
         meter: UNLIMITED,
     };
     assert!(
         matches!(check_product_closure(&request, &proof, &limits, &cancel).expect("core check"),
-        TemporalCertificateCheck::Rejected(rejection) if rejection.rule == CertificateRule::NotPartition)
+        fsl_replay::ProductClosureCheck::Rejected(rejection) if rejection.rule == CertificateRule::NotPartition)
     );
+}
+
+fn product_members(
+    proof: &fsl_replay::ProductClosureCertificate,
+) -> &[fsl_replay::ProductStateKey] {
+    match &proof.closure {
+        fsl_replay::ProductClosure::Product(states) => states,
+        fsl_replay::ProductClosure::Relation(_) => panic!("expected a temporal product"),
+    }
+}
+
+fn product_members_mut(
+    proof: &mut fsl_replay::ProductClosureCertificate,
+) -> &mut Vec<fsl_replay::ProductStateKey> {
+    match &mut proof.closure {
+        fsl_replay::ProductClosure::Product(states) => states,
+        fsl_replay::ProductClosure::Relation(_) => panic!("expected a temporal product"),
+    }
 }

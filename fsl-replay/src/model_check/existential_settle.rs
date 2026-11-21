@@ -11,8 +11,8 @@ use super::state_graph::{
     GraphEvidence, GraphUndefined, RunEnd, TrapClosure, WitnessPath, WitnessSource,
 };
 use crate::{
-    Certification, IncompleteCause, InconclusiveCause, ProductClosureRefusal,
-    ProductClosureRequest, ProofBasis, SettlementBasis, TemporalCertificateCheck, TerminalValue,
+    Certification, IncompleteCause, InconclusiveCause, ProductClosureCheck, ProductClosureRefusal,
+    ProductClosureRequest, ProofBasis, SettlementBasis, TerminalValue,
 };
 
 /// A single-existential settlement and the evidence that its replay reproduced.
@@ -34,17 +34,17 @@ pub fn settle_existential(
     method: &StateGraphMethod,
     cancel: &Cancel,
 ) -> Result<ExistentialRecord, ProductClosureRefusal> {
+    let clause = request.hyper_clause()?;
     let [subject] = request.subjects else {
         return Err(ProductClosureRefusal::Input("HP-5-subject"));
     };
-    let alias = request
-        .clause
+    let alias = clause
         .aliases()
         .first()
         .ok_or(ProductClosureRefusal::Input("HP-5-subject"))?;
     let system = ModelSystem::for_alias(subject.simulation.clone(), alias.as_str())
         .map_err(|_| ProductClosureRefusal::Input("HP-5-subject"))?;
-    let over = match (request.clause.parameters(), instance.instance.as_slice()) {
+    let over = match (clause.parameters(), instance.instance.as_slice()) {
         ([], []) => None,
         ([parameter], [(name, key)]) if name == &parameter.name => Some(
             system
@@ -56,7 +56,7 @@ pub fn settle_existential(
         ),
         _ => return Err(ProductClosureRefusal::Input("HP-5-instance")),
     };
-    if request.clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+    if clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
         && matches!(
             instance.outcome,
             ExistentialOutcome::ClosedWitnessed { .. } | ExistentialOutcome::Trapped { .. }
@@ -71,7 +71,7 @@ pub fn settle_existential(
         let replayed = super::graph_hyper::replay_evidence(
             &system,
             request.package,
-            request.clause,
+            clause,
             &candidate,
             method.limits.limits.max_states,
             method.limits.limits.max_transitions,
@@ -106,7 +106,7 @@ pub fn settle_existential(
                 return Err(ProductClosureRefusal::Input("HP-5-certificate-instance"));
             }
             match crate::check_product_closure(request, certificate, &method.limits, cancel)? {
-                TemporalCertificateCheck::Accepted => replay(
+                ProductClosureCheck::Accepted => replay(
                     GraphEvidence::Witness {
                         paths: lassos
                             .iter()
@@ -130,15 +130,13 @@ pub fn settle_existential(
                         SettlementBasis::DecisiveWitness,
                     ),
                 ),
-                TemporalCertificateCheck::Rejected(rejection) => {
+                ProductClosureCheck::Rejected(rejection) => {
                     Row::inconclusive(InconclusiveCause::CertificateRejected {
                         rule: rejection.rule,
                         at: rejection.at,
                     })
                 }
-                TemporalCertificateCheck::Stopped(cause) => Row::stopped_run(cause, None),
-                TemporalCertificateCheck::MemoryBoundReached { .. }
-                | TemporalCertificateCheck::InstanceBoundReached { .. } => Row::failed(),
+                ProductClosureCheck::Stopped { cause, .. } => Row::stopped_run(cause, None),
             }
         }
         ExistentialOutcome::WitnessedUnchecked {
@@ -259,7 +257,7 @@ fn settle_closed(
         closed_executions, horizon, judge_closed_tuple, CheckedHyperLetters, CheckedStepMatch,
         ClosedInputs, ClosedStop, ClosedVerdict, ParameterBinding,
     };
-    let clause = request.clause;
+    let clause = request.hyper_clause()?;
     let binding: Vec<ParameterBinding> = match (clause.parameters(), &over) {
         ([parameter], Some(found)) => vec![ParameterBinding {
             parameter: parameter.name.clone(),
@@ -347,7 +345,11 @@ fn settle_closed(
                         }
                     }
                     match all {
-                        Ok(true) if paths.len() == fsl_eval::simulation::TransitionSystem::initial(system).len() => {
+                        Ok(true)
+                            if paths.len()
+                                == fsl_eval::simulation::TransitionSystem::initial(system)
+                                    .len() =>
+                        {
                             evidence = Some(GraphEvidence::Witness {
                                 paths: paths
                                     .iter()

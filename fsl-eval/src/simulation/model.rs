@@ -365,6 +365,31 @@ pub struct StepEffect {
     pub written: Vec<WrittenSlots>,
 }
 
+/// A labelled model transition whose result participates in canonical edge order.
+/// Distinct results remain distinct when they reach the same model state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelRelationTransition {
+    /// The operation, receiver and arguments.
+    pub transition: ModelTransition,
+    /// The observed result in the existing typed canonical value spelling.
+    pub result: Option<String>,
+}
+
+impl quire_canonical::Encode for ModelRelationTransition {
+    fn encode_into<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_array()?;
+        quire_canonical::Encode::encode_into(&self.transition, writer)?;
+        writer.bool(self.result.is_some())?;
+        if let Some(result) = &self.result {
+            writer.string(result)?;
+        }
+        writer.end_array()
+    }
+}
+
 /// A clock collection a step wrote whole, and where each of its post-state
 /// slots comes from.
 #[derive(Clone, Debug, Eq, PartialEq)]

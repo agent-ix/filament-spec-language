@@ -8,7 +8,8 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
-    check_model_bounds, ModelFinding, ModelKey, ModelSimState, ModelSystem,
+    check_model_bounds, ModelFinding, ModelKey, ModelRelationTransition as RelationTransition,
+    ModelSimState, ModelSystem,
 };
 use fsl_eval::simulation::{
     EncodingRefusal, Expansion, ExpansionStop, Outcome, StateKey, TransitionSystem,
@@ -19,36 +20,12 @@ use fsl_replay::{
     HyperUndefined, ModelCheckLimit, ModelStep, ReachedLimit,
 };
 use fsl_semantics::check::CheckedModelRelation;
-use quire_canonical::{Encode, Sink, Writer};
 use std::collections::BTreeMap;
 
 use super::check::{not_simulated, ModelCheckRefusal, BOUND_POSITIONS};
 use super::graph::{retain, RetainedEdge, RetainedGraph};
 
 type RelationGraph = RetainedGraph<ModelSimState, RelationTransition, ModelFinding>;
-
-/// A relation edge identity includes the operation result, which is part of
-/// an execution binding even when several results reach one state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct RelationTransition {
-    transition: ModelTransition,
-    result: Option<String>,
-}
-
-impl Encode for RelationTransition {
-    fn encode_into<S: Sink + ?Sized>(
-        &self,
-        writer: &mut Writer<'_, S>,
-    ) -> Result<(), quire_canonical::Error> {
-        writer.begin_array()?;
-        self.transition.encode_into(writer)?;
-        writer.bool(self.result.is_some())?;
-        if let Some(result) = &self.result {
-            writer.string(result)?;
-        }
-        writer.end_array()
-    }
-}
 
 /// Model expansion with result-aware transition identities for relation checks.
 struct RelationSystem<'s, 'a> {
@@ -95,7 +72,7 @@ pub struct ModelRelationCheckRequest<'a> {
     pub relation: &'a CheckedModelRelation,
     /// The checked package whose body the relation evaluates.
     pub package: &'a CheckedPackage,
-    /// One subject per distinct relation alias, in first binding order.
+    /// One subject per distinct used relation alias, in model declaration order.
     pub subjects: Vec<ModelSubject<'a>>,
     /// FR-126's graph budgets and FR-184's relation tuple budget.
     pub limits: fsl_replay::ModelCheckLimits,
@@ -122,6 +99,8 @@ pub enum ModelRelationOutcome {
     /// Every tuple in the product of reachable transition sets satisfied the
     /// relation body.
     Holds {
+        /// Independently checkable reachable subject closures.
+        certificate: fsl_replay::ProductClosureCertificate,
         /// Search counts.
         stats: ModelRelationStats,
     },
@@ -199,12 +178,7 @@ pub fn check_model_relation(
     cancel: &Cancel,
 ) -> Result<ModelRelationOutcome, ModelRelationRefusal> {
     let executions = request.relation.executions();
-    let mut aliases = Vec::new();
-    for alias in request.relation.execution_aliases() {
-        if !aliases.contains(alias) {
-            aliases.push(alias.clone());
-        }
-    }
+    let aliases = request.relation.aliases();
     if request.subjects.len() != aliases.len() {
         return Err(ModelRelationRefusal::SubjectCount {
             expected: aliases.len(),
@@ -216,10 +190,11 @@ pub fn check_model_relation(
     let mut graphs = Vec::with_capacity(request.subjects.len());
     let mut stats = ModelRelationStats::default();
     let mut bounded_depth = None;
-    for (subject, expected) in request.subjects.iter().zip(&aliases) {
-        let system = ModelSystem::new(subject.simulation.clone()).map_err(|failure| {
-            ModelRelationRefusal::Model(ModelCheckRefusal::Admission(Box::new(failure)))
-        })?;
+    for (subject, expected) in request.subjects.iter().zip(aliases) {
+        let system =
+            ModelSystem::for_alias(subject.simulation.clone(), expected).map_err(|failure| {
+                ModelRelationRefusal::Model(ModelCheckRefusal::Admission(Box::new(failure)))
+            })?;
         let found = system.model().unwrap_or_default();
         let expected_package = request
             .package
@@ -339,7 +314,10 @@ pub fn check_model_relation(
         return Ok(if let Some(depth) = bounded_depth {
             ModelRelationOutcome::BoundReached { depth, stats }
         } else {
-            ModelRelationOutcome::Holds { stats }
+            ModelRelationOutcome::Holds {
+                certificate: certificate(&request, &graphs)?,
+                stats,
+            }
         });
     }
 
@@ -351,7 +329,9 @@ pub fn check_model_relation(
                     limit: ModelCheckLimit::MaxRelationTuples,
                     value: request.limits.max_relation_tuples,
                 }),
-                count: Some(stats.relation_tuples),
+                count: Some(stats.relation_tuples.checked_add(1).ok_or_else(|| {
+                    ModelRelationRefusal::Fault(InternalFault::new("EN-1", "relation-count-fits"))
+                })?),
                 stats,
             });
         }
@@ -411,7 +391,9 @@ pub fn check_model_relation(
             .iter()
             .map(|edge| edge.transition.result.as_deref())
             .collect();
-        stats.relation_tuples = stats.relation_tuples.saturating_add(1);
+        stats.relation_tuples = stats.relation_tuples.checked_add(1).ok_or_else(|| {
+            ModelRelationRefusal::Fault(InternalFault::new("EN-1", "relation-count-fits"))
+        })?;
         let evaluation = fsl_eval::value::evaluate_model_relation_transitions(
             request.package,
             request.relation,
@@ -498,7 +480,10 @@ pub fn check_model_relation(
     Ok(if let Some(depth) = bounded_depth {
         ModelRelationOutcome::BoundReached { depth, stats }
     } else {
-        ModelRelationOutcome::Holds { stats }
+        ModelRelationOutcome::Holds {
+            certificate: certificate(&request, &graphs)?,
+            stats,
+        }
     })
 }
 
@@ -600,4 +585,72 @@ fn trace_to_edge(
         path.push(incoming.clone());
         current = incoming.source;
     }
+}
+
+/// Write only the retained evidence; the independent checker recomputes it.
+fn certificate(
+    request: &ModelRelationCheckRequest<'_>,
+    graphs: &[RelationGraph],
+) -> Result<fsl_replay::ProductClosureCertificate, ModelRelationRefusal> {
+    let mut subjects = Vec::new();
+    for (alias, graph) in request.relation.aliases().iter().zip(graphs) {
+        let mut states: Vec<_> = graph
+            .states()
+            .iter()
+            .map(|state| StateKey::from_canonical_bytes(state.key.clone()))
+            .collect();
+        states.sort();
+        let mut executions = Vec::new();
+        for ((name, operation), owner) in request
+            .relation
+            .executions()
+            .iter()
+            .zip(request.relation.execution_aliases())
+        {
+            if owner != alias {
+                continue;
+            }
+            let operation = fsl_semantics::check::operation_text(operation);
+            let transitions = graph
+                .edges()
+                .iter()
+                .filter(|edge| edge.transition.transition.operation() == operation)
+                .map(|edge| {
+                    let state_key = |id| {
+                        graph
+                            .state(id)
+                            .map(|state| StateKey::from_canonical_bytes(state.key.clone()))
+                            .ok_or_else(|| {
+                                ModelRelationRefusal::Fault(InternalFault::new(
+                                    "EN-1",
+                                    "relation-edge-state",
+                                ))
+                            })
+                    };
+                    Ok(fsl_replay::HyperTransitionEdge {
+                        pre_state: state_key(edge.source)?,
+                        transition: edge.transition.transition.clone(),
+                        post_state: state_key(edge.target)?,
+                        result: edge.transition.result.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, ModelRelationRefusal>>()?;
+            executions.push(fsl_replay::HyperExecutionEdges {
+                execution: name.clone(),
+                transitions,
+            });
+        }
+        subjects.push(fsl_replay::HyperSubjectClosure {
+            alias: alias.clone(),
+            states,
+            executions,
+        });
+    }
+    Ok(fsl_replay::ProductClosureCertificate {
+        form: fsl_semantics::check::HyperForm::StepRelation,
+        instance: Vec::new(),
+        reduction: None,
+        closure: fsl_replay::ProductClosure::Relation(subjects),
+        components: None,
+    })
 }

@@ -16,7 +16,13 @@ use fsl_eval::simulation::model::{CheckedHyperLetters, ModelSystem};
 use fsl_eval::simulation::{StateKey, SymmetryGroup, TransitionSystem};
 use fsl_foundation::IdentityLimits;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedHyperClause, CopyGroup, HyperForm};
+use fsl_semantics::check::{CheckedHyperClause, CheckedModelRelation, CopyGroup, HyperForm};
+
+mod relation;
+pub use relation::{
+    HyperExecutionEdges, HyperSubjectClosure, HyperTransitionEdge, HyperTransitionTuple,
+    HyperTupleStop,
+};
 
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
 use super::scc::{check_partition, CertificateState, Component, ComponentWitness, ProductGraph};
@@ -109,9 +115,75 @@ pub struct ProductClosureCertificate {
     /// The copy group used to canonicalize members, if one was applied.
     pub reduction: Option<CopyGroup>,
     /// Sorted, duplicate-free canonical product members.
-    pub closure: Vec<ProductStateKey>,
+    pub closure: ProductClosure,
     /// HP-2/HP-3 component partition and its independently checked witnesses.
     pub components: Option<Vec<Component<ProductStateKey>>>,
+}
+
+impl ProductClosureCertificate {
+    /// Serialize an HP-1 certificate as RFC 8785 JSON, without granting a verdict.
+    ///
+    /// # Errors
+    /// Refuses a non-HP-1 certificate or an unencodable labelled edge.
+    pub fn relation_bytes(&self) -> Result<Vec<u8>, ProductClosureRefusal> {
+        #[derive(serde::Serialize)]
+        struct RelationCertificate<'a> {
+            form: &'static str,
+            instance: &'a [(String, String)],
+            closure: &'a [HyperSubjectClosure],
+        }
+        let ProductClosure::Relation(closure) = &self.closure else {
+            return Err(ProductClosureRefusal::Input("relation-closure"));
+        };
+        if self.form != HyperForm::StepRelation
+            || !self.instance.is_empty()
+            || self.reduction.is_some()
+            || self.components.is_some()
+        {
+            return Err(ProductClosureRefusal::Input("relation-certificate"));
+        }
+        fsl_foundation::canonical_json::encode(&RelationCertificate {
+            form: "HP-1",
+            instance: &self.instance,
+            closure,
+        })
+        .map_err(|_| ProductClosureRefusal::Input("relation-certificate-encoding"))
+    }
+}
+
+/// The closed members of a temporal product or of an HP-1 relation's subjects.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(untagged)]
+pub enum ProductClosure {
+    /// Temporal product keys retain their existing wire shape.
+    Product(Vec<ProductStateKey>),
+    /// HP-1 subjects in model alias declaration order.
+    Relation(Vec<HyperSubjectClosure>),
+}
+
+/// The checked declaration whose original inputs a certificate proves.
+#[derive(Clone, Copy)]
+pub enum ProductClosureClause<'a> {
+    /// A temporal hyper clause.
+    Hyper(&'a CheckedHyperClause),
+    /// A relation over labelled model transitions.
+    Relation(&'a CheckedModelRelation),
+}
+
+/// An independent product certificate check, with HP-1 tuple stop detail.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProductClosureCheck {
+    /// Every required check passed.
+    Accepted,
+    /// A certificate rule failed at its actual member or tuple.
+    Rejected(CertificateRejection),
+    /// A request budget or cancellation stopped recomputation.
+    Stopped {
+        /// The existing settled incomplete cause.
+        cause: IncompleteCause,
+        /// The first unpaid tuple, only for an HP-1 tuple-budget stop.
+        tuple: Option<HyperTupleStop>,
+    },
 }
 
 /// The original checked inputs that the core uses to reconstruct the product.
@@ -119,13 +191,25 @@ pub struct ProductClosureRequest<'a> {
     /// The checked program that owns every atom and match.
     pub package: &'a CheckedPackage,
     /// The clause being proved.
-    pub clause: &'a CheckedHyperClause,
+    pub clause: ProductClosureClause<'a>,
     /// One source model subject per distinct alias, in clause alias order.
     /// A unit that selects several models carries, per alias, the snapshot
     /// provision reduced to that alias's model.
     pub subjects: &'a [ModelSubject<'a>],
     /// Atom and match accounting limits.
     pub meter: ScalarLimits,
+}
+
+impl<'a> ProductClosureRequest<'a> {
+    /// Read the temporal owner, refusing a relation passed to a temporal operation.
+    pub(crate) fn hyper_clause(&self) -> Result<&'a CheckedHyperClause, ProductClosureRefusal> {
+        match self.clause {
+            ProductClosureClause::Hyper(clause) => Ok(clause),
+            ProductClosureClause::Relation(_) => {
+                Err(ProductClosureRefusal::Input("temporal-clause"))
+            }
+        }
+    }
 }
 
 /// A malformed original input or an invariant failure while reconstructing.
@@ -173,10 +257,11 @@ fn rejected(rule: CertificateRule, key: ProductStateKey) -> TemporalCertificateC
 pub(crate) fn alias_systems<'a>(
     request: &ProductClosureRequest<'a>,
 ) -> Result<Vec<ModelSystem<'a>>, ProductClosureRefusal> {
+    let clause = request.hyper_clause()?;
     request
         .subjects
         .iter()
-        .zip(request.clause.aliases())
+        .zip(clause.aliases())
         .map(|(subject, alias)| {
             ModelSystem::for_alias(subject.simulation.clone(), alias.as_str())
                 .map_err(|_| ProductClosureRefusal::Input("model-subject"))
@@ -189,11 +274,19 @@ pub(crate) fn complete_scope(
     request: &ProductClosureRequest<'_>,
     certificates: &[ProductClosureCertificate],
 ) -> Result<(), ProductClosureRefusal> {
+    if let ProductClosureClause::Relation(_) = request.clause {
+        return if certificates.len() == 1 && certificates[0].instance.is_empty() {
+            Ok(())
+        } else {
+            Err(ProductClosureRefusal::Input("certificate-scope"))
+        };
+    }
+    let clause = request.hyper_clause()?;
     let systems = alias_systems(request)?;
     let mut domains = Vec::new();
-    for parameter in request.clause.parameters() {
+    for parameter in clause.parameters() {
         let slot = request
-            .clause
+            .hyper_clause()?
             .aliases()
             .iter()
             .position(|alias| alias == &parameter.alias)
@@ -249,10 +342,34 @@ pub fn check_product_closure(
     certificate: &ProductClosureCertificate,
     limits: &ModelCheckLimits,
     cancel: &Cancel,
-) -> Result<TemporalCertificateCheck, ProductClosureRefusal> {
-    match check(request, certificate, limits, cancel) {
-        Err(ProductClosureRefusal::Stopped(cause)) => Ok(TemporalCertificateCheck::Stopped(cause)),
-        result => result,
+) -> Result<ProductClosureCheck, ProductClosureRefusal> {
+    let result = match request.clause {
+        ProductClosureClause::Relation(clause) => {
+            relation::check(request, clause, certificate, limits, cancel)
+        }
+        ProductClosureClause::Hyper(_) => {
+            check(request, certificate, limits, cancel).and_then(|check| {
+                Ok(match check {
+                    TemporalCertificateCheck::Accepted => ProductClosureCheck::Accepted,
+                    TemporalCertificateCheck::Rejected(rejection) => {
+                        ProductClosureCheck::Rejected(rejection)
+                    }
+                    TemporalCertificateCheck::Stopped(cause) => {
+                        ProductClosureCheck::Stopped { cause, tuple: None }
+                    }
+                    TemporalCertificateCheck::MemoryBoundReached { .. }
+                    | TemporalCertificateCheck::InstanceBoundReached { .. } => {
+                        return Err(ProductClosureRefusal::Recompute("unexpected-product-check"))
+                    }
+                })
+            })
+        }
+    };
+    match result {
+        Err(ProductClosureRefusal::Stopped(cause)) => {
+            Ok(ProductClosureCheck::Stopped { cause, tuple: None })
+        }
+        other => other,
     }
 }
 
@@ -262,7 +379,11 @@ fn check(
     limits: &ModelCheckLimits,
     cancel: &Cancel,
 ) -> Result<TemporalCertificateCheck, ProductClosureRefusal> {
-    for pair in certificate.closure.windows(2) {
+    let clause = request.hyper_clause()?;
+    let ProductClosure::Product(closure) = &certificate.closure else {
+        return Err(ProductClosureRefusal::Input("product-closure"));
+    };
+    for pair in closure.windows(2) {
         if pair[0] >= pair[1] {
             return Ok(rejected(CertificateRule::Malformed, pair[1].clone()));
         }
@@ -277,22 +398,19 @@ fn check(
             at: CertificateLocus::CertificateMember(super::CertificateMember::Components),
         }));
     }
-    if request.clause.form() != Some(&certificate.form)
-        || request.subjects.len() != request.clause.aliases().len()
+    if clause.form() != Some(&certificate.form) || request.subjects.len() != clause.aliases().len()
     {
         return Err(ProductClosureRefusal::Input("clause-or-subjects"));
     }
     let systems = alias_systems(request)?;
     let slot = |alias: &str| {
-        request
-            .clause
+        clause
             .aliases()
             .iter()
             .position(|known| known.as_str() == alias)
             .ok_or(ProductClosureRefusal::Input("model-alias"))
     };
-    let variable_systems = request
-        .clause
+    let variable_systems = clause
         .quantifiers()
         .iter()
         .map(|quantifier| {
@@ -302,15 +420,10 @@ fn check(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut instance = Vec::new();
-    if certificate.instance.len() != request.clause.parameters().len() {
+    if certificate.instance.len() != clause.parameters().len() {
         return Err(ProductClosureRefusal::Input("instance"));
     }
-    for (parameter, (name, key)) in request
-        .clause
-        .parameters()
-        .iter()
-        .zip(&certificate.instance)
-    {
+    for (parameter, (name, key)) in clause.parameters().iter().zip(&certificate.instance) {
         if name != &parameter.name {
             return Err(ProductClosureRefusal::Input("parameter"));
         }
@@ -329,25 +442,23 @@ fn check(
             instance: found,
         });
     }
-    let letters =
-        CheckedHyperLetters::new(request.package, request.clause, variable_systems.clone())
-            .map_err(|_| ProductClosureRefusal::Input("letters"))?;
-    let matcher = CheckedStepMatch::new(request.package, request.clause);
+    let letters = CheckedHyperLetters::new(request.package, clause, variable_systems.clone())
+        .map_err(|_| ProductClosureRefusal::Input("letters"))?;
+    let matcher = CheckedStepMatch::new(request.package, clause);
     let copy = certificate.reduction.as_ref();
     if let Some(copy) = copy {
-        if copy != &fsl_eval::hyper::fairness_preserving_copy_group(request.clause) {
+        if copy != &fsl_eval::hyper::fairness_preserving_copy_group(clause) {
             return Err(ProductClosureRefusal::Input("copy-group"));
         }
     }
     let group = copy.map(fsl_eval::hyper::copy_symmetry);
-    let variables: Vec<&str> = request
-        .clause
+    let variables: Vec<&str> = clause
         .quantifiers()
         .iter()
         .map(|q| q.variable.as_str())
         .collect();
     let mut product = Product::build(ProductBuild {
-        clause: request.clause,
+        clause: clause,
         instance: &instance,
         systems: variable_systems.clone(),
         letters: &letters,
@@ -363,7 +474,7 @@ fn check(
     if product.start().is_err() {
         return Err(product_stop(&product, request, limits)?);
     }
-    let members: BTreeSet<ProductStateKey> = certificate.closure.iter().cloned().collect();
+    let members: BTreeSet<ProductStateKey> = closure.iter().cloned().collect();
     let mut pending = VecDeque::new();
     let mut seen = BTreeMap::new();
     for state in product.initial() {
@@ -457,7 +568,7 @@ fn check(
         .map(|(key, _, _)| key.clone())
         .collect::<Vec<_>>();
     let (graph, constraints) = fairness_graph(
-        request.clause,
+        clause,
         &variable_systems,
         &retained,
         &edges,
@@ -640,6 +751,7 @@ fn product_stop(
     limits: &ModelCheckLimits,
 ) -> Result<ProductClosureRefusal, ProductClosureRefusal> {
     use fsl_eval::hyper::Halt;
+    let clause = request.hyper_clause()?;
     let stopped = |limit, value| {
         ProductClosureRefusal::Stopped(IncompleteCause::LimitReached { limit, value })
     };
@@ -663,13 +775,11 @@ fn product_stop(
                     crate::meter_bound(&request.meter, counter),
                 ),
                 Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates) => {
-                    let quantifier = request
-                        .clause
+                    let quantifier = clause
                         .quantifiers()
                         .get(component)
                         .ok_or(ProductClosureRefusal::Recompute("halt-component"))?;
-                    let slot = request
-                        .clause
+                    let slot = clause
                         .aliases()
                         .iter()
                         .position(|alias| alias == &quantifier.alias)
@@ -823,7 +933,7 @@ pub fn product_certificate(
             .map(|binding| (binding.parameter.clone(), binding.instance.key.clone()))
             .collect(),
         reduction,
-        closure,
+        closure: ProductClosure::Product(closure),
         components,
     })
 }
