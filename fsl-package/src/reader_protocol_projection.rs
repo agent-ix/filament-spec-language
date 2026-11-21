@@ -1989,7 +1989,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 else {
                     return Err(fault("reader-reference-literal-has-identity").into());
                 };
-                let ValueType::Reference(object_type) = self.value_type(id)? else {
+                let ValueType::Reference(ref object_type) = self.value_type(id)? else {
                     return Err(fault("reader-reference-literal-has-object-type").into());
                 };
                 let bytes = identity.as_bytes();
@@ -2014,7 +2014,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     })?;
                 (
                     NodeKind::ReferenceLiteral {
-                        object_type,
+                        object_type: object_type.clone(),
                         identity,
                     },
                     Vec::new(),

@@ -2700,7 +2700,9 @@ pub(super) fn observed_disposition(
             refused_disposition(evaluation, graph, sources),
             Some(at.index()),
         ),
-        (Some(HoldsStop::Failed(failure)), _) => (package_call_disposition(failure), None),
+        (Some(HoldsStop::Failed(failure)), _) => {
+            (refusal_disposition(*convert_call_failure(failure)), None)
+        }
         (None, Ok(outcome)) => (ClauseDisposition::Temporal(verdict(outcome)), None),
         (None, Err(TemporalRefusal::Fault(fault))) => {
             (ClauseDisposition::EvaluateFault(fault), None)
