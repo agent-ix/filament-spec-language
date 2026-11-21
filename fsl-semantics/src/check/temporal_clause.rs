@@ -2601,8 +2601,8 @@ pub struct PackageClauseForm {
 /// package route does not read yet, never a clause built without it.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum PackageClauseRefusal {
-    /// The clause's profile reads bounded or timed intervals, which the
-    /// package form does not read yet.
+    /// The clause's profile reads timed intervals, which the package form
+    /// does not read yet.
     #[error("the package form does not read the {0:?} profile yet")]
     Profile(TemporalProfile),
     /// The formula's arena does not place each operator before its operands.
