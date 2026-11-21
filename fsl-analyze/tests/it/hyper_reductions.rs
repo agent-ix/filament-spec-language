@@ -5,10 +5,14 @@
 //! an ineligible form settles V-8 before any expansion.
 
 use filament_exact::Cancel;
+use fsl_analyze::model_check::ModelCheckRefusal;
 use fsl_foundation::ReductionKind;
-use fsl_replay::{AppliedReduction, HyperOutcome, HyperReductionCause, ModelCheckLimits, RunStats};
+use fsl_replay::{
+    AppliedReduction, HyperOutcome, HyperReductionCause, ModelCheckLimits, ModelTraceSettlement,
+    RunStats, SymmetryBrokenCause, SymmetryRefusal,
+};
 use fsl_route::reductions::{Reductions, SymmetryDeclaration};
-use fsl_semantics::check::HyperForm;
+use fsl_semantics::check::{HyperForm, TemporalProfile};
 use ix_trace_rs::trace;
 
 use crate::hyper::refuted;
@@ -17,15 +21,33 @@ use crate::hyper_world::{key, non_interference, opaque, Vault, World, EQUAL_INPU
 /// The two vaults `v` and `w` of one initial state.
 const TWO_VAULTS: [(&str, (i64, i64)); 2] = [("v", (0, 0)), ("w", (1, 0))];
 
-/// The key symmetry of `vaults` over `v` and `w`.
-fn symmetry() -> Reductions {
+/// The initial states of `keys`, each holding every vault with one secret:
+/// closed under every renaming of the keys.
+fn uniform_snapshots<'k>(keys: &[&'k str]) -> Vec<Vec<(&'k str, (i64, i64))>> {
+    [0, 1]
+        .into_iter()
+        .map(|secret| keys.iter().map(|key| (*key, (secret, 0))).collect())
+        .collect()
+}
+
+/// `NonInterference`'s `match`, pairing steps of one vault with equal inputs.
+const SAME_VAULT: &str = "match { a.step.op = b.step.op and a.step.receiver = b.step.receiver \
+     and a.step.Vault::step.i = b.step.Vault::step.i }";
+
+/// The key symmetry of `vaults` over one class of `keys`.
+fn class_of(keys: &[&str]) -> Reductions {
     Reductions {
         symmetry: vec![SymmetryDeclaration {
             population: key("vaults"),
-            classes: vec![vec!["v".to_owned(), "w".to_owned()]],
+            classes: vec![keys.iter().map(|key| (*key).to_owned()).collect()],
         }],
         ..Reductions::default()
     }
+}
+
+/// The key symmetry of `vaults` over `v` and `w`.
+fn symmetry() -> Reductions {
+    class_of(&["v", "w"])
 }
 
 /// [`symmetry`] with the state constraint `constraint` also selected.
@@ -36,16 +58,29 @@ fn with_constraint(reductions: Reductions, constraint: &str) -> Reductions {
     }
 }
 
-/// `NonInterference` with the state constraints `Low` (met by every reachable
-/// state) and `Zero` (cut on the first step that sets `l`) declared beside it.
+/// The secure vault with the state constraints `Low` (met by every reachable
+/// state) and `Zero` (cut on the first step that sets `l`) declared as
+/// `at current` clauses of its model.
+const SECURE_CONSTRAINED: Vault = Vault::Custom(
+    "post Step using v on V::Vault::step { self.l = i }\n\
+     invariant Low using v on V::Vault at current { self.l <= 1 }\n\
+     invariant Zero using v on V::Vault at current { self.l = 0 }\n",
+);
+
+/// `NonInterference` over the vaults `v` and `w` of `vault`.
 fn interference(vault: Vault) -> World {
-    let declaration = format!(
-        "{}\n\
-         constraint Low using v on V::Vault at current {{ self.l <= 1 }}\n\
-         constraint Zero using v on V::Vault at current {{ self.l = 0 }}",
-        non_interference(EQUAL_INPUTS)
-    );
-    World::with_vaults(vault, &TWO_VAULTS, &declaration)
+    interference_over(vault, &["v", "w"])
+}
+
+/// `NonInterference` over the vaults `keys` of `vault`, whose initial states
+/// are closed under every renaming of them.
+fn interference_over(vault: Vault, keys: &[&str]) -> World {
+    World::with_snapshots(
+        vault,
+        uniform_snapshots(keys),
+        keys,
+        &non_interference(SAME_VAULT),
+    )
 }
 
 fn product_states(outcome: &HyperOutcome) -> u64 {
@@ -59,7 +94,6 @@ fn product_states(outcome: &HyperOutcome) -> u64 {
 
 #[trace("TC-3011", "FR-174-AC-7")]
 #[test]
-#[ignore = "QSL-2248: key symmetry with the diagonal action on an HP-2 product not implemented yet"]
 fn a_key_symmetry_keeps_the_verdict_with_fewer_states() {
     let secure = interference(Vault::Secure);
     let unreduced = secure
@@ -78,13 +112,16 @@ fn a_key_symmetry_keeps_the_verdict_with_fewer_states() {
     let leaky = interference(Vault::Leaky);
     let counterexample = refuted(leaky.run_selecting(symmetry()).expect("not refused"));
     assert_eq!(counterexample.traces.len(), 2);
+    assert!(matches!(
+        leaky.replay(&counterexample),
+        Ok(ModelTraceSettlement::Reproduced { .. })
+    ));
 }
 
 #[trace("TC-3011", "FR-174-AC-7")]
 #[test]
-#[ignore = "QSL-2248: a state constraint on an HP-2 product not implemented yet"]
 fn a_state_constraint_reduces_and_holds_reduced() {
-    let secure = interference(Vault::Secure);
+    let secure = interference(SECURE_CONSTRAINED);
     let low = secure
         .run_selecting(with_constraint(Reductions::default(), "Low"))
         .expect("not refused");
@@ -120,9 +157,71 @@ fn a_state_constraint_reduces_and_holds_reduced() {
     );
 }
 
+/// Finite HP-2 still enumerates closed executions when no reduction is
+/// selected. Selected product reductions are explicitly unsupported until
+/// the finite route executes them; preservation refusals retain precedence.
+#[trace("TC-3011", "FR-174-AC-7", "FR-173-AC-6")]
+#[test]
+fn a_finite_hp2_selection_is_explicitly_unsupported_before_expansion() {
+    let world = World::with_snapshots(
+        SECURE_CONSTRAINED,
+        uniform_snapshots(&["v", "w"]),
+        &["v", "w"],
+        "hyper Bounded using ep over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         { always [0, 2] holds(v.l @ a <= 1 and v.l @ b <= 1) }",
+    );
+    assert_eq!(world.clause.form(), Some(&HyperForm::Universal));
+    assert_eq!(
+        world.clause.profile(),
+        TemporalProfile::EventPositionFalseExtension
+    );
+    let ordinary = world
+        .run_selecting(Reductions::default())
+        .expect("the finite clause runs");
+    let HyperOutcome::HoldsClosed { stats } = ordinary else {
+        panic!("expected ordinary closed enumeration, got {ordinary:?}");
+    };
+    assert!(stats.product_states > 0, "{stats:?}");
+
+    // Zero is true initially but cuts a reachable step setting l to 1.
+    // Returning HoldsClosed here would silently bypass that selection.
+    for (selection, reduction) in [
+        (
+            with_constraint(Reductions::default(), "Zero"),
+            ReductionKind::StateConstraint,
+        ),
+        (symmetry(), ReductionKind::Symmetry),
+        (with_constraint(symmetry(), "Zero"), ReductionKind::Symmetry),
+    ] {
+        assert_eq!(
+            world
+                .run_selecting(selection)
+                .expect("the selection settles"),
+            HyperOutcome::Reduction {
+                cause: HyperReductionCause::Unsupported { reduction },
+                stats: RunStats::default(),
+            }
+        );
+    }
+    let mut nonpreserving = with_constraint(symmetry(), "Zero");
+    nonpreserving.partial_order = true;
+    assert_eq!(
+        world
+            .run_selecting(nonpreserving)
+            .expect("the preservation row settles"),
+        HyperOutcome::Reduction {
+            cause: HyperReductionCause::NotPreserving {
+                reduction: ReductionKind::PartialOrder,
+                form: HyperForm::Universal,
+            },
+            stats: RunStats::default(),
+        }
+    );
+}
+
 #[trace("TC-3011", "FR-174-AC-7")]
 #[test]
-#[ignore = "QSL-2248: the hyper reduction eligibility rule not implemented yet"]
 fn a_key_symmetry_on_an_ineligible_form_settles_unsupported() {
     let world = World::with_vaults(Vault::Secure, &TWO_VAULTS, &opaque(""));
     let outcome = world.run_selecting(symmetry()).expect("not refused");
@@ -143,11 +242,6 @@ fn a_key_symmetry_on_an_ineligible_form_settles_unsupported() {
     assert!(!matches!(eligible, HyperOutcome::Reduction { .. }));
 }
 
-/// The constraint `Low` declared after `declaration`.
-fn with_low(declaration: &str) -> String {
-    format!("{declaration}\nconstraint Low using v on V::Vault at current {{ self.l <= 1 }}")
-}
-
 /// Whether two outcomes give one verdict: both hold, or both are violated.
 fn same_verdict(left: &HyperOutcome, right: &HyperOutcome) -> bool {
     let holds = |outcome: &HyperOutcome| {
@@ -162,28 +256,24 @@ fn same_verdict(left: &HyperOutcome, right: &HyperOutcome) -> bool {
 
 #[trace("TC-3011", "FR-174-AC-7")]
 #[test]
-#[ignore = "QSL-2248: a state constraint on an HP-2 product over two subjects or under each fairness not implemented yet"]
 fn a_state_constraint_is_eligible_on_every_hp2_item() {
-    let power = World::with_second_model(
-        Vault::Secure,
-        &crate::hyper_world::STARTS,
-        &with_low(
-            "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
-             forall trace s of V forall trace n of N \
-             match { s.step.Vault::step.i = n.step.Vault::step.i } \
-             { always holds(d.l @ s = e.l @ n) }",
-        ),
+    let power = World::with_second_vaults(
+        SECURE_CONSTRAINED,
+        &[("v", (0, 0))],
+        &[("v", (1, 0))],
+        "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
+         forall trace s of V forall trace n of N \
+         match { s.step.Vault::step.i = n.step.Vault::step.i } \
+         { always holds(d.l @ s = e.l @ n) }",
     );
     let each = World::new(
-        Vault::Secure,
+        SECURE_CONSTRAINED,
         false,
         &crate::hyper_world::STARTS,
-        &with_low(
-            "hyper P using inf over behaviours (v: V::Vault) \
-             forall trace a of V fair weak each V::Vault::step; \
-             forall trace b of V fair weak each V::Vault::step; \
-             match { a.step.op = b.step.op } { always holds(v.l @ a = v.l @ b) }",
-        ),
+        "hyper P using inf over behaviours (v: V::Vault) \
+         forall trace a of V fair weak each V::Vault::step; \
+         forall trace b of V fair weak each V::Vault::step; \
+         match { a.step.op = b.step.op } { always holds(v.l @ a = v.l @ b) }",
     );
     for world in [&power, &each] {
         let constrained = world
@@ -194,7 +284,7 @@ fn a_state_constraint_is_eligible_on_every_hp2_item() {
             "{constrained:?}"
         );
         let unconstrained = world
-            .run(ModelCheckLimits::default(), &Cancel::new())
+            .run_selecting(Reductions::default())
             .expect("not refused");
         assert!(
             same_verdict(&constrained, &unconstrained),
@@ -203,36 +293,88 @@ fn a_state_constraint_is_eligible_on_every_hp2_item() {
     }
 }
 
-/// FR-174-AC-7: a request that selects a row-preserving key symmetry is
-/// admitted by the selector, then settles `unsupported` before any expansion.
-#[trace("TC-599", "FR-174-AC-7")]
+/// FR-151 "Form": a symmetry declaration naming a key outside the subject's
+/// universe is refused before any expansion.
+#[trace("TC-3011", "FR-174-AC-7")]
 #[test]
-fn a_selected_preserving_reduction_is_reported_before_expansion() {
+fn a_symmetry_over_a_key_outside_the_universe_is_refused() {
     let world = World::new(
         Vault::Secure,
         false,
         &STARTS,
         &non_interference(EQUAL_INPUTS),
     );
-    let selected = Reductions {
-        symmetry: vec![fsl_route::reductions::SymmetryDeclaration {
-            population: crate::hyper_world::key("vaults"),
-            classes: vec![vec!["v".to_owned(), "w".to_owned()]],
-        }],
-        ..Reductions::default()
-    };
-    let outcome = world
-        .run_selecting(selected)
-        .expect("the reduction selection parses");
-    assert_eq!(
-        outcome,
-        HyperOutcome::Reduction {
-            cause: HyperReductionCause::Unsupported {
-                reduction: ReductionKind::Symmetry,
-            },
-            stats: RunStats::default(),
-        }
+    let refusal = world
+        .run_selecting(symmetry())
+        .expect_err("the key `w` is not in the universe");
+    assert!(
+        matches!(
+            refusal,
+            ModelCheckRefusal::Symmetry(SymmetryRefusal::UnknownKey { .. })
+        ),
+        "{refusal:?}"
     );
+}
+
+/// FR-151 "Closed initial states": initial states a declared swap of `v` and
+/// `w` maps to no initial state settle `SymmetryBroken` before any expansion.
+#[trace("TC-3011", "FR-174-AC-7")]
+#[test]
+fn initial_states_not_closed_under_the_symmetry_settle_symmetry_broken() {
+    let world = World::with_vaults(Vault::Secure, &TWO_VAULTS, &non_interference(EQUAL_INPUTS));
+    let outcome = world.run_selecting(symmetry()).expect("not refused");
+    let HyperOutcome::Reduction { cause, stats } = outcome else {
+        panic!("expected a reduction cause, got {outcome:?}");
+    };
+    assert!(
+        matches!(
+            cause,
+            HyperReductionCause::SymmetryBroken {
+                cause: SymmetryBrokenCause::InitialStatesNotClosed { .. },
+                ..
+            }
+        ),
+        "{cause:?}"
+    );
+    assert_eq!(stats, RunStats::default());
+}
+
+/// The diagonal action over a stabiliser that still has keys to swap: the
+/// clause binds `v`, so `w` and `x` stay interchangeable in the one instance
+/// the orbit `[v, w, x]` leaves. The secure vault holds with fewer product
+/// states than the unreduced check, and the leaky vault's counterexample is
+/// concretised through the key renaming and replays.
+#[trace("TC-3011", "FR-174-AC-7")]
+#[test]
+fn a_key_symmetry_with_a_nontrivial_stabiliser_keeps_the_verdict() {
+    let keys = ["v", "w", "x"];
+    let secure = interference_over(Vault::Secure, &keys);
+    let unreduced = secure
+        .run(ModelCheckLimits::default(), &Cancel::new())
+        .expect("not refused");
+    let reduced = secure.run_selecting(class_of(&keys)).expect("not refused");
+    let HyperOutcome::HoldsReduced { reductions, .. } = &reduced else {
+        panic!("expected HoldsReduced, got {reduced:?}");
+    };
+    let [AppliedReduction::Symmetry {
+        orbit, stabiliser, ..
+    }, AppliedReduction::CopySwap { .. }] = &reductions[..]
+    else {
+        panic!("expected a symmetry then a copy swap, got {reductions:?}");
+    };
+    assert_eq!(orbit, &["v", "w", "x"]);
+    let [class] = &stabiliser[..] else {
+        panic!("expected one stabiliser class, got {stabiliser:?}");
+    };
+    assert_eq!(class.keys, ["w", "x"]);
+    assert!(product_states(&reduced) < product_states(&unreduced));
+
+    let leaky = interference_over(Vault::Leaky, &keys);
+    let counterexample = refuted(leaky.run_selecting(class_of(&keys)).expect("not refused"));
+    assert!(matches!(
+        leaky.replay(&counterexample),
+        Ok(ModelTraceSettlement::Reproduced { .. })
+    ));
 }
 
 /// FR-174-AC-4: a state constraint that does not preserve HP-3 is rejected

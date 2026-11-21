@@ -1137,8 +1137,9 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         | ModelCheckRefusal::ProtocolAbstractSide
         | ModelCheckRefusal::Hyper(
             HyperRefusal::FormNotDecided { .. }
-                | HyperRefusal::NotSingleExistential { .. }
-                | HyperRefusal::ClosedUndefined,
+            | HyperRefusal::NotSingleExistential { .. }
+            | HyperRefusal::ClosedUndefined
+            | HyperRefusal::ConstraintUndefined { .. },
         ) => Refusal::Unsupported(NOT_YET),
         // Clauses and operations the engine cannot read: unsupported forms.
         ModelCheckRefusal::Translation(_) | ModelCheckRefusal::Footprint(_) => {

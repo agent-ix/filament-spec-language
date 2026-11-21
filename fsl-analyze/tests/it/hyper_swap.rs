@@ -711,30 +711,30 @@ fn symmetry() -> Reductions {
     }
 }
 
-/// A reduction the table admits is not
-/// refused as non-preserving. This engine does not offer key symmetry or a
-/// state constraint for a hyper item, so the item settles `unsupported`
-/// naming the first selected reduction, still before any state is expanded.
+/// A reduction whose row reads "yes" for an item FR-174's eligibility rule
+/// does not admit is not refused as non-preserving: key symmetry over `Opaque`
+/// (HP-3) and a state constraint over a projection-aligned (HP-6) clause settle
+/// `unsupported` naming the reduction, before any state is expanded. An HP-2
+/// item is eligible, so no selection settles it before expansion.
 #[trace("TC-599")]
 #[test]
 fn a_reduction_whose_row_reads_yes_is_not_refused_as_non_preserving() {
-    let interference = World::new(
+    let opaque = World::new(
         Vault::Secure,
         false,
         &STARTS,
-        &non_interference(EQUAL_INPUTS),
+        &crate::hyper_world::opaque(""),
     );
-    for (reductions, expected) in [
-        (symmetry(), ReductionKind::Symmetry),
-        (
-            Reductions {
-                constraint: Some("Bounded".to_owned()),
-                ..Reductions::default()
-            },
-            ReductionKind::StateConstraint,
-        ),
+    let projected = World::busy(Vault::Busy, &IDLE, &aligned(&[]));
+    let constraint = Reductions {
+        constraint: Some("Bounded".to_owned()),
+        ..Reductions::default()
+    };
+    for (world, reductions, expected) in [
+        (&opaque, symmetry(), ReductionKind::Symmetry),
+        (&projected, constraint, ReductionKind::StateConstraint),
     ] {
-        let outcome = interference.run_selecting(reductions).expect("not refused");
+        let outcome = world.run_selecting(reductions).expect("not refused");
         let HyperOutcome::Reduction { cause, stats } = outcome else {
             panic!("expected a reduction cause, got {outcome:?}");
         };
@@ -746,7 +746,13 @@ fn a_reduction_whose_row_reads_yes_is_not_refused_as_non_preserving() {
         );
         assert_eq!(stats, fsl_replay::RunStats::default());
     }
-    // No selection leaves the item to the engine.
+    // No selection leaves an HP-2 item to the engine.
+    let interference = World::new(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &non_interference(EQUAL_INPUTS),
+    );
     assert!(matches!(
         interference.run(Default::default(), &Cancel::new()),
         Ok(HyperOutcome::HoldsReduced { .. })
@@ -1112,9 +1118,9 @@ const INTERVAL_UNREDUCED: usize = 8;
 const INTERVAL_REDUCED: u64 = 5;
 
 /// Key symmetry for `NonInterference` with a `fair each` constraint settles
-/// `ReductionNotPreserving` (ADR-023 PH-3), while the same selection with
-/// `whole` fairness reads "yes" (PH-2), and key symmetry for `Opaque` reads
-/// "yes" too (PH-6): both settle `unsupported`.
+/// `ReductionNotPreserving` (ADR-023 PH-3), while key symmetry for `Opaque`
+/// reads "yes" (PH-6) and settles `unsupported`, the eligibility rule admitting
+/// an HP-2 item alone.
 #[trace("TC-599")]
 #[test]
 fn the_key_symmetry_rows_read_the_fairness_granularity_and_the_form() {
@@ -1137,15 +1143,6 @@ fn the_key_symmetry_rows_read_the_fairness_granularity_and_the_form() {
             stats: fsl_replay::RunStats::default()
         }
     );
-    let whole = World::new(
-        Vault::Secure,
-        false,
-        &STARTS,
-        "hyper P using inf over behaviours (v: V::Vault) \
-         forall trace a of V fair weak V::Vault::step; \
-         forall trace b of V fair weak V::Vault::step; \
-         match { a.step.op = b.step.op } { always holds(v.l @ a = v.l @ b) }",
-    );
     let opaque = World::new(
         Vault::Secure,
         false,
@@ -1155,17 +1152,15 @@ fn the_key_symmetry_rows_read_the_fairness_granularity_and_the_form() {
          match { a.step.Vault::step.i = b.step.Vault::step.i } \
          { holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b) }",
     );
-    for world in [&whole, &opaque] {
-        assert_eq!(
-            world.run_selecting(symmetry()).expect("not refused"),
-            HyperOutcome::Reduction {
-                cause: HyperReductionCause::Unsupported {
-                    reduction: ReductionKind::Symmetry
-                },
-                stats: fsl_replay::RunStats::default()
-            }
-        );
-    }
+    assert_eq!(
+        opaque.run_selecting(symmetry()).expect("not refused"),
+        HyperOutcome::Reduction {
+            cause: HyperReductionCause::Unsupported {
+                reduction: ReductionKind::Symmetry
+            },
+            stats: fsl_replay::RunStats::default()
+        }
+    );
 }
 
 /// A projection-aligned (HP-6) clause is stored whole whatever its copy group:

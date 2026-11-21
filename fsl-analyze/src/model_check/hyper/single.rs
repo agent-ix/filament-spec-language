@@ -651,6 +651,8 @@ impl<'a> Run<'_, 'a> {
             meter: self.request.meter,
             cancel: self.cancel,
             copy_swap: None,
+            key_generators: Vec::new(),
+            constraint: None,
         });
         let mut product = match built {
             Ok(product) => product,
@@ -752,6 +754,9 @@ impl<'a> Run<'_, 'a> {
             ProductHalt::Encoding(refusal) => return Err(ModelCheckRefusal::Encoding(refusal)),
             ProductHalt::Fault(internal) => return Err(ModelCheckRefusal::Fault(internal)),
             ProductHalt::WitnessSet(_) => return Err(fault("a-single-trace-has-no-witness-set")),
+            ProductHalt::ConstraintUndefined(_) => {
+                return Err(fault("a-single-trace-selects-no-state-constraint"))
+            }
         };
         Ok(halt.end())
     }

@@ -276,6 +276,7 @@ pub(crate) fn document(busy: bool, reset: bool) -> Vec<u8> {
             "identity": population, "displayName": population,
             "kind": {"module": PACKAGE, "name": "population"},
             "members": [vault], "extent": "closed", "origin": origin(&population),
+            "symmetric": true,
         }],
     })
     .to_string()
@@ -1148,6 +1149,8 @@ impl World {
             meter: UNLIMITED,
             cancel: &cancel,
             copy_swap: None,
+            key_generators: Vec::new(),
+            constraint: None,
         })
         .expect("the negated body translates");
         product.start().expect("the initial states read");

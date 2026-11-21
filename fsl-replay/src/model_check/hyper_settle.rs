@@ -224,6 +224,17 @@ pub fn settle_hyper_check(
                     reduction: *reduction,
                 })
             }
+            HyperReductionCause::SymmetryBroken { population, cause } => {
+                Row::inconclusive(InconclusiveCause::SymmetryBroken {
+                    population: population.clone(),
+                    cause: cause.clone(),
+                })
+            }
+            HyperReductionCause::ConstraintReached { boundary_states } => {
+                Row::inconclusive(InconclusiveCause::ConstraintReached {
+                    boundary_states: *boundary_states,
+                })
+            }
         },
         HyperOutcome::Violated {
             counterexample: payload,
