@@ -9,7 +9,9 @@ use filament_exact::{
 };
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
+use fsl_semantics::check::{BodyTerm, LeafTerm, MemberTerm, OperationMode, Operator};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use fsl_semantics::value::Member;
 use ix_trace_rs::trace;
 
 use super::quantity_literals::{package_with, UNLIMITED};
@@ -69,6 +71,60 @@ const FUNCTIONS: &str = "\
 #[test]
 fn a_conversion_across_an_equivalence_class_is_exact() {
     let quarter = package_with(&format!("{}{FUNCTIONS}", units(QUARTER))).expect("checks");
+    let graph = quarter.graph().semantic_graph();
+    let conversions: Vec<_> = graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.quantity.convert" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        conversions.len(),
+        3,
+        "u1, u2 and u3 each lower a conversion"
+    );
+    let mut targets = Vec::new();
+    for conversion in conversions {
+        assert_eq!(conversion.operator, Operator::Convert);
+        assert_eq!(
+            conversion.operation.mode(),
+            Some(&OperationMode::Rounding(
+                filament_exact::RoundingMode::Exact
+            ))
+        );
+        let Some(Member::TypeArgument { declaration, .. }) = conversion.operation.member() else {
+            panic!("the conversion names its target unit");
+        };
+        assert_eq!(conversion.result_type.admitted(), Some(declaration));
+        let [MemberTerm::Leaf(LeafTerm::Reference { target })] = conversion.arguments.as_slice()
+        else {
+            panic!("the conversion takes one referenced quantity operand");
+        };
+        let operand = graph
+            .node(target.admitted().expect("an admitted operand").clone())
+            .expect("the operand node");
+        assert_ne!(operand.semantic_type().as_ref(), Some(declaration));
+        let target = graph
+            .node(declaration.clone())
+            .expect("the target unit node");
+        assert_eq!(target.semantic_form(), "unit");
+        targets.push(
+            target
+                .declaration()
+                .expect("a declared target unit")
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>()
+                .join("::"),
+        );
+    }
+    targets.sort();
+    assert_eq!(targets, ["beat", "ms", "s"]);
     assert!(truth_at(&quarter, "u1", fraction(1, 1)));
     assert!(!truth_at(&quarter, "u1", fraction(2, 1)));
     assert!(truth_at(&quarter, "u2", fraction(3, 1)));
@@ -82,28 +138,30 @@ fn a_conversion_across_an_equivalence_class_is_exact() {
     assert!(truth_at(&equal, "u2", fraction(12, 1)));
 }
 
-/// FR-093-AC-46 u5: a sum of two units of a class refuses
-/// `ill_typed`/`type-mismatch` under either root ratio; only `convert`
-/// relates them.
+/// FR-093-AC-46 u5 and FR-093-AC-44: addition, subtraction, equality and
+/// ordering of distinct units of one class still refuse
+/// `ill_typed`/`type-mismatch` under either root ratio.
 #[trace("FR-093-AC-46")]
 #[test]
-fn a_sum_across_an_equivalence_class_refuses_type_mismatch() {
+fn arithmetic_and_comparison_across_a_class_require_conversion() {
     use filament_exact::IllTypedCause;
     use fsl_semantics::check::CheckCause;
     for equivalence in [QUARTER, EQUAL] {
-        let refusals = package_with(&format!(
-            "{}function u5 using v(d: Quantity<s>, p: Quantity<beat>): Boolean pure \
-             {{ d + p = d + p }}\n",
-            units(equivalence)
-        ))
-        .expect_err("the sum refuses");
-        assert!(
-            matches!(
-                refusals.as_slice(),
-                [refusal] if refusal.cause == CheckCause::IllTyped(IllTypedCause::TypeMismatch)
-            ),
-            "{refusals:?}"
-        );
+        for expression in ["d + p = d + p", "d - p = d - p", "d = p", "d < p"] {
+            let refusals = package_with(&format!(
+                "{}function u5 using v(d: Quantity<s>, p: Quantity<beat>): Boolean pure \
+             {{ {expression} }}\n",
+                units(equivalence)
+            ))
+            .expect_err("the distinct-unit operation refuses");
+            assert!(
+                matches!(
+                    refusals.as_slice(),
+                    [refusal] if refusal.cause == CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+                ),
+                "{expression} under {equivalence}: {refusals:?}"
+            );
+        }
     }
 }
 

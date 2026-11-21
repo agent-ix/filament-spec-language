@@ -9,9 +9,9 @@
 
 use filament_checked::node::RecordField;
 use filament_exact::{EffectiveId, NodeKey, Rational};
-use filament_semantic_value::quantity::QuantityUnit;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::enumeration::EnumMemberIndex;
+use filament_semantic_value::quantity::QuantityUnit;
 use fsl_package::BareWorld;
 use fsl_semantics::check::{CheckedGraph, DispatchOperation, Scope};
 
