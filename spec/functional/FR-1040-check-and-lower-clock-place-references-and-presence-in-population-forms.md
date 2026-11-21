@@ -19,6 +19,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-772
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-154
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-056
+    type: depends_on
 ---
 # FR-1040: Check and lower clock-place references and presence reads in population forms
 
@@ -56,6 +60,29 @@ population holds, so there is no absent owner to test.
   `scalar_type`/`clock_reference` node. A `Reference<Clock>` field,
   parameter, result or element is typed by that node, so a function whose
   signature holds one has a node like any other function.
+- **`Reference<Clock>` as a model field type.** A model field that holds a
+  place id is typed `Reference<Clock>`. A domain package spells that type
+  as FSpec FR-154 "Clock reference types" states: the field's `typeRef`
+  names a type definition of `kind` `reference` whose `target` is
+  `ix://filament/native/Clock`, an alias of it or a value type bound to it
+  by `target`. A `typeRef` never spells a type argument, and
+  `ix://filament/native/Clock` itself names a clock place, so the reference
+  type definition is the only spelling. Model intake (FR-056) SHALL read such
+  a field as a data member of type `Reference<Clock>` (or `Reference<A>`
+  for an alias `A`): it is no clock member, contributes no clock place,
+  takes its multiplicity and presence as any data field does
+  (`Sequence<Reference<Clock>>[0, 3]`, `Option<Reference<Clock>>`), and is
+  counted in the owning type's data part. S4 SHALL type the field, its reads
+  and its writes by the package's `scalar_type`/`clock_reference` node. A
+  postcondition conjunct `self.r = ref(self.x)` over such a field is a data
+  write of `r`, checked against the operation's frame as any data write is;
+  it is not a clock write and resets no clock, and `x` need not be in the
+  frame. An FSL model unit (FR-710) that declares a field `r:
+  Reference<Clock>` compiles it to that spelling: the compiler writes one
+  `reference` type definition per such field, identity
+  `ix://<domain identity>/Reference_<Owner>_<field>`, as it writes an
+  option value type `ix://<domain identity>/Option_<Owner>_<field>` for an
+  `Option<T>` field, and types the field by it.
 - **Paths through a reference.** A place path that crosses an object
   reference (`ref(self.r.x)`, `ref(self.r.ts[0].x)`, `present(self.r.v)`)
   the checker SHALL check with the data read up to the last object reference on the path
@@ -132,6 +159,7 @@ form either lowers or refuses with one of the typed causes above.
 | FR-1040-AC-5 | `ref(self.v)` over `v: Option<Clock>` with no presence premise checks; in the precondition of the operation `pick(i: Int[0, 1], k: Text)` of `Call` (TC-3084's fixture), `ref(c.q[i])` in `count(c in M::calls where i < size(c.q) and ref(c.q[i]) = self.r) >= 0` checks, and `ref(c.q[i])` in `count(c in M::calls where ref(c.q[i]) = self.r) >= 0` refuses `undefined_expression`/`unproved-presence` at `i`. | Test (TC-3084) |
 | FR-1040-AC-6 | Negative: `sum(c in M::calls: c.x)` and `only(c in M::calls: c.x)` refuse `invalid_timed_model`/`clock-read-outside-constraint` at `c.x`; `sum(c in M::calls: ref(c.x))` and `sum(c in M::calls: M::calls)` refuse `ill_typed`/`type-mismatch` at the summand; `ref(c.m[k].x)` in `pick`'s precondition, `k` its `Text` parameter, over a `Map` value refuses `ill_typed`/`type-mismatch` at the `ref`; `ref(c.x) < ref(c.y)` refuses `ill_typed`/`operator-ineligible`; and a call `late(c.x)` to a function `late(t: Clock): Boolean` in a `count` condition refuses `invalid_timed_model`/`clock-read-outside-constraint` at the call. | Test (TC-3084) |
 | FR-1040-AC-7 | A pure function `same(a: Reference<Clock>, b: Reference<Clock>): Boolean { a = b }` has a function node whose parameters are typed by the `scalar_type`/`clock_reference` node, and a refinement row or clause calling it lowers its call to that node; with the function's body made ill-typed, the unit refuses once at the function body and not at the call. | Test (TC-3084) |
+| FR-1040-AC-8 | Over a domain package `acme/rpc` whose object type `Call` has clock fields `x` and `y` and a field `r` typed `ix://acme/rpc/ClockRef`, a type definition of `kind` `reference` with `target` `ix://filament/native/Clock`, intake gives `r` the type `Reference<Clock>` as a data member, and the postcondition `self.r = ref(self.x)` of an operation `point` whose frame names only `r` checks with no `clock-write` refusal and lowers the write to a `filament.op.clock_reference.ref` application typed by the `scalar_type`/`clock_reference` node, which also types the field; after `point` the state's `r` holds the place id of `self.x`, and two states that differ only in clock values have one state key. The same field typed `ix://filament/native/Clock` is a clock field and the same postcondition refuses `invalid_timed_model`/`clock-write`. An FSL model unit declaring `object Call { x: Clock; r: Reference<Clock>; }` under `domain "acme/rpc"` compiles to a document holding the type definition `ix://acme/rpc/Reference_Call_r` of `kind` `reference` with `target` `ix://filament/native/Clock` and the field `r` typed by it. | Test (TC-3084) |
 
 ## Dependencies
 
@@ -139,4 +167,5 @@ form either lowers or refuses with one of the typed causes above.
 - FR-139 and FR-391: the population forms in refinements and state clauses.
 - FR-093: lowering of checked value expressions to FSpec FR-322 terms.
 - FSpec FR-829: the place-reference application and the `clock_reference` type node.
+- FSpec FR-154 "Clock reference types" and FR-056: the domain-package spelling of a `Reference<Clock>` field and its intake.
 - FSpec FR-322 "Presence" and FSpec FR-772: the presence read and the slot domain.
