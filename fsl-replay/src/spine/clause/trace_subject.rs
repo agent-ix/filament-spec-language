@@ -81,13 +81,6 @@ pub fn run_trace_subject_clause(
         }
     }
     let cancel = Cancel::new();
-    if let Some(actual) =
-        super::extracted_clause_count(&unit, request.limits.source, &cancel).filter(|n| *n > 1)
-    {
-        return Ok(empty_report(ClauseDisposition::ExtractionClauseCount {
-            actual,
-        }));
-    }
     let compile = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
             &front_end::ParseRequest {
@@ -99,6 +92,9 @@ pub fn run_trace_subject_clause(
             &cancel,
         )?
         .into_value();
+        if let Some(actual) = super::extracted_clause_count(&unit, &parsed).filter(|n| *n > 1) {
+            return Ok(Err(actual));
+        }
         let temporal_selections = temporal_clock_selections(&parsed);
         let models = front_end::select(&parsed, &request.packages, request.limits.model, &cancel)?
             .into_value();
@@ -120,10 +116,15 @@ pub fn run_trace_subject_clause(
             &cancel,
         )?
         .into_value();
-        Ok((models, checked, emitted))
+        Ok(Ok((models, checked, emitted)))
     };
     let (_models, checked, _emitted) = match compile() {
-        Ok(compiled) => compiled,
+        Ok(Ok(compiled)) => compiled,
+        Ok(Err(actual)) => {
+            return Ok(empty_report(ClauseDisposition::ExtractionClauseCount {
+                actual,
+            }));
+        }
         Err(failure) => {
             let disposition = match front_end::refusal_or_fault(failure) {
                 Ok(refusal) => ClauseDisposition::Compile(refusal),

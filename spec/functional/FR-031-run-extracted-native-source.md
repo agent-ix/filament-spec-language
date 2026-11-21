@@ -155,8 +155,8 @@ A body whose fence declares a language other than FSL native shall refuse at
 compile with `unknown_language`, exit 20, with no `package_id`
 (FR-109-AC-6). A body that does not parse refuses at compile with FR-109's
 `source` refusal. A body that declares more than one clause shall refuse at
-compile with `extraction-clause-count`, `details` `{"actual": n}` for the
-number of clauses the body declares, with no `package_id`. A selection that
+compile with `extraction-clause-count`, whose `fields` carry `{"actual": "n"}` for the
+number of clauses the body declares (a compile-stage refusal record carries `fields` of text values and no `details` member), with no `package_id`. A selection that
 names a clause the body does not declare refuses at `select` with FR-109's
 `missing_declaration`.
 
@@ -185,7 +185,7 @@ start at zero.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-031-AC-1 | An LF and a CRLF Markdown document whose one selected fence holds FR-108's healthy-parent unit run through `run_clause` report `success`, exit 0, with the `package_id` of the body compiled alone; violating-parent reports `violation`, exit 10; missing-model reports `compile`, `missing_import`/`missing-selection`, exit 20, with no `package_id`. | Test (TC-109) |
+| FR-031-AC-1 | An LF and a CRLF Markdown document whose one selected fence holds FR-108's healthy-parent clause as a one-clause unit run through `run_clause` report `success`, exit 0, with the `package_id` of the body compiled alone; violating-parent reports `violation`, exit 10; missing-model reports `compile`, `missing_import`/`missing-selection`, exit 20, with no `package_id`. | Test (TC-109) |
 | FR-031-AC-2 | A selected clause the document does not hold and an unavailable extraction each end with FR-030's error, retaining the original identity, the selection and Quire's actual outcome, with no compile, no `package_id` and no truth; a body in an `ix:formal` fence refuses at compile with `unknown_language`, exit 20. | Test (TC-109) |
 | FR-031-AC-3 | An original over its byte or line limit, a body run with `work_units` 0, and a body compiled under `SpineLimits` whose checking limit is one below the body's checking work each report incomplete with that limit's typed cause; the same request with default limits then succeeds. | Test (TC-109) |
 | FR-031-AC-4 | The report of AC-1's healthy run names the body identity (`agent-ix`, its body identity) and the original document identity, and its extraction record holds Quire's unchanged `ClausesOutcome` and the verified map. | Test (TC-109) |
@@ -193,7 +193,7 @@ start at zero.
 | FR-031-AC-6 | With every model file the request names absent, a request carrying `extraction` and `package` refuses `extraction-package-conflict` from the request reader; one with no `clauses` binding and one with two refuse `extraction-clause-count` with `details` `{"actual": 0}` and `{"actual": 2}`; one carrying `call` in place of `clause`, and a compile request carrying `extraction`, refuse `extraction-requires-run`; each at stage `request`, exit 20, empty stdout, with no file read beyond the request. A `null` `extraction`, a positional `body` and an unknown member in `body` each refuse `invalid-request` naming the member. | Test (TC-109) |
 | FR-031-AC-7 | A clause-only context that Quire's validator rejects refuses `invalid-quire-context` at stage `quire-context`, exit 20, with Quire's producer diagnostics unchanged in `details`; an unavailable extraction through the command writes the command-error envelope at stage `quire` retaining the original identity, the binding and Quire's outcome. | Test (TC-109) |
 | FR-031-AC-8 | Over an indented CRLF fence preceded on its lines by the two-byte character `é`, a body whose second line holds an ill-typed expression refuses at compile `ill_typed` with its body span unchanged and the original regions the map gives, each region's byte offsets equal to the body offsets plus the fence's original offset and indentation; a body refusal spanning the final CRLF the map deletes carries every original region of the span; a package-encoding refusal carries no original region; a malformed original-to-body map refuses before compile with FR-030's correspondence error. | Test (TC-109) |
-| FR-031-AC-9 | A body declaring two clauses refuses at compile `extraction-clause-count` with `details` `{"actual": 2}` and no `package_id`; a body with a syntax error refuses at compile at FR-109's `source` refusal; a selection naming a clause the body does not declare refuses at `select` `missing_declaration`. | Test (TC-109) |
+| FR-031-AC-9 | A body declaring two clauses refuses at compile `extraction-clause-count` with `fields` `{"actual": "2"}` and no `package_id`; a body with a syntax error refuses at compile at FR-109's `source` refusal; a selection naming a clause the body does not declare refuses at `select` `missing_declaration`. | Test (TC-109) |
 | FR-031-AC-10 | Through the command, AC-1's healthy request writes one `/2` clause-run document whose `extraction` member equals the in-process extraction record, and the FR-267 strict reader reads it back with every member equal (FSpec FR-352-AC-13); a clause-run request over a unit given as bytes writes no `extraction`. | Test (TC-109) |
 
 ## Dependencies

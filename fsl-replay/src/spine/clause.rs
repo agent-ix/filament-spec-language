@@ -306,25 +306,10 @@ impl ClauseRunSource {
 }
 
 /// The number of clauses an extracted unit declares, or `None` for a program
-/// source or a body that does not parse (compilation reports that refusal).
-/// A clause is a state clause or a temporal clause.
-fn extracted_clause_count(
-    unit: &Unit<'_>,
-    limits: fsl_cst::Limits,
-    cancel: &Cancel,
-) -> Option<usize> {
+/// source. A clause is a state clause or a temporal clause. It reads the
+/// unit the front end already parsed, so a body is parsed once.
+fn extracted_clause_count(unit: &Unit<'_>, parsed: &front_end::ParsedUnitSource) -> Option<usize> {
     unit.language?;
-    let parsed = front_end::parse(
-        &front_end::ParseRequest {
-            source: unit.identity,
-            path: unit.path,
-            bytes: unit.bytes,
-        },
-        limits,
-        cancel,
-    )
-    .ok()?
-    .into_value();
     Some(
         parsed
             .unit()
@@ -1776,11 +1761,6 @@ fn run_clause_reading(
     }
 
     let cancel = Cancel::new();
-    if let Some(actual) =
-        extracted_clause_count(&unit, request.limits.source, &cancel).filter(|n| *n > 1)
-    {
-        return Ok(report(ClauseDisposition::ExtractionClauseCount { actual }));
-    }
     let front_end = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
             &front_end::ParseRequest {
@@ -1792,6 +1772,9 @@ fn run_clause_reading(
             &cancel,
         )?
         .into_value();
+        if let Some(actual) = extracted_clause_count(&unit, &parsed).filter(|n| *n > 1) {
+            return Ok(Err(actual));
+        }
         let models = front_end::select(&parsed, &request.packages, request.limits.model, &cancel)?
             .into_value();
         let by_name = temporal_selections.is_empty();
@@ -1845,10 +1828,13 @@ fn run_clause_reading(
             &cancel,
         )?
         .into_value();
-        Ok((models, checked, emitted))
+        Ok(Ok((models, checked, emitted)))
     };
     let (models, checked, emitted) = match front_end() {
-        Ok(compiled) => compiled,
+        Ok(Ok(compiled)) => compiled,
+        Ok(Err(actual)) => {
+            return Ok(report(ClauseDisposition::ExtractionClauseCount { actual }));
+        }
         Err(failure) => {
             let disposition = match front_end::refusal_or_fault(failure) {
                 Ok(refusal) => ClauseDisposition::Compile(refusal),
@@ -2431,11 +2417,6 @@ fn compile_program_parts(
         }
     }
     let cancel = Cancel::new();
-    if let Some(actual) = extracted_clause_count(&unit, limits.source, &cancel).filter(|n| *n > 1) {
-        return Err(Box::new(report(ClauseDisposition::ExtractionClauseCount {
-            actual,
-        })));
-    }
     let front_end = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
             &front_end::ParseRequest {
@@ -2447,6 +2428,9 @@ fn compile_program_parts(
             &cancel,
         )?
         .into_value();
+        if let Some(actual) = extracted_clause_count(&unit, &parsed).filter(|n| *n > 1) {
+            return Ok(Err(actual));
+        }
         let models = front_end::select(&parsed, packages, limits.model, &cancel)?.into_value();
         let check_selections = clocks.check_selections(&parsed);
         let checked = front_end::check_with_refinement_internals(
@@ -2475,10 +2459,15 @@ fn compile_program_parts(
             &cancel,
         )?
         .into_value();
-        Ok((models, checked, emitted))
+        Ok(Ok((models, checked, emitted)))
     };
     let (models, checked, emitted) = match front_end() {
-        Ok(compiled) => compiled,
+        Ok(Ok(compiled)) => compiled,
+        Ok(Err(actual)) => {
+            return Err(Box::new(report(ClauseDisposition::ExtractionClauseCount {
+                actual,
+            })));
+        }
         Err(failure) => {
             let disposition = match front_end::refusal_or_fault(failure) {
                 Ok(refusal) => ClauseDisposition::Compile(refusal),
