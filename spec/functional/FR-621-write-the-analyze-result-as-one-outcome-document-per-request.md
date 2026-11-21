@@ -264,6 +264,49 @@ In `--format text`, the driver prints one line per item,
 basis when present, then one line with the document category, and exits with
 the same code as JSON mode.
 
+### Producer context for an independent replay
+
+For a replayable refutation, the producer SHALL expose `replay_context` in
+the item's outcome entry, using the closed serialized composition defined in
+[Producer replay context](../../docs/producer-replay-context.md): `request`,
+`source_bytes`, `documents`, `family`, `payload`, `envelope`, `subject`, and
+`certificate`. An external-process consumer SHALL be able to recover the
+complete original request descriptor and family inputs from this JSON without
+linking the producer's Rust types. The producer SHALL retain the admitted inputs
+needed to reconstruct that item's replay independently: the complete raw
+checked package and selected dependencies, source bytes, domain-package
+and state documents, selected initial states and universes, target and
+checked obligation identity, backend identity, selected environments and
+domains, and the family's actual counterexample and required certificate.
+These inputs SHALL come from that run's acquisition and family settlement,
+not be inferred from a claim name or from `replay.reproduced`.
+
+The retained request members SHALL use FR-071's existing owned types and
+FSpec FR-336's mapping where that mapping applies. A reference SHALL be
+recoverable through the owning admission/provision handle; a bare identity
+or native object reference SHALL NOT substitute for supplied bytes or
+claim canonical-reference authority. FSpec FR-336's canonical-reference
+conversion remains a separate dependency. A temporal model/protocol replay
+SHALL also retain its typed witness envelope and the selected model/subject
+inputs required by its family replay entry; a transcript alone is insufficient.
+
+The reader SHALL authenticate the immutable original request, envelope and
+subject against their admitted bytes and original proving settings before
+constructing a separate consumer execution request. It SHALL NOT alter the
+recorded envelope to make an accounting equality check pass.
+
+Proving-run settings and supplied-value ceilings SHALL remain distinguished
+from the independent consumer's effective replay accounting. Constructing
+the independent request SHALL use the consumer's effective accounting
+limits, including every accounting-counter entry in `stage_limits`; retained
+producer accounting SHALL NOT override them. Missing reconstruction inputs,
+an admission refusal, a replay refusal or an internal fault SHALL remain
+explicit and SHALL NOT alter the producer's native terminal record,
+certificate status, category or exit code. A family with no complete existing
+request/payload encoding SHALL report reconstruction unavailable rather than
+emit a guessed descriptor or source variant. Canonical references remain
+conditional on their owning conversion.
+
 ## Acceptance Criteria
 
 The Counter fixture is FR-620's.
@@ -285,6 +328,10 @@ The Counter fixture is FR-620's.
 | FR-621-AC-13 | A request over FR-246-AC-1's `Ctl` with the third WCET 6 and the items `CtlFp` and `CtlEdf` gives two `refuted` items, category `violation`, exit 10, each with a `counterexample` entry whose `counterexample` is FSpec FR-419's `schedulability-miss`: for `CtlFp` `analysis` `fixed-priority` and `miss` `{"kind": "response", "task": "c", "job": "0", "iterates": [6, 10, 13], "response": 13, "bound": 12}` in unit `ms`, for `CtlEdf` `analysis` `edf` and `miss` `{"kind": "utilization", "utilization": 13/12}`; neither carries `replay`, the document's `last_stage` is `S7`, and no item is refused for a missing counterexample. Over the unchanged `Ctl` both items are `proved` with no `counterexample`. | Test (TC-2960) |
 | FR-621-AC-14 | A hybrid item whose `bounded-solver` proof FSpec FR-193 settles `insufficient-horizon` and whose entry carries a `flowpipe` writes `certificate` with exactly `identity` and `form`; a refuted hybrid item that exact replay reproduces and whose provider entry carried a `validated-witness` writes `certificate` with exactly `identity` and `form`; FSpec FR-652-AC-5's accepted certificate writes `checker`, `accepted` `true` and `form`; its `[1, 10]` variant writes `accepted` `false`, `rule` `jump` and `at` `/certificate/steps/160`; a witness check the work limit stops writes the `incomplete` item with `accepted` `false`, `rule` `work-limit` and an `at` rooted at `/certificate`. | Test (TC-3035) |
 | FR-621-AC-15 | A statistical `probability` item over FR-193's violating model with `max_witnesses` 2, whose engine finds five sampled witnesses, writes a `measured` record with two `witnesses`, the first two in trace-index order, and `notes` `[{"code": "witnesses-beyond-limit", "details": {"kept": "2", "found": "5"}}]`; with `max_witnesses` 8 the item has no `notes` member. A kept witness with a member that has no FSpec FR-410 spelling is left out of `witnesses` and named by one `witness-omitted` note holding its `test`, its `trace` and the pointer `at` of that member, and the notes sort by `code`, then `test` and `trace` by numeric value, so a witness with `test` `"9"` precedes one with `"10"`. In each case the item's record, category, exit code and every identity are those of the same item with `notes` removed. | Test (TC-3136) |
+
+| FR-621-AC-16 | An external process reading the item's serialized replay_context can recover its complete original request, package/source/document bytes, initial states, universes, target, obligation and family witness envelope. Missing bytes, an inconsistent envelope, or an unavailable canonical reference refuses reconstruction before consumer accounting is applied and does not turn the original refutation into a proof. | Test |
+| FR-621-AC-17 | With different producer and consumer accounting bounds, the reader first authenticates the original request/envelope under the immutable proving context, then independent replay uses the consumer's effective bound for every accounting counter, including a counter present in the producer's stage limits. The original request and envelope remain unchanged and supplied-value ceilings remain distinct. | Test |
+| FR-621-AC-18 | Independent hybrid replay receives the producer's actual counterexample and the certificate its replay arm requires. Missing context or a refused/faulted recheck remains explicit; the producer's terminal record, refusal, certificate status, category and exit code are preserved. | Test |
 
 ## Dependencies
 
