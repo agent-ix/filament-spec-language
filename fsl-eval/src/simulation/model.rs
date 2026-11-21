@@ -3347,7 +3347,7 @@ impl WalkMemo {
             }
             if let Err(incomplete) = work.charge(Charge::new(ChargePoint::GraphEdge)) {
                 return Ok(Expanded::Stopped(walk::exhausted(
-                    ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
+                    crate::simulation::ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
                 )));
             }
             return Ok(found.clone());
@@ -3458,7 +3458,7 @@ pub fn sample_model_walk_keyed(
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
-        .map(|(id, base, value_type)| (id.clone(), base.clone(), *value_type))
+        .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
         .collect();
     crate::simulation::sample::sample_request_using(
         &view,
