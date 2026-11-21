@@ -95,6 +95,11 @@ fn fixture(remove_x: bool) -> Checked {
         fields.retain(|field| field["name"] != "x");
     }
     let selected = if remove_x { "y" } else { "x" };
+    // Definedness::range_path documents that presence uses stable_path,
+    // which takes a "model read only in a state clause (FR-104)".
+    // Its local-root rule is `NodeKind::Local(slot) => break *slot`.
+    // Bind the optional read once so present/value share that stable local
+    // rather than trying to prove presence of a function's model Attribute.
     let body = format!(
         "{}\n\
          protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{\n\
@@ -109,7 +114,7 @@ fn fixture(remove_x: bool) -> Checked {
          }}\n\
          invariant Stored using m on C::Call at current {{ self.r = ref(self.{selected}) }}\n\
          function stored using m(c: Reference<C::Call>): Reference<Clock> pure {{ deref(c).r }}\n\
-         function maybe_stored using m(c: Reference<C::Call>): Reference<Clock> pure {{ if present(deref(c).maybe) then value(deref(c).maybe) else deref(c).r }}\n\
+         function maybe_stored using m(c: Reference<C::Call>): Reference<Clock> pure {{ let maybe = deref(c).maybe in if present(maybe) then value(maybe) else deref(c).r }}\n\
          function has_maybe using m(c: Reference<C::Call>): Boolean pure {{ present(deref(c).maybe) }}\n\
          function stored_refs using m(c: Reference<C::Call>): Sequence<Reference<Clock>>[0, 3] pure {{ deref(c).refs }}",
         clock_refinement(&format!(
