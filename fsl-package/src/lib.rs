@@ -36,7 +36,7 @@ mod bare;
 #[cfg(feature = "std")]
 mod clock_authority;
 #[cfg(feature = "std")]
-pub use clock_authority::ClockDeclarations;
+pub use clock_authority::{ClockDeclarationTableError, ClockDeclarations};
 #[cfg(feature = "std")]
 mod bare_slot;
 #[cfg(feature = "std")]
