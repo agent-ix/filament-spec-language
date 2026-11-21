@@ -2181,7 +2181,22 @@ impl<'a> Typer<'a> {
             }
             ExprNode::Convert { target, operand } => {
                 let target = self.declared_target(target, &location)?;
-                let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
+                let operand = expression.at(*operand);
+                // A Decimal conversion target supplies a literal's complete
+                // expected policy (FR-140). Other source expressions retain
+                // their independently inferred type before conversion.
+                let decimal_literal = match operand.node() {
+                    ExprNode::DecimalValue { .. } => true,
+                    ExprNode::Negate(inner) => {
+                        matches!(operand.at(*inner).node(), ExprNode::DecimalValue { .. })
+                    }
+                    _ => false,
+                };
+                let operand_hint = match &target {
+                    ValueType::Decimal(_) if decimal_literal => Some(Cow::Owned(target.clone())),
+                    _ => None,
+                };
+                let goal = Goal::Infer(operand, operand_hint, location.child(0));
                 return Ok(Self::unary(Unary::Convert(target), goal, location, frames));
             }
             ExprNode::Query {

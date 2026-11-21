@@ -418,7 +418,9 @@ fn a_rational_step_sum_and_its_offset_are_exact_and_certified() {
     for (offset, numerator, denominator) in [("", "1", "1"), (" + rational(1,3)", "4", "3")] {
         let unit = plan_unit(
             "Int[0, 3]",
-            &format!("minimize Reach.steps.sum(s => convert<Cost>(rational(1,3))){offset}"),
+            &format!(
+                "minimize Reach.steps.sum(s => let cost: Cost = rational(1,3) in cost){offset}"
+            ),
             "Reach.length = 3",
         )
         .replace(
@@ -568,7 +570,10 @@ fn a_nonconstant_suffix_on_an_explicit_sum_remains_general() {
             "minimize sum<Integer>(s in Reach.steps: 2) + Reach.length",
             "6",
         ),
-        ("minimize sum<Integer>(s in [1,2]: s) + 7", "10"),
+        (
+            "minimize let costs: Sequence<Integer>[2,2] = [1,2] in sum<Integer>(s in costs: s) + 7",
+            "10",
+        ),
     ] {
         let (exit, value) = plan(
             &plan_unit("Int[0, 3]", objective, "Reach.length >= 2"),

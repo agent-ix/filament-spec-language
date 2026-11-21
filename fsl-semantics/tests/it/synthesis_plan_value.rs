@@ -472,7 +472,9 @@ fn a_decimal_step_sum_retains_its_complete_declared_summand_type() {
     for term in [
         "let cost: Cost = if s.index < 2 then 0.10 else 0.05 in cost",
         "convert<Cost>(0.10)",
+        "convert<Cost>(decimal(10,2))",
         "convert<Cost>(0.10) + 0.05",
+        "let amount: Decimal[0,100;1,1;exact] = 0.1 in convert<Cost>(amount)",
     ] {
         let checked = check_step_sum_with_types(
             "Int[0, 3]",
