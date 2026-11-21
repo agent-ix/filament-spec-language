@@ -4132,11 +4132,21 @@ fn package_refusal_unit(profile: &str) -> String {
         { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n".replace(EVENT_POSITION, profile)
 }
 
-/// Real evaluated refusals retain their source record and caller-rendered span;
-/// caller text provisioning remains a call-stage boundary on the byte route.
+/// A real call refusal retains its source record and caller-rendered span.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-11", "TC-451", "FR-100-AC-9")]
-fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
+fn package_remainder_call_refusal_keeps_caller_source_locus() {
+    assert_package_refusal_sources("call");
+}
+
+/// A refused native condition renders its actual selected-claim region.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-11")]
+fn package_remainder_condition_refusal_keeps_caller_source_locus() {
+    assert_package_refusal_sources("clause");
+}
+
+fn assert_package_refusal_sources(member: &str) {
     use fsl_foundation::{Source, SourceIdentity, Span};
     let unit = package_refusal_unit(EVENT_POSITION);
     let directory = tempfile::tempdir().unwrap();
@@ -4152,135 +4162,133 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         unit.len(),
     )
     .unwrap_or_else(|refusal| panic!("valid caller source: {}", refusal.error.message));
-    for (member, selection, term) in [
-        (
-            "call",
+    let (selection, term) = match member {
+        "call" => (
             json!({"function":"totalVersions","snapshot":"spine-snapshot.json",
             "arguments":[{"parameter":"p","value":{"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)}}]}),
             "allInstances<Config::ConfigVersion>(p)",
         ),
-        (
-            "clause",
+        "clause" => (
             json!({"selection":{"temporal":{"name":"C","trace":{"finite":[level_sample(1)]}}},
             "observations":{}}),
             "allInstances<Config::ConfigVersion>(Config::config_history)",
         ),
-    ] {
-        let owner = if member == "call" {
-            0
+        _ => panic!("unknown fixture member {member}"),
+    };
+    let owner = if member == "call" {
+        0
+    } else {
+        unit.find("temporal C").unwrap()
+    };
+    let start = owner + unit[owner..].find(term).unwrap();
+    let span = serde_json::to_value(
+        offered
+            .locate(Span {
+                start,
+                end: start + term.len(),
+            })
+            .unwrap(),
+    )
+    .unwrap();
+    let mut caller = source("unit.native");
+    caller["file"] = json!("caller.native");
+    caller["document"] = json!("CallerDocument");
+    caller["formal_revision"] = json!(19);
+    let mut source_request = json!({"format":"native-run/1","request":{
+        "models":models,"program":{"source":caller},"clocks":clocks
+    }});
+    source_request["request"][member] = selection.clone();
+    let expected = write_request(directory.path(), &source_request);
+    assert_eq!(expected.0, 22, "source {member}: {}", expected.1);
+    let outcome = |value: &Value| {
+        if member == "call" {
+            value["outcome"].clone()
         } else {
-            unit.find("temporal C").unwrap()
-        };
-        let start = owner + unit[owner..].find(term).unwrap();
-        let span = serde_json::to_value(
-            offered
-                .locate(Span {
-                    start,
-                    end: start + term.len(),
-                })
-                .unwrap(),
-        )
-        .unwrap();
-        let mut caller = source("unit.native");
-        caller["file"] = json!("caller.native");
-        caller["document"] = json!("CallerDocument");
-        caller["formal_revision"] = json!(19);
-        let mut source_request = json!({"format":"native-run/1","request":{
-            "models":models,"program":{"source":caller},"clocks":clocks
-        }});
-        source_request["request"][member] = selection.clone();
-        let expected = write_request(directory.path(), &source_request);
-        assert_eq!(expected.0, 22, "source {member}: {}", expected.1);
-        let outcome = |value: &Value| {
-            if member == "call" {
-                value["outcome"].clone()
-            } else {
-                value["disposition"]["outcome"].clone()
-            }
-        };
-        let refusal = outcome(&expected.1);
-        assert_eq!(refusal["kind"], "refused", "{}", expected.1);
-        assert_eq!(refusal["code"], "incomplete_population", "{refusal}");
+            value["disposition"]["outcome"].clone()
+        }
+    };
+    let refusal = outcome(&expected.1);
+    assert_eq!(refusal["kind"], "refused", "{}", expected.1);
+    assert_eq!(refusal["code"], "incomplete_population", "{refusal}");
+    assert_eq!(
+        refusal["cause"],
+        if member == "call" {
+            "incomplete-scope"
+        } else {
+            "missing-required-artifact"
+        },
+        "{refusal}"
+    );
+    assert_eq!(
+        refusal["fields"],
+        json!({"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)})
+    );
+    assert_eq!(
+        refusal["locus"],
+        json!({"file":"caller.native","span":span})
+    );
+    if member == "clause" {
+        fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&expected.1).unwrap())
+            .unwrap();
+    }
+    let mut request = json!({"format":"native-run/1","request":{
+        "models":models,"package":{"directory":"handoff"},"sources":[caller]
+    }});
+    request["request"][member] = selection;
+    for (document, revision) in [("CallerDocument", 19), ("AnotherDocument", 27)] {
+        request["request"]["sources"][0]["document"] = json!(document);
+        request["request"]["sources"][0]["formal_revision"] = json!(revision);
+        let actual = write_request(directory.path(), &request);
+        assert_eq!(actual.0, expected.0, "package {member}: {}", actual.1);
         assert_eq!(
-            refusal["cause"],
-            if member == "call" {
-                "incomplete-scope"
-            } else {
-                "missing-required-artifact"
-            },
-            "{refusal}"
-        );
-        assert_eq!(
-            refusal["fields"],
-            json!({"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)})
-        );
-        assert_eq!(
-            refusal["locus"],
-            json!({"file":"caller.native","span":span})
+            outcome(&actual.1),
+            refusal,
+            "package {member}: {}",
+            actual.1
         );
         if member == "clause" {
-            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&expected.1).unwrap())
+            assert_eq!(actual, expected, "all original condition report fields");
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
                 .unwrap();
         }
-        let mut request = json!({"format":"native-run/1","request":{
-            "models":models,"package":{"directory":"handoff"},"sources":[caller]
-        }});
-        request["request"][member] = selection;
-        for (document, revision) in [("CallerDocument", 19), ("AnotherDocument", 27)] {
-            request["request"]["sources"][0]["document"] = json!(document);
-            request["request"]["sources"][0]["formal_revision"] = json!(revision);
-            let actual = write_request(directory.path(), &request);
-            assert_eq!(actual.0, expected.0, "package {member}: {}", actual.1);
-            assert_eq!(
-                outcome(&actual.1),
-                refusal,
-                "package {member}: {}",
-                actual.1
-            );
-            if member == "clause" {
-                assert_eq!(actual, expected, "all original condition report fields");
-                fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
-                    .unwrap();
-            }
-        }
-        let assert_missing = |request: &Value| {
-            let result = write_request(directory.path(), request);
-            assert_eq!(result.0, 20, "{member}: {}", result.1);
-            assert_eq!(result.1["code"], "invalid_runtime_input", "{}", result.1);
-            assert_eq!(result.1["cause"], "missing-member", "{}", result.1);
-            assert_eq!(result.1["stage"], "call", "{}", result.1);
-            assert_eq!(result.1["details"], json!({"field":"sources"}));
-            assert!(result.1["message"]
-                .as_str()
-                .unwrap()
-                .contains("test:s1-16:unit.native"));
-            assert!(result.1.get("outcome").is_none());
-            assert!(result.1.get("disposition").is_none());
-        };
-        let mut missing = request.clone();
-        missing["request"]
-            .as_object_mut()
-            .unwrap()
-            .remove("sources");
-        assert_missing(&missing);
-        missing = request.clone();
-        missing["request"]["sources"] = json!([]);
-        assert_missing(&missing);
-        missing = request.clone();
-        missing["request"]["sources"][0]["identity"] = json!("wrong-reference");
-        assert_missing(&missing);
-        std::fs::write(directory.path().join("caller.native"), "short").unwrap();
-        assert_missing(&request);
-        for endpoint in [start, start + term.len()] {
-            let mut split = unit.as_bytes().to_vec();
-            split[endpoint - 1..endpoint + 1].copy_from_slice("é".as_bytes());
-            assert!(
-                std::str::from_utf8(&split).is_ok(),
-                "the entire caller document remains valid UTF-8"
-            );
-            std::fs::write(directory.path().join("caller.native"), split).unwrap();
-            assert_missing(&request);
-        }
-        std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
     }
+    let assert_missing = |request: &Value| {
+        let result = write_request(directory.path(), request);
+        assert_eq!(result.0, 20, "{member}: {}", result.1);
+        assert_eq!(result.1["code"], "invalid_runtime_input", "{}", result.1);
+        assert_eq!(result.1["cause"], "missing-member", "{}", result.1);
+        assert_eq!(result.1["stage"], "call", "{}", result.1);
+        assert_eq!(result.1["details"], json!({"field":"sources"}));
+        assert!(result.1["message"]
+            .as_str()
+            .unwrap()
+            .contains("test:s1-16:unit.native"));
+        assert!(result.1.get("outcome").is_none());
+        assert!(result.1.get("disposition").is_none());
+    };
+    let mut missing = request.clone();
+    missing["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("sources");
+    assert_missing(&missing);
+    missing = request.clone();
+    missing["request"]["sources"] = json!([]);
+    assert_missing(&missing);
+    missing = request.clone();
+    missing["request"]["sources"][0]["identity"] = json!("wrong-reference");
+    assert_missing(&missing);
+    std::fs::write(directory.path().join("caller.native"), "short").unwrap();
+    assert_missing(&request);
+    for endpoint in [start, start + term.len()] {
+        let mut split = unit.as_bytes().to_vec();
+        split[endpoint - 1..endpoint + 1].copy_from_slice("é".as_bytes());
+        assert!(
+            std::str::from_utf8(&split).is_ok(),
+            "the entire caller document remains valid UTF-8"
+        );
+        std::fs::write(directory.path().join("caller.native"), split).unwrap();
+        assert_missing(&request);
+    }
+    std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
 }
