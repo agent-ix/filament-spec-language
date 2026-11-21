@@ -83,29 +83,7 @@ pub(crate) fn occurrence_source(
     occurrence: &CheckedOccurrence,
     selected: Option<&SourceRegion>,
 ) -> Result<OccurrenceSource, OccurrenceSourceRefusal> {
-    let node = package
-        .resolved_graph()
-        .nodes
-        .iter()
-        .find(|node| node.node_id == *application)
-        .ok_or(OccurrenceSourceRefusal::UnknownNode)?;
-    if application.package.as_ref() != package.name() {
-        return Err(OccurrenceSourceRefusal::UnknownNode);
-    }
-    if !node.occurrences.contains(occurrence) {
-        return Err(OccurrenceSourceRefusal::UnknownOccurrence);
-    }
-    let structural = package
-        .structural_key(application)
-        .ok_or(OccurrenceSourceRefusal::UnknownNode)?;
-    let key = OccurrenceKey::new(
-        fsl_semantics::check::wire_id::node_key(structural)
-            .map_err(|_| OccurrenceSourceRefusal::UnknownNode)?,
-        Origin::new(
-            Role::new(crate::checked_v2::role_spelling(&occurrence.role)),
-            occurrence.ordinal,
-        ),
-    );
+    let key = occurrence_key(package, application, occurrence)?;
     let entry = package
         .source_map()
         .iter()
@@ -139,6 +117,38 @@ pub(crate) fn occurrence_source(
         occurrence: key,
         region: region.clone(),
     })
+}
+
+/// Validate the explicit occurrence even when a consumer needs its identity
+/// alone, such as a captured function-body quantifier's witness.
+pub(crate) fn occurrence_key(
+    package: &CheckedPackageV2,
+    application: &CheckedNodeId,
+    occurrence: &CheckedOccurrence,
+) -> Result<OccurrenceKey, OccurrenceSourceRefusal> {
+    let node = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == *application)
+        .ok_or(OccurrenceSourceRefusal::UnknownNode)?;
+    if application.package.as_ref() != package.name() {
+        return Err(OccurrenceSourceRefusal::UnknownNode);
+    }
+    if !node.occurrences.contains(occurrence) {
+        return Err(OccurrenceSourceRefusal::UnknownOccurrence);
+    }
+    let structural = package
+        .structural_key(application)
+        .ok_or(OccurrenceSourceRefusal::UnknownNode)?;
+    Ok(OccurrenceKey::new(
+        fsl_semantics::check::wire_id::node_key(structural)
+            .map_err(|_| OccurrenceSourceRefusal::UnknownNode)?,
+        Origin::new(
+            Role::new(crate::checked_v2::role_spelling(&occurrence.role)),
+            occurrence.ordinal,
+        ),
+    ))
 }
 
 /// Validate a complete body visit through the existing lending cursor before

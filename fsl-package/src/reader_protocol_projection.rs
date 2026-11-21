@@ -165,7 +165,7 @@ impl ReaderProtocolProjection {
                 function.clone()
             })
             .collect();
-        let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<Location>>> =
+        let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>>> =
             BTreeMap::new();
         for projected in &self.functions {
             let function = &projected.node;
@@ -196,16 +196,30 @@ impl ReaderProtocolProjection {
                         .and_then(|group| group.get(*visit));
                     *visit += 1;
                     if node.term.as_ref() == Some(application) {
-                        let location =
+                        let captured =
                             row.ok_or_else(|| fault("projected-body-term-has-captured-location"))?;
-                        located.push((position, location.clone()));
+                        let key = node
+                            .key
+                            .as_ref()
+                            .ok_or_else(|| fault("captured-body-application-has-admitted-key"))?;
+                        let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+                            key.clone(),
+                            filament_exact::Origin::new(
+                                filament_exact::Role::new(crate::checked_v2::role_spelling(
+                                    &captured.occurrence.role,
+                                )),
+                                captured.occurrence.ordinal,
+                            ),
+                        );
+                        located.push((position, captured.location.clone(), occurrence));
                     }
                 }
             }
         }
-        for (position, location) in located {
+        for (position, location, occurrence) in located {
             if let Some(node) = self.nodes.get_mut(position) {
                 node.location = Some(location);
+                node.occurrence = Some(occurrence);
             }
         }
         // A `let`, conditional or `case` is no term and has no row (FSpec
@@ -2291,6 +2305,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             absorbed: None,
             type_argument,
             occurrence: self.sole_expression_occurrence(id, node),
+            key: Some(self.index.key(id)?),
         }))
     }
 
@@ -4037,12 +4052,17 @@ fn location(admitted: &CheckedProtocolLocation) -> Option<Location> {
 /// Reconstruct through the admitted lending cursor. An exhausted cursor or an
 /// unrepresentable coordinate fails the whole function before any projection
 /// node receives a location.
+struct CapturedBodyLocation {
+    location: Location,
+    occurrence: filament_contract_model::CheckedOccurrence,
+}
+
 fn reconstructed_body_locations(
     admitted: &CheckedPackageV2,
     function: &CheckedNodeId,
     work_limit: u64,
-) -> Result<BTreeMap<CheckedNodeId, Vec<Location>>, InternalFault> {
-    let mut rows: BTreeMap<CheckedNodeId, Vec<Location>> = BTreeMap::new();
+) -> Result<BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>>, InternalFault> {
+    let mut rows: BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>> = BTreeMap::new();
     let mut cursor = admitted
         .body_locations(function, work_limit)
         .map_err(|_| fault("admitted-body-locations-reconstruct"))?;
@@ -4054,9 +4074,13 @@ fn reconstructed_body_locations(
         let location = body_location(&view.row.location, &previous)
             .ok_or_else(|| fault("body-location-coordinates-fit"))?;
         previous = location.clone();
+        let occurrence = view.row.occurrence.clone();
         rows.entry(view.row.application.clone())
             .or_default()
-            .push(location);
+            .push(CapturedBodyLocation {
+                location,
+                occurrence,
+            });
     }
     Ok(rows)
 }
@@ -4350,6 +4374,9 @@ struct ReaderProjectedNode {
     children: Vec<usize>,
     /// The occurrence of the node at this position, when it has just one.
     occurrence: Option<fsl_foundation::source::provenance::OccurrenceKey>,
+    /// The shared key already rebuilt by the owning admitted index. A row
+    /// can bind a repeated occurrence without rebuilding this structural key.
+    key: Option<NodeKey>,
     /// The application this slot-walk position is a term of (FR-383).
     term: Option<CheckedNodeId>,
     /// A quantity conversion the walk visits directly above this node,
@@ -4371,6 +4398,7 @@ impl ReaderProjectedNode {
             absorbed: None,
             type_argument: None,
             occurrence: None,
+            key: None,
         }
     }
 
@@ -4529,7 +4557,11 @@ mod order_tests {
         let allowance =
             body_location_allowance(&package, function).expect("a finite DAG allowance");
         let locations = reconstructed_body_locations(&package, function, allowance).unwrap();
-        let mut paths: Vec<_> = locations.values().flatten().map(Location::path).collect();
+        let mut paths: Vec<_> = locations
+            .values()
+            .flatten()
+            .map(|row| row.location.path())
+            .collect();
         paths.sort();
         assert_eq!(paths, vec![vec![], vec![0], vec![1]]);
         assert!(
