@@ -1599,7 +1599,18 @@ fn a_read_must_stay_in_the_component_its_slot_root_names() {
     supplied_hyper(&built, &admitted, |bare| {
         let form = bare
             .hyper_clause_form(root.occurrence())
-            .expect("Linked package form");
+            .unwrap_or_else(|error| {
+                let metadata: Vec<_> = nodes(&built.wire)
+                    .iter()
+                    .filter(|node| {
+                        node["body"]["operation"]["member"]["kind"]
+                            .as_str()
+                            .is_some_and(|kind| kind != "field")
+                    })
+                    .map(|node| &node["body"]["operation"])
+                    .collect();
+                panic!("Linked package form: {error:?}; operation metadata: {metadata:?}");
+            });
         assert!(
             bare.project_hyper_holds(root.occurrence(), form.atoms[0].0)
                 .is_ok(),
