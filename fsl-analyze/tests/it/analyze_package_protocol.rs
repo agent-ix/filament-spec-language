@@ -56,6 +56,171 @@ fn package_run(ws: &Workspace, request_path: &std::path::Path) -> Run {
     analyze(&package_request(ws, request_path).0)
 }
 
+fn parallel_request(ws: &Workspace, run: &str) -> std::path::PathBuf {
+    let body = format!(
+        "{}{}",
+        crate::fill::contracts("false"),
+        crate::fill::protocol("Flow", "role a on M::Cell;", run, "d")
+    );
+    let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
+    let mut documents = crate::fill::Documents::new();
+    documents.start("s0", &[("c", 0)]);
+    let snapshots: Vec<Vec<u8>> = documents.snapshots.values().cloned().collect();
+    // Both roles and every attempted operation use the Cell/Level closure.
+    // Idle remains because the shared model declares its empty population.
+    let mut model: Value =
+        serde_json::from_slice(&crate::fill::document()).expect("the Fill model is JSON");
+    model["types"]
+        .as_array_mut()
+        .expect("model types")
+        .retain(|node| {
+            matches!(
+                node["identity"].as_str(),
+                Some("ix://test/fill/Level" | "ix://test/fill/Cell" | "ix://test/fill/Idle")
+            )
+        });
+    model["constructs"]
+        .as_array_mut()
+        .expect("model constructs")
+        .retain(|construct| {
+            matches!(
+                construct["kind"]["name"].as_str(),
+                Some("value_type" | "object_type" | "population")
+            )
+        });
+    let model = serde_json::to_vec(&model).expect("the parallel model serializes");
+    crate::analyze_cli_support::request_over(
+        ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Flow", "kind": "temporal-satisfaction",
+        "temporal": {"item_kind": "deadlock-freedom", "subject": {"protocol": {
+            "protocol": "Flow",
+            "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
+            "roles": {
+                "w": {"type": "model-binding", "selection": "test/fill"},
+                "a": {"type": "model-binding", "selection": "test/fill"}
+            }
+        }}}}]}),
+    )
+}
+
+fn parallel_attempts(join: &str) -> String {
+    format!(
+        "parallel Both {{ branch Machine {} branch Assemble {} }} {join};",
+        crate::fill::attempt("Reserved", "setTwo", "TwoPre, TwoPost", "reserved", "true"),
+        "attempt Assembled by a on M::Cell::touch contracts [TouchPre] as (assembled: Boolean) { true };"
+    )
+}
+
+/// The complete two-attempt Any/cancel control-flow example, with one blocked
+/// contract, distinguishes cancellation from leaving the other branch running.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-3", "FR-206-AC-6")]
+#[test]
+fn package_parallel_any_preserves_outstanding_and_joined_labels() {
+    for (name, join, expected) in [
+        (
+            "cancel",
+            "join any [Machine, Assemble] outstanding cancel",
+            "proved",
+        ),
+        (
+            "continue",
+            "join any [Machine, Assemble] outstanding continue",
+            "refuted",
+        ),
+        (
+            "blocked-label",
+            "join any [Machine] outstanding cancel",
+            "refuted",
+        ),
+        (
+            "ready-label",
+            "join any [Assemble] outstanding cancel",
+            "proved",
+        ),
+        ("all", "join all [Machine, Assemble]", "refuted"),
+        ("all-ready", "join all [Machine, Assemble]", "proved"),
+    ] {
+        let ws = Workspace::new(&format!("package-parallel-any-{name}"));
+        let mut run = parallel_attempts(join);
+        if name == "all-ready" {
+            run = run.replace("TwoPre, TwoPost", "TwoPost");
+        }
+        let path = parallel_request(&ws, &run);
+        let source = analyze(&path);
+        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+        let (package_path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl"))
+            .expect("remove source before package analysis");
+        let package = analyze(&package_path);
+        assert_eq!(package.item(0), source.item(0), "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+        if expected == "refuted" {
+            assert_eq!(package.item(0)["replay"]["reproduced"], true);
+        }
+    }
+}
+
+/// Cancelling an outer branch also cancels its inner running branches; keeping
+/// them running prevents finish and leaves the same deadlock on both routes.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-9", "FR-206-AC-6")]
+#[test]
+fn package_parallel_any_cancels_nested_running_branches() {
+    for (outstanding, expected) in [("cancel", "proved"), ("continue", "refuted")] {
+        let ws = Workspace::new(&format!("package-parallel-any-nested-{outstanding}"));
+        let blocked = crate::fill::attempt("Blocked", "setTwo", "TwoPre, TwoPost", "b", "true");
+        let ready = crate::fill::attempt("Ready", "touch", "TouchPre", "r", "true");
+        let run = format!(
+            "parallel Outer {{ branch fast {ready} branch nested parallel Inner {{ \
+             branch left {blocked} branch right {} }} join all [left, right]; \
+             }} join any [fast] outstanding {outstanding};",
+            crate::fill::attempt("Other", "setTwo", "TwoPre, TwoPost", "o", "true")
+        );
+        let path = parallel_request(&ws, &run);
+        let source = analyze(&path);
+        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+        let (package_path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl"))
+            .expect("remove source before package analysis");
+        let package = analyze(&package_path);
+        assert_eq!(package.item(0), source.item(0), "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+        if expected == "refuted" {
+            assert_eq!(package.item(0)["replay"]["reproduced"], true);
+        }
+    }
+}
+
+/// Any/continue deadlocks retain the replay refusal's typed code and cause.
+#[trace("TC-2958", "FR-940-AC-22", "FR-206-AC-3")]
+#[test]
+fn package_parallel_any_preserves_replay_refusal_code_and_cause() {
+    let ws = Workspace::new("package-parallel-any-replay-bound");
+    let path = parallel_request(
+        &ws,
+        &parallel_attempts("join any [Machine, Assemble] outstanding continue"),
+    );
+    let (package_path, bytes) = package_request(&ws, &path);
+    let below = u64::try_from(bytes.len() / 2).expect("the package length");
+    let source = crate::analyze_cli_support::analyze_under_replay_bytes(&path, below);
+    assert_eq!(
+        label(&source.item(0)),
+        "inconclusive",
+        "{}",
+        source.document()
+    );
+    let cause = &source.item(0)["record"]["cause"];
+    assert_eq!(cause["kind"], "replay-refused");
+    assert_eq!(cause["code"], "stage_limit_exceeded");
+    assert_eq!(cause["cause"], "input-bytes-exceeded");
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package analysis");
+    let package = crate::analyze_cli_support::analyze_under_replay_bytes(&package_path, below);
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.exit, source.exit);
+}
+
 fn terminal_request(
     ws: &Workspace,
     captures: &str,

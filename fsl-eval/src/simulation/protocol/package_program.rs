@@ -34,6 +34,7 @@ pub struct PackageControl {
     pub children: Vec<ProtocolNodeId>,
     /// Branch labels for a `parallel`, in package order.
     pub branches: Vec<(String, ProtocolNodeId)>,
+    pub(super) join: Option<PackageJoin>,
     /// The resolved source default, for a `parallel`.
     pub memory_default: Option<MemoryModelName>,
     /// The operation's admitted constraint slot, for expression controls.
@@ -62,6 +63,13 @@ pub struct PackageControl {
     pub contracts: Vec<fsl_package::CheckedNodeId>,
     /// The FR-531 identities of the selected state clauses.
     pub contract_keys: Vec<NodeKey>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PackageJoin {
+    pub(super) policy: fsl_semantics::check::CheckedJoinPolicy,
+    pub(super) joined: Vec<String>,
+    pub(super) outstanding: Option<fsl_semantics::check::CheckedOutstanding>,
 }
 
 /// One static role binding from the admitted package.
@@ -376,6 +384,34 @@ impl<'a> PackageProtocolProgram<'a> {
         let mut controls = BTreeMap::new();
         for control in &form.controls {
             let name = control.path.last().cloned().unwrap_or_default();
+            let join = match &control.body {
+                ControlBody::Parallel { join, .. } => {
+                    use fsl_semantics::check::{CheckedJoinPolicy, CheckedOutstanding};
+                    let policy = match join.policy {
+                        ParallelJoinPolicy::All => CheckedJoinPolicy::All,
+                        ParallelJoinPolicy::Any => CheckedJoinPolicy::Any,
+                        ParallelJoinPolicy::Quorum | ParallelJoinPolicy::Predicate => {
+                            return Err(PackageProgramRefusal::Unsupported(control.operation));
+                        }
+                    };
+                    let outstanding = match join.outstanding {
+                        None => None,
+                        Some("cancel") => Some(CheckedOutstanding::Cancel),
+                        Some("continue") => Some(CheckedOutstanding::Continue),
+                        Some(_) => return Err(PackageProgramRefusal::UnknownControl),
+                    };
+                    Some(PackageJoin {
+                        policy,
+                        joined: join
+                            .joined
+                            .iter()
+                            .map(|label| (*label).to_owned())
+                            .collect(),
+                        outstanding,
+                    })
+                }
+                _ => None,
+            };
             let (
                 children,
                 branches,
@@ -408,10 +444,7 @@ impl<'a> PackageProtocolProgram<'a> {
                     None,
                     Vec::new(),
                 ),
-                ControlBody::Parallel { branches, join } => {
-                    if join.policy != ParallelJoinPolicy::All {
-                        return Err(PackageProgramRefusal::Unsupported(control.operation));
-                    }
+                ControlBody::Parallel { branches, .. } => {
                     let branches = branches
                         .iter()
                         .map(|(label, body)| {
@@ -532,6 +565,7 @@ impl<'a> PackageProtocolProgram<'a> {
                     parent: path_parent(control),
                     children,
                     branches,
+                    join,
                     memory_default: control.memory,
                     constraint,
                     operation_anchor,

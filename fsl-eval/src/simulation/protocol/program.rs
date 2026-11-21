@@ -1137,16 +1137,16 @@ impl<'a> Program<'a> {
         for control in package.controls.values().filter(|control| {
             control.operation == fsl_package::protocol_view::ControlOperation::Parallel
         }) {
+            let join = control
+                .join
+                .as_ref()
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-parallel-has-its-join"))?;
             joins.insert(
                 control.id,
                 Join {
-                    policy: CheckedJoinPolicy::All,
-                    joined: control
-                        .branches
-                        .iter()
-                        .map(|(label, _)| label.clone())
-                        .collect(),
-                    outstanding: None,
+                    policy: join.policy.clone(),
+                    joined: join.joined.clone(),
+                    outstanding: join.outstanding,
                     branches: control.branches.clone(),
                 },
             );
@@ -1157,9 +1157,17 @@ impl<'a> Program<'a> {
         slots.push(None);
         package_binders.push(Some(package.finish_binder.clone()));
         binder_types.push(package.finish_binder_type.clone());
+        let finish_name = package
+            .form
+            .finish
+            .node
+            .declaration
+            .as_ref()
+            .and_then(|declaration| declaration.qualified_name.get(2))
+            .ok_or_else(|| ProtocolRefusal::fault("a-package-finish-is-named"))?;
         let finish = Finish {
             node: finish_node,
-            text: format!("{}::finish", package.name),
+            text: finish_name.to_string(),
             constraint: None,
             binder: (finish_slot, package.finish_binder_type.clone()),
         };
