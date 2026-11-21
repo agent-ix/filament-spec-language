@@ -56,8 +56,8 @@ pub use reduce::{
 };
 pub use refine::{check_refinement, AbstractProtocolBinding, RefinementCheckRequest};
 pub use relation::{
-    check_model_relation, ModelRelationCheckRequest, ModelRelationOutcome, ModelRelationRefusal,
-    ModelRelationStats,
+    check_model_relation, check_model_relation_input, ModelRelationCheckRequest,
+    ModelRelationInput, ModelRelationOutcome, ModelRelationRefusal, ModelRelationStats,
 };
 pub use request::{RequestRefusal, SubjectContext};
 pub use scc::Component;

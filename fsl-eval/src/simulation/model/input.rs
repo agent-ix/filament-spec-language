@@ -1002,6 +1002,17 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ) -> Option<fsl_semantics::check::PackageStateGraphForm> {
         None
     }
+    /// FR-940: evaluate one HP-1 tuple at its admitted claim occurrence.
+    ///
+    /// # Errors
+    ///
+    /// A form not owned by this evaluator or an inconsistent checked tuple.
+    fn evaluate_model_relation(
+        &self,
+        relation: &super::ModelRelationDescriptor,
+        tuple: super::ModelRelationTuple<'_>,
+        meter: &mut Meter,
+    ) -> Result<crate::value::ModelRelationEvaluation, InternalFault>;
 
     /// FR-107: one state clause, by name, over its admitted observations.
     ///
@@ -1623,6 +1634,15 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
 }
 
 impl ModelEvaluator for CheckedPackage {
+    fn evaluate_model_relation(
+        &self,
+        relation: &super::ModelRelationDescriptor,
+        tuple: super::ModelRelationTuple<'_>,
+        meter: &mut Meter,
+    ) -> Result<crate::value::ModelRelationEvaluation, InternalFault> {
+        super::relation_input::evaluate_source(self, relation, tuple, meter)
+    }
+
     fn evaluate_clause(
         &self,
         clause: &QualifiedName,
@@ -2129,6 +2149,15 @@ impl ModelEvaluator for BarePackage<'_> {
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
     ) -> Option<fsl_semantics::check::PackageStateGraphForm> {
         self.state_graph_claim_form(claim).ok()
+    }
+
+    fn evaluate_model_relation(
+        &self,
+        _relation: &super::ModelRelationDescriptor,
+        _tuple: super::ModelRelationTuple<'_>,
+        _meter: &mut Meter,
+    ) -> Result<crate::value::ModelRelationEvaluation, InternalFault> {
+        Err(SOURCE_FORM)
     }
 
     fn package_protocol_observation(

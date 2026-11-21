@@ -12,7 +12,9 @@ use fsl_eval::hyper::{
     ProjectedProduct, Property, WitnessInputs, WitnessProduct,
 };
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{CheckedHyperLetters, ModelSystem};
+use fsl_eval::simulation::model::{
+    CheckedHyperLetters, ModelEvaluator, ModelRelationDescriptor, ModelSystem,
+};
 use fsl_eval::simulation::{StateKey, SymmetryGroup, TransitionSystem};
 use fsl_foundation::IdentityLimits;
 use fsl_package::CheckedPackage;
@@ -200,6 +202,37 @@ pub struct ProductClosureRequest<'a> {
     pub meter: ScalarLimits,
 }
 
+/// Source-free original inputs for the existing independent HP-1 checker.
+pub struct ModelRelationClosureRequest<'a> {
+    /// The admitted relation's ordered subject and execution facts.
+    pub relation: &'a ModelRelationDescriptor,
+    /// The evaluator that owns its claim occurrence.
+    pub evaluator: &'a dyn ModelEvaluator,
+    /// Original model subjects, independent of the engine's retained graph.
+    pub subjects: &'a [ModelSubject<'a>],
+    /// A fresh evaluation meter for each reconstructed tuple.
+    pub meter: ScalarLimits,
+}
+
+/// Check HP-1 evidence without requiring a source package.
+///
+/// # Errors
+///
+/// Refuses invalid original inputs or a reconstruction invariant failure.
+pub fn check_model_relation_closure(
+    request: &ModelRelationClosureRequest<'_>,
+    certificate: &ProductClosureCertificate,
+    limits: &ModelCheckLimits,
+    cancel: &Cancel,
+) -> Result<ProductClosureCheck, ProductClosureRefusal> {
+    match relation::check(request, request.relation, certificate, limits, cancel) {
+        Err(ProductClosureRefusal::Stopped(cause)) => {
+            Ok(ProductClosureCheck::Stopped { cause, tuple: None })
+        }
+        result => result,
+    }
+}
+
 impl<'a> ProductClosureRequest<'a> {
     /// Read the temporal owner, refusing a relation passed to a temporal operation.
     pub(crate) fn hyper_clause(&self) -> Result<&'a CheckedHyperClause, ProductClosureRefusal> {
@@ -345,7 +378,19 @@ pub fn check_product_closure(
 ) -> Result<ProductClosureCheck, ProductClosureRefusal> {
     let result = match request.clause {
         ProductClosureClause::Relation(clause) => {
-            relation::check(request, clause, certificate, limits, cancel)
+            let relation = ModelRelationDescriptor::of_source(request.package, clause)
+                .map_err(|_| ProductClosureRefusal::Input("relation-descriptor"))?;
+            check_model_relation_closure(
+                &ModelRelationClosureRequest {
+                    relation: &relation,
+                    evaluator: request.package,
+                    subjects: request.subjects,
+                    meter: request.meter,
+                },
+                certificate,
+                limits,
+                cancel,
+            )
         }
         ProductClosureClause::Hyper(_) => {
             check(request, certificate, limits, cancel).and_then(|check| {

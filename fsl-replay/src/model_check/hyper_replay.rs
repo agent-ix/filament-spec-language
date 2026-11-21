@@ -65,7 +65,9 @@ use fsl_eval::hyper::{
     PartnerSearch, Property, StepLabel, StepMatch, WitnessInputs, WitnessProduct,
 };
 use fsl_eval::model_subject::AtomStop;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::model::{
+    ModelEvaluator, ModelRelationDescriptor, ModelRelationTuple, ModelSimState, ModelSystem,
+};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{
     evaluate_projected_prefix, evaluate_tuple, AtomReading, ComponentPosition, ComponentTrace,
@@ -136,12 +138,49 @@ pub struct ModelRelationReplay<'a, 's> {
     pub cancel: &'a Cancel,
 }
 
+/// Source-free inputs for replaying the same HP-1 execution tuple.
+pub struct ModelRelationReplayInput<'a, 's> {
+    /// The admitted relation's execution facts.
+    pub relation: &'a ModelRelationDescriptor,
+    /// The route's evaluator, keyed by the claim occurrence.
+    pub evaluator: &'a dyn ModelEvaluator,
+    /// One original model system per execution in binding order.
+    pub systems: Vec<&'a ModelSystem<'s>>,
+    /// A fresh relation-body evaluation budget.
+    pub meter: ScalarLimits,
+    /// The replay cancellation handle.
+    pub cancel: &'a Cancel,
+}
+
 /// Replay an FR-179 `step-tuple` counterexample against the checked relation.
 /// Each trace establishes a reachable pre-state and ends in one transition of
 /// the execution's named operation. The relation body is then recomputed over
 /// those transitions.
 pub fn replay_model_relation_tuple(
     replay: &ModelRelationReplay<'_, '_>,
+    counterexample: &HyperCounterexample,
+) -> Result<ModelTraceSettlement, ReplayRefusal> {
+    let relation = ModelRelationDescriptor::of_source(replay.package, replay.relation)
+        .map_err(|_| fault("relation-descriptor-owned-by-package"))?;
+    replay_model_relation_input(
+        &ModelRelationReplayInput {
+            relation: &relation,
+            evaluator: replay.package,
+            systems: replay.systems.clone(),
+            meter: replay.meter,
+            cancel: replay.cancel,
+        },
+        counterexample,
+    )
+}
+
+/// Replay an HP-1 tuple through its route's evaluator without source inputs.
+///
+/// # Errors
+///
+/// Refuses malformed execution traces or inconsistent admitted inputs.
+pub fn replay_model_relation_input(
+    replay: &ModelRelationReplayInput<'_, '_>,
     counterexample: &HyperCounterexample,
 ) -> Result<ModelTraceSettlement, ReplayRefusal> {
     let executions = replay.relation.executions();
@@ -175,8 +214,7 @@ pub fn replay_model_relation_tuple(
         let trace = &counterexample.traces[index];
         let system = replay.systems[index];
         let expected_package = replay
-            .package
-            .graph()
+            .relation
             .model_package_identity(alias)
             .unwrap_or_default();
         if trace.variable != *variable
@@ -237,16 +275,19 @@ pub fn replay_model_relation_tuple(
         .map(|observation| observation.environment())
         .collect();
     let results: Vec<_> = result_values.iter().map(Option::as_deref).collect();
-    let evaluation = fsl_eval::value::evaluate_model_relation_transitions(
-        replay.package,
-        replay.relation,
-        &transitions,
-        &results,
-        &pre,
-        &post,
-        &mut Meter::new(replay.meter).with_cancel(replay.cancel.clone()),
-    )
-    .map_err(|_| fault("checked-relation-body-evaluates"))?;
+    let evaluation = replay
+        .evaluator
+        .evaluate_model_relation(
+            replay.relation,
+            ModelRelationTuple {
+                transitions: &transitions,
+                results: &results,
+                pre: &pre,
+                post: &post,
+            },
+            &mut Meter::new(replay.meter).with_cancel(replay.cancel.clone()),
+        )
+        .map_err(|_| fault("checked-relation-body-evaluates"))?;
     Ok(match (undefined_claim, evaluation) {
         (None, fsl_eval::value::ModelRelationEvaluation::Refuted) => {
             ModelTraceSettlement::Reproduced {
