@@ -44,3 +44,15 @@ fn a_six_member_key_is_refused() {
         Err(ProductActionRefusal::Shape)
     ));
 }
+
+#[trace("TC-3060", "FR-196-AC-15")]
+#[test]
+fn an_instance_without_its_phase_or_a_phase_without_its_instance_is_refused() {
+    for (instance, phase) in [(INSTANCE_M, "null"), ("null", r#""active""#)] {
+        let half = post_state(instance, phase);
+        assert!(matches!(
+            ProductAction::parse(half.as_bytes()),
+            Err(ProductActionRefusal::Shape)
+        ));
+    }
+}

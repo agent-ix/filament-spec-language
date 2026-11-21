@@ -357,7 +357,9 @@ fn product_key(node: NodeRef<'_>) -> Result<ProbabilityProductKey, ProductAction
         items[3].node(),
         Node::Null | Node::String("waiting" | "active")
     );
-    if !instance || !activation {
+    // FR-196 pairs the `on each` instance with its activation phase.
+    let paired = matches!(items[2].node(), Node::Null) == matches!(items[3].node(), Node::Null);
+    if !instance || !activation || !paired {
         return Err(ProductActionRefusal::Shape);
     }
     let bytes = to_vec(&node, LIMITS).map_err(|_| ProductActionRefusal::NotCanonical)?;

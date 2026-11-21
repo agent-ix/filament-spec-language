@@ -91,12 +91,23 @@ pub enum ProbabilitySourceError {
     /// State/model admission failed with its original typed cause.
     #[error("probability certificate subject refused: {0:?}")]
     Subject(AdmissionFailure),
-    /// The emitted package is not a readable package document.
+    /// The emitted package bytes are not a readable document.
+    #[error("probability certificate package unreadable: {0}")]
+    PackageRead(quire_canonical::ReadError),
+    /// The emitted package does not describe its name and sources.
     #[error("probability certificate package refused: {0}")]
-    Package(String),
+    Package(Box<crate::ReplayRequestRefusal>),
     /// The emitted package does not name exactly one source.
-    #[error("conflicting_identity: probability certificate package names {0} sources")]
+    #[error("probability certificate package names {0} sources, not one")]
     PackageSources(usize),
+    /// The request names a package name other than the emitted package's.
+    #[error("conflicting_identity: probability certificate package name {requested:?} is not {actual:?}")]
+    PackageName {
+        /// The name the request stated.
+        requested: String,
+        /// The name the emitted package carries.
+        actual: String,
+    },
     /// The package the byte provision recompiles to differs from the
     /// emitted package the request names.
     #[error("conflicting_identity: probability certificate package")]
@@ -112,6 +123,8 @@ pub enum ProbabilitySourceError {
 pub struct ProbabilityPackageRequest<'a> {
     /// The emitted `filament.checked-package/v2` bytes.
     pub package: &'a [u8],
+    /// The package name the request states, which must be the package's own.
+    pub package_name: Option<&'a str>,
     /// Complete source, domain-package and snapshot provision.
     pub provision: &'a ByteProvision,
     /// Requested structural claim identity, independent of the certificate.
@@ -151,10 +164,16 @@ pub fn check_probability_certificate_package(
         .input_bytes
         .max(limits.observation.document_bytes);
     let package = crate::ReplayPackage::read(request.package, ceiling)
-        .map_err(|error| ProbabilitySourceError::Package(error.to_string()))?;
+        .map_err(ProbabilitySourceError::PackageRead)?;
     let (name, sources) = package
         .name_and_sources()
-        .map_err(|error| ProbabilitySourceError::Package(error.to_string()))?;
+        .map_err(|error| ProbabilitySourceError::Package(Box::new(error)))?;
+    if let Some(requested) = request.package_name.filter(|requested| *requested != name) {
+        return Err(ProbabilitySourceError::PackageName {
+            requested: requested.to_owned(),
+            actual: name,
+        });
+    }
     let [source] = sources.as_slice() else {
         return Err(ProbabilitySourceError::PackageSources(sources.len()));
     };

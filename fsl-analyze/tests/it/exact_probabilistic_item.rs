@@ -600,7 +600,7 @@ fn a_rejected_check_builds_no_proved_record() {
 /// settles `refuted` after replay.
 #[trace("TC-638", "FR-203-AC-1")]
 #[test]
-#[ignore = "QSL-2158: no FR-201 certificate profile exists for an accumulate-measure event, so analyze settles P95 unsupported not-yet-implemented instead of proved ExactValue{24233/25000}"]
+#[ignore = "QSL-2158: the exact route builds certificates only for formula events, so the workload quantile of an accumulate measure settles not-yet-implemented instead of proved ExactValue{24233/25000}; no code writes its Conditional or Exact certificate and the checker has no reader for a measure objective"]
 fn p95_settles_proved_with_its_exact_value() {
     let claim = "probabilistic P95 using ev on M over (s: M::Server) under Steady on origin \
          { quantile 0.95 of (accumulate duration from holds(s.phase = 1) \
@@ -629,7 +629,7 @@ fn p95_settles_proved_with_its_exact_value() {
 /// `refuted` with its replayed undefined path, whatever the threshold.
 #[trace("TC-641", "FR-203-AC-5")]
 #[test]
-#[ignore = "QSL-2158: the exact engine settles a bounded always claim and a ProbBuild::Undefined result unsupported not-yet-implemented, and no undefined-evaluation witness replay exists"]
+#[ignore = "QSL-2158: FR-202-AC-5's Undefined witness replay is not implemented: the exact route settles ProbBuild::Undefined not-yet-implemented, the witness path type cannot end undefined, and the qualified bounded monitor translates only eventually so always[0,3] is not routed"]
 fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
     for threshold in ["0.5", "0.01"] {
         let claim = format!(

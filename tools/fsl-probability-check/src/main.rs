@@ -170,6 +170,7 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
         (None, Some(package), None) => check_probability_certificate_package(
             ProbabilityPackageRequest {
                 package: &package,
+                package_name: request.package_name.as_deref(),
                 provision: &provision,
                 item: &item,
                 initial,
@@ -268,8 +269,10 @@ fn source_failure(error: ProbabilitySourceError) -> Result<Value, String> {
         )
         | ProbabilitySourceError::SourceMismatch
         | ProbabilitySourceError::Source { .. }
+        | ProbabilitySourceError::PackageRead(_)
         | ProbabilitySourceError::Package(_)
         | ProbabilitySourceError::PackageSources(_)
+        | ProbabilitySourceError::PackageName { .. }
         | ProbabilitySourceError::PackageMismatch
         | ProbabilitySourceError::Packages(_) => "refused",
         ProbabilitySourceError::Document(

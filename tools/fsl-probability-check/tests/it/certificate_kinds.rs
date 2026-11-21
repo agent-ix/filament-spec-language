@@ -87,7 +87,7 @@ fn accepted_then_rejected(request: &Value, kinds: &[&str]) {
 /// fairness set: an `exact` certificate the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158: no FR-201 certificate profile exists for an unbounded fair eventual proof (fair end components over a cyclic MDP); analyze settles it unsupported not-yet-implemented"]
+#[ignore = "QSL-2158: analyze settles an unbounded eventual claim under a fairness set not-yet-implemented; no code writes the fair-end-component Exact document from decide_fair_reachability, and the checker's cyclic-MDP profile reads only an empty fairness set"]
 fn an_unbounded_fair_eventual_certificate_is_accepted() {
     let source = likely(
         "inf",
@@ -101,7 +101,7 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
 /// certificates the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158: no FR-201 lower/upper certificate profile exists; at max_rational_bits 2 the exact engine settles Incomplete(LimitReached) and emits no interval certificate"]
+#[ignore = "QSL-2158: at a tight max_rational_bits the exact route settles Incomplete(LimitReached) instead of falling back to interval iteration; no writer emits a Lower or Upper document and the checker reads only kind exact"]
 fn value_bounds_certificates_are_accepted() {
     let source = likely(
         "inf",
@@ -119,7 +119,7 @@ fn value_bounds_certificates_are_accepted() {
 /// accepted by the checker.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158: no FR-201 certificate profile exists for a measure or quantile event; analyze settles it unsupported not-yet-implemented"]
+#[ignore = "QSL-2158: the exact route builds certificates only for formula events, so a quantile of a steps measure settles not-yet-implemented; no code writes the XF-2 shifted-reward Upper certificate and the checker has no reader for a measure objective"]
 fn a_finite_horizon_quantile_certificate_is_accepted() {
     let source = likely(
         "ev",
@@ -150,6 +150,42 @@ fn a_long_run_certificate_is_accepted() {
     );
 }
 
+/// The probabilistic unit's source with a reward, whose exact certificate
+/// is checked over the package.
+fn package_source() -> String {
+    likely(
+        "inf",
+        "Even",
+        "probability >= rational(1,2) [ eventually holds(m.delivered) ]",
+    )
+    .replace(
+        "terminal Stop",
+        "reward cost on Msg::send_a = 1;\nterminal Stop",
+    )
+}
+
+/// The request that names the package S4 emits for `source` in place of the
+/// source; its certificate is the document's bytes as the run wrote them.
+fn package_request(source: &str) -> Value {
+    let request = certified(source, ExactProbLimits::default());
+    let (checked, _) = super::bounded::compile_source_with(source, domain().as_bytes());
+    let emitted = fsl_replay::spine::package(
+        &checked,
+        fsl_replay::spine::PackageLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .unwrap_or_else(|failure| panic!("S4 emits the probabilistic unit: {failure:?}"))
+    .into_value();
+    let mut later = request;
+    later
+        .as_object_mut()
+        .unwrap()
+        .remove("source")
+        .expect("the source member");
+    later["package"] = json!(emitted.package().bytes().to_vec());
+    later
+}
+
 /// TC-2065 (FR-203-AC-8, FR-282-AC-20): the exact certificate `analyze`
 /// writes for a claim over a unit with random parameters, a workload and a
 /// reward is carried as bytes out of the run and accepted by the checker in
@@ -160,43 +196,7 @@ fn a_long_run_certificate_is_accepted() {
 #[trace("TC-2065", "FR-282-AC-20")]
 #[test]
 fn an_analyze_certificate_is_accepted_later_over_the_emitted_package() {
-    let source = likely(
-        "inf",
-        "Even",
-        "probability >= rational(1,2) [ eventually holds(m.delivered) ]",
-    )
-    .replace(
-        "terminal Stop",
-        "reward cost on Msg::send_a = 1;\nterminal Stop",
-    );
-    let request = certified(&source, ExactProbLimits::default());
-
-    // The certificate leaves the run as bytes.
-    let directory = std::env::temp_dir().join(format!("fsl-certificate-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
-    let saved = directory.join("certificate.json");
-    std::fs::write(&saved, request["certificate"].as_str().unwrap()).unwrap();
-
-    // S4 emits the probabilistic unit.
-    let (checked, _) = super::bounded::compile_source_with(&source, domain().as_bytes());
-    let emitted = fsl_replay::spine::package(
-        &checked,
-        fsl_replay::spine::PackageLimits::default(),
-        &filament_exact::Cancel::new(),
-    )
-    .unwrap_or_else(|failure| panic!("S4 emits the probabilistic unit: {failure:?}"))
-    .into_value();
-    let package = emitted.package().bytes().to_vec();
-
-    // A later, separate run reads the saved certificate over the package.
-    let mut later = request.clone();
-    later
-        .as_object_mut()
-        .unwrap()
-        .remove("source")
-        .expect("the source member");
-    later["package"] = json!(package);
-    later["certificate"] = json!(std::fs::read_to_string(&saved).unwrap());
+    let later = package_request(&package_source());
     let (code, output) = run(&later);
     assert_eq!(code, 0, "{output}");
 
@@ -205,4 +205,68 @@ fn an_analyze_certificate_is_accepted_later_over_the_emitted_package() {
     });
     let (code, output) = run(&altered);
     assert_ne!(code, 0, "an altered certificate is rejected: {output}");
+}
+
+/// A request the package route must refuse, never accept.
+fn refused_package(request: &Value, reason: &str) {
+    let (code, output) = run(request);
+    assert_eq!(code, 2, "{output}");
+    assert!(
+        output["reason"]
+            .as_str()
+            .is_some_and(|text| text.contains(reason)),
+        "{reason}: {output}"
+    );
+}
+
+/// FR-282-AC-20 (negative): the package the provision recompiles to must be
+/// the package the request names; a source that recompiles to other bytes is
+/// refused.
+#[trace("TC-2065", "FR-282-AC-20")]
+#[test]
+fn a_package_the_provision_does_not_recompile_to_is_refused() {
+    let mut request = package_request(&package_source());
+    let other = package_source().replace(
+        "terminal Stop",
+        "reward extra on Msg::send_a = 1;\nterminal Stop",
+    );
+    request["byte_provision"][0][2] = json!(other.as_bytes());
+    refused_package(
+        &request,
+        "conflicting_identity: probability certificate package",
+    );
+}
+
+/// FR-282-AC-20 (negative): a package that names no source, or two, and bytes
+/// that are no document, are refused with their own cause.
+#[trace("TC-2065", "FR-282-AC-20")]
+#[test]
+fn a_package_without_exactly_one_source_or_without_a_document_is_refused() {
+    let request = package_request(&package_source());
+    let bytes: Vec<u8> = serde_json::from_value(request["package"].clone()).unwrap();
+    let mut document: Value = serde_json::from_slice(&bytes).unwrap();
+    document["lock"]["sources"] = json!([]);
+    let mut none = request.clone();
+    none["package"] = json!(serde_json::to_vec(&document).unwrap());
+    refused_package(&none, "names 0 sources");
+    let mut unreadable = request;
+    unreadable["package"] = json!([255, 254]);
+    refused_package(&unreadable, "package unreadable");
+}
+
+/// FR-282-AC-20 (negative): a stated package name other than the package's
+/// own is refused, and a request names exactly one of source and package.
+#[trace("TC-2065", "FR-282-AC-20")]
+#[test]
+fn a_package_request_names_its_own_package_and_exactly_one_subject() {
+    let request = package_request(&package_source());
+    let mut renamed = request.clone();
+    renamed["package_name"] = json!("another-package");
+    refused_package(&renamed, "package name");
+    let mut neither = request.clone();
+    neither.as_object_mut().unwrap().remove("package");
+    refused_package(&neither, "exactly one of source and package");
+    let mut both = request;
+    both["source"] = json!({"authority": "test", "identity": "bounded-certificate-source", "content": package_source()});
+    refused_package(&both, "exactly one of source and package");
 }
