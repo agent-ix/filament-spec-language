@@ -218,7 +218,7 @@ mod tests {
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
-        canonical_values: false,
+            canonical_values: false,
             snapshot: None,
             function: "q".to_owned(),
             arguments: vec![crate::CallArgument {
@@ -482,7 +482,7 @@ mod tests {
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
-        canonical_values: false,
+            canonical_values: false,
             snapshot: None,
             function: "r".to_owned(),
             arguments: vec![crate::CallArgument {

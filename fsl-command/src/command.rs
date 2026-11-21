@@ -4803,8 +4803,7 @@ fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::s
             if !argument.value.is_object() {
                 return Err(RunCause::ClauseRequest {
                     member: format!("/call/arguments/{index}/value"),
-                    reason: "expected a typed canonical value object"
-                        .to_owned(),
+                    reason: "expected a typed canonical value object".to_owned(),
                 });
             }
             Ok(fsl_replay::spine::WireArgument {

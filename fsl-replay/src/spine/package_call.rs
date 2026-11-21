@@ -209,12 +209,17 @@ fn run_package_resolving(
     })?;
     match &evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(value))
-            if call.canonical_values || !matches!(
-                value,
-                Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
-            ) =>
+            if call.canonical_values
+                || !matches!(
+                    value,
+                    Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
+                ) =>
         {
-            match if call.canonical_values { forms.write_canonical(value) } else { forms.write(value) } {
+            match if call.canonical_values {
+                forms.write_canonical(value)
+            } else {
+                forms.write(value)
+            } {
                 Ok(form) => Ok(CallOutcome::Completed(CallValue::Written(form))),
                 Err(WriteStop::NoForm) => Err(Box::new(RunRefusal::UnsupportedResult {
                     function: call.function.clone(),

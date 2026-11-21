@@ -414,7 +414,7 @@ fn tc_792_source_compiled_lookup_driver_preserves_present_and_absent_paths() {
             &Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
-        canonical_values: false,
+                canonical_values: false,
                 snapshot: None,
                 function: "query".to_owned(),
                 arguments: vec![
@@ -472,7 +472,7 @@ fn tc_792_source_driver_admits_unused_parameters_before_body_evaluation() {
         &Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
-        canonical_values: false,
+            canonical_values: false,
             snapshot: None,
             function: "unused".to_owned(),
             arguments: vec![
@@ -519,7 +519,7 @@ fn tc_792_source_driver_binding_precedence_precedes_value_admission() {
         &Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
-        canonical_values: false,
+            canonical_values: false,
             snapshot: None,
             function: "query".to_owned(),
             arguments: vec![CallArgument {
@@ -561,7 +561,7 @@ fn tc_792_source_driver_cancellation_returns_no_lookup_result() {
         &Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
-        canonical_values: false,
+            canonical_values: false,
             snapshot: None,
             function: "query".to_owned(),
             arguments: vec![

@@ -1098,12 +1098,17 @@ pub(crate) fn run_compiled(
     sources.extend(checked.libraries().iter().cloned());
     let outcome = match &evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(value))
-            if call.canonical_values || !matches!(
-                value,
-                Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
-            ) =>
+            if call.canonical_values
+                || !matches!(
+                    value,
+                    Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
+                ) =>
         {
-            match if call.canonical_values { forms.write_canonical(value) } else { forms.write(value) } {
+            match if call.canonical_values {
+                forms.write_canonical(value)
+            } else {
+                forms.write(value)
+            } {
                 Ok(form) => CallOutcome::Completed(CallValue::Written(form)),
                 Err(super::run_value::WriteStop::NoForm) => {
                     return Err(Box::new(RunRefusal::UnsupportedResult {
@@ -1373,17 +1378,19 @@ pub(crate) fn admit_wire_arguments(
         }
         let read = if call.canonical_values {
             forms.read_canonical(&wire.value, value_type)
-        } else { match &wire.value {
-            serde_json::Value::Number(number) => match number.as_i64() {
-                Some(number) => forms.bare_integer(number, value_type),
-                None => Err(ReadStop::Defect(ArgumentDefect {
-                    code: Code::InvalidRuntimeInput,
-                    cause: "wrong-value-kind",
-                    path: String::new(),
-                })),
-            },
-            form => forms.read(form, value_type),
-        }};
+        } else {
+            match &wire.value {
+                serde_json::Value::Number(number) => match number.as_i64() {
+                    Some(number) => forms.bare_integer(number, value_type),
+                    None => Err(ReadStop::Defect(ArgumentDefect {
+                        code: Code::InvalidRuntimeInput,
+                        cause: "wrong-value-kind",
+                        path: String::new(),
+                    })),
+                },
+                form => forms.read(form, value_type),
+            }
+        };
         let value = read.map_err(|stop| {
             Box::new(match stop {
                 ReadStop::Defect(defect) => RunRefusal::Argument { position, defect },

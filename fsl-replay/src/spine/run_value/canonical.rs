@@ -25,11 +25,16 @@ impl Forms<'_> {
             return Ok(form.clone());
         }
         let object = form.as_object().ok_or_else(|| wrong_kind(path))?;
-        let tag = object.get("type").and_then(Json::as_str).ok_or_else(|| wrong_kind(path))?;
+        let tag = object
+            .get("type")
+            .and_then(Json::as_str)
+            .ok_or_else(|| wrong_kind(path))?;
         let wanted = match declared {
             ValueType::Boolean => "boolean",
             ValueType::Integer | ValueType::Int(_) => "integer",
-            ValueType::Rational(_) | ValueType::Quantity(_) | ValueType::BoundedQuantity(_)
+            ValueType::Rational(_)
+            | ValueType::Quantity(_)
+            | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_) => "rational",
             ValueType::Decimal(_) => "decimal",
             ValueType::Float(float) => match float.width() {
@@ -46,8 +51,12 @@ impl Forms<'_> {
             ValueType::Map(_) => "map",
             ValueType::Enum(_) => "enum",
             ValueType::Reference(_) => "reference",
-            ValueType::Composite(key) => match self.types.composite(key.clone())
-                .ok_or(ReadStop::Fault("composite-declaration"))?.shape() {
+            ValueType::Composite(key) => match self
+                .types
+                .composite(key.clone())
+                .ok_or(ReadStop::Fault("composite-declaration"))?
+                .shape()
+            {
                 CompositeShape::Record(_) => "record",
                 CompositeShape::Tuple(_) => "tuple",
                 CompositeShape::Union(_) => "union",
@@ -61,7 +70,9 @@ impl Forms<'_> {
             ValueType::Boolean | ValueType::Integer | ValueType::Int(_) => {
                 closed(object, &["type", "value"], path)?;
                 if matches!(declared, ValueType::Boolean) {
-                    if !object["value"].is_boolean() { return Err(wrong_kind_at(path, "value")); }
+                    if !object["value"].is_boolean() {
+                        return Err(wrong_kind_at(path, "value"));
+                    }
                 } else {
                     integer_text(&object["value"], path, "value")?;
                 }
@@ -111,19 +122,27 @@ impl Forms<'_> {
             }
             ValueType::Collection(collection) => {
                 closed(object, &["type", "elements"], path)?;
-                let values = self.canonical_elements(&object["elements"], collection.element(), path, "elements")?;
+                let values = self.canonical_elements(
+                    &object["elements"],
+                    collection.element(),
+                    path,
+                    "elements",
+                )?;
                 Ok(json!({wanted: values}))
             }
             ValueType::Map(map) => {
                 closed(object, &["type", "entries"], path)?;
-                let entries = object["entries"].as_array().ok_or_else(|| wrong_kind_at(path, "entries"))?;
+                let entries = object["entries"]
+                    .as_array()
+                    .ok_or_else(|| wrong_kind_at(path, "entries"))?;
                 let mut normalized = Vec::with_capacity(entries.len());
                 path.push("entries");
                 for (index, entry) in entries.iter().enumerate() {
                     path.push(&index.to_string());
                     let entry = identity_form::closed(entry, &["key", "value"], path)?;
                     let key = self.canonical_child(&entry["key"], map.key(), path, "key")?;
-                    let value = self.canonical_child(&entry["value"], map.values(), path, "value")?;
+                    let value =
+                        self.canonical_child(&entry["value"], map.values(), path, "value")?;
                     normalized.push(json!({"key": key, "value": value}));
                     path.pop();
                 }
@@ -133,14 +152,19 @@ impl Forms<'_> {
             ValueType::Enum(shape) => {
                 closed(object, &["type", "name", "member"], path)?;
                 let (name, members) = self.enum_cases(shape)?;
-                let owner = members.first().ok_or(ReadStop::Fault("enum-has-members"))?.owner();
+                let owner = members
+                    .first()
+                    .ok_or(ReadStop::Fault("enum-has-members"))?
+                    .owner();
                 if object["name"] != declaration_form(owner)? {
                     return Err(wrong_kind_at(path, "name"));
                 }
                 Ok(json!({"variant": {"type": name, "case": object["member"]}}))
             }
             ValueType::Composite(key) => self.canonical_composite(object, key, path),
-            ValueType::Quantity(_) | ValueType::BoundedQuantity(_) | ValueType::CarriedQuantity(_) => {
+            ValueType::Quantity(_)
+            | ValueType::BoundedQuantity(_)
+            | ValueType::CarriedQuantity(_) => {
                 closed(object, &["type", "numerator", "denominator", "unit"], path)?;
                 let unit = string_member(object, "unit", path)?;
                 let unit = crate::id_text::unit_from_text(unit)
@@ -154,15 +178,29 @@ impl Forms<'_> {
         }
     }
 
-    fn canonical_child(&self, form: &Json, declared: &ValueType, path: &mut Path, segment: &str) -> Result<Json, ReadStop> {
+    fn canonical_child(
+        &self,
+        form: &Json,
+        declared: &ValueType,
+        path: &mut Path,
+        segment: &str,
+    ) -> Result<Json, ReadStop> {
         path.push(segment);
         let value = self.canonical_input(form, declared, path);
         path.pop();
         value
     }
 
-    fn canonical_elements(&self, form: &Json, declared: &ValueType, path: &mut Path, segment: &str) -> Result<Vec<Json>, ReadStop> {
-        let values = form.as_array().ok_or_else(|| wrong_kind_at(path, segment))?;
+    fn canonical_elements(
+        &self,
+        form: &Json,
+        declared: &ValueType,
+        path: &mut Path,
+        segment: &str,
+    ) -> Result<Vec<Json>, ReadStop> {
+        let values = form
+            .as_array()
+            .ok_or_else(|| wrong_kind_at(path, segment))?;
         path.push(segment);
         let mut normalized = Vec::with_capacity(values.len());
         for (index, value) in values.iter().enumerate() {
@@ -172,19 +210,38 @@ impl Forms<'_> {
         Ok(normalized)
     }
 
-    fn canonical_composite(&self, object: &Map<String, Json>, declared: &NodeKey, path: &mut Path) -> Result<Json, ReadStop> {
-        let name = object.get("name").ok_or_else(|| defect_below(Code::InvalidRuntimeInput, "missing-member", path, &["name"]))?;
-        let declaration = self.types.composites().find(|candidate| {
-            declaration_form(&candidate.key()).is_ok_and(|form| &form == name)
-        }).filter(|candidate| self.types.composite_conforms(candidate.key(), declared.clone()))
+    fn canonical_composite(
+        &self,
+        object: &Map<String, Json>,
+        declared: &NodeKey,
+        path: &mut Path,
+    ) -> Result<Json, ReadStop> {
+        let name = object.get("name").ok_or_else(|| {
+            defect_below(Code::InvalidRuntimeInput, "missing-member", path, &["name"])
+        })?;
+        let declaration = self
+            .types
+            .composites()
+            .find(|candidate| declaration_form(&candidate.key()).is_ok_and(|form| &form == name))
+            .filter(|candidate| {
+                self.types
+                    .composite_conforms(candidate.key(), declared.clone())
+            })
             .ok_or_else(|| wrong_kind_at(path, "name"))?;
         let legacy_name = declaration_name(declaration);
         match declaration.shape() {
             CompositeShape::Record(fields) => {
                 closed(object, &["type", "name", "fields"], path)?;
-                let entries = object["fields"].as_array().ok_or_else(|| wrong_kind_at(path, "fields"))?;
+                let entries = object["fields"]
+                    .as_array()
+                    .ok_or_else(|| wrong_kind_at(path, "fields"))?;
                 if entries.len() != fields.len() {
-                    return Err(defect_below(Code::InvalidRuntimeInput, "invalid-value", path, &["fields"]));
+                    return Err(defect_below(
+                        Code::InvalidRuntimeInput,
+                        "invalid-value",
+                        path,
+                        &["fields"],
+                    ));
                 }
                 let mut normalized = Map::new();
                 path.push("fields");
@@ -192,13 +249,27 @@ impl Forms<'_> {
                     path.push(&index.to_string());
                     let entry = identity_form::closed(entry, &["name", "value"], path)?;
                     if entry["name"].as_str() != Some(field.name()) {
-                        return Err(defect_below(Code::InvalidRuntimeInput, "invalid-value", path, &["name"]));
+                        return Err(defect_below(
+                            Code::InvalidRuntimeInput,
+                            "invalid-value",
+                            path,
+                            &["name"],
+                        ));
                     }
                     let value = match (field.presence(), entry["value"].is_null()) {
                         (Presence::Optional, true) => json!({"absent": {}}),
                         (presence, _) => {
-                            let value = self.canonical_child(&entry["value"], field.value_type(), path, "value")?;
-                            if presence == Presence::Optional { json!({"present": value}) } else { value }
+                            let value = self.canonical_child(
+                                &entry["value"],
+                                field.value_type(),
+                                path,
+                                "value",
+                            )?;
+                            if presence == Presence::Optional {
+                                json!({"present": value})
+                            } else {
+                                value
+                            }
                         }
                     };
                     normalized.insert(field.name().to_owned(), value);
@@ -215,22 +286,46 @@ impl Forms<'_> {
             CompositeShape::Union(members) => {
                 closed(object, &["type", "name", "member", "components"], path)?;
                 let name = string_member(object, "member", path)?;
-                let member = members.iter().find(|member| member.identifier() == name)
-                    .ok_or_else(|| defect_below(Code::InvalidRuntimeInput, "invalid-value", path, &["member"]))?;
-                let values = self.canonical_positions(&object["components"], member.positions(), path)?;
+                let member = members
+                    .iter()
+                    .find(|member| member.identifier() == name)
+                    .ok_or_else(|| {
+                        defect_below(
+                            Code::InvalidRuntimeInput,
+                            "invalid-value",
+                            path,
+                            &["member"],
+                        )
+                    })?;
+                let values =
+                    self.canonical_positions(&object["components"], member.positions(), path)?;
                 if values.is_empty() {
                     Ok(json!({"variant": {"type": legacy_name, "case": name}}))
                 } else {
-                    Ok(json!({"variant": {"type": legacy_name, "case": name, "components": values}}))
+                    Ok(
+                        json!({"variant": {"type": legacy_name, "case": name, "components": values}}),
+                    )
                 }
             }
         }
     }
 
-    fn canonical_positions(&self, form: &Json, positions: &[ValueType], path: &mut Path) -> Result<Vec<Json>, ReadStop> {
-        let values = form.as_array().ok_or_else(|| wrong_kind_at(path, "components"))?;
+    fn canonical_positions(
+        &self,
+        form: &Json,
+        positions: &[ValueType],
+        path: &mut Path,
+    ) -> Result<Vec<Json>, ReadStop> {
+        let values = form
+            .as_array()
+            .ok_or_else(|| wrong_kind_at(path, "components"))?;
         if values.len() != positions.len() {
-            return Err(defect_below(Code::InvalidRuntimeInput, "invalid-value", path, &["components"]));
+            return Err(defect_below(
+                Code::InvalidRuntimeInput,
+                "invalid-value",
+                path,
+                &["components"],
+            ));
         }
         path.push("components");
         let mut normalized = Vec::with_capacity(values.len());
@@ -243,18 +338,28 @@ impl Forms<'_> {
 
     pub(crate) fn write_canonical(&self, value: &Value) -> Result<Json, WriteStop> {
         if let Value::Population(population) = value {
-            let world = self.world.ok_or(WriteStop::Fault("population-result-has-object-world"))?;
-            let binding = world.objects.resolve_population(population.clone())
+            let world = self
+                .world
+                .ok_or(WriteStop::Fault("population-result-has-object-world"))?;
+            let binding = world
+                .objects
+                .resolve_population(population.clone())
                 .ok_or(WriteStop::Fault("population-result-has-binding"))?;
-            let mut elements = binding.members().keys().map(|key| {
-                let object = ObjectId::new(key.object.clone())
-                    .map_err(|_| WriteStop::Fault("population-member-has-an-identity"))?;
-                let value = Value::Reference(ObjectReference::new(
-                    key.universe.clone(), key.type_identity.clone(), object,
-                ));
-                fsl_eval::simulation::model::run_value_json(&value, self.types, self.enums)
-                    .ok_or(WriteStop::NoForm)
-            }).collect::<Result<Vec<_>, _>>()?;
+            let mut elements = binding
+                .members()
+                .keys()
+                .map(|key| {
+                    let object = ObjectId::new(key.object.clone())
+                        .map_err(|_| WriteStop::Fault("population-member-has-an-identity"))?;
+                    let value = Value::Reference(ObjectReference::new(
+                        key.universe.clone(),
+                        key.type_identity.clone(),
+                        object,
+                    ));
+                    fsl_eval::simulation::model::run_value_json(&value, self.types, self.enums)
+                        .ok_or(WriteStop::NoForm)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             elements.sort_by_key(order_key);
             return Ok(json!({"type": "set", "elements": elements}));
         }
