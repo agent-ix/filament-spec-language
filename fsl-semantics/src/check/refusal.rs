@@ -4157,6 +4157,49 @@ mod tests {
     use super::{CheckCause, CheckingLimitKind, CheckingStage, KeyFault, Setting, StageLimitCause};
     use fsl_foundation::diagnostic::Code;
 
+    /// The reference-literal refusal keeps the public diagnostic and payload
+    /// semantics when its resolved type is stored indirectly.
+    #[ix_trace_rs::trace("FR-1000-AC-2", "FSpec-FR-480-AC-2")]
+    #[test]
+    fn reference_literal_refusal_preserves_display_equality_and_payload() {
+        use filament_exact::ValueType;
+        use filament_semantic_value::location::ExpressionLocation;
+        use filament_semantic_value::Origin;
+        use fsl_forms::NameForm;
+        use fsl_foundation::Span;
+        use std::hash::{DefaultHasher, Hash, Hasher};
+
+        let name = NameForm::new("Boolean", Span { start: 3, end: 10 });
+        let actual = ValueType::Boolean;
+        let cause = CheckCause::ReferenceLiteralTypeMismatch {
+            name: name.clone(),
+            actual: Box::new(actual.clone()),
+        };
+        let location = ExpressionLocation::at(Origin::Expression, &[2, 4]);
+        let refusal = super::CheckRefusal { location, cause };
+        assert_eq!(refusal.cause.code(), Code::IllTyped);
+        assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
+        assert_eq!(
+            refusal.to_string(),
+            format!(
+                "ill_typed at {:?}: ReferenceLiteralTypeMismatch {{ name: {name:?}, actual: {actual:?} }}",
+                refusal.location
+            )
+        );
+        assert_eq!(refusal, refusal.clone());
+        let CheckCause::ReferenceLiteralTypeMismatch { actual: stored, .. } = &refusal.cause else {
+            unreachable!("the reference-literal cause")
+        };
+        assert_eq!(stored.as_ref(), &actual);
+        assert_eq!(serde_json::to_vec(stored).unwrap(), serde_json::to_vec(&actual).unwrap());
+        let hash = |value: &dyn Fn(&mut DefaultHasher)| {
+            let mut state = DefaultHasher::new();
+            value(&mut state);
+            state.finish()
+        };
+        assert_eq!(hash(&|state| stored.hash(state)), hash(&|state| actual.hash(state)));
+    }
+
     /// Every `CheckingLimitKind` reports `stage_limit_exceeded`
     /// with its own `<kind>-exceeded` cause, and carries the bound and
     /// actual counter it was built with.

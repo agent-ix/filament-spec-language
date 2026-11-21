@@ -1494,7 +1494,7 @@ impl<'n> Operands<'n> {
             (Self::Each(nodes), index) => nodes.get(index),
             (Self::FirstThenEach(_, nodes), index) => nodes.get(index.checked_sub(1)?),
             (Self::Receiver(_, arguments), index) => arguments.get(index.checked_sub(1)?),
-            (Self::One(_) | Self::Two(..) | Self::Three(..) | Self::FirstThenEach(..), _) => None,
+            (Self::One(_) | Self::Two(..) | Self::Three(..), _) => None,
         };
         operand.copied()
     }
