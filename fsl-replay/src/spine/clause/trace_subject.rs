@@ -266,7 +266,7 @@ impl<'a> SubjectSamples<'a> {
             Self::Values(_) => None,
             Self::Tape { tape, .. } => match tape.entry(index)? {
                 TapeEntry::Read(letter) => Some(letter),
-                TapeEntry::Held(_) | TapeEntry::Object(_) => None,
+                TapeEntry::Held(_) | TapeEntry::Anchored(..) | TapeEntry::Object(_) => None,
             },
         }
     }

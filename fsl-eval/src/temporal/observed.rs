@@ -184,12 +184,7 @@ pub fn evaluate_observed_timed(
             len: u64::try_from(stamps.len()).unwrap_or(u64::MAX),
         },
     };
-    let mut letters = ObservedLetters::over(
-        package,
-        clause,
-        positions,
-        shape,
-    );
+    let mut letters = ObservedLetters::over(package, clause, positions, shape);
     let represented = stamps.len();
     let trace = match (loop_start.clone(), through) {
         (Some((start, delay)), None) => super::TimedTrace::lasso(stamps, start, delay),
@@ -201,21 +196,18 @@ pub fn evaluate_observed_timed(
         (None, None) => super::TimedTrace::new(stamps),
     };
     let result = trace.and_then(|trace| {
-        let activation_positions: Vec<usize> = match (
-            clause.clause().activation(),
-            loop_start.as_ref(),
-        ) {
-            (fsl_semantics::check::Activation::Origin, _) => vec![0],
-            (fsl_semantics::check::Activation::Each { .. }, Some((start, _))) => {
-                (0..usize::try_from(*start).unwrap_or(usize::MAX))
+        let activation_positions: Vec<usize> =
+            match (clause.clause().activation(), loop_start.as_ref()) {
+                (fsl_semantics::check::Activation::Origin, _) => vec![0],
+                (fsl_semantics::check::Activation::Each { .. }, Some((start, _))) => (0
+                    ..usize::try_from(*start).unwrap_or(usize::MAX))
                     .chain(
                         (0..represented.saturating_sub(usize::try_from(*start).unwrap_or(0)))
                             .map(|offset| represented.saturating_add(offset)),
                     )
-                    .collect()
-            }
-            (fsl_semantics::check::Activation::Each { .. }, None) => (0..represented).collect(),
-        };
+                    .collect(),
+                (fsl_semantics::check::Activation::Each { .. }, None) => (0..represented).collect(),
+            };
         let guarded = matches!(
             clause.clause().activation(),
             fsl_semantics::check::Activation::Each { guarded: true }
@@ -580,8 +572,7 @@ fn evaluate_window_over(
         ObservedPositions::Tape(_) => {
             crate::temporal::facts::ClauseFacts::of_checked_letters(clause.clause())
         }
-        ObservedPositions::Objects { .. }
-        | ObservedPositions::ObjectTape { .. } => {
+        ObservedPositions::Objects { .. } | ObservedPositions::ObjectTape { .. } => {
             crate::temporal::facts::ClauseFacts::of_checked(clause.clause())
         }
         ObservedPositions::Samples(_) => {
@@ -688,6 +679,29 @@ impl CarriedWindow {
             active: None,
             windows: None,
         };
+        // FR-194 "Evaluation": a window aggregate reads the stamps of the
+        // admitted trace, so a carried run reads the contents the one-shot
+        // run reads.
+        if clause.clause().profile()
+            == fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+            && clause
+                .clause()
+                .formula()
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, FormulaNode::Aggregate { .. }))
+        {
+            match trace.timed_window_trace() {
+                Ok(windows) => letters.windows = Some(windows),
+                Err(refusal) => {
+                    return ObservedWindowRun {
+                        result: Err(TemporalRefusal::Window(refusal)),
+                        stopped: None,
+                        undefined: None,
+                    };
+                }
+            }
+        }
         let result = state.evaluate(
             &facts,
             silent,
@@ -826,7 +840,7 @@ impl<'a> ObservedLetters<'a> {
             }
         };
         match tape.entry(index.checked_add(from)?)? {
-            TapeEntry::Read(letter) => Some(letter),
+            TapeEntry::Read(letter) | TapeEntry::Anchored(_, letter) => Some(letter),
             TapeEntry::Held(_) | TapeEntry::Object(_) => None,
         }
     }
@@ -893,7 +907,9 @@ impl ObservedLetters<'_> {
             ObservedPositions::Tape(tape) => slot
                 .and_then(|slot| tape.entries().get(slot))
                 .and_then(|entry| match entry {
-                    TapeEntry::Held(sample) => Some((&self.empty, sample.clone())),
+                    TapeEntry::Held(sample) | TapeEntry::Anchored(sample, _) => {
+                        Some((&self.empty, sample.clone()))
+                    }
                     TapeEntry::Read(_) | TapeEntry::Object(_) => None,
                 }),
             ObservedPositions::ObjectTape { tape, over, from } => slot
@@ -903,7 +919,7 @@ impl ObservedLetters<'_> {
                     TapeEntry::Object(environment) => {
                         Some((&**environment, Value::Reference(over.clone())))
                     }
-                    TapeEntry::Read(_) | TapeEntry::Held(_) => None,
+                    TapeEntry::Read(_) | TapeEntry::Held(_) | TapeEntry::Anchored(..) => None,
                 }),
         };
         found.ok_or_else(|| {
@@ -1036,7 +1052,15 @@ impl TemporalLetters for ObservedLetters<'_> {
         if self.windows.is_some()
             && self.clause.aggregate_conditions(atom).is_some()
             && !self.is_silent(position)
+            && self.taped(position).is_none()
         {
+            // FR-501 "Verdicts": an aggregate is an atom, so a valuation
+            // absent from the admitted observation is `MissingValuation`.
+            let absent = u64::try_from(atom.index())
+                .is_ok_and(|atom| self.absent.contains(&(position.index(), atom)));
+            if absent {
+                return Ok(Valuation::Missing);
+            }
             return self.read_aggregate(atom, position, meter, visit);
         }
         self.valuation(atom, position, meter)
@@ -1137,12 +1161,18 @@ impl ObservedLetters<'_> {
         meter: &mut Meter,
         visit: &mut dyn FnMut(&mut Meter) -> Result<(), LetterStop>,
     ) -> Result<Valuation, LetterStop> {
-        let stop = |code: &'static str| {
-            LetterStop::Fault(InternalFault::new("temporal.observed", code))
-        };
-        let (ObservedPositions::Samples(samples), Some(windows)) =
-            (self.positions, self.windows.as_ref())
-        else {
+        let stop =
+            |code: &'static str| LetterStop::Fault(InternalFault::new("temporal.observed", code));
+        let (Some(windows), Some(samples)) = (
+            self.windows.as_ref(),
+            match self.positions {
+                ObservedPositions::Samples(samples) => {
+                    Some(observed_aggregate::Held::Listed(samples))
+                }
+                ObservedPositions::Tape(tape) => Some(observed_aggregate::Held::Tape(tape)),
+                ObservedPositions::Objects { .. } | ObservedPositions::ObjectTape { .. } => None,
+            },
+        ) else {
             return Err(stop("aggregate-reads-samples-with-a-stamped-trace"));
         };
         let expressions = self
@@ -1810,4 +1840,51 @@ pub fn letters_valuation<L: TemporalLetters>(
         activations,
         trace,
     })
+}
+
+/// FR-820 "Summarized positions": the letter of the position `at` of a carried
+/// timestamped clause state, read while the samples of the position's window
+/// are still held: each `holds` atom and each window aggregate atom, the
+/// aggregate read against the stamps of `trace`. `None` for a clause with a
+/// guard or captures, and for a reading that does not reduce to a letter (an
+/// undefined atom or a refused condition), which keep the sample.
+pub fn read_anchor_letter(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    tape: &super::tape::LetterTape,
+    trace: &TimestampedTrace,
+    at: u64,
+    meter: &mut Meter,
+) -> Option<TapeLetter> {
+    let checked = clause.clause();
+    if checked.captures().len() != 0
+        || matches!(
+            checked.activation(),
+            fsl_semantics::check::Activation::Each { guarded: true }
+        )
+    {
+        return None;
+    }
+    let mut letters = ObservedLetters::over(
+        package,
+        clause,
+        ObservedPositions::Tape(tape),
+        TemporalTrace::Finite {
+            len: u64::try_from(trace.len()).ok()?,
+        },
+    );
+    letters.windows = Some(trace.timed_window_trace().ok()?);
+    let formula = checked.formula();
+    let mut atoms = Vec::new();
+    for (index, node) in formula.nodes().iter().enumerate() {
+        if matches!(
+            node,
+            FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. }
+        ) {
+            let id = formula.node_id(index)?;
+            let reading = letters.atom(id, TemporalPosition::new(at), meter).ok()?;
+            atoms.push((index, super::tape::TapeReading::of(&reading)?));
+        }
+    }
+    Some(TapeLetter::new(atoms, None, false))
 }

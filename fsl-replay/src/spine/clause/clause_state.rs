@@ -1156,9 +1156,7 @@ impl<'a> ClauseState<'a> {
                         },
                     ));
                 }
-                TraceInput::Timed { .. }
-                | TraceInput::Lasso { .. }
-                | TraceInput::Model { .. } => {}
+                TraceInput::Timed { .. } | TraceInput::Lasso { .. } | TraceInput::Model { .. } => {}
             }
             *held = Some(shape);
         }
@@ -1344,7 +1342,113 @@ impl<'a> ClauseState<'a> {
         }
         self.report = Arc::clone(&report);
         self.evaluated = Some((seen, assertion));
+        self.drop_unread_window_samples(assertion);
         Ok(Advance { report, decided })
+    }
+
+    /// FR-820 "Summarized positions": a `Timestamped` clause with a window
+    /// aggregate holds a sample by value only while a window can still read
+    /// it. Progress complete through `T` admits no later position at a stamp
+    /// at or below `T`, so no later anchor reads a stamp below `T - b`, `b` the
+    /// farthest age of any aggregate window; an evaluated sample below that
+    /// stamp is dropped from the tape and its text with it. A position at such
+    /// a stamp is not admitted after the completeness that covers it, so a
+    /// window never reads a position the state dropped. A clause whose run
+    /// stopped on a condition keeps its samples: each report reads the stop
+    /// again.
+    fn drop_unread_window_samples(&mut self, assertion: Option<ProgressAssertion>) {
+        use filament_exact::{Integer, Rational};
+        let Some(assertion) = assertion else {
+            return;
+        };
+        if self.open.kind != ClauseTraceKind::Timestamped || self.reading != Reading::Observed {
+            return;
+        }
+        let ProgressCompleteness::Complete { through } = assertion.completeness else {
+            return;
+        };
+        if !matches!(self.report.disposition, ClauseDisposition::Temporal(_))
+            || self.report.refused_at.is_some()
+        {
+            return;
+        }
+        let mut reach: Option<Rational> = None;
+        for aggregate in self.node.clause().aggregates().values() {
+            let AggregateWindow::Duration(window) = &aggregate.window else {
+                return;
+            };
+            if reach
+                .as_ref()
+                .is_none_or(|farthest| window.upper > *farthest)
+            {
+                reach = Some(window.upper.clone());
+            }
+        }
+        // An activation still open reads the atoms of every position through its
+        // horizon, and each atom its own window: the farthest back a later read
+        // goes is the horizon, the window, and the cover's widening below the
+        // covered stamp.
+        let (Some(reach), Some(horizon)) = (reach, self.node.clause().horizon()) else {
+            return;
+        };
+        let widening = match self.open.cover {
+            None | Some(TimestampedCover::Exact) => 0,
+            Some(
+                TimestampedCover::Counter { uncertainty }
+                | TimestampedCover::Bounded { uncertainty },
+            ) => uncertainty.saturating_add(1),
+        };
+        let covered = assertion.watermark.min(through);
+        // Positions below `anchors` are read as anchors by no open activation;
+        // samples below `samples` are read as window members by no later
+        // anchor (the newest closed anchor is one tick below `anchors`, and its
+        // window reaches `reach` further back).
+        let anchors = Rational::from_integer(Integer::from(covered)).sub(&Rational::from_integer(
+            Integer::from(horizon.saturating_add(widening)),
+        ));
+        let samples = anchors
+            .sub(&reach)
+            .sub(&Rational::from_integer(Integer::from(1_u64)));
+        let evaluated = self
+            .evaluated
+            .map_or(0, |(seen, _)| seen)
+            .min(self.seen.len());
+        let stamp = |position: &Seen| Rational::from_integer(Integer::from(position.stamp));
+        let admission = self.admission.borrow();
+        let Some(trace) = admission.trace_ref() else {
+            return;
+        };
+        let mut meter = Meter::new(self.open.limits.accounting);
+        for index in 0..evaluated {
+            let Some(position) = self.seen.get(index) else {
+                continue;
+            };
+            let at = u64::try_from(index).unwrap_or(u64::MAX);
+            match self.tape.entries().get(index) {
+                // The atoms of an anchor no activation reads again are read
+                // now, while its window's samples are held.
+                Some(TapeEntry::Held(sample)) if stamp(position) < anchors => {
+                    let sample = sample.clone();
+                    if let Some(letter) = fsl_eval::temporal::read_anchor_letter(
+                        self.package,
+                        self.node,
+                        &self.tape,
+                        trace,
+                        at,
+                        &mut meter,
+                    ) {
+                        self.tape
+                            .replace(index, TapeEntry::Anchored(sample, letter));
+                    }
+                }
+                Some(TapeEntry::Anchored(_, letter)) if stamp(position) < samples => {
+                    let letter = letter.clone();
+                    self.tape.replace(index, TapeEntry::Read(letter));
+                    self.texts.remove(&at);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// FR-330's report of a refused reading. The run refuses before it reads
@@ -1455,7 +1559,7 @@ impl<'a> ClauseState<'a> {
             let held = usize::try_from(place)
                 .ok()
                 .and_then(|place| self.tape.entries().get(place))
-                .is_some_and(|entry| matches!(entry, TapeEntry::Held(_)));
+                .is_some_and(|entry| matches!(entry, TapeEntry::Held(_) | TapeEntry::Anchored(..)));
             if let (true, Some(Some(text))) = (held, texts.get_mut(*index).map(Option::take)) {
                 self.texts.insert(place, text);
             }
@@ -1617,7 +1721,9 @@ impl<'a> ClauseState<'a> {
             .enumerate()
             .map(|(index, position)| {
                 let letter = match self.tape.entries().get(index) {
-                    Some(TapeEntry::Read(letter)) => letter_json(letter),
+                    Some(TapeEntry::Read(letter) | TapeEntry::Anchored(_, letter)) => {
+                        letter_json(letter)
+                    }
                     Some(TapeEntry::Held(_) | TapeEntry::Object(_)) | None => Json::Null,
                 };
                 let document = match self.reading {
@@ -1787,7 +1893,16 @@ impl<'a> ClauseState<'a> {
             if matches!(state.reading, Reading::Subject | Reading::Observed) || state.lettered() {
                 let entry = match &position["letter"] {
                     Json::Null => TapeEntry::Held(admit(seen, &reference)?),
-                    letter => TapeEntry::Read(letter_of(letter).ok_or_else(mismatch)?),
+                    letter => {
+                        let letter = letter_of(letter).ok_or_else(mismatch)?;
+                        // A sample whose text is held is an anchor still read
+                        // as a window member.
+                        if texts.contains_key(&seen) {
+                            TapeEntry::Anchored(admit(seen, &reference)?, letter)
+                        } else {
+                            TapeEntry::Read(letter)
+                        }
+                    }
                 };
                 state.tape.push(entry);
             }
@@ -1969,9 +2084,7 @@ fn truncate_listing(cell: &mut RefCell<Option<TraceInput>>, len: usize) {
             list.truncate(len);
         }
         Some(TraceInput::Timestamped { observations, .. }) => observations.truncate(len),
-        Some(
-            TraceInput::Timed { .. } | TraceInput::Lasso { .. } | TraceInput::Model { .. },
-        )
+        Some(TraceInput::Timed { .. } | TraceInput::Lasso { .. } | TraceInput::Model { .. })
         | None => {}
     }
 }
