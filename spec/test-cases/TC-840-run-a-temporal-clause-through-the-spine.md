@@ -14,7 +14,8 @@ Verify the `Temporal` selection of `run_clause` from source: selection,
 admission, evaluation dispatch by profile and trace shape, categories, exit
 codes.
 
-Scope: FR-330-AC-1 to FR-330-AC-4, FR-330-AC-12 to FR-330-AC-17.
+Scope: FR-330-AC-1 to FR-330-AC-4, FR-330-AC-12 to FR-330-AC-17 and
+FR-330-AC-19.
 
 ## Test Procedure
 
@@ -41,6 +42,21 @@ holds(c.value = 2)`, infinite-trace), and snapshots with `c.value` 0, 1, 2.
    model-subject clause without aggregate terms to this route. Run the original `run_clause`
    `Temporal` request from step 1 as a compatibility control.
 
+7. Run AC-16's `Model` trace through source and checked-package execution.
+   Compare the carried counterexamples with the actual states and transition
+   identities reconstructed by model replay, including the typed `over`
+   reference and fairness. Repeat with an `on each` clause whose first
+   failing activation is after position 0, and with a terminal initial state,
+   no prefix steps and a one-step terminal-stutter loop. For the terminal
+   case, supply a different syntactically valid key on the request stutter;
+   if admission accepts it without validating that key, check that the
+   output uses the actual replayed terminal key.
+8. Run a model trace whose atom evaluates undefined at a reconstructed state.
+   Check the cause, position and exit with no carried counterexample. If the
+   route carries one, check its finite model prefix and failing state key;
+   repeat through source and checked-package execution. Retain steps 1 and
+   6 and FR-330-AC-18 as snapshot and record-sample controls.
+
 Tag the tests `#[trace("TC-840", "FR-330-AC-n")]`.
 
 ## Expected Results
@@ -62,3 +78,16 @@ Tag the tests `#[trace("TC-840", "FR-330-AC-n")]`.
   Each malformed/mismatched subject request refuses at stage `admit` before
   evaluating a formula. The compatibility control returns the same report
   as it did before this route was added.
+- Step 7: both routes report a violation with equal model-arm witnesses,
+  initial index 0 and non-null actual typed binding, the validated taken
+  steps and original loop boundary. `trace_position` equals the failing
+  activation, while `decisive.position` remains the decisive atom's position.
+  The later activation keeps its nonzero position. The terminal initial case
+  carries one stutter step with the actual initial state's canonical key,
+  including when a supplied unchecked stutter key differs. No reconstructed
+  state receives an invented document identity.
+- Step 8: cause, position and exit 10 survive without an observed witness.
+  Any carried undefined witness uses `trace: "model"`, the actual prefix
+  reaching the failing state, an empty loop and `where.state_key` of that
+  state with its recorded locus and cause. Snapshot and record-sample
+  controls keep their existing observed-arm forms and outcomes.
