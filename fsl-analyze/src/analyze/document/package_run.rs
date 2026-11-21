@@ -714,7 +714,7 @@ fn resolve_names<'s>(
     };
     let clauses = view.clause_names();
     let declared = view.declared_names();
-    let unnamed = !view.unnamed_claims().is_empty();
+    let unnamed = !view.unnamed_claims().is_empty() || unnamed_composition(view).is_some();
     let models: Vec<String> = view
         .model_selections()
         .into_iter()
@@ -1880,17 +1880,14 @@ impl<'a> WorkInputs<'_, 'a> {
 }
 
 /// The node of the first component composition the package holds, which no
-/// name table row carries.
+/// name table row carries. The producer writes it as a declaration, not a
+/// claim occurrence, so [`AnalysisView::unnamed_claims`] never lists it.
 fn unnamed_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
-    let unnamed = view.unnamed_claims();
     view.package()
         .resolved_graph()
         .nodes
         .iter()
-        .find(|node| {
-            unnamed.contains(&&node.node_id)
-                && crate::claim_family::is_component_composition(&node.semantic_form)
-        })
+        .find(|node| crate::claim_family::is_component_composition(&node.semantic_form))
         .map(|node| node.node_id.clone())
 }
 

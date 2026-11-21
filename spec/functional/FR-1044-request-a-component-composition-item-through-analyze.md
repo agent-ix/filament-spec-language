@@ -298,18 +298,15 @@ AC below stays as written and open on QSL-2739.
   Which profile declares the lattice, and its binding, are decisions for the
   standard before the second PR.
 - **AC-10, `package` handoff.** Today a `package` handoff of a unit that
-  declares compositions is refused whole at the request stage, and settles no
-  item: the strict package reader refuses the package the producer emits, at
-  an operand row of its `semantic_graph`, and FSL reports it
-  `invalid_package` with no cause, category `refusal`, exit 20, for a request
-  with or without `items`. No composition item reaches the package route's own
-  resolution. The package route itself reads no composition term's slots or
-  component packages: over a package the reader admits, a request with no
-  `items` is refused as `unsupported_construct`/`not-yet-implemented` naming
-  the `composition` rule, and an item naming a composition or a name no row
-  carries is refused naming the `unnamed-claim` family, never as
-  `unknown-claim`. That second behavior is the route's source behavior; no
-  public request reaches it yet, and its evidence is deferred with AC-10 to the
+  declares compositions is admitted, and the package route reads no
+  composition term's slots or component packages. A request with no `items`
+  is refused whole at the request stage as
+  `unsupported_construct`/`not-yet-implemented` naming the `composition`
+  rule, exit 20, with no item. An item naming a composition or a name no row
+  carries is refused the same way naming the `unnamed-claim` family, never as
+  `unknown-claim`, because the package carries no name row for a composition.
+  A name a row does carry resolves as usual. These typed results are public;
+  the source/package parity of AC-10 stays open and is deferred to the
   package-consumer API lane, which owns the package form.
 - **Text mode.** Text rendering of the outcome belongs to the external driver.
   No test in this repository exercises it, and this requirement does not

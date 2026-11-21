@@ -901,41 +901,47 @@ fn package_handoff(ws: &Workspace, path: &std::path::Path) -> PathBuf {
 }
 
 /// Asserts the public `package` handoff of a composition unit is refused
-/// whole at the request stage, exit 20, with no item: the strict reader
-/// refuses the package the producer emitted at an operand row of its
-/// `semantic_graph`, and FSL reports it `invalid_package` with no cause.
-/// Nothing settles, so the package route's own resolution, which an admitted
-/// package would reach, is not exercised (QSL-2739: package-consumer API).
-fn assert_package_refused(run: &crate::analyze_cli_support::Run) {
+/// whole at the request stage, exit 20, with no item: the typed
+/// `unsupported_construct`/`not-yet-implemented` pending refusal whose message
+/// names the family at `detail`. Nothing settles, so the package route's own
+/// resolution of a composition is not exercised (QSL-2739: package-consumer
+/// API).
+fn assert_package_pending(run: &crate::analyze_cli_support::Run, detail: &str) {
     let document = run.document();
-    let diagnostic = &document["diagnostics"][0];
+    let diagnostics = document["diagnostics"].as_array().expect("diagnostics");
     assert_eq!(run.exit, 20, "{document}");
     assert_eq!(document["category"], "refusal", "{document}");
     assert_eq!(document["items"], json!([]), "{document}");
-    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
-    assert!(diagnostic["cause"].is_null(), "{diagnostic}");
+    assert!(document["last_stage"].is_null(), "{document}");
+    assert_eq!(diagnostics.len(), 1, "{document}");
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic["code"], "unsupported_construct", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
     assert!(
-        diagnostic["message"].as_str().is_some_and(
-            |text| text.starts_with("invalid_package at /semantic_graph/operand_rows/")
-        ),
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains(detail)),
         "{diagnostic}"
     );
 }
 
 /// FR-1044 "Current system behavior" (QSL-2739): a `package` handoff of a
 /// unit with composition declarations, requested with no `items`, is refused
-/// whole and settles no item. The component libraries are supplied to the
-/// producer, so the refusal is the handoff's own.
+/// whole as the composition family and settles no item, `Local` included.
 #[test]
 fn the_package_default_items_refuse_a_composition() {
     let ws = Workspace::new("compose-package-default");
     let path = request_for(&ws, &system(), BOUNDED, None);
-    assert_package_refused(&analyze(&package_handoff(&ws, &path)));
+    assert_package_pending(
+        &analyze(&package_handoff(&ws, &path)),
+        ": the composition rule has no package form yet at",
+    );
 }
 
 /// FR-1044 "Current system behavior" (QSL-2739): an item naming a
 /// composition, or a name no package row carries, over a `package` handoff of
-/// that unit is refused whole too.
+/// that unit is refused whole as the unnamed-claim family: the package carries
+/// no name row for the composition, so neither name settles `unknown-claim`.
 #[test]
 fn a_package_item_naming_a_composition_is_refused() {
     // Each compile writes its own handoff directory, so each name gets its
@@ -943,8 +949,27 @@ fn a_package_item_naming_a_composition_is_refused() {
     for name in ["Sys", "Typo"] {
         let ws = Workspace::new(&format!("compose-package-named-{name}"));
         let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition(name)])));
-        assert_package_refused(&analyze(&package_handoff(&ws, &path)));
+        assert_package_pending(
+            &analyze(&package_handoff(&ws, &path)),
+            "items[0] names the unnamed-claim family, which has no package form yet",
+        );
     }
+}
+
+/// FR-1044 "Current system behavior" (QSL-2739): a name the package carries a
+/// row for still resolves beside a composition; only the unresolved names are
+/// refused.
+#[test]
+fn a_package_item_naming_a_local_clause_beside_a_composition_settles() {
+    let ws = Workspace::new("compose-package-local");
+    let path = request_for(&ws, &system(), BOUNDED, Some(json!([{"claim": "Local"}])));
+    let run = analyze(&package_handoff(&ws, &path));
+    let document = run.document();
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{document}");
+    assert_eq!(items[0]["claim_name"], "Local", "{document}");
+    assert_eq!(label(&items[0]), "proved", "{document}");
+    assert_eq!(run.exit, 0, "{document}");
 }
 
 /// FR-1044-AC-10, second half, once the package route reads a composition:
