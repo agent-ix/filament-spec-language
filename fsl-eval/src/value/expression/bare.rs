@@ -90,18 +90,18 @@ fn clock_declarations(
         })
 =======
 /// Run the package atom through the same component-aware machine as a source
-/// atom, including absent-key and subject reference bindings.
-pub(crate) fn evaluate_hyper_holds(
+/// atom, including absent-key bindings.
+fn evaluate_hyper_holds(
     package: &BarePackage<'_>,
     clause: &fsl_semantics::check::CheckedHyperClause,
     atom: fsl_semantics::check::FormulaNodeId,
     slots: Vec<crate::hyper::HyperSlot>,
     components: &[&ObjectEnvironment],
-    reference_bindings: Option<&[&crate::simulation::model::ReferenceBindings]>,
     meter: &mut Meter,
 ) -> Result<Evaluation, CallFailure> {
     let fault = |invariant| CallFailure::Fault(InternalFault::new("S6a", invariant));
-    clause.package_atom(atom)
+    clause
+        .package_atom(atom)
         .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
     if slots.len() != clause.atom_slots().len() {
         return Err(fault("hyper-atom-binds-one-value-per-slot"));
@@ -133,9 +133,6 @@ pub(crate) fn evaluate_hyper_holds(
             reads: term.component_reads(),
             observations: None,
         });
-    if let Some(bindings) = reference_bindings {
-        machine = machine.with_component_reference_bindings(bindings);
-    }
     let mut values = Vec::with_capacity(slots.len());
     for (slot, binding) in slots.into_iter().enumerate() {
         match binding {
@@ -1196,7 +1193,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         components: &[&ObjectEnvironment],
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        evaluate_hyper_holds(self, clause, atom, slots, components, None, meter)
+        evaluate_hyper_holds(self, clause, atom, slots, components, meter)
     }
 
     fn evaluate_step_predicate(

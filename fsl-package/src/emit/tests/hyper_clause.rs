@@ -1031,6 +1031,14 @@ fn a_package_hyper_form_refuses_unknown_traces_and_the_reader_refuses_duplicate_
         let admitted = read.admitted;
         let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
         supplied_hyper(&built, &admitted, |bare| {
+            assert!(matches!(
+                bare.project_hyper_holds(root.occurrence(), 1),
+                Err(crate::BareClauseRefusal::Selection(
+                    crate::bare_slot::BareSelectionFailure::Slot(
+                        crate::protocol_selection::SlotSelectionFailure::MalformedNode(node)
+                    )
+                )) if &node == root.occurrence().node()
+            ));
             let error = bare
                 .hyper_clause_form(root.occurrence())
                 .expect_err("malformed package hyper slot");

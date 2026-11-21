@@ -89,6 +89,131 @@ fn package_hyper_atom_has_source_values_and_complete_charge_logs() {
             source_meter.admitted_charges(),
             "complete ordered charge log at ({left}, {right})"
         );
+        for bound in [
+            0,
+            source_meter
+                .consumed(LimitKind::WorkUnits)
+                .saturating_sub(1),
+        ] {
+            let limits = ScalarLimits {
+                work_units: bound,
+                ..UNLIMITED
+            };
+            let mut source_meter = Meter::new(limits);
+            let mut bare_meter = Meter::new(limits);
+            let source_result = source_package
+                .evaluate_hyper_holds(
+                    source,
+                    atom(source),
+                    slots(source, &components),
+                    &components,
+                    &mut source_meter,
+                )
+                .expect("bounded source atom");
+            let bare_result = bare
+                .evaluate_hyper_holds(
+                    &rebuilt,
+                    atom(&rebuilt),
+                    slots(&rebuilt, &components),
+                    &components,
+                    &mut bare_meter,
+                )
+                .expect("bounded package atom");
+            assert!(matches!(
+                source_result.outcome,
+                filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Incomplete(_))
+            ));
+            assert_eq!(outcome(&bare_result), outcome(&source_result));
+            assert_eq!(
+                bare_meter.admitted_charges(),
+                source_meter.admitted_charges()
+            );
+            assert!(!bare_meter.charge_log_truncated());
+            assert!(!source_meter.charge_log_truncated());
+        }
+    }
+}
+
+/// An absent slot retains the model evaluator's absent-object outcome and
+/// exact charge sequence independently in either component.
+#[trace("TC-2958", "FR-940-AC-6", "FR-125")]
+#[test]
+fn package_hyper_atom_preserves_absent_object_outcomes_and_charges() {
+    let (_ws, handoff, mut budget) = handoff_of("package-hyper-absent", ASYMMETRIC);
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff supply joins");
+    let source_package = handoff.compiled.checked();
+    let source = &source_package.graph().hyper_clauses()[0];
+    let form = bare
+        .hyper_clause_form(source.assembled_occurrence().expect("claim occurrence"))
+        .expect("package form");
+    let rebuilt =
+        CheckedHyperClause::of_package_form(form, bare.world().expect("world").types(), 1_000_000)
+            .expect("the package clause");
+    let present = objects(&handoff, 0);
+    let absent = ObjectEnvironment::default();
+    let reference = counter(&present);
+    for missing in 0..2 {
+        let components = if missing == 0 {
+            [&absent, &present]
+        } else {
+            [&present, &absent]
+        };
+        let bindings = |clause: &CheckedHyperClause| {
+            clause
+                .atom_slots()
+                .iter()
+                .map(|slot| {
+                    if slot.trace == missing {
+                        HyperSlot::Absent {
+                            key: reference.clone(),
+                            population: crate::counter::key("counters").node,
+                        }
+                    } else {
+                        HyperSlot::Bound(Value::Reference(reference.clone()))
+                    }
+                })
+                .collect()
+        };
+        let mut source_meter = Meter::new(UNLIMITED);
+        let mut bare_meter = Meter::new(UNLIMITED);
+        let source_result = source_package
+            .evaluate_hyper_holds(
+                source,
+                atom(source),
+                bindings(source),
+                &components,
+                &mut source_meter,
+            )
+            .expect("source absent atom");
+        let bare_result = bare
+            .evaluate_hyper_holds(
+                &rebuilt,
+                atom(&rebuilt),
+                bindings(&rebuilt),
+                &components,
+                &mut bare_meter,
+            )
+            .expect("package absent atom");
+        assert!(matches!(
+            source_result.outcome,
+            filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Undefined(_))
+        ));
+        assert_eq!(outcome(&bare_result), outcome(&source_result));
+        assert!(!source_meter.admitted_charges().is_empty());
+        assert_eq!(
+            bare_meter.admitted_charges(),
+            source_meter.admitted_charges()
+        );
+        assert!(!bare_meter.charge_log_truncated());
+        assert!(!source_meter.charge_log_truncated());
     }
 }
 

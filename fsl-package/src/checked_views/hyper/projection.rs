@@ -139,11 +139,28 @@ impl BarePackage<'_> {
 /// Propagate slot ownership through the expression DAG, keeping independent
 /// reads in a Boolean composition independent. A model read needs exactly
 /// one owning trace; an unbound local never receives a default component.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Ownership {
+    None,
+    Trace(usize),
+    Mixed,
+}
+
+impl Ownership {
+    fn join(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::None, other) | (other, Self::None) => other,
+            (Self::Trace(first), Self::Trace(second)) if first == second => self,
+            (Self::Trace(_), Self::Trace(_)) | (Self::Mixed, _) | (_, Self::Mixed) => Self::Mixed,
+        }
+    }
+}
+
 fn components(
     projection: &ReaderProtocolProjection,
     slots: &[fsl_semantics::check::AtomSlot],
 ) -> Option<BTreeMap<ExpressionLocation, usize>> {
-    let mut owners: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    let mut owners: BTreeMap<usize, Ownership> = BTreeMap::new();
     let mut reads = BTreeMap::new();
     let mut pending = vec![(projection.root(), false)];
     while let Some((index, exit)) = pending.pop() {
@@ -157,12 +174,12 @@ fn components(
             pending.extend(children.iter().rev().map(|child| (*child, false)));
             continue;
         }
-        let mut traces = BTreeSet::new();
+        let mut ownership = Ownership::None;
         for child in children {
-            traces.extend(owners.get(child)?.iter().copied());
+            ownership = ownership.join(*owners.get(child)?);
         }
         if let NodeKind::Local(level) = kind {
-            traces.insert(slots.get(*level)?.trace);
+            ownership = ownership.join(Ownership::Trace(slots.get(*level)?.trace));
         }
         if matches!(
             kind,
@@ -174,14 +191,12 @@ fn components(
                 | NodeKind::AllInstances { .. }
                 | NodeKind::Lookup { .. }
         ) {
-            let mut traces = traces.iter();
-            let component = *traces.next()?;
-            if traces.next().is_some() {
+            let Ownership::Trace(component) = ownership else {
                 return None;
-            }
+            };
             reads.insert(projection.location(index)?.clone(), component);
         }
-        owners.insert(index, traces);
+        owners.insert(index, ownership);
     }
     Some(reads)
 }
