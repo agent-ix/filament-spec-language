@@ -4155,8 +4155,9 @@ fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
 /// The exact type of a node whose semantic type is a collection, optionally
 /// cardinality-bounded. IR's projection reads a collection only as a record member, so
 /// the join is FSL's: the bounds node gives the cardinality, the collection
-/// type node the kind and its element, and the element is typed by a node of
-/// the package that has it as semantic type (IR's own projection of that node).
+/// type node the kind and its element. References retain their selected
+/// object identity directly; other elements use IR's projection of a node
+/// that has the element as its semantic type.
 #[ix_trace_rs::string_edge]
 fn collection_node_type(
     index: &TypeReader<'_>,
