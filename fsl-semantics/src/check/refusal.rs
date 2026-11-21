@@ -3062,9 +3062,9 @@ pub enum CheckCause {
     /// An unknown plan-record member, retaining its owner and exact member span.
     PlanUnknownField {
         /// The record owner.
-        owner: String,
+        owner: Box<str>,
         /// The requested field.
-        field: String,
+        field: Box<str>,
         /// The authored member name.
         span: Option<Span>,
     },
