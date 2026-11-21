@@ -661,6 +661,18 @@ pub struct SubjectBinding<'a> {
     pub universes: Vec<PopulationUniverse>,
 }
 
+impl SubjectBinding<'_> {
+    /// Formal replay premises exclude descriptive effect-decision receipts.
+    /// The original provision remains available for item-local receipt binding.
+    fn replay_documents(&self) -> impl Iterator<Item = &Vec<u8>> {
+        self.packages.values().chain(
+            self.snapshots
+                .values()
+                .filter(|bytes| !document::effect_decision::is_receipt(bytes)),
+        )
+    }
+}
+
 /// The caller's shared accounting, observation, normalization and deadline
 /// limits for one analyze request (FR-277, FR-281).
 ///
@@ -877,6 +889,9 @@ impl ItemDetail {
 /// Why analyze could not admit a shared subject binding.
 #[derive(Debug, thiserror::Error)]
 pub enum AnalyzeRefusal {
+    /// FR-1046 canonical receipt admission refused the selected document.
+    #[error(transparent)]
+    EffectDecision(document::effect_decision::ReceiptRefusal),
     /// FR-120 did not admit the subject binding.
     #[error("the analyze subject binding did not admit: {0:?}")]
     Binding(AdmissionFailure),
@@ -1015,6 +1030,10 @@ impl AnalyzeRefusal {
 
     fn refusal_document(&self) -> OutcomeDocument {
         match self {
+            Self::EffectDecision(refusal) => {
+                OutcomeDocument::new(Operation::Analyze, None, Category::Refusal)
+                    .with_diagnostics(vec![refusal.diagnostic()])
+            }
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
                     .with_last_stage(Some(OutcomeStage::S4))
