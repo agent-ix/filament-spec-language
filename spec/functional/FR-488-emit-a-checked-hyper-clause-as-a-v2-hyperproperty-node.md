@@ -473,12 +473,17 @@ not, so two clauses with equal bodies and different prefixes share one
 wrapper and keep their own per-trace rows (FSpec FR-322 "Hyper clause rows").
 
 - The emitter SHALL write one `claim_names` row
-  `{declaration, occurrence, name, qualified_name, declaration_region}` for
-  every hyper clause, whatever its profile, and no `temporal_clause_names` row
+  `{declaration, occurrence, name, qualified_name, declaration_region, source_unit}` for
+  every hyper clause, whatever its profile and domain, and no `temporal_clause_names` row
   for its wrapper. `declaration` is the `hyperproperty` node's emitted NodeId,
   `occurrence` is the clause's `claim` occurrence of that node (AC-14), `name`
   and `qualified_name` are the declared clause name and its package-local path,
-  and `declaration_region` is the whole hyper declaration's span. Two
+  and `declaration_region` is the whole hyper declaration's span. `source_unit`
+  is the `lock.sources` identity of the source unit that declares the
+  clause, the unit in which the reader resolves every unit name the clause
+  owns (FSpec FR-322 "Hyper clause source unit"); it is never the unit of a
+  subject's model. The clause's `temporal_bindings` rows carry no
+  `source_unit`, and no other `claim_names` row carries one. Two
   structurally equal hyper clauses share one `hyperproperty` node and carry two
   rows at their own ordinals. The name enters no key (AC-12).
 - The emitter SHALL write, for a hyper clause whose profile is
@@ -534,6 +539,7 @@ in FR-487. "Admitted" means FSL's I2 admission of the emitted package
 | FR-488-AC-28 | `hyper Whole using inf over behaviours () forall trace a of V forall trace b of V { always holds(true) }` over the vault model emits a body wrapper whose `over` argument references the `model`/`model_root` node of the vault package, which is among the wrapper's `dependencies`, and the strict reader admits the package; `NonInterference`, whose body reads `v @ a`, keeps `over` on the slot node `slot_sv_sa`. A package whose wrapper for `NonInterference` has `over` edited to the model root refuses `invalid_model_binding`/`malformed-declaration` at `/semantic_graph/nodes/{w}/body/arguments/0`, and one whose wrapper for `Whole` references the root of a package no `subjects` binding names refuses the same. | Test (TC-3010) |
 | FR-488-AC-29 | The checker refuses `ambiguous_declaration`/`ambiguous-name` at the parameter's declaring source region, naming `op_sa` and the tag `op`, for `function f(op_sa: Integer): Integer pure { op_sa }`, and naming `op_s_x41` and the tag `op` for the same function with that parameter name; it refuses the same, naming `slot_sx_sy` and the tag `slot`, for the clock guard binder of `pre F using v on Config::ConfigVersion::attemptUpdate { forall(slot_sx_sy in self.us: slot_sx_sy.x < 5 ms) }` over a `us: Sequence<Timer>` field; no refused unit emits a package. The function with its parameter named `slot_sv`, `op_sa_sb`, `rcv_s`, `op_sa_x4`, `op_s_xC3`, `op_s_xc3` or `slotted` is admitted and emits a parameter node of that name (FSpec FR-402-AC-12). | Test (TC-3082) |
 | FR-488-AC-30 | In AC-26's `Fwd` and `Rev`, whose body reads `v @ a` and `v @ b`, the one wrapper's slot nodes are `slot_sv_sa` at `level` 0 and `slot_sv_sb` at `level` 1 and its `over` references `slot_sv_sa`, in both clauses, although `Rev`'s first quantifier is `b`; compiling `Rev` alone emits the wrapper `node_id` that compiling `Fwd` alone emits. A clause over `forall trace a of V forall trace b of V` whose body reads only `v @ b` mints no node for `slot_sv_sa`, and its wrapper's scope is `slot_sv_sb` at `level` 0, its `over`. AC-16's `Linked`, whose body reads only `v @ a`, emits the `let` binder `r` at `level` 1. The strict reader admits every package (FSpec FR-402-AC-14, FR-402-AC-15). | Test (TC-3000) |
+| FR-488-AC-31 | `NonInterference` declared in unit `example` over the vault model of another unit emits its `claim_names` row with `source_unit` `{"authority": "agent-ix", "identity": "example"}` and its two `temporal_bindings` rows with no `source_unit`; the unit's state-clause `claim_names` rows carry none; and FSpec FR-322-AC-511's finite-domain clause `Fast`, compiled in `example` with the role `t` bound to `{"kind": "timestamped_event", "timestamp_unit": "ms"}`, emits a package whose `ms` resolves in `example` and which the strict reader admits. | Test (TC-1327) |
 
 ## Open FSpec questions
 
