@@ -7492,9 +7492,16 @@ fn emit_package_inner(
         &source_map,
         temporal_selections,
     )?;
-    let claim_names = claim_name_rows(graph, ids, &emitted_node_ids, &nodes, &source_map)?;
     let equality_node_ids =
         equality_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
+    let claim_names = claim_name_rows(
+        graph,
+        ids,
+        &emitted_node_ids,
+        &equality_node_ids,
+        &nodes,
+        &source_map,
+    )?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &equality_node_ids,
@@ -8893,6 +8900,7 @@ fn claim_name_rows(
     graph: &CheckedGraph,
     ids: &StructuralIds,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    producer_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
 ) -> Result<Vec<filament_contract_model::ClaimNameRow>, EmitRefusal> {
@@ -8993,7 +9001,7 @@ fn claim_name_rows(
     };
     let mut named: Vec<(CheckedNodeId, CheckedOccurrence)> = Vec::with_capacity(sites.len());
     for synthesis in graph.synthesis_claims() {
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(synthesis.node())
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9005,7 +9013,7 @@ fn claim_name_rows(
         row(declaration, occurrence, synthesis.name(), synthesis.span())?;
     }
     for (occurrence, name, span) in &sites {
-        let Some(declaration) = emitted_node_ids.get(occurrence.node()).cloned() else {
+        let Some(declaration) = producer_node_ids.get(occurrence.node()).cloned() else {
             continue;
         };
         let occurrence = CheckedOccurrence {
