@@ -629,6 +629,52 @@ struct Clauses {
     postconditions: Vec<ClauseInfo>,
 }
 
+/// One boundary of the native relation's ordered, gated invocation walk.
+/// No expression meter is borrowed while the visitor is called.
+pub enum NativeCandidateEvent<'a> {
+    /// Gate one logical operation/receiver/argument invocation before its
+    /// preconditions or runtime post-state relation are evaluated.
+    Begin(&'a ModelTransition),
+    /// One valid runtime outcome, sorted by (typed result, canonical state key), before search admission.
+    Completed {
+        /// The exact invocation identity.
+        transition: &'a ModelTransition,
+        /// The runtime post-state, not yet admitted by the search.
+        state: &'a ModelSimState,
+        /// Present exactly when this invocation has several outcomes; zero based.
+        outcome: Option<u64>,
+    },
+    /// The invocation has no valid runtime outcome.
+    Disabled(&'a ModelTransition),
+    /// A native contract could not be decided; this is not semantic false.
+    Undetermined {
+        /// The invocation being evaluated.
+        transition: &'a ModelTransition,
+        /// The closed native outcome classification.
+        outcome: &'a ClauseOutcome,
+    },
+}
+
+/// The caller's decision at one native candidate boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeCandidateControl {
+    /// Continue this invocation and its outcomes.
+    Continue,
+    /// Skip this invocation without evaluating it (native replay selection).
+    Skip,
+    /// Stop the walk immediately, retaining the caller's already processed prefix.
+    Stop,
+}
+
+/// Whether the ordered walk exhausted its finite invocation space.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeCandidateVisit {
+    /// Every invocation was visited.
+    Complete,
+    /// The caller stopped at a boundary.
+    Stopped,
+}
+
 /// FR-120: the transition system of a checked package's state family.
 pub struct ModelSystem<'a> {
     /// The identity of the one domain package this system is over, when it
@@ -650,7 +696,7 @@ pub struct ModelSystem<'a> {
     populations: Vec<fsl_semantics::model::state::StatePopulation>,
     limits: ExpansionLimits,
     meter: ScalarLimits,
-    shared_meter: std::sync::Mutex<filament_exact::Meter>,
+    shared_meter: std::sync::Arc<std::sync::Mutex<filament_exact::Meter>>,
     shared_accounting: std::sync::atomic::AtomicBool,
     request_cancel: std::sync::Mutex<Option<filament_exact::Cancel>>,
     footprints: footprints::FootprintCache,
@@ -725,10 +771,48 @@ impl std::ops::DerefMut for EvaluationMeter<'_> {
     }
 }
 impl ModelSystem<'_> {
-    /// The candidate materialization ceiling for one model expansion.
-    pub fn expansion_candidate_limit(&self) -> u64 {
-        self.limits.max_candidates
+    /// Native receiver identity text and its type-owned canonical reference.
+    ///
+    /// # Errors
+    /// A state whose object reference cannot be reconstructed.
+    pub fn invocation_receivers(
+        &self,
+        state: &ModelSimState,
+    ) -> Result<Vec<(String, filament_exact::ObjectReference)>, ExpansionStop> {
+        walk::rows_of(self, state.state()).and_then(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    let text = encode::reference_canonical_text(&row.reference)
+                        .map_err(|_| walk::stop(BROKEN))?;
+                    Ok((text, row.reference))
+                })
+                .collect()
+        })
     }
+
+    /// Visit operations in the supplied admitted declaration order, then
+    /// canonical receivers, then Boolean/finite-Int arguments in typed order.
+    /// The callback gates runtime evaluation; outcomes are delivered one at a
+    /// time through the same native apply/complete relation as other callers.
+    ///
+    /// # Errors
+    /// Native expansion or evaluation failure; caller stops are returned as
+    /// `Stopped`, never converted to a model failure.
+    pub fn visit_plan_candidates(
+        &self,
+        state: &ModelSimState,
+        operations: &[(EffectiveId, String)],
+        cancel: Option<&filament_exact::Cancel>,
+        visitor: &mut dyn for<'event> FnMut(NativeCandidateEvent<'event>) -> NativeCandidateControl,
+    ) -> Result<NativeCandidateVisit, ExpansionStop> {
+        self.shared_accounting
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(cancel) = cancel {
+            self.cancel_plan_with(cancel);
+        }
+        walk::visit_plan_candidates(self, state, operations, cancel, visitor)
+    }
+
     /// Start the source adapter's single request evaluation session.
     pub fn share_evaluation_meter(&self, limits: ScalarLimits) {
         let meter = filament_exact::Meter::new(limits);
@@ -766,7 +850,9 @@ impl ModelSystem<'_> {
             .lock()
             .expect("request cancellation lock") = Some(cancel.clone());
         let mut meter = self.shared_meter.lock().expect("evaluation meter lock");
-        *meter = meter.clone().with_cancel(cancel.clone());
+        let limits = *meter.limits();
+        let owned = std::mem::replace(&mut *meter, filament_exact::Meter::new(limits));
+        *meter = owned.with_cancel(cancel.clone());
     }
     /// Acquire the evaluation meter for one non-nested expression evaluation.
     pub fn evaluation_meter(&self) -> EvaluationMeter<'_> {
@@ -1354,7 +1440,9 @@ impl<'a> ModelSystem<'a> {
             populations,
             limits: request.expansion,
             meter: request.meter,
-            shared_meter: std::sync::Mutex::new(filament_exact::Meter::new(request.meter)),
+            shared_meter: std::sync::Arc::new(std::sync::Mutex::new(filament_exact::Meter::new(
+                request.meter,
+            ))),
             shared_accounting: std::sync::atomic::AtomicBool::new(false),
             request_cancel: std::sync::Mutex::new(None),
             footprints: footprints::FootprintCache::default(),

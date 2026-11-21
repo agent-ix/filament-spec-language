@@ -130,6 +130,8 @@ pub struct SourcePlan<'a> {
     /// The index in the plan value's operation list of each operation text a
     /// transition carries.
     operations: BTreeMap<String, usize>,
+    native_operations: std::sync::Arc<[(filament_exact::EffectiveId, String)]>,
+    receivers: BTreeMap<String, filament_exact::ObjectReference>,
     direction: Direction,
     kind: ObjectiveKind,
     merges: bool,
@@ -197,6 +199,22 @@ impl<'a> SourcePlan<'a> {
                 .ok_or_else(|| PlanSourceError::UnknownOperation(name.to_owned()))?;
             operations.insert(text.to_owned(), index);
         }
+        use fsl_eval::simulation::TransitionSystem;
+        let receivers = system
+            .initial()
+            .iter()
+            .map(|state| system.invocation_receivers(state))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| PlanSourceError::UnknownOperation("receiver identity".to_owned()))?
+            .into_iter()
+            .flatten()
+            .collect();
+        let native_operations = shape
+            .operations
+            .iter()
+            .map(|operation| (operation.declaring.clone(), operation.name.clone()))
+            .collect::<Vec<_>>()
+            .into();
         let direction = match synthesis.objective_direction() {
             Some("maximize") => Direction::Maximize,
             _ => Direction::Minimize,
@@ -275,6 +293,8 @@ impl<'a> SourcePlan<'a> {
             system,
             limits,
             operations,
+            native_operations,
+            receivers,
             direction,
             kind,
             merges,
@@ -695,7 +715,11 @@ fn is_step_sum(body: &CheckedBody, plan: &filament_exact::NodeKey) -> bool {
 }
 
 impl PlanRules for SourcePlan<'_> {
-    type StepKey = (usize, Vec<ArgumentKey>);
+    type StepKey = (
+        usize,
+        Option<filament_exact::ObjectReference>,
+        Vec<ArgumentKey>,
+    );
 
     fn direction(&self) -> Direction {
         self.direction
@@ -715,11 +739,18 @@ impl PlanRules for SourcePlan<'_> {
                 .get(step.operation())
                 .copied()
                 .unwrap_or(usize::MAX),
+            step.receiver()
+                .and_then(|receiver| self.receivers.get(receiver))
+                .cloned(),
             step.arguments()
                 .iter()
                 .map(|text| ArgumentKey::of(text))
                 .collect(),
         )
+    }
+
+    fn native_operations(&self) -> Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>> {
+        Some(self.native_operations.clone())
     }
 
     fn policy_count(&self) -> usize {

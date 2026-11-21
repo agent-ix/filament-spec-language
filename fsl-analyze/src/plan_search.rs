@@ -217,6 +217,42 @@ pub enum MonitorStep {
     Reject,
 }
 
+/// A plan-owned invocation identity plus its canonical runtime outcome.
+/// Native ModelTransition remains unchanged for every other model caller.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PlanStep {
+    invocation: ModelTransition,
+    outcome_ordinal: Option<u64>,
+}
+impl PlanStep {
+    /// Bind an invocation to an ordinal, present only for multiple outcomes.
+    pub fn new(invocation: ModelTransition, outcome_ordinal: Option<u64>) -> Self {
+        Self {
+            invocation,
+            outcome_ordinal,
+        }
+    }
+    /// The ordinary native invocation.
+    pub fn invocation(&self) -> &ModelTransition {
+        &self.invocation
+    }
+    /// Zero-based canonical outcome, absent for single-outcome invocations.
+    pub fn outcome_ordinal(&self) -> Option<u64> {
+        self.outcome_ordinal
+    }
+}
+impl std::ops::Deref for PlanStep {
+    type Target = ModelTransition;
+    fn deref(&self) -> &Self::Target {
+        &self.invocation
+    }
+}
+impl From<ModelTransition> for PlanStep {
+    fn from(invocation: ModelTransition) -> Self {
+        Self::new(invocation, None)
+    }
+}
+
 /// A plan, or a plan prefix: its states from the initial state and the
 /// step between each adjacent pair.
 #[derive(Clone, Copy, Debug)]
@@ -224,7 +260,7 @@ pub struct PlanView<'p> {
     /// The initial state followed by each step's post-state.
     pub states: &'p [ModelSimState],
     /// The steps, in plan order.
-    pub steps: &'p [ModelTransition],
+    pub steps: &'p [PlanStep],
 }
 
 impl PlanView<'_> {
@@ -272,6 +308,12 @@ pub trait PlanRules {
 
     /// The FR-804 order key of `step`.
     fn step_key(&self, step: &ModelTransition) -> Self::StepKey;
+
+    /// The admitted native operation order when this rule uses the gated
+    /// source cursor. Other model integrations retain their native interface.
+    fn native_operations(&self) -> Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>> {
+        None
+    }
 
     /// The number of policy clauses, in the request's `policy` order.
     fn policy_count(&self) -> usize;
@@ -440,7 +482,7 @@ pub struct ReportedPlan {
     /// The initial state followed by every post-state.
     pub states: Vec<ModelSimState>,
     /// The steps, in plan order.
-    pub steps: Vec<ModelTransition>,
+    pub steps: Vec<PlanStep>,
 }
 
 impl ReportedPlan {
@@ -559,15 +601,15 @@ pub(crate) struct Node<K> {
     /// The representative prefix's accumulated per-step cost.
     pub(crate) accumulated: Rational,
     /// The representative prefix: parent node and step.
-    pub(crate) parent: Option<(usize, ModelTransition)>,
+    pub(crate) parent: Option<(usize, PlanStep)>,
     /// The representative prefix's FR-804 step keys.
-    pub(crate) prefix: Vec<K>,
+    pub(crate) prefix: Vec<(K, Option<u64>)>,
     /// The node's goal verdict and objective value, when it was evaluated
     /// and holds.
     pub(crate) goal: Option<Rational>,
     /// Successor records in step order: step, successor node index and the
     /// step's cost (zero for a general objective).
-    pub(crate) successors: Vec<(ModelTransition, usize, Rational)>,
+    pub(crate) successors: Vec<(PlanStep, usize, Rational)>,
     pub(crate) expanded: bool,
 }
 
@@ -633,8 +675,8 @@ pub(crate) fn admission(
 /// One candidate invocation of a state: its step, and the post-state when
 /// the step is enabled.
 struct Candidate<K> {
-    key: K,
-    step: ModelTransition,
+    key: (K, Option<u64>),
+    step: PlanStep,
     post: Option<ModelSimState>,
 }
 
@@ -867,20 +909,20 @@ impl<R: PlanRules> Search<'_, '_, R> {
             .successors
             .into_iter()
             .map(|(step, post)| Candidate {
-                key: self.rules.step_key(&step),
-                step,
+                key: (self.rules.step_key(&step), None),
+                step: step.into(),
                 post: Some(post),
             })
             .collect();
-        let enabled: BTreeSet<ModelTransition> = candidates
+        let enabled: BTreeSet<PlanStep> = candidates
             .iter()
             .map(|candidate| candidate.step.clone())
             .collect();
         for step in identities {
-            if !enabled.contains(&step) {
+            if !enabled.contains(&PlanStep::from(step.clone())) {
                 candidates.push(Candidate {
-                    key: self.rules.step_key(&step),
-                    step,
+                    key: (self.rules.step_key(&step), None),
+                    step: step.into(),
                     post: None,
                 });
             }
@@ -890,111 +932,183 @@ impl<R: PlanRules> Search<'_, '_, R> {
     }
 
     fn expand(&mut self, parent: usize, next: &mut Vec<usize>) -> Result<(), Stop> {
+        if let Some(operations) = self.rules.native_operations() {
+            use fsl_eval::simulation::model::{
+                NativeCandidateControl as Control, NativeCandidateEvent as Event,
+            };
+            let system = self.system;
+            let state = self.nodes[parent].state.clone();
+            let cancel = self.request.cancel;
+            let mut stopped = None;
+            let mut visitor = |event: Event<'_>| {
+                let result = match event {
+                    Event::Begin(_) => self.charge(PlanLimit::MaxWork),
+                    Event::Completed {
+                        transition,
+                        state,
+                        outcome,
+                    } => {
+                        let key = (self.rules.step_key(transition), outcome);
+                        self.admit_candidate(
+                            parent,
+                            next,
+                            key,
+                            PlanStep::new(transition.clone(), outcome),
+                            Some(state.clone()),
+                        )
+                    }
+                    Event::Disabled(_) => Ok(()),
+                    Event::Undetermined { outcome, .. } => match outcome {
+                        fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(_)
+                        | fsl_eval::simulation::model::ClauseOutcome::FamilyUndefined(_) => Ok(()),
+                        fsl_eval::simulation::model::ClauseOutcome::Incomplete(incomplete) => {
+                            Err(Stop::Cause(PlanStopCause::LimitReached {
+                                limit: incomplete.limit_kind.as_str(),
+                                value: incomplete.limit,
+                                setting: format!("accounting.{}", incomplete.limit_kind.as_str()),
+                            }))
+                        }
+                        fsl_eval::simulation::model::ClauseOutcome::KernelRefused(_)
+                        | fsl_eval::simulation::model::ClauseOutcome::FamilyRefused(_)
+                        | fsl_eval::simulation::model::ClauseOutcome::NotBoolean
+                        | fsl_eval::simulation::model::ClauseOutcome::Stopped(_) => {
+                            Err(Stop::Error(PlanSearchError::ReplayRejected(
+                                "a native operation did not produce a defined runtime outcome",
+                            )))
+                        }
+                    },
+                };
+                match result {
+                    Ok(()) => Control::Continue,
+                    Err(stop) => {
+                        stopped = Some(stop);
+                        Control::Stop
+                    }
+                }
+            };
+            system
+                .visit_plan_candidates(&state, &operations, Some(cancel), &mut visitor)
+                .map_err(|stop| match cancel.cause() {
+                    Some(cause) => Stop::Cause(PlanStopCause::Cancelled(cause)),
+                    None => expansion_stop(stop, system),
+                })?;
+            if let Some(stop) = stopped {
+                return Err(stop);
+            }
+            self.nodes[parent].expanded = true;
+            return Ok(());
+        }
         let candidates = self.candidates(&self.nodes[parent].state)?;
         self.nodes[parent].expanded = true;
-        let depth = self.nodes[parent].depth + 1;
-        for Candidate {
-            key: step_key,
-            step,
-            post,
-        } in candidates
-        {
-            // Applying the step: precondition, post-state and admission. A
-            // disabled step is charged and stops here (FSpec FR-801).
+        for Candidate { key, step, post } in candidates {
             self.charge(PlanLimit::MaxWork)?;
-            let Some(state) = post else {
-                continue;
-            };
-            if !self.admissible(&state)? {
-                continue;
-            }
-            let mut monitors = Vec::with_capacity(self.nodes[parent].monitors.len());
-            let mut rejected = false;
-            for policy in 0..self.rules.policy_count() {
-                self.charge(PlanLimit::MaxWork)?;
-                let previous = self.nodes[parent].monitors[policy].clone();
-                match self.rules.policy_advance(policy, &previous, &state)? {
-                    MonitorStep::Continue(monitor) => monitors.push(monitor),
-                    MonitorStep::Reject => {
-                        rejected = true;
-                        break;
-                    }
+            self.admit_candidate(parent, next, key, step, post)?;
+        }
+        Ok(())
+    }
+
+    /// Process a native outcome under its invocation's already granted apply.
+    fn admit_candidate(
+        &mut self,
+        parent: usize,
+        next: &mut Vec<usize>,
+        step_key: (R::StepKey, Option<u64>),
+        step: PlanStep,
+        post: Option<ModelSimState>,
+    ) -> Result<(), Stop> {
+        let depth = self.nodes[parent].depth + 1;
+        let Some(state) = post else {
+            return Ok(());
+        };
+        if !self.admissible(&state)? {
+            return Ok(());
+        }
+        let mut monitors = Vec::with_capacity(self.nodes[parent].monitors.len());
+        let mut rejected = false;
+        for policy in 0..self.rules.policy_count() {
+            self.charge(PlanLimit::MaxWork)?;
+            let previous = self.nodes[parent].monitors[policy].clone();
+            match self.rules.policy_advance(policy, &previous, &state)? {
+                MonitorStep::Continue(monitor) => monitors.push(monitor),
+                MonitorStep::Reject => {
+                    rejected = true;
+                    break;
                 }
             }
-            if rejected {
-                continue;
-            }
-            let mut prefix = self.nodes[parent].prefix.clone();
-            prefix.push(step_key);
-            let cost = match self.kind {
-                ObjectiveKind::StepSum => {
-                    let (states, steps) = self.prefix_with(parent, &step, &state);
-                    let view = PlanView {
-                        states: &states,
-                        steps: &steps,
-                    };
-                    let Some(cost) = self.rules.step_cost(&view, steps.len() - 1)? else {
-                        // An undefined step cost makes every completion's
-                        // objective undefined: the prefix is not admissible.
-                        self.explored.undefined_objectives += 1;
-                        continue;
-                    };
-                    if cost < zero() && self.negative_step.is_none() {
-                        return Err(Stop::Negative(steps.len() - 1));
-                    }
-                    cost
+        }
+        if rejected {
+            return Ok(());
+        }
+        let mut prefix = self.nodes[parent].prefix.clone();
+        prefix.push(step_key);
+        let cost = match self.kind {
+            ObjectiveKind::StepSum => {
+                let (states, steps) = self.prefix_with(parent, &step, &state);
+                let view = PlanView {
+                    states: &states,
+                    steps: &steps,
+                };
+                let Some(cost) = self.rules.step_cost(&view, steps.len() - 1)? else {
+                    // An undefined step cost makes every completion's
+                    // objective undefined: the prefix is not admissible.
+                    self.explored.undefined_objectives += 1;
+                    return Ok(());
+                };
+                if cost < zero() && self.negative_step.is_none() {
+                    return Err(Stop::Negative(steps.len() - 1));
                 }
-                ObjectiveKind::General => zero(),
-            };
-            let accumulated = self.nodes[parent].accumulated.add(&cost);
-            let key = NodeKey {
-                state: self.state_key(&state)?,
-                monitors: monitors.clone(),
-                depth,
-                accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum)
-                    .then(|| accumulated.clone()),
-                prefix: (!self.rules.merges_prefixes()).then_some(self.nodes.len()),
-            };
-            if let Some(&existing) = self.index.get(&key) {
-                // Frontier comparison with the admitted node.
-                self.charge(PlanLimit::MaxWork)?;
-                self.nodes[parent]
-                    .successors
-                    .push((step.clone(), existing, cost.clone()));
-                if self.dominance && self.better(&accumulated, &self.nodes[existing].accumulated) {
-                    // Cost dominance: the strictly better prefix becomes the
-                    // representative. The goal depends on the node alone, so
-                    // only a goal node's per-step sum value changes.
-                    let node = &mut self.nodes[existing];
-                    if node.goal.is_some() {
-                        node.goal = Some(accumulated.clone());
-                    }
-                    node.accumulated = accumulated;
-                    node.parent = Some((parent, step));
-                    node.prefix = prefix;
+                cost
+            }
+            ObjectiveKind::General => zero(),
+        };
+        let accumulated = self.nodes[parent].accumulated.add(&cost);
+        let key = NodeKey {
+            state: self.state_key(&state)?,
+            monitors: monitors.clone(),
+            depth,
+            accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum)
+                .then(|| accumulated.clone()),
+            prefix: (!self.rules.merges_prefixes()).then_some(self.nodes.len()),
+        };
+        if let Some(&existing) = self.index.get(&key) {
+            // Frontier comparison with the admitted node.
+            self.charge(PlanLimit::MaxWork)?;
+            self.nodes[parent]
+                .successors
+                .push((step.clone(), existing, cost.clone()));
+            if self.dominance && self.better(&accumulated, &self.nodes[existing].accumulated) {
+                // Cost dominance: the strictly better prefix becomes the
+                // representative. The goal depends on the node alone, so
+                // only a goal node's per-step sum value changes.
+                let node = &mut self.nodes[existing];
+                if node.goal.is_some() {
+                    node.goal = Some(accumulated.clone());
                 }
-                continue;
+                node.accumulated = accumulated;
+                node.parent = Some((parent, step));
+                node.prefix = prefix;
             }
-            self.charge(PlanLimit::MaxStates)?;
-            let index = self.nodes.len();
-            self.index.insert(key.clone(), index);
-            self.nodes.push(Node {
-                key,
-                state,
-                monitors,
-                depth,
-                accumulated,
-                parent: Some((parent, step.clone())),
-                prefix,
-                goal: None,
-                successors: Vec::new(),
-                expanded: false,
-            });
-            self.nodes[parent].successors.push((step, index, cost));
-            self.evaluate_goal(index)?;
-            if depth < self.request.lengths.max() {
-                next.push(index);
-            }
+            return Ok(());
+        }
+        self.charge(PlanLimit::MaxStates)?;
+        let index = self.nodes.len();
+        self.index.insert(key.clone(), index);
+        self.nodes.push(Node {
+            key,
+            state,
+            monitors,
+            depth,
+            accumulated,
+            parent: Some((parent, step.clone())),
+            prefix,
+            goal: None,
+            successors: Vec::new(),
+            expanded: false,
+        });
+        self.nodes[parent].successors.push((step, index, cost));
+        self.evaluate_goal(index)?;
+        if depth < self.request.lengths.max() {
+            next.push(index);
         }
         Ok(())
     }
@@ -1010,9 +1124,9 @@ impl<R: PlanRules> Search<'_, '_, R> {
     fn prefix_with(
         &self,
         parent: usize,
-        step: &ModelTransition,
+        step: &PlanStep,
         state: &ModelSimState,
-    ) -> (Vec<ModelSimState>, Vec<ModelTransition>) {
+    ) -> (Vec<ModelSimState>, Vec<PlanStep>) {
         let (mut states, mut steps) = self.prefix_of(parent);
         states.push(state.clone());
         steps.push(step.clone());
@@ -1020,7 +1134,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
     }
 
     /// The representative prefix that admitted node `index`.
-    pub(crate) fn prefix_of(&self, index: usize) -> (Vec<ModelSimState>, Vec<ModelTransition>) {
+    pub(crate) fn prefix_of(&self, index: usize) -> (Vec<ModelSimState>, Vec<PlanStep>) {
         prefix_of(&self.nodes, index)
     }
 
@@ -1276,7 +1390,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
 pub(crate) fn prefix_of<K>(
     nodes: &[Node<K>],
     mut index: usize,
-) -> (Vec<ModelSimState>, Vec<ModelTransition>) {
+) -> (Vec<ModelSimState>, Vec<PlanStep>) {
     let mut states = vec![nodes[index].state.clone()];
     let mut steps = Vec::new();
     while let Some((parent, step)) = &nodes[index].parent {
@@ -1328,11 +1442,9 @@ fn expansion_stop(stop: ExpansionStop, system: &ModelSystem<'_>) -> Stop {
                 setting: format!("accounting.{counter}"),
             })
         }
-        Some(ExpansionLimit::MaxCandidates) => Stop::Cause(PlanStopCause::LimitReached {
-            limit: "max_work",
-            value: system.expansion_candidate_limit(),
-            setting: "plan_search.max_work".to_owned(),
-        }),
+        // A legacy native-model candidate ceiling is not a plan work unit.
+        // Source search/replay/checking use the gated cursor instead.
+        Some(ExpansionLimit::MaxCandidates) => Stop::Error(PlanSearchError::Expansion(stop)),
         None => Stop::Error(PlanSearchError::Expansion(stop)),
     }
 }

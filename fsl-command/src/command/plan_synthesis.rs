@@ -193,11 +193,10 @@ pub(super) fn run(
             initial: binding.initial.clone(),
             universes: binding.universes.clone(),
             observation: ObservationLimits::default(),
-            expansion: ExpansionLimits {
-                max_candidates: request
-                    .limits
-                    .get(fsl_analyze::plan_search::PlanLimit::MaxWork),
-            },
+            // Source search, replay and certificate re-derivation use the
+            // gated native cursor. The legacy model bound is not a planner
+            // work counter and has no alias to plan_search.max_work.
+            expansion: ExpansionLimits::default(),
             meter: limits,
             emit: fsl_package::EmitLimits::new(intake.remaining),
         },
@@ -478,6 +477,8 @@ fn render(
                 operation: operation.name.clone(),
                 arguments,
                 delay: None,
+                receiver: step.receiver().map(rendered_argument).transpose()?,
+                outcome_ordinal: step.outcome_ordinal(),
             })
         })
         .collect::<Result<_, RunCause>>()?;

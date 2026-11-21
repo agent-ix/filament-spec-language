@@ -360,6 +360,10 @@ pub struct RenderedStep {
     pub operation: String,
     /// `{parameter, value}` pairs in parameter order.
     pub arguments: Vec<(String, Value)>,
+    /// The native FR-181 typed receiver, absent only for receiverless operations.
+    pub receiver: Option<Value>,
+    /// Canonical outcome ordinal, present only for multiple native outcomes.
+    pub outcome_ordinal: Option<u64>,
     /// A timed model's exact delay, in its typed quantity form.
     pub delay: Option<Value>,
 }
@@ -458,6 +462,8 @@ pub fn plan_outcome(
                 let mut written = json!({"index": index, "operation": step.operation,
                     "arguments": step.arguments.iter().map(|(parameter, value)|
                         json!({"parameter": parameter, "value": value})).collect::<Vec<_>>()});
+                if let Some(receiver) = &step.receiver { written["receiver"] = receiver.clone(); }
+                if let Some(ordinal) = step.outcome_ordinal { written["outcome_ordinal"] = json!(ordinal); }
                 if let Some(delay) = &step.delay {
                     written["delay"] = delay.clone();
                 }

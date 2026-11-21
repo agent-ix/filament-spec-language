@@ -304,6 +304,35 @@ pub(crate) fn declare(
             .find(|operation| operation.name() == name)
             .ok_or_else(|| unsupported(location))?;
         for (position, (parameter, value_type)) in operation.parameters().iter().enumerate() {
+            let optional = operation.parameter_is_optional(position);
+            if let Some((first_type, first_optional, first_operation)) =
+                arguments_seen.get(parameter)
+            {
+                if first_type != value_type || *first_optional != optional {
+                    return Err(CheckRefusal { location: location.clone(), cause: CheckCause::PlanUnsupported {
+                        form: format!("parameter {parameter} has conflicting types or declared presence in operations {first_operation} and {name}"),
+                        span: form.grammar.span,
+                    } });
+                }
+            } else {
+                arguments_seen.insert(
+                    parameter.clone(),
+                    (value_type.clone(), optional, name.clone()),
+                );
+            }
+        }
+    }
+    for (model, declaring, name) in &named.plan_operations {
+        if Some(model.as_str()) != alias.as_deref() {
+            continue;
+        }
+        let operation = scope
+            .operations()
+            .declared_by(declaring.clone())
+            .iter()
+            .find(|operation| operation.name() == name)
+            .ok_or_else(|| unsupported(location))?;
+        for (position, (parameter, value_type)) in operation.parameters().iter().enumerate() {
             let reason = if operation.parameter_is_optional(position) {
                 Some(format!(
                     "optional parameter {parameter} of operation {name}"
@@ -311,13 +340,6 @@ pub(crate) fn declare(
             } else if !carried(value_type) {
                 Some(format!(
                     "operation {name} parameter {parameter} of type {value_type:?}; source planning currently carries only Boolean and finite Int parameters"
-                ))
-            } else if arguments_seen
-                .get(parameter)
-                .is_some_and(|first| first != value_type)
-            {
-                Some(format!(
-                    "operation parameter {parameter} has conflicting types across operations"
                 ))
             } else {
                 None
@@ -331,7 +353,6 @@ pub(crate) fn declare(
                     },
                 });
             }
-            arguments_seen.insert(parameter.clone(), value_type.clone());
         }
         if !operation.effect().creates.is_empty() {
             return Err(CheckRefusal {

@@ -11,7 +11,7 @@ use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 
 use super::{
-    zero, MonitorStep, ObjectiveKind, PlanLengths, PlanRules, PlanSearchError, PlanView,
+    zero, MonitorStep, ObjectiveKind, PlanLengths, PlanRules, PlanSearchError, PlanStep, PlanView,
     ReportedPlan,
 };
 
@@ -57,17 +57,34 @@ pub fn replay<R: PlanRules>(
         ));
     }
     for (index, step) in plan.steps.iter().enumerate() {
-        let expansion = system
-            .successors(&plan.states[index])
-            .map_err(PlanSearchError::Expansion)?;
         let expected = key(&plan.states[index + 1])?;
-        let mut reached = false;
-        for (candidate, state) in &expansion.successors {
-            if candidate == step && key(state)? == expected {
-                reached = true;
-                break;
+        let reached = if let Some(operations) = rules.native_operations() {
+            selected_outcome(
+                system,
+                &plan.states[index],
+                &operations,
+                |candidate| candidate == step.invocation(),
+                |ordinal, state| Ok(ordinal == step.outcome_ordinal() && key(state)? == expected),
+            )?
+            .is_some()
+        } else {
+            if step.outcome_ordinal().is_some() {
+                return Err(PlanSearchError::ReplayRejected(
+                    "an outcome ordinal is not admitted by this native integration",
+                ));
             }
-        }
+            let expansion = system
+                .successors(&plan.states[index])
+                .map_err(PlanSearchError::Expansion)?;
+            let mut reached = false;
+            for (candidate, state) in &expansion.successors {
+                if candidate == step.invocation() && key(state)? == expected {
+                    reached = true;
+                    break;
+                }
+            }
+            reached
+        };
         if !reached {
             return Err(PlanSearchError::ReplayFailed {
                 step: index,
@@ -123,17 +140,31 @@ pub fn substitute<R: PlanRules>(
         let Some(current) = plan.states.last() else {
             return Err(PlanSearchError::InitialStates(0));
         };
-        let expansion = system
-            .successors(current)
-            .map_err(PlanSearchError::Expansion)?;
-        let mut candidates: Vec<_> = expansion
-            .successors
-            .into_iter()
-            .filter(|(step, _)| operation_name(system, step) == Some(name.as_str()))
-            .map(|(step, state)| (rules.step_key(&step), step, state))
-            .collect();
-        candidates.sort_by(|left, right| left.0.cmp(&right.0));
-        let Some((_, step, state)) = candidates.into_iter().next() else {
+        let selected = if let Some(operations) = rules.native_operations() {
+            selected_outcome(
+                system,
+                current,
+                &operations,
+                |candidate| operation_name(system, candidate) == Some(name.as_str()),
+                |_, _| Ok(true),
+            )?
+        } else {
+            let expansion = system
+                .successors(current)
+                .map_err(PlanSearchError::Expansion)?;
+            let mut candidates: Vec<_> = expansion
+                .successors
+                .into_iter()
+                .filter(|(step, _)| operation_name(system, step) == Some(name.as_str()))
+                .map(|(step, state)| (rules.step_key(&step), step, state))
+                .collect();
+            candidates.sort_by(|left, right| left.0.cmp(&right.0));
+            candidates
+                .into_iter()
+                .next()
+                .map(|(_, step, state)| (PlanStep::from(step), state))
+        };
+        let Some((step, state)) = selected else {
             return Err(PlanSearchError::ReplayFailed {
                 step: index,
                 operation: name.clone(),
@@ -144,6 +175,75 @@ pub fn substitute<R: PlanRules>(
     }
     let value = replay(system, rules, &plan, lengths, kind)?;
     Ok((plan, value))
+}
+
+/// Re-derive the selected invocation through the shared ordered native path.
+/// The ordinal is checked against the actual number and order of outcomes,
+/// including the absence rule for a single outcome.
+fn selected_outcome(
+    system: &ModelSystem<'_>,
+    state: &ModelSimState,
+    operations: &[(filament_exact::EffectiveId, String)],
+    mut invocation: impl FnMut(&ModelTransition) -> bool,
+    mut outcome: impl FnMut(Option<u64>, &ModelSimState) -> Result<bool, PlanSearchError>,
+) -> Result<Option<(PlanStep, ModelSimState)>, PlanSearchError> {
+    use fsl_eval::simulation::model::{
+        ClauseOutcome, NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let mut selected = None;
+    let mut failure = None;
+    system
+        .visit_plan_candidates(state, operations, None, &mut |event| match event {
+            Event::Begin(step) => {
+                if invocation(step) {
+                    Control::Continue
+                } else {
+                    Control::Skip
+                }
+            }
+            Event::Completed {
+                transition,
+                state,
+                outcome: ordinal,
+            } => match outcome(ordinal, state) {
+                Ok(true) => {
+                    selected = Some((PlanStep::new(transition.clone(), ordinal), state.clone()));
+                    Control::Stop
+                }
+                Ok(false) => Control::Continue,
+                Err(error) => {
+                    failure = Some(error);
+                    Control::Stop
+                }
+            },
+            Event::Disabled(_) => Control::Continue,
+            Event::Undetermined { outcome, .. } => match outcome {
+                ClauseOutcome::KernelUndefined(_) | ClauseOutcome::FamilyUndefined(_) => {
+                    Control::Continue
+                }
+                ClauseOutcome::Incomplete(incomplete) => {
+                    failure = Some(PlanSearchError::RuleStopped(super::RuleStop::Accounting {
+                        counter: incomplete.limit_kind.as_str(),
+                        value: incomplete.limit,
+                    }));
+                    Control::Stop
+                }
+                ClauseOutcome::KernelRefused(_)
+                | ClauseOutcome::FamilyRefused(_)
+                | ClauseOutcome::NotBoolean
+                | ClauseOutcome::Stopped(_) => {
+                    failure = Some(PlanSearchError::ReplayRejected(
+                        "a native invocation refused during replay",
+                    ));
+                    Control::Stop
+                }
+            },
+        })
+        .map_err(PlanSearchError::Expansion)?;
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    Ok(selected)
 }
 
 fn rejected() -> PlanSearchError {
