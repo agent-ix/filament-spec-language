@@ -256,6 +256,31 @@ pub fn base_reserved_spellings() -> std::collections::BTreeSet<&'static str> {
     output
 }
 
+/// Every contextual word of the complete grammar: a keyword only where its
+/// declaration or clause begins, so it stays a completion candidate there
+/// while remaining an ordinary identifier elsewhere.
+pub fn contextual_spellings() -> std::collections::BTreeSet<&'static str> {
+    fn collect(rule: &Rule, output: &mut std::collections::BTreeSet<&'static str>) {
+        match rule {
+            Rule::Terminal(Terminal::ContextualWord(value)) => {
+                output.insert(value);
+            }
+            Rule::Sequence(rules) | Rule::Choice(rules) => {
+                for rule in rules {
+                    collect(rule, output);
+                }
+            }
+            Rule::Optional(rule) | Rule::Repeat { rule, .. } => collect(rule, output),
+            Rule::Terminal(_) | Rule::Production(_) => {}
+        }
+    }
+    let mut output = std::collections::BTreeSet::new();
+    for rule in complete_v1().values() {
+        collect(rule, &mut output);
+    }
+    output
+}
+
 pub(super) fn complete_reserved_words(
     grammar: &Grammar,
 ) -> std::collections::BTreeSet<&'static str> {

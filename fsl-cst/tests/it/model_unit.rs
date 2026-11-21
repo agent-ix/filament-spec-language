@@ -130,7 +130,7 @@ fn a_domain_after_a_profile_refuses_at_the_word() {
 
 /// The words only a model-unit declaration begins or continues with are
 /// identifiers everywhere else: record fields, parameters and expressions.
-#[trace("FR-710-AC-3", "TC-1942")]
+#[trace("FR-710-AC-10", "TC-1942")]
 #[test]
 fn model_unit_words_parse_as_identifiers_outside_their_declarations() {
     let words = [
@@ -169,6 +169,30 @@ fn model_unit_words_parse_as_identifiers_outside_their_declarations() {
         "{HEADER}profile Complete = \"filament.value.complete/v1\";\n\
          record Words {{ {fields}}}\n\
          function total using Complete({parameters}): Integer pure {{ {sum} }}\n"
+    );
+    let parsed = parse(&text);
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    assert_eq!(parsed.cst().render(), text.as_bytes());
+}
+
+/// FR-710-AC-10: inside a model unit a contextual word is an identifier
+/// wherever its declaration or clause does not begin, beside the very
+/// declaration or clause it names.
+#[trace("FR-710-AC-10", "TC-1942")]
+#[test]
+fn model_unit_words_are_identifiers_inside_model_unit_bodies() {
+    let text = format!(
+        "{HEADER}domain \"example/words\";\n\
+         event Placed {{ occurs: Integer; timestamp: Timestamp; occurs timestamp; }}\n\
+         machine Gate {{ states: Integer; states (Open, Shut); transition Open -> Shut on toggle; }}\n\
+         process Flow {{ step: Integer; step first: begin; }}\n\
+         object store {{ machine: Integer; }}\n\
+         machine process {{ states (Open); }}\n\
+         interface Pump {{ rate: Integer; }}\n\
+         object Sys {{ level: Integer; }}\n\
+         part pump: Sys [1, 1] in Sys;\n\
+         port out: Pump [1, 1] out on pump;\n\
+         port inout: Pump [1, 1] inout on pump;\n"
     );
     let parsed = parse(&text);
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
