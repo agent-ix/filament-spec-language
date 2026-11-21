@@ -1174,6 +1174,25 @@ impl<'a> PackageProtocolWork<'a> {
                             detail,
                         ));
                     }
+                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::RoleLifetime {
+                        node,
+                        lifetime,
+                    }) => {
+                        let mut detail = serde_json::Map::new();
+                        detail.insert(
+                            "fact".to_owned(),
+                            serde_json::json!("replicated-role-lifetime"),
+                        );
+                        detail.insert("node".to_owned(), serde_json::json!(node));
+                        detail.insert("lifetime".to_owned(), serde_json::json!(lifetime));
+                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                            filament_semantic_value::catalog::CatalogCode::new(
+                                "unsupported_construct",
+                                "not-yet-implemented",
+                            ),
+                            detail,
+                        ));
+                    }
                     Err(fsl_eval::simulation::protocol::PackageProgramRefusal::ParameterType {
                         package,
                         node,
