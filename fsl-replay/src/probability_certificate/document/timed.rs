@@ -2293,9 +2293,7 @@ fn region_key(
                 .filter(|fraction| *fraction > 0)
         })
         .collect::<BTreeSet<_>>();
-    if state.elapsed < deadline.saturating_add(subdivisions)
-        && state.phase != Phase::Inactive
-    {
+    if state.elapsed < deadline.saturating_add(subdivisions) && state.phase != Phase::Inactive {
         let fraction = state.elapsed % subdivisions;
         if fraction > 0 {
             fractions.insert(fraction);
@@ -3302,7 +3300,8 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         .map_err(|_| unsupported())?
         .map(|binding| binding.reference);
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let mut meter = filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
+    let mut meter =
+        filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
     let mut storage = 0;
     let graph = match route {
         TimedProbabilityRoute::Digital => enumerate_digital_deadline(
@@ -3442,29 +3441,75 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             Ok(())
         }
     };
-    let mut mass = zero();
-    for path in &witness.paths {
-        poll(cancel).map_err(from_document)?;
-        let mut at = &graph.initial;
-        let mut probability = one();
-        for step in &path.steps {
-            let state = graph.states.get(at).ok_or(Error::Refused)?;
-            let index = *chosen.get(at).ok_or(Error::Refused)?;
-            let choice = state.choices.get(index).ok_or(Error::Refused)?;
-            let step_mass = choice
-                .iter()
-                .filter(|edge| edge.target == step.post_key)
-                .fold(zero(), |sum, edge| sum.add(&edge.probability));
-            if step_mass <= zero() {
-                return Err(Error::Refused);
-            }
-            probability = probability.mul(&step_mass);
-            limit_bits(&probability)?;
-            at = &step.post_key;
+    // The witness selects the scheduler; the mass is the checker graph's own
+    // probability of the failing outcome under that memoryless choice (states
+    // the witness never visits take their first choice). A step the checker
+    // does not itself have therefore contributes nothing, and a cycle under the
+    // choice is refused rather than approximated.
+    #[allow(clippy::too_many_arguments)]
+    fn mass_of<'a>(
+        graph: &'a CheckerGraph,
+        chosen: &BTreeMap<ProbabilityProductKey, usize>,
+        failing: bool,
+        key: &'a ProbabilityProductKey,
+        memo: &mut BTreeMap<&'a ProbabilityProductKey, Rational>,
+        on_path: &mut BTreeSet<&'a ProbabilityProductKey>,
+        cancel: &Cancel,
+        check_bits: &dyn Fn(&Rational) -> Result<(), super::super::ProbabilityWitnessError>,
+    ) -> Result<Rational, super::super::ProbabilityWitnessError> {
+        use super::super::ProbabilityWitnessError as Error;
+        if let Some(value) = memo.get(key) {
+            return Ok(value.clone());
         }
-        mass = mass.add(&probability);
-        limit_bits(&mass)?;
+        poll(cancel).map_err(|_| Error::Graph(ExactProbabilityGraphError::LimitReached))?;
+        let state = graph.states.get(key).ok_or(Error::Refused)?;
+        let value = match state.terminal {
+            Some(verdict) => {
+                if verdict == !failing {
+                    one()
+                } else {
+                    zero()
+                }
+            }
+            None => {
+                if !on_path.insert(key) {
+                    return Err(Error::Refused);
+                }
+                let index = chosen.get(key).copied().unwrap_or(0);
+                let mut sum = zero();
+                if let Some(choice) = state.choices.get(index) {
+                    for edge in choice.iter().filter(|edge| edge.probability > zero()) {
+                        let child = mass_of(
+                            graph,
+                            chosen,
+                            failing,
+                            &edge.target,
+                            memo,
+                            on_path,
+                            cancel,
+                            check_bits,
+                        )?;
+                        sum = sum.add(&edge.probability.mul(&child));
+                        check_bits(&sum)?;
+                    }
+                }
+                on_path.remove(key);
+                sum
+            }
+        };
+        memo.insert(key, value.clone());
+        Ok(value)
     }
+    let mass = mass_of(
+        &graph,
+        &chosen,
+        failing,
+        &graph.initial,
+        &mut BTreeMap::new(),
+        &mut BTreeSet::new(),
+        cancel,
+        &limit_bits,
+    )?;
     let threshold = match &bound {
         Bound::AtMost(threshold) => threshold.clone(),
         Bound::AtLeast(threshold) => one().sub(threshold),
