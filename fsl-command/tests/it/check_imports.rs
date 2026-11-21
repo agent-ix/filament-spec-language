@@ -152,16 +152,23 @@ fn check_dependent_bytes_excludes_source_and_counts_selected_library() {
          import \"test/geometry\" as g;\n\
          function Eligible using v(n: Int[0, 12]): Boolean pure {{ n >= 3 }}\n"
     );
-    // Trailing whitespace pads the checked source past the library size, so
-    // only the selected library can be what `dependent_bytes` counts.
-    let importing_source = format!("{importing_source}{}", " ".repeat(library_bytes + 1));
-    std::fs::write(&source_path, &importing_source).unwrap();
-    assert!(importing_source.len() > library_bytes);
     let selected_library = || CheckInputs {
         libraries: vec![("test/geometry".to_owned(), library_path.clone())],
         dependent_bytes: library_bytes,
         ..CheckInputs::default()
     };
+    // The unpadded FR-866-AC-2 program at N succeeds at S4.
+    std::fs::write(&source_path, &importing_source).unwrap();
+    let unpadded = document(&command::check_outcome(&source_path, &selected_library()));
+    assert_eq!(unpadded["category"], "success", "{unpadded}");
+    assert_eq!(unpadded["last_stage"], "S4", "{unpadded}");
+    assert!(unpadded["diagnostics"].as_array().unwrap().is_empty());
+
+    // Trailing whitespace pads the checked source past the library size, so
+    // only the selected library can be what `dependent_bytes` counts.
+    let importing_source = format!("{importing_source}{}", " ".repeat(library_bytes + 1));
+    std::fs::write(&source_path, &importing_source).unwrap();
+    assert!(importing_source.len() > library_bytes);
     let exact = document(&command::check_outcome(&source_path, &selected_library()));
     assert_eq!(exact["category"], "success", "{exact}");
     assert_eq!(exact["last_stage"], "S4", "{exact}");

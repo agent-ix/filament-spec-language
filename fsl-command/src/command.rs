@@ -344,6 +344,7 @@ fn check_outcome_inner(
         let source = intake.source_outside_budget(
             &check_source_file(source_path, "filament", &source_identity, "CheckSource"),
             "source",
+            check_source_read_ceiling(inputs.limits.source.source_bytes),
         )?;
         if fsl_semantics::model::intake::is_model_unit_source(source.source().text().as_bytes()) {
             compile_formal_model_unit(&source)?;
@@ -1561,6 +1562,12 @@ impl RunError {
     }
 }
 
+/// Read ceiling for check's source: the fixed intake ceiling, raised to the
+/// S1 limit so `s1.input_bytes` is always the bound that refuses.
+fn check_source_read_ceiling(s1_source_bytes: usize) -> usize {
+    TOTAL_BYTES.max(s1_source_bytes)
+}
+
 fn read_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let read = || -> io::Result<Vec<u8>> {
         let file = File::open(path)?;
@@ -1637,17 +1644,18 @@ impl Intake<'_> {
         self.admit_source(selected, identity, bytes, self.maximum)
     }
 
-    /// Reads a source under the fixed intake ceiling without charging the
-    /// intake's budget (check's `dependent_bytes`, FR-866); the stage-1
+    /// Reads a source under `ceiling` (see `check_source_read_ceiling`) without
+    /// charging the intake's budget (check's `dependent_bytes`, FR-866); the stage-1
     /// `s1.input_bytes` ceiling is then enforced by the parse, as in compile.
     fn source_outside_budget(
         &mut self,
         selected: &wire::SourceFile,
         request_member: &str,
+        ceiling: usize,
     ) -> Result<FormalSource> {
         let identity = selected.identity.bind(request_member)?;
-        let bytes = read_file(&self.directory.join(&selected.file), TOTAL_BYTES)?;
-        self.admit_source(selected, identity, bytes, TOTAL_BYTES)
+        let bytes = read_file(&self.directory.join(&selected.file), ceiling)?;
+        self.admit_source(selected, identity, bytes, ceiling)
     }
 
     fn admit_source(
@@ -4528,6 +4536,16 @@ mod tests {
     use super::*;
     use filament_semantic_value::catalog::InternalFault;
     use ix_trace_rs::trace;
+
+    /// FR-866 / FR-869: a raised `s1.input_bytes` raises check's source read
+    /// ceiling, so the S1 limit is the bound that refuses.
+    #[test]
+    #[trace("FR-866", "TC-2457")]
+    fn check_source_read_ceiling_never_undercuts_the_s1_limit() {
+        assert_eq!(check_source_read_ceiling(0), TOTAL_BYTES);
+        assert_eq!(check_source_read_ceiling(TOTAL_BYTES), TOTAL_BYTES);
+        assert_eq!(check_source_read_ceiling(TOTAL_BYTES + 1), TOTAL_BYTES + 1);
+    }
 
     fn fault_error(stage: &'static str, invariant: &'static str) -> RunError {
         RunError {
