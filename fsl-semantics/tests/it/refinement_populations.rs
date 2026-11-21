@@ -231,6 +231,7 @@ fn only_over_a_population_lowers() {
     let [MemberTerm::Leaf(LeafTerm::Reference { target: filtered }), MemberTerm::Binding(Binding {
         name: only_binder,
         value: BindingValue::Leaf(LeafTerm::Reference { target: only_body }),
+        ..
     })] = only.arguments.as_slice()
     else {
         panic!("collection.only has a filtered collection and one value binder");
@@ -240,6 +241,7 @@ fn only_over_a_population_lowers() {
     let [MemberTerm::Leaf(LeafTerm::Reference { target: population }), MemberTerm::Binding(Binding {
         name: filter_binder,
         value: BindingValue::Leaf(LeafTerm::Reference { target: predicate }),
+        ..
     })] = filter.arguments.as_slice()
     else {
         panic!("collection.filter has the population and its condition binder");
@@ -308,6 +310,7 @@ fn only_without_where_uses_all_instances_as_its_source() {
     let [MemberTerm::Leaf(LeafTerm::Reference { target: source }), MemberTerm::Binding(Binding {
         name,
         value: BindingValue::Leaf(LeafTerm::Reference { target: body }),
+        ..
     })] = only.arguments.as_slice()
     else {
         panic!("collection.only has a source and one value binder");

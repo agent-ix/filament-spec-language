@@ -387,6 +387,9 @@ pub struct Binding<V> {
     pub name: String,
     /// The bound term.
     pub value: V,
+    /// A `let` binding's binder: the `value`/`parameter` node the name
+    /// binds (FSpec FR-322 "The binder link"). Absent on every other binding.
+    pub binder: Option<NodeRef>,
 }
 
 /// A member of a [`GroupTerm`]: a Leaf, or a binding whose value is a Leaf.
@@ -561,6 +564,7 @@ impl<V: DebugWith> DebugWith for Binding<V> {
         f.debug_struct("Binding")
             .field("name", &self.name)
             .field("value", &With(&self.value, table))
+            .field("binder", &self.binder.as_ref().map(|binder| With(binder, table)))
             .finish()
     }
 }
@@ -934,13 +938,17 @@ impl<V> Binding<V> {
         Self {
             name: name.into(),
             value,
+            binder: None,
         }
     }
 }
 
 impl Binding<LeafTerm> {
     fn map_refs(&self, map: &mut impl FnMut(&NodeRef) -> NodeRef) -> Self {
-        Self::new(self.name.clone(), self.value.map_refs(map))
+        Self {
+            binder: self.binder.as_ref().map(&mut *map),
+            ..Self::new(self.name.clone(), self.value.map_refs(map))
+        }
     }
 }
 
@@ -1127,6 +1135,20 @@ impl MemberTerm {
         Self::binding(name, BindingValue::Leaf(value))
     }
 
+    /// A `let`'s `{term: "binding", name, value, binder}`: the binding of a
+    /// Leaf with the `value`/`parameter` node it binds (FSpec FR-322 "The
+    /// binder link").
+    pub(crate) fn let_binding(
+        name: impl Into<String>,
+        value: LeafTerm,
+        binder: NodeRef,
+    ) -> Self {
+        Self::Binding(Binding {
+            binder: Some(binder),
+            ..Binding::new(name, BindingValue::Leaf(value))
+        })
+    }
+
     /// Call `visit` with every Leaf this Member holds, in order.
     pub(crate) fn for_each_leaf(&self, visit: &mut impl FnMut(&LeafTerm)) {
         match self {
@@ -1149,10 +1171,10 @@ impl MemberTerm {
         match self {
             Self::Leaf(leaf) => Self::Leaf(leaf.map_refs(map)),
             Self::Group(group) => Self::Group(group.map_refs(map)),
-            Self::Binding(binding) => Self::Binding(Binding::new(
-                binding.name.clone(),
-                binding.value.map_refs(map),
-            )),
+            Self::Binding(binding) => Self::Binding(Binding {
+                binder: binding.binder.as_ref().map(&mut *map),
+                ..Binding::new(binding.name.clone(), binding.value.map_refs(map))
+            }),
         }
     }
 }
@@ -1400,6 +1422,17 @@ impl BodyTerm {
             LeafTerm::Reference { target } => visit(target),
             LeafTerm::DependencyReference { node } => visit(node),
         });
+        if let Self::Application(ApplicationTerm { arguments, .. }) = self {
+            for argument in arguments {
+                if let MemberTerm::Binding(Binding {
+                    binder: Some(binder),
+                    ..
+                }) = argument
+                {
+                    visit(binder);
+                }
+            }
+        }
     }
 
     /// This body with every node reference it holds replaced by `map`'s
