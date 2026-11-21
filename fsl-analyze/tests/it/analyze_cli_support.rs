@@ -73,9 +73,18 @@ pub(crate) const HANDOFF: &str = "handoff";
 /// `request` with `package` selecting that directory in place of `program`
 /// and `libraries`, and the handoff's package bytes.
 pub(crate) fn package_selection(ws: &Workspace, request: &Value) -> (Value, Vec<u8>) {
+    package_selection_named(ws, request, "analyze-unit")
+}
+
+/// Compile a single-unit handoff under the caller's explicit package namespace.
+pub(crate) fn package_selection_named(
+    ws: &Workspace,
+    request: &Value,
+    package_name: &str,
+) -> (Value, Vec<u8>) {
     let mut compiled = json!({
         "models": request["models"], "program": request["program"],
-        "handoff": {"directory": HANDOFF, "package_name": "analyze-unit",
+        "handoff": {"directory": HANDOFF, "package_name": package_name,
             "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}});
     if let Some(libraries) = request.get("libraries") {
         compiled["libraries"] = libraries.clone();
