@@ -3,13 +3,25 @@
 //! (FR-755), TLA+ and Lean export
 //! (FR-756), the TL lowering (FR-757) and the layering CI gate (FR-345).
 //! Each feeds source and a `native-run/1` request through the command
-//! adapter (`fsl_command::command::run`) and asserts on the output document,
-//! because the engines' own entry points do not exist yet.
+//! adapter (`fsl_command::command::run`) and asserts on the output document.
+//! Separately staged extensions retain named ignores.
 
 use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;
+
+// The domain document supplies the operation frame; the authored spine
+// postcondition constrains that frame's possible post-states.
+// The postcondition needs both object navigation and Integer conversion;
+// its model layer includes graph and value forms. The plan uses temporal v.
+const PLAN_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.temporal.infinite-trace/v1\";\n\
+     profile g = \"filament.model.complete/v1\";\n\
+     model Config = \"example/config-version\";\n\
+     post VersionAdvances using g on Config::ConfigVersion::attemptUpdate {\n\
+       (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)\n\
+       and (not result implies self.versionNumber = pre(self.versionNumber)) }\n";
 
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.model.complete/v1\";\n\
@@ -81,6 +93,8 @@ fn run_with_model(
         let snapshot_path = directory.path().join("spine-snapshot.json");
         let bytes = std::fs::read(&snapshot_path).expect("the spine snapshot exists");
         let mut snapshot: Value = serde_json::from_slice(&bytes).expect("a JSON snapshot");
+        // Model runs and plan searches start at initialization, rather than
+        // the handler observation used by the spine's invariant walkthrough.
         snapshot["anchor"] = json!({"kind": "initialization", "name": "start"});
         std::fs::write(
             snapshot_path,
@@ -91,6 +105,21 @@ fn run_with_model(
     write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": request}),
+    )
+}
+
+/// Run with the explicitly named, authored four-value planning model.
+fn run_plan(unit: &str, mut synthesis: Value) -> (u8, Value) {
+    let directory = tempfile::tempdir().unwrap();
+    crate::support::plan_model::write(directory.path());
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    synthesis["initial"] = json!("planning-initial.json");
+    write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": source("planning-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")}, "synthesis": synthesis
+        }}),
     )
 }
 
@@ -231,25 +260,20 @@ fn a_passing_run_records_tested_and_never_proved() {
 /// `{"type": "integer", "value": "1"}`; plan lengths `Int[0, 0]` make the goal `infeasible`
 /// with a closure certificate and every no-plan member present and `null`.
 #[test]
-#[trace("TC-2860", "FR-1010-AC-3")]
+#[trace("FR-1010")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-6")]
-#[ignore = "QSL-1978: planner and optimizer not implemented yet"]
 fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     let unit = |lengths: &str| {
         format!(
-            "{MODEL_HEADER}type Lengths = {lengths};\n\
+            "{PLAN_HEADER}type Lengths = {lengths};\n\
              synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-             minimize Reach.length satisfies {{ Reach.length >= 1 }};\n"
+             satisfies {{ Reach.length >= 1 }};\n"
         )
     };
-    let (_, value) = run(
+    let (_, value) = run_plan(
         &unit("Int[0, 3]"),
-        true,
-        (
-            "synthesis",
-            json!({
+        json!({
         "declaration": "Reach", "initial": "spine-snapshot.json"}),
-        ),
     );
     let result = &value["synthesis"];
     assert_eq!(result["status"], "optimal", "{value}");
@@ -260,14 +284,10 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     );
     assert_eq!(result["certificate"]["type"], "potential", "{value}");
     assert_eq!(result["certification"], "certified", "{value}");
-    let (_, value) = run(
+    let (_, value) = run_plan(
         &unit("Int[0, 0]"),
-        true,
-        (
-            "synthesis",
-            json!({
+        json!({
         "declaration": "Reach", "initial": "spine-snapshot.json"}),
-        ),
     );
     assert_eq!(value["synthesis"]["status"], "infeasible", "{value}");
     assert_eq!(
@@ -755,22 +775,26 @@ fn pick_finds_validates_exhausts_and_optimizes() {
     assert_eq!(maximal["synthesis"]["optimal"], true, "{maximal}");
 }
 
-/// FR-1037: a plan synthesis selected through the `synthesis` member is
-/// refused as not yet routed to the planner; the value enumerator never
-/// reports a verdict for it.
+/// FR-1037: a plan synthesis selected through the `synthesis` member runs
+/// the plan search and writes its `filament.plan-outcome/v1` document; the
+/// value enumerator never reports a verdict for it.
 #[test]
 #[trace("TC-3017", "FR-1037-AC-1")]
-fn a_plan_synthesis_is_refused_not_enumerated() {
+fn a_plan_synthesis_runs_the_plan_search_not_the_enumerator() {
     let unit = format!(
-        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+        "{PLAN_HEADER}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-         satisfies {{ true }};\n"
+         satisfies {{ Reach.length >= 1 }};\n"
     );
-    let (exit, value) = run(&unit, true, ("synthesis", json!({"declaration": "Reach"})));
-    assert_eq!(exit, 21, "{value}");
-    assert_eq!(value["code"], "unsupported_construct", "{value}");
-    assert_eq!(value["cause"], "not-yet-implemented", "{value}");
-    assert!(value["synthesis"].get("status").is_none(), "{value}");
+    let (exit, value) = run_plan(
+        &unit,
+        json!({"declaration": "Reach", "initial": "spine-snapshot.json"}),
+    );
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["format"], "filament.plan-outcome/v1", "{value}");
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    assert_eq!(exit, 0, "{value}");
+    assert!(outcome.get("candidates").is_none(), "{value}");
 }
 
 /// FSpec FR-194-AC-10: a search stopped by its work limit is `incomplete`
@@ -792,7 +816,7 @@ fn a_work_limited_synthesis_is_incomplete() {
 
 fn reach(objective: &str, policy: Value) -> Value {
     let unit = format!(
-        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+        "{PLAN_HEADER}type Lengths = Int[0, 3];\n\
          temporal NotOne using v over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ always holds(c.versionNumber != 1) }}\n\
          temporal SomeTime using v over (c: Config::ConfigVersion) clock \"model-steps\" \
@@ -800,14 +824,10 @@ fn reach(objective: &str, policy: Value) -> Value {
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          {objective} satisfies {{ Reach.length >= 1 }};\n"
     );
-    run(
+    run_plan(
         &unit,
-        true,
-        (
-            "synthesis",
-            json!({"declaration": "Reach",
-        "initial": "spine-snapshot.json", "policy": policy}),
-        ),
+        json!({"declaration": "Reach",
+        "policy": policy}),
     )
     .1
 }
@@ -818,7 +838,7 @@ fn reach(objective: &str, policy: Value) -> Value {
 #[test]
 #[trace("TC-2105", "FR-755-AC-3")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-4")]
-#[ignore = "QSL-1978: planner policy clauses not implemented yet"]
+#[ignore = "QSL-1978: positive-length canonical policy monitors remain required after wiring and lambda"]
 fn the_planner_keeps_plans_within_policy() {
     let value = reach("", json!(["NotOne"]));
     let result = &value["synthesis"];
@@ -844,7 +864,6 @@ fn the_planner_keeps_plans_within_policy() {
 /// FSpec FR-650-AC-2: a per-step cost objective is minimized and certified.
 #[test]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-2")]
-#[ignore = "QSL-1978: per-step cost objectives not implemented yet"]
 fn the_planner_minimizes_a_per_step_cost_sum() {
     let value = reach("minimize Reach.steps.sum(s => 2)", json!([]));
     assert_eq!(value["synthesis"]["status"], "optimal", "{value}");
@@ -863,32 +882,23 @@ fn the_planner_minimizes_a_per_step_cost_sum() {
 /// run stopped by its work limit is `incomplete` naming it.
 #[test]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-3")]
-#[ignore = "QSL-1978: planner infeasibility and work limits not implemented yet"]
 fn the_planner_reports_infeasible_and_incomplete() {
     let unit = format!(
-        "{MODEL_HEADER}type Lengths = Int[0, 0];\n\
+        "{PLAN_HEADER}type Lengths = Int[0, 0];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          satisfies {{ Reach.length >= 1 }};\n"
     );
-    let (_, value) = run(
+    let (_, value) = run_plan(
         &unit,
-        true,
-        (
-            "synthesis",
-            json!({"declaration": "Reach",
+        json!({"declaration": "Reach",
         "initial": "spine-snapshot.json"}),
-        ),
     );
     assert_eq!(value["synthesis"]["status"], "infeasible", "{value}");
     let wide = unit.replace("Int[0, 0]", "Int[0, 3]");
-    let (_, value) = run(
+    let (_, value) = run_plan(
         &wide,
-        true,
-        (
-            "synthesis",
-            json!({"declaration": "Reach",
+        json!({"declaration": "Reach",
         "initial": "spine-snapshot.json", "limits": {"max_work": 1}}),
-        ),
     );
     assert_eq!(value["synthesis"]["status"], "incomplete", "{value}");
 }
@@ -901,10 +911,9 @@ fn the_planner_reports_infeasible_and_incomplete() {
 #[test]
 #[trace("TC-2105", "FR-755-AC-4")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-7")]
-#[ignore = "QSL-1978: the closed synthesis member list is not implemented yet"]
 fn a_test_seam_named_on_the_wire_is_an_unknown_member() {
     let unit = format!(
-        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+        "{PLAN_HEADER}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          satisfies {{ Reach.length >= 1 }};\n"
     );

@@ -6,7 +6,9 @@ use filament_exact::{IllTypedCause, ValueType};
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
+use super::check::NamedScope;
 use super::ir::CheckedBody;
+pub use super::plan_value::{CheckedPlan, PlanOperation, PlanPopulation, PlanShape};
 use super::{CheckCause, CheckRefusal, Scope, Signatures, Typer};
 use crate::family::{CheckContext, DiagnosticSink, ScopeStack, StageLimits};
 
@@ -59,8 +61,13 @@ pub struct CheckedSynthesis {
     pub(crate) satisfies: CheckedBody,
     /// The checked objective when the declaration has one.
     pub(crate) objective: Option<CheckedBody>,
-    /// The candidate binder name shared by both checked expressions.
+    /// Names of the satisfies expression's slots, including its local binders.
     pub(crate) slot_names: Vec<String>,
+    /// Names of the independently typed objective's slots and local binders.
+    pub(crate) objective_slot_names: Vec<String>,
+    /// The plan value of a plan synthesis (FSpec FR-800), whose grammar is a
+    /// model object type.
+    pub(crate) plan: Option<CheckedPlan>,
 }
 
 impl CheckedSynthesis {
@@ -74,9 +81,24 @@ impl CheckedSynthesis {
         self.form.span
     }
 
+    /// The plan value's declarations when this is a plan synthesis (FSpec
+    /// FR-800), whose checked expressions read the plan through them.
+    pub fn plan(&self) -> Option<&CheckedPlan> {
+        self.plan.as_ref()
+    }
+
     /// The checked finite domain type.
     pub fn domain(&self) -> &ValueType {
         &self.domain
+    }
+
+    /// The authored model alias selecting a plan grammar.
+    pub fn grammar_model(&self) -> Option<&str> {
+        self.form
+            .grammar
+            .name
+            .rsplit_once("::")
+            .map(|(alias, _)| alias)
     }
 
     /// The checked grammar type.
@@ -102,7 +124,7 @@ impl CheckedSynthesis {
             .is_some_and(|body| matches!(body.root().kind(), NodeKind::Local(_)))
     }
 
-    /// Candidate binder names in evaluation frame order.
+    /// The satisfies expression's binder names in evaluation frame order.
     pub fn slot_names(&self) -> &[String] {
         &self.slot_names
     }
@@ -127,6 +149,16 @@ pub(crate) fn check_forms(
     forms: &[fsl_forms::SynthesisForm],
     scope: &Scope,
     signatures: &Signatures,
+    named: &NamedScope,
+    source: &fsl_foundation::source::provenance::RawSourceRef,
+    source_owners: &std::collections::BTreeMap<
+        String,
+        fsl_foundation::source::provenance::RawSourceRef,
+    >,
+    package_name: &str,
+    models: &[super::lowering::AdmittedModel],
+    dispatch_tables: &[super::DispatchTable],
+    sealing_meter: &mut filament_exact::Meter,
 ) -> Result<Vec<CheckedSynthesis>, Vec<CheckRefusal>> {
     let mut checked = Vec::with_capacity(forms.len());
     for (index, form) in forms.iter().enumerate() {
@@ -148,11 +180,94 @@ pub(crate) fn check_forms(
             }]);
         };
 
-        let candidate_type = if matches!(grammar, ValueType::Reference(_)) {
-            grammar.clone()
-        } else {
-            domain.clone()
+        // FSpec FR-800: a grammar that is a model object type selects plan
+        // synthesis, whose candidate is the plan and whose domain is the
+        // plan lengths, never negative.
+        let mut plan = match &grammar {
+            ValueType::Reference(object) => {
+                if let Some(component) = first_unbounded_component(scope.types(), &domain) {
+                    return Err(vec![CheckRefusal {
+                        location: location.clone(),
+                        cause: CheckCause::SynthesisUnboundedDomain {
+                            component,
+                            span: form.domain.span,
+                        },
+                    }]);
+                }
+                let lengths =
+                    matches!(&domain, ValueType::Int(lengths) if !lengths.lower().is_negative());
+                if !lengths {
+                    return Err(vec![CheckRefusal::ill_typed(
+                        &location,
+                        IllTypedCause::TypeMismatch,
+                    )]);
+                }
+                Some(
+                    super::plan_value::declare(
+                        scope,
+                        named,
+                        form,
+                        object,
+                        source_owners.get(&form.name.name).unwrap_or(source),
+                        package_name,
+                        &location,
+                    )
+                    .map_err(|refusal| vec![refusal])?,
+                )
+            }
+            _ => None,
         };
+        if let Some(plan) = &mut plan {
+            if let Some(handle) = plan.shape.receiver_union.clone() {
+                // Use the same source ownership, model correspondence and
+                // lowering path as final emission. FR441 binds the member to
+                // this settled structural id, never the private plan handle.
+                // Reuse the owning checker session meter and cancellation.
+                let owner = super::node_key::SourceOwner::from(source);
+                let owners = source_owners
+                    .iter()
+                    .map(|(name, source)| {
+                        (name.clone(), super::node_key::SourceOwner::from(source))
+                    })
+                    .collect();
+                let mut occurrences = super::family::OccurrenceMap::default();
+                let mut sealing = super::lowering::Lowering::new_with_source_owners(
+                    &plan.scope,
+                    &owner,
+                    &owners,
+                    models,
+                    dispatch_tables,
+                    plan.scope.types().units().clone(),
+                    None,
+                    0,
+                    &mut occurrences,
+                    sealing_meter,
+                    package_name,
+                );
+                let settled = sealing
+                    .type_node(&ValueType::Composite(handle.clone()), &location)
+                    .map_err(|refusal| vec![refusal])?;
+                drop(sealing);
+                plan.scope.seal_plan_union(handle, settled).ok_or_else(|| {
+                    vec![CheckRefusal {
+                        location: location.clone(),
+                        cause: CheckCause::InternalFault(Box::new(
+                            super::refusal::KeyFault::StageFault(
+                                filament_semantic_value::catalog::InternalFault::new(
+                                    "S3",
+                                    "plan-receiver-union-seal",
+                                ),
+                            ),
+                        )),
+                    }]
+                })?;
+            }
+        }
+        let candidate_type = match &plan {
+            Some(plan) => ValueType::Composite(plan.shape.plan.clone()),
+            None => domain.clone(),
+        };
+        let scope = plan.as_ref().map_or(scope, |plan| &plan.scope);
         let parameters = vec![(form.name.name.clone(), candidate_type)];
         let (satisfies, slot_names) = check_expression(
             scope,
@@ -163,8 +278,8 @@ pub(crate) fn check_forms(
             &satisfies_location,
         )
         .map_err(|refusal| vec![refusal])?;
-        let objective = if let Some(objective) = &form.objective {
-            let (body, _) = check_expression(
+        let (objective, objective_slot_names) = if let Some(objective) = &form.objective {
+            let (body, objective_slot_names) = check_expression(
                 scope,
                 signatures,
                 &objective.expression.expression,
@@ -179,9 +294,9 @@ pub(crate) fn check_forms(
                     IllTypedCause::TypeMismatch,
                 )]);
             }
-            Some(body)
+            (Some(body), objective_slot_names)
         } else {
-            None
+            (None, Vec::new())
         };
         checked.push(CheckedSynthesis {
             form: form.clone(),
@@ -190,6 +305,8 @@ pub(crate) fn check_forms(
             satisfies,
             objective,
             slot_names,
+            objective_slot_names,
+            plan,
         });
     }
     Ok(checked)
@@ -211,6 +328,9 @@ fn is_numeric(value_type: &ValueType) -> bool {
             | ValueType::Rational(_)
             | ValueType::Decimal(_)
             | ValueType::Float(_)
+            | ValueType::Quantity(_)
+            | ValueType::BoundedQuantity(_)
+            | ValueType::CarriedQuantity(_)
     )
 }
 

@@ -3229,8 +3229,8 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                     ..
                 }
                 | ExprNode::Sum {
-                    result_type: name,
-                    result_type_span: span,
+                    result_type: Some(name),
+                    result_type_span: Some(span),
                     ..
                 } => forms.push(TypeForm::name(name.clone(), *span)),
                 ExprNode::Boolean(_)
@@ -3245,6 +3245,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::String(_)
                 | ExprNode::ReferenceLiteral { .. }
                 | ExprNode::Name(_)
+                | ExprNode::Sum { .. }
                 | ExprNode::Let { .. }
                 | ExprNode::Case(_)
                 | ExprNode::If { .. }
@@ -4391,6 +4392,13 @@ impl PackageDeclarations {
                                 super::lowering::QuantityKind::Unit,
                                 &unit.name.name,
                             ),
+                            source.clone(),
+                        );
+                    }
+                    fsl_forms::DeclarationForm::Composition(composition) => {
+                        source_owners.insert(composition.name.name.clone(), source.clone());
+                        source_owners.insert(
+                            super::composition::declaration_origin(&composition.name.name),
                             source.clone(),
                         );
                     }
@@ -6226,7 +6234,7 @@ impl PackageDeclarations {
         declared_type_spans.extend(unit.compositions.iter().map(|composition| {
             (
                 super::composition::declaration_origin(&composition.name.name),
-                composition.name.span,
+                composition.span,
             )
         }));
         package.compositions = unit.compositions;

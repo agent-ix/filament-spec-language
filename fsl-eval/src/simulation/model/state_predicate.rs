@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{Meter, ObjectReference};
+use filament_exact::ObjectReference;
 use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole, StatePredicate};
@@ -126,7 +126,7 @@ impl ModelSystem<'_> {
                     Some(row.reference.clone())
                 }
             };
-            let mut meter = Meter::new(self.meter);
+            let mut meter = self.evaluation_meter();
             let evaluation = match (self.source_package(), claim.occurrence()) {
                 (Some(package), _) => {
                     let (from, target) = claim.node_predicates();
@@ -222,7 +222,7 @@ impl ModelSystem<'_> {
                     Some(row.reference.clone())
                 }
             };
-            let mut meter = Meter::new(self.meter);
+            let mut meter = self.evaluation_meter();
             if let Some(cancel) = cancel {
                 meter = meter.with_cancel(cancel.clone());
             }

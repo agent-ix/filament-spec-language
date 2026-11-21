@@ -2,16 +2,17 @@
 //! FR-1044: the items a `compose` declaration selects through `analyze`.
 //!
 //! An item naming a checked `compose` declaration with `kind` `composition`
-//! selects the declaration's composition. Its premise items, the component
-//! guarantees and the cycle's `fixed-point` slot, are derived from the
-//! declaration, never supplied, and settle in the same request after the
-//! caller's items. A component guarantee is a clause of the component's own
-//! checked package, so its item is resolved over that package and run over it
-//! by the shared analyze path ([`CompositionClaim::package`]).
+//! selects the declaration's composition, under every rule. Its premise
+//! items, the component guarantees, are derived from the declaration, never
+//! supplied, and settle in the same request after the caller's items. A
+//! component guarantee is a clause of the component's own checked package, so
+//! its item is resolved over that package and run over it by the shared
+//! analyze path ([`CompositionClaim::package`]).
 //!
-//! No registered backend advertises `composition`, so a routed composition
-//! settles `unsupported` at negotiation, and the `assume-guarantee` item,
-//! which has no FSpec FR-331 request item, settles `unsupported` before it.
+//! No registered backend advertises `composition` by default, so a routed
+//! composition settles `unsupported` at negotiation. A declaration whose
+//! dependency graph holds a cycle settles `unsupported` before any premise is
+//! read or any request is written (FSpec FR-489 "Cycles").
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -20,13 +21,11 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
-use fsl_replay::planner::{composition_premises, CompositionPremise, ItemKey, SlotKey, SlotRole};
+use fsl_replay::planner::{composition_premises, CompositionPremise, ItemKey, SlotKey};
 use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::Registry;
-use fsl_semantics::check::{
-    Capability, CheckedComposition, ClauseRef, CompositionRule, CompositionSlotKey,
-};
+use fsl_semantics::check::{Capability, CheckedComposition, ClauseRef, CompositionSlotKey};
 use fsl_semantics::library::LibraryName;
 use serde_json::{json, Map, Value};
 
@@ -51,11 +50,22 @@ pub struct CompositionClaim {
     /// The record the item settles with before negotiation (FR-621 `S4`);
     /// `None` when negotiation settles it.
     pub settled: Option<Box<TerminalRecord>>,
-    /// For a composition, the request index of the item of each of its
-    /// component-guarantee premises, as assigned by [`premise_items`]: the
-    /// items whose own settlements decide whether a provider's `proved` for
-    /// the composition stands. Empty for every other claim.
-    pub required: Vec<RequestIndex>,
+    /// For a composition, each of its component-guarantee premises with the
+    /// request index of its item, as assigned by [`premise_items`]: the items
+    /// whose own settlements decide whether a provider's `proved` for the
+    /// composition stands. Empty for every other claim.
+    pub required: Vec<Guarantee>,
+}
+
+/// A component-guarantee entry of a composition's `premises` and the item
+/// that settles it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Guarantee {
+    /// The entry's index in the composition's `premises`.
+    pub premise: u64,
+    /// The request index of the item whose typed slot key (assumptions
+    /// included) is the entry's.
+    pub item: RequestIndex,
 }
 
 /// What resolving one selection of a composition gives.
@@ -69,6 +79,8 @@ pub(super) struct Selected {
 
 /// One premise item a selected composition derives.
 pub(super) struct Premise {
+    /// The slot's index in the composition's `premises`.
+    slot: u64,
     /// The slot's key, which identifies the item within the request.
     key: ItemKey,
     kind: PremiseKind,
@@ -82,13 +94,6 @@ enum PremiseKind {
         /// Whether the guarantee is checked under peer guarantees, which no
         /// registered engine reads.
         assumed: bool,
-    },
-    /// A cycle's `fixed-point` slot.
-    FixedPoint {
-        name: String,
-        node: filament_exact::NodeKey,
-        profile: String,
-        premises: Vec<Value>,
     },
     /// A slot whose component or key the checked declaration does not
     /// resolve: an invariant break, settled as a typed `failed` record.
@@ -157,6 +162,26 @@ fn unsupported(index: RequestIndex, kind: Capability) -> TerminalRecord {
     )
 }
 
+/// The record of a composition whose dependency graph holds a cycle (FSpec
+/// FR-489 "Cycles"): `unsupported`, naming the kind `composition`, the form
+/// `fixed-point` and every cycle's guarantees in edge order.
+fn cyclic(index: RequestIndex, composition: &CheckedComposition) -> TerminalRecord {
+    let cycles: Vec<Vec<String>> = composition
+        .cycles()
+        .iter()
+        .map(|cycle| cycle.guarantees.iter().map(ToString::to_string).collect())
+        .collect();
+    let mut detail = Map::new();
+    detail.insert("kind".to_owned(), json!(Capability::Composition.to_wire()));
+    detail.insert("form".to_owned(), json!("fixed-point"));
+    detail.insert("cycles".to_owned(), json!(cycles));
+    TerminalRecord::disposition_unsupported(
+        index,
+        fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+        detail,
+    )
+}
+
 /// Resolve `selection` when it names a checked `compose` declaration of
 /// `ctx.package`; `None` for any other name.
 pub(super) fn resolve(
@@ -179,24 +204,18 @@ pub(super) fn resolve(
         Ok(kind) => kind,
         Err(_) => return settled(invalid_kind(index, Some(name), "unknown-kind")),
     };
-    let planner_local = composition.rule() == CompositionRule::AssumeGuarantee;
     if kind != Capability::Composition {
-        // FR-507: only a composition applies to its own claim. An
-        // `assume-guarantee` claim has no family.
+        // FR-507: only a composition applies to its own claim.
         let diagnostic = Diagnostic {
             code: CatalogCode::new("invalid_capability", "inapplicable-kind"),
             payload: Payload::Inapplicable {
                 request_index: index,
                 capability: kind,
-                family: if planner_local {
-                    None
-                } else {
-                    crate::claim_family::claim_family(
-                        ctx.package,
-                        ItemKind::Formula,
-                        &occurrence(composition.node()),
-                    )
-                },
+                family: crate::claim_family::claim_family(
+                    ctx.package,
+                    ItemKind::Formula,
+                    &occurrence(composition.node()),
+                ),
             },
         };
         return settled(ResolvedItem::Settled {
@@ -208,21 +227,10 @@ pub(super) fn resolve(
             )),
         });
     }
-    if let Some(refusal) = composition.item_refusal() {
-        let cycles: Vec<Vec<String>> = refusal
-            .cycles
-            .iter()
-            .map(|cycle| cycle.iter().map(ToString::to_string).collect())
-            .collect();
-        let mut detail = Map::new();
-        detail.insert("cycles".to_owned(), json!(cycles));
+    if !composition.cycles().is_empty() {
         return settled(ResolvedItem::Settled {
             claim_name: Some(name.to_owned()),
-            record: Box::new(TerminalRecord::disposition_invalid_request(
-                index,
-                CatalogCode::new("invalid_model_binding", refusal.cause()),
-                detail,
-            )),
+            record: Box::new(cyclic(index, composition)),
         });
     }
     let slots = match composition_premises(ctx.package, composition.node()) {
@@ -251,25 +259,15 @@ pub(super) fn resolve(
         }
     }
     let premises = premises_of(composition, &slots);
-    let item = if planner_local {
-        // FSpec FR-491: the planner settles an `assume-guarantee` item, so it
-        // has no request item to negotiate or echo.
-        ResolvedItem::Settled {
-            claim_name: Some(name.to_owned()),
-            record: Box::new(unsupported(index, Capability::Composition)),
-        }
-    } else {
-        routed(ctx, index, selection, name, composition, listed)
-    };
+    let item = routed(ctx, index, selection, name, composition, listed);
     Some(Selected { item, premises })
 }
 
-/// The derived slot list a request's `premises` member spells: every slot
-/// but the `fixed-point` slot, as `{role, key}`.
+/// The derived slot list a request's `premises` member spells, as
+/// `{role, key}`.
 fn list(slots: &[CompositionPremise]) -> Result<Vec<Value>, fsl_replay::planner::KeyWireError> {
     slots
         .iter()
-        .filter(|premise| premise.derived.role != SlotRole::FixedPoint)
         .map(|premise| {
             Ok(json!({
                 "role": premise.derived.role.as_str(),
@@ -313,7 +311,10 @@ fn routed(
         (name, composition.node()),
         named,
         (backend_options, selection.required.unwrap_or(true)),
-        listed,
+        CompositionItem {
+            premises: listed,
+            assumptions: composition.item().assumptions,
+        },
         unrouted,
     )
 }
@@ -325,7 +326,7 @@ fn claim_item(
     (name, node): (&str, &filament_exact::NodeKey),
     named: Option<fsl_foundation::BackendId>,
     (backend_options, required): (BTreeMap<String, String>, bool),
-    premises: Vec<Value>,
+    form: CompositionItem,
     unrouted: bool,
 ) -> ResolvedItem {
     let candidates = ctx
@@ -352,7 +353,7 @@ fn claim_item(
             backend_options,
             protocol_analysis: None,
         },
-        form: Some(ItemForm::Composition(CompositionItem { premises })),
+        form: Some(ItemForm::Composition(form)),
     };
     ResolvedItem::Composition(Box::new(CompositionClaim {
         claim: ResolvedClaim {
@@ -369,55 +370,48 @@ fn claim_item(
 }
 
 /// The premise items of `composition` in FSpec FR-491 order: each
-/// `component-guarantee` slot, then each `fixed-point` slot.
+/// `component-guarantee` slot.
 fn premises_of(composition: &CheckedComposition, slots: &[CompositionPremise]) -> Vec<Premise> {
-    let of_role = |fixed: bool| {
-        slots
-            .iter()
-            .filter(move |premise| (premise.derived.role == SlotRole::FixedPoint) == fixed)
-            .filter_map(|premise| premise_of(composition, premise))
-    };
-    of_role(false).chain(of_role(true)).collect()
+    slots
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, premise)| premise_of(composition, slot, premise))
+        .collect()
 }
 
 /// The premise item `premise` derives, `None` for a slot no item backs.
-fn premise_of(composition: &CheckedComposition, premise: &CompositionPremise) -> Option<Premise> {
+fn premise_of(
+    composition: &CheckedComposition,
+    slot: usize,
+    premise: &CompositionPremise,
+) -> Option<Premise> {
     let SlotKey::Item(key) = &premise.derived.key else {
         return None;
     };
     let unresolved = || PremiseKind::Unresolved {
         composition: composition.name().to_owned(),
     };
-    let kind = match &premise.slot.key {
-        Some(CompositionSlotKey::ComponentGuarantee(guarantee)) => premise
-            .slot
-            .guarantee
-            .as_ref()
-            .and_then(|clause| {
-                let component = composition
-                    .components()
-                    .iter()
-                    .find(|component| component.name == clause.component)?;
-                Some(PremiseKind::Guarantee {
-                    clause: clause.clone(),
-                    library: LibraryName::new(component.subject.package.as_str()).ok()?,
-                    assumed: !guarantee.assumptions.is_empty(),
-                })
-            })
-            .unwrap_or_else(unresolved),
-        Some(CompositionSlotKey::FixedPoint { node, profile, .. }) => key
-            .to_wire()
-            .ok()
-            .and_then(|wire| wire.get("premises")?.as_array().cloned())
-            .map_or_else(unresolved, |premises| PremiseKind::FixedPoint {
-                name: composition.name().to_owned(),
-                node: node.clone(),
-                profile: profile.clone(),
-                premises,
-            }),
-        None => return None,
+    let Some(CompositionSlotKey::ComponentGuarantee(guarantee)) = &premise.slot.key else {
+        return None;
     };
+    let kind = premise
+        .slot
+        .guarantee
+        .as_ref()
+        .and_then(|clause| {
+            let component = composition
+                .components()
+                .iter()
+                .find(|component| component.name == clause.component)?;
+            Some(PremiseKind::Guarantee {
+                clause: clause.clone(),
+                library: LibraryName::new(component.subject.package.as_str()).ok()?,
+                assumed: !guarantee.assumptions.is_empty(),
+            })
+        })
+        .unwrap_or_else(unresolved);
     Some(Premise {
+        slot: u64::try_from(slot).ok()?,
         key: key.clone(),
         kind,
     })
@@ -441,7 +435,7 @@ pub(super) fn premise_items(
     for (composition, premises) in groups {
         let mut required = Vec::new();
         for premise in premises {
-            let guarantee = !matches!(premise.kind, PremiseKind::FixedPoint { .. });
+            let slot = premise.slot;
             let index = match written.get(&premise.key) {
                 Some(index) => *index,
                 None => {
@@ -451,9 +445,10 @@ pub(super) fn premise_items(
                     index
                 }
             };
-            if guarantee {
-                required.push(index);
-            }
+            required.push(Guarantee {
+                premise: slot,
+                item: index,
+            });
         }
         if let Some(ResolvedItem::Composition(claim)) = resolved.get_mut(composition.get()) {
             claim.required = required;
@@ -465,20 +460,6 @@ pub(super) fn premise_items(
 fn premise_item(ctx: &Context<'_>, index: RequestIndex, premise: Premise) -> ResolvedItem {
     match premise.kind {
         PremiseKind::Unresolved { composition } => failed(index, &composition),
-        PremiseKind::FixedPoint {
-            name,
-            node,
-            profile,
-            premises,
-        } => claim_item(
-            ctx,
-            index,
-            (&name, &node),
-            None,
-            (BTreeMap::from([("profile".to_owned(), profile)]), true),
-            premises,
-            false,
-        ),
         PremiseKind::Guarantee {
             clause,
             library,

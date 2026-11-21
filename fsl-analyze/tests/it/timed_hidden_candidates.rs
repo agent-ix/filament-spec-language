@@ -8,13 +8,15 @@
 
 use filament_exact::{Cancel, Integer};
 use fsl_analyze::zone_check::{
-    certificate_item, check_timed_refinement, TimedLivenessHalf, TimedRefinementRefusal,
-    TimedSafetyOutcome, ZoneCheckLimits, ZoneCheckRefusal,
+    certificate_item, check_timed_refinement, settle_timed_refinement, TimedLivenessHalf,
+    TimedLivenessOutcome, TimedRefinementRefusal, TimedSafetyOutcome, ZoneCheckLimits,
+    ZoneCheckRefusal,
 };
 use fsl_replay::{
-    check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, CertifiedItem,
-    DivergentTarget, RefinementFailure, RefinementTraceSettlement, SilentMove,
-    TemporalCounterexample, ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
+    check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, Certification,
+    CertifiedItem, DivergentTarget, ProofBasis, RefinementFailure, RefinementTraceSettlement,
+    SilentMove, TemporalCounterexample, TerminalValue, ZoneCertificate, ZoneCertificateRequest,
+    ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::ItemObligation;
 use ix_trace_rs::trace;
@@ -632,14 +634,13 @@ fn timed_hidden_an_initial_state_with_no_candidate_alive_at_zero_is_refuted() {
     assert_time_invariant(safety_with_limits(&world));
 }
 
-/// The liveness half's refusal is its own: the decided safety half is still
-/// reported when candidates' rows disagree (a stutter beside a guarded step).
-#[trace("TC-2538", "FR-899")]
-#[test]
-fn timed_hidden_safety_is_reported_beside_the_liveness_refusal() {
+/// A stutter beside a guarded step (the mixed rows of the world of
+/// [`timed_hidden_a_stutter_and_a_guarded_step_split_the_zone`]) with
+/// `rows` after the step row.
+fn mixed_rows(rows: &str) -> Refining {
     let abstract_document = abstract_document(&[("send", &["inflight"])]);
     let concrete = document(&["x"], &[("send", &["inflight"])]);
-    let world = refining(
+    refining(
         &abstract_document,
         &concrete,
         &format!(
@@ -652,30 +653,33 @@ fn timed_hidden_safety_is_reported_beside_the_liveness_refusal() {
                 .replace(" late = self.late;", "")
                 .replace(
                     "step M::Call::send -> A::Call::send(self);",
-                    "step M::Call::send -> any;\nensure fair weak A::Call::send;"
+                    &format!("step M::Call::send -> any;\n{rows}")
                 )
         ),
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"))
-    .with_abstract_hidden_initials(&abstract_document, &[false, true]);
-    let mut request = safety_request(&world);
-    request.limits = LIMITS;
-    let outcome = check_timed_refinement(request, &Cancel::new()).expect("EN-6 takes it");
-    assert!(
-        matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }),
-        "{:?}",
-        outcome.safety
-    );
-    assert!(
-        matches!(
-            outcome.liveness,
-            Some(TimedLivenessHalf::Refused(
-                ZoneCheckRefusal::HiddenCandidateLiveness
-            ))
-        ),
-        "{:?}",
-        outcome.liveness
-    );
+    .with_abstract_hidden_initials(&abstract_document, &[false, true])
+}
+
+/// Candidates whose rows disagree (a stutter beside a guarded step) have their
+/// liveness half decided, beside the safety half. FR-899 "Hidden fields": "The
+/// half holds exactly when, for every concrete behaviour fair under `F_C`, some
+/// candidate run along it satisfies `F_A`." With `F_C` empty the concrete
+/// model may idle for ever, never taking `send`, which the abstract `send`
+/// enables from `y >= 5`: violated. Assuming the concrete `send` weakly fair
+/// leaves only behaviours that send, and the candidate that takes the abstract
+/// `send` at `y >= 5` satisfies the claim: holds.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_a_stutter_and_a_guarded_step_decide_the_liveness_half() {
+    let idle = liveness_violation(&mixed_rows("ensure fair weak A::Call::send;"));
+    assert!(matches!(
+        idle.refinement,
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+    assert_liveness_holds(&mixed_rows(
+        "assume fair weak M::Call::send;\nensure fair weak A::Call::send;",
+    ));
 }
 
 /// A looping world: the concrete `send` needs `x = 1`, resets `x` and is held
@@ -888,4 +892,242 @@ fn timed_hidden_a_dead_initial_entry_is_required_and_locked() {
         }
         other => panic!("an omitted dead initial entry is rejected: {other:?}"),
     }
+}
+
+/// A polling world over the hidden `h` (candidates `h = false` and
+/// `h = true`, both initial): the concrete `poll` loop never takes anything,
+/// the abstract `idle` is enabled only where `h` holds and `send` is enabled
+/// while the call is not in flight. `invariants` are the abstract time
+/// invariants and `ensures` the abstract fairness rows. `y` is never reset, so
+/// a candidate with `y <= 2` dies two units into the loop.
+fn polling(invariants: &str, ensures: &str) -> Refining {
+    let abstract_document = abstract_document(&[("send", &["inflight"]), ("idle", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"]), ("poll", &["x"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             pre ASendable using v on A::Call::send {{ not self.inflight }}\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre AIdleable using v on A::Call::idle {{ self.h }}\n\
+             post AIdled using v on A::Call::idle {{ self.inflight = pre(self.inflight) }}\n\
+             {invariants}\n\
+             pre MSend using v on M::Call::send {{ not self.inflight }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n\
+             pre MPoll using v on M::Call::poll {{ not self.inflight }}\n\
+             post MPolled using v on M::Call::poll {{ self.x = 0 ms }}\n{}",
+            refinement("self.inflight")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "step M::Call::send -> A::Call::send(self);",
+                    &format!("step M::Call::send -> A::Call::send(self);\nstep M::Call::poll -> stutter;\n{ensures}"),
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true])
+}
+
+/// Both halves of `world` under the tests' limits.
+fn both_halves(world: &Refining) -> fsl_analyze::zone_check::TimedRefinementOutcome<&'static str> {
+    let mut request = safety_request(world);
+    request.limits = LIMITS;
+    check_timed_refinement(request, &Cancel::new()).expect("EN-6 takes the refinement")
+}
+
+/// The liveness half's violation beside a holding safety half.
+fn liveness_violation(world: &Refining) -> TemporalCounterexample {
+    let outcome = both_halves(world);
+    assert!(
+        matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }),
+        "{:?}",
+        outcome.safety
+    );
+    match outcome.liveness {
+        Some(TimedLivenessHalf::Checked(TimedLivenessOutcome::Violated {
+            counterexample, ..
+        })) => *counterexample,
+        other => panic!("the liveness half is violated: {other:?}"),
+    }
+}
+
+fn assert_liveness_holds(world: &Refining) {
+    let outcome = both_halves(world);
+    assert!(
+        matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }),
+        "{:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Holds { .. }
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
+}
+
+const DIES_TRUE: &str = "time invariant IT when { self.h } { self.y <= 2 ms }";
+const DIES_FALSE: &str = "time invariant IF when { not self.h } { self.y <= 2 ms }";
+const FAIR_IDLE: &str = "ensure fair weak A::Call::idle;";
+
+/// FR-899 "Hidden fields": the half holds when some candidate run along every
+/// fair concrete behaviour satisfies `F_A`. The `h` candidate dies two units
+/// in, and the surviving `not h` candidate never enables `idle`, so its run is
+/// fair: both halves hold, the safety certificate carries the death edge and
+/// FR-245's checker accepts it.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_a_survivor_that_satisfies_the_claim_holds_both_halves() {
+    let world = polling(DIES_TRUE, FAIR_IDLE);
+    assert_liveness_holds(&world);
+    let certificate = certified(&world);
+    assert!(
+        certificate
+            .edges
+            .iter()
+            .any(|edge| matches!(&edge.silent, Some(SilentMove::Dies { .. }))),
+        "a candidate dies"
+    );
+    assert_eq!(
+        checked(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+    // ADR-020 CT-4: no core checker covers the liveness half.
+    let outcome = both_halves(&world);
+    let record = settle_timed_refinement(
+        &outcome,
+        &Cancel::new(),
+        |certificate| {
+            check_zone_certificate(
+                request(&world),
+                &obligation(&world),
+                certificate_item,
+                certificate,
+                CertificateCheckLimits::default(),
+                &Cancel::new(),
+            )
+        },
+        |_| panic!("a holding half replays no lasso"),
+    );
+    assert_eq!(
+        record.value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Exhaustive,
+            certification: Certification::Uncertified,
+        }
+    );
+}
+
+/// The surviving candidate is the only run once the other is dead: it keeps
+/// `send` enabled and the polling loop never takes it. The refuting lasso
+/// passes the death edge, so its first delay runs past `y = 2`.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_a_survivor_that_violates_the_claim_is_a_lasso_through_the_death() {
+    let world = polling(DIES_TRUE, "ensure fair weak A::Call::send;");
+    let counterexample = liveness_violation(&world);
+    assert!(matches!(
+        counterexample.refinement,
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+    let first = counterexample
+        .prefix
+        .first()
+        .and_then(|step| step.delay.clone())
+        .expect("a delayed first step");
+    assert!(
+        first > filament_exact::Rational::from_integer(Integer::from(2_i64)),
+        "the lasso passes the death at y = 2: {first:?}"
+    );
+    assert_reproduced(&world, &counterexample);
+}
+
+/// The soundness case: the `not h` candidate would run fair for ever (it never
+/// enables `idle`), but it dies at `y > 2`, and the `h` candidate that
+/// survives enables `idle` for ever. With nobody dying the half holds; with
+/// the death it is violated.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_a_dead_candidate_cannot_satisfy_the_liveness_claim() {
+    assert_liveness_holds(&polling("", FAIR_IDLE));
+    let world = polling(DIES_FALSE, FAIR_IDLE);
+    let counterexample = liveness_violation(&world);
+    assert!(matches!(
+        counterexample.refinement,
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+    assert_reproduced(&world, &counterexample);
+}
+
+/// FR-145 reproduces the refutation: replay drops each candidate by its own
+/// invariant along the loop's delays, so a dead candidate is no fair run.
+fn assert_reproduced(world: &Refining, counterexample: &TemporalCounterexample) {
+    assert!(
+        matches!(
+            replay(world, counterexample),
+            RefinementTraceSettlement::Reproduced {
+                failure: RefinementFailure::HiddenUnfair { .. },
+                ..
+            }
+        ),
+        "{:?}",
+        replay(world, counterexample)
+    );
+}
+
+/// The concrete `poll` fires every 3 units (guard `x >= 3`, invariant
+/// `x <= 3`, resets `x`) and maps to the abstract `tick`, which resets `y` and
+/// leaves `h` free: two post rows, `h' = true` and `h' = false`. `idle` needs
+/// `h`; `invariant` is the abstract time invariant of the `not h` candidate.
+fn ticking(invariant: &str) -> Refining {
+    let abstract_document = abstract_document(&[("tick", &["y", "h"]), ("idle", &["inflight"])]);
+    let concrete = document(&["x"], &[("poll", &["x"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             pre ATickable using v on A::Call::tick {{ self.y >= 0 ms }}\n\
+             post ATick using v on A::Call::tick {{ self.y = 0 ms }}\n\
+             pre AIdleable using v on A::Call::idle {{ self.h }}\n\
+             post AIdled using v on A::Call::idle {{ self.inflight = pre(self.inflight) }}\n\
+             {invariant}\n\
+             time invariant MInv when {{ true }} {{ self.x <= 3 ms }}\n\
+             pre MPoll using v on M::Call::poll {{ self.x >= 3 ms }}\n\
+             post MPolled using v on M::Call::poll {{ self.x = 0 ms }}\n{}",
+            refinement("self.inflight")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "step M::Call::send -> A::Call::send(self);",
+                    &format!("step M::Call::poll -> A::Call::tick(self);\n{FAIR_IDLE}"),
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true])
+}
+
+/// A candidate born at every tick and dead before the next one is no witness
+/// of an infinite run, and the search cannot chain a different candidate into
+/// each iteration: with `y <= 2` the `not h` run dies at `y > 2` before the
+/// tick at `y = 3`, so every infinite run is the `h` run, which enables `idle`
+/// for ever; with `y <= 3` the `not h` run is reborn at each tick and never
+/// enables `idle`. Both are replayed.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn timed_hidden_a_candidate_born_at_each_tick_and_dead_before_the_next_is_no_run() {
+    let dying = ticking("time invariant IF when { not self.h } { self.y <= 2 ms }");
+    let counterexample = liveness_violation(&dying);
+    let Some(RefinementFailure::HiddenUnfair { constraint }) = &counterexample.refinement else {
+        panic!("{:?}", counterexample.refinement);
+    };
+    assert_eq!(constraint.operation().name(), "idle");
+    assert_reproduced(&dying, &counterexample);
+    let surviving = ticking("time invariant IF when { not self.h } { self.y <= 3 ms }");
+    assert_liveness_holds(&surviving);
 }

@@ -4,9 +4,9 @@
 //! guarantee from its admitted request.
 //!
 //! The planner reads every premise from the request and nothing else. It
-//! never writes `refuted` ([`PlannerValue`] has no such variant), never
-//! promotes a `tested` premise, and caps trust at the weakest deciding
-//! premise.
+//! writes `refuted` only for a composition's declared interface mismatch
+//! (FSpec FR-492 "Interface mismatch"), never promotes a `tested` premise,
+//! and caps trust at the weakest deciding premise.
 
 use std::collections::BTreeSet;
 
@@ -32,6 +32,7 @@ use fsl_foundation::node_wire::node_key_to_json;
 
 use super::compose::{settle_composition, DischargeRecord};
 use super::entry::LimitFacts;
+use super::mismatch::InterfaceMismatch;
 use super::request::DEFAULT_MAX_WORK;
 
 /// The planner's work budget (FSpec FR-492 `limits.max_work`, FR-461 setting
@@ -75,7 +76,8 @@ pub enum SettleRefusal {
     Constraint(#[from] KeyWireError),
 }
 
-/// The item's FR-360 label: never `refuted` (FSpec FR-488).
+/// The item's FR-360 label: `refuted` only for a composition's declared
+/// interface mismatch (FSpec FR-492 "Interface mismatch").
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlannerValue {
     /// Every needed slot is `proved` or `supplied`.
@@ -86,6 +88,9 @@ pub enum PlannerValue {
     Unsupported,
     /// The deciding slot is `incomplete`, or the planner's budget ran out.
     Incomplete,
+    /// A composition's declared interface is absent or weaker than a premise
+    /// needs.
+    Refuted,
 }
 
 impl PlannerValue {
@@ -96,6 +101,7 @@ impl PlannerValue {
             Self::Inconclusive => "inconclusive",
             Self::Unsupported => "unsupported",
             Self::Incomplete => "incomplete",
+            Self::Refuted => "refuted",
         }
     }
 
@@ -105,6 +111,7 @@ impl PlannerValue {
             Self::Proved => SettlementBasis::DecisiveWitness,
             Self::Inconclusive => SettlementBasis::Unsettled,
             Self::Unsupported | Self::Incomplete => SettlementBasis::Unavailable,
+            Self::Refuted => SettlementBasis::DecisiveCounterexample,
         }
     }
 }
@@ -266,6 +273,9 @@ pub struct PlannerResult {
     /// entry per discharged slot, also when the item does not settle
     /// `proved`.
     pub discharge: Option<DischargeRecord>,
+    /// A `refuted` composition's declared interface mismatch, with no cause,
+    /// certification or conclusion.
+    pub mismatch: Option<InterfaceMismatch>,
 }
 
 /// Settle the declaration `request` names in `package` from `request`.
@@ -328,6 +338,7 @@ pub(crate) fn settle_declared(
             slots: Vec::new(),
             conclusion: None,
             discharge: None,
+            mismatch: None,
         });
     }
 
@@ -346,6 +357,7 @@ pub(crate) fn settle_declared(
                 slots,
                 conclusion: None,
                 discharge: None,
+                mismatch: None,
             });
         }
         slots.push(slot_outcome(
@@ -358,7 +370,7 @@ pub(crate) fn settle_declared(
         )?);
     }
 
-    let (value, cause) = decide(&slots, |_| false);
+    let (value, cause) = decide(&slots);
     let certification = (value == PlannerValue::Proved).then(|| fold_certification(&slots));
     let conclusion =
         (value == PlannerValue::Proved).then(|| conclusion(declaration, request, &slots));
@@ -370,21 +382,14 @@ pub(crate) fn settle_declared(
         slots,
         conclusion,
         discharge: None,
+        mismatch: None,
     })
 }
 
 /// FSpec FR-492 "Decision order": the first slot, in slot order, whose
-/// outcome is neither `proved` nor `supplied` decides the item. A slot
-/// `deferred` to another slot (a cycle member waiting on its `fixed-point`
-/// slot) is passed over, and decides only when no other slot does.
-pub(super) fn decide(
-    slots: &[SlotOutcome],
-    deferred: impl Fn(&SlotOutcome) -> bool,
-) -> (PlannerValue, Option<PlannerCause>) {
-    let deciding = slots
-        .iter()
-        .find(|outcome| !outcome.value.settles() && !deferred(outcome))
-        .or_else(|| slots.iter().find(|outcome| !outcome.value.settles()));
+/// outcome is neither `proved` nor `supplied` decides the item.
+pub(super) fn decide(slots: &[SlotOutcome]) -> (PlannerValue, Option<PlannerCause>) {
+    let deciding = slots.iter().find(|outcome| !outcome.value.settles());
     let Some(outcome) = deciding else {
         return (PlannerValue::Proved, None);
     };
@@ -870,6 +875,9 @@ impl PlannerResult {
         }
         if let Some(discharge) = &self.discharge {
             result.insert("discharge".to_owned(), discharge.to_wire()?);
+        }
+        if let Some(mismatch) = &self.mismatch {
+            result.insert("mismatch".to_owned(), mismatch.to_members()?);
         }
         Ok(Value::Object(result))
     }

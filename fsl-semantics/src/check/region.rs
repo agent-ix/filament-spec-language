@@ -431,9 +431,13 @@ impl DeclarationRegions {
             },
             CheckCause::TerminalWithoutObjectType { span, .. }
             | CheckCause::TimedNotChecked { span, .. }
-            | CheckCause::SynthesisUnboundedDomain { span, .. } => {
+            | CheckCause::SynthesisUnboundedDomain { span, .. }
+            | CheckCause::PlanUnsupported { span, .. } => {
                 region(&self.source, self.embedding.as_deref(), *span)
             }
+            CheckCause::PlanUnknownField { span, .. } => span
+                .and_then(|span| region(&self.source, self.embedding.as_deref(), span))
+                .or_else(|| self.region(&refusal.location)),
             CheckCause::RefinementNotEmitted { span, .. } => {
                 region(&self.source, self.embedding.as_deref(), *span)
             }
@@ -625,6 +629,26 @@ impl CheckedGraph {
             |protocol, attempt| *self.attempt_spans.get(protocol)?.get(attempt)?,
             location,
         )
+    }
+
+    /// Authored composition member regions in canonical body-array order,
+    /// under the declaration's actual source and embedding (FSpec FR-491).
+    /// Returns `None` for an unknown composition or an unmappable member.
+    pub fn composition_member_regions(
+        &self,
+        node: &filament_exact::NodeKey,
+    ) -> Option<Vec<SourceRegion>> {
+        let composition = self
+            .compositions()
+            .iter()
+            .find(|composition| composition.node() == node)?;
+        let owner = super::composition::declaration_origin(composition.name());
+        let source = self.source_owners.get(&owner).unwrap_or(&self.source);
+        composition
+            .canonical_member_spans()
+            .into_iter()
+            .map(|span| region(source, self.embedding.as_deref(), span))
+            .collect()
     }
 
     /// [`Self::region`] as a function that remembers the span node each

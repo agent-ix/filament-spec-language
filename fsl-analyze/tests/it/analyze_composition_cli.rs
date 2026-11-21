@@ -31,14 +31,31 @@ use crate::counter::{clause_text, document};
 /// The clause `test/part-a` and, with `name` `Capped`, `test/part-b` declare.
 const BOUNDED: &str = "always holds(c.value <= 3)";
 
-/// `SysRely`'s peer: `Capped` relies on `Bounded`.
+/// The `rely` of `SysRely` and `SysAGRely`: `Capped` relies on `Bounded`.
 const RELY: &str = "rely PB::Capped on PA::Bounded;";
 
 const COMPONENTS: &str = "component PA from A using M; component PB from B using M; \
      guarantee PA::Bounded; guarantee PB::Capped; ";
 
+/// `Fenced` and `Pings`, the extra clauses of `test/part-a`: a safety clause
+/// conditional on fairness the compositions never supply, and a liveness
+/// clause no composition declares a guarantee for.
+const PART_A_EXTRA: &str = "temporal Fenced using t0 over (c: M::Counter) clock \"model-steps\" \
+     on origin { fair weak each M::Counter::inc; always holds(c.value <= 3) }\n\
+     temporal Pings using t0 over (c: M::Counter) clock \"model-steps\" \
+     on origin { always eventually holds(c.value = 3) }\n";
+
+/// `Done`, the extra liveness clause of `test/part-b`.
+const PART_B_EXTRA: &str = "temporal Done using t0 over (c: M::Counter) clock \"model-steps\" \
+     on origin { fair weak each M::Counter::inc; eventually holds(c.value = 3) }\n";
+
 fn library(formula: &str, name: &str) -> String {
-    crate::counter::unit_text(&clause_text(name, "", formula))
+    let extra = if name == "Bounded" {
+        PART_A_EXTRA
+    } else {
+        PART_B_EXTRA
+    };
+    crate::counter::unit_text(&format!("{}{extra}", clause_text(name, "", formula)))
 }
 
 fn program(body: &str) -> String {
@@ -58,21 +75,40 @@ fn compose(name: &str, rule: &str, members: &str) -> String {
     format!("compose {name} rule {rule} {{ {COMPONENTS}{members}}}\n")
 }
 
+/// The peers of a cycle: `RELY` and the reverse `rely`.
+const MUTUAL: &str = "rely PB::Capped on PA::Bounded; rely PA::Bounded on PB::Capped;";
+
 /// The declarations of `test/system`.
 fn system() -> String {
     format!(
-        "{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
         clause_text("Local", "", BOUNDED),
         compose("Sys", "interface", ""),
         compose("SysPR", "protocol-refinement", ""),
         compose("SysRT", "refinement-transfer", ""),
         compose("SysAG", "assume-guarantee", ""),
         compose("SysRely", "interface", RELY),
-        compose(
-            "SysCycle",
-            "interface",
-            &format!("{RELY} rely PA::Bounded on PB::Capped;"),
-        ),
+        compose("SysAGRely", "assume-guarantee", RELY),
+        compose("SysCycle", "interface", MUTUAL),
+        compose("SysCyclePR", "protocol-refinement", MUTUAL),
+        compose("SysCycleRT", "refinement-transfer", MUTUAL),
+        compose("SysCycleAG", "assume-guarantee", MUTUAL),
+        // `PA::Bounded` is no declared guarantee, so the peer interface is
+        // absent.
+        "compose SysAbsent rule assume-guarantee { component PA from A using M; \
+         component PB from B using M; guarantee PB::Capped; rely PB::Capped on PA::Bounded; }\n",
+        // `Fenced` (slot 3) needs fairness nothing supplies, so it is `weaker`;
+        // `Pings` (slot 4) is no declared guarantee, so it is `absent`, and
+        // the reason-major order names it though it is the higher slot.
+        "compose SysMixed rule assume-guarantee { component PA from A using M; \
+         component PB from B using M; guarantee PB::Done; guarantee PA::Bounded; \
+         guarantee PA::Fenced; rely PB::Done on PA::Fenced; depends PB::Done on PA::Pings; }\n",
+        // The peer interfaces of `SysMixed`, as premises whose keys name them.
+        "compose SysPeers rule interface { component PA from A using M; \
+         component PB from B using M; guarantee PA::Fenced; guarantee PA::Pings; }\n",
+        // No component guarantee: a composition with no premise to name.
+        "compose SysNone rule interface { component PA from A using M; \
+         component PB from B using M; }\n",
     )
 }
 
@@ -175,6 +211,11 @@ fn a_routed_composition_is_unsupported_beside_its_proved_premises() {
     assert_eq!(items.len(), 3, "{document}");
     assert_routed(&items[0]);
     assert_eq!(items[0]["request"]["kind"], "composition", "{document}");
+    assert_eq!(
+        items[0]["request"]["assumptions"],
+        json!([[], []]),
+        "{document}"
+    );
     for (slot, (premise, name)) in [(1, "Bounded"), (2, "Capped")].into_iter().enumerate() {
         let item = &items[premise];
         assert_eq!(item["claim_name"], name, "{document}");
@@ -219,11 +260,30 @@ const PROVIDER: &str = "fsl.test-composition-provider";
 
 type Seen = std::sync::Arc<std::sync::Mutex<Vec<Value>>>;
 
+use fsl_analyze::provider::{ProviderRequest, ProviderTarget, ProviderVerdict};
+use fsl_replay::planner::{InterfaceMismatch, MismatchReason};
+
+/// How a recording provider answers the items of one request.
+struct Answer(Box<dyn Fn(&ProviderRequest<'_>) -> Vec<ProviderVerdict> + Send + Sync>);
+
+impl std::fmt::Debug for Answer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Answer")
+    }
+}
+
+/// Every item answered with `verdict`.
+fn fixed(verdict: ProviderVerdict) -> Answer {
+    Answer(Box::new(move |request| {
+        vec![verdict.clone(); request.items().len()]
+    }))
+}
+
 /// A registered composition provider outside FSL that records every request
-/// it is sent as serialized and answers each item with one fixed verdict. It
-/// proves nothing of its own: the verdict is the external provider's claim.
+/// it is sent as serialized and answers it as `Answer` says. It proves
+/// nothing of its own: the verdict is the external provider's claim.
 #[derive(Debug)]
-struct Recording(Seen, fsl_analyze::provider::ProviderVerdict);
+struct Recording(Seen, Answer);
 
 impl fsl_analyze::provider::ExternalProvider for Recording {
     fn settle(
@@ -235,21 +295,27 @@ impl fsl_analyze::provider::ExternalProvider for Recording {
             .lock()
             .expect("the record lock")
             .push(serde_json::to_value(request).expect("the request serializes"));
-        vec![self.1.clone(); request.items().len()]
+        (self.1 .0)(request)
     }
 }
 
 /// The provider process that advertises `composition` and publishes the
 /// option `profile`, which an item sends only to a backend it names
 /// (FR-967).
-fn composition_provider(
+fn composition_provider(seen: &Seen, answer: Answer) -> fsl_analyze::analyze::Engine {
+    composition_provider_of(seen, answer, fsl_route::ProviderOrigin::Process)
+}
+
+/// [`composition_provider`] registered with `origin`.
+fn composition_provider_of(
     seen: &Seen,
-    verdict: fsl_analyze::provider::ProviderVerdict,
+    answer: Answer,
+    origin: fsl_route::ProviderOrigin,
 ) -> fsl_analyze::analyze::Engine {
     use fsl_semantics::check::Capability;
     let descriptor = fsl_route::descriptor_from_manifest(
         fsl_route::Candidate::new(fsl_foundation::BackendId::new(PROVIDER)),
-        fsl_route::ProviderOrigin::Process,
+        origin,
         vec![(
             Some(Capability::Composition.to_wire()),
             Some(fsl_route::Mode::Unbounded.to_wire()),
@@ -267,7 +333,7 @@ fn composition_provider(
     fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-composition", "1").expect("a tool"),
-        Box::new(Recording(std::sync::Arc::clone(seen), verdict)),
+        Box::new(Recording(std::sync::Arc::clone(seen), answer)),
     )
     .expect("a composition process provider registers (FR-635)")
 }
@@ -287,10 +353,20 @@ fn through_provider(
     items: Value,
     verdict: fsl_analyze::provider::ProviderVerdict,
 ) -> (crate::analyze_cli_support::Run, Vec<Value>) {
+    through_answer(dir, capped, items, fixed(verdict))
+}
+
+/// [`through_provider`] with the provider answering as `answer` says.
+fn through_answer(
+    dir: &str,
+    capped: &str,
+    items: Value,
+    answer: Answer,
+) -> (crate::analyze_cli_support::Run, Vec<Value>) {
     let ws = Workspace::new(dir);
     let path = request_for(&ws, &system(), capped, Some(items));
     let seen = Seen::default();
-    let run = analyze_with_providers(&path, vec![composition_provider(&seen, verdict)]);
+    let run = analyze_with_providers(&path, vec![composition_provider(&seen, answer)]);
     let sent = seen.lock().expect("the record lock").clone();
     (run, sent)
 }
@@ -361,14 +437,15 @@ fn a_provider_proof_stands_when_every_component_guarantee_is_proved() {
 }
 
 /// Asserts `item` is a composition the provider proved, which FSL did not
-/// accept: `inconclusive` `replay-refused`, naming the provider.
-fn assert_proof_not_accepted(item: &Value) {
+/// confirm: `inconclusive` `provider-answer-unconfirmed` naming `premise`,
+/// and the provider as the backend, with no certification.
+fn assert_proof_not_accepted(item: &Value, premise: u64) {
     assert_eq!(label(item), "inconclusive", "{item}");
-    assert_eq!(item["record"]["cause"]["kind"], "replay-refused", "{item}");
     assert_eq!(
-        item["record"]["cause"]["code"], "unsupported_projection",
+        item["record"]["cause"]["kind"], "provider-answer-unconfirmed",
         "{item}"
     );
+    assert_eq!(item["record"]["cause"]["premise"], premise, "{item}");
     assert_eq!(item["record"]["backend"], PROVIDER, "{item}");
     assert!(item["record"]["certification"].is_null(), "{item}");
 }
@@ -385,7 +462,7 @@ fn a_provider_proof_is_refused_over_a_refuted_component_guarantee() {
     );
     let document = run.document();
     assert_eq!(sent.len(), 1, "the provider answered: {document}");
-    assert_proof_not_accepted(&document["items"][0]);
+    assert_proof_not_accepted(&document["items"][0], 1);
     assert_eq!(label(&document["items"][1]), "proved", "{document}");
     assert_eq!(label(&document["items"][2]), "refuted", "{document}");
 }
@@ -398,25 +475,25 @@ fn a_provider_proof_is_refused_over_an_unsupported_component_guarantee() {
     let (run, _) = through_provider(
         "compose-provider-unsupported",
         BOUNDED,
-        json!([provided("SysRely")]),
+        json!([provided("SysAGRely")]),
         fsl_analyze::provider::ProviderVerdict::Proved,
     );
     let document = run.document();
-    assert_proof_not_accepted(&document["items"][0]);
+    assert_proof_not_accepted(&document["items"][0], 1);
     assert_eq!(label(&document["items"][1]), "proved", "{document}");
     assert_eq!(label(&document["items"][2]), "unsupported", "{document}");
 }
 
 /// FR-1044 "Behavior" (the provider proof gate): two compositions of one request whose `Capped` guarantees
 /// are equal on the wire and differ in assumptions each read their own item.
-/// `Sys`'s proved `Capped` never discharges `SysRely`'s assumed one.
+/// `Sys`'s proved `Capped` never discharges `SysAGRely`'s assumed one.
 #[trace("TC-3154", "FR-621-AC-17")]
 #[test]
 fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
     let (run, sent) = through_provider(
         "compose-provider-peers",
         BOUNDED,
-        json!([provided("Sys"), provided("SysRely")]),
+        json!([provided("Sys"), provided("SysAGRely")]),
         fsl_analyze::provider::ProviderVerdict::Proved,
     );
     let document = run.document();
@@ -428,7 +505,7 @@ fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
         .sum();
     assert_eq!(sent_items, 2, "both compositions reach the provider");
     assert_eq!(label(&items[0]), "proved", "{document}");
-    assert_proof_not_accepted(&items[1]);
+    assert_proof_not_accepted(&items[1], 1);
     assert_eq!(items[3]["claim_name"], "Capped", "{document}");
     // FR-621-AC-17: a premise item over a dependency names it in `package`
     // and holds its node ids against that dependency's graph; the composition
@@ -468,34 +545,33 @@ fn a_provider_refutation_of_a_composition_is_not_replayable() {
     );
 }
 
-/// FR-1044-AC-2: the other routed rules write AC-1's items; an
-/// `assume-guarantee` selection is planner-local, with no `request` member.
+/// FR-1044-AC-2: the other routed rules, `assume-guarantee` included, write
+/// AC-1's items: each has a `request` member and is not settled by a
+/// planner-local disposition.
 #[trace("FR-1044-AC-2")]
 #[test]
-fn the_other_rules_and_the_planner_local_item_settle_unsupported() {
+fn every_rule_settles_as_one_routed_item() {
     let ws = Workspace::new("compose-ac2");
-    for name in ["SysPR", "SysRT"] {
+    for name in ["SysPR", "SysRT", "SysAG"] {
         let run = analyze(&request(&ws, &system(), json!([composition(name)])));
         let document = run.document();
         assert_routed(&document["items"][0]);
-        assert_eq!(document["items"].as_array().expect("items").len(), 3);
+        assert_eq!(document["items"][0]["claim_name"], name, "{document}");
+        assert_eq!(document["items"][0]["request"]["kind"], "composition");
+        assert_eq!(
+            document["items"][0]["request"]["assumptions"],
+            json!([[], []]),
+            "{document}"
+        );
+        let items = document["items"].as_array().expect("items");
+        assert_eq!(items.len(), 3, "{document}");
+        for (index, premise) in [(1, "Bounded"), (2, "Capped")] {
+            assert_eq!(items[index]["claim_name"], premise, "{document}");
+            assert_eq!(label(&items[index]), "proved", "{document}");
+            assert_eq!(items[index]["record"]["backend"], "en-1", "{document}");
+        }
         assert_eq!(run.exit, 21, "{document}");
     }
-    let run = analyze(&request(&ws, &system(), json!([composition("SysAG")])));
-    let document = run.document();
-    let item = &document["items"][0];
-    assert_unsupported_composition(item);
-    assert_eq!(item["claim_name"], "SysAG", "{document}");
-    assert!(item["request"].is_null(), "no request item: {item}");
-    assert!(item["request"]["candidates"].is_null(), "{item}");
-    assert_eq!(document["items"].as_array().expect("items").len(), 3);
-    for (index, name) in [(1, "Bounded"), (2, "Capped")] {
-        let premise = &document["items"][index];
-        assert_eq!(premise["claim_name"], name, "{document}");
-        assert_eq!(label(premise), "proved", "{document}");
-        assert_eq!(premise["record"]["backend"], "en-1", "{document}");
-    }
-    assert_eq!(run.exit, 21, "{document}");
 }
 
 /// FR-1044-AC-3: each selector settles by its own rule, and the request's
@@ -537,7 +613,7 @@ fn each_selector_settles_by_its_own_rule() {
     inapplicable(&items[2], 2, "composition", Some("temporal-trace"));
     inapplicable(&items[3], 3, "temporal-satisfaction", Some("protocol"));
     assert_eq!(cause(&items[4]), "absent-kind", "{document}");
-    inapplicable(&items[5], 5, "temporal-satisfaction", None);
+    inapplicable(&items[5], 5, "temporal-satisfaction", Some("protocol"));
     assert_eq!(run.exit, 20, "{document}");
 }
 
@@ -689,6 +765,27 @@ fn a_caller_may_only_restate_the_derived_premise_keys() {
         ));
         assert_request_refusal(&run, pointer);
     }
+    // (f) a caller's `assumptions` is an unknown member of the closed item.
+    for name in ["Sys", "SysAG"] {
+        let run = analyze(&request(
+            &ws,
+            &system(),
+            json!([{"claim": name, "kind": "composition", "assumptions": [[], []]}]),
+        ));
+        let document = run.document();
+        assert_eq!(run.exit, 20, "{document}");
+        assert_eq!(document["items"], json!([]), "{document}");
+        assert_eq!(
+            document["diagnostics"][0]["code"], "invalid-request",
+            "{document}"
+        );
+        assert!(
+            document["diagnostics"][0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("assumptions")),
+            "{document}"
+        );
+    }
     // (d) a name that is no composition keeps its own refusal, with no
     // premise item.
     let run = analyze(&request(
@@ -723,17 +820,45 @@ fn a_realizability_item_keeps_its_premises() {
     assert_eq!(label(&run.item(0)), "proved", "{}", run.item(0));
 }
 
-/// FR-1044-AC-5: a guarantee checked under peer guarantees is not run as
-/// the clause alone.
-#[trace("FR-1044-AC-5")]
+/// FR-1044-AC-5: `interface` derives no assumption set, so its `rely` slot
+/// writes no item and both guarantees run as the clauses they are.
+#[trace("FR-1044-AC-5", "FR-530-AC-10")]
 #[test]
-fn a_premise_under_assumptions_is_not_run_as_the_clause_alone() {
-    let ws = Workspace::new("compose-ac5");
+fn an_interface_composition_derives_no_assumption_set() {
+    let ws = Workspace::new("compose-ac5-interface");
     let run = analyze(&request(&ws, &system(), json!([composition("SysRely")])));
     let document = run.document();
     let items = document["items"].as_array().expect("items");
     assert_eq!(items.len(), 3, "no item for the rely slot: {document}");
     assert_eq!(roles(&items[0]).len(), 3, "{document}");
+    assert_eq!(
+        items[0]["request"]["assumptions"],
+        json!([[], []]),
+        "{document}"
+    );
+    assert_eq!(label(&items[1]), "proved", "{document}");
+    assert_eq!(label(&items[2]), "proved", "{document}");
+    assert_eq!(items[2]["record"]["backend"], "en-1", "{document}");
+    assert_unsupported_composition(&items[0]);
+    assert_eq!(run.exit, 21, "{document}");
+}
+
+/// FR-1044-AC-5: under `assume-guarantee`, a guarantee checked under peer
+/// guarantees is not run as the clause alone.
+#[trace("FR-1044-AC-5")]
+#[test]
+fn a_premise_under_assumptions_is_not_run_as_the_clause_alone() {
+    let ws = Workspace::new("compose-ac5");
+    let run = analyze(&request(&ws, &system(), json!([composition("SysAGRely")])));
+    let document = run.document();
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(items.len(), 3, "no item for the rely slot: {document}");
+    assert_eq!(roles(&items[0]).len(), 3, "{document}");
+    assert_eq!(
+        items[0]["request"]["assumptions"],
+        json!([[], [0]]),
+        "{document}"
+    );
     assert_eq!(label(&items[1]), "proved", "{document}");
     let assumed = &items[2];
     assert_eq!(assumed["claim_name"], "Capped", "{document}");
@@ -771,32 +896,100 @@ fn a_premise_under_assumptions_is_not_run_as_the_clause_alone() {
     assert_eq!(label(&alone.item(2)), "proved");
 }
 
-/// FR-1044-AC-6: a dependency cycle with no lattice profile refuses the
-/// composition item and derives no premise item.
-#[trace("FR-1044-AC-6")]
-#[test]
-fn a_cycle_without_a_lattice_refuses_the_item() {
-    let ws = Workspace::new("compose-ac6");
-    let run = analyze(&request(&ws, &system(), json!([composition("SysCycle")])));
-    let document = run.document();
+/// The record every cyclic composition settles with, under any rule: no
+/// `request` member and no candidates, `unsupported` by disposition at `S4`
+/// with no proof basis, naming kind `composition`, form `fixed-point` and the cycle's guarantees in
+/// edge order.
+fn assert_cycle_answer(item: &Value, name: &str) {
+    assert_eq!(item["claim_name"], name, "{item}");
+    assert!(item["request"].is_null(), "no request member: {item}");
+    assert_eq!(label(item), "unsupported", "{item}");
+    assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
+    assert!(item["record"]["backend"].is_null(), "{item}");
+    // The record carries no proof basis; FSpec FR-243's `unavailable` is a
+    // settlement basis no terminal record writes.
+    assert!(item["record"]["basis"].is_null(), "{item}");
     assert_eq!(
-        document["items"].as_array().map(Vec::len),
-        Some(1),
-        "{document}"
-    );
-    let item = &document["items"][0];
-    assert_eq!(item["category"], "refusal", "{item}");
-    assert_eq!(
-        item["record"]["diagnostic"]["code"], "invalid_model_binding",
+        item["record"]["diagnostic"]["code"], "unsupported_projection",
         "{item}"
     );
-    assert_eq!(cause(item), "malformed-declaration", "{item}");
+    assert_eq!(cause(item), "unsupported-requested-capability", "{item}");
+    let detail = &item["record"]["diagnostic"]["detail"];
+    assert_eq!(detail["kind"], "composition", "{item}");
+    assert_eq!(detail["form"], "fixed-point", "{item}");
     assert_eq!(
-        item["record"]["diagnostic"]["detail"]["cycles"],
+        detail["cycles"],
         json!([["PB::Capped", "PA::Bounded"]]),
         "{item}"
     );
+}
+
+/// FR-1044-AC-6: a dependency cycle settles `unsupported` under every rule,
+/// with no provider registered, and derives no premise item.
+#[trace("FR-1044-AC-6")]
+#[test]
+fn a_cycle_settles_unsupported_under_every_rule_before_any_premise() {
+    let ws = Workspace::new("compose-ac6");
+    for name in ["SysCycle", "SysCyclePR", "SysCycleRT", "SysCycleAG"] {
+        let run = analyze(&request(
+            &ws,
+            &system(),
+            json!([composition(name), {"claim": "Local"}]),
+        ));
+        let document = run.document();
+        let items = document["items"].as_array().expect("items");
+        assert_eq!(items.len(), 2, "no premise item for {name}: {document}");
+        assert_cycle_answer(&items[0], name);
+        assert_eq!(label(&items[1]), "proved", "{document}");
+        assert_eq!(run.exit, 21, "{document}");
+        // Alone, the cycle answer is the only item settled, at `S4`.
+        let alone = analyze(&request(&ws, &system(), json!([composition(name)])));
+        assert_eq!(alone.document()["last_stage"], "S4", "{name}");
+    }
+}
+
+/// FR-1044-AC-6: a `rely` of a component on itself is not this answer; it
+/// refuses the unit `invalid_model_binding`/`malformed-declaration`, exit 20.
+#[trace("FR-1044-AC-6")]
+#[test]
+fn a_self_rely_refuses_the_unit_as_a_malformed_declaration() {
+    let ws = Workspace::new("compose-ac6-self");
+    let body = format!(
+        "{}{}",
+        clause_text("Local", "", BOUNDED),
+        compose("SysSelf", "interface", "rely PA::Bounded on PA::Bounded;")
+    );
+    let run = analyze(&request(&ws, &body, json!([composition("SysSelf")])));
+    let document = run.document();
     assert_eq!(run.exit, 20, "{document}");
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "invalid_model_binding", "{document}");
+    assert_eq!(diagnostic["cause"], "malformed-declaration", "{document}");
+}
+
+/// FR-1044-AC-6: a registered provider that answers `proved` receives no
+/// request for a cyclic composition and cannot make it `proved`, and no
+/// component item runs for it.
+#[trace("FR-1044-AC-6")]
+#[test]
+fn a_cycle_is_never_sent_to_a_registered_provider() {
+    for name in ["SysCycle", "SysCyclePR", "SysCycleRT", "SysCycleAG"] {
+        let (run, sent) = through_provider(
+            &format!("compose-ac6-{name}"),
+            BOUNDED,
+            json!([provided(name)]),
+            ProviderVerdict::Proved,
+        );
+        let document = run.document();
+        assert!(
+            sent.is_empty(),
+            "no request reaches the provider: {document}"
+        );
+        let items = document["items"].as_array().expect("items");
+        assert_eq!(items.len(), 1, "no component item runs: {document}");
+        assert_cycle_answer(&items[0], name);
+        assert_eq!(run.exit, 21, "{document}");
+    }
 }
 
 /// FR-1044-AC-8: premise items are written once however many selections
@@ -822,7 +1015,7 @@ fn a_shared_premise_is_written_once() {
         json!([
             composition("Sys"),
             composition("Sys"),
-            composition("SysRely")
+            composition("SysAGRely")
         ]),
     ));
     let document = run.document();
@@ -912,6 +1105,391 @@ fn a_composition_is_a_default_item() {
     assert_eq!(run.exit, 21, "{document}");
 }
 
+/// The sum of the items the provider was sent over every request.
+fn sent_items(sent: &[Value]) -> Vec<&Value> {
+    sent.iter()
+        .flat_map(|request| request["items"].as_array().into_iter().flatten())
+        .collect()
+}
+
+/// FR-1044-AC-11: `Sys`, `SysAG` and `SysAGRely` each reach the provider as
+/// one `composition` item with the derived `premises` and `assumptions`, no
+/// premise result and no component proof; two compositions equal except in a
+/// valid `assumptions` are different requests.
+#[trace("FR-1044-AC-11")]
+#[test]
+fn a_provider_is_sent_the_derived_premises_and_assumptions() {
+    let (run, sent) = through_provider(
+        "compose-ac11",
+        BOUNDED,
+        json!([provided("Sys"), provided("SysAG"), provided("SysAGRely")]),
+        ProviderVerdict::Unknown,
+    );
+    let document = run.document();
+    let items = sent_items(&sent);
+    assert_eq!(items.len(), 3, "{document}");
+    for (item, assumptions) in
+        items
+            .iter()
+            .zip([json!([[], []]), json!([[], []]), json!([[], [0]])])
+    {
+        assert_eq!(item["kind"], "composition", "{item}");
+        assert_eq!(item["assumptions"], assumptions, "{item}");
+        assert!(item["premises"].is_array(), "{item}");
+        for premise in item["premises"].as_array().expect("premises") {
+            assert!(premise.get("result").is_none(), "no premise result: {item}");
+        }
+        assert_eq!(item["options"], json!({"profile": "p1"}), "{item}");
+    }
+    // The echo carries the same derived members the provider read.
+    for (index, item) in items.iter().enumerate() {
+        let echoed = &document["items"][index]["request"];
+        assert_eq!(echoed["assumptions"], item["assumptions"], "{document}");
+        assert_eq!(echoed["premises"], item["premises"], "{document}");
+    }
+    // `SysAG` and `SysAGRely` differ in their premises (the `rely` slot) and
+    // in their assumptions, so neither request stands for the other.
+    assert_ne!(items[1]["assumptions"], items[2]["assumptions"]);
+}
+
+/// FR-1044-AC-12: a provider's `proved` for `SysAG` stands over proved
+/// components with the certification of the provider's origin, and is
+/// unconfirmed, naming premise 1, over a refuted `Capped`.
+#[trace("FR-1044-AC-12")]
+#[test]
+fn an_assume_guarantee_proof_stands_only_over_proved_components() {
+    let (run, _) = through_provider(
+        "compose-ac12-stands",
+        BOUNDED,
+        json!([provided("SysAG")]),
+        ProviderVerdict::Proved,
+    );
+    let document = run.document();
+    assert_eq!(label(&document["items"][0]), "proved", "{document}");
+    assert_eq!(
+        document["items"][0]["record"]["certification"], "trusted",
+        "{document}"
+    );
+    assert_eq!(run.exit, 0, "{document}");
+    // A linked provider's proof stands `uncertified`, never `trusted`.
+    let ws = Workspace::new("compose-ac12-linked");
+    let path = request_for(&ws, &system(), BOUNDED, Some(json!([provided("SysAG")])));
+    let seen = Seen::default();
+    let run = analyze_with_providers(
+        &path,
+        vec![composition_provider_of(
+            &seen,
+            fixed(ProviderVerdict::Proved),
+            fsl_route::ProviderOrigin::Linked,
+        )],
+    );
+    let document = run.document();
+    assert_eq!(label(&document["items"][0]), "proved", "{document}");
+    assert_eq!(
+        document["items"][0]["record"]["certification"], "uncertified",
+        "{document}"
+    );
+    let (run, _) = through_provider(
+        "compose-ac12-refuted",
+        "always holds(c.value <= 2)",
+        json!([provided("SysAG")]),
+        ProviderVerdict::Proved,
+    );
+    let document = run.document();
+    assert_proof_not_accepted(&document["items"][0], 1);
+    assert_eq!(label(&document["items"][2]), "refuted", "{document}");
+}
+
+/// FR-1044-AC-12 (AC-8's request): the two `Sys` compositions stand, and
+/// `SysAGRely` is unconfirmed with premise 1: its `Capped` (index 5) has a
+/// `request` member equal to item 4's `proved` one but another typed context,
+/// and is `unsupported`.
+#[trace("FR-1044-AC-12")]
+#[test]
+fn an_equal_wire_guarantee_under_another_context_does_not_confirm_a_proof() {
+    let (run, _) = through_provider(
+        "compose-ac12-context",
+        BOUNDED,
+        json!([provided("Sys"), provided("Sys"), provided("SysAGRely")]),
+        ProviderVerdict::Proved,
+    );
+    let document = run.document();
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(items.len(), 6, "{document}");
+    assert_eq!(label(&items[0]), "proved", "{document}");
+    assert_eq!(label(&items[1]), "proved", "{document}");
+    assert_proof_not_accepted(&items[2], 1);
+    assert_eq!(label(&items[4]), "proved", "{document}");
+    assert_eq!(label(&items[5]), "unsupported", "{document}");
+    let mut equal = items[4]["request"].clone();
+    equal["request_index"] = json!(5);
+    equal["candidates"] = items[5]["request"]["candidates"].clone();
+    assert_eq!(items[5]["request"], equal, "{document}");
+}
+
+/// FR-1044-AC-12 (zero-guarantee seam): a composition with no
+/// `component-guarantee` entry has no premise to name, so a provider's
+/// `proved` stands.
+#[trace("FR-1044-AC-12")]
+#[test]
+fn a_proof_with_no_component_guarantee_to_confirm_stands() {
+    let (run, _) = through_provider(
+        "compose-ac12-none",
+        BOUNDED,
+        json!([provided("SysNone")]),
+        ProviderVerdict::Proved,
+    );
+    let document = run.document();
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "no premise item: {document}");
+    assert_eq!(label(&items[0]), "proved", "{document}");
+    assert_eq!(items[0]["record"]["certification"], "trusted", "{document}");
+}
+
+/// The mismatch `SysAbsent` declares, built from the node `Sys`'s first
+/// premise names (`PA::Bounded`), which is the peer interface no guarantee of
+/// `SysAbsent` declares; `change` rewrites it.
+fn mismatch_answer(change: fn(InterfaceMismatch) -> InterfaceMismatch) -> Answer {
+    Answer(Box::new(move |request| {
+        let node = |item: usize| {
+            let ProviderTarget::Composition(target) = &request.targets()[item] else {
+                panic!("a composition target");
+            };
+            let wire = &target.premises()[0]["key"]["claim"]["node"];
+            fsl_foundation::node_wire::node_key_from_json(wire).expect("a node key")
+        };
+        let found = InterfaceMismatch {
+            component: "PA".to_owned(),
+            interface: node(1),
+            premise: 1,
+            reason: MismatchReason::Absent,
+        };
+        vec![
+            ProviderVerdict::Mismatch(change(found)),
+            ProviderVerdict::Proved,
+        ]
+    }))
+}
+
+/// FR-1044-AC-14: a provider's `interface-mismatch` equal to the first
+/// mismatch the declaration gives settles the composition `refuted` by a
+/// decisive counterexample, built and not replayed, with no certification.
+#[trace("FR-1044-AC-14")]
+#[test]
+fn a_declared_interface_mismatch_the_provider_names_refutes_the_composition() {
+    let (run, _) = through_answer(
+        "compose-ac14",
+        BOUNDED,
+        json!([provided("SysAbsent"), provided("Sys")]),
+        mismatch_answer(|found| found),
+    );
+    let document = run.document();
+    let item = &document["items"][0];
+    assert_eq!(label(item), "refuted", "{document}");
+    assert_eq!(item["record"]["backend"], PROVIDER, "{document}");
+    assert!(item["record"]["certification"].is_null(), "{document}");
+    assert!(item.get("replay").is_none(), "{document}");
+    let counterexample = &item["counterexample"]["counterexample"];
+    assert_eq!(counterexample["type"], "interface-mismatch", "{document}");
+    assert_eq!(counterexample["component"], "PA", "{document}");
+    assert_eq!(counterexample["premise"], 1, "{document}");
+    assert_eq!(counterexample["reason"], "absent", "{document}");
+    assert_eq!(item["category"], "violation", "{document}");
+    // `SysAbsent`'s one premise is `Capped` with no assumption (the absent
+    // `Bounded` has no index), so it runs as its clause and proves; `Sys`'s
+    // premises prove beside it.
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(label(&items[1]), "proved", "{document}");
+    assert_eq!(label(&items[2]), "proved", "{document}");
+    assert_eq!(label(&items[3]), "proved", "{document}");
+    assert_eq!(run.exit, 10, "{document}");
+}
+
+/// FR-1044-AC-14, the recomputation seam: `SysMixed` has `weaker` at slot 3
+/// and `absent` at slot 4, and FSpec FR-492's reason-major order names the
+/// `absent` one. A provider's `weaker` witness at slot 3 is refused, and its
+/// `absent` witness at slot 4 refutes the composition.
+#[trace("FR-1044-AC-14")]
+#[test]
+fn the_provider_witness_is_admitted_in_reason_major_order() {
+    // The peer interfaces `SysPeers` names in its premises: `Fenced`, then
+    // `Pings`.
+    let witness = |premise: usize, reason: MismatchReason| {
+        Answer(Box::new(move |request| {
+            let ProviderTarget::Composition(target) = &request.targets()[1] else {
+                panic!("a composition target");
+            };
+            let wire = &target.premises()[premise - 3]["key"]["claim"]["node"];
+            let interface =
+                fsl_foundation::node_wire::node_key_from_json(wire).expect("a node key");
+            vec![
+                ProviderVerdict::Mismatch(InterfaceMismatch {
+                    component: "PA".to_owned(),
+                    interface,
+                    premise,
+                    reason,
+                }),
+                ProviderVerdict::Proved,
+            ]
+        }))
+    };
+    let items = || json!([provided("SysMixed"), provided("SysPeers")]);
+    let (run, _) = through_answer(
+        "compose-ac14-weaker",
+        BOUNDED,
+        items(),
+        witness(3, MismatchReason::Weaker),
+    );
+    let document = run.document();
+    let item = &document["items"][0];
+    assert_eq!(label(item), "failed", "{document}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_result",
+        "{document}"
+    );
+    assert_eq!(cause(item), "invalid-value", "{document}");
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["pointer"], "/counterexample",
+        "{document}"
+    );
+    let (run, _) = through_answer(
+        "compose-ac14-absent",
+        BOUNDED,
+        items(),
+        witness(4, MismatchReason::Absent),
+    );
+    let document = run.document();
+    let item = &document["items"][0];
+    assert_eq!(label(item), "refuted", "{document}");
+    let counterexample = &item["counterexample"]["counterexample"];
+    assert_eq!(counterexample["premise"], 4, "{document}");
+    assert_eq!(counterexample["reason"], "absent", "{document}");
+    assert_eq!(counterexample["component"], "PA", "{document}");
+}
+
+/// FR-1044-AC-14: a well-formed witness that differs from the recomputation
+/// in `component`, `interface`, `premise` or `reason` is the reader's
+/// `invalid_result`/`invalid-value` at `/counterexample`, never `refuted`.
+#[trace("FR-1044-AC-14")]
+#[test]
+fn a_well_formed_mismatch_that_differs_from_the_declaration_is_refused() {
+    // The peer interface is the node `Sys`'s first premise names; the
+    // `interface` variant names its second premise's node instead, a clause
+    // that is no peer interface of `SysAbsent`.
+    let wrong_interface = |slot: usize| {
+        Answer(Box::new(move |request| {
+            let ProviderTarget::Composition(target) = &request.targets()[1] else {
+                panic!("a composition target");
+            };
+            let wire = &target.premises()[slot]["key"]["claim"]["node"];
+            let interface =
+                fsl_foundation::node_wire::node_key_from_json(wire).expect("a node key");
+            vec![
+                ProviderVerdict::Mismatch(InterfaceMismatch {
+                    component: "PA".to_owned(),
+                    interface,
+                    premise: 1,
+                    reason: MismatchReason::Absent,
+                }),
+                ProviderVerdict::Proved,
+            ]
+        }))
+    };
+    let answers: [(&str, Answer); 4] = [
+        (
+            "component",
+            mismatch_answer(|found| InterfaceMismatch {
+                component: "PB".to_owned(),
+                ..found
+            }),
+        ),
+        ("interface", wrong_interface(1)),
+        (
+            "premise",
+            mismatch_answer(|found| InterfaceMismatch {
+                premise: 0,
+                ..found
+            }),
+        ),
+        (
+            "reason",
+            mismatch_answer(|found| InterfaceMismatch {
+                reason: MismatchReason::Weaker,
+                ..found
+            }),
+        ),
+    ];
+    for (name, answer) in answers {
+        let (run, _) = through_answer(
+            &format!("compose-ac14-{name}"),
+            BOUNDED,
+            json!([provided("SysAbsent"), provided("Sys")]),
+            answer,
+        );
+        let document = run.document();
+        let item = &document["items"][0];
+        assert_ne!(label(item), "refuted", "{name}: {document}");
+        assert_eq!(label(item), "failed", "{name}: {document}");
+        assert_eq!(
+            item["record"]["diagnostic"]["code"], "invalid_result",
+            "{name}: {document}"
+        );
+        assert_eq!(cause(item), "invalid-value", "{name}: {document}");
+        assert_eq!(
+            item["record"]["diagnostic"]["detail"]["pointer"], "/counterexample",
+            "{name}: {document}"
+        );
+    }
+}
+
+/// FR-1044-AC-14: a witness answered for a declaration that holds no mismatch
+/// (`Sys`), and a `proved` answer over a refuted `Capped`, are never
+/// `refuted`; with no provider registered `SysAbsent` is `unsupported`.
+#[trace("FR-1044-AC-14")]
+#[test]
+fn a_mismatch_without_a_declared_mismatch_is_never_a_refutation() {
+    let (run, _) = through_answer(
+        "compose-ac14-none",
+        BOUNDED,
+        json!([provided("Sys"), provided("SysAbsent")]),
+        Answer(Box::new(|request| {
+            let ProviderTarget::Composition(target) = &request.targets()[0] else {
+                panic!("a composition target");
+            };
+            let wire = &target.premises()[0]["key"]["claim"]["node"];
+            let interface =
+                fsl_foundation::node_wire::node_key_from_json(wire).expect("a node key");
+            vec![
+                ProviderVerdict::Mismatch(InterfaceMismatch {
+                    component: "PA".to_owned(),
+                    interface,
+                    premise: 0,
+                    reason: MismatchReason::Absent,
+                }),
+                ProviderVerdict::Proved,
+            ]
+        })),
+    );
+    let document = run.document();
+    assert_eq!(label(&document["items"][0]), "failed", "{document}");
+    assert_eq!(
+        document["items"][0]["record"]["diagnostic"]["detail"]["pointer"], "/counterexample",
+        "{document}"
+    );
+    let (run, _) = through_provider(
+        "compose-ac14-unproved",
+        "always holds(c.value <= 2)",
+        json!([provided("Sys")]),
+        ProviderVerdict::Proved,
+    );
+    let document = run.document();
+    assert_proof_not_accepted(&document["items"][0], 1);
+    let ws = Workspace::new("compose-ac14-unregistered");
+    let run = analyze(&request(&ws, &system(), json!([composition("SysAbsent")])));
+    let document = run.document();
+    assert_unsupported_composition(&document["items"][0]);
+}
+
 /// The package handoff of the source request at `path`.
 fn package_handoff(ws: &Workspace, path: &std::path::Path) -> PathBuf {
     let source: Value =
@@ -964,20 +1542,19 @@ fn the_package_default_items_refuse_a_composition() {
     );
 }
 
-/// FR-1044 "Current system behavior" (QSL-2739): an item naming a
-/// composition, or a name no package row carries, over a `package` handoff of
-/// that unit is settled whole as the unnamed-claim family: the package carries
-/// no name row for the composition, so neither name settles `unknown-claim`.
+/// FR-1044 "Current system behavior" (QSL-2739): a named composition remains
+/// a pending declaration; a name no package row carries remains an unnamed
+/// claim. Neither selection settles `unknown-claim`.
 #[test]
 fn a_package_item_naming_a_composition_is_refused() {
     // Each compile writes its own handoff directory, so each name gets its
     // own workspace.
-    for name in ["Sys", "Typo"] {
+    for (name, family) in [("Sys", "declaration"), ("Typo", "unnamed-claim")] {
         let ws = Workspace::new(&format!("compose-package-named-{name}"));
         let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition(name)])));
         assert_package_pending(
             &analyze(&package_handoff(&ws, &path)),
-            "items[0] names the unnamed-claim family, which has no package form yet",
+            &format!("items[0] names the {family} family, which has no package form yet"),
         );
     }
 }
@@ -1001,7 +1578,7 @@ fn a_package_item_naming_a_local_clause_beside_a_composition_settles() {
 /// FR-1044-AC-10, second half, once the package route reads a composition:
 /// the same items, records and exit code as the source request.
 #[test]
-#[ignore = "QSL-2739: the package route has no composition form (package-consumer API)"]
+#[ignore = "FR-1044-AC-10 stays OPEN with terra:QSL:package-consumer-api: the package route has no composition form"]
 fn the_package_route_settles_the_same_items() {
     let ws = Workspace::new("compose-ac10-package-equal");
     let body = format!(

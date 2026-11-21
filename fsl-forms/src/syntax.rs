@@ -797,13 +797,13 @@ pub enum ExprNode {
         /// The predicate.
         predicate: ExprId,
     },
-    /// `sum<N>(x in c: e)`.
+    /// `sum<N>(x in c: e)`, or a plan objective's `Reach.steps.sum(s => e)`
+    /// (`result_type` is `None`: the total takes the summand's own family).
     Sum {
         /// The qualified name of the result type `N`.
-        result_type: String,
-        /// The span of the result type's name; empty when the form was not
-        /// read from a source unit.
-        result_type_span: Span,
+        result_type: Option<String>,
+        /// The span of an authored result type; absent for an inferred sum.
+        result_type_span: Option<Span>,
         /// The binder name.
         binder: String,
         /// The collection operand.
@@ -1826,8 +1826,8 @@ impl Expression {
     ) -> Self {
         let binder = binder.into();
         Self::compose([source, summand], |[source, summand]| ExprNode::Sum {
-            result_type: result_type.name,
-            result_type_span: result_type.span,
+            result_type: Some(result_type.name),
+            result_type_span: Some(result_type.span),
             binder,
             source,
             summand,

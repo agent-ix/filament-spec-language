@@ -464,6 +464,9 @@ pub struct ItemCause {
     /// A `hypotheses-not-established` cause's hypothesis item result.
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<ItemLabel>,
+    /// A `provider-answer-unconfirmed` cause's `premises` index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    premise: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rule: Option<CertificateRule>,
     #[serde(rename = "at", skip_serializing_if = "Option::is_none")]
@@ -831,6 +834,7 @@ impl ItemCause {
             rule: None,
             hypothesis: None,
             result: None,
+            premise: None,
             certificate_at: None,
             limit: None,
             defect: None,
@@ -911,6 +915,11 @@ impl ItemCause {
             }) => {
                 item.hypothesis = Some(WireNode::of(hypothesis));
                 item.result = Some(*result);
+            }
+            ReportedInconclusiveCause::Cause(InconclusiveCause::ProviderAnswerUnconfirmed {
+                premise,
+            }) => {
+                item.premise = Some(*premise);
             }
             ReportedInconclusiveCause::Cause(
                 InconclusiveCause::BoundReached { depth }

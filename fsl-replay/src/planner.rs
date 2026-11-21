@@ -29,6 +29,7 @@ mod from_package;
 mod item;
 mod json;
 mod key;
+mod mismatch;
 mod request;
 mod settle;
 mod transfer;
@@ -63,6 +64,7 @@ pub use key::{
     ClaimKind, Correspondence, CorrespondenceRole, ExtentClass, FairnessKey, ItemKey, KeyWireError,
     LocalKey, OperationRef, PremiseKey, SlotKey, TemporalItemKind, TemporalKey,
 };
+pub use mismatch::{interface_mismatch, InterfaceMismatch, MismatchReason};
 pub use request::{
     read_settlement_request, Discharge, Discharger, EnvironmentRecord, ItemRef, PremiseResult,
     ReadLimits, RecordSupplies, RequestRefusal, RequestSlot, SettlementRequest, SlotFill,

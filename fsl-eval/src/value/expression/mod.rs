@@ -1045,6 +1045,50 @@ pub fn evaluate_protocol_slot(
     .run_frame(body.root(), frame)
 }
 
+/// FSpec FR-800: evaluate one checked `satisfies` or objective body of a
+/// plan synthesis over `package`. `scope` is the unit's scope with the plan
+/// value's records and operation enum declared
+/// ([`fsl_semantics::check::CheckedPlan::scope`]), which the body's record
+/// reads resolve against; `frame[0]` is the plan value. A plan value reads
+/// no object, so the body observes no object environment.
+pub fn evaluate_plan_body(
+    package: &CheckedPackage,
+    scope: &fsl_semantics::check::Scope,
+    body: &fsl_semantics::check::CheckedBody,
+    frame: Vec<Option<Value>>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    evaluate_plan_node(package, scope, body.root(), frame, meter)
+}
+
+/// Evaluate a checked subexpression of a plan body with the same scope,
+/// local frame and meter as [`evaluate_plan_body`]. This lets a per-step
+/// objective evaluate its sum separately from its constant offset.
+/// Unlike `evaluate_bare_expression`, the node already belongs to the
+/// checked source graph and needs its synthetic plan scope; it does not
+/// construct a bytes-only expression projection or a second evaluator.
+pub fn evaluate_plan_node(
+    package: &CheckedPackage,
+    scope: &fsl_semantics::check::Scope,
+    node: fsl_semantics::check::CheckedNode<'_>,
+    mut frame: Vec<Option<Value>>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    frame.resize(node.body().frame_slots(frame.len()), None);
+    let objects = ObjectEnvironment::default();
+    let reads = std::collections::BTreeMap::new();
+    Machine::with_pre(
+        scope,
+        package.graph(),
+        &objects,
+        None,
+        Some(&reads),
+        meter,
+        package.graph().dispatch_tables(),
+    )
+    .run_frame(node, frame)
+}
+
 /// Evaluate the declared function `function` of `package` on `arguments`,
 /// one value per parameter in declared order, over no model state: the
 /// function a `join predicate(..)` names is pure and reads only its

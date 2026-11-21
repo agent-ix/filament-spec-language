@@ -13,7 +13,6 @@ use super::walk::{exhausted, stop, walk_of};
 use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::reduction::ConstraintValue;
-use filament_exact::Meter;
 
 impl ModelSystem<'_> {
     /// Whether the package declares a checked `at current` state clause
@@ -65,7 +64,7 @@ impl ModelSystem<'_> {
                 .evaluate_clause(
                     &clause.qualified,
                     &observations,
-                    &mut Meter::new(self.meter),
+                    &mut self.evaluation_meter(),
                 )
                 .map_err(|_| stop(BROKEN))?;
             match verdict(&evaluation.evaluation.outcome) {

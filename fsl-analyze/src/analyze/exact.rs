@@ -273,6 +273,7 @@ fn run_timed(
     request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
+    tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     let claim = request.claim;
     let simulation = request.subject.simulation.clone();
@@ -331,7 +332,7 @@ fn run_timed(
         Ok(built) => built,
         Err(refusal) => return build_refusal(refusal, subject),
     };
-    let (built, monitor) = built;
+    let (built, _) = built;
     let ProbBuild::Built(product) = built else {
         return not_yet();
     };
@@ -374,50 +375,18 @@ fn run_timed(
         Err(_) => return not_yet(),
     };
     if !holds {
-        let reference = binding.as_ref().map(|binding| &binding.reference);
-        let target = product
-            .labels
-            .iter()
-            .map(|labels| labels.first().copied().unwrap_or(false))
-            .collect::<Vec<_>>();
-        let bounded_monitor = match (&claim.form, monitor) {
-            (
-                ProbForm::Probability {
-                    event: Event::Formula { formula, .. },
-                    ..
-                },
-                Some(monitor),
-            ) => {
-                let context =
-                    match fsl_replay::probabilistic_formula_monitor_context(claim, reference) {
-                        Ok(context) => context,
-                        Err(_) => return not_yet(),
-                    };
-                match fsl_eval::automaton::QualifiedBoundedMonitor::from_monitor(
-                    formula.formula(),
-                    &context,
-                    monitor,
-                    limits.model.max_automaton_states,
-                ) {
-                    Ok(monitor) => Some(monitor),
-                    Err(_) => return not_yet(),
-                }
-            }
-            _ => return not_yet(),
-        };
-        return replay_refutation(
+        return replay_timed_refutation(
             &system,
             claim,
             &product,
             &policy,
             *start,
-            &target,
-            reference,
-            bounded_monitor.as_ref(),
+            bound,
+            binding.as_ref().map(|binding| &binding.reference),
             &limits,
             cancel,
             subject,
-            None,
+            tamper_witness,
         );
     }
     let mut certificate = match certificate_of(
@@ -858,7 +827,7 @@ fn run(
             ..
         }
     ) {
-        return run_timed(request, cancel, tamper);
+        return run_timed(request, cancel, tamper, tamper_witness);
     }
     if matches!(request.claim.form, ProbForm::LongRunFraction { .. }) {
         return long_run::run(request, cancel, tamper);
@@ -2340,12 +2309,40 @@ fn replay_produced_witness(
     let Some(package) = system.source_package() else {
         return not_yet();
     };
-    match replay_probabilistic_witness(package, system, &item, &witness, limits, cancel) {
+    finish_replay(
+        replay_probabilistic_witness(package, system, &item, &witness, limits, cancel),
+        claim,
+        system,
+        &witness,
+        &spelled_scheduler,
+        limits,
+        subject,
+    )
+}
+
+/// The report a witness replay settles: refuted on a reproduction, otherwise
+/// the typed reason it did not.
+fn finish_replay(
+    replayed: Result<ProbabilityWitnessReplay, ProbabilityWitnessError>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    system: &ModelSystem<'_>,
+    witness: &ProbabilisticCounterexample,
+    spelled_scheduler: &[(
+        fsl_eval::simulation::StateKey,
+        fsl_eval::simulation::model::ScheduledIdentity,
+    )],
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    let Some(package) = system.source_package() else {
+        return not_yet();
+    };
+    match replayed {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let scope = package.graph().scope();
             let quantile_bound;
             let wire = fsl_replay::probabilistic_wire(
-                &witness,
+                witness,
                 match &claim.form {
                     ProbForm::Reach { bound, .. }
                     | ProbForm::Probability { bound, .. }
@@ -2362,7 +2359,7 @@ fn replay_produced_witness(
                 scope.types(),
                 scope.variant_types(),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
-                &spelled_scheduler,
+                spelled_scheduler,
             );
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
         }
@@ -2547,4 +2544,286 @@ mod tests {
         assert!(terminal.exact_certificate_document().is_none());
         assert!(evidence.is_none() && counterexample.is_none());
     }
+}
+
+/// FR-923: refute a timed deadline claim with a path set over the timed
+/// product, which the checker's own replay of the same product must reproduce.
+///
+/// The product's policy picks, per state, the choice that reaches the decided
+/// states the bound forbids; the paths are read from it. Each path step
+/// carries the product-state key it reaches (the key is what the checker
+/// replays) and, where the step takes an operation, the operation, draw and
+/// post-state it resolves to in the model.
+#[allow(clippy::too_many_arguments)]
+fn replay_timed_refutation(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    product: &ProbProduct,
+    policy: &[Option<usize>],
+    initial: crate::exact_probabilistic::ProbStateId,
+    bound: &Bound,
+    binding: Option<&ObjectReference>,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+) -> EngineReport {
+    use crate::exact_probabilistic::{produce_witness, ProductAction, WitnessScope};
+    use fsl_eval::probabilistic::{DeadlinePhase, MonitorState};
+    let forbidden = match bound {
+        Bound::AtMost(_) => DeadlinePhase::Accept,
+        Bound::AtLeast(_) => DeadlinePhase::Reject,
+    };
+    let accepting = product
+        .states
+        .iter()
+        .map(|state| {
+            matches!(
+                state.monitor,
+                Some(MonitorState::Deadline { phase, .. }) if phase == forbidden
+            )
+        })
+        .collect::<Vec<_>>();
+    let past = match bound {
+        Bound::AtMost(threshold) => threshold.clone(),
+        Bound::AtLeast(threshold) => Rational::from_integer(1_i64.into()).sub(threshold),
+    };
+    let scope = match claim.scheduler {
+        ProbScheduler::Every => WitnessScope::EveryScheduler,
+        ProbScheduler::Workload(_) => WitnessScope::Workload,
+    };
+    let produced = match produce_witness(product, policy, scope, initial, &accepting, &past, limits)
+    {
+        Ok(Some(produced)) => produced,
+        Ok(None) => return not_yet(),
+        Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
+            return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
+        }
+        Err(_) => return not_yet(),
+    };
+    let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
+        return not_yet();
+    };
+    let initials = system.initial();
+    let [first] = initials.as_slice() else {
+        return not_yet();
+    };
+    let key_of = |state: &crate::exact_probabilistic::ProbKey| {
+        state
+            .certificate_state
+            .clone()
+            .ok_or(ProbabilityDocumentError::Malformed)
+    };
+    let Some(initial_state) = product.states.get(initial.index()) else {
+        return broken();
+    };
+    let Ok(initial_key) = key_of(initial_state) else {
+        return not_yet();
+    };
+    let mut paths = Vec::with_capacity(produced.paths.len());
+    for path in produced.paths {
+        let mut previous_key = initial_key.clone();
+        let mut state = first.clone();
+        let mut steps = Vec::with_capacity(path.steps.len());
+        for step in path.steps {
+            if cancel.poll() {
+                if let Some(cause) = cancel.tripped() {
+                    return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+                }
+            }
+            let Some(to) = product.states.get(step.to.index()) else {
+                return broken();
+            };
+            let Ok(post_key) = key_of(to) else {
+                return not_yet();
+            };
+            let Ok(choice) = canonical_action(system, product, &step.action, &key_of) else {
+                return not_yet();
+            };
+            let (action, transition, draw, post, resume) = match &step.action {
+                ProductAction::Identity(identity)
+                | ProductAction::WorkloadResolve { identity, .. } => {
+                    let wanted = timed_key_discrete(&post_key);
+                    let actions = match system.actions_with_cancel(&state, cancel) {
+                        Ok(Ok(actions)) => actions,
+                        _ => return not_yet(),
+                    };
+                    let found = actions
+                        .into_iter()
+                        .filter(|action| &action.identity == identity)
+                        .flat_map(|action| action.draws)
+                        .filter(|draw| {
+                            step.draw.as_ref().is_none_or(|expected| {
+                                fsl_eval::simulation::model::same_values(expected, &draw.random)
+                            })
+                        })
+                        .find_map(|draw| {
+                            draw.successors.into_iter().find_map(|(transition, post)| {
+                                let key = system.state_key(&post).ok()?.0;
+                                let discrete: serde_json::Value =
+                                    serde_json::from_slice(&key).ok()?;
+                                (Some(&discrete) == wanted.as_ref())
+                                    .then(|| (transition, draw.random.clone(), post))
+                            })
+                        });
+                    match found {
+                        Some((transition, random, post)) => {
+                            let resume = post.clone();
+                            (
+                                Some(identity.clone()),
+                                Some(transition),
+                                Some(random),
+                                post,
+                                resume,
+                            )
+                        }
+                        None => {
+                            // A clock-guarded operation is not enabled at the bare
+                            // model state; take its step from the timed state the
+                            // previous key names.
+                            let Some((transition, post, resume)) = timed_step_for(
+                                system,
+                                claim,
+                                &state,
+                                &previous_key,
+                                identity,
+                                &step.elapsed,
+                                wanted.as_ref(),
+                            ) else {
+                                return not_yet();
+                            };
+                            (
+                                Some(identity.clone()),
+                                Some(transition),
+                                step.draw.clone(),
+                                post,
+                                resume,
+                            )
+                        }
+                    }
+                }
+                _ => (None, None, None, state.clone(), state.clone()),
+            };
+            let next_key = post_key.clone();
+            steps.push(ProbabilityWitnessStep {
+                choice,
+                action,
+                transition,
+                draw,
+                post: post.clone(),
+                post_key,
+                elapsed: step.elapsed,
+            });
+            state = resume;
+            previous_key = next_key;
+        }
+        paths.push(ProbabilityWitnessPath { steps });
+    }
+    let mut witness = ProbabilisticCounterexample {
+        item: item.clone(),
+        binding: binding.cloned(),
+        initial: first.clone(),
+        initial_key,
+        scheduler: Vec::new(),
+        paths,
+        subsystem: None,
+    };
+    if let Some(tamper) = tamper {
+        tamper(&mut witness);
+    }
+    let Some(package) = system.source_package() else {
+        return not_yet();
+    };
+    finish_replay(
+        replay_probabilistic_witness(package, system, &item, &witness, limits, cancel),
+        claim,
+        system,
+        &witness,
+        &[],
+        limits,
+        subject,
+    )
+}
+
+/// The discrete model-state component of a timed product-state key.
+fn timed_key_discrete(key: &ProbabilityProductKey) -> Option<serde_json::Value> {
+    let root: serde_json::Value = serde_json::from_slice(key.as_bytes()).ok()?;
+    root.get(4)?.get(1)?.get(1).cloned()
+}
+
+/// The model step of the operation a timed digital witness step took, found
+/// from the timed state its previous key names: the clocks as keyed (placed
+/// by clock identity), or those delayed by the step's elapsed time first.
+///
+/// The product resolves every tied zero-time operation of an instant in one
+/// step, so the step's model state can lie several operations after the first.
+/// The search follows a chain whose FIRST operation is `identity`'s and
+/// returns that operation's transition, the model state right after it (what a
+/// single recorded transition produces) and the model state at the end of the
+/// chain (what the product key names, and where the next step starts).
+/// `None` when no such chain reaches the wanted model state, or the previous
+/// key is a region key: a region refutation through a clock-guarded step
+/// therefore settles not-yet.
+fn timed_step_for(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    state: &fsl_eval::simulation::model::ModelSimState,
+    previous: &ProbabilityProductKey,
+    identity: &fsl_eval::simulation::model::ScheduledIdentity,
+    elapsed: &Rational,
+    wanted: Option<&serde_json::Value>,
+) -> Option<(
+    filament_semantic_value::model_transition::ModelTransition,
+    fsl_eval::simulation::model::ModelSimState,
+    fsl_eval::simulation::model::ModelSimState,
+)> {
+    use fsl_eval::simulation::model::{TimedState, TimedSystem};
+    let valuation = fsl_replay::digital_key_clocks(system, claim, previous)?;
+    let timed = TimedSystem::new(system, claim.subject.alias.as_str()).ok()?;
+    // A tie among the zero-time operations of one instant: the product never
+    // resolves more of them in one step than a small model has operations, and
+    // each level multiplies the frontier, so the search stays short.
+    const CHAIN: usize = 4;
+    let reaches = |from: TimedState| {
+        type First = Option<(
+            filament_semantic_value::model_transition::ModelTransition,
+            fsl_eval::simulation::model::ModelSimState,
+        )>;
+        let mut frontier: Vec<(TimedState, First)> = vec![(from, None)];
+        for level in 0..CHAIN {
+            let mut next = Vec::new();
+            for (at, first) in frontier {
+                let Ok(steps) = timed.steps(&at) else {
+                    continue;
+                };
+                for (step, post) in steps {
+                    let first = if level == 0 {
+                        if step.operation() != identity.operation
+                            || step.receiver() != &identity.receiver
+                        {
+                            continue;
+                        }
+                        Some((step.transition().clone(), post.discrete().clone()))
+                    } else {
+                        first.clone()
+                    };
+                    let key = system.state_key(post.discrete()).ok()?.0;
+                    let discrete: serde_json::Value = serde_json::from_slice(&key).ok()?;
+                    if Some(&discrete) == wanted {
+                        let (transition, after_first) = first?;
+                        return Some((transition, after_first, post.discrete().clone()));
+                    }
+                    next.push((post, first));
+                }
+            }
+            frontier = next;
+        }
+        None
+    };
+    for clocks in [valuation.delayed(elapsed), valuation] {
+        if let Some(found) = reaches(TimedState::new(state.clone(), clocks)) {
+            return Some(found);
+        }
+    }
+    None
 }

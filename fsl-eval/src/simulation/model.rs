@@ -39,9 +39,9 @@ pub use operation_coverage::{
 };
 mod model_based_test;
 pub use model_based_test::{
-    run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
+    read_clause, run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
     run_model_based_test, run_model_based_test_with_system, run_model_based_test_with_value_bits,
-    ModelBasedCaseProvenance, ModelBasedCounterexample, ModelBasedCoverage,
+    ClauseReading, ModelBasedCaseProvenance, ModelBasedCounterexample, ModelBasedCoverage,
     ModelBasedPartitionCoverage, ModelBasedProvenance, ModelBasedRunLimits,
     ModelBasedSizeBoundedRoot, ModelBasedTestCause, ModelBasedTestChecks, ModelBasedTestCounts,
     ModelBasedTestDefect, ModelBasedTestDiscardCount, ModelBasedTestDiscardReason,
@@ -732,6 +732,53 @@ struct Clauses {
     postconditions: Vec<ClauseInfo>,
 }
 
+/// One boundary of the native relation's ordered, gated invocation walk.
+/// No expression meter is borrowed while the visitor is called.
+#[derive(Clone, Copy)]
+pub enum NativeCandidateEvent<'a> {
+    /// Gate one logical operation/receiver/argument invocation before its
+    /// preconditions or runtime post-state relation are evaluated.
+    Begin(&'a ModelTransition),
+    /// One valid runtime outcome, sorted by (typed result, canonical state key), before search admission.
+    Completed {
+        /// The exact invocation identity.
+        transition: &'a ModelTransition,
+        /// The runtime post-state, not yet admitted by the search.
+        state: &'a ModelSimState,
+        /// Present exactly when this invocation has several outcomes; zero based.
+        outcome: Option<u64>,
+    },
+    /// The invocation has no valid runtime outcome.
+    Disabled(&'a ModelTransition),
+    /// A native contract could not be decided; this is not semantic false.
+    Undetermined {
+        /// The invocation being evaluated.
+        transition: &'a ModelTransition,
+        /// The closed native outcome classification.
+        outcome: &'a ClauseOutcome,
+    },
+}
+
+/// The caller's decision at one native candidate boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeCandidateControl {
+    /// Continue this invocation and its outcomes.
+    Continue,
+    /// Skip this invocation without evaluating it (native replay selection).
+    Skip,
+    /// Stop the walk immediately, retaining the caller's already processed prefix.
+    Stop,
+}
+
+/// Whether the ordered walk exhausted its finite invocation space.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeCandidateVisit {
+    /// Every invocation was visited.
+    Complete,
+    /// The caller stopped at a boundary.
+    Stopped,
+}
+
 /// FR-120: the transition system of a checked package's state family.
 pub struct ModelSystem<'a> {
     /// The identity of the one domain package this system is over, when it
@@ -753,6 +800,10 @@ pub struct ModelSystem<'a> {
     populations: Vec<fsl_semantics::model::state::StatePopulation>,
     limits: ExpansionLimits,
     meter: ScalarLimits,
+    shared_meter: std::sync::Arc<std::sync::Mutex<filament_exact::Meter>>,
+    shared_accounting: std::sync::atomic::AtomicBool,
+    shared_limits: std::sync::Mutex<ScalarLimits>,
+    request_cancel: std::sync::Mutex<Option<filament_exact::Cancel>>,
     footprints: footprints::FootprintCache,
     /// [`Self::universe_declaring`] per field, computed once.
     declaring: std::sync::Mutex<BTreeMap<DeclarationKey, Option<Vec<ObjectReference>>>>,
@@ -790,6 +841,142 @@ pub struct ModelSystem<'a> {
     /// Whether FR-120's bound check admits the system ([`Self::bounded`]),
     /// found once.
     bounded: std::sync::OnceLock<bool>,
+}
+
+/// An expression meter, shared across a source-plan request when enabled.
+pub enum EvaluationMeter<'a> {
+    /// The existing independent evaluation contract outside source planning.
+    Local(filament_exact::Meter),
+    /// The request's serialized accounting session.
+    Shared(std::sync::MutexGuard<'a, filament_exact::Meter>),
+}
+impl EvaluationMeter<'_> {
+    /// Preserve consumed counters while attaching the caller's cancellation.
+    pub fn with_cancel(mut self, cancel: filament_exact::Cancel) -> Self {
+        *std::ops::DerefMut::deref_mut(&mut self) =
+            std::ops::Deref::deref(&self).clone().with_cancel(cancel);
+        self
+    }
+}
+impl std::ops::Deref for EvaluationMeter<'_> {
+    type Target = filament_exact::Meter;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Local(meter) => meter,
+            Self::Shared(meter) => meter,
+        }
+    }
+}
+impl std::ops::DerefMut for EvaluationMeter<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Local(meter) => meter,
+            Self::Shared(meter) => meter,
+        }
+    }
+}
+impl ModelSystem<'_> {
+    /// Native receiver identity text and its type-owned canonical reference.
+    ///
+    /// # Errors
+    /// A state whose object reference cannot be reconstructed.
+    pub fn invocation_receivers(
+        &self,
+        state: &ModelSimState,
+    ) -> Result<Vec<(String, filament_exact::ObjectReference)>, ExpansionStop> {
+        walk::rows_of(self, state.state()).and_then(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    let text = encode::reference_canonical_text(&row.reference)
+                        .map_err(|_| walk::stop(BROKEN))?;
+                    Ok((text, row.reference))
+                })
+                .collect()
+        })
+    }
+
+    /// Visit operations in the supplied admitted declaration order, then
+    /// canonical receivers, then Boolean/finite-Int arguments in typed order.
+    /// The callback gates runtime evaluation; outcomes are delivered one at a
+    /// time through the same native apply/complete relation as other callers.
+    ///
+    /// # Errors
+    /// Native expansion or evaluation failure; caller stops are returned as
+    /// `Stopped`, never converted to a model failure.
+    pub fn visit_plan_candidates(
+        &self,
+        state: &ModelSimState,
+        operations: &[(EffectiveId, String)],
+        cancel: Option<&filament_exact::Cancel>,
+        visitor: &mut dyn for<'event> FnMut(NativeCandidateEvent<'event>) -> NativeCandidateControl,
+    ) -> Result<NativeCandidateVisit, ExpansionStop> {
+        self.shared_accounting
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(cancel) = cancel {
+            self.cancel_plan_with(cancel);
+        }
+        walk::visit_plan_candidates(self, state, operations, cancel, visitor)
+    }
+
+    /// Start the source adapter's single request evaluation session.
+    pub fn share_evaluation_meter(&self, limits: ScalarLimits) {
+        let meter = filament_exact::Meter::new(limits);
+        let meter = match self
+            .request_cancel
+            .lock()
+            .expect("request cancellation lock")
+            .clone()
+        {
+            Some(cancel) => meter.with_cancel(cancel),
+            None => meter,
+        };
+        *self.shared_meter.lock().expect("evaluation meter lock") = meter;
+        *self.shared_limits.lock().expect("evaluation limits lock") = limits;
+        self.shared_accounting
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    /// Native replay has its own evaluation allowance even after the search
+    /// was cancelled. Its engine still enforces the independent replay bound.
+    pub fn begin_plan_replay(&self, limits: ScalarLimits) {
+        *self
+            .request_cancel
+            .lock()
+            .expect("request cancellation lock") = None;
+        self.share_evaluation_meter(limits);
+    }
+    /// Whether optional fresh-meter optimizations must defer to enumeration.
+    pub fn shares_evaluation_meter(&self) -> bool {
+        self.shared_accounting
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+    /// The cancellation reason of the active source request, when any.
+    pub fn plan_cancel_cause(&self) -> Option<filament_exact::CancelCause> {
+        self.request_cancel
+            .lock()
+            .expect("request cancellation lock")
+            .as_ref()
+            .and_then(filament_exact::Cancel::cause)
+    }
+
+    /// Share cancellation with expansion and every evaluation charge.
+    pub fn cancel_plan_with(&self, cancel: &filament_exact::Cancel) {
+        *self
+            .request_cancel
+            .lock()
+            .expect("request cancellation lock") = Some(cancel.clone());
+        let mut meter = self.shared_meter.lock().expect("evaluation meter lock");
+        let limits = *meter.limits();
+        let owned = std::mem::replace(&mut *meter, filament_exact::Meter::new(limits));
+        *meter = owned.with_cancel(cancel.clone());
+    }
+    /// Acquire the evaluation meter for one non-nested expression evaluation.
+    pub fn evaluation_meter(&self) -> EvaluationMeter<'_> {
+        if self.shares_evaluation_meter() {
+            EvaluationMeter::Shared(self.shared_meter.lock().expect("evaluation meter lock"))
+        } else {
+            EvaluationMeter::Local(filament_exact::Meter::new(self.meter))
+        }
+    }
 }
 
 /// One element-count member of a pure-clock collection: the object type
@@ -1021,6 +1208,12 @@ impl<'a> ModelSystem<'a> {
             Some(model) => Self::over_model_of(request, &model, true),
             None => Self::new(request),
         }
+    }
+
+    /// The effective identity of the object type the declaration `key`
+    /// names, as the checked type environment knows it.
+    pub fn type_identity(&self, key: &DeclarationKey) -> Option<EffectiveId> {
+        self.model.type_identity(key)
     }
 
     /// [`Self::new`] over the one domain package `model` names, for a unit
@@ -1379,6 +1572,12 @@ impl<'a> ModelSystem<'a> {
             populations,
             limits: request.expansion,
             meter: request.meter,
+            shared_meter: std::sync::Arc::new(std::sync::Mutex::new(filament_exact::Meter::new(
+                request.meter,
+            ))),
+            shared_accounting: std::sync::atomic::AtomicBool::new(false),
+            shared_limits: std::sync::Mutex::new(request.meter),
+            request_cancel: std::sync::Mutex::new(None),
             footprints: footprints::FootprintCache::default(),
             declaring: std::sync::Mutex::default(),
             applied: application::AppliedMemo::default(),
@@ -1461,7 +1660,11 @@ impl<'a> ModelSystem<'a> {
 
     /// The evaluation meter limits each reading of the system starts from.
     pub fn meter_limits(&self) -> ScalarLimits {
-        self.meter
+        if self.shares_evaluation_meter() {
+            *self.shared_limits.lock().expect("evaluation limits lock")
+        } else {
+            self.meter
+        }
     }
 
     /// FR-101's canonical bytes of `transition`, which order successors.
@@ -1690,6 +1893,13 @@ impl<'a> ModelSystem<'a> {
             .into_iter()
             .map(|(node, _, value_type)| (node, value_type))
             .collect()
+    }
+
+    /// Whether the current native evaluator can enumerate a numeric result
+    /// type with its active bounds. Source planning uses this capability
+    /// before search rather than treating a missing domain as no outcomes.
+    pub fn has_native_result_domain(&self, value_type: &ValueType) -> bool {
+        self.value_domain(value_type, &[]).is_some()
     }
 
     /// The active FR-190 bounded domain for one value type. Without a
@@ -3075,12 +3285,20 @@ pub fn sample_model_runs(
 #[derive(Default)]
 pub struct WalkMemo {
     expansions: std::cell::RefCell<std::collections::HashMap<MemoAt, ModelExpansion>>,
+    ordered: std::cell::RefCell<
+        std::collections::BTreeMap<
+            crate::simulation::StateKey,
+            std::collections::BTreeMap<String, OrderedModelExpansion>,
+        >,
+    >,
+    retained: std::cell::RefCell<Option<filament_exact::Meter>>,
 }
 
 /// A state's canonical key bytes and its anchor.
 type MemoAt = (Vec<u8>, String);
 
 type ModelExpansion = Expansion<ModelTransition, ModelSimState, ModelFinding>;
+type OrderedModelExpansion = std::sync::Arc<Expanded<ModelTransition, ModelSimState, ModelFinding>>;
 
 impl WalkMemo {
     /// An empty memo.
@@ -3114,6 +3332,157 @@ impl WalkMemo {
         self.expansions.borrow_mut().insert(at, expanded.clone());
         Ok(expanded)
     }
+
+    fn ordered_expansion(
+        &self,
+        system: &ModelSystem<'_>,
+        state: &ModelSimState,
+        key: &crate::simulation::StateKey,
+        cancel: Option<&filament_exact::Cancel>,
+    ) -> Result<OrderedModelExpansion, crate::simulation::EncodingRefusal> {
+        use filament_exact::{length_amount, Charge, ChargePoint, Meter};
+        let mut work = Meter::new(system.meter);
+        if let Some(cancel) = cancel {
+            work = work.with_cancel(cancel.clone());
+        }
+        if let Err(incomplete) = work.charge(Charge::new(ChargePoint::GraphEdge)) {
+            return Ok(std::sync::Arc::new(Expanded::Stopped(walk::exhausted(
+                crate::simulation::ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
+            ))));
+        }
+        let anchor = format!("{:?}", state.anchor());
+        if let Some(found) = self
+            .ordered
+            .borrow()
+            .get(key)
+            .and_then(|anchors| anchors.get(&anchor))
+        {
+            return Ok(found.clone());
+        }
+        let expanded = expand(system, state, identity_limits())?;
+        let Expanded::Successors {
+            successors,
+            findings,
+        } = &expanded
+        else {
+            return Ok(std::sync::Arc::new(expanded));
+        };
+        // Refusals, undefined evaluations and incomplete readings are never
+        // stable memo values. A violated invariant is a state-and-anchor fact.
+        if findings
+            .iter()
+            .any(|finding| !matches!(finding, ModelFinding::InvariantViolated { .. }))
+        {
+            return Ok(std::sync::Arc::new(expanded));
+        }
+        let mut units = length_amount(key.as_bytes().len())
+            .saturating_add(length_amount(anchor.len()))
+            .saturating_add(256);
+        for successor in successors {
+            units = units
+                .saturating_add(length_amount(successor.key.as_bytes().len()).saturating_mul(2))
+                .saturating_add(length_amount(
+                    system.transition_key(&successor.transition)?.len(),
+                ))
+                .saturating_add(1024);
+        }
+        for finding in findings {
+            if let ModelFinding::InvariantViolated { clause, anchor, .. } = finding {
+                units = units
+                    .saturating_add(length_amount(clause.len()))
+                    .saturating_add(length_amount(anchor.name.len()))
+                    .saturating_add(length_amount(key.as_bytes().len()))
+                    .saturating_add(1024);
+            }
+        }
+        let mut retained = self.retained.borrow_mut();
+        let meter = retained.get_or_insert_with(|| {
+            let meter = Meter::new(system.meter);
+            if let Some(cancel) = cancel {
+                meter.with_cancel(cancel.clone())
+            } else {
+                meter
+            }
+        });
+        let admitted = meter
+            .charge(Charge::new(ChargePoint::GraphResultRetain).results(units))
+            .is_ok();
+        let expanded = std::sync::Arc::new(expanded);
+        if admitted {
+            let mut ordered = self.ordered.borrow_mut();
+            if let Some(anchors) = ordered.get_mut(key) {
+                anchors.insert(anchor, expanded.clone());
+            } else {
+                ordered.insert(
+                    key.clone(),
+                    std::collections::BTreeMap::from([(anchor, expanded.clone())]),
+                );
+            }
+        }
+        Ok(expanded)
+    }
+}
+
+/// The seeded model walk's limits and draw identity. A memo is scoped to
+/// this run's subject and predicate context.
+pub struct ModelWalkSettings<'a> {
+    /// The requires-bound position ceiling.
+    pub position_limit: u64,
+    /// The pinned sampler definition.
+    pub sampler: &'a DefinitionRef,
+    /// The run's seed.
+    pub seed: u64,
+    /// This walk's trace index.
+    pub trace: u64,
+    /// The greatest number of transitions drawn.
+    pub max_steps: usize,
+    /// The run's cancellation handle, polled on memo hits.
+    pub cancel: Option<&'a filament_exact::Cancel>,
+}
+
+/// [`sample_model_walk`] with the already encoded state key at each visited
+/// position and bounded reuse of canonical ordered expansions.
+///
+/// # Errors
+/// The same admission and encoding refusals as [`sample_model_walk`].
+pub fn sample_model_walk_keyed(
+    system: &ModelSystem<'_>,
+    initial: usize,
+    settings: ModelWalkSettings<'_>,
+    memo: &WalkMemo,
+    end: impl FnMut(&ModelSimState, &crate::simulation::StateKey) -> bool,
+) -> Result<Trace<ModelTransition, ModelFinding>, NotSimulated> {
+    let start = system
+        .initial
+        .get(initial)
+        .cloned()
+        .ok_or(NotSimulated::EmptyInitial)?;
+    let view = OneInitial {
+        system,
+        start,
+        memo: None,
+    };
+    check_model_bounds(system, settings.position_limit)?;
+    let domains = system.rooted_domains();
+    let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
+        .iter()
+        .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
+        .collect();
+    crate::simulation::sample::sample_request_using(
+        &view,
+        SampleRequest {
+            domains: &roots,
+            types: system.types,
+            position_limit: settings.position_limit,
+            sampler: settings.sampler,
+            seed: settings.seed,
+            trace: settings.trace,
+            max_steps: settings.max_steps,
+            identity: identity_limits(),
+        },
+        end,
+        |state, key| memo.ordered_expansion(system, state, key, settings.cancel),
+    )
 }
 
 /// `system` with one initial state.

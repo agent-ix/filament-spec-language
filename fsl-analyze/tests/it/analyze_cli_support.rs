@@ -275,6 +275,19 @@ pub(crate) fn staying_counter_request(ws: &Workspace, body: &str, items: Value) 
     )
 }
 
+/// The Counter with a reset to zero enabled at every value, so its four
+/// states form a closed cyclic component.
+pub(crate) fn resetting_counter_request(ws: &Workspace, body: &str, items: Value) -> PathBuf {
+    let reset = STAY.replace("self.value = 0 and n = 0", "n = 0");
+    request_over(
+        ws,
+        &unit_text(&format!("{CONTRACT}{reset}{body}")),
+        &crate::counter::document_with_ranged_parameter(),
+        &[counter_snapshot(&[("a", 0)])],
+        json!({"items": items, "deadline_ms": 2000}),
+    )
+}
+
 /// The clause `name` over the Counter subject with `fairness` and `formula`.
 pub(crate) fn clause(name: &str, fairness: &str, formula: &str) -> String {
     clause_text(name, fairness, formula)

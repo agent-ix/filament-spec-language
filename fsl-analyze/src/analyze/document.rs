@@ -1840,6 +1840,24 @@ fn resolve_one(
     {
         return resolved;
     }
+    // A model-derived item names its model alias, even when a declaration
+    // happens to have the requested name. Protocol deadlock items instead
+    // retain their authored protocol anchor.
+    if selection
+        .temporal
+        .as_ref()
+        .and_then(|temporal| temporal.item_kind)
+        .is_some_and(|kind| {
+            matches!(
+                kind.kind(),
+                ItemKind::DeadlockFreedom | ItemKind::TimeLockFreedom
+            )
+        })
+        && package.graph().protocol(name).is_none()
+    {
+        return resolve_derived(package, subject, index, selection, registry, binding, name)
+            .unwrap_or_else(|| unknown_claim(index, name));
+    }
     let Some(node) = declarations(package).get(name).cloned() else {
         return resolve_derived(package, subject, index, selection, registry, binding, name)
             .unwrap_or_else(|| unknown_claim(index, name));
@@ -3084,7 +3102,7 @@ fn default_items(
             continue;
         };
         if let Some(composition) = composition_item::composition_at(package, node) {
-            // FSpec FR-290 gives an `assume-guarantee` declaration no item.
+            // FSpec FR-491 selects an `assume-guarantee` declaration by name only.
             if composition.rule() != fsl_semantics::check::CompositionRule::AssumeGuarantee {
                 let selection = ItemSelection {
                     claim: Some(name),
@@ -3473,6 +3491,7 @@ impl ClaimItem {
         }
         if let Some(ItemForm::Composition(composition)) = &self.form {
             item.insert("premises".to_owned(), json!(composition.premises));
+            item.insert("assumptions".to_owned(), json!(composition.assumptions));
             if !self.options.backend_options.is_empty() {
                 item.insert("options".to_owned(), json!(self.options.backend_options));
             }
@@ -3848,20 +3867,22 @@ pub fn settle_run(
     )
 }
 
-/// FR-1044: a routed composition's `proved` stands only when it has
-/// component-guarantee items and every one of them settled `proved` in this
-/// request. The items are the ones its slot keys identified at resolution, by
-/// request index, so a guarantee checked under other peers is never read as
-/// this one; an item absent from `records` settled by disposition, before any
-/// engine ran, and is not `proved`. A composition with no such item has
-/// nothing to establish its proof, so its `proved` fails closed too. A
-/// provider's `proved` that fails the check settles `inconclusive` with
-/// `replay-refused`, the nearest existing core-only cause, and the code of an
-/// unsupported capability. A `proved` record that names no backend is a
-/// broken invariant and settles `failed`.
+/// FR-1044, FSpec FR-331 "Result entries": the producer's proof guard. A
+/// routed composition's `proved` stands only when every `component-guarantee`
+/// entry of its `premises` is held by the same request and settled `proved`.
+/// Each entry is read by the request index of the item its typed slot key
+/// (assumptions included) identifies, so a guarantee checked under other
+/// peers is never read as this one; an item absent from `records` settled by
+/// disposition, before any engine ran, and is not `proved`. A provider's
+/// `proved` that fails the check settles `inconclusive` with
+/// `provider-answer-unconfirmed` naming the first entry, in `premises` order,
+/// that is not confirmed. A composition with no `component-guarantee` entry
+/// has no premise to name, so the guard confirms nothing and the answer
+/// stands. A `proved` record that names no backend is a broken invariant and
+/// settles `failed`.
 fn gate_compositions(
     records: &mut [TerminalRecord],
-    gates: &BTreeMap<RequestIndex, Vec<RequestIndex>>,
+    gates: &BTreeMap<RequestIndex, Vec<composition_item::Guarantee>>,
 ) {
     let proved: std::collections::BTreeSet<RequestIndex> = records
         .iter()
@@ -3873,16 +3894,22 @@ fn gate_compositions(
         let Some(required) = gates.get(&index) else {
             continue;
         };
-        if !matches!(record.value(), TerminalValue::Proved { .. })
-            || (!required.is_empty() && required.iter().all(|premise| proved.contains(premise)))
-        {
+        if !matches!(record.value(), TerminalValue::Proved { .. }) {
             continue;
         }
+        let Some(unconfirmed) = required
+            .iter()
+            .find(|guarantee| !proved.contains(&guarantee.item))
+        else {
+            continue;
+        };
         *record = match record.backend().cloned() {
             Some(backend) => TerminalRecord::inconclusive(
                 index,
                 backend,
-                InconclusiveCause::ReplayRefused(fsl_foundation::Code::UnsupportedProjection),
+                InconclusiveCause::ProviderAnswerUnconfirmed {
+                    premise: unconfirmed.premise,
+                },
             ),
             None => TerminalRecord::disposition_failed(
                 index,
@@ -3903,6 +3930,7 @@ mod composition_gate_tests {
     use fsl_foundation::{BackendId, RequestIndex};
     use fsl_replay::{Certification, InconclusiveCause, TerminalRecord, TerminalValue};
 
+    use super::composition_item::Guarantee;
     use super::gate_compositions;
 
     fn index(position: usize) -> RequestIndex {
@@ -3917,21 +3945,37 @@ mod composition_gate_tests {
         )
     }
 
-    /// FR-1044 Behavior: a composition's `proved` over component guarantees
+    fn entries(items: &[usize]) -> Vec<Guarantee> {
+        items
+            .iter()
+            .enumerate()
+            .map(|(premise, item)| Guarantee {
+                premise: u64::try_from(premise).unwrap_or(u64::MAX),
+                item: index(*item),
+            })
+            .collect()
+    }
+
+    /// FSpec FR-331-AC-65: a composition's `proved` over component guarantees
     /// that all settled `proved` stands.
     #[test]
     fn a_proof_over_proved_guarantees_stands() {
         let mut records = vec![proved(0), proved(1), proved(2)];
-        let gates = BTreeMap::from([(index(0), vec![index(1), index(2)])]);
+        let gates = BTreeMap::from([(index(0), entries(&[1, 2]))]);
         gate_compositions(&mut records, &gates);
         assert!(matches!(records[0].value(), TerminalValue::Proved { .. }));
     }
 
-    /// FR-1044 Behavior: a guarantee that is not `proved`, or that has no
-    /// record because it settled by disposition, refuses the proof.
+    /// FSpec FR-331-AC-65: the first guarantee, in `premises` order, that is
+    /// not `proved`, or that has no record because it settled by disposition,
+    /// is the premise the cause names.
     #[test]
-    fn a_proof_over_an_unproved_or_missing_guarantee_is_refused() {
-        for guarantees in [vec![index(1), index(2)], vec![index(1), index(5)]] {
+    fn a_proof_over_an_unproved_or_missing_guarantee_names_the_first_entry() {
+        for (guarantees, expected) in [
+            (entries(&[1, 2]), 1),
+            (entries(&[2, 1]), 0),
+            (entries(&[1, 5]), 1),
+        ] {
             let mut records = vec![
                 proved(0),
                 proved(1),
@@ -3942,7 +3986,9 @@ mod composition_gate_tests {
             assert!(
                 matches!(
                     records[0].value(),
-                    TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
+                    TerminalValue::Inconclusive(InconclusiveCause::ProviderAnswerUnconfirmed {
+                        premise
+                    }) if *premise == expected
                 ),
                 "{:?}",
                 records[0].value()
@@ -3950,18 +3996,14 @@ mod composition_gate_tests {
         }
     }
 
-    /// FR-1044 Behavior: a composition with no component-guarantee item has
-    /// nothing that establishes its proof, so a provider's `proved` fails
-    /// closed rather than stand on the provider's answer alone.
+    /// FSpec FR-331-AC-65: a composition with no component-guarantee entry
+    /// has no premise to name, so the provider's `proved` stands.
     #[test]
-    fn a_proof_with_no_guarantee_to_check_is_refused() {
+    fn a_proof_with_no_guarantee_to_check_stands() {
         let mut records = vec![proved(0)];
         let gates = BTreeMap::from([(index(0), Vec::new())]);
         gate_compositions(&mut records, &gates);
-        assert!(matches!(
-            records[0].value(),
-            TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
-        ));
+        assert!(matches!(records[0].value(), TerminalValue::Proved { .. }));
     }
 
     /// A record of an item that is no composition is never read.
@@ -3992,10 +4034,10 @@ struct ItemReads<'r> {
 struct Negotiation {
     /// The checked package each component item is analyzed over (FR-1044).
     components: BTreeMap<RequestIndex, std::sync::Arc<CheckedPackage>>,
-    /// Each routed composition's component-guarantee items (FR-1044): its
-    /// provider's `proved` stands only when every one of them settled
-    /// `proved`.
-    gates: BTreeMap<RequestIndex, Vec<RequestIndex>>,
+    /// Each routed composition's component-guarantee entries and their items
+    /// (FR-1044): its provider's `proved` stands only when every one of them
+    /// settled `proved`.
+    gates: BTreeMap<RequestIndex, Vec<composition_item::Guarantee>>,
     negotiated: Vec<NegotiatedItem>,
     unrouted_items: Vec<RequestIndex>,
     settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)>,
@@ -4294,6 +4336,17 @@ fn write_run(
                     })
             })
             .flatten();
+        let mut axes = OutcomeAxes::of_record(record.value(), disposed);
+        if !disposed {
+            if let Some(super::Counterexample::StateGraph(graph)) = outcome
+                .counterexamples
+                .iter()
+                .find(|found| found.request_index == index)
+                .map(|found| &found.counterexample)
+            {
+                axes.settlement = Some(graph.record.basis);
+            }
+        }
         let mut item = item_document(
             written,
             ItemMembers {
@@ -4303,7 +4356,7 @@ fn write_run(
                 target,
                 detail: detail.cloned(),
                 scoped: echo.is_some_and(|echo| echo.scoped),
-                axes: OutcomeAxes::of_record(record.value(), disposed),
+                axes,
                 producer: record
                     .producer(targets.get(&index))
                     .map(|backend| backend.as_str().to_owned()),
@@ -4524,9 +4577,9 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value>
         | super::Counterexample::Hybrid(_)
         | super::Counterexample::TaskProduct(_) => json!({"state_clause": qualified}),
         super::Counterexample::FiniteHyper(_) => json!({"hyperproperty": qualified}),
-        super::Counterexample::ScheduleMiss(_) | super::Counterexample::ProtocolAnalysis(_) => {
-            return None
-        }
+        super::Counterexample::ScheduleMiss(_)
+        | super::Counterexample::InterfaceMismatch(_)
+        | super::Counterexample::ProtocolAnalysis(_) => return None,
     })
 }
 

@@ -499,11 +499,216 @@ fn every_scheduler_discrete_delay_is_certified() {
 
 /// FR-923-AC-1: a bound above the discrete delay's exact value is refuted.
 #[trace("TC-2492", "FR-923-AC-1")]
-#[ignore = "QSL-2156: timed witness replay of a refuted every-scheduler deadline claim is not implemented yet"]
 #[test]
 fn every_scheduler_discrete_delay_refutes() {
     let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
-    assert!(is_refuted(&settle(&world, "Strict")));
+    let record = settle(&world, "Strict");
+    assert!(is_refuted(&record), "{record:#?}");
+    let mass = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .mass()
+        .clone();
+    assert_eq!(mass, ratio(871, 160_000));
+}
+
+/// FR-923-AC-1: a refutation is evidence only when the checker's own replay of
+/// the timed product reproduces it, so a witness whose path does not end in the
+/// forbidden decided state does not settle `refuted`.
+#[trace("TC-2492", "FR-923-AC-1")]
+#[test]
+fn altered_timed_witness_is_not_refuted() {
+    let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
+    let record = settle_witness_tampered(&world, "Strict", |witness| {
+        let initial = witness.initial_key.clone();
+        for path in &mut witness.paths {
+            path.steps.last_mut().expect("a step").post_key = initial.clone();
+        }
+    });
+    assert!(!is_refuted(&record), "{record:#?}");
+    assert!(record.probabilistic_counterexample.is_none());
+}
+
+/// FR-921: the clock valuation a digital key names is placed by clock identity
+/// in the model's place order, never by the position of the clock in the key.
+/// The same two-clock key with its clocks listed in the opposite order names
+/// the same valuation, and each value is the one its clock holds.
+#[trace("TC-2490", "FR-921-AC-2")]
+#[test]
+fn a_digital_key_valuation_does_not_depend_on_the_key_clock_order() {
+    let world = retx_over(
+        &["x", "a"],
+        &[("send", &["late", "x", "a"])],
+        " and self.x >= 1 ms and self.a >= 0 ms",
+        true,
+        TWO_DELAYS,
+        &every_deadlines(),
+    );
+    let doc = document(&settle(&world, "Deadline"));
+    assert_eq!(doc["objective"]["timed"]["route"], "digital");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Deadline")
+        .expect("the claim checks");
+    let system = world.system();
+    let valuation = |key: &Value| {
+        fsl_replay::digital_key_clocks(
+            &system,
+            claim,
+            &fsl_replay::ProbabilityProductKey::from_canonical_bytes(
+                serde_json::to_vec(key).expect("serializes"),
+            ),
+        )
+        .expect("a digital key")
+        .values()
+        .to_vec()
+    };
+    let timed = fsl_eval::simulation::model::TimedSystem::new(&system, &claim.subject.alias)
+        .expect("a timed subject");
+    let places: Vec<String> = timed
+        .places()
+        .iter()
+        .map(|place| {
+            timed
+                .model()
+                .clock(place.clock())
+                .expect("a clock")
+                .name()
+                .to_string()
+        })
+        .collect();
+    let mut distinct = false;
+    for entry in doc["values"].as_array().expect("values") {
+        let encoded = entry["state"].as_str().expect("encoded key");
+        let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 key");
+        let key: Value = serde_json::from_slice(&bytes).expect("canonical key");
+        let clocks = key[4][1][4].as_array().expect("clocks").clone();
+        let scale: i64 = key[4][1][3]
+            .as_str()
+            .expect("scale")
+            .parse()
+            .expect("number");
+        let whole = |name: &str| -> i64 {
+            clocks
+                .iter()
+                .find(|clock| clock[0][1] == name)
+                .and_then(|clock| clock[1].as_str())
+                .expect("the clock is keyed")
+                .parse()
+                .expect("whole ticks")
+        };
+        distinct |= whole("x") != whole("a");
+        let mut reversed = key.clone();
+        reversed[4][1][4] = Value::Array(clocks.iter().rev().cloned().collect());
+        let straight = valuation(&key);
+        assert_eq!(straight, valuation(&reversed));
+        let held: Vec<_> = places
+            .iter()
+            .map(|name| ratio(whole(name), scale))
+            .collect();
+        assert_eq!(straight, held, "each place holds its own clock's ticks");
+    }
+    assert!(distinct, "some state must tell the two clocks apart");
+}
+
+fn settle_witness_tampered(
+    world: &World,
+    claim: &str,
+    tamper: impl Fn(&mut fsl_replay::ProbabilisticCounterexample),
+) -> AnalyzeRecord {
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+        RequestIndex::new(0),
+        request(world, claim),
+        tamper,
+    );
+    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+}
+
+/// FR-923-AC-1: a forged path into a decided state the chosen choice has no
+/// outcome to is not reported: the mass is the checker graph's own and the
+/// evidence keeps only the paths the checker validated.
+#[trace("TC-2492", "FR-923-AC-1")]
+#[test]
+fn a_forged_decided_target_is_neither_counted_nor_reported() {
+    let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
+    let honest = settle(&world, "Strict");
+    let honest_witness = honest
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness");
+    let paths = honest_witness.evidence().paths.len();
+    assert!(paths >= 2, "the forgery needs a second honest path");
+    // Replace the decided end of one honest path by the decided end of another.
+    // Where the new end is no outcome of the chosen choice the path leaves the
+    // evidence; wherever the witness still refutes, the mass is the honest one.
+    let mut dropped_one = false;
+    for victim in 0..paths {
+        for source in 0..paths {
+            let forged = settle_witness_tampered(&world, "Strict", |witness| {
+                let other = witness.paths[source]
+                    .steps
+                    .last()
+                    .expect("a step")
+                    .post_key
+                    .clone();
+                witness.paths[victim]
+                    .steps
+                    .last_mut()
+                    .expect("a step")
+                    .post_key = other;
+            });
+            if let Some(reproduced) = forged.probabilistic_counterexample.as_ref() {
+                assert_eq!(reproduced.mass(), honest_witness.mass());
+                assert!(reproduced.evidence().paths.len() <= paths);
+                dropped_one |= reproduced.evidence().paths.len() < paths;
+            }
+        }
+    }
+    assert!(dropped_one, "some forged end must leave the evidence");
+}
+
+/// FR-923-AC-3: a witness that takes the tie's NON-failing ordering does not
+/// reach the bound, whatever claim it is replayed against.
+#[trace("TC-2492", "FR-923-AC-3")]
+#[test]
+fn a_witness_of_the_non_failing_choice_is_not_refuted() {
+    let claim = |name: &str, comparison: &str| {
+        format!(
+            "probabilistic {name} using ev on M over (c: M::Call) under every scheduler on origin \
+             {{ probability {comparison} [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
+        )
+    };
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("tick", &["retried"])],
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
+         post Ticked using v on M::Call::tick { self.retried = true }\n",
+        &format!("{}{}", claim("Most", "<= 0.6"), claim("Least", ">= 0.9")),
+    );
+    let most = settle(&world, "Most");
+    assert!(is_refuted(&most), "{most:#?}");
+    let least = settle(&world, "Least");
+    assert!(is_refuted(&least), "{least:#?}");
+    // The `Least` witness runs the ordering that never retries.
+    let other = least
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .evidence()
+        .clone();
+    let transplanted = settle_witness_tampered(&world, "Most", |witness| {
+        let item = witness.item.clone();
+        *witness = other.clone();
+        witness.item = item;
+    });
+    assert!(!is_refuted(&transplanted), "{transplanted:#?}");
+    assert!(transplanted.probabilistic_counterexample.is_none());
 }
 
 /// FR-923-AC-2: values that read the drawn delay as a free choice are
@@ -527,9 +732,8 @@ fn distribution_free_values_are_rejected() {
 }
 
 /// FR-923-AC-3: over every scheduler a tie at the least delay is the
-/// scheduler's choice, so the maximum is 1 where `Both` gives `21/40`.
+/// scheduler's choice, so the maximum is 1 and a bound of `<= 0.6` is refuted.
 #[trace("TC-2492", "FR-923-AC-3")]
-#[ignore = "QSL-2156: timed witness replay of an every-scheduler tie refutation and a workload-scheduler timed deadline check are not implemented yet"]
 #[test]
 fn every_scheduler_tie_is_the_schedulers_choice() {
     // `send` is drawn at 2 ms; `tick` is free but can only fire at x = 2 ms.
@@ -553,7 +757,36 @@ fn every_scheduler_tie_is_the_schedulers_choice() {
             claim("Weighted", "under Both")
         ),
     );
-    assert!(is_refuted(&settle(&world, "Every")));
+    let record = settle(&world, "Every");
+    assert!(is_refuted(&record), "{record:#?}");
+}
+
+/// FR-923-AC-3: the same tie under the workload `Both` is resolved by its
+/// weights and gives `21/40`.
+#[trace("TC-2492", "FR-923-AC-3")]
+#[ignore = "QSL-2156: the workload-scheduler timed deadline check (weights resolving a timed tie) is not implemented yet"]
+#[test]
+fn a_workload_resolves_a_timed_tie_by_its_weights() {
+    let claim = |name: &str, scheduler: &str| {
+        format!(
+            "probabilistic {name} using ev on M over (c: M::Call) {scheduler} on origin \
+             {{ probability <= 0.6 [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
+        )
+    };
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("tick", &["retried"])],
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
+         post Ticked using v on M::Call::tick { self.retried = true }\n\
+         workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
+        &format!(
+            "{}{}",
+            claim("Every", "under every scheduler"),
+            claim("Weighted", "under Both")
+        ),
+    );
     assert_eq!(proved_value(&settle(&world, "Weighted")), ratio(21, 40));
 }
 

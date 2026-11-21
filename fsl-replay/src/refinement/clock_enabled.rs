@@ -28,6 +28,18 @@ use crate::refinement::failure::Taken;
 /// the candidate state that enables it.
 pub type SegmentEnabled = Vec<(Vec<u8>, ModelTransition)>;
 
+/// One segment of a loop step's delay: what the alive candidates enable and
+/// which candidates are alive. A candidate is alive at an instant while its
+/// own time invariant holds there (FR-900 "Delay"); a dead one has no run
+/// along the loop from then on.
+#[derive(Clone, Debug)]
+pub struct Segment {
+    /// The transitions the alive candidates enable.
+    pub enabled: SegmentEnabled,
+    /// The state keys of the candidates whose invariant holds.
+    pub alive: Vec<Vec<u8>>,
+}
+
 /// A clock's value at the start of a loop step; `None` is past every
 /// constant.
 type Value = Option<Rational>;
@@ -98,6 +110,36 @@ struct Enabling {
     key: Vec<u8>,
     transition: ModelTransition,
     parts: Vec<Vec<PlaceConstraint>>,
+}
+
+/// Each candidate's state key with its own time invariants.
+fn candidate_invariants(
+    abstract_system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    candidates: &[ModelState],
+) -> Result<Vec<(Vec<u8>, Vec<PlaceConstraint>)>, &'static str> {
+    let mut held = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let key = abstract_system
+            .state_key_of(candidate)
+            .map_err(|_| "timed-abstract-state-key")?
+            .0;
+        let state = abstract_system.pre_state(candidate.clone(), abstract_system.declared_anchor());
+        let own = timed
+            .invariants(&state)
+            .map_err(|_| "timed-abstract-invariant")?;
+        held.push((key, own));
+    }
+    Ok(held)
+}
+
+/// Whether every invariant of `own` holds `instant` past `values`.
+fn own_holds(own: &[PlaceConstraint], values: &[Value], instant: &Rational) -> bool {
+    own.iter().all(|constraint| {
+        values
+            .get(constraint.place())
+            .is_some_and(|value| holds(constraint.op(), value, instant, constraint.bound()))
+    })
 }
 
 /// The enabling parts of every step of every candidate.
@@ -293,7 +335,7 @@ pub fn loop_segments(
     candidates: &[&[ModelState]],
     taken: &[Taken],
     delays: &[Option<Rational>],
-) -> Result<Option<Vec<Vec<SegmentEnabled>>>, &'static str> {
+) -> Result<Option<Vec<Vec<Segment>>>, &'static str> {
     if candidates.len() != taken.len() || taken.len() != delays.len() {
         return Err("timed-abstract-loop-shape");
     }
@@ -312,21 +354,34 @@ pub fn loop_segments(
     for (index, candidates) in candidates.iter().enumerate() {
         let held = enablings(abstract_system, timed, candidates)?;
         let values = &starts[index];
-        let all_parts: Vec<Vec<PlaceConstraint>> = held
+        let invariants = candidate_invariants(abstract_system, timed, candidates)?;
+        let mut all_parts: Vec<Vec<PlaceConstraint>> = held
             .iter()
             .flat_map(|entry| entry.parts.iter().cloned())
             .collect();
+        all_parts.extend(invariants.iter().map(|(_, own)| own.clone()));
+        // A terminal stutter waits past every constant.
+        let ageing: Vec<Value> = if delays[index].is_none() {
+            vec![None; places]
+        } else {
+            values.clone()
+        };
         let instants = instants_of(&all_parts, values, delays[index].as_ref())?;
         let mut segments = Vec::with_capacity(instants.len());
         for instant in &instants {
+            let alive: Vec<Vec<u8>> = invariants
+                .iter()
+                .filter(|(_, own)| own_holds(own, &ageing, instant))
+                .map(|(key, _)| key.clone())
+                .collect();
             let mut enabled: SegmentEnabled = Vec::new();
-            for entry in &held {
+            for entry in held.iter().filter(|entry| alive.contains(&entry.key)) {
                 let pair = (entry.key.clone(), entry.transition.clone());
                 if part_holds(&entry.parts, values, instant) && !enabled.contains(&pair) {
                     enabled.push(pair);
                 }
             }
-            segments.push(enabled);
+            segments.push(Segment { enabled, alive });
         }
         loop_segments.push(segments);
     }
