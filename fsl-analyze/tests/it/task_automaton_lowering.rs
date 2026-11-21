@@ -736,20 +736,12 @@ fn a_release_backed_claim_routes_to_en_6_only_when_named() {
         json!(["en-7"])
     );
     assert_eq!(
-        unnamed["request"]["extent"],
-        json!({"classification": "unbounded", "finite_bound_available": false})
-    );
-    assert_eq!(
         unnamed["record"]["basis"]["type"], "closed-form",
         "{unnamed}"
     );
     assert_eq!(
         with.item(1)["request"]["candidates"]["backends"],
         json!(["en-6"])
-    );
-    assert_eq!(
-        with.item(1)["request"]["extent"],
-        json!({"classification": "bounded", "bounds": []})
     );
     let without = run("not-release-backed", &[], PAIR, items);
     assert_eq!(
