@@ -40,7 +40,29 @@ fn controls(send: &str, receive: &str) -> String {
 
 impl Fixture {
     fn new(captures: &str, run: &str, owns: bool) -> Self {
+        Self::with_channels(captures, "", run, owns)
+    }
+
+    fn with_channels(captures: &str, channels: &str, run: &str, owns: bool) -> Self {
         let mut model: Json = serde_json::from_slice(&fill::document()).expect("model JSON");
+        model["types"]
+            .as_array_mut()
+            .expect("types")
+            .retain(|node| {
+                matches!(
+                    node["identity"].as_str(),
+                    Some("ix://test/fill/Level" | "ix://test/fill/Cell" | "ix://test/fill/Idle")
+                )
+            });
+        model["constructs"]
+            .as_array_mut()
+            .expect("constructs")
+            .retain(|construct| {
+                matches!(
+                    construct["kind"]["name"].as_str(),
+                    Some("value_type" | "object_type" | "population")
+                )
+            });
         crate::related_by::add_owns_relationship(&mut model);
         let cell = model["types"]
             .as_array_mut()
@@ -48,6 +70,10 @@ impl Fixture {
             .iter_mut()
             .find(|node| node["identity"] == "ix://test/fill/Cell")
             .expect("Cell");
+        cell["operations"]
+            .as_array_mut()
+            .expect("operations")
+            .retain(|operation| operation["name"] == "touch");
         let mut other = cell["relationships"][0].clone();
         other["identity"] = json!("ix://test/fill/relationship/other");
         cell["relationships"]
@@ -64,6 +90,7 @@ impl Fixture {
             relationship Other = M::other;
             channel ch from w to w carries Boolean ordering unordered
                 delivery exactly-once-premise capacity 1 overflow block;
+            {channels}
             run sequence Main {{ {run} }}
             finish Done as (done: Boolean) {{ false }};
         }}"
@@ -337,14 +364,14 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
     });
 }
 
-#[trace("FR-731-AC-1", "FR-940-AC-6", "FR-216")]
+#[trace("FR-731-AC-1", "FR-940-AC-6")]
 #[test]
 fn correlation_only_capture_and_prior_binder_reads_remain_live_after_an_earlier_step() {
     let run = format!(
-        "send First via spare as (first: Reference<M::Cell>) {{ true }}; check Between {{ true }}; {}",
+        "send First via spare as (first: Reference<M::Cell>) {{ true }}; check Between using v {{ true }}; {}",
         controls("related by Owns (saved, first)", "related by Owns (first, saved)")
     );
-    let fixture = Fixture::new("capture saved: Reference<M::Cell> = k; channel spare from w to w carries Reference<M::Cell> ordering unordered delivery exactly-once-premise capacity 1 overflow block;", &run, true);
+    let fixture = Fixture::with_channels("capture saved: Reference<M::Cell> = k;", "channel spare from w to w carries Reference<M::Cell> ordering unordered delivery exactly-once-premise capacity 1 overflow block;", &run, true);
     let graph = fixture.graph();
     let tx = graph
         .iter()
@@ -420,7 +447,7 @@ fn missing_authored_carrier_is_typed_unavailable_but_empty_legacy_group_executes
 #[test]
 fn unported_attempt_and_recommend_correlations_remain_named_unsupported() {
     for step in [
-        "attempt Work by w on M::Cell::touch contracts [] as (result: Boolean) related by Other (k, k) { true };",
+        "attempt Work by w on M::Cell::touch contracts [] as (worked: Boolean) related by Other (k, k) { true };",
         "recommend Work by w on M::Cell::touch contracts [] as (advice: Boolean) related by Other (k, k) { true };",
     ] {
         let fixture = Fixture::new("", step, true);
@@ -433,7 +460,7 @@ fn unported_attempt_and_recommend_correlations_remain_named_unsupported() {
 #[trace("FR-940-AC-6", "FR-731-AC-1")]
 #[test]
 fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_executes() {
-    let run = format!("{} parallel Background memory sc {{ branch idle sequence Idle {{ check OK {{ true }}; }} }} join all [idle];", controls("related by Owns (k, k)", ""));
+    let run = format!("{} parallel Background memory sc {{ branch idle sequence Idle {{ check OK using v {{ true }}; }} }} join all [idle];", controls("related by Owns (k, k)", ""));
     let fixture = Fixture::new("", &run, true);
     fixture.with_routes(true, |_, native| {
         let definition = native
@@ -593,7 +620,7 @@ fn replay_both(
     ));
 }
 
-#[trace("FR-731-AC-3", "FR-940-AC-6", "FSpec-FR-831")]
+#[trace("FR-731-AC-2", "FR-731-AC-3", "FR-940-AC-6", "FSpec-FR-831")]
 #[test]
 fn replay_reports_first_authored_alias_including_repeated_canonical_premises() {
     let run = controls(
@@ -651,7 +678,7 @@ fn replay_reports_first_authored_alias_including_repeated_canonical_premises() {
     replay_both(&failing, forged, ReplayExpectation::Related("owns"));
     for blocked in [
         run.replace("{ tx }", "{ false }"),
-        format!("check Stop {{ false }}; {run}"),
+        format!("check Stop using v {{ false }}; {run}"),
     ] {
         let fixture = Fixture::new("", &blocked, false);
         let mut forged = witness(&fixture);
@@ -659,4 +686,53 @@ fn replay_reports_first_authored_alias_including_repeated_canonical_premises() {
         forged.prefix.push(valid.prefix[0].clone());
         replay_both(&fixture, forged, ReplayExpectation::NotEnabled);
     }
+    let mixed = controls(
+        "related by owns (k, k) related by Other (k, k) related by owns (k, k)",
+        "related by Owns (k, k)",
+    );
+    let fixture = Fixture::new("", &mixed, true);
+    fixture.with_routes(true, |_, native| {
+        let admitted = native
+            .model
+            .simulation
+            .input
+            .admitted_package()
+            .expect("admitted");
+        let fsl_eval::simulation::model::ProtocolDefinition::Package(form) = native
+            .model
+            .simulation
+            .input
+            .protocol_definition("P")
+            .expect("P")
+        else {
+            panic!("native")
+        };
+        let tx = form
+            .controls
+            .iter()
+            .find(|control| control.path.last().is_some_and(|name| name == "Tx"))
+            .expect("Tx");
+        let clauses = admitted
+            .protocol_correlation_clauses(&tx.node.node_id)
+            .expect("authored rows");
+        assert_eq!(clauses.len(), 3);
+        assert_eq!(clauses[0].alias.as_ref(), "owns");
+        assert_eq!(clauses[1].alias.as_ref(), "Other");
+        assert_ne!(clauses[0].canonical_index, clauses[1].canonical_index);
+        assert_eq!(clauses[0].canonical_index, clauses[2].canonical_index);
+    });
+    assert!(
+        !has_step(&fixture.graph(), StepKind::Send),
+        "the later false premise disables Tx after the true Owns premise"
+    );
+    let mut forged = witness(&fixture);
+    assert!(forged.prefix.is_empty());
+    forged.prefix.push(valid.prefix[0].clone());
+    replay_both(&fixture, forged, ReplayExpectation::Related("Other"));
+    let swapped = controls(
+        "related by Other (k, k) related by owns (k, k) related by owns (k, k)",
+        "related by Owns (k, k)",
+    );
+    let swapped = Fixture::new("", &swapped, true);
+    assert!(!has_step(&swapped.graph(), StepKind::Send));
 }
