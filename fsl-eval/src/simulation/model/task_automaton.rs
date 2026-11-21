@@ -40,6 +40,31 @@
 //! [`TaskLocation::key`] is the finite key. Its fields are plain data so the
 //! certificate's `TaskProductKey` can be built from it field by field.
 //!
+//! # Deadline misses end the lowering
+//!
+//! A deadline-miss edge targets a terminal location: its [`LocationInfo`] stops
+//! time, and [`TaskAutomaton::successors`] of it returns
+//! [`TaskAutomatonRefusal::PostMiss`]. Past a miss the service-clock encoding is
+//! not exact (a suspended job's clock can exceed its ceiling, so a bounded
+//! subtraction would fail and the automaton would time-lock where the concrete
+//! product continues). A schedulability proof needs no miss to be reachable, so
+//! a checker that reaches a miss edge must not certify: the item is refuted by
+//! the concrete search or stays `incomplete`, never `proved`.
+//!
+//! # Template ties and unreachable shapes
+//!
+//! A task has at most `ceil(D/T)` live jobs before its first miss, one fewer
+//! than its `ceil(D/T)+1` slots, so an [`Overflow`] needs a prior miss and
+//! the lowering refuses past a miss first; the overflow data is reported for
+//! completeness and a checker treats a reachable one as stopping certification.
+//!
+//! When several jobs miss at one instant the miss template names the first in
+//! task-then-rank order; the concrete product names the first in activation
+//! order, which a quotient node does not hold. Targets are equal; only the
+//! label can differ. One operation releasing the same task twice is refused
+//! at check time (`DuplicateRelease`, fsl-semantics), and the lowering refuses
+//! it too ([`TaskAutomatonRefusal::DuplicateRelease`]) instead of guessing.
+//!
 //! # Policy
 //!
 //! The policy is the plan's, derived from the checked claim. Fixed priority
@@ -599,6 +624,15 @@ pub enum TaskAutomatonRefusal {
     /// A release transition has no canonical identity.
     #[error("a release transition has no canonical identity")]
     Identity,
+    /// The clock layout does not hold a slot the control names.
+    #[error("the task clock layout has no such slot")]
+    Layout,
+    /// The location follows a deadline miss; the lowering is not exact there.
+    #[error("successors past a deadline miss are not modelled")]
+    PostMiss,
+    /// One source operation releases the same task twice.
+    #[error("one source operation releases a task twice")]
+    DuplicateRelease,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -677,12 +711,13 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
                     services.insert((aux.task_index, slot), index);
                 }
                 (TaskProductClockKind::Deadline, Some(slot)) => {
-                    let service = services.get(&(aux.task_index, slot)).copied().unwrap_or(0);
-                    slots[aux.task_index].push(SlotClocks {
-                        jitter: jitters.get(&(aux.task_index, slot)).copied(),
-                        service,
-                        deadline: index,
-                    });
+                    if let Some(service) = services.get(&(aux.task_index, slot)).copied() {
+                        slots[aux.task_index].push(SlotClocks {
+                            jitter: jitters.get(&(aux.task_index, slot)).copied(),
+                            service,
+                            deadline: index,
+                        });
+                    }
                 }
                 _ => {}
             }
@@ -850,9 +885,24 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         Ok(found)
     }
 
-    fn job_clocks(&self, job: &LiveJob) -> SlotClocks {
-        let slot = usize::try_from(job.slot).unwrap_or(usize::MAX);
-        self.slots[job.task_index][slot]
+    fn slot_of(&self, task_index: usize, slot: u64) -> Result<SlotClocks, TaskAutomatonRefusal> {
+        usize::try_from(slot)
+            .ok()
+            .and_then(|slot| self.slots.get(task_index)?.get(slot))
+            .copied()
+            .ok_or(TaskAutomatonRefusal::Layout)
+    }
+
+    fn job_clocks(&self, job: &LiveJob) -> Result<SlotClocks, TaskAutomatonRefusal> {
+        self.slot_of(job.task_index, job.slot)
+    }
+
+    fn ceiling(&self, clock: usize) -> Result<Rational, TaskAutomatonRefusal> {
+        clock
+            .checked_sub(1)
+            .and_then(|index| self.clocks.get(index))
+            .map(|clock| clock.ceiling.clone())
+            .ok_or(TaskAutomatonRefusal::Layout)
     }
 
     fn work(&self, job: &LiveJob) -> Rational {
@@ -900,16 +950,14 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
             }
         }
         for job in &location.control.jobs {
-            let clocks = self.job_clocks(job);
+            let clocks = self.job_clocks(job)?;
             let task = &plan.task_set.tasks[job.task_index];
             live[clocks.deadline] = true;
-            if !location.control.missed {
-                invariant.push(ClockAtom::upper(
-                    clocks.deadline,
-                    false,
-                    task.deadline.clone(),
-                ));
-            }
+            invariant.push(ClockAtom::upper(
+                clocks.deadline,
+                false,
+                task.deadline.clone(),
+            ));
             if job.phase == JobPhase::Pending {
                 if let Some(jitter) = clocks.jitter {
                     live[jitter] = true;
@@ -922,6 +970,15 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
             if job.phase == JobPhase::Running {
                 invariant.push(ClockAtom::upper(clocks.service, false, self.work(job)));
             }
+        }
+        if location.control.missed {
+            // A deadline miss is terminal: time stops and nothing follows.
+            return Ok(LocationInfo {
+                invariant: Vec::new(),
+                time_stopped: true,
+                urgent: Guard::falsity(),
+                live,
+            });
         }
         let time_stopped = source
             .is_urgent(&location.source)
@@ -1120,6 +1177,9 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         location: &TaskLocation,
     ) -> Result<(Vec<TaskEdge>, Vec<Overflow>), TaskAutomatonRefusal> {
         self.certification()?;
+        if location.control.missed {
+            return Err(TaskAutomatonRefusal::PostMiss);
+        }
         let plan = self.product.plan();
         let mut edges = Vec::new();
         let mut overflows = Vec::new();
@@ -1158,12 +1218,17 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
                 .collect();
             let mut released: Vec<(usize, usize)> = Vec::new();
             let mut overflowing = None;
+            let mut seen: Vec<usize> = Vec::new();
             for release in plan.releases_for_operation(step.operation()) {
                 let Some(task_index) = plan.tasks.iter().position(|bound| {
                     plan.task_set.tasks[bound.task_index].name == release.task.name
                 }) else {
                     continue;
                 };
+                if seen.contains(&task_index) {
+                    return Err(TaskAutomatonRefusal::DuplicateRelease);
+                }
+                seen.push(task_index);
                 let task = &plan.task_set.tasks[task_index];
                 let Some(arrival) = self.arrival_clock(task_index) else {
                     continue;
@@ -1180,10 +1245,10 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
                 let Some(slot) =
                     (0..plan.tasks[task_index].max_jobs).find(|slot| !live.contains(slot))
                 else {
-                    overflowing = Some(task_index);
-                    break;
+                    overflowing.get_or_insert(task_index);
+                    continue;
                 };
-                let clocks = self.slots[task_index][usize::try_from(slot).unwrap_or(usize::MAX)];
+                let clocks = self.slot_of(task_index, slot)?;
                 control.arrival_started[task_index] = true;
                 resets.push(ClockReset {
                     clock: arrival,
@@ -1287,22 +1352,27 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
 
     /// Whether the job at `better` precedes the job at `worse` in policy
     /// order, as a guard over deadline clocks.
-    fn before(&self, control: &TaskControl, better: usize, worse: usize) -> Guard {
+    fn before(
+        &self,
+        control: &TaskControl,
+        better: usize,
+        worse: usize,
+    ) -> Result<Guard, TaskAutomatonRefusal> {
         let plan = self.product.plan();
         let (left, right) = (&control.jobs[better], &control.jobs[worse]);
         if left.task_index == right.task_index {
             // The same task's jobs are ordered by age: the list order.
-            return if better < worse {
+            return Ok(if better < worse {
                 Guard::truth()
             } else {
                 Guard::falsity()
-            };
+            });
         }
         let (left_task, right_task) = (
             &plan.task_set.tasks[left.task_index],
             &plan.task_set.tasks[right.task_index],
         );
-        match plan.policy {
+        Ok(match plan.policy {
             SchedulingPolicy::FixedPriority | SchedulingPolicy::Amc => {
                 if left_task.priority < right_task.priority {
                     Guard::truth()
@@ -1312,8 +1382,8 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
             }
             SchedulingPolicy::Edf => {
                 let (left_clock, right_clock) = (
-                    self.job_clocks(left).deadline,
-                    self.job_clocks(right).deadline,
+                    self.job_clocks(left)?.deadline,
+                    self.job_clocks(right)?.deadline,
                 );
                 // Absolute deadline is `now - d + D`, so the left job's is
                 // earlier exactly when `d_l - d_r > D_l - D_r`.
@@ -1326,7 +1396,7 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
                     bound: constant.neg(),
                 }])
             }
-        }
+        })
     }
 
     fn scheduler_edges(
@@ -1334,6 +1404,9 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         location: &TaskLocation,
     ) -> Result<Vec<TaskEdge>, TaskAutomatonRefusal> {
         self.certification()?;
+        if location.control.missed {
+            return Err(TaskAutomatonRefusal::PostMiss);
+        }
         let control = &location.control;
         let mut edges = Vec::new();
         let edge = |kind: TaskTemplate,
@@ -1375,16 +1448,14 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         }
         // Raw urgent guards, then each made exclusive of the higher classes.
         let mut miss_raw = Vec::new();
-        if !control.missed {
-            for job in &control.jobs {
-                let clocks = self.job_clocks(job);
-                let task = &self.product.plan().task_set.tasks[job.task_index];
-                let mut atoms = vec![ClockAtom::lower(clocks.deadline, false, &task.deadline)];
-                if job.phase == JobPhase::Running {
-                    atoms.push(ClockAtom::upper(clocks.service, true, self.work(job)));
-                }
-                miss_raw.push(Guard::conjunction(atoms));
+        for job in &control.jobs {
+            let clocks = self.job_clocks(job)?;
+            let task = &self.product.plan().task_set.tasks[job.task_index];
+            let mut atoms = vec![ClockAtom::lower(clocks.deadline, false, &task.deadline)];
+            if job.phase == JobPhase::Running {
+                atoms.push(ClockAtom::upper(clocks.service, true, self.work(job)));
             }
+            miss_raw.push(Guard::conjunction(atoms));
         }
         let miss_any = miss_raw
             .iter()
@@ -1417,7 +1488,7 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         let mut complete_raw = Guard::falsity();
         if let Some(position) = running {
             let job = &control.jobs[position];
-            let clocks = self.job_clocks(job);
+            let clocks = self.job_clocks(job)?;
             let work = self.work(job);
             complete_raw = Guard::conjunction(vec![ClockAtom::lower(clocks.service, false, &work)]);
             let mut target = control.clone();
@@ -1435,15 +1506,15 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
                 .enumerate()
                 .filter(|(other, candidate)| *other != position && candidate.started)
                 .map(|(_, candidate)| {
-                    let service = self.job_clocks(candidate).service;
-                    BoundedSubtraction {
+                    let service = self.job_clocks(candidate)?.service;
+                    Ok(BoundedSubtraction {
                         clock: service,
                         amount: work.clone(),
-                        ceiling: self.clocks[service - 1].ceiling.clone(),
+                        ceiling: self.ceiling(service)?,
                         template: template.clone(),
-                    }
+                    })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, TaskAutomatonRefusal>>()?;
             edges.push(edge(
                 template,
                 complete_raw.and(&not_miss),
@@ -1459,22 +1530,21 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
             .filter(|(_, job)| job.phase != JobPhase::Pending)
             .map(|(position, _)| position)
             .collect();
-        let best = |position: usize| {
-            eligible
-                .iter()
-                .filter(|other| **other != position)
-                .fold(Guard::truth(), |guard, other| {
-                    guard.and(&self.before(control, position, *other))
-                })
+        let best = |position: usize| -> Result<Guard, TaskAutomatonRefusal> {
+            let mut guard = Guard::truth();
+            for other in eligible.iter().filter(|other| **other != position) {
+                guard = guard.and(&self.before(control, position, *other)?);
+            }
+            Ok(guard)
         };
         let exclusive = not_miss.and(&complete_raw.negated());
         if let Some(position) = running {
             let job = &control.jobs[position];
-            let better = eligible
-                .iter()
-                .filter(|other| **other != position)
-                .fold(Guard::falsity(), |union, other| union.or(&best(*other)));
-            let clocks = self.job_clocks(job);
+            let mut better = Guard::falsity();
+            for other in eligible.iter().filter(|other| **other != position) {
+                better = better.or(&best(*other)?);
+            }
+            let clocks = self.job_clocks(job)?;
             let template = self.template(
                 TaskTransitionAction::Preempt,
                 control,
@@ -1502,8 +1572,8 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         } else {
             for position in &eligible {
                 let job = &control.jobs[*position];
-                let clocks = self.job_clocks(job);
-                let guard = best(*position).and(&not_miss);
+                let clocks = self.job_clocks(job)?;
+                let guard = best(*position)?.and(&not_miss);
                 let mut target = control.clone();
                 target.jobs[*position].phase = JobPhase::Running;
                 target.jobs[*position].started = true;

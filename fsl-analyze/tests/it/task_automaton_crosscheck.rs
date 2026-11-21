@@ -3,12 +3,14 @@
 //! the concrete `TaskProductSystem` at sampled rational-time states, and its
 //! certification gate exposes the dual-WCET mode-switch exclusion (ruling U6).
 
-use filament_exact::Rational;
+use std::collections::BTreeSet;
+
+use filament_exact::{NonZeroInteger, Rational};
 use fsl_eval::simulation::model::{
-    CertificationRefusal, EdgeKind, JobPhase, LocationKey, TaskAutomaton, TaskAutomatonRefusal,
-    TaskProductState, TaskProductSystem, TaskTransitionAction, TimedSystem,
+    CertificationRefusal, EdgeKind, JobPhase, TaskAutomaton, TaskAutomatonRefusal, TaskEdge,
+    TaskProductState, TaskProductSystem, TaskTemplate, TaskTransitionAction,
+    TaskTransitionIdentity, TimedSystem,
 };
-use ix_trace_rs::trace;
 
 use crate::timed_world::{world, World, DENSE};
 
@@ -70,7 +72,33 @@ fn sporadic_pair() -> World {
     )
 }
 
-type Point = (LocationKey, Vec<Rational>);
+/// `p` runs long; `q` arrives later with an earlier absolute deadline.
+fn preempting_pair() -> World {
+    world_for(
+        "Q",
+        &["p", "q"],
+        "taskset Q {\n\
+         task p periodic 10 ms deadline 10 ms bcet 4 ms wcet 4 ms priority 2 lo;\n\
+         task q sporadic 5 ms deadline 3 ms bcet 1 ms wcet 1 ms priority 1 lo;\n\
+         }\n\
+         schedulable QFp on Q under fixed_priority;\n\
+         schedulable QEdf on Q under edf;\n",
+    )
+}
+
+/// Both tasks released at once share an absolute deadline.
+fn tied_pair() -> World {
+    world_for(
+        "T",
+        &["a", "b"],
+        "taskset T {\n\
+         task a periodic 6 ms deadline 6 ms bcet 1 ms wcet 1 ms priority 1 lo;\n\
+         task b periodic 6 ms deadline 6 ms bcet 2 ms wcet 2 ms priority 2 lo;\n\
+         }\n\
+         schedulable TFp on T under fixed_priority;\n\
+         schedulable TEdf on T under edf;\n",
+    )
+}
 
 fn overloaded_pair() -> World {
     world_for(
@@ -88,24 +116,102 @@ fn rational(n: i64, d: i64) -> Rational {
     crate::zone_search::exact(n, d)
 }
 
-fn sorted(mut points: Vec<Point>) -> Vec<Point> {
-    points.sort();
-    points.dedup();
-    points
+/// What a walk exercised, so a walk that never reaches a case fails.
+#[derive(Default)]
+struct Coverage {
+    compared: usize,
+    actions: BTreeSet<String>,
+    /// States with two live jobs of different tasks at one absolute deadline.
+    ties: usize,
+    /// States whose live clocks hold two distinct nonzero fractional parts.
+    fraction_orders: usize,
+    /// States where a scheduler action is enabled (an invariant boundary).
+    boundaries: usize,
 }
 
-/// Walks the concrete product from every initial state along pseudo-random
+fn fractional_part(value: &Rational) -> Rational {
+    let denominator = NonZeroInteger::try_from(value.denominator()).expect("nonzero denominator");
+    let (_, remainder) = value.numerator().div_mod_floor(denominator);
+    Rational::new(remainder, value.denominator().clone()).expect("nonzero denominator")
+}
+
+fn template_label(template: &TaskTemplate, missing: usize) -> String {
+    if template.action == TaskTransitionAction::DeadlineMiss && missing > 1 {
+        // Simultaneous misses: the concrete product names the first in
+        // activation order, a quotient node holds none (module doc).
+        return format!("{:?}", template.action);
+    }
+    format!(
+        "{:?}|{}|{}|{}|{:?}|{:?}|{:?}",
+        template.action,
+        template.task,
+        template.job_rank,
+        template.slot,
+        template.release,
+        template.source_transition,
+        template.priority
+    )
+}
+
+/// The rank of the live job `(task, slot)` among its task's jobs in `state`,
+/// oldest first.
+fn concrete_rank(
+    product: &TaskProductSystem<'_, '_>,
+    state: &TaskProductState,
+    task: &str,
+    slot: u64,
+) -> u64 {
+    let tasks = &product.plan().task_set.tasks;
+    let mut same: Vec<_> = state
+        .jobs()
+        .iter()
+        .filter(|job| tasks[job.task_index].name == task)
+        .collect();
+    same.sort_by(|a, b| {
+        a.activated_at
+            .cmp(&b.activated_at)
+            .then(a.occurrence.cmp(&b.occurrence))
+    });
+    u64::try_from(
+        same.iter()
+            .position(|job| job.slot == slot)
+            .expect("the identity names a live job"),
+    )
+    .expect("small")
+}
+
+fn identity_label(
+    product: &TaskProductSystem<'_, '_>,
+    labelled_in: &TaskProductState,
+    identity: &TaskTransitionIdentity,
+    missing: usize,
+) -> String {
+    if identity.action == TaskTransitionAction::DeadlineMiss && missing > 1 {
+        return format!("{:?}", identity.action);
+    }
+    format!(
+        "{:?}|{}|{}|{}|{:?}|{:?}|{:?}",
+        identity.action,
+        identity.task,
+        concrete_rank(product, labelled_in, &identity.task, identity.slot),
+        identity.slot,
+        identity.release,
+        identity.source_transition,
+        identity.priority
+    )
+}
+
+/// Walks the concrete product from the initial state along pseudo-random
 /// moves and, at each visited state, asserts that the automaton's enabled
-/// edges, delays and successors agree with the concrete product's. Returns
-/// the number of discrete steps and delays compared and the actions seen.
-fn cross_check(world: &World, claim: &str, seeds: u64, depth: usize) -> (usize, Vec<String>) {
+/// edges (target, valuation and template label), delays and successors agree
+/// with the concrete product's.
+fn cross_check(world: &World, claim: &str, seeds: u64, depth: usize) -> Coverage {
     let model = world.system();
     let timed = TimedSystem::new(&model, "M").expect("dense timed model");
     let product = TaskProductSystem::new(timed, claim).expect("checked task product");
     let automaton = TaskAutomaton::new(&product);
     automaton.certification().expect("fixed-work set");
-    let mut compared = 0;
-    let mut actions = Vec::new();
+    let mut coverage = Coverage::default();
     for seed in 0..seeds {
         let mut rng = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         let mut pick = |bound: usize| {
@@ -126,6 +232,30 @@ fn cross_check(world: &World, claim: &str, seeds: u64, depth: usize) -> (usize, 
                 info.invariant_holds(&v),
                 "the abstraction satisfies the invariant"
             );
+            let missing = state
+                .jobs()
+                .iter()
+                .filter(|job| state.now() >= &job.deadline && job.service < job.demand)
+                .count();
+            let jobs = state.jobs();
+            if jobs.iter().any(|a| {
+                jobs.iter()
+                    .any(|b| a.task_index != b.task_index && a.deadline == b.deadline)
+            }) {
+                coverage.ties += 1;
+            }
+            let fractions: BTreeSet<Rational> = v
+                .iter()
+                .skip(1)
+                .filter(|value| !value.is_integer())
+                .map(fractional_part)
+                .collect();
+            if fractions.len() >= 2 {
+                coverage.fraction_orders += 1;
+            }
+            if info.urgent.holds(&v) {
+                coverage.boundaries += 1;
+            }
 
             // Discrete moves: edges against concrete source and scheduler steps.
             let successors = automaton.successors(&location).expect("successors");
@@ -133,33 +263,57 @@ fn cross_check(world: &World, claim: &str, seeds: u64, depth: usize) -> (usize, 
             let mut symbolic = Vec::new();
             for edge in &successors.edges {
                 if let Some(next) = automaton.fire(edge, &v).expect("fire") {
-                    symbolic.push((edge.target.key().expect("key"), next));
-                    actions.push(match &edge.kind {
-                        EdgeKind::Source { activations, .. } if !activations.is_empty() => {
-                            "Activate".to_owned()
+                    let (label, action) = match &edge.kind {
+                        EdgeKind::Source {
+                            activations,
+                            transition,
+                        } if activations.is_empty() => {
+                            (format!("source|{transition:?}"), "Source".to_owned())
                         }
-                        EdgeKind::Source { .. } => "Source".to_owned(),
-                        EdgeKind::Scheduler(template) => format!("{:?}", template.action),
-                    });
+                        EdgeKind::Source { activations, .. } => (
+                            activations
+                                .iter()
+                                .map(|template| template_label(template, missing))
+                                .collect::<Vec<_>>()
+                                .join(";"),
+                            "Activate".to_owned(),
+                        ),
+                        EdgeKind::Scheduler(template) => (
+                            template_label(template, missing),
+                            format!("{:?}", template.action),
+                        ),
+                    };
+                    coverage.actions.insert(action);
+                    symbolic.push((edge.target.key().expect("key"), next, label));
                 }
             }
             let mut concrete = Vec::new();
             let scheduler = product.scheduler_steps(&state);
             let source = product.source_steps(&state).expect("source steps");
-            for next in scheduler
-                .iter()
-                .map(|step| &step.state)
-                .chain(source.iter().map(|step| &step.state))
-            {
-                let (target, next) = automaton.abstract_state(next).expect("abstraction");
-                concrete.push((target.key().expect("key"), next));
+            for step in &scheduler {
+                let (target, next) = automaton.abstract_state(&step.state).expect("abstraction");
+                let label = identity_label(&product, &state, &step.identity, missing);
+                concrete.push((target.key().expect("key"), next, label));
             }
-            assert_eq!(
-                sorted(symbolic),
-                sorted(concrete),
-                "discrete successors agree at {state:?}"
-            );
-            compared += 1;
+            for step in &source {
+                let (target, next) = automaton.abstract_state(&step.state).expect("abstraction");
+                let label = if step.activations.is_empty() {
+                    format!("source|{:?}", step.source.transition())
+                } else {
+                    step.activations
+                        .iter()
+                        .map(|identity| identity_label(&product, &step.state, identity, missing))
+                        .collect::<Vec<_>>()
+                        .join(";")
+                };
+                concrete.push((target.key().expect("key"), next, label));
+            }
+            symbolic.sort();
+            symbolic.dedup();
+            concrete.sort();
+            concrete.dedup();
+            assert_eq!(symbolic, concrete, "discrete successors agree at {state:?}");
+            coverage.compared += 1;
 
             // Delays at the event boundaries, half-way to them and past them.
             let boundaries = product.next_event_delays(&state).expect("boundaries");
@@ -186,7 +340,7 @@ fn cross_check(world: &World, claim: &str, seeds: u64, depth: usize) -> (usize, 
                         "delayed valuation agrees"
                     );
                     admitted.push(reached);
-                    compared += 1;
+                    coverage.compared += 1;
                 }
             }
 
@@ -208,69 +362,158 @@ fn cross_check(world: &World, claim: &str, seeds: u64, depth: usize) -> (usize, 
             };
         }
     }
-    (compared, actions)
+    coverage
 }
 
-fn assert_saw(actions: &[String], wanted: &[&str]) {
+fn assert_saw(coverage: &Coverage, wanted: &[&str]) {
     for action in wanted {
         assert!(
-            actions.iter().any(|seen| seen == action),
+            coverage.actions.contains(*action),
             "the walk exercised {action}; saw {:?}",
-            {
-                let mut seen = actions.to_vec();
-                seen.sort();
-                seen.dedup();
-                seen
-            }
+            coverage.actions
         );
     }
+    assert!(
+        coverage.fraction_orders > 0,
+        "the walk reached a fraction-order point"
+    );
+    assert!(coverage.boundaries > 0, "the walk reached a boundary point");
 }
 
-/// FR-418-AC-12, AC-13: fixed-priority successors (release, dispatch,
+/// FR-418 ruling U7: fixed-priority successors (release, dispatch,
 /// preemption, resumption, completion and its bounded subtractions) of the
-/// task automaton equal the concrete product's at sampled rational states.
-#[trace("TC-371", "FR-418-AC-12")]
-#[trace("TC-371", "FR-418-AC-13")]
+/// task automaton equal the concrete product's, labels included, at sampled
+/// rational states.
 #[test]
 fn fixed_priority_symbolic_successors_agree_with_the_concrete_product() {
-    let (compared, actions) = cross_check(&set_b(4), "BFp", 24, 60);
-    assert!(compared > 200, "compared {compared}");
+    let coverage = cross_check(&set_b(4), "BFp", 24, 60);
+    assert!(coverage.compared > 200, "compared {}", coverage.compared);
     assert_saw(
-        &actions,
+        &coverage,
         &["Activate", "Dispatch", "Preempt", "Resume", "Complete"],
     );
 }
 
-/// FR-418-AC-12: earliest-deadline-first successors, decided by diagonal
+/// FR-418 ruling U7: earliest-deadline-first successors, decided by diagonal
 /// deadline-clock guards and the task-name tie, agree with the concrete
-/// product's.
-#[trace("TC-371", "FR-418-AC-12")]
+/// product's, including preemption and resumption and an equal absolute
+/// deadline across tasks.
 #[test]
 fn edf_symbolic_successors_agree_with_the_concrete_product() {
-    let (compared, actions) = cross_check(&set_b(4), "BEdf", 24, 60);
-    assert!(compared > 200, "compared {compared}");
-    assert_saw(&actions, &["Activate", "Dispatch", "Complete"]);
-    let (_, sporadic) = cross_check(&sporadic_pair(), "PEdf", 24, 60);
+    let coverage = cross_check(&preempting_pair(), "QEdf", 40, 60);
+    assert_saw(
+        &coverage,
+        &["Activate", "Dispatch", "Preempt", "Resume", "Complete"],
+    );
+    let tied = cross_check(&tied_pair(), "TEdf", 24, 40);
+    assert!(tied.ties > 0, "an equal absolute deadline was reached");
+    assert_saw(&tied, &["Activate", "Dispatch", "Complete"]);
+    let sporadic = cross_check(&sporadic_pair(), "PEdf", 40, 60);
     assert_saw(&sporadic, &["Activate", "Dispatch", "Complete"]);
 }
 
-/// FR-418-AC-13: a sporadic and a periodic task under both policies, and an
-/// overloaded set whose first deadline miss is an edge, agree too.
-#[trace("TC-371", "FR-418-AC-13")]
+/// FR-418 ruling U7: a sporadic and a periodic task under fixed priority
+/// agree, with preemption and resumption, and an overloaded set whose first
+/// deadline miss is an edge agrees too.
 #[test]
 fn sporadic_and_overloaded_sets_agree_with_the_concrete_product() {
-    let (compared, actions) = cross_check(&sporadic_pair(), "PFp", 24, 60);
-    assert!(compared > 100, "compared {compared}");
-    assert_saw(&actions, &["Activate", "Dispatch", "Complete"]);
-    let (_, overloaded) = cross_check(&overloaded_pair(), "OFp", 24, 30);
-    assert_saw(&overloaded, &["DeadlineMiss"]);
+    let coverage = cross_check(&preempting_pair(), "QFp", 40, 60);
+    assert_saw(
+        &coverage,
+        &["Activate", "Dispatch", "Preempt", "Resume", "Complete"],
+    );
+    let pair = cross_check(&sporadic_pair(), "PFp", 40, 60);
+    assert_saw(&pair, &["Activate", "Dispatch", "Preempt", "Complete"]);
+    let overloaded = cross_check(&overloaded_pair(), "OFp", 24, 30);
+    assert!(overloaded.actions.contains("DeadlineMiss"));
 }
 
-/// FR-418 ruling U6: a dual-WCET task set with a mode switch is not covered
+/// FR-418 ruling U7, post-miss refusal: the lowering never continues past a
+/// deadline miss. With x (priority 1, period 6, deadline 2, work 6) and y
+/// (priority 2, period 10, deadline 5, work 1), y runs, x preempts it at 1/2
+/// and misses at 5/2; past the miss y's service clock would exceed its
+/// ceiling, so the miss location is terminal and its successors are refused
+/// rather than the automaton time-locking.
+#[test]
+fn the_lowering_refuses_successors_past_a_deadline_miss() {
+    let world = world_for(
+        "M2",
+        &["x", "y"],
+        "taskset M2 {\n\
+         task x periodic 6 ms deadline 2 ms bcet 6 ms wcet 6 ms priority 1 lo;\n\
+         task y periodic 10 ms deadline 5 ms bcet 1 ms wcet 1 ms priority 2 lo;\n\
+         }\n\
+         schedulable MFp on M2 under fixed_priority;\n",
+    );
+    let model = world.system();
+    let timed = TimedSystem::new(&model, "M").expect("dense timed model");
+    let product = TaskProductSystem::new(timed, "MFp").expect("checked task product");
+    let automaton = TaskAutomaton::new(&product);
+    let (mut location, mut v) = automaton.initial().expect("initial").remove(0);
+    let mut take = |location: &mut fsl_eval::simulation::model::TaskLocation,
+                    v: &mut Vec<Rational>,
+                    wanted: &dyn Fn(&TaskEdge) -> bool| {
+        let edge = automaton
+            .successors(location)
+            .expect("successors")
+            .edges
+            .into_iter()
+            .find(|edge| wanted(edge) && automaton.fire(edge, v).expect("fire").is_some())
+            .expect("the wanted edge is enabled");
+        *v = automaton.fire(&edge, v).expect("fire").expect("enabled");
+        *location = edge.target;
+    };
+    let activates = |task: &'static str| {
+        move |edge: &TaskEdge| {
+            matches!(&edge.kind, EdgeKind::Source { activations, .. }
+                if activations.iter().any(|a| a.task == task))
+        }
+    };
+    let action = |action: TaskTransitionAction, task: &'static str| move |edge: &TaskEdge| matches!(&edge.kind, EdgeKind::Scheduler(t) if t.action == action && t.task == task);
+    let delay = |location: &fsl_eval::simulation::model::TaskLocation,
+                 v: &mut Vec<Rational>,
+                 by: Rational| {
+        let info = automaton.location_info(location).expect("info");
+        assert!(info.admits_delay(v, &by), "delay {by:?} is admitted");
+        *v = fsl_eval::simulation::model::delay_valuation(&info, v, &by);
+    };
+    take(&mut location, &mut v, &activates("y"));
+    take(
+        &mut location,
+        &mut v,
+        &action(TaskTransitionAction::Dispatch, "y"),
+    );
+    delay(&location, &mut v, rational(1, 2));
+    take(&mut location, &mut v, &activates("x"));
+    take(
+        &mut location,
+        &mut v,
+        &action(TaskTransitionAction::Preempt, "y"),
+    );
+    take(
+        &mut location,
+        &mut v,
+        &action(TaskTransitionAction::Dispatch, "x"),
+    );
+    delay(&location, &mut v, rational(2, 1));
+    take(
+        &mut location,
+        &mut v,
+        &action(TaskTransitionAction::DeadlineMiss, "x"),
+    );
+    assert!(location.control().missed);
+    assert_eq!(
+        automaton.successors(&location).err(),
+        Some(TaskAutomatonRefusal::PostMiss)
+    );
+    let info = automaton.location_info(&location).expect("miss info");
+    assert!(info.time_stopped, "a miss location stops time");
+}
+
+/// FR-418 ruling U6 (settlement is S4): a dual-WCET task set with a mode switch is not covered
 /// by `closed-finite-product/v1`; the lowering exposes the refusal so the
 /// checker's policy check can settle `certificate-unchecked`, and it builds no
 /// edges for it.
-#[trace("TC-371", "FR-418-AC-21")]
 #[test]
 fn dual_wcet_mode_switch_is_not_certified() {
     let body_tasks = "taskset D {\n\
@@ -297,10 +540,9 @@ fn dual_wcet_mode_switch_is_not_certified() {
     );
 }
 
-/// FR-418-AC-13: the lowering is data in FR-418 clock order, with the
+/// FR-418 ruling U7 (lowering data, not yet a certificate check): the lowering is data in FR-418 clock order, with the
 /// bounded subtractions and diagonals the guards use, and an activation
 /// names the new job's rank and slot in its target.
-#[trace("TC-371", "FR-418-AC-13")]
 #[test]
 fn the_automaton_exposes_clocks_subtractions_diagonals_and_templates() {
     let world = set_b(4);
@@ -362,9 +604,9 @@ fn the_automaton_exposes_clocks_subtractions_diagonals_and_templates() {
         .any(|job| job.phase == JobPhase::Running));
 }
 
-/// FR-418-AC-13: a task with release jitter lowers to jitter clocks, a
+/// Lowering-only test, not certified: release jitter has no concrete oracle
+/// (`TaskProductSystem` refuses it), so this checks only the structure: a task with release jitter lowers to jitter clocks, a
 /// pending phase and a release edge within the jitter window.
-#[trace("TC-371", "FR-418-AC-13")]
 #[test]
 fn jitter_lowers_to_a_pending_phase_and_a_release_edge() {
     let world = world_for(
@@ -409,61 +651,4 @@ fn jitter_lowers_to_a_pending_phase_and_a_release_edge() {
         .find(|edge| matches!(&edge.kind, EdgeKind::Scheduler(t) if t.action == TaskTransitionAction::Release))
         .expect("a release edge");
     assert_eq!(release.target.control().jobs[0].phase, JobPhase::Ready);
-}
-
-/// FR-418-AC-13: an allocation past a task's `ceil(D/T)+1` slots is an
-/// overflow where it is enabled, never a location or an edge.
-#[trace("TC-371", "FR-418-AC-13")]
-#[test]
-fn an_allocation_past_the_slot_bound_is_overflow_not_a_node() {
-    let world = world_for(
-        "W",
-        &["a"],
-        "taskset W {\n\
-         task a periodic 1 ms deadline 1 ms bcet 5 ms wcet 5 ms priority 1 lo;\n\
-         }\n\
-         schedulable WFp on W under fixed_priority;\n",
-    );
-    let model = world.system();
-    let timed = TimedSystem::new(&model, "M").expect("dense timed model");
-    let product = TaskProductSystem::new(timed, "WFp").expect("checked task product");
-    assert_eq!(product.plan().tasks[0].max_jobs, 2);
-    let automaton = TaskAutomaton::new(&product);
-    let (mut location, mut v) = automaton.initial().expect("initial").remove(0);
-    let mut overflowed = false;
-    for _ in 0..40 {
-        let successors = automaton.successors(&location).expect("successors");
-        if successors
-            .overflows
-            .iter()
-            .any(|overflow| overflow.guard.holds(&v))
-        {
-            overflowed = true;
-            assert!(!successors.edges.iter().any(|edge| matches!(
-                &edge.kind,
-                EdgeKind::Source { activations, .. } if !activations.is_empty()
-            ) && automaton
-                .fire(edge, &v)
-                .expect("fire")
-                .is_some()));
-            break;
-        }
-        let fired = successors.edges.iter().find_map(|edge| {
-            if matches!(&edge.kind, EdgeKind::Source { activations, .. } if activations.is_empty())
-            {
-                return None;
-            }
-            let next = automaton.fire(edge, &v).expect("fire")?;
-            Some((edge.target.clone(), next))
-        });
-        if let Some((target, next)) = fired {
-            (location, v) = (target, next);
-            continue;
-        }
-        let info = automaton.location_info(&location).expect("info");
-        let delay = rational(1, 1);
-        assert!(info.admits_delay(&v, &delay));
-        v = fsl_eval::simulation::model::delay_valuation(&info, &v, &delay);
-    }
-    assert!(overflowed, "a third live job needs a slot past max_jobs");
 }

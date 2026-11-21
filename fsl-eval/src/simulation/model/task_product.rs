@@ -1498,7 +1498,11 @@ impl<'s, 'a> TaskProductSystem<'s, 'a> {
         }
     }
 
-    pub(super) fn job_order(&self, left: &TaskProductJob, right: &TaskProductJob) -> std::cmp::Ordering {
+    pub(super) fn job_order(
+        &self,
+        left: &TaskProductJob,
+        right: &TaskProductJob,
+    ) -> std::cmp::Ordering {
         let left_task = &self.plan.task_set.tasks[left.task_index];
         let right_task = &self.plan.task_set.tasks[right.task_index];
         match self.plan.policy {
