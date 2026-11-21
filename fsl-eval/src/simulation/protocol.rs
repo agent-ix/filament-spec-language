@@ -882,6 +882,10 @@ pub fn check_protocol_bounds(
     };
     check_requires_bound(&roots(&domains), model.types(), position_limit)
         .map_err(with_capacities)?;
+    // The generic type classifier treats references as finite; the model
+    // preflight additionally checks declared clock-selector domains. Protocol
+    // attempts carry no timed-profile bound for those selectors.
+    super::model::check_model_bounds(model, position_limit).map_err(with_capacities)?;
     check_attempt_types(model, protocol, evaluator).map_err(with_capacities)?;
     if capacities.unbound().is_empty() {
         Ok(())
