@@ -3963,6 +3963,9 @@ fn body_location_allowance(admitted: &CheckedPackageV2, function: &CheckedNodeId
             own = own.checked_add(1)?;
             match term {
                 CheckedTerm::Reference { target } => {
+                    if target.package.as_ref() != admitted.name() {
+                        continue;
+                    }
                     if let Some(child) = nodes.get(target) {
                         if has_tag(child, WireTag::Expression)
                             || has_form(child, WireTag::Value, WireForm::RecordValue)

@@ -109,12 +109,16 @@ fn is_term(node: &CheckedSemanticNodeV2) -> bool {
 fn references<'a>(
     term: &'a CheckedTerm,
     nodes: &BTreeMap<&CheckedNodeId, &'a CheckedSemanticNodeV2>,
+    package: &str,
 ) -> Vec<&'a CheckedSemanticNodeV2> {
     let mut pending = vec![term];
     let mut found = Vec::new();
     while let Some(term) = pending.pop() {
         match term {
             CheckedTerm::Reference { target } => {
+                if target.package.as_ref() != package {
+                    continue;
+                }
                 if let Some(node) = nodes.get(target) {
                     if has_tag(node, WireTag::Expression)
                         || has_form(node, WireTag::Value, WireForm::RecordValue)
@@ -206,7 +210,7 @@ pub(super) fn checked_body_locations(
         let mut walk = nodes
             .get(id)
             .and_then(|node| body(node))
-            .map(|body| references(body, &nodes))
+            .map(|body| references(body, &nodes, graph.package_name()))
             .unwrap_or_default();
         walk.reverse();
         while let Some(node) = walk.pop() {
@@ -267,7 +271,11 @@ pub(super) fn checked_body_locations(
                     location: row.location,
                 });
             }
-            walk.extend(references(&node.body, &nodes).into_iter().rev());
+            walk.extend(
+                references(&node.body, &nodes, graph.package_name())
+                    .into_iter()
+                    .rev(),
+            );
         }
     }
     let rows = ordered(
