@@ -12,7 +12,7 @@ use filament_exact::{
 use filament_semantic_value::declaration::{CompositeDeclaration, TypeEnvironment};
 use fsl_foundation::{IdentityLimits, Setting};
 use fsl_semantics::model::state::{ModelState, StateField, StateModel, StateObject};
-use quire_canonical::{Error, Limits, Sink, Writer};
+use quire_canonical::{Encode, Error, Limits, NodeRef, Sink, Writer};
 
 use super::super::{ModelKeyBudget, ModelKeyError};
 use super::projection::{self, ArrayOrder, Scalar, StructuralSink, ValueSink};
@@ -986,6 +986,43 @@ impl ValueSink for Bounded<'_, '_> {
     }
 }
 
+/// Run canonical admission through the same reservation/cancellation bridge as encoding.
+pub(crate) fn with_reservation<T>(
+    identity: IdentityLimits,
+    budget: &mut dyn ModelKeyBudget,
+    cancel: &Cancel,
+    action: impl FnOnce(&mut dyn quire_canonical::Reservation) -> T,
+) -> Result<T, ModelKeyError> {
+    let scope = Scope {
+        budget: RefCell::new(budget),
+        cancel,
+        identity,
+        refused: RefCell::new(None),
+    };
+    scope.poll()?;
+    let result = action(&mut Provision(&scope));
+    scope.poll()?;
+    if let Some(error) = scope.refused.borrow_mut().take() {
+        return Err(error);
+    }
+    Ok(result)
+}
+
+pub(crate) fn node_bytes(
+    node: NodeRef<'_>,
+    identity: IdentityLimits,
+    budget: &mut dyn ModelKeyBudget,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ModelKeyError> {
+    let scope = Scope {
+        budget: RefCell::new(budget),
+        cancel,
+        identity,
+        refused: RefCell::new(None),
+    };
+    scope.canonical(|writer| node.encode_into(writer))
+}
+
 pub(crate) fn model_bytes(
     model: &StateModel,
     state: &ModelState,
@@ -1003,6 +1040,84 @@ pub(crate) fn model_bytes(
     let mut sink = Bounded::new(&scope);
     scope.work(1)?;
     projection::project_model_state(&mut sink, model, state, typing)?;
+    scope.poll()?;
+    sink.finish_bytes()
+}
+
+pub(crate) fn pending_bytes(
+    scheduled: &super::super::ScheduledIdentity,
+    random: &[Value],
+    typing: Typing<'_>,
+    identity: IdentityLimits,
+    budget: &mut dyn ModelKeyBudget,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ModelKeyError> {
+    let scope = Scope {
+        budget: RefCell::new(budget),
+        cancel,
+        identity,
+        refused: RefCell::new(None),
+    };
+    scope.bytes(scheduled.operation.len())?;
+    scope
+        .work(u64::try_from(scheduled.operation.len()).map_err(|_| ModelKeyError::SizeOverflow)?)?;
+    scope.admit(scheduled.operation.len())?;
+    let parsed = quire_canonical::read_with_reservation(
+        scheduled.operation.as_bytes(),
+        identity.input_bytes,
+        &mut Provision(&scope),
+    );
+    scope.poll()?;
+    if let Some(error) = scope.refused.borrow_mut().take() {
+        return Err(error);
+    }
+    let parsed =
+        parsed.map_err(|_| ModelKeyError::Unsupported("scheduled operation declaration"))?;
+    let quire_canonical::Node::Object(members) = parsed.root().node() else {
+        return Err(ModelKeyError::Unsupported(
+            "scheduled operation declaration",
+        ));
+    };
+    if members.len() != 2 {
+        return Err(ModelKeyError::Unsupported(
+            "scheduled operation declaration",
+        ));
+    }
+    let field = |name| match parsed.root().get(name).map(|node| node.node()) {
+        Some(quire_canonical::Node::String(value)) => Ok(value),
+        _ => Err(ModelKeyError::Unsupported(
+            "scheduled operation declaration",
+        )),
+    };
+    let operation = super::DeclarationRecord {
+        package: field("package")?,
+        node: field("node")?,
+    };
+    if scope.canonical(|writer| operation.encode_into(writer))? != scheduled.operation.as_bytes() {
+        return Err(ModelKeyError::Unsupported(
+            "scheduled operation declaration",
+        ));
+    }
+    let mut sink = Bounded::new(&scope);
+    ValueSink::begin_array(&mut sink, ArrayOrder::Retained)?;
+    StructuralSink::text(&mut sink, "drawn")?;
+    ValueSink::begin_array(&mut sink, ArrayOrder::Retained)?;
+    projection::project_declaration(&mut sink, operation)?;
+    projection::project_reference(&mut sink, &scheduled.receiver)?;
+    ValueSink::begin_array(&mut sink, ArrayOrder::Retained)?;
+    for value in &scheduled.arguments {
+        scope.work(1)?;
+        projection::project_value(&mut sink, value, typing, None, false)?;
+    }
+    ValueSink::end_array(&mut sink)?;
+    ValueSink::end_array(&mut sink)?;
+    ValueSink::begin_array(&mut sink, ArrayOrder::Retained)?;
+    for value in random {
+        scope.work(1)?;
+        projection::project_value(&mut sink, value, typing, None, false)?;
+    }
+    ValueSink::end_array(&mut sink)?;
+    ValueSink::end_array(&mut sink)?;
     scope.poll()?;
     sink.finish_bytes()
 }

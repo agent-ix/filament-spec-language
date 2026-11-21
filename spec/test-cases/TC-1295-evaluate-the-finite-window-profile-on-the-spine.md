@@ -178,8 +178,12 @@ Row 52's independent labels cover every aggregate kind and optional parts:
 - Command-intake controls assert the outer `native-run-result/2.code`:
   `io-error` for a selected-file failure at stage `file` and
   `invalid-identifier` for a formal constructor failure at stage `request`,
-  each exit 20. Native diagnostic catalog codes retain their underscore
-  spellings; the constructor's existing `details.code` is `invalid_identifier`.
+  each exit 20. Independently set the selected source's `document` to `""`
+  and its `formal_revision` to `0`: `/details/code` is respectively
+  `invalid_identifier` and `invalid_source_revision`, and `/details/path`
+  names the rejected field. Native diagnostic catalog codes retain their
+  underscore spellings; the original constructor diagnostic is not
+  normalized to another code or nested under `details.diagnostic`.
   FR-001 source/S0 and `SourceNotSupplied` call refusals are unchanged.
 - No row returns a truth value for a case the table marks `Pending` or
   `Indeterminate`, and no row marked definite returns `Pending` or

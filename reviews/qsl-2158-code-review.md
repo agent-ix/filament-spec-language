@@ -1,0 +1,1132 @@
+---
+id: SR-202611210022442313144108508
+title: "QSL-2158 PR 3285 FR-1043 finite-horizon measure profile code and Rust review"
+type: SpecReview
+analysis: code-review
+scope: "agent-ix/filament-spec-language@986e56a8e157cc8cf694ff4daed7cd2dcdc144e0 (merge-base f3aa681d7ed753a2cdd998bc24842ef38dda3c86); PR 3285 Rust diff: fsl-eval/src/probabilistic.rs, fsl-eval/src/probabilistic/key.rs, fsl-eval/src/simulation/model.rs, fsl-eval/src/simulation/model/encode/bounded.rs, fsl-analyze/src/analyze/exact.rs, fsl-analyze/src/analyze/exact/measure.rs, fsl-analyze/src/analyze/exact/undefined.rs, fsl-analyze/src/exact_probabilistic.rs, fsl-analyze/src/exact_probabilistic/{build,finite_horizon,plan,witness}.rs, fsl-analyze/src/statistical/model.rs, fsl-replay/src/probability_certificate.rs, fsl-replay/src/probability_certificate/document.rs, fsl-replay/src/probability_certificate/document/{measure,measure/bounds,fairness,key,writer}.rs, fsl-replay/src/probability_certificate/witness.rs, fsl-replay/src/probability_certificate/witness/{measure,step,undefined,bounded}.rs, fsl-replay/src/{certificate,certificate/simulation,lib,proof_result}.rs, fsl-replay/src/model_check/{counterexample,replay}.rs, fsl-replay/src/outcome/counterexample.rs, tools/fsl-probability-check/src/main.rs, tests fsl-analyze/tests/it/exact_probabilistic_item/measure_profile.rs, fsl-analyze/tests/it/exact_probabilistic_item.rs, fsl-analyze/tests/it/state_probabilistic_replay.rs, tools/fsl-probability-check/tests/it/certificate_kinds.rs, Cargo.toml, Cargo.lock"
+review_set: subset
+relationships:
+  - {target: "ix://agent-ix/filament-spec-language/FR-1043", type: references}
+  - {target: "ix://agent-ix/filament-spec-language/FR-1042", type: references}
+  - {target: "ix://agent-ix/filament-spec-language/FR-202", type: references}
+  - {target: "ix://agent-ix/filament-spec-language/FR-203", type: references}
+---
+
+## Summary
+
+Ticket: QSL-2158, PR 3285. This review covers the implementation at frozen
+head `986e56a8e1` against the accepted normative contracts. Spec text is not
+re-reviewed. The amended FR-1043, FR-1042, FR-201, FR-202 and FR-203 text was
+accepted by SR-202611210022442313144108507 (findings 001 to 013 fixed, plus
+FractionValue AC-11 PASS; `/tmp/qsl2158-mean-spec-review/fraction-value/report.md`).
+The Rust lane follows `rust-review` and `rust-style` and the repository's
+`AGENTS.md`.
+
+The core soundness boundaries hold. The checker rebuilds the complete
+eight-member product with the shared `fsl-eval` control. It recomputes each
+decided payoff from the key and Bellman-checks every action and post-state.
+It rederives ranks, and it rejects at the canonical locus. The vacuity check
+explores the full product and returns value-free `AcceptedVacuous` with
+`Exhaustive`. Numeric offers for no-activation claims reject `InequalityFails`
+at the initial key. Mean refutation applies strict comparisons, the
+role-direction `Malformed{kind}` rule and no-fallback hints. Native
+FractionValue replay re-executes the actual step and its rewards before any
+outside-window read.
+
+The defects found are three behavioral gaps against SHALL clauses, two
+duplications of existing codecs, two places where tests do not assert their
+AC, and eleven low-severity cleanups.
+
+## Verdict
+
+**CONDITIONAL**. There are no high findings. Medium and low findings must be
+fixed in this PR, per the dispatch brief.
+
+Gates: no cargo was run, per the brief. Remote focused acceptance (33 exact
+tests listed in `/tmp/qsl2158-fr1043-focused-986e.txt`) is pending on draco
+and is not claimed here. The most recent recorded compile (`ec6`) predates
+this head. `rustfmt --edition 2021 --check` on every changed `.rs` file at
+`986e56a8e1` shows no diffs (read-only). The `model.rs` import reordering fixes
+fmt drift that was already present at base. The PR does not change
+`.github/workflows`.
+
+Verified clean, with no findings:
+- The FR-1043-AC-1 to AC-11 and FR-202-AC-27 to AC-30 behavior paths are
+  implemented.
+- FR-203-AC-10 vacuity record: `Proved{Exhaustive, Certified}`, no
+  `ExactValue`, document `{"mode":"vacuous"}` with empty values. The pinned
+  FSpec `Result` schema conformance test is present.
+- The P95 `24233/25000` and 2 ms one-path refutation are asserted.
+- TC-2065 `quantile 0.4 <= 3` shifted `11/135` is accepted in a separate
+  process, and level 0.5 is refuted.
+- The removed `#[ignore]` markers are justified, and no tests were deleted or
+  weakened.
+- FSpec pin `d6d06609` appears only in `Cargo.toml`/`Cargo.lock`.
+- No `unsafe` code, `todo!` or `unimplemented!` was introduced. No reachable
+  panic was found.
+- A quantile over a fraction is refused by S3 (`QuantileOverFraction`), so the
+  fraction `activated=false` flag cannot fabricate vacuity.
+
+## Findings
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-001 | medium | A partial `lower` mean refutation still enumerates the complete product before checking the named subset. FR-1043 requires expanding only the named states and their successors under the checker's limits. A product that exceeds `states`/`edges` but whose named lower subset fits returns `incomplete` instead of an accepted refutation. | fsl-replay/src/probability_certificate/document/measure/bounds.rs:306 |
+| FND-002 | medium | An undefined reward on an operation with an object-typed parameter skips FR-187 admission (`let Some(domains) = domains else { continue }`). It is then flattened to an internal BROKEN expansion fault at runtime, not FR-202 `Undefined` evidence as FR-1043 requires ("an undefined reward ... SHALL settle by FR-202's Undefined evidence"). The coder's preflight-refusal grounding (frames.rs:92-116, symbolic.rs:409-428) covers only operations whose parameters all have finite domains. | fsl-eval/src/simulation/model/probabilistic.rs:567 |
+| FND-003 | medium | The FR-1043 rule that workload ratios with both activating and never-activating initial keys follow FR-201's per-key vacuity is not implemented. The checker refuses any non-singleton initial set as `Unsupported`, and the producer returns `not_yet`. No test covers it. | fsl-replay/src/probability_certificate/document/measure.rs:466 |
+| FND-004 | medium | The `fsl-eval` key encoder re-states the UnitId descriptor and decimal-integer wire grammar (`["declared",node]` / `["compound",[{unit,exponent}]]`, `unwrap_or_default`) that `fsl-replay` `writer::Text::unit`/`integer` already define. That leaves two owners of one encoding. | fsl-eval/src/probabilistic/key.rs:111 |
+| FND-005 | medium | `bounds.rs` hand-implements TransitionIdentity choice decoding and encoding (`TransitionShape`, the `Transition` encoder, ad-hoc `starts_with('{')` checks) instead of reusing the `ModelTransition` canonical codec. The test helper `mean_bound` mirrors that hand form. | fsl-replay/src/probability_certificate/document/measure/bounds.rs:121 |
+| FND-006 | medium | The vacuity test asserts only `ProductState(_)` for the numeric no-activation rejection, not the initial complete product key the AC requires. It does not assert the `inconclusive CertificateRejected` settlement. FR-203-AC-11's cancellation, caller-limit and engine-only no-acceptance cases for vacuity are not exercised. | fsl-analyze/tests/it/exact_probabilistic_item/measure_profile.rs:858 |
+| FND-007 | medium | The FR-1043-AC-7 limits test asserts only checker `Err(Limit)` values at zero limits. It never asserts the settled `incomplete` record with the actual limit and no truth value. It does not exercise `scalar_bits`/RationalBits or a limit reached during expansion (`states: 0` stops at the read-time row-count check). | fsl-analyze/tests/it/exact_probabilistic_item/measure_profile.rs:459 |
+| FND-008 | low | The same MeasureError-to-ProbabilityDocumentError mapping is written three times (`scalar_error`, `measure_error`, `scalar_failure`). The ExactProbLimits-to-ProbabilityDocumentLimits literal gains five more copies (7 to 12), and the measure-form `matches!` predicate is repeated across six dispatch sites. | fsl-replay/src/probability_certificate/document/measure.rs:117 |
+| FND-009 | low | The checker's enumeration and the witness terminal-stutter replay hand-build zero-reward lists with different filters (subject-model filter versus all declarations, one entry per declaration). EN-5 uses `ModelSystem::zero_rewards()`, the owner of stutter rewards. | fsl-replay/src/probability_certificate/document/measure.rs:633 |
+| FND-010 | low | The canonical full-product-action order is re-stated as a local tag table (`""`/`"identity"`/`"post-state"`/`"terminal-stutter"` plus raw bytes) instead of ordering by `ProductAction::to_bytes()`. | fsl-replay/src/probability_certificate/document/measure/bounds.rs:420 |
+| FND-011 | low | The lower-rank check does a linear `document.ranking.iter().find` inside the per-value loop. That is quadratic work, uncharged to the caller's work meter, although `ranking` is sorted and `checked_values` uses `binary_search`. | fsl-replay/src/probability_certificate/document/measure/bounds.rs:381 |
+| FND-012 | low | `weighted_value` inlines `validate_probability_mass`'s non-negative, unit-mass rule as a second implementation instead of reusing it. | fsl-analyze/src/exact_probabilistic/finite_horizon.rs:1147 |
+| FND-013 | low | The public `measure_probability_product_key` path maps structural mismatches (Formula/Deadline control, a missing reward descriptor) to `Error::ReservationDenied{requested:0}`. A malformed caller input is therefore reported as a budget denial. | fsl-eval/src/probabilistic/key.rs:182 |
+| FND-014 | low | New unchecked indexing: `state.choices[index]` in exact mean refutation, and `initial[0]`/`initial[1]` in the ratio check. Neither is reachable as a panic, but rust-style prefers `get`/destructuring, as the adjacent code uses. | fsl-replay/src/probability_certificate/document/measure.rs:2306 |
+| FND-015 | low | Redundant full enumerations charged to the caller budget. The ratio check enumerates the product a third time only to take `graph.initial`. The producer's vacuity route builds a complete checker document only to clear its ranking in `into_vacuous`. | fsl-replay/src/probability_certificate/document/measure.rs:1829 |
+| FND-016 | low | The producer's `Arithmetic::retain` charges storage for every intermediate `mass`/`term`/`sum` cumulatively and never releases it. Producer working storage is overstated relative to the checker, so EN-5 can settle `StorageBytes` incomplete on an item the checker accepts. | fsl-analyze/src/exact_probabilistic/finite_horizon.rs:699 |
+| FND-017 | low | The P95 FR-1043-AC-4 test does not assert the AC's "denominator is 1 at the initial key" or "`threshold` 5 in its unit". | fsl-analyze/tests/it/exact_probabilistic_item/measure_profile.rs:579 |
+| FND-018 | low | The public `ProbabilityCertificatePart::Post`/`Reset` variants are added with no producer or consumer in this PR (speculative API). In `fsl-eval/src/probabilistic.rs`, the public `MeasurePlan` derives no standard traits, and `mod tests` sits mid-file before `MeasureComparison`/`MeasurePayoff`. | fsl-replay/src/probability_certificate.rs:595 |
+
+## Coverage
+
+- Methods: `code-review` with its `rust-review` lane folded in, under the
+  `rust-style` baseline (API, implementation, safety, wire and testing
+  references). The duplication and vendoring check found no vendored files;
+  the in-repo duplications are FND-004/005/008/009/010/012. The ceremony
+  check found none.
+- Checked and clean: identity refused before enumeration. Strict canonical
+  decode with depth limit 1. Values/ranking exact coverage. `RankBroken` at the
+  first differing key. Shifted range `[-level, 1-level]`. Tight-activation
+  search. Ratio `ThresholdMissed`. Vacuity precedence. Mean strict refutation
+  and equality. No-fallback hints. Witness-policy parity. Subsystem and paths
+  mutually exclusive. Path set refused for a mean. Positive actual draw.
+  Residual post-state policy required. FractionValue locus
+  (`h+1`, actual post-state, pre-step control/sums). `ReplayParity` on forged
+  locus, position, control, sums or cause. Cancellation polls on every loop.
+- Not run: cargo build, tests, clippy and deny (per the brief). Runtime
+  results are pending in the parent's remote focused batch.
+
+## Disposition pass 1
+
+Latest reviewed source: `1bef7ca58bebe9972e3fe74189d578e060034722`; actual merge-base `529282e9dc28cc6be8b382ae634636e3b4fe4a14`. One independent Codex reviewer (GPT-6 family as supplied by harness; no more specific model version exposed), user-directed replacement of initial reviewer. Initial findings/history above are retained verbatim.
+
+**Latest verdict: FAIL; not mergeable**. New high FND-020 blocks compilation; new medium FND-019 is still-open. No focused test executed. Original FND-001 and003–018 fixed; FND-002 rejected with admission grounding.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-019 | medium | Lower enumeration now drops every unnamed frontier and consequently rejects a valid named descendant behind it as Malformed(values). FR-1042 permits initial plus any subset. Extend the existing partial-lower fixture (root1/3 plus success2/3 branch) with the reachable all-fail terminal (fraction collecting control advanced to remaining0/complete, count0/3, value0, rank0), omitting the intermediate all-fail rows. The added terminal satisfies its exact payoff/rank and changes no named Bellman equation, but it is never inserted in graph.states and bounds.rs returns MalformedMember("values"), mapped by native replay to CertificateRejected{rule:Malformed, at:Member("values")}. Enumerate/check every named state and its actual successors without requiring a named path from the initial. | fsl-replay/src/probability_certificate/document/measure.rs:581; fsl-replay/src/probability_certificate/document/measure/bounds.rs:269 |
+
+| FND-020 | high | Exact-head focused build fails E0425: ProbabilityDocumentLimits::for_exact references ExactProbLimits without importing the type. The checker owning crate cannot compile, so the first29-profile command exits101 with zero tests and commands2–14 are held. Also remove the reported unused MeasureError import in measure.rs7. Parent raw log /private/tmp/qsl-3285-1bef-1.log. | fsl-replay/src/probability_certificate/document.rs:229 |
+
+## Dispositions
+
+Round 1. `fixed` records inspected source resolution; execution evidence remains separately qualified below.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Partial lower now stops at immediate unnamed frontier, removing full-product enumeration; the separate disconnected-row regression is FND-019. |
+| FND-002 | rejected | The originally plausible path has no admitted runtime reproducer. Object-domain preflight skip is real, but mandatory Linked Definedness still checks every typed reward; literal mod0 fails Nonzero, ordinary reference.field fails Composite typing, and deref is forbidden StateReadInReward. The corrected remote10970 probe compiled/selected one test but failed at admission, so it is not BROKEN runtime evidence. Parameter identity equality is a defined positive control. This rejection is bounded to the alleged paths; it is not a universal soundness proof. |
+| FND-003 | fixed | Each actual initial index is independently checked; zero/zero roots are omitted only alongside activation, all-zero numeric roots reject; sealed binding and exact entry matching protect settlement. |
+| FND-004 | fixed | Evaluator and replay writer use the single foundation scalar_wire integer/unit owner. |
+| FND-005 | fixed | Hint decoding and reconstruction use ModelTransition construction/canonical encoding, compared byte-exactly before matching schedules. |
+| FND-006 | fixed | Numeric no-activation rejection checks the exact initial key; settlement units assert same-locus CertificateRejected and engine-only failure; actual vacuity cases assert typed cap/cancellation incomplete without evidence. |
+| FND-007 | fixed | Nonzero expansion edge1 and RationalBits4 checker limits are exercised; analyzer settlement asserts exact state/rational limit cause and no evidence. |
+| FND-008 | fixed | One From<MeasureError> owner, for_exact limit projection, and CheckedProbabilisticClaim::bounded_measure routing replace repeated rules. Specialized cyclic/timed projections retain their distinct meanings. |
+| FND-009 | fixed | Checker enumeration and stutter replay call the existing zero_rewards owner. |
+| FND-010 | fixed | Canonical choice selection sorts ProductAction::to_bytes octets. |
+| FND-011 | fixed | Rank lookup uses binary_search and charges logarithmic GraphEdge work. |
+| FND-012 | fixed | weighted_value and weighted_interval use validate_probability_mass; exact validation receives the actual Arithmetic meter. |
+| FND-013 | fixed | Key structure is checked before encoding as Unsupported; encoder structural errors use Serialize. ReservationDenied remains a budget refusal. |
+| FND-014 | fixed | Choice access uses get and the ratio parts use slice destructuring. |
+| FND-015 | fixed | Ratio reuses numerator/denominator initials; unchecked vacuous factory computes the objective without discarded full graph/ranks. |
+| FND-016 | fixed | Arithmetic uses checkpoint/release for scratch and retains selected final values; temporary topological storage is released before induction. |
+| FND-017 | fixed | P95 checks threshold5 in the checked reward unit and initial denominator1, preserving package recheck. |
+| FND-018 | fixed | Unused Post/Reset variants removed; MeasurePlan derives Clone/Debug/Eq/PartialEq and test module follows production definitions. |
+| FND-020 | still-open | Actual exact-head remote compile fails E0425: ExactProbLimits is not imported for ProbabilityDocumentLimits::for_exact at document.rs229; no tests execute. |
+| FND-019 | still-open | New acceptance regression: disconnected named rows behind an unnamed frontier are rejected despite being a valid subset; see new finding and static adverse case. |
+
+### Round 1 source excerpts
+
+FND-001 after_excerpt:
+
+```rust
+        if named.is_some_and(|named| !named.contains(&key)) {
+            // A lower certificate assigns zero to this frontier key. Its
+            // descendants and terminal payoff are outside the named proof.
+            states.insert(
+                key,
+                State {
+                    terminal: None,
+                    rank: 0,
+                    choices: Vec::new(),
+                    actions: Vec::new(),
+                    activated: false,
+                },
+            );
+            continue;
+        }
+        let terminal = plan
+            .payoff
+```
+
+FND-003 after_excerpt:
+
+```rust
+        let Some(coverage) = &self.initial_values else {
+            return true;
+        };
+        let mut offered = entries.iter();
+        for (initial, value) in &coverage.values {
+            let Some(value) = value else {
+                continue;
+            };
+            let Some(entry) = offered.next() else {
+                return false;
+            };
+            if entry.initial != *initial
+                || entry.binding != coverage.binding
+                || entry.extremum.is_some()
+```
+
+FND-004 after_excerpt:
+
+```rust
+    }
+    pub(super) fn unit<S: Sink + ?Sized>(
+        &self,
+        unit: Option<&filament_exact::UnitId>,
+        writer: &mut Writer<'_, S>,
+    ) -> Result<(), Error> {
+        self.poll()?;
+        fsl_foundation::scalar_wire::unit(unit, writer, |value, writer| self.integer(value, writer))
+    }
+```
+
+FND-005 after_excerpt:
+
+```rust
+        let transition = filament_semantic_value::model_transition::ModelTransition::new(
+            wire.operation,
+            wire.receiver.map(|value| value.get().to_owned()),
+            wire.arguments
+                .into_iter()
+                .map(|value| value.get().to_owned())
+                .collect(),
+            limits,
+        )
+        .map_err(|_| ProductActionError::Schedule)?;
+        let canonical = transition
+            .canonical_bytes(limits)
+            .map_err(|_| ProductActionError::Schedule)?;
+        if canonical != bytes {
+```
+
+FND-006 after_excerpt:
+
+```rust
+            let checked = check(&world, name, &numeric);
+            assert!(matches!(&checked, Ok(ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::InequalityFails,
+                at: ProbabilityCertificateLocus::ProductState(at)
+            })) if at == &expected), "numeric no-activation {scheduler}/{name}: {checked:?}; expected initial {expected:?}");
+```
+
+FND-007 after_excerpt:
+
+```rust
+        )
+        .remove(0);
+        let terminal = record
+            .terminal()
+            .unwrap_or_else(|| panic!("{name}: {:?}", record.settlement));
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }),
+            "{name}: {:?}",
+            record.settlement
+        );
+        assert!(terminal.exact_certificate_document().is_none());
+        assert!(
+            record.exact_probabilistic.is_none() && record.probabilistic_counterexample.is_none()
+        );
+```
+
+FND-008 after_excerpt:
+
+```rust
+    pub fn for_exact(limits: &ExactProbLimits, accounting: filament_exact::ScalarLimits) -> Self {
+        Self {
+            bytes: limits.document.bytes,
+            storage_bytes: limits.document.storage_bytes,
+            states: limits.model.limits.max_states,
+            edges: limits.model.limits.max_transitions,
+            scalar_bits: limits.max_rational_bits,
+            accounting,
+        }
+    }
+}
+```
+
+FND-009 after_excerpt:
+
+```rust
+                != system.state_key(&step.post).ok().map(|(bytes, _)| bytes)
+        {
+            return Err(ProbabilityWitnessError::Refused);
+        }
+        let rewards = system.zero_rewards();
+        let Some(projected) = project(state, &rewards, meter, storage)? else {
+            return Err(ProbabilityWitnessError::Refused);
+        };
+        *edges = edges
+            .checked_add(1)
+```
+
+FND-010 after_excerpt:
+
+```rust
+                limits.storage_bytes,
+                u64::try_from(capacity.saturating_mul(2)).unwrap_or(u64::MAX),
+            )?;
+            let bytes = action
+                .as_ref()
+                .map(crate::ProductAction::to_bytes)
+                .transpose()
+                .map_err(|_| ProbabilityDocumentError::Malformed)?
+                .unwrap_or_default();
+            choices.push((bytes, index));
+        }
+        choices.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut satisfying = None;
+```
+
+FND-011 after_excerpt:
+
+```rust
+        if lower
+            && document
+                .ranking
+                .binary_search_by(|row| row.0.cmp(key))
+                .ok()
+                .and_then(|index| document.ranking.get(index))
+                .map(|row| row.1)
+                != Some(state.rank)
+        {
+```
+
+FND-012 after_excerpt:
+
+```rust
+fn weighted_value(
+    edges: &[&ProbEdge],
+    values: &[Rational],
+    operations: &mut Arithmetic<'_>,
+) -> Result<Rational, FhError> {
+    validate_probability_mass(edges, operations)?;
+    let mut sum = rational_zero();
+    for edge in edges {
+        operations.visit()?;
+        let value = values.get(edge.to.index()).ok_or(FhError::InvalidState)?;
+        let term = operations.arithmetic(filament_exact::RationalArithmetic::Multiply(
+            &edge.probability,
+            value,
+```
+
+FND-013 after_excerpt:
+
+```rust
+            binding,
+            model: model.root(),
+            control,
+            accumulator,
+            pending: pending.as_ref().map(|pending| pending.root()),
+            reward: reward.map(|reward| fsl_eval::probabilistic::key::RewardKey {
+                model: &reward.model,
+                name: &reward.name,
+                unit: reward.unit.as_ref(),
+            }),
+            budget: &scope,
+            max_bytes: identity.input_bytes,
+        };
+        key.validate().map_err(ModelKeyError::Unsupported)?;
+```
+
+FND-014 after_excerpt:
+
+```rust
+        }
+        let [(numerator_graph, numerator_values), (denominator_graph, denominator_values)] =
+            checked_parts.as_slice()
+        else {
+            return Err(ProbabilityDocumentError::Malformed);
+        };
+        if numerator_graph.initials != denominator_graph.initials {
+            return Err(ProbabilityDocumentError::Malformed);
+        }
+```
+
+FND-015 after_excerpt:
+
+```rust
+    Ok(MeasureProbabilityDocument {
+        identity: item.clone(),
+        payoff: MeasurePayoffKind::Satisfied,
+        values: Vec::new(),
+        ranking: Vec::new(),
+        objective: selected.objective,
+        conditional: Some(Box::new(Conditional::Vacuous)),
+    })
+```
+
+FND-016 after_excerpt:
+
+```rust
+            let checkpoint = operations.storage_used();
+            if let Some((_, current)) = &selected {
+                operations.retain(current)?;
+            }
+            let value = weighted_value(edges, &values, operations)?;
+            // Both candidate values remain live through selection.
+            operations.retain(&value)?;
+            let replace = match selected.as_ref() {
+                None => true,
+                Some((_, current)) => operations.prefer(objective, &value, current)?,
+            };
+            if replace {
+```
+
+FND-017 after_excerpt:
+
+```rust
+    let initial = denominator["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["state"] == initial["state"])
+        .unwrap();
+    assert_eq!(initial["value"], json!({"numerator":"1","denominator":"1"}));
+```
+
+FND-018 after_excerpt:
+
+```rust
+/// The checked component of a conditional probability certificate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProbabilityCertificatePart {
+    /// The satisfied-and-activated numerator.
+    Numerator,
+    /// The activation denominator.
+    Denominator,
+}
+impl ProbabilityCertificatePart {
+    /// Canonical published part spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Numerator => "numerator",
+            Self::Denominator => "denominator",
+        }
+```
+
+### Round 1 scope and verification
+
+No cargo, local tests, clippy, deny, baseline, Kani or sweep was run. Parent reports exact1bef7ca58bebe9972e3fe74189d578e060034722 first29-profile command COMPILE101/ZERO tests: E0425 document.rs229 missing ExactProbLimits import, plus unused MeasureError at document/measure.rs7. Raw /private/tmp/qsl-3285-1bef-1.log. Commands2–14 held/not run; no42-test acceptance. Original986e33 never ran/HOLD and is superseded. Upstream monitor_root23 is reader-only evidence, not acceptance. Remote10970 admission failure is only prior post-rebase compile/probe evidence.
+
+The actual current PR diff preserves main exports, boxed task transitions, refinement guards/time invariants, protocol replay, call_failure propagation and unavailability removals. IR20a4dfbf/core-data424ba49 remain pinned; only authorized FSpecd6d066 replaces its prior pin. No workflow lane changes; git diff --check passes. No applicable AssuranceProfile was found. No new source edits, test deletion, vendoring or speculative owner API retained. FractionValue replays the actual post-step state at h+1 with PRE undecided control/accumulator before outside-window predicate access.
+
+Scope entries below record criteria examined against implementation; AC12 is context_only at full generic scope.
+
+```yaml
+scope:
+- id: FR-1042-AC-12
+  path: spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md
+  role: context_only
+  excerpt: For a bounded fraction mean over an initial terminal state with a false
+    fraction predicate and window 2, the base's only continuation is terminal stutter
+    and its value is 0. An `upper` minimum document with every value 0 and no policy
+    rows, and a `lower` maximum document with every value 0, the rederived remaining-horizon
+    ranks and no policy rows, are accepted. The checker retains the existing stutter
+    action at each undecided key; no fabricated operation identity or new wire form
+    is required.
+- id: FR-1042-AC-13
+  path: spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md
+  role: examined
+  excerpt: At an intermediate state with two enabled post-state choices `a` and `b`,
+    their successors reach event success with probability `1/4` and `3/4`, respectively.
+    With correct successor values and ranks, a minimum `upper` initial bound `1/2`
+    with no hint is accepted selecting `a`, and a maximum `lower` bound `1/2` with
+    no hint is accepted selecting `b`. Initial bounds `1/8` for the upper and `7/8`
+    for the lower reject `InequalityFails` there because no action satisfies. Post-state
+    selection needs no fabricated TransitionIdentity row.
+- id: FR-1042-AC-14
+  path: spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md
+  role: examined
+  excerpt: In AC-3, minimum `upper` `s` `1/4` with hint `go` rejects `InequalityFails`
+    although `wait` satisfies, and the same document without that hint accepts selecting
+    `wait`. A nonexistent hint rejects `InequalityFails` even when an enabled action
+    satisfies. Maximum `lower` `s` 1 with hint `wait` rejects `RankBroken`; removing
+    the hint does not accept it, since no action satisfies both inequality and progress.
+    When several actions satisfy every condition, an omitted hint selects the first
+    in canonical full-product-action order.
+- id: FR-1043-AC-1
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: '`Retry`''s undelivered state `u` has `try`, delivering with `1/2` and
+    otherwise staying; delivered is terminal. Under its workload, `quantile 0.5 of
+    (steps from holds(true) until holds(delivered) within 4) <= 2` settles `proved`,
+    `ExactValue{3/4}`, with a `conditional` `ratio` certificate whose numerator (payoff
+    `satisfied`, `comparison` `"le"`, `threshold` 2) has values `3/4`, `1/2`, 0, 0
+    at `u` with active amounts 0, 1, 2 and above the bound and ranks 4, 3, 2, 1, and
+    whose denominator (payoff `activated`) is 1 there; `fsl-probability-check` accepts
+    it, and rejects it `RankBroken` with the ran'
+- id: FR-1043-AC-2
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: With `try` split into `fast` (`1/2`) and `slow` (`1/4`), under every scheduler
+    `quantile 0.4 of (…) <= 2` settles `proved` with an `exact` `shifted` document
+    (`level` `2/5`) whose values are `3/80`, `−3/20`, `−2/5`, `−2/5`; `quantile 0.5
+    of (…) <= 2` settles `refuted` (minimum shifted value `−1/16`, `Pr(M <= 2) = 7/16`
+    under `slow`); the level-0.4 document with `3/80` replaced by `fast`'s `9/40`
+    is rejected `InequalityFails` at the initial key.
+- id: FR-1043-AC-3
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: 'Over AC-2''s model under every scheduler, `quantile 0.6 of (…) >= 2` (claim
+    `Pr(M < 2 | act) < 3/5`) settles `proved`: the `shifted` document (`comparison`
+    `"lt"`) has maximum initial value `−1/10` (through `fast`) and `−3/5` at every
+    other undecided state; `quantile 0.5 of (…) >= 2` settles `refuted`, its maximum
+    0 attained by `fast` with an activated state reachable.'
+- id: FR-1043-AC-4
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: '`P95` over FR-185-AC-1''s `Service` under `Steady` at `5 ms` (FR-741-AC-2,
+    FR-203-AC-1) settles `proved`, `ExactValue{24233/25000}`, with a `conditional`
+    `ratio` certificate whose parts are documents of this profile (`kind` `"accumulate"`,
+    `reward` the checked `duration`, `threshold` 5 in its unit) and whose denominator
+    is 1 at the initial key; `fsl-probability-check` accepts it from the emitted package
+    and rejects it with one numerator value altered. At `2 ms` the item settles `refuted`
+    with FR-202-AC-1''s one-path set.'
+- id: FR-1043-AC-5
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: Under `Retry`'s workload, `mean of fraction holds(delivered) over [0, 2]
+    >= rational(2,5)` settles `proved`, `ExactValue{5/12}`, with a `fraction` document;
+    at `rational(1,2)` it settles `refuted` with FSpec FR-413 subsystem evidence containing
+    an independently accepted `exact` `fraction` certificate of `5/12 < 1/2`, checked
+    for refutation rather than the proof threshold. The comparison event `probability
+    >= 0.7 [M <= 2]` over AC-1's measure settles `proved`, `ExactValue{3/4}`, with
+    an `event` document.
+- id: FR-1043-AC-6
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: FR-201-AC-51's finite-horizon quantile item over the cyclic `link` model
+    under every scheduler (`Pr(M <= 3) = 13/27` for `steps from holds(true) until
+    holds(m.delivered) within 4`), written at level 0.4, settles `proved` with shifted
+    initial value `11/135` and a document `fsl-probability-check` accepts in a separate
+    process; written at level 0.5 it settles `refuted`.
+- id: FR-1043-AC-7
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-1's numerator with `window`, `threshold`, `comparison`, `reward`, `unit`,
+    `level` or `payoff` changed refuses objective mismatch; a key whose accumulator
+    amount or phase is altered is not an alias and fails coverage; a `shifted` value
+    below `−level` is rejected `Malformed` at `values`. Pre-cancellation and exhaustion
+    of each caller limit during expansion, payoff evaluation or exact sums settle
+    `incomplete` with the actual limit and no truth value.
+- id: FR-1043-AC-8
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: With AC-1's `try` split into `fast` (`1/2`) and `slow` (`1/4`), `mean of
+    fraction holds(delivered) over [0, 2]` has minimum `11/48` and maximum `5/12`.
+    Under every scheduler, `>= 1/2` is refuted by an accepted exact minimum or FR-1042
+    `upper` on the minimum with initial bound `1/4` and policy `slow`; `<= 1/3` is
+    refuted by an accepted exact maximum or `lower` on the maximum with initial bound
+    `2/5` and policy `fast`. Both reuse subsystem evidence and are independently accepted
+    by FR-202's checked-subject mean-certificate replay entry.
+- id: FR-1043-AC-9
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12`, a valid workload
+    `upper` bound `1/2` at `>= 1/2`, and a valid `lower` bound `2/5` at `<= 2/5` each
+    reject `ThresholdMissed` at the initial key and settle `inconclusive`, `CertificateRejected`.
+    In AC-8, a valid `lower` minimum document with initial bound `1/5` at `>= 1/2`
+    and a valid `upper` maximum document with bound `1/2` at `<= 1/3` each reject
+    `Malformed` at `kind` with the same settlement. Identity/base mismatch retains
+    its typed refusal; an invalid value rejects `InequalityFails` with `CertificateRejected`;
+    a disagreeing witne
+- id: FR-1043-AC-10
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: FR-203-AC-10's no-activation quantile under a resolved workload and under
+    every scheduler, with and without an admitted fairness set, settles certified
+    `Exhaustive` with an independently accepted conditional `vacuous` certificate,
+    no `ExactValue`, shifted-value proof or numeric entry. Offering an all-zero `exact`
+    `shifted` document under every scheduler, or a workload `ratio` with denominator
+    0, for that no-activation claim rejects `InequalityFails` at the initial complete
+    product key and settles `inconclusive`, `CertificateRejected{rule, at}`, without
+    numeric acceptance or `ExactValue`. A var
+- id: FR-1043-AC-11
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: '`Coin` initially has bound object `c` with `c.v = 0`; its only operation
+    `drop(b)` draws `b` uniformly from `{0,1}`, deleting `c` when `b = 0`, and declares
+    reward `R = 0` for both supported draws. Under its resolved workload, `mean of
+    fraction holds(c.v = 0) over [0,0] weighted by R >= 1/2` reaches undefined `division-by-zero`
+    on the actual `drop(0)` step of probability `1/2`: the final tentative weighted
+    sums are `(0,0)`, and the `FractionValue` location is position 1 with the actual
+    post-state lacking `c`, pre-step undecided control `remaining = 1` and pre-step
+    sums `(0,0)`. Native replay r'
+- id: FR-202-AC-27
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: Through the checked-subject mean-certificate replay entry, FR-1043-AC-5's
+    workload mean `5/12` refutes `>= 1/2` using subsystem evidence containing the
+    independently accepted `exact` `fraction` certificate; the same document checks
+    in its refutation role despite missing the proof threshold. An unchecked document,
+    an unreplayed engine value or a path set yields no accepted mean-refutation evidence.
+- id: FR-202-AC-28
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: FR-1043-AC-8's minimum `11/48` with an accepted `upper` bound `1/4` refutes
+    every-scheduler `>= 1/2`; its maximum `5/12` with an accepted `lower` bound `2/5`
+    refutes every-scheduler `<= 1/3`. A valid `lower` minimum document with initial
+    bound `1/5` at `>= 1/2`, and a valid `upper` maximum document with initial bound
+    `1/2` at `<= 1/3`, each reject `Malformed` at `kind` and settle `inconclusive`,
+    `CertificateRejected`; their conditions hold but their refutation roles are wrong.
+- id: FR-202-AC-29
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: AC-27's exact `5/12` at `>= 5/12` or `<= 5/12`, and a valid workload `upper`
+    bound `1/2` at `>= 1/2`, each reject `ThresholdMissed` at the initial key and
+    settle `inconclusive`, `CertificateRejected`. Changing identity or base payoff/optimization
+    retains the typed refusal; invalid certificate values settle `inconclusive`, `CertificateRejected{InequalityFails,
+    at}`; a disagreeing witness policy settles `inconclusive`, `ReplayParity`; cancellation
+    or a caller limit preserves its typed incomplete result without accepted evidence.
+- id: FR-202-AC-30
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: 'A mean minimum refutation with a slack `upper < θ` for which both the
+    optimizer''s attaining action and a different canonical-first action satisfy every
+    FR-1042 condition emits a witness matching the independently checked policy: with
+    no hint it uses the canonical-first satisfying full-product action; with a representable
+    valid hint it uses that hinted action. Both replay as refuted. An old optimizer
+    witness disagreeing with the checked selection settles `inconclusive`, `ReplayParity`;
+    implicit stutter or post-state selection uses the same rule without a fabricated
+    policy identity.'
+- id: FR-203-AC-10
+  path: spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md
+  role: examined
+  excerpt: 'The untimed claim `quantile 0.5 of (steps from holds(false) until holds(true)
+    within 4) <= 2`, checked separately under a resolved workload and under every
+    scheduler (with and without an admitted fairness set) has no activating state
+    in the complete reachable product. Native checking independently accepts its `Conditional`
+    `Vacuous` certificate and settlement returns `proved`, `closed-scope`, `Certified`,
+    `Exhaustive`, category success, carrying that certificate with empty `values`
+    and `conditional` exactly `{"mode": "vacuous"}`. The emitted result passes FR-331''s
+    contract with basis `{"type":'
+- id: FR-203-AC-11
+  path: spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md
+  role: examined
+  excerpt: Changing AC-10's activation predicate to `holds(true)` makes the offered
+    vacuous certificate reject `InequalityFails` and settle `inconclusive`, `CertificateRejected`,
+    without vacuity acceptance. Offering an otherwise well-shaped `exact`, `ratio`
+    or `optimum` certificate on `exhaustive`, or generic `evidence` with or without
+    its permitted vacuous certificate, refuses the FR-331 result contract. An `exact-value`
+    basis missing its value, using scalar zero or denominator zero refuses; AC-1's
+    ordinary exact result with a valid `Rational` value remains admitted. An engine-only
+    assertion, partial ex
+- id: FR-203-AC-12
+  path: spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md
+  role: examined
+  excerpt: '`Retry` has `Msg.delivered`, terminal when delivered, and the resolved
+    `Steady` workload whose `fast` step delivers with probability `1/2` and whose
+    `slow` weight is 0. With request initial states ordered as index 0 `{delivered:
+    true}` and index 1 `{delivered: false}`, the same admitted binding `m`, and `quantile
+    0.5 of (steps from holds(not m.delivered) until holds(m.delivered) within 4) <=
+    2`, the independent conditional certificate check accounts for both pairs: index
+    0 has unreachable activation with numerator and denominator 0, while index 1 activates
+    immediately with numerator `3/4`, den'
+```
+
+## Disposition pass 2
+
+Final normal repair round; same independent Codex reviewer. Frozen source `10564ea0ef37a7f47113ad44e3ec13ff3cac4c43`, actual merge-base `645bef0e0e810a5c551b7894ee98d7c6288b7467`. Earlier findings and dispositions above are retained verbatim. Existing closed outcomes remain: CR001/003–018 fixed, CR002 rejected on bounded admission evidence; GA001/003/004 fixed, generic GA002 deferred per architecture/QSL2158 commentd59dedf8. This round does not waive any new defect.
+
+**Latest verdict: FAIL, not mergeable.** CR019/020 fixed by inspected source; new medium CR021 and high CR022 remain still-open. Final focused command fails compilation101 with zero tests. Refer remaining CR021 to architecture: do not start an automatic third repair round.
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-021 | medium | The new model inverse bypasses caller work/cancellation accounting while validating restored named rows. For one object with F distinct fields, restore.rs725–733 linearly searches the F-field declaration vector for every input row (F(F+1)/2 name comparisons) without charging or polling those comparisons; the explicit parse/restore charges grow only with encoded input and visited values. Universe membership similarly scans U keys per object at710–713. At781–784 the new inverse also calls StateModel::observation without budget/cancel; observe_state deep-clones field Values and extents and validates their full closure (observation/initial.rs143–207). Thus sufficiently wide admitted objects or universes perform validation beyond the supplied work ceiling, and cancellation cannot interrupt the scans/closure phase. Admit the actual scans/retained clone work and poll under the caller scope, or use an owner validation seam that already does so; do not invent a default budget. | fsl-eval/src/simulation/model/restore.rs:730; fsl-eval/src/simulation/model/restore.rs:783; fsl-semantics/src/model/observation/initial.rs:171 |
+
+| FND-022 | high | Final10564 focused command fails with two E0499 at restore.rs656/657: self.push mutably borrows self while its tuple arguments invoke self.reference twice. The owning crate cannot compile; zero tests execute and commands2–15 are held. Decode the source and target into separate locals before self.push. Raw /private/tmp/qsl-3285-1056-1.log. | fsl-eval/src/simulation/model/restore.rs:656 |
+
+### Round 2 dispositions
+
+These rows append to the same artifact's existing Dispositions history. Each finding is judged by its latest row.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-019 | fixed | Every named key is seeded through the owner inverse; detached terminal, undecided and pending controls are independently checked. Unknown universe/control/draw rows reject Malformed at values. |
+| FND-020 | fixed | ExactProbLimits is explicitly imported; unused MeasureError and ModelSimState imports removed. Final compilation acceptance is still pending. |
+| FND-021 | still-open | New resource boundary defect; final normal round exhausted, requires architecture decision. |
+| FND-022 | still-open | New compile E0499 at restore.rs656/657; zero tests execute, requires architecture decision. |
+
+FND-019 after_excerpt:
+
+```rust
+    if let Some(named) = named {
+        for key in named {
+            if seen.contains(key) {
+                continue;
+            }
+            let (model, control, accumulator, resolution) =
+                restore_named(system, plan, binding, key, limits, cancel, meter, storage)?;
+            let truths = if control.is_decided() {
+                Vec::new()
+            } else {
+                read(&model)?
+```
+
+FND-020 after_excerpt:
+
+```rust
+use serde::{Deserialize, Serialize};
+
+use super::*;
+use crate::ExactProbLimits;
+
+```
+
+### Round 2 implementation and evidence
+
+Inspected the full831-line inverse and every changed provenance/anchor consumer, control decoder, reservation bridge, pending-row validator and regression. Model restoration validates declared populations, member types, field values, references, universes, extents and object closure; rejects nonempty unsupported auxiliary maps; re-encodes through the existing owner and requires byte equality. Structural errors map to existing Malformed member(values); retained caller denials and cancellation map through the actual admission scope. The resource defect CR021 qualifies the claim that all validation is bounded. No default arithmetic meter was introduced.
+
+RestoredFromKey has no anchor or incoming effect; actual successors keep absent anchor and record genuine new effects. Required-anchor consumers refuse absence; sampler position checks before cache lookup. Declared pre-state construction remains separate. Existing initial/witness parity comparisons still compare against actual admitted anchored initials. Named pending rows rebuild enabled actions and positive draws, match owner pending bytes and require multiple actual posts; no invented history, external pending parser or wire format.
+
+The new profile test exercises genuinely detached terminal, undecided and pending rows, retains an actual PostState selection, and rejects forged universe, horizon/control and draw. The owner unit exercises actual noninitial restoration, successor transition/probability/key equality, absent provenance after real effects, sampler/anchor refusal, typed integer-range error, storage denial and precancellation. These are real assertions, not proof that the final batch has run. No new source/test stub or unsupported speculative API was found.
+
+Parent reports final exact10564 first30-profile command COMPILE101/ZERO tests, two E0499 at restore.rs656/657: self.push holds mutable self while self.reference(source) and self.reference(target) also borrow self. Commands2–15 held/not run. Raw /private/tmp/qsl-3285-1056-1.log. No44-test acceptance. Owner-only400617 exact restoration test passed1/0/0/272filtered, log /private/tmp/qsl-3285-4006-inverse.log. Later buffer-admission/import/main-merge changes mean that owner result is not final profile acceptance. Old1bef first29-profile command COMPILE101/ZERO tests and commands2–14 held; never green. No local cargo, tests, clippy, deny, broad baseline or sweep was run.
+
+Read-only git diff --check passes. Actual final PR scope is645bef...HEAD; unrelated main merges are excluded. Main certificate/hyper/refinement/protocol APIs are preserved; authorized FSpecd6d066 and IR20a4dfbf/core-data424 pins remain. Accepted normative SR507 is unchanged and not re-reviewed. No applicable AssuranceProfile.
+
+### Round 2 examined scope
+
+```yaml
+scope:
+- id: FR-1042-AC-12
+  path: spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md
+  role: context_only
+  excerpt: For a bounded fraction mean over an initial terminal state with a false fraction predicate and window
+    2, the base's only continuation is terminal stutter and its value is 0. An `upper` minimum document with every
+    value 0 and no policy rows, and a `lower` maximum document with every value 0, the rederived remaining-horizon
+    ranks and no policy rows, are accepted. The checker retains the existing stutter action at each undecided key;
+    no fabricated operation identity or new wire form is required.
+- id: FR-1042-AC-13
+  path: spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md
+  role: examined
+  excerpt: At an intermediate state with two enabled post-state choices `a` and `b`, their successors reach event
+    success with probability `1/4` and `3/4`, respectively. With correct successor values and ranks, a minimum `upper`
+    initial bound `1/2` with no hint is accepted selecting `a`, and a maximum `lower` bound `1/2` with no hint is
+    accepted selecting `b`. Initial bounds `1/8` for the upper and `7/8` for the lower reject `InequalityFails`
+    there because no action satisfies. Post-state selection needs no fabricated TransitionIdentity row.
+- id: FR-1042-AC-14
+  path: spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md
+  role: examined
+  excerpt: In AC-3, minimum `upper` `s` `1/4` with hint `go` rejects `InequalityFails` although `wait` satisfies,
+    and the same document without that hint accepts selecting `wait`. A nonexistent hint rejects `InequalityFails`
+    even when an enabled action satisfies. Maximum `lower` `s` 1 with hint `wait` rejects `RankBroken`; removing
+    the hint does not accept it, since no action satisfies both inequality and progress. When several actions satisfy
+    every condition, an omitted hint selects the first in canonical full-product-action order.
+- id: FR-1043-AC-1
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: '`Retry`''s undelivered state `u` has `try`, delivering with `1/2` and otherwise staying; delivered is
+    terminal. Under its workload, `quantile 0.5 of (steps from holds(true) until holds(delivered) within 4) <= 2`
+    settles `proved`, `ExactValue{3/4}`, with a `conditional` `ratio` certificate whose numerator (payoff `satisfied`,
+    `comparison` `"le"`, `threshold` 2) has values `3/4`, `1/2`, 0, 0 at `u` with active amounts 0, 1, 2 and above
+    the bound and ranks 4, 3, 2, 1, and whose denominator (payoff `activated`) is 1 there; `fsl-probability-check`
+    accepts it, and rejects it `RankBroken` with the ran'
+- id: FR-1043-AC-2
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: With `try` split into `fast` (`1/2`) and `slow` (`1/4`), under every scheduler `quantile 0.4 of (…) <=
+    2` settles `proved` with an `exact` `shifted` document (`level` `2/5`) whose values are `3/80`, `−3/20`, `−2/5`,
+    `−2/5`; `quantile 0.5 of (…) <= 2` settles `refuted` (minimum shifted value `−1/16`, `Pr(M <= 2) = 7/16` under
+    `slow`); the level-0.4 document with `3/80` replaced by `fast`'s `9/40` is rejected `InequalityFails` at the
+    initial key.
+- id: FR-1043-AC-3
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: 'Over AC-2''s model under every scheduler, `quantile 0.6 of (…) >= 2` (claim `Pr(M < 2 | act) < 3/5`)
+    settles `proved`: the `shifted` document (`comparison` `"lt"`) has maximum initial value `−1/10` (through `fast`)
+    and `−3/5` at every other undecided state; `quantile 0.5 of (…) >= 2` settles `refuted`, its maximum 0 attained
+    by `fast` with an activated state reachable.'
+- id: FR-1043-AC-4
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: '`P95` over FR-185-AC-1''s `Service` under `Steady` at `5 ms` (FR-741-AC-2, FR-203-AC-1) settles `proved`,
+    `ExactValue{24233/25000}`, with a `conditional` `ratio` certificate whose parts are documents of this profile
+    (`kind` `"accumulate"`, `reward` the checked `duration`, `threshold` 5 in its unit) and whose denominator is
+    1 at the initial key; `fsl-probability-check` accepts it from the emitted package and rejects it with one numerator
+    value altered. At `2 ms` the item settles `refuted` with FR-202-AC-1''s one-path set.'
+- id: FR-1043-AC-5
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: Under `Retry`'s workload, `mean of fraction holds(delivered) over [0, 2] >= rational(2,5)` settles `proved`,
+    `ExactValue{5/12}`, with a `fraction` document; at `rational(1,2)` it settles `refuted` with FSpec FR-413 subsystem
+    evidence containing an independently accepted `exact` `fraction` certificate of `5/12 < 1/2`, checked for refutation
+    rather than the proof threshold. The comparison event `probability >= 0.7 [M <= 2]` over AC-1's measure settles
+    `proved`, `ExactValue{3/4}`, with an `event` document.
+- id: FR-1043-AC-6
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: FR-201-AC-51's finite-horizon quantile item over the cyclic `link` model under every scheduler (`Pr(M
+    <= 3) = 13/27` for `steps from holds(true) until holds(m.delivered) within 4`), written at level 0.4, settles
+    `proved` with shifted initial value `11/135` and a document `fsl-probability-check` accepts in a separate process;
+    written at level 0.5 it settles `refuted`.
+- id: FR-1043-AC-7
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-1's numerator with `window`, `threshold`, `comparison`, `reward`, `unit`, `level` or `payoff` changed
+    refuses objective mismatch; a key whose accumulator amount or phase is altered is not an alias and fails coverage;
+    a `shifted` value below `−level` is rejected `Malformed` at `values`. Pre-cancellation and exhaustion of each
+    caller limit during expansion, payoff evaluation or exact sums settle `incomplete` with the actual limit and
+    no truth value.
+- id: FR-1043-AC-8
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: With AC-1's `try` split into `fast` (`1/2`) and `slow` (`1/4`), `mean of fraction holds(delivered) over
+    [0, 2]` has minimum `11/48` and maximum `5/12`. Under every scheduler, `>= 1/2` is refuted by an accepted exact
+    minimum or FR-1042 `upper` on the minimum with initial bound `1/4` and policy `slow`; `<= 1/3` is refuted by
+    an accepted exact maximum or `lower` on the maximum with initial bound `2/5` and policy `fast`. Both reuse subsystem
+    evidence and are independently accepted by FR-202's checked-subject mean-certificate replay entry.
+- id: FR-1043-AC-9
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12`, a valid workload `upper` bound `1/2` at
+    `>= 1/2`, and a valid `lower` bound `2/5` at `<= 2/5` each reject `ThresholdMissed` at the initial key and settle
+    `inconclusive`, `CertificateRejected`. In AC-8, a valid `lower` minimum document with initial bound `1/5` at
+    `>= 1/2` and a valid `upper` maximum document with bound `1/2` at `<= 1/3` each reject `Malformed` at `kind`
+    with the same settlement. Identity/base mismatch retains its typed refusal; an invalid value rejects `InequalityFails`
+    with `CertificateRejected`; a disagreeing witne
+- id: FR-1043-AC-10
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: FR-203-AC-10's no-activation quantile under a resolved workload and under every scheduler, with and without
+    an admitted fairness set, settles certified `Exhaustive` with an independently accepted conditional `vacuous`
+    certificate, no `ExactValue`, shifted-value proof or numeric entry. Offering an all-zero `exact` `shifted` document
+    under every scheduler, or a workload `ratio` with denominator 0, for that no-activation claim rejects `InequalityFails`
+    at the initial complete product key and settles `inconclusive`, `CertificateRejected{rule, at}`, without numeric
+    acceptance or `ExactValue`. A var
+- id: FR-1043-AC-11
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: '`Coin` initially has bound object `c` with `c.v = 0`; its only operation `drop(b)` draws `b` uniformly
+    from `{0,1}`, deleting `c` when `b = 0`, and declares reward `R = 0` for both supported draws. Under its resolved
+    workload, `mean of fraction holds(c.v = 0) over [0,0] weighted by R >= 1/2` reaches undefined `division-by-zero`
+    on the actual `drop(0)` step of probability `1/2`: the final tentative weighted sums are `(0,0)`, and the `FractionValue`
+    location is position 1 with the actual post-state lacking `c`, pre-step undecided control `remaining = 1` and
+    pre-step sums `(0,0)`. Native replay r'
+- id: FR-202-AC-27
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: Through the checked-subject mean-certificate replay entry, FR-1043-AC-5's workload mean `5/12` refutes
+    `>= 1/2` using subsystem evidence containing the independently accepted `exact` `fraction` certificate; the
+    same document checks in its refutation role despite missing the proof threshold. An unchecked document, an unreplayed
+    engine value or a path set yields no accepted mean-refutation evidence.
+- id: FR-202-AC-28
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: FR-1043-AC-8's minimum `11/48` with an accepted `upper` bound `1/4` refutes every-scheduler `>= 1/2`;
+    its maximum `5/12` with an accepted `lower` bound `2/5` refutes every-scheduler `<= 1/3`. A valid `lower` minimum
+    document with initial bound `1/5` at `>= 1/2`, and a valid `upper` maximum document with initial bound `1/2`
+    at `<= 1/3`, each reject `Malformed` at `kind` and settle `inconclusive`, `CertificateRejected`; their conditions
+    hold but their refutation roles are wrong.
+- id: FR-202-AC-29
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: AC-27's exact `5/12` at `>= 5/12` or `<= 5/12`, and a valid workload `upper` bound `1/2` at `>= 1/2`,
+    each reject `ThresholdMissed` at the initial key and settle `inconclusive`, `CertificateRejected`. Changing
+    identity or base payoff/optimization retains the typed refusal; invalid certificate values settle `inconclusive`,
+    `CertificateRejected{InequalityFails, at}`; a disagreeing witness policy settles `inconclusive`, `ReplayParity`;
+    cancellation or a caller limit preserves its typed incomplete result without accepted evidence.
+- id: FR-202-AC-30
+  path: spec/functional/FR-202-replay-a-probabilistic-witness.md
+  role: examined
+  excerpt: 'A mean minimum refutation with a slack `upper < θ` for which both the optimizer''s attaining action
+    and a different canonical-first action satisfy every FR-1042 condition emits a witness matching the independently
+    checked policy: with no hint it uses the canonical-first satisfying full-product action; with a representable
+    valid hint it uses that hinted action. Both replay as refuted. An old optimizer witness disagreeing with the
+    checked selection settles `inconclusive`, `ReplayParity`; implicit stutter or post-state selection uses the
+    same rule without a fabricated policy identity.'
+- id: FR-203-AC-10
+  path: spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md
+  role: examined
+  excerpt: 'The untimed claim `quantile 0.5 of (steps from holds(false) until holds(true) within 4) <= 2`, checked
+    separately under a resolved workload and under every scheduler (with and without an admitted fairness set) has
+    no activating state in the complete reachable product. Native checking independently accepts its `Conditional`
+    `Vacuous` certificate and settlement returns `proved`, `closed-scope`, `Certified`, `Exhaustive`, category success,
+    carrying that certificate with empty `values` and `conditional` exactly `{"mode": "vacuous"}`. The emitted result
+    passes FR-331''s contract with basis `{"type":'
+- id: FR-203-AC-11
+  path: spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md
+  role: examined
+  excerpt: Changing AC-10's activation predicate to `holds(true)` makes the offered vacuous certificate reject `InequalityFails`
+    and settle `inconclusive`, `CertificateRejected`, without vacuity acceptance. Offering an otherwise well-shaped
+    `exact`, `ratio` or `optimum` certificate on `exhaustive`, or generic `evidence` with or without its permitted
+    vacuous certificate, refuses the FR-331 result contract. An `exact-value` basis missing its value, using scalar
+    zero or denominator zero refuses; AC-1's ordinary exact result with a valid `Rational` value remains admitted.
+    An engine-only assertion, partial ex
+- id: FR-203-AC-12
+  path: spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md
+  role: examined
+  excerpt: '`Retry` has `Msg.delivered`, terminal when delivered, and the resolved `Steady` workload whose `fast`
+    step delivers with probability `1/2` and whose `slow` weight is 0. With request initial states ordered as index
+    0 `{delivered: true}` and index 1 `{delivered: false}`, the same admitted binding `m`, and `quantile 0.5 of
+    (steps from holds(not m.delivered) until holds(m.delivered) within 4) <= 2`, the independent conditional certificate
+    check accounts for both pairs: index 0 has unreachable activation with numerator and denominator 0, while index
+    1 activates immediately with numerator `3/4`, den'
+- id: FR-1043
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: |-
+    Expansion, payoff evaluation, unit conversion and exact
+      sums SHALL run under the caller's byte, state, edge, work, storage,
+      representation and arithmetic limits and cancellation; a stop SHALL
+      settle `incomplete` with its limit and no truth value.
+- id: FR-120
+  path: spec/functional/FR-120-simulate-a-checked-package-s-state-family.md
+  role: context_only
+  excerpt: |-
+    A model state is one complete, closed population state: for each universe
+    population, its objects, each with its key, its most-specific type and a
+    value for each declared field, where every reference value names an object
+    of the state. It also carries its anchor, which its key omits.
+```
+
+## Targeted verification round 3
+
+Frozen source `9e0a042d5f3f967e32caa2f9d4cd57d373379b82`; actual base `645bef0e0e810a5c551b7894ee98d7c6288b7467`. Same independent Codex reviewer. All earlier history above is retained verbatim.
+
+**Latest source verdict: PASS for targeted CR021/022. Overall FAIL, compile-blocked.** CR021 and CR022 are fixed in inspected source. Newly observed high CR023 remains still-open; final9e0a executes zero tests.
+
+Architecture-authorized targeted exception only: CR021 resource boundary and CR022 mechanical borrow error, not a full third review. The superseding ruling (QSL2158 commenta36a5342) accepts one conservatively prepaid bounded atomic clone/closure/extent interval, cancellation polled before and after; an inner callback is explicitly outside completion scope. The older CR021 wording requiring inner cancellability is therefore not a remaining requirement. No new upstream callback API, pin or validator was demanded.
+
+CR021 source verification: declaration fields and universe members are indexed once, with caller admission before index construction and per-lookup work. No per-row field or universe vector rescan remains at the reported sites. observation_work_size traverses selected package records with caller callback charges, at least one per view including empty views, plus population-member visits; returned cardinalities include records absent from the state key. Its traversal performs sizing without validation or retained allocation. It accounts relationship/population declaration-key byte sizes. Restoration combines canonical source bytes, decoded value/task count, actual objects/extents, indexed fields/universes and selected declarations; checked arithmetic computes conservative cross-product work and clone storage. All prepayment uses the existing actual caller budget/meter and can stop before the owner call. tick/retain poll before the interval, tick(0) polls after the call even if observation returns a structural error, so cancellation retains precedence. Owner validation remains the existing observation call. No fresh default budget or duplicated validator was introduced.
+
+CR022 source verification: source and target references are evaluated in separate locals before self.push, removing the two overlapping mutable self borrows with the same evaluation order and same retained pair.
+
+The new owning66-field test constructs a genuinely admitted Link model with64 extra Boolean fields, obtains its actual canonical key, and supplies positive caller work bytes.len()+33. The initial byte charge and reservation-backed canonical read precede declaration indexing; the66-field charge must be the denied next charge. Assertions inspect actual retained Incomplete WorkUnits, consumed input bytes, next_charge66 and exact charge sequence. It is a meaningful nonzero caller-denial assertion by inspection; runtime is still pending. Existing owner/provenance/detached tests were not changed by this correction.
+
+No remaining CR021/022 defect found within the authorized target; newly supplied compiler evidence is recorded separately as CR023. Every earlier fixed/rejected/deferred outcome is preserved; CR019/020 are not reopened, and generic GA002 remains architecture-deferred. No new full gap, BASE, normative or global audit ran. Accepted SR507 remains intact. Only the newly supplied actual compiler block is added as CR023; no expanded source-review hunt ran. Source stayed frozen and clean. Read-only diff --check passes; this correction changes only model restoration, its approved sizing accessor and one owning resource test (plus prior review custody). Pins, wire, default scopes and main behavior are unchanged.
+
+Parent reports exact frozen9e0a first30-profile command COMPILE101/ZERO tests: measure.rs475/504/521 pass ProbabilityKeyAdmission where quire_canonical::Reservation is required, but it implements filament_exact::Reservation; measure.rs552 calls nonexistent enabled_actions_with_budget (actual API actions_with_budget). Commands2–16 held. Raw /private/tmp/qsl-3285-9e0a-1.log. No45-test acceptance or executed66-field test. Prior10564 first30-profile command COMPILE101/ZERO tests (two E0499); commands2–15 held. Older400617 owner-unit1pass0fail0ignore272filtered is older-source evidence only. No local cargo/tests/clippy/baseline/Kani/sweep/devcompile; no45-test acceptance claim.
+
+## New findings (targeted verification round 3)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-023 | high | Actual9e0a first30-profile command fails compilation: measure.rs475/504/521 pass ProbabilityKeyAdmission to canonical APIs requiring quire_canonical::Reservation, while it implements filament_exact::Reservation; measure.rs552 calls nonexistent enabled_actions_with_budget (actual API actions_with_budget). Zero tests; commands2–16 held. Raw /private/tmp/qsl-3285-9e0a-1.log. | fsl-replay/src/probability_certificate/document/measure.rs:475; fsl-replay/src/probability_certificate/document/measure.rs:552 |
+
+### Targeted round 3 dispositions
+
+Targeted round3, explicitly authorized after the final normal repair round. Latest rows supersede D2 still-open outcomes without deleting them.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-021 | fixed | Indexed lookups and conservatively prepaid actual-caller bounded owner validation satisfy the superseding architecture ruling; pre/post cancellation is accepted. |
+| FND-022 | fixed | Decode source/target into locals before self.push; earlier E0499 is resolved. |
+| FND-023 | still-open | Newly observed actual compiler blockers; no runtime acceptance. Parent owns bounded mechanical alignment, no full extra review loop. |
+
+FND-021 after_excerpt:
+
+```rust
+                    .and_then(|pairs| n.checked_add(pairs))
+            })
+            .ok_or(ModelKeyError::SizeOverflow)?;
+        self.tick(work)?;
+        self.retain(
+            units
+                .checked_mul(size_of::<Value>().max(size_of::<FieldValue>()))
+                .ok_or(ModelKeyError::SizeOverflow)?,
+        )?;
+        let observation = system.model.observation(&state, super::state_document());
+        self.tick(0)?;
+        observation.map_err(|_| bad())?;
+        Ok(state)
+    }
+}
+```
+
+FND-022 after_excerpt:
+
+```rust
+                    let mut instances = Vec::new();
+                    for instance in self.array(member(extent, "instances")?)? {
+                        let source = self.reference(member(instance, "source")?)?;
+                        let target = self.reference(member(instance, "target")?)?;
+                        self.push(&mut instances, (source, target))?;
+                    }
+                    self.push(
+```
+
+### Targeted examined scope
+
+```yaml
+scope:
+- id: FR-1043-AC-7
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-1's numerator with `window`, `threshold`, `comparison`, `reward`, `unit`, `level` or `payoff` changed
+    refuses objective mismatch; a key whose accumulator amount or phase is altered is not an alias and fails coverage;
+    a `shifted` value below `−level` is rejected `Malformed` at `values`. Pre-cancellation and exhaustion of each
+    caller limit during expansion, payoff evaluation or exact sums settle `incomplete` with the actual limit and
+    no truth value.
+- id: FR-1043-AC-9
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12`, a valid workload `upper` bound `1/2` at
+    `>= 1/2`, and a valid `lower` bound `2/5` at `<= 2/5` each reject `ThresholdMissed` at the initial key and settle
+    `inconclusive`, `CertificateRejected`. In AC-8, a valid `lower` minimum document with initial bound `1/5` at
+    `>= 1/2` and a valid `upper` maximum document with bound `1/2` at `<= 1/3` each reject `Malformed` at `kind`
+    with the same settlement. Identity/base mismatch retains its typed refusal; an invalid value rejects `InequalityFails`
+    with `CertificateRejected`; a disagreeing witne
+- id: FR-1043
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: |-
+    Expansion, payoff evaluation, unit conversion and exact
+      sums SHALL run under the caller's byte, state, edge, work, storage,
+      representation and arithmetic limits and cancellation; a stop SHALL
+      settle `incomplete` with its limit and no truth value.
+```
+
+## Targeted mechanical verification round 4
+
+Frozen source `bd54ba0f8b40d960acb39086268fffd4269f3a13`; same independent Codex reviewer. Earlier history remains verbatim.
+
+**Latest source verdict: PASS for CR023. Overall CONDITIONAL pending final exact-head45 focused results.** No finding remains still-open in inspected source. This does not claim compilation or runtime acceptance.
+
+Targeted CR023 mechanical verification only, continuing the same architecture-authorized correction. Inspected the eight production lines and their actual called APIs/error mappings. The quire_canonical::Reservation implementation explicitly forwards to the existing filament_exact::Reservation implementation; its poll, cumulative storage ceiling, checked size conversion and original first retained stop remain unchanged. Canonical denial handling resolves ModelKeyError::Denied through admission.refusal, preserving cancellation/storage/accounting causes instead of replacing them with Malformed.
+
+restore_named now calls the real public ModelSystem::actions_with_budget and maps its ModelKeyExpansionError through admission.expansion_refusal. The owner method uses the existing KeyScope and actual caller budget/cancel. Its difference from enabled_actions is filtering actions with no physical post for any draw; such an action cannot contain a matching pending draw, which independently requires positive probability and at least two actual posts. Draw selection, pending identity equality and retained rewards/posts remain unchanged. No error-semantic change or new defect found in this narrow correction.
+
+CR023 is fixed by inspected source. CR021/022 remain fixed under the accepted prepaid atomic-interval ruling; no deeper callback or full additional review was demanded. All prior histories/dispositions, including rejected CR002 and architecture-deferred generic GA002, remain preserved. Accepted normative SR507, pins, scope, defaults and wire are unchanged. No new full gap/BASE/matrix/global analysis was run. Source remains clean/frozen; read-only diff --check passes.
+
+Final exactbd54ba0f8b40d960acb39086268fffd4269f3a13 same45tests/16commands is being requested remotely; no results supplied yet. No45-test acceptance claim. Previous9e0a first30 command COMPILE101/ZERO tests, commands2–16 held, remains historical failure. No local cargo, tests, baseline, clippy, Kani, sweeps or devcompile.
+
+### Mechanical round 4 dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-023 | fixed | Canonical Reservation bridge forwards existing caller admission; actual actions_with_budget and matching expansion_refusal replace nonexistent API. Runtime still pending. |
+
+FND-023 after_excerpt:
+
+```rust
+impl quire_canonical::Reservation for ProbabilityKeyAdmission<'_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), quire_canonical::ReservationDenied> {
+        Reservation::reserve(self, bytes).map_err(|_| quire_canonical::ReservationDenied)
+    }
+}
+```
+
+## Subsequent exact-head runtime evidence
+
+Parent reports exact bd54ba0f8b40d960acb39086268fffd4269f3a13 first30-profile command COMPILE101/ZERO tests; commands2–16 held. Earlier CR023 compiler errors are gone and CR023 remains fixed. The newly observed blocker is three E0609 in existing liveness test code: liveness.rs1065 reads anchors[0].kind on Option<&SelectedAnchor>;1067 reads anchor.kind/name on &Option, following anchor().clone() captures at1048/1062. Raw /private/tmp/qsl-3285-bd54-1.log. Overall execution remains compile-blocked; no45-test acceptance or merge clearance. Parent has authorized the coder to require the actual anchor before cloning, preserving every assertion, with no production change. This addendum records supplied runtime evidence only; no new source inspection/full review was performed. Await the frozen correction and targeted test diff before verification. All previous source clearances, including CR021/022/023, remain preserved.
+
+## Targeted liveness compiler verification round 5
+
+Frozen source `df2460d71671b173a71a9b0fc7e38ace62030c43`; same independent Codex reviewer.
+
+**Latest targeted source verdict: PASS. Overall CONDITIONAL pending compile-only and focused runtime.** No remaining source finding or new defect identified within this targeted test correction.
+
+Targeted inspection only of the test compiler correction in commit5762aa5e5859e2550919316a5a760f46bb718178 (df246 is artifact custody). The actual source uses required_anchor().expect(...).clone() at the two existing initial/handler captures. required_anchor returns the real admitted anchor or a typed refusal; expect makes missing provenance fail the test explicitly. This captures SelectedAnchor values rather than Option<&SelectedAnchor>, resolving the reported E0609 member accesses without fabricating a default anchor.
+
+All existing assertions are preserved: one initial and one successor, values0/1/2/3, initialization kind, handler kinds/names, shared handler identity, terminal stutter, repeated state/value/key and distinct stutter-versus-inc identities. No production change, weakened test, changed fixture, removed trace or broadened review. No new defect found in the authorized correction. The late bd54 liveness compiler blocker is corrected by source inspection; this is not evidence that df246 compiles or the test runs.
+
+CR023 and all earlier source clearances remain fixed; rejected CR002 and architecture-deferred generic GA002 remain unchanged. CR021/022 preserve the accepted prepaid atomic validation boundary. All prior finding/history text remains verbatim. No new full code/gap/BASE/matrix/global audit or finding id. Source clean/frozen; read-only diff --check passes.
+
+Exact df2460d71671b173a71a9b0fc7e38ace62030c43 compile-only all seven touched packages with --tests has been requested under new architecture ruling before focused46tests/17commands; both compilation and runtime results pending. No acceptance or merge clearance claimed. Prior bd54 first30 command COMPILE101/ZERO tests, commands2–16 held, due this existing liveness test; CR023 compiler errors were gone. Raw /private/tmp/qsl-3285-bd54-1.log. No local cargo/tests or other gates run.
+
+## Targeted Binding compiler verification round 6
+
+Frozen source `e7787487c512f4f40662d291d0bc8422d7bffe9b`; same independent Codex reviewer.
+
+**Latest targeted source verdict: PASS. Overall CONDITIONAL pending compile-only and focused runtime.**
+
+Targeted test compiler correction only. The entire source delta is four added `..` rest patterns in existing Binding destructures in fsl-replay/src/spine/clause/tests.rs. Each continues to bind exactly the same name/value or context/frame values; it now permits the additional binder field without attempting to match it. All existing pattern alternatives, literal checks, names, reference targets, panic paths and assertions remain verbatim. The fifth Binding pattern already had a rest pattern. No production change, fixture change, weakened assertion, unrelated warning cleanup or expanded review. Source inspection clears the four reported E0027 sites; it does not establish compilation/runtime acceptance.
+
+Every prior source clearance and fixed/rejected/deferred finding outcome remains preserved, including CR023 fixed, CR021/022 fixed under the accepted prepaid interval, CR002 rejected and generic GA002 architecture-deferred. No new finding, full code/gap/BASE/matrix/global analysis or source mutation. Earlier artifacts remain verbatim prefixes. Source remains clean/frozen; read-only diff --check passes.
+
+Parent reports prior df246 architecture-directed seven-package --tests check exit101 with exactly four E0027 at spine/clause/tests.rs3841/3951/4452/5114, Binding patterns omit binder; raw /private/tmp/qsl-3285-df24-compile.log. Same seven-package compile-only queued at exacte778; focused46 runtime is HOLD. Compile/runtime results pending, no46-test acceptance or merge clearance. No local cargo/tests/gates run.
+
+## Actual e778 compile and runtime evidence
+
+**Latest overall verdict: FAIL, runtime acceptance blocked.** Earlier targeted static compiler/source clearances remain historical source findings outcomes; they are not runtime acceptance.
+
+Exact e7787487c512f4f40662d291d0bc8422d7bffe9b seven-touched-package --tests compile-only EXIT0/13.09s, remote /private/tmp/qsl-3285-e778-compile.log. First focused measure_profile module:30 selected,1 passed,29 failed,0 ignored,2578 filtered,0.25s,exit101; commands2–17 held/not run. Verified raw runtime /tmp/qsl-3285-e778-runtime-1.log. No46-test acceptance or merge clearance.
+
+Observed failure clusters are S1 `expected (` in mean/fraction fixtures; `delivered` wrong-value-kind admissions/producer Declined InvalidInput; residual Undefined expected Refuted but actual Failed runtime_invariant; vacuity control expectation failure; and P95 emitted-package independent checker StorageBytes bound8000000 actual8000015. Only `an_undefined_measure_after_merged_draws_replays_a_real_positive_draw` passed. These are observed failures, not established common root causes. The raw log was read for this evidence update.
+
+Per parent direction, no new source review, finding hunt, test rerun or source mutation was performed. No failing test was bent/deleted and no budget was raised. Coder is diagnosing the clusters read-only; parent requested an architecture ruling before corrections because29 failures exceed the standing single-test scope. Await later bounded authorization/frozen head before targeted verification. All prior fixed/rejected/deferred source dispositions remain preserved; no mergeable claim.
+
+## Targeted runtime bundle verification round 7
+
+Frozen source `790ffd226b950c075584ead59d9cb76c57c04648`; actual current main base `7d9dd0ee52e92712f9e74cc4922fcd73d4eb0d9f`; same independent Codex reviewer.
+
+**Latest targeted source verdict: PASS. Overall CONDITIONAL pending final compile and focused46 runtime.** No new finding within the authorized bundle. Earlier failing runtime remains preserved as history.
+
+Architecture-authorized runtime bundle only, reviewed against nondiagnostic e778 and directly affected current context; no full additional review or unrelated main audit. The ratio checker independently reconstructs one graph from the checked package/claim. Both parts still require their own identity/payoff roles and independently derived complete objectives, range checks, exact sorted values/ranking coverage, rederived ranks and Bellman equality. Shared topology/control/key derivation follows the same admitted measure, including the claim threshold retained by both controls. Numerator values remain retained while the graph terminal payoff switches to the independently evaluated and retained shared MeasurePayoff::Activated values; denominator values are checked separately and both maps feed total actual-index/binding coverage and ratio/vacuity checks. No second payoff-rule table, graph/counter reset, budget raise or model shrink. The added activation payoff evaluation and retention are charged. Wrong denominator objective/role/rank/value does not inherit numerator acceptance.
+
+P95 still asserts exact24233/25000, initial denominator1, checked threshold/unit, emitted-package acceptance, altered numerator InequalityFails at Numerator, independent altered denominator InequalityFails at Denominator, and two-ms refutation. Existing bad key/objective/rank controls remain. These are preserved meaningful assertions, not executed corrected-head evidence.
+
+Bounded pending identity now reads ScheduledIdentity.operation as the owner declaration text {node,package}, checks exactly two string members and canonical byte equality through DeclarationRecord, then emits via existing project_declaration. Reservation/cancel/byte checks and retained owner refusal are preserved. Receiver/arguments/actual draw are unchanged. Actual residual Undefined replay still uses positive physical draw, resolved post, pending policy and PRE control/sums; no fabricated anchor/evidence or runtime_invariant relabeling was introduced.
+
+Test repair follows explicit rulings: actual Boolean fixture carriers and parenthesized mean/fraction syntax; partial Lower <= independently checked full optimizer value with scheduler rows restricted to the named subset, while full/equality/adverse controls remain; interior FR186 thresholds with valid Lower0 reaching exactly ThresholdMissed; canonical fraction [n,d] expectations with the same zeros and existing cause/position/control/sums forgeries. No extra frontier product-parity rule was imposed.
+
+Vacuity exercises real resolve_items/settle_run Result output with actual owning-model string, exact wrapper, accepted checker, exhaustive basis and unchanged conditional/vacuous document. Schema exception controls use FSpec's published positive carrier and verify an admitted ordinary numeric baseline before mutations. The broader preexisting nested structuralNodeKey/exportNodeId schema gap is architecture-deferred and is not claimed fixed or raised as this PR's blocker. No schema weakening/stringification was introduced.
+
+All QSL2158-DIAG searches in production trees are empty. The three diagnostic-only source files outside the two changed production owners have no diff from nondiagnostic e778. No diagnostic patch was blindly applied. All earlier source dispositions remain preserved: CR001/003–023 fixed; CR002 rejected; GA001/003/004 fixed, generic GA002 deferred. CR021 retains accepted prepaid bounded atomic validation with pre/post cancellation; no withdrawn inner callback demand. No new finding within the authorized bundle. Accepted normative SR507, pins and unrelated main changes remain intact. Source stayed clean/frozen; read-only diff --check passes.
+
+Historical actual evidence: e778 compile-only seven packages --tests EXIT0/13.09s, then module30 selected1passed29failed0ignored2578filtered/0.25s/exit101, commands2–17held. Fixture correction add87 reached19passed11failed0ignored2578filtered/1.17s/exit101, raw /tmp/qsl-3285-add8-module.log. Diagnostic877 seven-package compile passed, exactP95 failed0pass1fail0ignore2607filtered/0.23s/exit101; raw /tmp/qsl-3285-877d-p95.log shows denominator SECOND graph expansion used7999759,next256,bound8000000,actual8000015. These are diagnosis/failure history, not corrected790ffd acceptance.
+
+Final790ffd seven-package --tests compile is requested but delayed in shared TEST-RUN backlog; final compile and focused46tests/17commands have no supplied results yet. Overall CONDITIONAL; no mergeable/acceptance claim. No local cargo, tests, broad baseline, clippy, Kani, sweeps or devcompile.
+
+## Targeted runtime test-failure round 1 verification
+
+Frozen source `22884bbd1f29bdd249e5ec1f3293e24cc77b9282`; actual base `1ed4808a5abe4c093c32267a2d59716123bf1000`; same independent Codex reviewer.
+
+**Latest targeted source verdict: PASS. Overall CONDITIONAL pending exact22884 compile and focused46 runtime.**
+
+Targeted test-failure round1of2 only: the private residual payload callback, its ownership/accounting and the genuine residual fixture expansion, plus necessary integration import preservation. No full additional review or unrelated main audit.
+
+The private FnMut callback is invoked only for PostState in WitnessWork::Action/Step; all existing identity, terminal-stutter, scalar/draw/reward/probability and slot charges remain. The nonmeasure caller still explicitly refuses PostState as BrokenInvariant. The measure callback visits/polls each owned product state through existing witness_charge(0), compares full ProbKey identity, requires a matching nonpending resolved target and an existing qualified canonical certificate key, and charges fixed ProbKey size plus canonical key length before the residual action is cloned. No reencoding, new codec/public API, reset, budget raise, search/replay/settlement change.
+
+Actual ownership was traced: measure builder creates PostState edge-target keys with certificate_state=None; canonical certificate keys are subsequently installed only in product.states. Cloning the edge action therefore does not clone a second certificate-key Vec. The callback borrows the matched state's qualified canonical key as a conservative size bound for the actual edge target's model/binding/control/accumulator payload, plus fixed ProbKey storage. Native action/step/path retention calls remain before ownership changes. No ungrounded duplicate-certificate allocation finding is asserted.
+
+The residual fixture variant now removes the delivered terminal and not-delivered preconditions after replacing the postcondition with true, enabling both actual post states at later positions. This expands transitions so genuine positive accumulated pending rows exist. Initial state, claims, window, random support, operation bodies and all meaningful positive/adverse checks remain; the original terminal-stutter variant is unchanged. Actual PostState, canonical tie, no-satisfying positive residual, bad/nonexistent hint and no-fallback assertions remain. No test weakened, deleted or ignored.
+
+All temporary QSL2158_DIAG/force_capture code is absent from the two production files. The initial terminal/search hypothesis was disproved by the probe and no such logic change was applied. The actual correction is35 changed formatted production lines, plus7added/1removed fixture lines.
+
+Integration preservation checked: five owned correction/test/review SHA256s match premerge afd038 exactly; all76 range pairs are unchanged. Sole manual frames.rs import resolution retains main ModelSystem and removes obsolete ModelSimState, preserving reached() provenance. Actual base is main1ed4808. Authorized IR1cbd86a48f02e4623e558a3d3b23c066c7f280bf, FSpecd6d066 and core-data424 pins are retained. No unrelated main audit. Source remains clean/frozen and read-only diff --check passes.
+
+No new defect found within the authorized target. Prior finding history/outcomes remain preserved, including CR002 rejected, CR021 accepted prepaid interval, CR023 fixed and generic GA002 architecture-deferred. Accepted BASE SR507 unchanged; no new full gap/matrix/global analysis or finding id.
+
+Actual790ffd full46 completed44pass2fail0ignore: module28/30, commands2–17 each1pass. Failures were policy-hint fixture missing a genuine positive residual row and native residual Quantile Failed/runtime_invariant. Raw /home/peter/.cache/handoff/3285-cmd-1-790ffd.log read. Probe4533 compiled seven-package --tests EXIT0/24.30s, exact residual test0pass1fail0ignore2612filtered/0.10s; full81-line /home/peter/.cache/handoff/3285-probe-4533e1.log read: Event ThresholdMissed then witness produced/replay REPRODUCED, positive draw/forged-post checks passed; subsequent Quantile ThresholdMissed had no produced marker and source traces its controlled PostState payload refusal. This is old diagnosis, not22884 acceptance.
+
+Exact integrated22884 seven-package --tests compile and same46tests/17commands are queued through parent/architecture; no supplied new-head results yet. Overall CONDITIONAL, no acceptance/merge clearance. No local cargo, tests, baseline, clippy, Kani, sweeps, external models or extra agents.
+
+## Final exact-head runtime qualification
+
+**Latest overall verdict: PASS — READY for merge at source22884bbd1f29bdd249e5ec1f3293e24cc77b9282.**
+
+Architecture supplied actual acceptance on exact22884bbd1f29bdd249e5ec1f3293e24cc77b9282: seven-package --tests compile exit0; all17 focused commands complete,46 selected/46passed/0failed/0ignored. Module command1 passed30/30; commands2–17 each passed1/1. Remote logs dracoscratch3285-22884bbd.../cmd-N.log. This meets the pending runtime condition; architecture explicitly accepts the result and directs exact-head merge.
+
+Evidence-only qualification of the already reviewed immutable source; no new source inspection, review round, method, finding or disposition change. All prior histories remain preserved. Earlier source PASS plus actual compile/focused acceptance now clears the merge condition. Generic GA002 remains architecture-deferred; this is scoped PR acceptance, not a claim that all QSL2158 work is complete. Source freeze unchanged; parent owns artifact-only custody and exact-head admin merge.

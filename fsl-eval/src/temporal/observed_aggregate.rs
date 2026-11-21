@@ -138,6 +138,11 @@ pub(super) struct SampleWindowSource<'a> {
     pub(super) trigger: bool,
     /// The captures the activation fixed.
     pub(super) captures: &'a [Value],
+    /// The `(position, atom)` valuations absent from the admitted observations,
+    /// and the aggregate atom this source reads: a window member whose
+    /// observation holds no valuation for the atom reads as missing (FR-194-AC-17).
+    pub(super) absent: &'a [(u64, u64)],
+    pub(super) atom: u64,
     /// The first refused evaluation, kept whole.
     pub(super) refused: Option<filament_eval::Evaluation>,
 }
@@ -150,6 +155,9 @@ impl SampleWindowSource<'_> {
         meter: &mut Meter,
     ) -> Result<WindowRead<Value>, LetterStop> {
         let expression = expression.ok_or_else(|| fault("aggregate-expression-present"))?;
+        if self.absent.contains(&(position.index(), self.atom)) {
+            return Ok(WindowRead::Missing);
+        }
         let Some(sample) = usize::try_from(position.index())
             .ok()
             .and_then(|slot| self.samples.get(slot))

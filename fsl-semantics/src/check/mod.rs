@@ -4657,7 +4657,8 @@ impl PackageDeclarations {
             match anchored {
                 Ok((mut checked, bound)) => {
                     refusals.extend(profile_refusals.into_iter().map(|(_, refusal)| refusal));
-                    let content = protocol_clause::content(protocol, &self.alias_names, &scope);
+                    let content =
+                        protocol_clause::content(protocol, &self.alias_names, &scope, &models);
                     let content_refused = !content.is_empty();
                     refusals.extend(content);
                     match protocol_requirement::check(
@@ -5691,6 +5692,9 @@ impl PackageDeclarations {
         // Native selected-document projection needs object declarations even
         // when only an unused population or another model member names them.
         if let Err(refusal) = lowering.selected_object_nodes(&relationship_locations) {
+            refusals.push(refusal);
+        }
+        if let Err(refusal) = lowering.selected_enum_nodes(&relationship_locations) {
             refusals.push(refusal);
         }
         // FR-092/FR-093: the functions and the protocols are lowered in

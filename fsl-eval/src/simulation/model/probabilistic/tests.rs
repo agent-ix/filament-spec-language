@@ -1171,3 +1171,311 @@ fn a_weight_zero_workload_keeps_every_step_inside_the_state_graph() {
         queue.extend(weighted.into_iter().map(|step| step.post));
     }
 }
+
+#[trace("TC-3152", "FR-1043-AC-9")]
+#[test]
+fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
+    use super::super::{ModelKeyBudget, ModelRestoreBudget, ModelStateProvenance};
+    use filament_exact::{Cancel, IntegerDecimalBudget, Reservation, ReservationDenied};
+    struct Budget {
+        meter: filament_exact::Meter,
+        used: usize,
+    }
+    impl Reservation for Budget {
+        fn reserve(&mut self, bytes: usize) -> Result<(), ReservationDenied> {
+            let actual = self.used.checked_add(bytes).ok_or(ReservationDenied)?;
+            if actual > 4_000_000 {
+                return Err(ReservationDenied);
+            }
+            self.used = actual;
+            Ok(())
+        }
+    }
+    impl IntegerDecimalBudget for Budget {
+        fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
+            self.meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                        .work(Integer::from(units)),
+                )
+                .map_err(|_| ReservationDenied)
+        }
+    }
+    impl ModelKeyBudget for Budget {
+        fn integer(&mut self, value: &Integer) -> Result<(), ReservationDenied> {
+            self.meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::GraphResultRetain)
+                        .size(
+                            filament_exact::LimitKind::IntegerBits,
+                            value.magnitude_bits(),
+                        ),
+                )
+                .map_err(|_| ReservationDenied)
+        }
+    }
+    impl ModelRestoreBudget for Budget {
+        fn meter(&mut self) -> &mut filament_exact::Meter {
+            &mut self.meter
+        }
+    }
+    let model = world::link();
+    let world = World::new(&model);
+    let system = world.system();
+    let actual = initial(&system);
+    let bytes = system.state_key(&actual).unwrap().0;
+    let mut budget = Budget {
+        meter: filament_exact::Meter::new(system.meter_limits()),
+        used: 0,
+    };
+    let restored = system
+        .restore_state_key_with_budget(
+            &bytes,
+            fsl_foundation::IdentityLimits::default(),
+            &mut budget,
+            &Cancel::new(),
+        )
+        .unwrap();
+    assert_eq!(system.state_key(&restored).unwrap().0, bytes);
+    assert!(matches!(
+        restored.provenance(),
+        ModelStateProvenance::RestoredFromKey { effect: None }
+    ));
+    assert!(restored.anchor().is_none() && restored.reached_by().is_none());
+    let refused = restored.required_anchor();
+    assert!(
+        refused.is_err(),
+        "key restoration cannot supply an initial anchor: {refused:?}"
+    );
+    let sampler_id =
+        fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
+            .unwrap();
+    let sampler = crate::simulation::sampled::ProbabilisticSampler::new(
+        &system,
+        world.workload("Even"),
+        &sampler_id,
+    )
+    .unwrap();
+    let refused = sampler.position(restored.clone());
+    assert!(
+        matches!(
+            refused,
+            Err(crate::simulation::sampled::SampleStop::Expansion(_))
+        ),
+        "restored context is no sampled initial: {refused:?}"
+    );
+    let original = system.actions(&actual).unwrap().unwrap();
+    let rebuilt = system.actions(&restored).unwrap().unwrap();
+    assert_eq!(original.len(), rebuilt.len());
+    for (original, rebuilt) in original.iter().zip(&rebuilt) {
+        assert_eq!(original.identity, rebuilt.identity);
+        assert_eq!(original.draws.len(), rebuilt.draws.len());
+        for (original, rebuilt) in original.draws.iter().zip(&rebuilt.draws) {
+            assert_eq!(original.probability, rebuilt.probability);
+            assert_eq!(original.successors.len(), rebuilt.successors.len());
+            for ((transition, post), (restored_transition, restored_post)) in
+                original.successors.iter().zip(&rebuilt.successors)
+            {
+                assert_eq!(transition, restored_transition);
+                assert_eq!(
+                    system.state_key(post).unwrap().0,
+                    system.state_key(restored_post).unwrap().0
+                );
+                assert!(restored_post.anchor().is_none());
+                assert!(
+                    restored_post.reached_by().is_some(),
+                    "the new actual effect remains available"
+                );
+            }
+        }
+    }
+    let noninitial = original
+        .iter()
+        .flat_map(|action| &action.draws)
+        .flat_map(|draw| &draw.successors)
+        .map(|(_, post)| post)
+        .find(|post| matches!(field(post, "delivered"), Value::Boolean(false)))
+        .expect("a genuine failed send reaches attempts1");
+    let next_bytes = system.state_key(noninitial).unwrap().0;
+    assert_ne!(next_bytes, bytes);
+    assert!(noninitial.anchor().is_some() && noninitial.reached_by().is_some());
+    let restored_next = system
+        .restore_state_key_with_budget(
+            &next_bytes,
+            fsl_foundation::IdentityLimits::default(),
+            &mut budget,
+            &Cancel::new(),
+        )
+        .unwrap();
+    assert!(restored_next.anchor().is_none() && restored_next.reached_by().is_none());
+    let next_actions = system.actions(noninitial).unwrap().unwrap();
+    let restored_actions = system.actions(&restored_next).unwrap().unwrap();
+    assert_eq!(next_actions.len(), restored_actions.len());
+    for (actual, restored) in next_actions.iter().zip(&restored_actions) {
+        assert_eq!(actual.identity, restored.identity);
+        for (actual, restored) in actual.draws.iter().zip(&restored.draws) {
+            assert_eq!(actual.probability, restored.probability);
+            assert_eq!(
+                actual
+                    .successors
+                    .iter()
+                    .map(|(step, post)| (step.clone(), system.state_key(post).unwrap().0))
+                    .collect::<Vec<_>>(),
+                restored
+                    .successors
+                    .iter()
+                    .map(|(step, post)| (step.clone(), system.state_key(post).unwrap().0))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    let mut invalid: serde_json::Value = serde_json::from_slice(&next_bytes).unwrap();
+    let rows = invalid["semantic"]["entries"][0]["value"]["entries"][0]["value"]["fields"]
+        .as_array_mut()
+        .unwrap();
+    rows.iter_mut()
+        .find(|row| row["name"] == "attempts")
+        .unwrap()["value"] = serde_json::json!({"type":"integer","value":"99"});
+    let invalid = fsl_foundation::canonical_json::encode(&invalid).unwrap();
+    let refused = system.restore_state_key_with_budget(
+        &invalid,
+        fsl_foundation::IdentityLimits::default(),
+        &mut budget,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(refused, Err(super::super::ModelRestoreError::Malformed(_))),
+        "typed member range must be checked: {refused:?}"
+    );
+    let mut exhausted = Budget {
+        meter: filament_exact::Meter::new(system.meter_limits()),
+        used: 4_000_000,
+    };
+    let stopped = system.restore_state_key_with_budget(
+        &next_bytes,
+        fsl_foundation::IdentityLimits::default(),
+        &mut exhausted,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            stopped,
+            Err(super::super::ModelRestoreError::Key(
+                super::super::ModelKeyError::Denied
+            ))
+        ),
+        "caller storage denial: {stopped:?}"
+    );
+    let cancel = Cancel::new();
+    cancel.cancel(filament_exact::CancelCause::Deadline);
+    let stopped = system.restore_state_key_with_budget(
+        &bytes,
+        fsl_foundation::IdentityLimits::default(),
+        &mut budget,
+        &cancel,
+    );
+    assert!(
+        matches!(
+            stopped,
+            Err(super::super::ModelRestoreError::Key(
+                super::super::ModelKeyError::Cancelled(filament_exact::CancelCause::Deadline)
+            ))
+        ),
+        "{stopped:?}"
+    );
+}
+
+#[trace("TC-3152", "FR-1043-AC-9")]
+#[test]
+fn restored_large_declared_field_index_retains_the_nonzero_caller_work_stop() {
+    use super::super::{ModelKeyBudget, ModelKeyError, ModelRestoreBudget, ModelRestoreError};
+    use filament_exact::{Cancel, IntegerDecimalBudget, Reservation, ReservationDenied};
+    struct Budget {
+        meter: filament_exact::Meter,
+        denied: Option<filament_exact::Incomplete>,
+        charges: Vec<u64>,
+    }
+    impl Reservation for Budget {
+        fn reserve(&mut self, _: usize) -> Result<(), ReservationDenied> {
+            Ok(())
+        }
+    }
+    impl IntegerDecimalBudget for Budget {
+        fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
+            self.charges.push(units);
+            self.meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                        .work(Integer::from(units)),
+                )
+                .map_err(|denied| {
+                    self.denied = Some(denied);
+                    ReservationDenied
+                })
+        }
+    }
+    impl ModelKeyBudget for Budget {
+        fn integer(&mut self, _: &Integer) -> Result<(), ReservationDenied> {
+            Ok(())
+        }
+    }
+    impl ModelRestoreBudget for Budget {
+        fn meter(&mut self) -> &mut filament_exact::Meter {
+            &mut self.meter
+        }
+    }
+    let mut model = world::link();
+    for name in [
+        "field00", "field01", "field02", "field03", "field04", "field05", "field06", "field07",
+        "field08", "field09", "field10", "field11", "field12", "field13", "field14", "field15",
+        "field16", "field17", "field18", "field19", "field20", "field21", "field22", "field23",
+        "field24", "field25", "field26", "field27", "field28", "field29", "field30", "field31",
+        "field32", "field33", "field34", "field35", "field36", "field37", "field38", "field39",
+        "field40", "field41", "field42", "field43", "field44", "field45", "field46", "field47",
+        "field48", "field49", "field50", "field51", "field52", "field53", "field54", "field55",
+        "field56", "field57", "field58", "field59", "field60", "field61", "field62", "field63",
+    ] {
+        model.fields.push((name, world::BOOLEAN.to_owned()));
+        model
+            .initial
+            .as_object_mut()
+            .unwrap()
+            .insert(name.to_owned(), serde_json::json!({"boolean": false}));
+    }
+    let world = World::new(&model);
+    let system = world.system();
+    let bytes = system.state_key(&initial(&system)).unwrap().0;
+    let field_count = system.fields.values().map(Vec::len).sum::<usize>();
+    assert_eq!(field_count, 66);
+    let mut limits = system.meter_limits();
+    limits.work_units = u64::try_from(bytes.len() + field_count / 2).unwrap();
+    let mut budget = Budget {
+        meter: filament_exact::Meter::new(limits),
+        denied: None,
+        charges: Vec::new(),
+    };
+    let stopped = system.restore_state_key_with_budget(
+        &bytes,
+        fsl_foundation::IdentityLimits::default(),
+        &mut budget,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(stopped, Err(ModelRestoreError::Key(ModelKeyError::Denied))),
+        "{stopped:?}"
+    );
+    let denied = budget
+        .denied
+        .expect("actual caller meter retains the typed incomplete");
+    assert_eq!(denied.limit_kind, filament_exact::LimitKind::WorkUnits);
+    assert_eq!(denied.consumed, u64::try_from(bytes.len()).unwrap());
+    assert_eq!(denied.next_charge, Integer::from(field_count));
+    assert_eq!(
+        budget.charges,
+        [
+            u64::try_from(bytes.len()).unwrap(),
+            u64::try_from(field_count).unwrap()
+        ],
+        "canonical input admission succeeds before the declaration index is charged"
+    );
+}

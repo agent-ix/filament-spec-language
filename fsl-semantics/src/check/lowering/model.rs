@@ -575,30 +575,31 @@ impl AdmittedModel {
         })
     }
 
-    /// The effective object types at the ends of an admitted FR-152
-    /// connection. `None` means the declaration is not a connection, its
-    /// endpoints do not resolve to their owner types, or the connection's
-    /// admission rule refuses it.
-    pub(crate) fn admitted_connection_ends(&self, key: &DeclarationKey) -> Option<[ValueType; 2]> {
+    /// Check a systems Connection, retaining its substantive failures and ceilings.
+    /// `None` means the declaration does not classify as a Connection.
+    pub(crate) fn connection_admission(
+        &self,
+        key: &DeclarationKey,
+    ) -> Option<crate::model::systems::ConnectionCheckOutcome> {
         use crate::model::accounting::Meter;
-        use crate::model::systems::{
-            check_connection, ConnectionCheckOutcome, ConnectionOutcome, Kind,
-        };
-
-        let DomainPackageRecord::Relationship(relationship) = self.records.get(key)? else {
-            return None;
-        };
+        use crate::model::systems::{check_connection, Kind};
         let systems = self.systems.as_ref()?;
         if systems.actual_kind(key) != Kind::Connection {
             return None;
         }
         let mut meter = Meter::new(self.normalization_limits);
-        if !matches!(
-            check_connection(&self.index, systems, key, &mut meter),
-            ConnectionCheckOutcome::Completed(ConnectionOutcome::Admitted)
-        ) {
+        Some(check_connection(&self.index, systems, key, &mut meter))
+    }
+
+    /// Resolve the effective object types owning a Connection's two Ports.
+    /// The caller checks admission separately to retain failures and ceilings.
+    pub(crate) fn connection_ends(&self, key: &DeclarationKey) -> Option<[ValueType; 2]> {
+        if self.systems.as_ref()?.actual_kind(key) != crate::model::systems::Kind::Connection {
             return None;
         }
+        let DomainPackageRecord::Relationship(relationship) = self.records.get(key)? else {
+            return None;
+        };
         let endpoint_owner = |endpoint: &DeclarationKey| {
             let DomainPackageRecord::Endpoint(port) = self.records.get(endpoint)? else {
                 return None;
@@ -3127,6 +3128,34 @@ impl<'a> Lowering<'a> {
             // A relationship has no checked value or frame occurrence to
             // anchor it. Record its generated model root at the selected
             // model declaration span so emission can resolve provenance.
+            self.record(key, OccurrenceRole::Generated, location);
+        }
+        Ok(())
+    }
+
+    /// Root every checked payload-free variant of a selected model, including
+    /// declarations no function reads. The same canonical lowering supplies
+    /// both the declaration and its real case nodes.
+    pub(crate) fn selected_enum_nodes(
+        &mut self,
+        locations: &BTreeMap<String, Location>,
+    ) -> Result<(), CheckRefusal> {
+        let mut rooted = BTreeSet::new();
+        let mut declarations = Vec::new();
+        for model in self.models {
+            let Some(location) = model.alias.as_ref().and_then(|alias| locations.get(alias)) else {
+                continue;
+            };
+            for variant in self.scope.variant_types() {
+                if variant.declaration().package == model.selection.identity
+                    && rooted.insert(variant.declaration().clone())
+                {
+                    declarations.push((variant.clone(), location.clone()));
+                }
+            }
+        }
+        for (variant, location) in declarations {
+            let key = self.variant_type_nodes(&variant, &location)?;
             self.record(key, OccurrenceRole::Generated, location);
         }
         Ok(())

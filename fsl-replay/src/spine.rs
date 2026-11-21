@@ -1617,6 +1617,9 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 ProtocolAnchorCause::RoleModel { role, context, .. } => format!(
                     "{message}: role `{role}` is on `{context}`, which is not a type a role takes"
                 ),
+                ProtocolAnchorCause::ConnectionAdmission { connection, detail, .. } => format!(
+                    "{message}: connection {}: {}", connection.node, detail
+                ),
                 ProtocolAnchorCause::JoinList {
                     parallel, fault, ..
                 } => format!("{message}: the join of `{parallel}` is unsound ({fault:?})"),
