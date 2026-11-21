@@ -67,6 +67,31 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("the source checks: {refusals:?}"));
+    let normalization =
+        fsl_semantics::model::clock_reference::normalization::SourceDeclarations::from_graph(
+            &graph,
+        )
+        .expect("checked declaration provenance");
+    let source_clock = graph
+        .timed_models()
+        .first()
+        .expect("source timed model")
+        .clocks()
+        .first()
+        .expect("nested clock");
+    let source_rows: Vec<_> = source_clock
+        .resolved_path()
+        .iter()
+        .map(|row| {
+            (
+                normalization.text(&row.declaring_type),
+                normalization
+                    .member(&row.declaring_type, &row.member_identity)
+                    .expect("member resolved in its declaring row"),
+                normalization.text(&row.member_type),
+            )
+        })
+        .collect();
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
     let wire = wire(&emission);
     let order = nodes(&wire)
@@ -109,6 +134,15 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
     let checked_target_identity = format!("{package_name}:[{path},]:{ordinal}");
     assert_eq!(checked_target_identity, "pkg:[\"W\",]:0");
     let target_identity = format!("ix://{source_owner}/W");
+    assert_eq!(source_rows.last().expect("W.c row").0, target_identity);
+    assert_eq!(
+        source_rows.last().expect("W.c row").1,
+        format!("{target_identity}/c")
+    );
+    assert_eq!(
+        source_rows.last().expect("W.c row").2,
+        "ix://filament/native/Clock"
+    );
 
     let place = nodes(&wire)
         .iter()
