@@ -389,6 +389,11 @@ impl SettledRun {
         }
         self.counterexamples
             .retain(|found| !failures.contains_key(&found.request_index));
+        let records: BTreeMap<_, _> = self
+            .records
+            .iter()
+            .map(|record| (record.request_index(), record))
+            .collect();
         for item in &mut self.items {
             let Some(index) = item["request_index"]
                 .as_u64()
@@ -396,15 +401,31 @@ impl SettledRun {
             else {
                 continue;
             };
-            let Some(refusal) = failures.get(&fsl_foundation::RequestIndex::new(index)) else {
+            let index = fsl_foundation::RequestIndex::new(index);
+            if !failures.contains_key(&index) {
                 continue;
-            };
-            let request_index = item["request_index"].clone();
-            let claim_name = item["claim_name"].clone();
+            }
+            let record = records
+                .get(&index)
+                .ok_or(super::AnalyzeDocumentError::Fault)?;
+            let claim_name = item["claim_name"].as_str().map(str::to_owned);
             let request = item["request"].clone();
-            *item = serde_json::json!({"request_index": request_index, "claim_name": claim_name,
-                "request": request, "category": "refusal", "diagnostic": {
-                    "code": "invalid_runtime_input", "cause": refusal.cause().as_str(), "detail": {}}});
+            let written = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(record))
+                .map_err(|_| super::AnalyzeDocumentError::Fault)?;
+            *item = super::item_document(
+                written,
+                super::ItemMembers {
+                    claim_name,
+                    request: Some(request),
+                    identity: None,
+                    target: None,
+                    detail: None,
+                    scoped: item.get("axes").is_some(),
+                    axes: fsl_replay::OutcomeAxes::of_record(record.value(), true),
+                    producer: None,
+                    disposed: true,
+                },
+            );
         }
         self.document["items"] = Value::Array(self.items.clone());
         let diagnostics = self.document["diagnostics"]
