@@ -529,12 +529,8 @@ impl fsl_analyze::analyze::document::Negotiate for ClosedFormNegotiation {
     }
 }
 
-/// FR-633: the four claim-only examples reach negotiation in EN-7's mode
-/// from both source and a checked-package selection, and settle independently
-/// certified closed-form proofs or the exact miss evidence.
-#[trace("TC-1593", "FR-633-AC-1", "FR-633-AC-2", "FR-633-AC-3")]
-#[test]
-fn closed_form_schedule_requests_match_en7_before_negotiation() {
+/// Check one claim-only route from source and a checked-package selection.
+fn closed_form_schedule_request(claim: &str, expected: &str, exit: i32, analysis: &str) {
     let source = "language \"ix:native\" edition \"1-draft\";\n\
         profile t = \"filament.temporal.complete/v1\";\n\
         dimension Time;\nunit ms : Time = rational(1, 1);\n\
@@ -549,65 +545,82 @@ fn closed_form_schedule_requests_match_en7_before_negotiation() {
         response AResponse5 on Full.a <= 5 ms under fixed_priority;\n\
         response AResponse4 on Full.a <= 4 ms under fixed_priority;\n";
     for packaged in [false, true] {
-        for (claim, expected, exit, analysis) in [
-            ("FullEdf", "proved", 0, "edf"),
-            ("OverEdf", "refuted", 10, "edf"),
-            ("AResponse5", "proved", 0, "fixed-priority"),
-            ("AResponse4", "refuted", 10, "fixed-priority"),
-        ] {
-            let ws = Workspace::new(&format!("schedule-negotiation-{claim}-{packaged}"));
-            let path = request_over(
-                &ws,
-                source,
-                &crate::counter::document(false),
-                &[],
-                json!({"models": [], "items": [{"claim": claim}]}),
-            );
-            let path = if packaged {
-                let document: Value =
-                    serde_json::from_slice(&std::fs::read(&path).expect("the source request"))
-                        .expect("a JSON request");
-                let (request, _) =
-                    crate::analyze_cli_support::package_selection(&ws, &document["request"]);
-                ws.write(
-                    "packaged.json",
-                    json!({"format": "native-analyze/1", "request": request})
-                        .to_string()
-                        .as_bytes(),
-                )
+        let ws = Workspace::new(&format!("schedule-negotiation-{claim}-{packaged}"));
+        let path = request_over(
+            &ws,
+            source,
+            &crate::counter::document(false),
+            &[],
+            json!({"models": [], "items": [{"claim": claim}]}),
+        );
+        let path = if packaged {
+            let document: Value =
+                serde_json::from_slice(&std::fs::read(&path).expect("the source request"))
+                    .expect("a JSON request");
+            let (request, _) =
+                crate::analyze_cli_support::package_selection(&ws, &document["request"]);
+            ws.write(
+                "packaged.json",
+                json!({"format": "native-analyze/1", "request": request})
+                    .to_string()
+                    .as_bytes(),
+            )
+        } else {
+            path
+        };
+        let negotiation = ClosedFormNegotiation(std::cell::Cell::new(0));
+        let result =
+            fsl_command::command::analyze(&path, &negotiation, &filament_exact::Cancel::new())
+                .expect("a valid schedule request");
+        assert_eq!(negotiation.0.get(), 1, "{claim}, packaged={packaged}");
+        assert_eq!(i32::from(result.exit_code), exit, "{}", result.value);
+        let item = &result.value["items"][0];
+        assert_eq!(label(item), expected, "{item}");
+        assert_eq!(item["request"]["extent"]["classification"], "unbounded");
+        assert_eq!(item["request"]["candidates"]["backends"], json!(["en-7"]));
+        assert!(item["request"].get("backend").is_none());
+        if expected == "proved" {
+            assert_eq!(item["record"]["backend"], "en-7");
+            assert_eq!(item["record"]["basis"]["type"], "closed-form");
+            assert_eq!(item["record"]["basis"]["analysis"], analysis);
+            assert_eq!(item["record"]["certification"], "certified");
+        } else {
+            let miss = &item["counterexample"]["counterexample"];
+            assert_eq!(miss["type"], "schedulability-miss", "{miss}");
+            if claim == "OverEdf" {
+                assert_eq!(miss["miss"]["utilization"]["numerator"], "11");
+                assert_eq!(miss["miss"]["utilization"]["denominator"], "10");
             } else {
-                path
-            };
-            let negotiation = ClosedFormNegotiation(std::cell::Cell::new(0));
-            let result =
-                fsl_command::command::analyze(&path, &negotiation, &filament_exact::Cancel::new())
-                    .expect("a valid schedule request");
-            assert_eq!(negotiation.0.get(), 1, "{claim}, packaged={packaged}");
-            assert_eq!(i32::from(result.exit_code), exit, "{}", result.value);
-            let item = &result.value["items"][0];
-            assert_eq!(label(item), expected, "{item}");
-            assert_eq!(item["request"]["extent"]["classification"], "unbounded");
-            assert_eq!(item["request"]["candidates"]["backends"], json!(["en-7"]));
-            assert!(item["request"].get("backend").is_none());
-            if expected == "proved" {
-                assert_eq!(item["record"]["backend"], "en-7");
-                assert_eq!(item["record"]["basis"]["type"], "closed-form");
-                assert_eq!(item["record"]["basis"]["analysis"], analysis);
-                assert_eq!(item["record"]["certification"], "certified");
-            } else {
-                let miss = &item["counterexample"]["counterexample"];
-                assert_eq!(miss["type"], "schedulability-miss", "{miss}");
-                if claim == "OverEdf" {
-                    assert_eq!(miss["miss"]["utilization"]["numerator"], "11");
-                    assert_eq!(miss["miss"]["utilization"]["denominator"], "10");
-                } else {
-                    assert_eq!(miss["miss"]["task"], "a");
-                    assert_eq!(miss["miss"]["response"]["numerator"], "5");
-                    assert_eq!(miss["miss"]["bound"]["numerator"], "4");
-                }
+                assert_eq!(miss["miss"]["task"], "a");
+                assert_eq!(miss["miss"]["response"]["numerator"], "5");
+                assert_eq!(miss["miss"]["bound"]["numerator"], "4");
             }
         }
     }
+}
+
+#[trace("TC-1593", "FR-633-AC-3")]
+#[test]
+fn schedulability_edf_full_matches_en7_before_negotiation() {
+    closed_form_schedule_request("FullEdf", "proved", 0, "edf");
+}
+
+#[trace("TC-1593", "FR-633-AC-3", "FR-247-AC-2")]
+#[test]
+fn schedulability_edf_over_matches_en7_before_negotiation() {
+    closed_form_schedule_request("OverEdf", "refuted", 10, "edf");
+}
+
+#[trace("TC-1593", "FR-633-AC-2")]
+#[test]
+fn schedulability_response_meets_matches_en7_before_negotiation() {
+    closed_form_schedule_request("AResponse5", "proved", 0, "fixed-priority");
+}
+
+#[trace("TC-1593", "FR-633-AC-2")]
+#[test]
+fn schedulability_response_misses_matches_en7_before_negotiation() {
+    closed_form_schedule_request("AResponse4", "refuted", 10, "fixed-priority");
 }
 
 /// FR-633-AC-1, AC-2: `Ctl` proves on EN-7 and a response bound one below
