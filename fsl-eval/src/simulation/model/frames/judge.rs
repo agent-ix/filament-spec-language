@@ -134,11 +134,7 @@ impl ModelSystem<'_> {
         &self,
         state: &ModelState,
     ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
-        let state = ModelSimState {
-            state: state.clone(),
-            anchor: mapped_anchor(),
-            reached_by: None,
-        };
+        let state = ModelSimState::anchored(state.clone(), mapped_anchor());
         expand_state(self, &state, None)
     }
 
@@ -159,11 +155,7 @@ impl ModelSystem<'_> {
         transition: &ModelTransition,
         post: &ModelSimState,
     ) -> Result<Option<ResolvedStep>, ExpansionStop> {
-        let state = ModelSimState {
-            state: pre.clone(),
-            anchor: mapped_anchor(),
-            reached_by: None,
-        };
+        let state = ModelSimState::anchored(pre.clone(), mapped_anchor());
         let walk = walk_of(self, &state, None)?;
         let references = walk.references();
         for row in &walk.rows {
@@ -224,8 +216,7 @@ impl ModelSystem<'_> {
             return Ok(Some(None));
         };
         let recorded = post
-            .reached_by
-            .as_ref()
+            .reached_by()
             .and_then(|effect| effect.result.as_deref());
         let references: Vec<ObjectReference> = rows_of(self, &post.state)?
             .into_iter()
@@ -259,11 +250,7 @@ impl ModelSystem<'_> {
         &self,
         request: &AbstractApplication<'_>,
     ) -> Result<Vec<Judged>, ExpansionStop> {
-        let state = ModelSimState {
-            state: request.pre.clone(),
-            anchor: mapped_anchor(),
-            reached_by: None,
-        };
+        let state = ModelSimState::anchored(request.pre.clone(), mapped_anchor());
         let walk = walk_of(self, &state, None)?;
         let row = walk
             .rows

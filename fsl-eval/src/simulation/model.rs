@@ -229,31 +229,105 @@ impl<'a> ModelSimulationRequest<'a> {
     }
 }
 
-/// A model state with its anchor (FR-120 "State, state key and anchor"). The
-/// anchor, and the effect of the step that reached the state, are not part of
-/// its key.
+/// Provenance of a model state, separate from its canonical search identity.
+#[derive(Clone, Debug)]
+pub enum ModelStateProvenance {
+    /// A state admitted from an actual anchored observation or declared pre-state.
+    Anchored {
+        /// The admitted observation's anchor.
+        anchor: SelectedAnchor,
+        /// The actual step that produced it, absent for an admitted pre-state.
+        effect: Option<StepEffect>,
+    },
+    /// A checked state restored from its canonical key. It carries no anchor
+    /// and cannot stand for an initial observation or native witness provenance.
+    RestoredFromKey {
+        /// A subsequent real step, when this restored state was expanded.
+        effect: Option<StepEffect>,
+    },
+}
+
+/// A model state and its explicit provenance. Provenance is not part of its key.
 #[derive(Clone, Debug)]
 pub struct ModelSimState {
     state: ModelState,
-    anchor: SelectedAnchor,
-    reached_by: Option<StepEffect>,
+    provenance: ModelStateProvenance,
 }
 
 impl ModelSimState {
+    fn anchored(state: ModelState, anchor: SelectedAnchor) -> Self {
+        Self {
+            state,
+            provenance: ModelStateProvenance::Anchored {
+                anchor,
+                effect: None,
+            },
+        }
+    }
+
+    fn reached(&self, state: ModelState, anchor: SelectedAnchor, effect: StepEffect) -> Self {
+        let provenance = match self.provenance {
+            ModelStateProvenance::Anchored { .. } => ModelStateProvenance::Anchored {
+                anchor,
+                effect: Some(effect),
+            },
+            ModelStateProvenance::RestoredFromKey { .. } => ModelStateProvenance::RestoredFromKey {
+                effect: Some(effect),
+            },
+        };
+        Self { state, provenance }
+    }
+
+    fn without_effect(&self, state: ModelState) -> Self {
+        let provenance = match &self.provenance {
+            ModelStateProvenance::Anchored { anchor, .. } => ModelStateProvenance::Anchored {
+                anchor: anchor.clone(),
+                effect: None,
+            },
+            ModelStateProvenance::RestoredFromKey { .. } => {
+                ModelStateProvenance::RestoredFromKey { effect: None }
+            }
+        };
+        Self { state, provenance }
+    }
+
     /// The closed population state.
     pub fn state(&self) -> &ModelState {
         &self.state
     }
 
-    /// The initialization or handler this state is anchored to.
-    pub fn anchor(&self) -> &SelectedAnchor {
-        &self.anchor
+    /// The state's admitted provenance, including explicit key restoration.
+    pub fn provenance(&self) -> &ModelStateProvenance {
+        &self.provenance
     }
 
-    /// The effect of the step that reached this state; `None` for an initial
-    /// state.
+    /// The actual initialization or handler anchor. A restored state has none.
+    pub fn anchor(&self) -> Option<&SelectedAnchor> {
+        match &self.provenance {
+            ModelStateProvenance::Anchored { anchor, .. } => Some(anchor),
+            ModelStateProvenance::RestoredFromKey { .. } => None,
+        }
+    }
+
+    /// Require actual observation provenance for an API that consumes an anchor.
+    ///
+    /// # Errors
+    /// A key-restored state has no initialization or handler provenance.
+    pub fn required_anchor(&self) -> Result<&SelectedAnchor, ExpansionStop> {
+        self.anchor().ok_or_else(|| {
+            walk::stop(CatalogCode::new(
+                "invalid_runtime_input",
+                "missing-required-artifact",
+            ))
+        })
+    }
+
+    /// The actual step that reached the state, absent when none was executed.
     pub fn reached_by(&self) -> Option<&StepEffect> {
-        self.reached_by.as_ref()
+        match &self.provenance {
+            ModelStateProvenance::Anchored { effect, .. }
+            | ModelStateProvenance::RestoredFromKey { effect } => effect.as_ref(),
+        }
     }
 }
 
@@ -1061,11 +1135,7 @@ impl<'a> ModelSystem<'a> {
                     ));
                 }
             }
-            initial.push(ModelSimState {
-                state,
-                anchor,
-                reached_by: None,
-            });
+            initial.push(ModelSimState::anchored(state, anchor));
         }
 
         let reference_bindings = if let Some(package) = input.source_package() {
@@ -2857,7 +2927,7 @@ impl WalkMemo {
         ) else {
             return system.successors(state);
         };
-        let at = (bytes, format!("{:?}", state.anchor));
+        let at = (bytes, format!("{:?}", state.anchor()));
         if let Some(found) = self.expansions.borrow().get(&at) {
             return Ok(found.clone());
         }
@@ -2998,7 +3068,7 @@ fn effects_of_with_omitted_clause(
             .filter(|successor| successor.transition == step.transition)
             .nth(step.ordinal)
             .ok_or_else(missing)?;
-        effects.push(matched.state.reached_by.clone().ok_or_else(missing)?);
+        effects.push(matched.state.reached_by().cloned().ok_or_else(missing)?);
         current = matched.state;
     }
     Ok(effects)

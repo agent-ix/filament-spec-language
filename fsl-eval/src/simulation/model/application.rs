@@ -547,7 +547,7 @@ impl<'a> ModelSystem<'a> {
                 quire_canonical::Limits::new(super::identity_limits().input_bytes),
             )
             .ok()
-            .map(|bytes| (bytes, format!("{:?}", state.anchor)));
+            .map(|bytes| (bytes, format!("{:?}", state.anchor())));
         Observed {
             state,
             identity,
@@ -621,7 +621,7 @@ impl<'a> ModelSystem<'a> {
         let Some(departure) = departure(identities.base, &state.state) else {
             return self.observed(state);
         };
-        let key = (format!("{:?}", state.anchor), departure);
+        let key = (format!("{:?}", state.anchor()), departure);
         if let Some(identity) = identities.known.borrow().get(&key) {
             return Observed {
                 state,

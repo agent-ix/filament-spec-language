@@ -1806,11 +1806,11 @@ impl Run<'_, '_, '_> {
                         .transpose()?;
                     successors.push(Applied {
                         transition: self.transition.clone(),
-                        state: ModelSimState {
-                            state: candidate,
-                            anchor: handler_anchor(&self.application.text),
-                            reached_by: Some(effect),
-                        },
+                        state: self.walk.state.reached(
+                            candidate,
+                            handler_anchor(&self.application.text),
+                            effect,
+                        ),
                         receiver: self.row.reference.clone(),
                         arguments: self.args.iter().map(|(_, value)| value.clone()).collect(),
                         result,
