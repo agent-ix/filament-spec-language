@@ -30,10 +30,10 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::observation::Observation;
 
-use super::contracts::{Verdict, verdict};
+use super::contracts::{verdict, Verdict};
 use super::reference_bindings::ReferenceBinding;
-use super::walk::{Row, rows_of, stop};
-use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
+use super::walk::{rows_of, stop, Row};
+use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use crate::simulation::StateKey;
 use crate::temporal::{AtomReading, CaptureReading};
@@ -263,7 +263,7 @@ impl ClauseLetters<'_, '_> {
                     &self
                         .system
                         .evaluator()
-                        .evaluate_holds(
+                        .evaluate_model_holds(
                             &crate::value::HoldsAtom {
                                 clause: key.clone(),
                                 position: atom.index(),
@@ -613,7 +613,7 @@ impl ModelLetters for ClauseLetters<'_, '_> {
                     &self
                         .system
                         .evaluator()
-                        .evaluate_guard(
+                        .evaluate_model_guard(
                             key,
                             Value::Reference(bound),
                             &observed.observation.environment,

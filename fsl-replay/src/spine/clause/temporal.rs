@@ -1085,12 +1085,49 @@ pub struct TemporalAuthentication<'a> {
 /// declaration identity comes from emission's exact `(NodeKey, occurrence)`
 /// mapping; the profile and clock are read from that declaration's admitted
 /// temporal subject.
+/// The model-time configuration read from the admitted timed model and its unit.
+fn admitted_model_time_binding(
+    package: &filament_contract_model::CheckedPackageV2,
+    subject: &fsl_package::checked_views::TemporalSubjectView<'_>,
+) -> Result<Option<TraceBinding>, Box<ClauseDisposition>> {
+    if subject.profile().definition.identity.as_ref() != TemporalProfile::Timed.identity() {
+        return Ok(None);
+    }
+    let invalid = || Box::new(refused("invalid-value", BTreeMap::new()));
+    let limit = u64::try_from(package.resolved_graph().nodes.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(3);
+    let Some(binding) = package
+        .model_time_for_clause(subject.declaration(), limit)
+        .map_err(|_| invalid())?
+    else {
+        return Ok(None);
+    };
+    let declaration = package
+        .node(binding.unit())
+        .and_then(|node| node.declaration.as_ref())
+        .ok_or_else(invalid)?;
+    let unit = declaration
+        .qualified_name
+        .iter()
+        .map(|part| part.as_ref())
+        .collect::<Vec<_>>()
+        .join("::");
+    Ok(Some(TraceBinding {
+        profile: subject.profile().definition.identity.to_string(),
+        clock_name: "model-time".to_owned(),
+        parameters: fsl_package::ClockConfiguration::Timed { unit: unit.into() },
+    }))
+}
+
 fn authenticate_binding(
     binding: Option<&TraceBinding>,
     subject: &fsl_package::checked_views::TemporalSubjectView<'_>,
     occurrence: u64,
+    package: &filament_contract_model::CheckedPackageV2,
 ) -> Result<crate::spine::AuthenticatedTemporalSelection, Box<ClauseDisposition>> {
-    let Some(binding) = binding else {
+    let model_time = admitted_model_time_binding(package, subject)?;
+    let Some(binding) = binding.or(model_time.as_ref()) else {
         return Err(Box::new(refused("invalid-value", BTreeMap::new())));
     };
     let binding = fsl_eval::temporal::evidence::TraceBinding {
@@ -1098,28 +1135,31 @@ fn authenticate_binding(
         clock_name: binding.clock_name.clone().into_boxed_str(),
         parameters: binding.parameters.clone(),
     };
-    let authenticated = binding
-        .authenticate(&fsl_eval::temporal::evidence::ClauseSelection {
-            declaration: subject.declaration(),
-            profile: subject.profile(),
-            // The clock row is the one keyed by this declaration's occurrence:
-            // a node several clauses share has a row per occurrence.
-            clock: subject
-                .occurrences()
-                .iter()
-                .find(|found| found.ordinal == occurrence)
-                .and_then(|found| subject.clock_of(found)),
-        })
-        .map_err(|mismatch| {
-            let mut fields = BTreeMap::from([
-                ("mismatched_dimension", mismatch.dimension.name().to_owned()),
-                ("asserted", mismatch.asserted),
-            ]);
-            if let Some(expected) = mismatch.expected {
-                fields.insert("expected", expected);
-            }
-            Box::new(refused("invalid-value", fields))
-        })?;
+    let selection = fsl_eval::temporal::evidence::ClauseSelection {
+        declaration: subject.declaration(),
+        profile: subject.profile(),
+        clock: subject
+            .occurrences()
+            .iter()
+            .find(|found| found.ordinal == occurrence)
+            .and_then(|found| subject.clock_of(found)),
+    };
+    let authenticated = match model_time.as_ref().map(|binding| &binding.parameters) {
+        Some(fsl_package::ClockConfiguration::Timed { unit }) => {
+            binding.authenticate_model_time(&selection, unit)
+        }
+        _ => binding.authenticate(&selection),
+    }
+    .map_err(|mismatch| {
+        let mut fields = BTreeMap::from([
+            ("mismatched_dimension", mismatch.dimension.name().to_owned()),
+            ("asserted", mismatch.asserted),
+        ]);
+        if let Some(expected) = mismatch.expected {
+            fields.insert("expected", expected);
+        }
+        Box::new(refused("invalid-value", fields))
+    })?;
     Ok(crate::spine::AuthenticatedTemporalSelection {
         declaration: authenticated.declaration,
         source_regions: subject.source_span().regions.clone(),
@@ -1176,6 +1216,7 @@ fn authenticate_bare_timed(
         binding.as_ref().or(derived.as_ref()),
         &subject,
         row.occurrence,
+        package,
     )
     .map(Some)
 }
@@ -1233,7 +1274,7 @@ fn authenticate_trace(
     };
     let subject = fsl_package::checked_views::temporal_subject(admitted_package, declaration)
         .map_err(|_| fault("admitted-temporal-subject-resolves"))?;
-    authenticate_binding(binding, &subject, node.claim().ordinal()).map(Some)
+    authenticate_binding(binding, &subject, node.claim().ordinal(), admitted_package).map(Some)
 }
 
 /// FR-283: the profile fit and FR-522 authentication of `trace` for the

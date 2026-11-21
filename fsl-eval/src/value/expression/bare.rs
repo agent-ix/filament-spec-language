@@ -24,12 +24,13 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::evaluate::reader_source::ReaderNode;
 use super::evaluate::{Machine, World};
-use super::protocol_slot::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply, resolve};
-use super::slot_supply::{AdmittedSupply, SlotHost, SourceView, admit_slot_supply};
+use super::protocol_slot::{resolve, ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply};
+use super::slot_supply::{admit_slot_supply, AdmittedSupply, SlotHost, SourceView};
 use super::{
-    ApplicationObservation, ApplicationObservationOptions, CheckedPackageEvaluation,
-    ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation, QualifiedName, Separation,
-    SuppliedFailure, SuppliedLimits, SuppliedRun, ValueInvariantEvaluation, unsupported_projection,
+    unsupported_projection, ApplicationObservation, ApplicationObservationOptions,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation,
+    QualifiedName, Separation, SuppliedFailure, SuppliedLimits, SuppliedRun,
+    ValueInvariantEvaluation,
 };
 
 /// Evaluate a reader projection over the local frame with the shared
@@ -870,6 +871,36 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             .map_err(CallFailure::Fault)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &super::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_holds(&atom.clause, atom.position)
+            .map_err(|failure| refusal(self, failure))?;
+        let arguments = clause_arguments(&term, &over, captures)?;
+        let reads = BTreeMap::new();
+        Machine::with_world(
+            World::Bytes(&world),
+            objects,
+            None,
+            Some(&reads),
+            meter,
+            &[],
+        )
+        .run(
+            ReaderNode::root(term.projection()),
+            term.projection().frame_slots(),
+            arguments,
+        )
+        .map_err(CallFailure::Fault)
+    }
+
     fn evaluate_holds_traced(
         &self,
         atom: &super::HoldsAtom,
@@ -942,6 +973,38 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 arguments,
             )
             .map_err(CallFailure::Fault)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_guard(clause)
+            .map_err(|failure| refusal(self, failure))?
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
+        let arguments = clause_arguments(&term, &over, &[])?;
+        let reads = BTreeMap::new();
+        Machine::with_world(
+            World::Bytes(&world),
+            objects,
+            None,
+            Some(&reads),
+            meter,
+            &[],
+        )
+        .run(
+            ReaderNode::root(term.projection()),
+            term.projection().frame_slots(),
+            arguments,
+        )
+        .map_err(CallFailure::Fault)
     }
 
     fn evaluate_hyper_holds(

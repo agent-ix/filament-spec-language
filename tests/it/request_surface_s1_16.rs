@@ -3073,11 +3073,7 @@ fn package_clause_selection_outcomes(unit: &str, traces: &[(Value, u8)], refused
         if refused_violation {
             assert_eq!(actual.0, 20, "{clause}: {}", actual.1);
             assert_eq!(actual.1["code"], "invalid-request", "{}", actual.1);
-            assert_eq!(
-                actual.1["details"]["member"], "clause.selection",
-                "{}",
-                actual.1
-            );
+            refusal_names(&actual.1, "clause.selection");
         } else {
             assert_eq!(actual, expected, "{clause}");
         }
@@ -3091,7 +3087,7 @@ fn package_clause_selection_outcomes(unit: &str, traces: &[(Value, u8)], refused
 fn package_clause_selections_snapshot_results_match_source() {
     for (body, expected) in [
         ("holds(c.versionNumber <= 2)", 0),
-        ("holds(deref(value(c.parent)).versionNumber = 0)", 10),
+        ("holds(3 mod c.versionNumber >= 0)", 10),
     ] {
         let unit = bump_low().replace(LOW_BODY, body);
         package_clause_selection_parity(&unit, &[(json!({"finite": ["s0", "s1"]}), expected)]);
@@ -3113,7 +3109,7 @@ fn package_clause_selections_snapshot_results_match_source() {
 fn package_clause_selections_model_results_match_source() {
     for (body, expected) in [
         ("holds(c.versionNumber <= 2)", 0),
-        ("holds(deref(value(c.parent)).versionNumber = 0)", 10),
+        ("holds(3 mod c.versionNumber >= 0)", 10),
     ] {
         let unit = bump_low()
             .replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1")
@@ -3135,7 +3131,7 @@ fn package_clause_selections_model_results_match_source() {
 fn package_clause_selections_timed_results_match_source() {
     for (body, expected) in [
         ("holds(c.versionNumber <= 2)", 0),
-        ("holds(deref(value(c.parent)).versionNumber = 0)", 10),
+        ("holds(3 mod c.versionNumber >= 0)", 10),
     ] {
         let unit = timed_low().replace("holds(c.versionNumber <= 2)", body);
         let prefix = json!([{"position": "s0", "stamp": "0"}]);
@@ -3206,7 +3202,7 @@ fn package_clause_selections_timed_samples_match_source() {
     let clauses: Vec<_> = traces.into_iter().map(|trace| {
         let clause = json!({"selection": {"temporal": {"name": "Low", "trace": trace}}, "observations": {}});
         let result = write_request(directory.path(), &json!({"format": "native-run/1", "request": {
-            "program": {"source": source("unit.native")}, "clocks": clocks, "clause": clause}}));
+            "models": [], "program": {"source": source("unit.native")}, "clocks": clocks, "clause": clause}}));
         assert_eq!(result.0, 0, "{}", result.1);
         (clause, result)
     }).collect();

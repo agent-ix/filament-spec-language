@@ -913,6 +913,16 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
+    /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
+    fn evaluate_model_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
     /// FR-940: the `when` guard of the temporal clause `clause`, keyed by
     /// its node, over `objects`, on either route.
     ///
@@ -920,6 +930,15 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ///
     /// As [`CheckedPackageEvaluation::evaluate_guard`].
     fn evaluate_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
+    /// Evaluate a model behaviour's activation guard with FR-107 model-read accounting.
+    fn evaluate_model_guard(
         &self,
         clause: &NodeKey,
         over: Value,
@@ -1365,6 +1384,17 @@ impl ModelEvaluator for CheckedPackage {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_holds(self, atom, over, captures, objects, meter)
+    }
+
     fn evaluate_guard(
         &self,
         clause: &NodeKey,
@@ -1373,6 +1403,16 @@ impl ModelEvaluator for CheckedPackage {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_guard(self, clause, over, objects, meter)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_guard(self, clause, over, objects, meter)
     }
 
     fn evaluate_frame(
@@ -1789,6 +1829,17 @@ impl ModelEvaluator for BarePackage<'_> {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_holds(self, atom, over, captures, objects, meter)
+    }
+
     fn evaluate_guard(
         &self,
         clause: &NodeKey,
@@ -1797,6 +1848,16 @@ impl ModelEvaluator for BarePackage<'_> {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_guard(self, clause, over, objects, meter)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_guard(self, clause, over, objects, meter)
     }
 
     fn evaluate_frame(

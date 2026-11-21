@@ -37,18 +37,16 @@ mod value_invariants;
 pub use bare::evaluate_bare_expression;
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
-pub use bare::{
-    evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward,
-};
+pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward};
 pub(crate) use bare::{
-    StateGraphOver, evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate,
-    evaluate_terminal_predicate as evaluate_bare_terminal_predicate,
+    evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate,
+    evaluate_terminal_predicate as evaluate_bare_terminal_predicate, StateGraphOver,
+};
+pub(crate) use evaluate::reader_source::{
+    package_constraint_reads, package_guard_reads, package_operation_footprint, package_term_reads,
+    ProjectedClause,
 };
 use evaluate::Machine;
-pub(crate) use evaluate::reader_source::{
-    ProjectedClause, package_constraint_reads, package_guard_reads, package_operation_footprint,
-    package_term_reads,
-};
 use filament_eval::{Registry, SessionLimits};
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};
 use filament_semantic_value::admission::AdmissionRecord;
@@ -72,8 +70,9 @@ pub use closure::{PackageClosure, PackageTask};
 pub use evaluate::refusal_record;
 pub use family::{InvalidQualifiedName, QualifiedName};
 pub use protocol_slot::{
-    BINDER_ACCOUNTING_VERSION, BinderCharges, ChargeAmounts, ProtocolReferenceOccurrence,
-    ProtocolSlot, ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue,
+    BinderCharges, ChargeAmounts, ProtocolReferenceOccurrence, ProtocolSlot,
+    ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue,
+    BINDER_ACCOUNTING_VERSION,
 };
 pub use s6a::separation::{
     ClauseEvaluation, ClauseRead, ComparisonReport, InvocationBinding, ObservationIdentity,
@@ -253,7 +252,7 @@ impl fsl_semantics::check::RewardEvaluator for S6aRewardEvaluator {
     ) -> Result<Value, fsl_semantics::check::RewardEvaluationFailure> {
         use filament_eval::{FamilyOutcome, FamilyResult};
         use filament_semantic_value::catalog::CatalogCode;
-        use fsl_foundation::diagnostic::{Code, kernel_refusal_record, refusal_record};
+        use fsl_foundation::diagnostic::{kernel_refusal_record, refusal_record, Code};
 
         fn failure(
             diagnostic_code: Code,
@@ -1538,6 +1537,16 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
+    /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
+    fn evaluate_model_holds(
+        &self,
+        atom: &HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
     /// FR-330 Outputs, FR-283 `decisive`: [`Self::evaluate_holds`] with
     /// FR-107's witness channel kept: the result carries, beside the
     /// evaluation, each decision and each quantifier stop report on the
@@ -1564,6 +1573,15 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     ///
     /// A clause with no guard is an `Err` fault.
     fn evaluate_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
+    /// Evaluate a model behaviour's activation guard with FR-107 model-read accounting.
+    fn evaluate_model_guard(
         &self,
         clause: &NodeKey,
         over: Value,
@@ -2607,6 +2625,29 @@ impl CheckedPackageEvaluation for CheckedPackage {
         .map_err(CallFailure::Fault)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let (clause, condition, slots) = source_condition(self.graph(), atom)?;
+        let reads = std::collections::BTreeMap::new();
+        Machine::with_pre(
+            self.graph().scope(),
+            self.graph(),
+            objects,
+            None,
+            Some(&reads),
+            meter,
+            self.graph().dispatch_tables(),
+        )
+        .run(condition, slots, holds_bindings(clause, over, captures))
+        .map_err(CallFailure::Fault)
+    }
+
     fn evaluate_holds_traced(
         &self,
         atom: &HoldsAtom,
@@ -2665,6 +2706,32 @@ impl CheckedPackageEvaluation for CheckedPackage {
             self.graph().scope(),
             self.graph(),
             objects,
+            meter,
+            self.graph().dispatch_tables(),
+        )
+        .run(guard, slots, vec![over.clone(), over])
+        .map_err(CallFailure::Fault)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let (guard, slots) = source_clause(self.graph(), clause)?
+            .guard()
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
+        let reads = std::collections::BTreeMap::new();
+        Machine::with_pre(
+            self.graph().scope(),
+            self.graph(),
+            objects,
+            None,
+            Some(&reads),
             meter,
             self.graph().dispatch_tables(),
         )
