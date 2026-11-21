@@ -925,8 +925,25 @@ fn same_type_populations_retain_each_listed_owner_before_clock_evaluation() {
     let mut world = world_holding(
         serde_json::to_vec(&document).expect("JSON"),
         "",
-        &rpc_unit(3, ""),
+        &only(&[], ""),
         json!({}),
+    );
+    let (single, _) = fsl_semantics::model::observation::admit_current_snapshot(
+        world.package.graph().model_inputs(),
+        world.package.graph().scope().types(),
+        &world.packages,
+        ModelNormalizationLimits::default(),
+        &world.snapshots,
+        &world.initial,
+        ObservationLimits::default(),
+    )
+    .expect("the one-population control admits before the repeated owner is added");
+    assert_eq!(
+        single
+            .population_members(&ident("calls"))
+            .expect("calls")
+            .len(),
+        1
     );
     let mut snapshot: Json =
         serde_json::from_slice(world.snapshots.get(&world.initial).expect("snapshot"))
