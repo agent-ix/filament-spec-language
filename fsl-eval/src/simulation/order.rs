@@ -53,7 +53,6 @@ type PendingSuccessor<T, S> = (Vec<u8>, OrderedSuccessor<T, S>);
 
 /// One state's expansion with its successors in canonical order, or the
 /// system's stop.
-#[derive(Clone)]
 pub(crate) enum Expanded<T, S, F> {
     /// The state expanded.
     Successors {
