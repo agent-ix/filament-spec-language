@@ -456,6 +456,13 @@ impl OriginalNodeKey {
 }
 
 impl OriginalValueType {
+    pub(crate) fn of_enum_shape(
+        shape: &filament_exact::EnumShape,
+    ) -> Result<Self, OriginalValueTypeError> {
+        enum_shape(&OriginalKeys, shape)
+            .map(Self)
+            .map_err(|_| OriginalValueTypeError)
+    }
     pub(crate) fn of(value: &ValueType) -> Result<Self, OriginalValueTypeError> {
         value_type(&OriginalKeys, value)
             .map(Self)
@@ -724,22 +731,7 @@ fn value_type(joins: &impl TypeKeys, value: &ValueType) -> Result<Json, Bad> {
             ("max", Json::Int(shape.max())),
             ("profile", spelled(&PROFILES, shape.profile())?),
         ])),
-        ValueType::Enum(shape) => {
-            let variants = shape
-                .variants()
-                .map(|variant| {
-                    Ok(object(vec![
-                        ("owner", joins.write_key(variant.owner())?),
-                        ("case", text(variant.case())),
-                    ]))
-                })
-                .collect::<Result<Vec<_>, Bad>>()?;
-            Ok(object(vec![
-                ("kind", text("enum")),
-                ("ordered", Json::Bool(shape.is_ordered())),
-                ("variants", Json::Array(variants)),
-            ]))
-        }
+        ValueType::Enum(shape) => enum_shape(joins, shape),
         ValueType::Option(element) => Ok(object(vec![
             ("kind", text("option")),
             ("element", value_type(joins, element)?),
@@ -788,6 +780,23 @@ fn value_type(joins: &impl TypeKeys, value: &ValueType) -> Result<Json, Bad> {
             ("bound", cardinality(map.bound())),
         ])),
     }
+}
+
+fn enum_shape(joins: &impl TypeKeys, shape: &filament_exact::EnumShape) -> Result<Json, Bad> {
+    let variants = shape
+        .variants()
+        .map(|variant| {
+            Ok(object(vec![
+                ("owner", joins.write_key(variant.owner())?),
+                ("case", text(variant.case())),
+            ]))
+        })
+        .collect::<Result<Vec<_>, Bad>>()?;
+    Ok(object(vec![
+        ("kind", text("enum")),
+        ("ordered", Json::Bool(shape.is_ordered())),
+        ("variants", Json::Array(variants)),
+    ]))
 }
 
 fn cardinality(bound: Option<CardinalityBound>) -> Json {

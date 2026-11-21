@@ -3132,6 +3132,34 @@ impl<'a> Lowering<'a> {
         Ok(())
     }
 
+    /// Root every checked payload-free variant of a selected model, including
+    /// declarations no function reads. The same canonical lowering supplies
+    /// both the declaration and its real case nodes.
+    pub(crate) fn selected_enum_nodes(
+        &mut self,
+        locations: &BTreeMap<String, Location>,
+    ) -> Result<(), CheckRefusal> {
+        let mut rooted = BTreeSet::new();
+        let mut declarations = Vec::new();
+        for model in self.models {
+            let Some(location) = model.alias.as_ref().and_then(|alias| locations.get(alias)) else {
+                continue;
+            };
+            for variant in self.scope.variant_types() {
+                if variant.declaration().package == model.selection.identity
+                    && rooted.insert(variant.declaration().clone())
+                {
+                    declarations.push((variant.clone(), location.clone()));
+                }
+            }
+        }
+        for (variant, location) in declarations {
+            let key = self.variant_type_nodes(&variant, &location)?;
+            self.record(key, OccurrenceRole::Generated, location);
+        }
+        Ok(())
+    }
+
     /// Root every ordinary object in a source-selected domain document.
     pub(crate) fn selected_object_nodes(
         &mut self,

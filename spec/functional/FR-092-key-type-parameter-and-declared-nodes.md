@@ -168,8 +168,9 @@ order of their tuple nodes' keys; the order carries no other meaning.
 
 ### Model enum shape rows
 
-For each model-owned enum (a variant type of a selected domain model) whose
-declaration node it emits, the `Emission` SHALL carry one
+For every payload-free model-owned enum of a selected domain model, including
+an unused declaration, lowering SHALL retain the real declaration and case
+nodes. The `Emission` SHALL carry one
 `SelectedModelEnumShapeRow` beside the model enum declaration and member
 rows. The row holds the declaration's emitted structural id and key, the
 selected document and the declaration's original model identity, the checked
@@ -178,8 +179,8 @@ ascending byte order of the case names), and one entry per case in that
 order: the case label, the case's emitted member node id and member key, the
 case's original model identity and the variant the shape holds at that case's
 rank. `check` reads the shape and variants from the checked variant type, so
-a consumer never derives a variant from a key. A declaration that is not
-emitted has no row. A case set that differs from the shape, a case whose
+a consumer never derives a variant from a key. A selected declaration that is
+not emitted is a writer fault. A case set that differs from the shape, a case whose
 variant is not the shape's at its rank and a case whose member node is not
 emitted are writer faults. Rows are written in ascending order of their
 declarations' keys.

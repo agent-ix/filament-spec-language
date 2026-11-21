@@ -4319,6 +4319,20 @@ fn literal_value(
         Literal::Timestamp(value) => {
             Value::Timestamp(Timestamp::from_canonical_text(&value.to_string()).ok()?)
         }
+        Literal::Enum(case) => {
+            let projection = index.projections.get(type_id)?.as_ref().ok()?;
+            let ValueType::Enum(shape) = projection.value_type() else {
+                return None;
+            };
+            let (rank, variant) = shape
+                .variants()
+                .enumerate()
+                .find(|(_, variant)| variant.case() == case)?;
+            Value::Enum(filament_exact::EnumMember::new(
+                variant.clone(),
+                u32::try_from(rank).ok()?,
+            ))
+        }
         _ => return None,
     })
 }

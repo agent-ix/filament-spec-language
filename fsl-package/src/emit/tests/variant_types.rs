@@ -69,9 +69,18 @@ fn checked_unit_with_profile(
     profile: &str,
 ) -> (fsl_semantics::check::CheckedGraph, Vec<u8>) {
     let document = serde_json::to_vec(&fixture::with_types(vec![fixture::variant_type(
-        "Odd", &ODD_CASES,
+        "Odd",
+        &["Gold Plus", "Café", "2x"],
     )]))
     .expect("the fixture serializes");
+    checked_document(unit_body, profile, document)
+}
+
+fn checked_document(
+    unit_body: &str,
+    profile: &str,
+    document: Vec<u8>,
+) -> (fsl_semantics::check::CheckedGraph, Vec<u8>) {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -106,6 +115,26 @@ fn emitted_from(emission: Emission, document: Vec<u8>) -> Emitted {
         wire,
         evidence,
     }
+}
+
+fn bare_enums() -> Emitted {
+    let document = serde_json::to_vec(&fixture::package(
+        vec![
+            fixture::variant_type("Tier", &["Gold", "Standard"]),
+            fixture::variant_type("Odd", &["Gold Plus", "Café", "2x"]),
+        ],
+        false,
+    ))
+    .unwrap();
+    let (graph, document) = checked_document(
+        "function keep using v(): Boolean pure { true }",
+        "filament.value.complete/v1",
+        document,
+    );
+    emitted_from(
+        emit_checked(&CheckedPackage::link(graph)).expect("real selected enums emit"),
+        document,
+    )
 }
 
 impl Emitted {
@@ -205,13 +234,18 @@ fn selected_model_enum_rows_join_and_refuse_missing_mismatched_duplicate_and_for
     };
     let declarations = emitted.emission.selected_model_enum_declaration_rows();
     let members = emitted.emission.selected_model_enum_member_rows();
-    assert_eq!(declarations.len(), 2);
-    assert_eq!(members.len(), 5);
+    assert_eq!(declarations.len(), 4);
+    assert_eq!(members.len(), 9);
     for row in declarations {
         assert_eq!(row.selected_document.as_ref(), fixture::PACKAGE);
-        assert!([fixture::id("Tier"), fixture::id("Odd")]
-            .iter()
-            .any(|identity| identity.as_str() == row.original_identity.as_ref()));
+        assert!([
+            fixture::id("Tier"),
+            fixture::id("Odd"),
+            fixture::id("Level"),
+            fixture::id("Grade")
+        ]
+        .iter()
+        .any(|identity| identity.as_str() == row.original_identity.as_ref()));
         let selected = emitted
             .emission
             .selected_model_enums(&admitted, 128)
@@ -230,6 +264,16 @@ fn selected_model_enum_rows_join_and_refuse_missing_mismatched_duplicate_and_for
             "Standard" if row.enum_original_identity.as_ref() == fixture::id("Tier").as_str() => {
                 ("Tier", "variant/Tier-Standard")
             }
+            "Gold" if row.enum_original_identity.as_ref() == fixture::id("Level").as_str() => {
+                ("Level", "variant/Level-Gold")
+            }
+            "Gold" if row.enum_original_identity.as_ref() == fixture::id("Grade").as_str() => {
+                ("Grade", "variant/Grade-Gold")
+            }
+            "Standard" if row.enum_original_identity.as_ref() == fixture::id("Grade").as_str() => {
+                ("Grade", "variant/Grade-Standard")
+            }
+            "Bronze" => ("Grade", "variant/Grade-Bronze"),
             "2x" => ("Odd", "variant/Odd-2x"),
             "Café" => ("Odd", "variant/Odd-Caf"),
             "Gold Plus" => ("Odd", "variant/Odd-Gold-Plus"),
@@ -491,8 +535,8 @@ fn an_identifier_cased_variant_type_emits_and_reports_enum_member_witness() {
     let emitted = emit_unit(TIER_UNIT);
     assert_eq!(
         node_where(&emitted.wire, "model", "variant_type").len(),
-        1,
-        "Tier is the one variant type the unit names"
+        4,
+        "every selected payload-free enum is retained, including unused Level, Grade and Odd"
     );
     assert!(emitted.wire["operation_effects"].is_array());
     assert_enum_equality_reader_outcomes(&emitted);
@@ -572,7 +616,7 @@ fn a_model_enum_shape_row_pairs_the_checked_shape_with_the_final_node_ids() {
         panic!("the emitted model enums are admitted")
     };
     let rows = emitted.emission.selected_model_enum_shape_rows();
-    assert_eq!(rows.len(), 2, "one shape row per model enum");
+    assert_eq!(rows.len(), 4, "one shape row per selected model enum");
     let declarations = emitted.emission.selected_model_enum_declaration_rows();
     let members = emitted.emission.selected_model_enum_member_rows();
     for (name, expected) in [
@@ -624,11 +668,10 @@ fn a_model_enum_shape_row_pairs_the_checked_shape_with_the_final_node_ids() {
 }
 
 /// FR-092-AC-26 (TC-1021): a model enum shape row is a writer fault when a
-/// case's member node is not emitted, and a declaration that is not emitted
-/// has no row.
+/// case's member node or selected declaration node is not emitted.
 #[trace("FR-092-AC-26", "TC-1021")]
 #[test]
-fn a_model_enum_shape_row_refuses_an_unemitted_case_and_skips_an_unemitted_declaration() {
+fn a_model_enum_shape_row_refuses_an_unemitted_case_or_declaration() {
     let unit = "function oddPick using v(t: M::Odd): M::Odd pure { t }";
     let (graph, _) = checked_unit(unit);
     let emission = emit_unit(unit).emission;
@@ -640,10 +683,14 @@ fn a_model_enum_shape_row_refuses_an_unemitted_case_and_skips_an_unemitted_decla
         ids.insert(row.member_key.clone(), row.structural_node.clone());
     }
     let rows = super::super::model_enum_shape_rows(&graph, &ids).expect("complete ids give rows");
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].cases.len(), ODD_CASES.len());
+    assert_eq!(rows.len(), 4);
+    let odd = rows
+        .iter()
+        .find(|row| row.original_identity.as_ref() == fixture::id("Odd"))
+        .expect("Odd retained");
+    assert_eq!(odd.cases.len(), ODD_CASES.len());
 
-    let dropped = rows[0].cases[1].member_key.clone();
+    let dropped = odd.cases[1].member_key.clone();
     let mut missing = ids.clone();
     missing.remove(&dropped);
     assert!(
@@ -653,8 +700,244 @@ fn a_model_enum_shape_row_refuses_an_unemitted_case_and_skips_an_unemitted_decla
 
     let mut undeclared = ids;
     undeclared.remove(&rows[0].node_key);
-    assert_eq!(
-        super::super::model_enum_shape_rows(&graph, &undeclared).expect("no declaration, no row"),
-        []
+    assert!(
+        super::super::model_enum_shape_rows(&graph, &undeclared).is_err(),
+        "a selected declaration cannot disappear"
     );
+}
+
+/// Complete original model enums cross the strict identities carrier even
+/// when no function reads their types. Authored case positions do not replace
+/// canonical ranks authenticated by IR against the model document.
+#[trace("FR-531-AC-8", "FR-531-AC-42", "FR-092-AC-26")]
+#[test]
+fn model_enums_round_trip_unused_declarations_and_canonical_runtime_members() {
+    use crate::{BarePackage, BareSupply, ReadIdentityRows};
+    use filament_contract_model::NativeJoinBudget;
+    let emitted = bare_enums();
+    let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
+        panic!("the selected model admits")
+    };
+    let mut budget = NativeJoinBudget::new(10_000_000, 10_000_000);
+    let original = emitted
+        .emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("producer rows");
+    let bytes = original.to_bytes(&admitted).expect("carrier");
+    let value: Value = serde_json::from_slice(&bytes).expect("JSON");
+    assert_eq!(value["format"], "filament.checked-handoff.identities/5");
+    assert_eq!(
+        value["model_enum_declarations"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(value["model_enum_members"].as_array().unwrap().len(), 5);
+    assert_eq!(value["model_enum_shapes"].as_array().unwrap().len(), 2);
+    let rows =
+        ReadIdentityRows::read(&bytes, &admitted, &mut budget).expect("native authenticated read");
+    assert_eq!(rows, original);
+    let identities = rows
+        .selected(&admitted, &mut budget)
+        .expect("same local join");
+    let types = admitted
+        .project_selected_type_declarations(&identities, &[], &[], &mut budget)
+        .expect("complete full projection");
+    assert_eq!(types.enums().len(), 2);
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut budget,
+        )
+        .expect("bounded world admission");
+    let world = bare.world().expect("world");
+    for row in types.enums() {
+        for (rank, case) in row.cases.iter().enumerate() {
+            let member = world
+                .enum_members()
+                .resolve(case.variant.clone())
+                .expect("every selected member is retained");
+            assert_eq!(member.position(), rank);
+            assert_eq!(member.member(), case.member_key);
+            assert_eq!(member.case(), case.case.as_ref());
+            assert!(!member.is_ordered());
+        }
+    }
+}
+
+/// Required enum channels are closed and versioned; native witness defects
+/// cannot become a partial successful selection.
+#[trace("FR-531-AC-12", "FR-531-AC-43", "FR-531-AC-8")]
+#[test]
+fn model_enum_carrier_refuses_missing_repeated_foreign_and_conflicting_evidence() {
+    use crate::{IdentityFileRefusal, ReadIdentityRows};
+    use filament_contract_model::NativeJoinBudget;
+    let emitted = bare_enums();
+    let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
+        panic!("selected model admits")
+    };
+    let budget = || NativeJoinBudget::new(10_000_000, 10_000_000);
+    let rows = emitted
+        .emission
+        .identity_rows(&admitted, &mut budget())
+        .expect("rows");
+    let bytes = rows.to_bytes(&admitted).expect("carrier");
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    for channel in [
+        "source_tuples",
+        "model_enum_declarations",
+        "model_enum_members",
+        "model_enum_shapes",
+    ] {
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove(channel);
+        assert!(
+            matches!(
+                ReadIdentityRows::read(
+                    &serde_json::to_vec(&missing).unwrap(),
+                    &admitted,
+                    &mut budget()
+                ),
+                Err(IdentityFileRefusal::Malformed { .. })
+            ),
+            "{channel} is required"
+        );
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        let repeated = format!("{{{channel:?}:[],{}", &text[1..]);
+        assert!(
+            matches!(
+                ReadIdentityRows::read(repeated.as_bytes(), &admitted, &mut budget()),
+                Err(IdentityFileRefusal::Malformed { .. })
+            ),
+            "{channel} is unique"
+        );
+    }
+    for edit in [
+        "foreign",
+        "missing",
+        "duplicate",
+        "rank",
+        "case_order",
+        "unknown",
+        "old",
+    ] {
+        let mut changed = value.clone();
+        match edit {
+            "foreign" => {
+                changed["model_enum_declarations"][0]["selected_document"] =
+                    json!("foreign/document")
+            }
+            "missing" => {
+                changed["model_enum_members"].as_array_mut().unwrap().pop();
+            }
+            "duplicate" => {
+                let row = changed["model_enum_members"][0].clone();
+                changed["model_enum_members"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(row);
+            }
+            "rank" => changed["model_enum_shapes"][0]["shape"]["variants"]
+                .as_array_mut()
+                .unwrap()
+                .reverse(),
+            "case_order" => changed["model_enum_shapes"][0]["cases"]
+                .as_array_mut()
+                .unwrap()
+                .reverse(),
+            "unknown" => {
+                changed
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("model_enum_unknown".into(), json!([]));
+            }
+            "old" => changed["format"] = json!("filament.checked-handoff.identities/4"),
+            _ => unreachable!(),
+        }
+        let result = ReadIdentityRows::read(
+            &serde_json::to_vec(&changed).unwrap(),
+            &admitted,
+            &mut budget(),
+        );
+        use filament_contract_model::ExactTypeProjectionErrorCode as Native;
+        match (edit, result) {
+            ("unknown", Err(IdentityFileRefusal::Malformed { .. })) => {}
+            ("old", Err(IdentityFileRefusal::Format(format))) => {
+                assert_eq!(format, "filament.checked-handoff.identities/4")
+            }
+            ("missing", Err(IdentityFileRefusal::Native(error))) => {
+                assert_eq!(error.code, Native::UnavailableIdentityWitness)
+            }
+            ("duplicate", Err(IdentityFileRefusal::Native(error))) => {
+                assert_eq!(error.code, Native::ConflictingIdentityWitness)
+            }
+            ("foreign" | "rank" | "case_order", Err(IdentityFileRefusal::Native(error))) => {
+                assert_eq!(error.code, Native::MismatchedIdentityWitness)
+            }
+            (_, other) => panic!("{edit} must preserve its typed refusal: {other:?}"),
+        }
+    }
+}
+
+/// Producer and native enum copies consume one cumulative allowance. Exact
+/// boundaries succeed; one-short and zero ceilings preserve the first unpaid
+/// resource rather than returning incomplete evidence.
+#[trace("FR-531-AC-31", "FR-531-AC-44", "FR-092-AC-26")]
+#[test]
+fn model_enum_identity_and_full_projection_budgets_are_cumulative() {
+    use filament_contract_model::{NativeJoinBudget, NativeJoinChargeKind};
+    let emitted = bare_enums();
+    let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
+        panic!("selected model admits")
+    };
+    let mut budget = NativeJoinBudget::new(10_000_000, 10_000_000);
+    let rows = emitted
+        .emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("rows");
+    let identities = rows
+        .selected(&admitted, &mut budget)
+        .expect("native enum join");
+    let before_projection = budget.consumed();
+    let types = admitted
+        .project_selected_type_declarations(&identities, &[], &[], &mut budget)
+        .expect("full projection");
+    assert_eq!(types.enums().len(), 2);
+    let need = budget.consumed();
+    assert!(need.work > before_projection.work && need.storage > before_projection.storage);
+    for (work, storage, denied) in [
+        (need.work, need.storage, None),
+        (
+            need.work - 1,
+            need.storage,
+            Some(NativeJoinChargeKind::Work),
+        ),
+        (
+            need.work,
+            need.storage - 1,
+            Some(NativeJoinChargeKind::Storage),
+        ),
+        (0, need.storage, Some(NativeJoinChargeKind::Work)),
+        (need.work, 0, Some(NativeJoinChargeKind::Storage)),
+    ] {
+        let mut exact = NativeJoinBudget::new(work, storage);
+        let result = emitted
+            .emission
+            .identity_rows(&admitted, &mut exact)
+            .ok()
+            .and_then(|rows| rows.selected(&admitted, &mut exact).ok())
+            .and_then(|identities| {
+                admitted
+                    .project_selected_type_declarations(&identities, &[], &[], &mut exact)
+                    .ok()
+            });
+        if let Some(kind) = denied {
+            assert!(result.is_none());
+            assert_eq!(exact.first_unpaid().expect("original denial").kind, kind);
+        } else {
+            assert_eq!(result.expect("exact allowance").enums().len(), 2);
+            assert_eq!(exact.consumed(), need);
+        }
+    }
 }
