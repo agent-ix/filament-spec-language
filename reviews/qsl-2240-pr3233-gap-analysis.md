@@ -33,3 +33,9 @@ Production code with no owning AC: `subtract_bounded`, `constrain_diagonal`, `re
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | high | FR-418-AC-13 would read covered in the matrix from tests that exercise only DBM operations; the refined-region relation and the subtraction guard have no AC at the pin, and FR-418-AC-18 is not yet pinned | fsl-replay/src/certificate/zone/region_tests.rs:87-431 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The AC-13 tags are gone. The AC-18 tags that replaced them, on an AC not yet at the FSL pin, are recorded as FND-007 of SR-2026112022385700000000002 |

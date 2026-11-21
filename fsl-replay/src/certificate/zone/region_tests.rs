@@ -240,7 +240,7 @@ fn constrain_diagonal_is_constrain_over_two_real_clocks() {
 /// `((0, 1), (0, 1))` splits, three ways by fraction order (`<`, `=`,
 /// `>`), so 18 regions. The diagonal `x - y <= 0` splits only the
 /// saturated pair `(> 1, > 1)`, so 19.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn the_universe_of_two_clocks_has_the_hand_counted_regions() {
     let all = Zone::universe(3);
@@ -268,7 +268,7 @@ fn the_universe_of_two_clocks_has_the_hand_counted_regions() {
 /// region for ceiling 2, `x in (0, 2]` is four (`(0,1)`, `1`, `(1,2)`, `2`),
 /// a clock above its ceiling is one saturated region wherever it is, and
 /// `x = 0.5, y = 0.25` lies in the one region `0 < y < x < 1`.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn regions_keep_integer_part_zero_fraction_order_and_saturate() {
     let ceil2 = ceilings(&[2]);
@@ -298,7 +298,7 @@ fn regions_keep_integer_part_zero_fraction_order_and_saturate() {
 
 /// A successor with a saturated clock is covered by a target that holds
 /// the whole saturated class, and not by one that cuts it.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn saturation_decides_coverage_above_the_ceiling() {
     let ceil = ceilings(&[2]);
@@ -317,7 +317,7 @@ fn saturation_decides_coverage_above_the_ceiling() {
 /// one region keeps the two truths apart: the closure of `x = y = 3`
 /// (ceilings 1) is the saturated square without the predicate and its
 /// `x - y <= 0` half with it.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn diagonal_truth_decides_coverage() {
     let ceil = ceilings(&[1, 1]);
@@ -349,7 +349,7 @@ fn diagonal_truth_decides_coverage() {
 /// Normalization is idempotent and its regions partition the zone's
 /// points, and `region_covers` is inclusion for a target that is a union
 /// of whole regions, on seeded zones.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn normalize_is_idempotent_and_covers_is_inclusion_after_normalization() {
     const S: i64 = 4;
@@ -421,7 +421,7 @@ fn normalize_is_idempotent_and_covers_is_inclusion_after_normalization() {
     assert!(aligned > 20, "enough sampled targets are unions of regions");
 }
 
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn region_operations_refuse_malformed_arguments() {
     let z = Zone::universe(3);
@@ -481,7 +481,7 @@ impl CoveredBy for Zone {
 /// `x in (1, 2)`, `y in (0, 1)`, ceilings 2: the fraction order splits the
 /// box in three, `frac x < frac y` (`x - y < 1`), `=` (`x - y = 1`) and `>`
 /// (`x - y > 1`). Hand-computed bounds of each region.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn fraction_order_splits_boxes_with_different_integer_parts() {
     let boxed = zone(
@@ -550,7 +550,7 @@ fn region_key(
 /// Point by point: with a grid of quarters, two points are in one region
 /// exactly when their definition keys agree. A partition that cut fraction
 /// order the other way, or merged integer parts, fails here.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn regions_are_the_definitions_classes_on_a_grid_of_quarters() {
     const S: i64 = 4;
@@ -595,7 +595,7 @@ fn regions_are_the_definitions_classes_on_a_grid_of_quarters() {
 }
 
 /// `region_covers` stops at the first region the target does not include.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn region_covers_stops_at_the_first_uncovered_region() {
     let ceil = ceilings(&[3, 3]);
@@ -622,7 +622,7 @@ fn region_covers_stops_at_the_first_uncovered_region() {
 
 /// For a target stated to be a union of whole regions no region is walked:
 /// one unit of work answers by inclusion.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn region_covers_uses_inclusion_for_a_union_of_regions() {
     let ceil = ceilings(&[2, 2]);
@@ -659,7 +659,7 @@ fn region_covers_uses_inclusion_for_a_union_of_regions() {
 
 /// A spent budget is `Exhausted`, never `Covered`, on both paths, and the
 /// same test with enough work is covered.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn region_covers_reports_an_exhausted_budget_never_covered() {
     let ceil = ceilings(&[2, 2]);
@@ -694,7 +694,7 @@ fn region_covers_reports_an_exhausted_budget_never_covered() {
 }
 
 /// A zone that admits a negative clock is refused, not cut at 0.
-#[trace("TC-371", "FR-418-AC-18")]
+#[trace("TC-371")]
 #[test]
 fn a_zone_admitting_a_negative_clock_is_refused() {
     let negative = Zone::from_matrix(

@@ -65,3 +65,24 @@ Tests run: `cargo-slot cargo test -p fsl-replay --lib certificate::zone` (name-f
 - FND-004 check: soundness; confidence medium.
 - FND-005 check: coverage; confidence high.
 - FND-006 check: test-intent; confidence high.
+
+## New findings (disposition pass 1)
+
+Re-checked at fix commit `134c0e6133`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | Twelve unit tests are now tagged `FR-418-AC-18`. That AC is not in the FSL spec pin `5c4384df` (it is on FSpec `origin/main` only), and none of the tests checks what AC-18 observes: a task-product certificate accepted, or settling `inconclusive` with `successor-missing` at the source node. Six of them do not touch coverage at all: the hand counts, the refusal of malformed arguments, the negative-clock refusal and the fraction-order vectors. So AC-18 would read covered with no certificate-level test, the same inflation FND-001 named for AC-13 | fsl-replay/src/certificate/zone/region_tests.rs:243, 271, 301, 320, 352, 424, 484, 553, 598, 625, 662, 697 |
+
+- **FND-007 detail.** Fix: keep these unit tests TC-only (as the subtraction tests now are) until S4 adds the certificate-level AC-18 test, or tag AC-18 only on the coverage tests and only after the FSL pin carries AC-18. The certificate-level test is the one that should carry AC-18.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | No `FR-418-AC-13` tag remains. The subtraction and diagonal tests are `#[trace("TC-371")]` and the 10^40 test keeps `FR-418-AC-4`. The AC-18 retag that replaced AC-13 is FND-007 |
+| FND-002 | fixed | `regions_are_the_definitions_classes_on_a_grid_of_quarters` (region_tests.rs:555) samples at scale 4. For each point it computes a key straight from the definition: integer part, zero-fraction flag, saturation, signed fraction order, predicate truth. It then asserts a bijection between keys and returned regions. That is a real oracle and does not reuse the code under test, and it fails on a flipped `gap`. `fraction_order_splits_boxes_with_different_integer_parts` (:486) adds the hand vector with unequal bases |
+| FND-003 | fixed | `region_covers` walks the regions depth first and stops at the first region not included. `charge` is called before every narrowing step; `Spent` becomes `Flow::Exhausted`, then `Coverage::Exhausted`. Only `Flow::Continue` maps to `Covered`, so a spent budget is never read as covered. `TargetShape::UnionOfRegions` answers by `includes`, after one charge. Its obligation is documented at zone.rs:996-1002 |
+| FND-004 | fixed | `check_regions` refuses a non-empty zone whose `0 - x_k` cell is looser than `(0, <=)` with `NegativeClockValue` (zone.rs:1072-1080). The precondition is in the doc, and a test covers it |
+| FND-005 | fixed | The module doc now says the task-product operations are not Kani-harnessed and names their tests |
+| FND-006 | fixed | The case now uses `y <= 4` and asserts the tightened `x < 5` |
