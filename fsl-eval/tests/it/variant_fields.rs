@@ -119,7 +119,7 @@ fn selected_model_enum_values_match_source_and_bare_evaluation() {
     let models = package_input([document_bytes.as_slice()]).unwrap();
     let mut first = std::collections::BTreeMap::new();
     for alias in ["M", "Renamed"] {
-        let functions = format!("function pick using v(): {alias}::Tier pure {{ {alias}::Tier::Gold }}\nfunction same using v(): Boolean pure {{ pick() = {alias}::Tier::Gold }}\nfunction other using v(): Boolean pure {{ pick() = {alias}::Tier::Standard }}\nfunction pass using v(t: {alias}::Tier): {alias}::Tier pure {{ t }}\nfunction forwarded using v(): {alias}::Tier pure {{ pass({alias}::Tier::Standard) }}");
+        let functions = format!("function pick using v(): {alias}::Tier pure {{ {alias}::Tier::Gold }}\nfunction same using v(): Boolean pure {{ pick() = {alias}::Tier::Gold }}\nfunction other using v(): Boolean pure {{ pick() = {alias}::Tier::Standard }}\nfunction different using v(): Boolean pure {{ pick() != {alias}::Tier::Standard }}\nfunction not_same using v(): Boolean pure {{ pick() != {alias}::Tier::Gold }}\nfunction pass using v(t: {alias}::Tier): {alias}::Tier pure {{ t }}\nfunction forwarded using v(): {alias}::Tier pure {{ pass({alias}::Tier::Standard) }}");
         let package = package_functions(&document, alias, &functions);
         let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
             .expect("selected enums emit");
@@ -160,6 +160,8 @@ fn selected_model_enum_values_match_source_and_bare_evaluation() {
             ("forwarded", None),
             ("same", Some(true)),
             ("other", Some(false)),
+            ("different", Some(true)),
+            ("not_same", Some(false)),
         ] {
             let call = |route: &dyn CheckedPackageEvaluation| {
                 let mut meter = Meter::new(UNLIMITED);
