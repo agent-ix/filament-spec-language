@@ -276,72 +276,84 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
     let document = serde_json::to_vec(&document).expect("JSON");
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
         .expect("actual Model input");
-    let source = clocked_unit(
-        "record W { c: Clock; }\n\
+    let source_only = "language \"ix:native\" edition \"1-draft\";\n\
+         profile T = \"filament.temporal.complete/v1\";\n\
+         dimension Time; unit ms : Time = rational(1, 1);\n\
+         record W { c: Clock; }\n\
          type AW = W; tuple Pair(AW, Clock);\n\
          union U { armed(Clock), idle }\n\
          object Order { pair: Pair; u: U; }\n\
-         time Order dense unit ms;\n",
-    );
-    let graph = assemble_with_models(source.as_bytes(), &packages)
-        .expect("Model and source declarations assemble")
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-        )
-        .unwrap_or_else(|refusals| panic!("declarations check: {refusals:?}"));
-    let declarations = SourceDeclarations::from_graph(&graph).expect("actual source provenance");
-    let mut source_templates = graph
-        .timed_models()
-        .iter()
-        .flat_map(|timed| timed.clocks().iter())
-        .map(|clock| {
-            declarations
-                .clock_template(clock)
-                .expect("source clock normalizes")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(source_templates.len(), 5);
-    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { carrier, .. }, PathEntry::Option] if carrier.layers == [CarrierLayer::Option])));
-    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Collection { shape, .. }, PathEntry::Option] if shape.kind == CollectionKind::Sequence && shape.minimum.as_str() == "0" && shape.maximum.as_ref().map(|bound| bound.as_str()) == Some("2"))));
-    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }, PathEntry::Field { .. }] if position.as_str() == "0")));
-    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }] if position.as_str() == "1")));
-    assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Case { name, .. }] if name == "armed")));
+         time Order dense unit ms;\n";
+    let source_packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("actual source-only input");
+    let cases = [
+        (clocked_unit(""), packages),
+        (source_only.to_owned(), source_packages),
+    ];
+    let mut all_templates = Vec::new();
+    for (source, packages) in cases {
+        let graph = assemble_with_models(source.as_bytes(), &packages)
+            .expect("Model and source declarations assemble")
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
+            .unwrap_or_else(|refusals| panic!("declarations check: {refusals:?}"));
+        let declarations =
+            SourceDeclarations::from_graph(&graph).expect("actual source provenance");
+        let mut source_templates = graph
+            .timed_models()
+            .iter()
+            .flat_map(|timed| timed.clocks().iter())
+            .map(|clock| {
+                declarations
+                    .clock_template(clock)
+                    .expect("source clock normalizes")
+            })
+            .collect::<Vec<_>>();
 
-    let source_table = graph.clock_declaration_table().clone();
-    let emission = emit_checked(&CheckedPackage::link(graph)).expect("source emits");
-    let Read::Verified {
-        admitted,
-        timed_models,
-        ..
-    } = super::read_back(&emission)
-    else {
-        panic!("actual emitted package admits");
-    };
-    let declarations = crate::BarePackage::new(&admitted)
-        .clock_declarations()
-        .expect("admitted declaration provenance");
-    let bare_table = declarations
-        .table(&timed_models)
-        .expect("atomic admitted place table");
-    assert_eq!(
-        source_table.entries().collect::<Vec<_>>(),
-        bare_table.entries().collect::<Vec<_>>(),
-        "both routes retain the same complete original member chains"
-    );
-    let mut bare_templates = timed_models
-        .iter()
-        .flat_map(|timed| timed.clock_places.iter())
-        .map(|place| {
-            declarations
-                .clock_template(place)
-                .expect("bare clock normalizes")
-        })
-        .collect::<Vec<_>>();
-    source_templates.sort();
-    bare_templates.sort();
-    assert_eq!(bare_templates, source_templates);
+        let source_table = graph.clock_declaration_table().clone();
+        let emission = emit_checked(&CheckedPackage::link(graph)).expect("source emits");
+        let Read::Verified {
+            admitted,
+            timed_models,
+            ..
+        } = super::read_back(&emission)
+        else {
+            panic!("actual emitted package admits");
+        };
+        let declarations = crate::BarePackage::new(&admitted)
+            .clock_declarations()
+            .expect("admitted declaration provenance");
+        let bare_table = declarations
+            .table(&timed_models)
+            .expect("atomic admitted place table");
+        assert_eq!(
+            source_table.entries().collect::<Vec<_>>(),
+            bare_table.entries().collect::<Vec<_>>(),
+            "both routes retain the same complete original member chains"
+        );
+        let mut bare_templates = timed_models
+            .iter()
+            .flat_map(|timed| timed.clock_places.iter())
+            .map(|place| {
+                declarations
+                    .clock_template(place)
+                    .expect("bare clock normalizes")
+            })
+            .collect::<Vec<_>>();
+        source_templates.sort();
+        bare_templates.sort();
+        assert_eq!(bare_templates, source_templates);
+        all_templates.extend(source_templates);
+    }
+    assert_eq!(all_templates.len(), 5);
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { carrier, .. }, PathEntry::Option] if carrier.layers == [CarrierLayer::Option])));
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Collection { shape, .. }, PathEntry::Option] if shape.kind == CollectionKind::Sequence && shape.minimum.as_str() == "0" && shape.maximum.as_ref().map(|bound| bound.as_str()) == Some("2"))));
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }, PathEntry::Field { .. }] if position.as_str() == "0")));
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }] if position.as_str() == "1")));
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Case { name, .. }] if name == "armed")));
 }
 
 /// The unit selecting [`clocked_document`] under a dense time source, with

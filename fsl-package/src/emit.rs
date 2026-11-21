@@ -4502,7 +4502,7 @@ fn checked_dispatch_tables(
 fn checked_term_data(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
-    equality_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    producer_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     selected_model_members: &[(
         NodeKey,
         NodeKey,
@@ -4516,7 +4516,7 @@ fn checked_term_data(
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
         graph,
-        equality_node_ids,
+        producer_node_ids,
         selected_model_members,
         equality_rows,
     )?
@@ -4524,11 +4524,14 @@ fn checked_term_data(
     term_data.dispatch_tables =
         checked_dispatch_tables(graph, emitted_node_ids, source_map, source_keys)?;
     term_data.protocol_locations =
-        protocol_locations::checked_protocol_locations(graph, emitted_node_ids)?;
+        protocol_locations::checked_protocol_locations(graph, producer_node_ids)?;
     term_data.probabilistic_claims = checked_probabilistic_claims(graph, emitted_node_ids)?;
+    // Location rows retain original S3 application keys, just as equality
+    // does. Resolve them through the actual timed substitutions, without
+    // adding aliases to the graph index used by reverse lookups.
     term_data.body_locations = body_locations::checked_body_locations(
         graph,
-        emitted_node_ids,
+        producer_node_ids,
         nodes,
         source_keys,
         output_bytes,
