@@ -260,7 +260,9 @@ impl Run<'_, '_> {
                     ConstraintReading::Stopped(verdict) => {
                         match self.stopped_reading(verdict, &totals)? {
                             Reading::Ended(outcome) => return Ok(outcome),
-                            _ => return Err(fault("a-stopped-constraint-ends-the-item")),
+                            Reading::Continue | Reading::Refuted(_) => {
+                                return Err(fault("a-stopped-constraint-ends-the-item"));
+                            }
                         }
                     }
                     ConstraintReading::Cut(at) => {
@@ -359,8 +361,11 @@ impl Run<'_, '_> {
                 match match_closed_step(inputs, tuple, position, MatchPart::Universal) {
                     Ok(MatchReading::Holds) => {}
                     Ok(MatchReading::Fails) => return Ok(ConstraintReading::Unmatched),
-                    Ok(_) => {
+                    Ok(MatchReading::Undefined { .. } | MatchReading::Refused { .. }) => {
                         return Ok(ConstraintReading::Stopped(ClosedVerdict::MatchUndetermined))
+                    }
+                    Ok(MatchReading::Fault(internal)) => {
+                        return Err(ModelCheckRefusal::Fault(internal));
                     }
                     Err(verdict) => return Ok(ConstraintReading::Stopped(verdict)),
                 }
