@@ -2467,4 +2467,49 @@ mod tests {
         assert!(evidence.is_none());
         assert!(counterexample.is_none());
     }
+    #[trace("FR-203-AC-11")]
+    #[test]
+    fn an_engine_proved_assertion_without_checker_acceptance_fails_invariant() {
+        let check = ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+            rule: ProbabilityCertificateRule::InequalityFails,
+            at: ProbabilityCertificateLocus::Member("values"),
+        });
+        let (terminal, evidence, counterexample) = ExactReport::Proved {
+            check,
+            extremum: None,
+            binding: None,
+            evidence: None,
+        }
+        .settle(RequestIndex::new(0), BackendId::new("en-5"));
+        assert_eq!(terminal.value(), &TerminalValue::Failed);
+        assert_eq!(terminal.diagnostic(), Some(BROKEN));
+        assert!(terminal.exact_certificate_document().is_none());
+        assert!(evidence.is_none() && counterexample.is_none());
+    }
+
+    #[trace("FR-203-AC-11")]
+    #[test]
+    fn an_inequality_rejection_settles_inconclusive_at_the_same_complete_key() {
+        let key = ProbabilityProductKey::for_model_state(
+            None,
+            include_bytes!(
+                "../../../tools/fsl-probability-check/tests/fixtures/link.model-key-0.json"
+            ),
+        )
+        .unwrap();
+        let (terminal, evidence, counterexample) = ExactReport::Rejected {
+            rule: CertificateRule::InequalityFails,
+            at: CertificateLocus::ProbabilityProductState(key.clone()),
+        }
+        .settle(RequestIndex::new(0), BackendId::new("en-5"));
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::InequalityFails,
+                at: CertificateLocus::ProbabilityProductState(key),
+            })
+        );
+        assert!(terminal.exact_certificate_document().is_none());
+        assert!(evidence.is_none() && counterexample.is_none());
+    }
 }
