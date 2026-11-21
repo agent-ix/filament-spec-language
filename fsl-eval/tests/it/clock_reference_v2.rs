@@ -279,6 +279,7 @@ fn assert_producer_clause(
     types: &filament_semantic_value::declaration::TypeEnvironment,
     packages: &fsl_semantics::model::intake::PackageInput,
     snapshots: &BTreeMap<DocumentRef, Vec<u8>>,
+    first_matches: bool,
 ) {
     let clause = package
         .graph()
@@ -331,7 +332,10 @@ fn assert_producer_clause(
                 &mut Meter::new(LIMITS),
             )
             .expect("actual route evaluates its Clock producer");
-        assert_value(&completed(evaluation.evaluation), &Value::Boolean(true));
+        assert_value(
+            &completed(evaluation.evaluation),
+            &Value::Boolean(name != "c1" || first_matches),
+        );
     }
 }
 
@@ -404,11 +408,18 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
         .expect("Bare supply");
     let world = bare.world().expect("Bare world");
     for present in [true, false] {
-        let snapshots = snapshot(
+        let mut snapshots = snapshot(
             places[0].object().as_str(),
             places[1].object().as_str(),
             present,
         );
+        if !present {
+            let mut document: Json =
+                serde_json::from_slice(&snapshots[&identity()]).expect("snapshot");
+            document["populations"][0]["objects"][0]["fields"]["r"] =
+                raw_reference(places[1].object().as_str());
+            snapshots.insert(identity(), serde_json::to_vec(&document).expect("snapshot"));
+        }
         let (state, _) = model
             .admit_initial(&snapshots, &identity(), ObservationLimits::default())
             .expect("actual references read back");
@@ -430,6 +441,7 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
             package.graph().scope().types(),
             &checked.packages,
             &snapshots,
+            present,
         );
         assert_producer_clause(
             &package,
@@ -437,6 +449,7 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
             world.types(),
             &checked.packages,
             &snapshots,
+            present,
         );
         for (index, name) in ["c1", "c2"].into_iter().enumerate() {
             assert_value(
@@ -445,7 +458,7 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
             );
             assert_value(
                 &capture(&package, &checked.packages, &snapshots, 2, name),
-                &Value::Boolean(index == 1),
+                &Value::Boolean(index == 1 || !present),
             );
             for function in ["stored", "has_maybe", "stored_refs"]
                 .into_iter()
@@ -474,7 +487,12 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
                 );
                 assert_value(&bare_value, &source_value);
                 match function_name {
-                    "stored" => assert_value(&bare_value, &Value::Reference(places[index].clone())),
+                    "stored" => assert_value(
+                        &bare_value,
+                        &Value::Reference(
+                            places[if !present && index == 0 { 1 } else { index }].clone(),
+                        ),
+                    ),
                     "maybe_stored" => {
                         assert_value(&bare_value, &Value::Reference(places[1].clone()))
                     }
