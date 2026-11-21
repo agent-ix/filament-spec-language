@@ -104,6 +104,28 @@ impl Restore<'_, '_, '_> {
             .map_err(|_| ModelKeyError::Denied)?;
         Ok(())
     }
+    fn push<T>(&mut self, values: &mut Vec<T>, value: T) -> Result<(), ModelRestoreError> {
+        if values.len() == values.capacity() {
+            let target = values
+                .capacity()
+                .checked_mul(2)
+                .unwrap_or(usize::MAX)
+                .max(1);
+            let bytes = target
+                .checked_mul(size_of::<T>())
+                .ok_or(ModelKeyError::SizeOverflow)?;
+            self.retain(bytes)?;
+            values
+                .try_reserve_exact(target - values.len())
+                .map_err(|_| {
+                    ModelKeyError::Encoding(crate::simulation::EncodingRefusal::Allocation {
+                        requested: bytes,
+                    })
+                })?;
+        }
+        values.push(value);
+        Ok(())
+    }
     fn array<'a>(&mut self, node: NodeRef<'a>) -> Result<Vec<NodeRef<'a>>, ModelRestoreError> {
         let Node::Array(items) = node.node() else {
             return Err(bad());
@@ -223,7 +245,8 @@ impl Restore<'_, '_, '_> {
             Visit(NodeRef<'a>, ValueType, bool),
             Finish(Finish),
         }
-        let mut tasks = vec![Task::Visit(node, expected.clone(), false)];
+        let mut tasks = Vec::new();
+        self.push(&mut tasks, Task::Visit(node, expected.clone(), false))?;
         let mut values: Vec<FieldValue> = Vec::new();
         while let Some(task) = tasks.pop() {
             self.tick(1)?;
@@ -267,7 +290,7 @@ impl Restore<'_, '_, '_> {
                             let mut items = present(slots)?.into_iter();
                             let mut entries = Vec::new();
                             while let Some(key) = items.next() {
-                                entries.push((key, items.next().ok_or_else(bad)?));
+                                self.push(&mut entries, (key, items.next().ok_or_else(bad)?))?;
                             }
                             filament_exact::from_admitted_map(ty, entries).map_err(|_| bad())?
                         }
@@ -278,11 +301,11 @@ impl Restore<'_, '_, '_> {
                             UnionValue::from_admitted(member, present(slots)?)
                         }
                     };
-                    values.push(FieldValue::Present(value));
+                    self.push(&mut values, FieldValue::Present(value))?;
                 }
                 Task::Visit(node, ty, optional) => {
                     if optional && matches!(node.node(), Node::Null) {
-                        values.push(FieldValue::Absent);
+                        self.push(&mut values, FieldValue::Absent)?;
                         continue;
                     }
                     let tag = text(member(node, "type")?)?;
@@ -428,12 +451,15 @@ impl Restore<'_, '_, '_> {
                         ValueType::Option(payload) if tag == "option" => {
                             let inner = member(node, "value")?;
                             let has_value = !matches!(inner.node(), Node::Null);
-                            tasks.push(Task::Finish(Finish::Option(
-                                payload.as_ref().clone(),
-                                has_value,
-                            )));
+                            self.push(
+                                &mut tasks,
+                                Task::Finish(Finish::Option(payload.as_ref().clone(), has_value)),
+                            )?;
                             if has_value {
-                                tasks.push(Task::Visit(inner, payload.as_ref().clone(), false));
+                                self.push(
+                                    &mut tasks,
+                                    Task::Visit(inner, payload.as_ref().clone(), false),
+                                )?;
                             }
                             continue;
                         }
@@ -448,12 +474,18 @@ impl Restore<'_, '_, '_> {
                                 return Err(bad());
                             }
                             let items = self.array(member(node, "elements")?)?;
-                            tasks.push(Task::Finish(Finish::Collection(
-                                declared.as_ref().clone(),
-                                items.len(),
-                            )));
+                            self.push(
+                                &mut tasks,
+                                Task::Finish(Finish::Collection(
+                                    declared.as_ref().clone(),
+                                    items.len(),
+                                )),
+                            )?;
                             for item in items.into_iter().rev() {
-                                tasks.push(Task::Visit(item, declared.element().clone(), false));
+                                self.push(
+                                    &mut tasks,
+                                    Task::Visit(item, declared.element().clone(), false),
+                                )?;
                             }
                             continue;
                         }
@@ -466,16 +498,25 @@ impl Restore<'_, '_, '_> {
                             }) {
                                 return Err(bad());
                             }
-                            tasks.push(Task::Finish(Finish::Map(
-                                declared.as_ref().clone(),
-                                items
-                                    .len()
-                                    .checked_mul(2)
-                                    .ok_or(ModelKeyError::SizeOverflow)?,
-                            )));
+                            self.push(
+                                &mut tasks,
+                                Task::Finish(Finish::Map(
+                                    declared.as_ref().clone(),
+                                    items
+                                        .len()
+                                        .checked_mul(2)
+                                        .ok_or(ModelKeyError::SizeOverflow)?,
+                                )),
+                            )?;
                             for (key, value) in items.into_iter().rev() {
-                                tasks.push(Task::Visit(value, declared.values().clone(), false));
-                                tasks.push(Task::Visit(key, declared.key().clone(), false));
+                                self.push(
+                                    &mut tasks,
+                                    Task::Visit(value, declared.values().clone(), false),
+                                )?;
+                                self.push(
+                                    &mut tasks,
+                                    Task::Visit(key, declared.key().clone(), false),
+                                )?;
                             }
                             continue;
                         }
@@ -499,10 +540,10 @@ impl Restore<'_, '_, '_> {
                                     if rows.len() != fields.len() {
                                         return Err(bad());
                                     }
-                                    tasks.push(Task::Finish(Finish::Composite(
-                                        own.key(),
-                                        fields.len(),
-                                    )));
+                                    self.push(
+                                        &mut tasks,
+                                        Task::Finish(Finish::Composite(own.key(), fields.len())),
+                                    )?;
                                     for field in fields.iter().rev() {
                                         self.tick(rows.len())?;
                                         let row = rows
@@ -512,11 +553,14 @@ impl Restore<'_, '_, '_> {
                                                     == Some(field.name())
                                             })
                                             .ok_or_else(bad)?;
-                                        tasks.push(Task::Visit(
-                                            member(*row, "value")?,
-                                            field.value_type().clone(),
-                                            field.presence() == Presence::Optional,
-                                        ));
+                                        self.push(
+                                            &mut tasks,
+                                            Task::Visit(
+                                                member(*row, "value")?,
+                                                field.value_type().clone(),
+                                                field.presence() == Presence::Optional,
+                                            ),
+                                        )?;
                                     }
                                 }
                                 ("tuple", CompositeShape::Tuple(types)) => {
@@ -524,12 +568,15 @@ impl Restore<'_, '_, '_> {
                                     if items.len() != types.len() {
                                         return Err(bad());
                                     }
-                                    tasks.push(Task::Finish(Finish::Composite(
-                                        own.key(),
-                                        items.len(),
-                                    )));
+                                    self.push(
+                                        &mut tasks,
+                                        Task::Finish(Finish::Composite(own.key(), items.len())),
+                                    )?;
                                     for (item, ty) in items.into_iter().zip(types).rev() {
-                                        tasks.push(Task::Visit(item, ty.clone(), false));
+                                        self.push(
+                                            &mut tasks,
+                                            Task::Visit(item, ty.clone(), false),
+                                        )?;
                                     }
                                 }
                                 ("union", CompositeShape::Union(members)) => {
@@ -542,14 +589,20 @@ impl Restore<'_, '_, '_> {
                                     if items.len() != declared.positions().len() {
                                         return Err(bad());
                                     }
-                                    tasks.push(Task::Finish(Finish::Union(
-                                        declared.member().ok_or_else(bad)?.clone(),
-                                        items.len(),
-                                    )));
+                                    self.push(
+                                        &mut tasks,
+                                        Task::Finish(Finish::Union(
+                                            declared.member().ok_or_else(bad)?.clone(),
+                                            items.len(),
+                                        )),
+                                    )?;
                                     for (item, ty) in
                                         items.into_iter().zip(declared.positions()).rev()
                                     {
-                                        tasks.push(Task::Visit(item, ty.clone(), false));
+                                        self.push(
+                                            &mut tasks,
+                                            Task::Visit(item, ty.clone(), false),
+                                        )?;
                                     }
                                 }
                                 _ => return Err(bad()),
@@ -558,7 +611,8 @@ impl Restore<'_, '_, '_> {
                         }
                         _ => return Err(bad()),
                     };
-                    values.push(FieldValue::Present(self.leaf(value, &ty)?));
+                    let value = self.leaf(value, &ty)?;
+                    self.push(&mut values, FieldValue::Present(value))?;
                 }
             }
         }
@@ -596,18 +650,22 @@ impl Restore<'_, '_, '_> {
                     };
                     let mut instances = Vec::new();
                     for instance in self.array(member(extent, "instances")?)? {
-                        instances.push((
-                            self.reference(member(instance, "source")?)?,
-                            self.reference(member(instance, "target")?)?,
-                        ));
+                        self.push(
+                            &mut instances,
+                            (
+                                self.reference(member(instance, "source")?)?,
+                                self.reference(member(instance, "target")?)?,
+                            ),
+                        )?;
                     }
-                    extents.push(
+                    self.push(
+                        &mut extents,
                         filament_semantic_value::relationship_extent::RelationshipExtent {
                             relationship,
                             complete,
                             instances,
                         },
-                    );
+                    )?;
                 }
                 continue;
             }
