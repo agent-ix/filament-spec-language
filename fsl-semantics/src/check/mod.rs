@@ -594,12 +594,12 @@ pub use refusal::{
     CheckingLimitKind, CheckingStage, ClockSelectionFault, DispatchFunctionRole, DispatchLinkCause,
     DispatchSubtypeFailure, ExcludedClauseForm, ExecutionPointRefusal, IdentityForm, IdentityNode,
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
-    MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
-    ProtocolAnchorCause, ProtocolCheckRefusal, ProtocolConstruct, ProtocolReferenceCause,
-    ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ReservedSlotName,
-    ShadowedDeclaration, SlotKind, SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect,
-    TaskTimeMember, TemporalCause, TimeUnitCause, TimedConstruct, TimedOmission,
-    UnwrittenTimedMember,
+    MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText,
+    PlanParameterOrigin, PredicateRole, ProtocolAnchorCause, ProtocolCheckRefusal,
+    ProtocolConstruct, ProtocolReferenceCause, ProvedInterval, QualifiedCandidate,
+    RefusedProtocolDependency, RelatedEnd, ReservedSlotName, ShadowedDeclaration, SlotKind,
+    SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
+    TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
     state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,

@@ -6885,6 +6885,35 @@ pub fn read_domain_package(
                                     member_name: Some(name.to_owned()),
                                 },
                             );
+                            if members == "operations" {
+                                for (position, parameter) in member
+                                    .get("params")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .enumerate()
+                                {
+                                    let parameter_ctx = NodeCtx::new(
+                                        parameter,
+                                        format!("{member_at}.params[{position}]"),
+                                    );
+                                    if let Some(origin) = parameter.get("origin") {
+                                        originals.insert(
+                                            declaration_key(
+                                                &selection.identity,
+                                                parameter_ctx.str_field("identity")?,
+                                            ),
+                                            OriginalDeclaration {
+                                                meaning: None,
+                                                origin: origin.clone(),
+                                                member_name: Some(
+                                                    parameter_ctx.str_field("name")?.to_owned(),
+                                                ),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                     Ok::<_, ModelRefusal>(())

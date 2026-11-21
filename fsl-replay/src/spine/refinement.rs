@@ -385,6 +385,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::ProtocolObligation(_)
         | CheckCause::TerminalWithoutObjectType { .. }
         | CheckCause::SynthesisUnboundedDomain { .. }
+        | CheckCause::PlanUnboundedParameter { .. }
         | CheckCause::UntypedMember(_)
         | CheckCause::Abstraction(_)
         | CheckCause::Extension(_)

@@ -1434,6 +1434,15 @@ fn check_message_one(first: &CheckRefusal) -> String {
         CheckCause::PlanUnsupported { form, .. } => {
             message = format!("{message}: {form}");
         }
+        CheckCause::PlanUnboundedParameter {
+            operation,
+            parameter,
+            component,
+            ..
+        } => {
+            message =
+                format!("{message}: operation {operation} parameter {parameter}: {component}");
+        }
         CheckCause::PlanUnknownField { owner, field, .. }
         | CheckCause::UnknownField { owner, field, .. } => {
             message = format!("{message}: `{owner}` has no field `{field}`");

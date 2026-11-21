@@ -147,10 +147,102 @@ fn key(path: &[&str]) -> Option<NodeKey> {
 }
 
 /// Whether a step's `arguments` record can carry a parameter of
-/// `value_type`: a value a step's canonical argument text reads back to
-/// without an object environment.
+/// `value_type`, preserving the native runtime's admitted value.
 fn carried(value_type: &ValueType) -> bool {
-    matches!(value_type, ValueType::Boolean | ValueType::Int(_))
+    matches!(
+        value_type,
+        ValueType::Boolean | ValueType::Int(_) | ValueType::Reference(_) | ValueType::Enum(_)
+    )
+}
+
+/// Find unbounded argument components without treating a state-relative
+/// reference domain as an unbounded value-synthesis population.
+fn unbounded_parameter<'a>(
+    types: &'a filament_semantic_value::declaration::TypeEnvironment,
+    value_type: &'a ValueType,
+) -> Option<String> {
+    enum Work<'a> {
+        Visit(&'a ValueType, String),
+        Leave(NodeKey),
+    }
+    let mut pending = vec![Work::Visit(value_type, String::new())];
+    let mut visiting = BTreeSet::new();
+    while let Some(work) = pending.pop() {
+        let (value_type, path) = match work {
+            Work::Visit(value_type, path) => (value_type, path),
+            Work::Leave(key) => {
+                visiting.remove(&key);
+                continue;
+            }
+        };
+        let member = |name: &str| {
+            if path.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{path}.{name}")
+            }
+        };
+        match value_type {
+            ValueType::Integer => return Some(member("Integer")),
+            ValueType::String => return Some(member("String")),
+            ValueType::Bytes => return Some(member("Bytes")),
+            ValueType::JsonObject => return Some(member("JsonObject")),
+            ValueType::Option(inner) => pending.push(Work::Visit(inner, member("some"))),
+            ValueType::Collection(collection) => {
+                if collection.bound().is_none() {
+                    return Some(member("unbounded collection"));
+                }
+                pending.push(Work::Visit(collection.element(), member("element")));
+            }
+            ValueType::Map(map) => {
+                if map.bound().is_none() {
+                    return Some(member("unbounded map"));
+                }
+                pending.push(Work::Visit(map.values(), member("value")));
+                pending.push(Work::Visit(map.key(), member("key")));
+            }
+            ValueType::Composite(key) => {
+                if !visiting.insert(key.clone()) {
+                    return Some(member("recursive composite"));
+                }
+                let Some(declaration) = types.composite(key.clone()) else {
+                    return Some(member("unknown composite"));
+                };
+                pending.push(Work::Leave(key.clone()));
+                let children: Vec<_> = match declaration.shape() {
+                    CompositeShape::Record(fields) => fields
+                        .iter()
+                        .map(|field| (member(field.name()), field.value_type()))
+                        .collect(),
+                    CompositeShape::Tuple(positions) => positions
+                        .iter()
+                        .enumerate()
+                        .map(|(index, ty)| (member(&index.to_string()), ty))
+                        .collect(),
+                    CompositeShape::Union(members) => {
+                        let mut children = Vec::new();
+                        for case in members {
+                            for (index, ty) in case.positions().iter().enumerate() {
+                                children
+                                    .push((member(&format!("{}.{index}", case.identifier())), ty));
+                            }
+                        }
+                        children
+                    }
+                };
+                pending.extend(
+                    children
+                        .into_iter()
+                        .rev()
+                        .map(|(path, ty)| Work::Visit(ty, path)),
+                );
+            }
+            // Other finite or staged families are handled by the carried
+            // support boundary; their unsupported status is not unboundedness.
+            _ => {}
+        }
+    }
+    None
 }
 
 fn argument_fields(operations: &[PlanOperation]) -> Vec<(String, ValueType)> {
@@ -321,10 +413,15 @@ pub(crate) fn declare(
                 arguments_seen.get(parameter)
             {
                 if first_type != value_type || *first_optional != optional {
-                    return Err(CheckRefusal { location: location.clone(), cause: CheckCause::PlanUnsupported {
-                        form: format!("parameter {parameter} has conflicting types or declared presence in operations {first_operation} and {name}"),
-                        span: form.grammar.span,
-                    } });
+                    return Err(CheckRefusal {
+                        location: location.clone(),
+                        cause: CheckCause::PlanUnsupported {
+                            form: format!(
+                                "parameter {parameter} has conflicting types or declared presence in operations {first_operation} and {name}"
+                            ),
+                            span: form.grammar.span,
+                        },
+                    });
                 }
             } else {
                 arguments_seen.insert(
@@ -345,13 +442,49 @@ pub(crate) fn declare(
             .find(|operation| operation.name() == name)
             .ok_or_else(|| unsupported(location))?;
         for (position, (parameter, value_type)) in operation.parameters().iter().enumerate() {
+            if let Some(component) = unbounded_parameter(scope.types(), value_type) {
+                let origin = named
+                    .plan_parameter_origins
+                    .get(&(declaring.clone(), name.clone(), parameter.clone()))
+                    .and_then(|origin| {
+                        let (_, span) = crate::model::intake::origin_locus(origin);
+                        let path = origin.get("source")?.get("path")?.as_str()?;
+                        // model_unit::source_origin writes this exact source
+                        // identity encoding; the authored path is not an ID.
+                        let artifact = origin.get("source")?.get("sourceIdentity")?.as_str()?;
+                        let source = artifact
+                            .strip_prefix("ix://")
+                            .and_then(|identity| identity.split_once('/'))
+                            .and_then(|(authority, identity)| {
+                                fsl_foundation::source::provenance::RawSourceRef::new(
+                                    authority, identity,
+                                )
+                                .ok()
+                            });
+                        Some(Box::new(super::refusal::PlanParameterOrigin {
+                            artifact: artifact.to_owned(),
+                            path: path.to_owned(),
+                            span: span?,
+                            source,
+                        }))
+                    });
+                return Err(CheckRefusal {
+                    location: location.clone(),
+                    cause: CheckCause::PlanUnboundedParameter {
+                        operation: name.clone(),
+                        parameter: parameter.clone(),
+                        component,
+                        origin,
+                    },
+                });
+            }
             let reason = if operation.parameter_is_optional(position) {
                 Some(format!(
                     "optional parameter {parameter} of operation {name}"
                 ))
             } else if !carried(value_type) {
                 Some(format!(
-                    "operation {name} parameter {parameter} of type {value_type:?}; source planning currently carries only Boolean and finite Int parameters"
+                    "operation {name} parameter {parameter} of type {value_type:?}; source planning currently carries Boolean, finite Int, Reference and enum parameters"
                 ))
             } else {
                 None
