@@ -27,8 +27,8 @@ mod frames;
 mod input;
 pub use input::{
     BodyReads, ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration,
-    PackageModelInput, PackageRewards, PendingClauseForm, PendingPackageForm, StateClauseEntry,
-    TerminalWhen,
+    PackageModelInput, PackageRewards, PendingClauseForm, PendingPackageForm, ProtocolDefinition,
+    StateClauseEntry, TerminalWhen,
 };
 mod operation_coverage;
 pub use operation_coverage::{
@@ -122,7 +122,8 @@ pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{
     operation_identity_text, AbstractApplication, Judged, Judgement, Rejection, ResolvedStep,
 };
-pub(crate) use reference_bindings::{ReferenceBinding, ReferenceBindings};
+pub(crate) use reference_bindings::ReferenceBinding;
+pub use reference_bindings::ReferenceBindings;
 mod hyper_letters;
 pub use hyper_letters::CheckedHyperLetters;
 pub use letters::{ClauseLetters, DecisiveObservation, LettersRefusal};

@@ -478,6 +478,9 @@ pub enum AssemblyCause {
     /// refused a form the checks above admitted: a broken invariant of
     /// `check`, never a property of the source.
     NominalAdmission(InvalidSemanticGraph),
+    /// Admitted dimension classes could not be projected onto their own
+    /// unit graph: an invariant of assembly, not a source-language refusal.
+    DimensionClassProjection(filament_semantic_value::unit::DimensionEquivalenceRefusal),
     /// A type position names a declaration of an imported library
     /// (`a::R` for an import qualifier `a`): an imported name stands only
     /// as a callee (ADR-015 D-5; `ill_typed`/`operator-ineligible`).
@@ -702,7 +705,9 @@ impl AssemblyCause {
             Self::IdentityAllocation { .. }
             | Self::StorageAllocation { .. }
             | Self::StorageCapacity { .. } => Code::ResourceExhausted,
-            Self::Handle(_) | Self::NominalAdmission(_) => Code::RuntimeInvariant,
+            Self::Handle(_) | Self::NominalAdmission(_) | Self::DimensionClassProjection(_) => {
+                Code::RuntimeInvariant
+            }
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
             | Self::TimedNotChecked(_) => Code::UnsupportedConstruct,
@@ -815,7 +820,9 @@ impl AssemblyCause {
             Self::TypeLimit(limit) | Self::IdentityLimit(limit) => limit.kind().catalog_cause(),
             Self::IdentityAllocation { .. } | Self::StorageAllocation { .. } => "allocation-failed",
             Self::StorageCapacity { .. } => "reservation-size-overflow",
-            Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
+            Self::Handle(_) | Self::NominalAdmission(_) | Self::DimensionClassProjection(_) => {
+                "established-invariant-broken"
+            }
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
             Self::TimedNotChecked(_) => "not-yet-implemented",
@@ -5187,15 +5194,26 @@ impl PackageDeclarations {
             }
         };
 
+        let runtime_units = if let Some(quantities) = quantities.as_ref() {
+            let classes = EquivalenceClasses::new(&equivalences);
+            let graph = quantities
+                .graph
+                .with_dimension_equivalences(&classes.memberships())
+                .map_err(|refusal| AssemblyRefusal {
+                    errors: vec![AssemblyError {
+                        span: equivalences
+                            .first()
+                            .map_or(Span { start: 0, end: 0 }, |equivalence| equivalence.span),
+                        cause: AssemblyCause::DimensionClassProjection(refusal),
+                    }],
+                })?;
+            filament_semantic_value::quantity::UnitTable::declared(&graph)
+        } else {
+            filament_semantic_value::quantity::UnitTable::default()
+        };
+
         let mut names = Names {
-            unit_table: std::cell::RefCell::new(
-                quantities
-                    .as_ref()
-                    .map(|assembled| {
-                        filament_semantic_value::quantity::UnitTable::declared(&assembled.graph)
-                    })
-                    .unwrap_or_default(),
-            ),
+            unit_table: std::cell::RefCell::new(runtime_units),
             units: quantities
                 .as_ref()
                 .map(|assembled| {
@@ -5830,8 +5848,11 @@ impl PackageDeclarations {
         package.sources = sources;
         package.source_owners = source_owners;
         package.execution_point_keys = execution_points.keys().cloned().collect();
-        let mut type_units = types.units().clone();
-        type_units.append(names.unit_table.into_inner());
+        // The names table holds the admitted runtime projection and any
+        // compound units formed by aliases. Other types contribute only
+        // units absent from that authoritative table.
+        let mut type_units = names.unit_table.into_inner();
+        type_units.append(types.units().clone());
         package.types = types.with_units(type_units);
         package.operations = operations;
         package.operation_clauses = operation_clauses;

@@ -1640,20 +1640,23 @@ fn a_tl_lowering_over_a_package_returns_the_source_record() {
 /// spine model selected, and removes the unit's source. Returns the request's
 /// `models` member.
 fn compile_handoff(directory: &Path, unit: &str) -> Value {
+    compile_handoff_with_clocks(directory, unit, None)
+}
+
+fn compile_handoff_with_clocks(directory: &Path, unit: &str, clocks: Option<Value>) -> Value {
     std::fs::write(directory.join("unit.native"), unit).unwrap();
     let models =
         json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
     let compile = directory.join("compile.json");
-    std::fs::write(
-        &compile,
-        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
-            "models": models, "program": {"source": source("unit.native")},
-            "output": {"package": "package.json"},
-            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
-                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
-        .unwrap(),
-    )
-    .unwrap();
+    let mut request = json!({"format": "native-compile/1", "request": {
+        "models": models, "program": {"source": source("unit.native")},
+        "output": {"package": "package.json"},
+        "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
+    if let Some(clocks) = clocks {
+        request["request"]["clocks"] = clocks;
+    }
+    std::fs::write(&compile, serde_json::to_vec(&request).unwrap()).unwrap();
     fsl_command::command::compile(&compile).expect("the unit compiles");
     std::fs::remove_file(directory.join("unit.native")).unwrap();
     models
@@ -3024,4 +3027,287 @@ fn a_model_alias_type_argument_carries_the_model_key_and_a_model_scalar_none() {
         &Some(json!({"package": "example/config-version", "node": model_key})),
         "a model alias gets the model key"
     );
+}
+
+/// Run supplied clauses through both selectors after removing the source file.
+#[derive(Clone, Copy)]
+enum SelectionObjects {
+    Present,
+    MissingSecond,
+    UniverseOnly,
+}
+
+fn package_clause_selection_outcomes(
+    unit: &str,
+    traces: &[(Value, u8)],
+    refused_violation: bool,
+    objects: SelectionObjects,
+) {
+    let directory = bump_directory(unit, &["a"], true);
+    let mut second = snapshot_of(directory.path(), &["a"], true);
+    second["identity"]["identity"] = json!("selection-second");
+    second["populations"][0]["objects"][0]["fields"]["versionNumber"] = json!({"integer": "1"});
+    match objects {
+        SelectionObjects::Present => {}
+        SelectionObjects::MissingSecond => second["populations"][0]["objects"] = json!([]),
+        SelectionObjects::UniverseOnly => {
+            second["populations"][0]["objects"][0]["key"] = json!("b")
+        }
+    }
+
+    std::fs::write(
+        directory.path().join("second.json"),
+        serde_json::to_vec(&second).unwrap(),
+    )
+    .unwrap();
+    let first = snapshot_of(directory.path(), &["a"], true);
+    let population = first["populations"][0]["population"].clone();
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    let clauses: Vec<_> = traces
+        .iter()
+        .map(|(trace, expected)| {
+            let clause = json!({"selection": {"temporal": {"name": "Low", "trace": trace,
+            "over": {"reference": {"population": population, "key": "a"}}}},
+            "observations": {"s0": "s.json", "s1": "second.json"}});
+            let result = write_request(
+                directory.path(),
+                &json!({"format": "native-run/1", "request": {
+            "models": models, "program": {"source": source("unit.native")}, "clause": clause}}),
+            );
+            assert_eq!(result.0, *expected, "source {trace}: {}", result.1);
+            (clause, result)
+        })
+        .collect();
+    let models = compile_handoff(directory.path(), unit);
+    for (clause, expected) in clauses {
+        let actual = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {
+            "models": models, "package": {"directory": "handoff"}, "clause": clause}}),
+        );
+        if refused_violation {
+            assert_eq!(actual.0, 20, "{clause}: {}", actual.1);
+            assert_eq!(actual.1["code"], "invalid-request", "{}", actual.1);
+            refusal_names(&actual.1, "clause.selection");
+        } else {
+            assert_eq!(actual, expected, "{clause}");
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
+                .expect("the result reads through the native result reader");
+            if clause["selection"]["temporal"]["trace"]
+                .get("model")
+                .is_some()
+            {
+                for limit in [
+                    json!("0"),
+                    json!("01"),
+                    json!("9007199254740992"),
+                    json!(1),
+                    Value::Null,
+                ] {
+                    let mut malformed = actual.1.clone();
+                    malformed["limits"]["expansion.max_candidates"] = limit;
+                    assert!(fsl_replay::spine::read_native_run_result(
+                        &serde_json::to_vec(&malformed).unwrap()
+                    )
+                    .is_err());
+                }
+                let mut malformed = actual.1.clone();
+                malformed["limits"]["unknown"] = json!("1");
+                assert!(fsl_replay::spine::read_native_run_result(
+                    &serde_json::to_vec(&malformed).unwrap()
+                )
+                .is_err());
+            }
+            if expected.0 == 10
+                && clause["selection"]["temporal"]["trace"]
+                    .get("model")
+                    .is_some()
+            {
+                assert!(actual.1["disposition"]["temporal"]
+                    .get("counterexample")
+                    .is_none());
+                let mut malformed = actual.1.clone();
+                malformed["disposition"]["temporal"]["counterexample"] = Value::Null;
+                assert!(fsl_replay::spine::read_native_run_result(
+                    &serde_json::to_vec(&malformed).unwrap()
+                )
+                .is_err());
+            }
+        }
+    }
+}
+
+/// FR-1039 Outputs: finite observations and distinct lasso slots have the
+/// source outcome, including undefined conditions, with no source file available.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn package_clause_selections_snapshot_results_match_source() {
+    for (objects, expected) in [
+        (SelectionObjects::Present, 0),
+        (SelectionObjects::MissingSecond, 10),
+    ] {
+        let unit = bump_low().replace(LOW_BODY, "always[0,1] holds(c.versionNumber <= 2)");
+        package_clause_selection_outcomes(
+            &unit,
+            &[(json!({"finite": ["s0", "s1"]}), expected)],
+            false,
+            objects,
+        );
+        let unit = unit.replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1");
+        package_clause_selection_outcomes(
+            &unit,
+            &[(
+                json!({"lasso": {"prefix": ["s0"], "loop": ["s1"]}}),
+                expected,
+            )],
+            false,
+            objects,
+        );
+    }
+}
+
+/// FR-1039 Outputs: model behaviours are re-executed over the package world;
+/// a terminal state's true and undefined conditions retain the source outcomes.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn package_clause_selections_model_results_match_source() {
+    for (body, objects, expected) in [
+        ("holds(c.versionNumber <= 2)", SelectionObjects::Present, 0),
+        (
+            "holds(deref(Config::ConfigVersion#\"b\").versionNumber >= 0)",
+            SelectionObjects::UniverseOnly,
+            10,
+        ),
+    ] {
+        let unit = bump_low()
+            .replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1")
+            .replace(
+                "pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1",
+                "false",
+            )
+            .replace(LOW_BODY, body);
+        let trace = json!({"model": {"initial": "s0", "universes": ["s0", "s1"], "prefix": [],
+            "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}});
+        package_clause_selection_outcomes(&unit, &[(trace, expected)], false, objects);
+    }
+}
+
+/// FR-1039 Outputs: timed snapshots use exact intervals, finite completeness
+/// and the lasso period, authenticating the same selected clock occurrence.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn package_clause_selections_timed_results_match_source() {
+    for (objects, expected) in [
+        (SelectionObjects::Present, 0),
+        (SelectionObjects::MissingSecond, 10),
+    ] {
+        let unit = timed_low();
+        let prefix = json!([{"position": "s0", "stamp": "0"}, {"position": "s1", "stamp": "2"}]);
+        package_clause_selection_outcomes(
+            &unit,
+            &[
+                (
+                    json!({"timed": {"prefix": prefix, "through": "3"}}),
+                    expected,
+                ),
+                (
+                    json!({"timed": {"prefix": [{"position": "s0", "stamp": "0"}], "loop": [{"position": "s1", "stamp": "2"}], "period": "3"}}),
+                    expected,
+                ),
+            ],
+            false,
+            objects,
+        );
+    }
+}
+
+/// FR-1039 Outputs: until reader body locations are available, a violated
+/// snapshot/model clause explicitly refuses its missing decisive record.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn package_clause_selections_violations_refuse_missing_decisive_locations() {
+    let unit = bump_low().replace(LOW_BODY, "holds(c.versionNumber > 2)");
+    package_clause_selection_outcomes(
+        &unit,
+        &[(json!({"finite": ["s0", "s1"]}), 10)],
+        true,
+        SelectionObjects::Present,
+    );
+    let unit = unit
+        .replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1")
+        .replace(
+            "pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1",
+            "false",
+        );
+    let directory = bump_directory(&unit, &["a"], true);
+    let snapshot = snapshot_of(directory.path(), &["a"], true);
+    let clause = json!({"selection": {"temporal": {"name": "Low", "over": {"reference": {
+        "population": snapshot["populations"][0]["population"], "key": "a"}},
+        "trace": {"model": {"initial": "s0", "universes": ["s0"], "prefix": [],
+        "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}}}},
+        "observations": {"s0": "s.json"}});
+    let path = directory.path().join("source-reference.json");
+    std::fs::write(&path, serde_json::to_vec(&json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")}, "clause": clause}})).unwrap()).unwrap();
+    let source_request = fsl_command::command::read_clause_run_request(&path).unwrap();
+    let report = fsl_replay::spine::run_clause(source_request).unwrap();
+    assert_eq!(
+        report.disposition.exit_code(),
+        10,
+        "{:?}",
+        report.disposition
+    );
+    let models = compile_handoff(directory.path(), &unit);
+    let actual = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+        "models": models, "package": {"directory": "handoff"}, "clause": clause}}),
+    );
+    assert_eq!(actual.0, 20, "{}", actual.1);
+    assert_eq!(actual.1["code"], "invalid-request", "{}", actual.1);
+    refusal_names(&actual.1, "clause.selection");
+}
+
+/// FR-1039 Outputs: timed record samples share the snapshot timed evaluator,
+/// with a selected role clock and exact endpoint inclusion.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn package_clause_selections_timed_samples_match_source() {
+    let unit = concat!(
+        "language \"ix:native\" edition \"1-draft\";\n",
+        "profile v = \"filament.value.complete/v1\";\n",
+        "profile t = \"filament.temporal.timed/v1\";\n",
+        "dimension Time; unit ms : Time = rational(1, 1);\n",
+        "record Reading { level: Int[0, 9]; }\n",
+        "temporal Low using t over (r: Reading) clock \"plant\" on origin { ",
+        "eventually(0 ms, 2 ms] holds(r.level = 1) }\n",
+    );
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let clocks = json!({"plant": {"kind": "timed", "unit": "ms"}});
+    let traces = [
+        json!({"timed": {"prefix": [{"position": level_sample(0), "stamp": "0"},
+            {"position": level_sample(1), "stamp": "2"}], "through": "2"}}),
+        json!({"timed": {"prefix": [{"position": level_sample(0), "stamp": "0"}],
+            "loop": [{"position": level_sample(1), "stamp": "2"}], "period": "3"}}),
+    ];
+    let clauses: Vec<_> = traces.into_iter().map(|trace| {
+        let clause = json!({"selection": {"temporal": {"name": "Low", "trace": trace}}, "observations": {}});
+        let result = write_request(directory.path(), &json!({"format": "native-run/1", "request": {
+            "models": [], "program": {"source": source("unit.native")}, "clocks": clocks, "clause": clause}}));
+        assert_eq!(result.0, 0, "{}", result.1);
+        (clause, result)
+    }).collect();
+    compile_handoff_with_clocks(directory.path(), unit, Some(clocks));
+    for (clause, expected) in clauses {
+        let actual = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {
+            "models": [], "package": {"directory": "handoff"}, "clause": clause}}),
+        );
+        assert_eq!(actual, expected);
+    }
 }

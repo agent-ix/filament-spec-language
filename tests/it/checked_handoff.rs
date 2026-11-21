@@ -1057,7 +1057,7 @@ fn the_extreme_rationals_are_package_values() {
                 .iter()
                 .zip(names)
                 .map(|(member, expected_name)| {
-                    let CheckedTerm::Binding { name, value } = member else {
+                    let CheckedTerm::Binding { name, value, .. } = member else {
                         panic!("{kind}: each Rational bound is named")
                     };
                     assert_eq!(name.as_ref(), expected_name);

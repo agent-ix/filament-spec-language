@@ -64,7 +64,7 @@ const STACK: usize = 512 * 1024;
 /// How many terms, branches or bindings each body has.
 const DEEP: usize = 100_000;
 
-/// A depth whose body-location rows still fit the output limit.
+/// A moderate body for the separate read-back lifecycle check.
 const MODERATE: usize = 2_000;
 
 /// The header every deep unit starts with.
@@ -144,18 +144,17 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
                     )
                     .unwrap_or_else(|refusals| panic!("{label}: checks: {refusals:?}"));
                 let package = CheckedPackage::link(graph);
-                // Each term of the sum is a body-location row carrying its path
-                // from the root, so the rows of a 100,000-deep sum cost the
-                // square of its depth: emission is refused at the output
-                // limit before they are built (FR-264 Behavior 5). The
-                // `else if` and `let` bodies hold no term rows.
                 let emitted = crate::emit::emit_checked(
                     &package,
                     crate::EmitLimits::new(if label == "sum" { 1 << 27 } else { 1 << 32 }),
                 );
                 if label == "sum" {
+                    // Compact deltas remove the quadratic path payload. The
+                    // rest of this authentic 100k graph still exceeds its
+                    // original wire ceiling; the streaming writer refuses
+                    // its first unpaid byte with a source occurrence.
                     let Err(EmitRefusal::OutputLimit(limit)) = &emitted else {
-                        panic!("{label}: refused at the output limit: {emitted:?}");
+                        panic!("sum: the original 128 MiB wire ceiling must refuse");
                     };
                     assert_eq!(
                         emitted.as_ref().expect_err("refused").code(),
@@ -163,12 +162,21 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
                     );
                     assert_eq!(limit.setting(), fsl_foundation::Setting::EmitOutputBytes);
                     assert_eq!(limit.configured_bound(), 1 << 27);
-                    assert!(limit.actual() > 1 << 27, "{label}: {limit}");
+                    assert_eq!(limit.actual(), (1 << 27) + 1);
+                    assert!(
+                        limit.locus().is_some(),
+                        "the wire writer retains its source occurrence"
+                    );
+                    eprintln!(
+                        "compact sum: configured={}, first_unpaid={}, source_occurrence=true",
+                        limit.configured_bound(),
+                        limit.actual()
+                    );
                 } else {
                     let emission =
                         emitted.unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));
-                    let written = wire(&emission);
-                    let written = nodes(&written);
+                    let wire = wire(&emission);
+                    let written = nodes(&wire);
                     assert!(written.len() >= DEEP, "{label}: one node per level");
                     for node in written {
                         assert!(
@@ -210,8 +218,7 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
     }
 }
 
-/// FR-264-AC-1: a 2,000-term sum (a 100,000-term sum is refused at the output
-/// limit for its body-location rows), emitted under limits raised to fit it,
+/// FR-264-AC-1: a 2,000-term sum, emitted under limits raised to fit it,
 /// reads back through the I2 read with `i2.*` raised to fit it and verifies at
 /// its emitted package. The `V2Read` clones, compares equal to its clone,
 /// formats for debug and drops, all on a 512 KiB stack.

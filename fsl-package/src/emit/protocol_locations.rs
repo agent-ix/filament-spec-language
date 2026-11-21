@@ -34,14 +34,14 @@ pub(super) const MAX_SAFE: u64 = 9_007_199_254_740_991;
 
 /// One row before its `term_ordinal` is assigned.
 pub(super) struct PendingRow<L = CheckedProtocolLocation> {
-    application: CheckedNodeId,
-    occurrence: CheckedOccurrence,
+    pub(super) application: CheckedNodeId,
+    pub(super) occurrence: CheckedOccurrence,
     /// The origin `name`, which orders the origins of one group.
-    origin_name: String,
+    pub(super) origin_name: String,
     /// The visit's place in the emitter's walk of every slot, which orders
     /// the rows of one origin by visit.
-    visit: usize,
-    location: L,
+    pub(super) visit: usize,
+    pub(super) location: L,
 }
 
 /// Every `protocol_locations` row of the emitted protocols, in the

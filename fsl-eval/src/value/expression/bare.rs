@@ -871,6 +871,38 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             .map_err(CallFailure::Fault)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &super::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_holds(&atom.clause, atom.position)
+            .map_err(|failure| refusal(self, failure))?;
+        let arguments = clause_arguments(&term, &over, captures)?;
+        let reads = BTreeMap::new();
+        Machine::with_world(
+            World::Bytes(&world),
+            objects,
+            None,
+            Some(&reads),
+            meter,
+            &[],
+        )
+        .with_reference_bindings(reference_bindings)
+        .run(
+            ReaderNode::root(term.projection()),
+            term.projection().frame_slots(),
+            arguments,
+        )
+        .map_err(CallFailure::Fault)
+    }
+
     fn evaluate_holds_traced(
         &self,
         atom: &super::HoldsAtom,
@@ -943,6 +975,40 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 arguments,
             )
             .map_err(CallFailure::Fault)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_guard(clause)
+            .map_err(|failure| refusal(self, failure))?
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
+        let arguments = clause_arguments(&term, &over, &[])?;
+        let reads = BTreeMap::new();
+        Machine::with_world(
+            World::Bytes(&world),
+            objects,
+            None,
+            Some(&reads),
+            meter,
+            &[],
+        )
+        .with_reference_bindings(reference_bindings)
+        .run(
+            ReaderNode::root(term.projection()),
+            term.projection().frame_slots(),
+            arguments,
+        )
+        .map_err(CallFailure::Fault)
     }
 
     fn evaluate_hyper_holds(

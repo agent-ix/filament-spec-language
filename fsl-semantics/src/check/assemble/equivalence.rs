@@ -158,6 +158,18 @@ impl EquivalenceClasses {
             .cloned()
             .unwrap_or_else(|| (dimension, Rational::from_integer(Integer::one())))
     }
+
+    /// Every admitted class member, its least-key representative and the
+    /// size of its canonical root in that representative's canonical roots.
+    /// These are the runtime unit graph's membership rows (FSV FR-134).
+    pub fn memberships(&self) -> Vec<(NodeKey, NodeKey, Rational)> {
+        self.members
+            .iter()
+            .map(|(member, (representative, size))| {
+                (member.clone(), representative.clone(), size.clone())
+            })
+            .collect()
+    }
 }
 
 /// Each node of `pairs` (`root(a) = r × root(b)`) with its component's least

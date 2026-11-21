@@ -1155,6 +1155,13 @@ struct OperationContractRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ModelLimitsRead {
+    #[serde(rename = "expansion.max_candidates")]
+    max_candidates: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ClauseRead {
     format: String,
     disposition: DispositionRead,
@@ -1166,6 +1173,8 @@ struct ClauseRead {
     extraction: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "present")]
     ledger: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    limits: Option<fsl_foundation::serde_object::Object<ModelLimitsRead>>,
     axes: crate::OutcomeAxes,
     #[serde(default, rename = "support")]
     _support: Option<serde_json::Value>,
@@ -2331,6 +2340,17 @@ pub fn read_native_run_result_bounded(
             .map_err(|_| budget.copy_failure("witness", "cannot traverse witness document"))?;
         budget.charge(u64::try_from(shallow.len()).unwrap_or(u64::MAX))?;
         let document: ClauseRead = read_typed(&shallow)?;
+        if let Some(limits) = &document.limits {
+            let value = &limits.0.max_candidates;
+            if !value.parse::<u64>().ok().is_some_and(|count| {
+                (1..=9_007_199_254_740_991).contains(&count) && count.to_string() == *value
+            }) {
+                return Err(NativeRunReadError::Invalid {
+                    member: "limits.expansion.max_candidates",
+                    reason: "a canonical positive Count string",
+                });
+            }
+        }
         if let Some(extraction) = &document.extraction {
             let _: ExtractionRead = serde_json::from_value(extraction.clone()).map_err(|_| {
                 NativeRunReadError::Invalid {
@@ -3011,6 +3031,15 @@ impl Disposition {
                 });
                 result.refusal = Some(refusal);
             }
+            ClauseDisposition::PackageAdmission(failure) => {
+                let (filament_eval::CallAdmissionFailure::Refused(admission)
+                | filament_eval::CallAdmissionFailure::Incomplete(admission)) = failure.as_ref();
+                let record = &admission.record;
+                result.refusal = Some(
+                    RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
+                        .fields(record.fields.clone()),
+                );
+            }
             ClauseDisposition::Admit(failure) => match failure {
                 fsl_semantics::model::observation::AdmissionFailure::Refused(record)
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
@@ -3488,10 +3517,14 @@ pub fn temporal_disposition_json(
                         }),
                     )
                 }
-                TemporalVerdict::Undefined { at, cause }
+                TemporalVerdict::Undefined { cause, .. }
                     if !matches!(cause, TemporalUndefinedCause::InsufficientData { .. }) =>
                 {
-                    let found = counterexample.ok_or(NativeRunResultError::Counterexample)?;
+                    let (wire, _) = temporal::verdict_wire(&verdict, None)?;
+                    let mut temporal = serde_json::to_value(wire)?;
+                    if let Some(found) = counterexample {
+                        temporal["counterexample"] = found;
+                    }
                     (
                         category,
                         basis,
@@ -3499,9 +3532,7 @@ pub fn temporal_disposition_json(
                         Some(Outcome::Undefined {
                             reason: cause.reason(),
                         }),
-                        serde_json::json!({
-                            "kind": "undefined", "position": at, "counterexample": found,
-                        }),
+                        temporal,
                     )
                 }
                 _ => {

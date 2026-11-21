@@ -13,6 +13,7 @@
 pub mod collections;
 pub mod composite;
 mod expression;
+pub(crate) use expression::reference_occurrences;
 pub(crate) use expression::evaluate_clause_set_with_cancel;
 pub(crate) use expression::evaluate_hyper_holds_with_component_bindings;
 pub use expression::{

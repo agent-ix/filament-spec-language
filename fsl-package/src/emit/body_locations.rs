@@ -1,20 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-531 "Function body locations in the bytes": one
-//! `checked_term_data.body_locations` row for every term of every function
-//! body the emitter writes.
-//!
-//! A body is walked exactly as FR-383 walks a protocol slot, from the body's
-//! root, and each term is keyed and located as a slot's term is, under the
-//! checker's `Body` owner of the function. A function has a body here when
-//! its emitted node carries a `body` binding, which is the walk FSpec FR-322
-//! defines on the wire.
+//! Captured function-body locations in canonical relative form (FSpec FR-322).
+//! Source locations come from the checked tree; relative encoding follows the
+//! emitted graph's walk, including every reach through composite values.
 
-use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_contract_model::{
     CheckedBindingNameKind, CheckedBodyLocation, CheckedBodyLocationOrigin,
-    CheckedBodySemanticLocation, CheckedNodeId, CheckedOccurrence, CheckedSemanticNodeV2,
+    CheckedBodySemanticLocation, CheckedKeyOrdinal, CheckedNodeId, CheckedSemanticNodeV2,
     CheckedTerm,
 };
 use filament_exact::NodeKey;
@@ -23,85 +16,138 @@ use filament_semantic_value::location::{
 };
 use fsl_semantics::check::CheckedGraph;
 
-use super::protocol_locations::{
-    applications_at, ordered, term_rows, wire_path, PendingRow, MAX_SAFE,
-};
+use super::protocol_locations::{applications_at, ordered, term_rows, PendingRow, MAX_SAFE};
 use super::EmitRefusal;
+use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
 
-/// The serialized bytes the path indices of a location add to a row, memoized
-/// by the address of the location's last link: a location's bytes are its
-/// parent's and its own index's.
-type PathBytes = HashMap<usize, u128>;
-
-/// The bytes one path index takes in the canonical array: its digits, the two
-/// quotes of a position above the safe range, and the separator that follows.
-fn index_bytes(index: usize) -> u128 {
-    let digits = u128::from(index.checked_ilog10().map_or(1, |log| log + 1));
-    let quotes = if u64::try_from(index).map_or(true, |index| index > MAX_SAFE) {
-        2
-    } else {
-        0
-    };
-    digits + quotes + 1
+/// Interned checker paths make finding a common prefix proportional to the
+/// encoded change, even when equivalent paths have independently built links.
+#[derive(Default)]
+struct Paths {
+    addresses: HashMap<usize, usize>,
+    // Keep memoized link addresses alive, including independently built paths.
+    retained: Vec<Location>,
+    children: HashMap<(usize, usize), usize>,
+    // Entry zero is the empty path.
+    links: Vec<(usize, usize, usize)>,
 }
 
-/// The bytes the indices of `at`'s path add to a row whose path is empty,
-/// without building the path.
-fn path_bytes(at: &Location, memo: &mut PathBytes) -> u128 {
-    let mut walked = Vec::new();
-    let mut total = 0;
-    for (address, index) in at.ancestry() {
-        if let Some(known) = memo.get(&address) {
-            total = *known;
-            break;
+impl Paths {
+    fn intern(&mut self, location: &Location) -> usize {
+        if self.links.is_empty() {
+            self.links.push((0, 0, 0));
         }
-        walked.push((address, index_bytes(index)));
+        if let Some(address) = location.chain_address() {
+            if let Some(known) = self.addresses.get(&address) {
+                return *known;
+            }
+            self.retained.push(location.clone());
+        }
+        let mut pending = Vec::new();
+        let mut parent = 0;
+        for (address, index) in location.ancestry() {
+            if let Some(known) = self.addresses.get(&address) {
+                parent = *known;
+                break;
+            }
+            pending.push((address, index));
+        }
+        for (address, index) in pending.into_iter().rev() {
+            let child = *self.children.entry((parent, index)).or_insert_with(|| {
+                let child = self.links.len();
+                self.links.push((parent, index, self.links[parent].2 + 1));
+                child
+            });
+            self.addresses.insert(address, child);
+            parent = child;
+        }
+        parent
     }
-    for (address, own) in walked.into_iter().rev() {
-        total += own;
-        memo.insert(address, total);
-    }
-    // An empty path is `[]`; a path of n indices adds its n indices and n - 1
-    // separators, and the row itself is followed by a separator.
-    if at.depth() == 0 {
-        1
-    } else {
-        total
+
+    fn delta(
+        &self,
+        mut previous: usize,
+        mut current: usize,
+    ) -> Option<(u64, Vec<CheckedKeyOrdinal>)> {
+        let mut up = 0_u64;
+        let mut down = Vec::new();
+        while previous != current {
+            let left = self.links.get(previous)?;
+            let right = self.links.get(current)?;
+            if left.2 >= right.2 {
+                previous = left.0;
+                up = up.checked_add(1)?;
+            } else {
+                let index = u64::try_from(right.1).ok()?;
+                down.push(if index <= MAX_SAFE {
+                    CheckedKeyOrdinal::Safe(index)
+                } else {
+                    CheckedKeyOrdinal::BeyondSafe(index.to_string().into())
+                });
+                current = right.0;
+            }
+        }
+        down.reverse();
+        Some((up, down))
     }
 }
 
-/// The bytes a `term_ordinal` adds beyond the one digit its row is charged.
-fn ordinal_bytes(term_ordinal: u64) -> u128 {
-    u128::from(term_ordinal.checked_ilog10().unwrap_or(0))
-}
-
-/// Whether an emitted function node carries a `body` binding.
-fn has_body_binding(node: &CheckedSemanticNodeV2) -> bool {
+fn body(node: &CheckedSemanticNodeV2) -> Option<&CheckedTerm> {
     let CheckedTerm::Aggregate { members } = &node.body else {
-        return false;
+        return None;
     };
-    members.iter().any(|member| {
-        matches!(
-            member,
-            CheckedTerm::Binding { name, .. } if name.kind() == CheckedBindingNameKind::Body
-        )
+    members.iter().find_map(|member| match member {
+        CheckedTerm::Binding { name, value, .. } if name.kind() == CheckedBindingNameKind::Body => {
+            Some(value.as_ref())
+        }
+        _ => None,
     })
 }
 
-/// Whether `node` is a `function` node of the package named `package` that
-/// carries a `body` binding: the only nodes the reader owes rows for (FSpec
-/// FR-322).
-///
-/// `#[string_edge]`: `function` is the admitted wire's fixed node tag.
-#[ix_trace_rs::string_edge]
-fn is_local_function_with_body(node: &CheckedSemanticNodeV2, package: &str) -> bool {
-    node.node_tag.as_ref() == "function"
-        && node.node_id.package.as_ref() == package
-        && has_body_binding(node)
+fn is_term(node: &CheckedSemanticNodeV2) -> bool {
+    has_tag(node, WireTag::Expression)
+        && !has_form(node, WireTag::Expression, WireForm::Reference)
+        && !matches!(&node.body, CheckedTerm::Application { operation, .. }
+            if operation.identity().is_some_and(|identity| matches!(identity,
+                "filament.op.control.let" | "filament.op.control.if" | "filament.op.control.case")))
 }
 
-/// Every `body_locations` row of the emitted function bodies, in the
-/// (application, occurrence, `term_ordinal`) order FSpec FR-322 requires.
+/// References encountered in stored member / ascending tuple order. Atomic
+/// values and parameters end a reach; composite values expose their children.
+fn references<'a>(
+    term: &'a CheckedTerm,
+    nodes: &BTreeMap<&CheckedNodeId, &'a CheckedSemanticNodeV2>,
+    package: &str,
+) -> Vec<&'a CheckedSemanticNodeV2> {
+    let mut pending = vec![term];
+    let mut found = Vec::new();
+    while let Some(term) = pending.pop() {
+        match term {
+            CheckedTerm::Reference { target } => {
+                if target.package.as_ref() != package {
+                    continue;
+                }
+                if let Some(node) = nodes.get(target) {
+                    if has_tag(node, WireTag::Expression)
+                        || has_form(node, WireTag::Value, WireForm::RecordValue)
+                        || has_form(node, WireTag::Value, WireForm::TupleValue)
+                    {
+                        found.push(*node);
+                    }
+                }
+            }
+            CheckedTerm::Application { arguments, .. } => pending.extend(arguments.iter().rev()),
+            CheckedTerm::Aggregate { members } => pending.extend(members.iter().rev()),
+            CheckedTerm::Binding { value, .. } => pending.push(value),
+            _ => {}
+        }
+    }
+    found
+}
+
+/// Every captured row, in the wire's (application, occurrence, term ordinal)
+/// order, with deltas computed in each function's actual body-walk order.
+#[ix_trace_rs::string_edge]
 pub(super) fn checked_body_locations(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -109,19 +155,24 @@ pub(super) fn checked_body_locations(
     source_keys: &super::SourceDeclarationKeys,
     output_bytes: u64,
 ) -> Result<Vec<CheckedBodySemanticLocation>, EmitRefusal> {
-    let with_body: BTreeSet<&CheckedNodeId> = nodes
-        .iter()
-        .filter(|node| is_local_function_with_body(node, graph.package_name()))
+    let nodes: BTreeMap<_, _> = nodes.iter().map(|node| (&node.node_id, node)).collect();
+    let with_body: BTreeSet<_> = nodes
+        .values()
+        .filter(|node| {
+            node.node_tag.as_ref() == "function"
+                && node.node_id.package.as_ref() == graph.package_name()
+                && body(node).is_some()
+        })
         .map(|node| &node.node_id)
         .collect();
     let mut functions = Vec::new();
     let mut index = 0;
     while let Some(state) = graph.function_state(index) {
-        let located = graph
+        if let Some(id) = graph
             .function_identity_at(index)
             .and_then(|identity| emitted_node_ids.get(&identity))
-            .filter(|id| with_body.contains(id));
-        if let Some(id) = located {
+            .filter(|id| with_body.contains(id))
+        {
             functions.push((
                 id,
                 state.name.to_owned(),
@@ -137,63 +188,102 @@ pub(super) fn checked_body_locations(
     }
     let origins = functions.iter().map(|function| &function.4).collect();
     let applications = applications_at(graph, &origins);
-    let mut pending: Vec<PendingRow<CheckedBodyLocation>> = Vec::new();
-    // Each row carries its path from the body's root, so the rows of a deep
-    // body grow with the square of its depth. A row is charged the bytes it
-    // is written in, before its path is built: the row with an empty path,
-    // serialized, and the path's indices as they serialize.
-    let charged = std::cell::Cell::new(0_u128);
-    let exceeded = std::cell::Cell::new(false);
-    let memo = RefCell::new(PathBytes::new());
+    let mut pending = Vec::new();
+
+    let mut charged = 0_u128;
     for (id, name, index, root, origin) in &functions {
-        let wire = |at: &Location,
-                    application: &CheckedNodeId,
-                    occurrence: &CheckedOccurrence|
-         -> Option<(String, CheckedBodyLocation)> {
-            if &at.origin != origin {
-                return None;
-            }
-            let origin = CheckedBodyLocationOrigin::FunctionBody {
-                function: (*id).clone(),
-                name: super::emitted_function_name(name, source_keys).into(),
-                index: u64::try_from(*index).ok()?,
-            };
-            let empty = CheckedBodySemanticLocation {
-                application: application.clone(),
-                occurrence: occurrence.clone(),
-                term_ordinal: 0,
-                location: CheckedBodyLocation {
-                    origin,
-                    path: Vec::new(),
-                },
-            };
-            let row = u128::try_from(serde_json::to_vec(&empty).ok()?.len()).ok()?;
-            let cost = row.saturating_add(path_bytes(at, &mut memo.borrow_mut()));
-            charged.set(charged.get().saturating_add(cost));
-            if charged.get() > u128::from(output_bytes) {
-                exceeded.set(true);
-                return None;
-            }
-            let location = CheckedBodyLocation {
-                path: wire_path(at)?,
-                ..empty.location
-            };
-            Some((name.clone(), location))
-        };
-        if let Err(refusal) = term_rows(
+        let mut paths = Paths::default();
+        let mut captured = Vec::new();
+        term_rows(
             graph,
             *root,
             &applications,
             emitted_node_ids,
-            &mut pending,
-            &wire,
+            &mut captured,
+            &|at, _, _| (&at.origin == origin).then(|| (name.clone(), at.clone())),
             true,
-        ) {
-            return Err(if exceeded.get() {
-                EmitRefusal::OutputLimit(super::output_limit(output_bytes, charged.get()))
-            } else {
-                refusal
-            });
+        )?;
+        let captured = ordered(captured, |application, occurrence, ordinal, location| {
+            (application, occurrence, ordinal, location)
+        });
+        let mut by_application: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (application, occurrence, _, location) in &captured {
+            by_application
+                .entry(application)
+                .or_default()
+                .push((occurrence, location));
+        }
+        let mut visits: BTreeMap<&CheckedNodeId, usize> = BTreeMap::new();
+        let mut previous = 0;
+        let mut walk = nodes
+            .get(id)
+            .and_then(|node| body(node))
+            .map(|body| references(body, &nodes, graph.package_name()))
+            .unwrap_or_default();
+        walk.reverse();
+        while let Some(node) = walk.pop() {
+            if is_term(node) {
+                let rank = visits.entry(&node.node_id).or_default();
+                let candidates = by_application
+                    .get(&node.node_id)
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                // Sharing through distinct value parents can reach a captured
+                // application again. Retain that application's genuine last
+                // capture; the new visit gets its own term coordinate.
+                let (occurrence, location) = candidates
+                    .get(*rank)
+                    .or_else(|| candidates.last())
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                *rank += 1;
+                let current = paths.intern(location);
+                let (up, down) = paths
+                    .delta(previous, current)
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                previous = current;
+                let location = CheckedBodyLocation {
+                    origin: CheckedBodyLocationOrigin::FunctionBody {
+                        function: (*id).clone(),
+                        name: super::emitted_function_name(name, source_keys).into(),
+                        index: u64::try_from(*index)
+                            .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                    },
+                    up,
+                    down,
+                };
+                let row = CheckedBodySemanticLocation {
+                    application: node.node_id.clone(),
+                    occurrence: (*occurrence).clone(),
+                    term_ordinal: 0,
+                    location,
+                };
+                charged = charged.saturating_add(
+                    u128::try_from(
+                        serde_json::to_vec(&row)
+                            .map_err(|_| EmitRefusal::SourceMapInvariant)?
+                            .len(),
+                    )
+                    .unwrap_or(u128::MAX)
+                        + 1,
+                );
+                if charged > u128::from(output_bytes) {
+                    return Err(EmitRefusal::OutputLimit(super::output_limit(
+                        output_bytes,
+                        charged,
+                    )));
+                }
+                pending.push(PendingRow {
+                    application: row.application,
+                    occurrence: row.occurrence,
+                    origin_name: name.clone(),
+                    visit: pending.len(),
+                    location: row.location,
+                });
+            }
+            walk.extend(
+                references(&node.body, &nodes, graph.package_name())
+                    .into_iter()
+                    .rev(),
+            );
         }
     }
     let rows = ordered(
@@ -205,10 +295,8 @@ pub(super) fn checked_body_locations(
             location,
         },
     );
-    // A row was charged one digit for its `term_ordinal`, which is assigned
-    // once the rows are grouped.
-    let written = rows.iter().fold(charged.get(), |total, row| {
-        total.saturating_add(ordinal_bytes(row.term_ordinal))
+    let written = rows.iter().fold(charged, |total, row| {
+        total.saturating_add(u128::from(row.term_ordinal.checked_ilog10().unwrap_or(0)))
     });
     if written > u128::from(output_bytes) {
         return Err(EmitRefusal::OutputLimit(super::output_limit(
@@ -217,4 +305,170 @@ pub(super) fn checked_body_locations(
         )));
     }
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_contract_model::{read_checked_package, CheckedPackageDispatchResult};
+
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-510")]
+    #[test]
+    fn compact_paths_use_the_longest_prefix_even_for_independent_chains() {
+        let root = Location::root(Origin::Expression);
+        let mut paths = Paths::default();
+        let first = paths.intern(&Location::at(Origin::Expression, &[2, 4, 6]));
+        let second = paths.intern(&Location::at(Origin::Expression, &[2, 4, 8, 1]));
+        assert_eq!(
+            paths.delta(first, second),
+            Some((
+                1,
+                vec![CheckedKeyOrdinal::Safe(8), CheckedKeyOrdinal::Safe(1)]
+            ))
+        );
+        assert_eq!(paths.delta(second, second), Some((0, vec![])));
+        let ancestor = paths.intern(&root.child(2));
+        assert_eq!(paths.delta(second, ancestor), Some((3, vec![])));
+        let empty = paths.intern(&root);
+        assert_eq!(paths.delta(ancestor, empty), Some((1, vec![])));
+    }
+
+    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510", "FSpec-FR-322-AC-513")]
+    #[test]
+    fn compact_composite_bodies_keep_each_shared_application_reach() {
+        let (_, checked) = super::super::tests::package_from_text(
+            "record Pair { left: Integer; right: Integer; }\n\
+             function pair using v(x: Integer): Pair pure { Pair { right: x - 1, left: x - 1 } }\n",
+        );
+        let emission =
+            super::super::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let package = match read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("composite body must read with all reaches: {other:?}"),
+        };
+        let rows = &package.checked_term_data().unwrap().body_locations;
+        assert_eq!(rows.len(), 2, "the record itself contributes no row");
+        assert_eq!(
+            rows[0].application, rows[1].application,
+            "both source positions share the arithmetic application"
+        );
+        assert_ne!(
+            (&rows[0].occurrence, rows[0].term_ordinal),
+            (&rows[1].occurrence, rows[1].term_ordinal)
+        );
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &rows[0].location.origin;
+        let mut cursor = package.body_locations(function, 10_000).unwrap();
+        let mut paths = Vec::new();
+        while let Some(view) = cursor.next_location().unwrap() {
+            paths.push(view.path.to_vec());
+        }
+        assert_eq!(paths.len(), 2);
+        assert_eq!(
+            paths,
+            vec![
+                vec![CheckedKeyOrdinal::Safe(1)],
+                vec![CheckedKeyOrdinal::Safe(0)]
+            ],
+            "stored record field order retains each source field's captured position"
+        );
+        let wire: serde_json::Value = serde_json::from_slice(emission.package().bytes()).unwrap();
+        for row in wire["checked_term_data"]["body_locations"]
+            .as_array()
+            .unwrap()
+        {
+            assert!(row["location"].get("path").is_none());
+            assert!(row["location"].get("up").is_some());
+            assert!(row["location"].get("down").is_some());
+        }
+    }
+    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510", "FSpec-FR-322-AC-513")]
+    #[test]
+    fn compact_tuple_body_walks_two_distinct_record_parents() {
+        let (_, checked) = super::super::tests::package_from_text(
+            "record Cell { n: Integer; tag: Integer; }\n\
+             tuple Pair(Cell, Cell);\n\
+             function pair using v(x: Integer): Pair pure { Pair(Cell { n: x - 1, tag: 0 }, Cell { n: x - 1, tag: 1 }) }\n",
+        );
+        let emission =
+            super::super::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let package = match read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("nested composite bodies must retain both reaches: {other:?}"),
+        };
+        let rows = &package.checked_term_data().unwrap().body_locations;
+        assert_eq!(
+            rows.len(),
+            2,
+            "neither the tuple nor its records contributes a row"
+        );
+        assert_eq!(rows[0].application, rows[1].application);
+        assert_eq!(
+            package
+                .resolved_graph()
+                .nodes
+                .iter()
+                .filter(|node| has_form(node, WireTag::Value, WireForm::RecordValue))
+                .count(),
+            2,
+            "different tags keep two genuine record-value parents"
+        );
+        assert_eq!(
+            package
+                .resolved_graph()
+                .nodes
+                .iter()
+                .filter(|node| has_form(node, WireTag::Value, WireForm::TupleValue))
+                .count(),
+            1
+        );
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &rows[0].location.origin;
+        let mut cursor = package.body_locations(function, 10_000).unwrap();
+        let mut paths = Vec::new();
+        while let Some(view) = cursor.next_location().unwrap() {
+            paths.push(view.path.to_vec());
+        }
+        assert_eq!(
+            paths,
+            vec![
+                vec![CheckedKeyOrdinal::Safe(0), CheckedKeyOrdinal::Safe(0)],
+                vec![CheckedKeyOrdinal::Safe(1), CheckedKeyOrdinal::Safe(0)]
+            ]
+        );
+    }
+    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
+    #[test]
+    fn compact_deep_body_stores_linear_delta_entries() {
+        const TERMS: usize = 128;
+        let (_, checked) = super::super::tests::package_from_text(&format!(
+            "function f using v(x: Integer): Integer pure {{ {}x }}\n",
+            "x + ".repeat(TERMS),
+        ));
+        let emission =
+            super::super::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let package = match read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the compact deep body must read: {other:?}"),
+        };
+        let rows = &package.checked_term_data().unwrap().body_locations;
+        assert_eq!(rows.len(), TERMS);
+        let entries: usize = rows.iter().map(|row| row.location.down.len()).sum();
+        assert_eq!(
+            entries,
+            TERMS - 1,
+            "each nested checker link is stored once"
+        );
+        assert!(rows.iter().all(|row| row.location.up == 0));
+    }
 }

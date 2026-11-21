@@ -84,6 +84,156 @@ fn admitted(root: &PlanRoot) -> Box<CheckedPackageV2> {
     )
 }
 
+/// The final plan retains each body location under its rekeyed entry function,
+/// while a declared helper keeps its original origin and checker coordinates.
+#[trace("FR-251-AC-9", "FSpec-FR-322-AC-309")]
+#[test]
+fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
+    use filament_contract_model::{CheckedBodyLocationOrigin, CheckedTermDataV2};
+    use fsl_analyze::monitor_entries::names;
+
+    let unit = unit_source(
+        "always holds(probe(c.versionNumber))",
+        "function probe using v(x: Int[0, 1000]): Boolean pure { x >= 0 }",
+        true,
+        "on origin",
+    );
+    let domain = Domain::config_version();
+    let packages =
+        fsl_semantics::model::intake::package_input([domain.document.as_slice()]).unwrap();
+    let source = SourceIdentity::new("agent-ix", "monitor-root");
+    let name = LibraryName::new("fixture").unwrap();
+    let limits = SpineLimits::default();
+    let root = emit_plan_root(
+        &PlanRootRequest {
+            source: &source,
+            path: "monitor.native",
+            bytes: unit.as_bytes(),
+            packages: &packages,
+            package_name: &name,
+            limits,
+            clause: "C",
+            target: &target(),
+            settings: &TimingObligationSettings::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the authentic monitor emits");
+    let read_limits = CheckedPackageReadLimits {
+        work: 1_000_000,
+        ..LIMITS
+    };
+    let package = match read_checked_package(
+        root.emission().package().bytes(),
+        read_limits,
+        root.emission().evidence(),
+    ) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => package,
+        other => panic!("the complete monitor must read within one million work units: {other:?}"),
+    };
+    let plan = package.monitor_plans().next().expect("one authentic plan");
+    let entries = [
+        plan.init().node_id().clone(),
+        plan.on_event().node_id().clone(),
+        plan.on_watermark().node_id().clone(),
+        plan.on_gap().node_id().clone(),
+    ];
+    let entry_names = [
+        names::INIT,
+        names::ON_EVENT,
+        names::ON_WATERMARK,
+        names::ON_GAP,
+    ];
+    let base = fsl_package::emit_checked(
+        root.checked_unit().package(),
+        SpineLimits::default().package.emit(),
+    )
+    .expect("the same combined checked unit emits its base package");
+    let base_json: serde_json::Value = serde_json::from_slice(base.package().bytes()).unwrap();
+    let base_data: CheckedTermDataV2 =
+        serde_json::from_value(base_json["checked_term_data"].clone()).unwrap();
+    let final_data = package
+        .checked_term_data()
+        .expect("body locations retained");
+    assert_eq!(
+        final_data.body_locations.len(),
+        base_data.body_locations.len()
+    );
+    let mut seen_entries = [false; 4];
+    let mut seen_helper = false;
+    let mut stale_origin = None;
+    for (row_index, (before, after)) in base_data
+        .body_locations
+        .iter()
+        .zip(&final_data.body_locations)
+        .enumerate()
+    {
+        let mut expected = before.location.clone();
+        let CheckedBodyLocationOrigin::FunctionBody {
+            function,
+            name,
+            index: _,
+        } = &mut expected.origin;
+        if let Some(at) = entry_names.iter().position(|entry| *entry == name.as_ref()) {
+            assert_ne!(*function, entries[at], "the entry's declared key changes");
+            if stale_origin.is_none() {
+                stale_origin = Some((row_index, function.clone()));
+            }
+            *function = entries[at].clone();
+            seen_entries[at] = true;
+        } else if name.as_ref() == "probe" {
+            seen_helper = true;
+        }
+        assert_eq!(
+            after.location, expected,
+            "only entry origin identities change"
+        );
+        assert_eq!(after.occurrence, before.occurrence);
+        assert_eq!(after.term_ordinal, before.term_ordinal);
+        assert_eq!(after.application, before.application);
+    }
+    assert_eq!(
+        seen_entries, [true; 4],
+        "each entry has authentic body rows"
+    );
+    assert!(
+        seen_helper,
+        "the authored helper exercises unchanged origins"
+    );
+    let (row_index, old_function) = stale_origin.expect("an entry origin to corrupt");
+    let mut stale: serde_json::Value =
+        serde_json::from_slice(root.emission().package().bytes()).unwrap();
+    stale["checked_term_data"]["body_locations"][row_index]["location"]["origin"]["function"] =
+        serde_json::to_value(old_function).unwrap();
+    let stale_bytes = serde_json::to_vec(&stale).unwrap();
+    match read_checked_package(&stale_bytes, read_limits, root.emission().evidence()) {
+        CheckedPackageDispatchResult::Refused(refusal) => {
+            assert_eq!(
+                refusal.code,
+                filament_contract_model::CheckedPackageRefusalCode::InvalidPackage,
+                "{refusal:?}"
+            );
+            assert_eq!(
+                refusal.cause,
+                Some(filament_contract_model::CheckedPackageRefusalCause::InvalidValue),
+                "{refusal:?}"
+            );
+            let expected_path =
+                format!("/checked_term_data/body_locations/{row_index}/location/origin/function");
+            assert_eq!(
+                refusal
+                    .loci
+                    .first()
+                    .and_then(|locus| locus.path.as_ref())
+                    .map(|path| path.as_str()),
+                Some(expected_path.as_str()),
+                "{refusal:?}"
+            );
+        }
+        other => panic!("the stale entry origin must be refused: {other:?}"),
+    }
+}
+
 fn json(root: &PlanRoot) -> serde_json::Value {
     // The resolved form: a node's ids name graph positions, not operand slots.
     fsl_semantics::check::wire_id::resolved_package_value(root.emission().package().bytes())

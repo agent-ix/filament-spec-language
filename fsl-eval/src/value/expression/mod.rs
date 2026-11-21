@@ -27,6 +27,7 @@ mod evaluate;
 mod family;
 pub mod post_targets;
 mod protocol_slot;
+pub(crate) use protocol_slot::reference_occurrences;
 mod s6a;
 mod slot_admission;
 mod slot_supply;
@@ -1537,6 +1538,17 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
+    /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
+    fn evaluate_model_holds(
+        &self,
+        atom: &HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
     /// FR-330 Outputs, FR-283 `decisive`: [`Self::evaluate_holds`] with
     /// FR-107's witness channel kept: the result carries, beside the
     /// evaluation, each decision and each quantifier stop report on the
@@ -1567,6 +1579,16 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
+    /// Evaluate a model behaviour's activation guard with FR-107 model-read accounting.
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
@@ -2606,6 +2628,31 @@ impl CheckedPackageEvaluation for CheckedPackage {
         .map_err(CallFailure::Fault)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let (clause, condition, slots) = source_condition(self.graph(), atom)?;
+        let reads = std::collections::BTreeMap::new();
+        Machine::with_pre(
+            self.graph().scope(),
+            self.graph(),
+            objects,
+            None,
+            Some(&reads),
+            meter,
+            self.graph().dispatch_tables(),
+        )
+        .with_reference_bindings(reference_bindings)
+        .run(condition, slots, holds_bindings(clause, over, captures))
+        .map_err(CallFailure::Fault)
+    }
+
     fn evaluate_holds_traced(
         &self,
         atom: &HoldsAtom,
@@ -2667,6 +2714,34 @@ impl CheckedPackageEvaluation for CheckedPackage {
             meter,
             self.graph().dispatch_tables(),
         )
+        .run(guard, slots, vec![over.clone(), over])
+        .map_err(CallFailure::Fault)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let (guard, slots) = source_clause(self.graph(), clause)?
+            .guard()
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
+        let reads = std::collections::BTreeMap::new();
+        Machine::with_pre(
+            self.graph().scope(),
+            self.graph(),
+            objects,
+            None,
+            Some(&reads),
+            meter,
+            self.graph().dispatch_tables(),
+        )
+        .with_reference_bindings(reference_bindings)
         .run(guard, slots, vec![over.clone(), over])
         .map_err(CallFailure::Fault)
     }

@@ -26,6 +26,14 @@ use fsl_semantics::check::{
 use super::{Capacities, ProtocolRefusal, Unsupported};
 use crate::simulation::model::ModelSystem;
 
+/// The source or package predicate that classifies a stopped live instance.
+pub(super) enum Terminal<'a> {
+    None,
+    Any,
+    SourceWhen(&'a CheckedBody),
+    PackageWhen(crate::value::ProtocolSlot),
+}
+
 /// One control of the `run` tree.
 pub(super) struct Control {
     pub(super) step: ControlStep,
@@ -301,6 +309,8 @@ pub(super) struct Program<'a> {
     pub(super) finish: Finish<'a>,
     /// Each binder slot's node, `None` for the `over` input.
     pub(super) slots: Vec<Option<ProtocolNodeId>>,
+    /// Package binder node ids aligned to `slots`, `None` on the source route.
+    pub(super) package_binders: Vec<Option<fsl_package::CheckedNodeId>>,
     /// Each binder slot's readers.
     pub(super) readers: Vec<BTreeSet<ProtocolNodeId>>,
     /// The binder slot of each node that has one.
@@ -308,7 +318,7 @@ pub(super) struct Program<'a> {
     /// Each binder slot's declared type.
     binder_types: Vec<ValueType>,
     /// The protocol's `terminal` member.
-    pub(super) terminal: &'a CheckedTerminalMember,
+    pub(super) terminal: Terminal<'a>,
     /// The `compensate` templates, in source order.
     pub(super) templates: Vec<Template<'a>>,
     /// Each `effect` node's attempt, from the `Effect` edges (ST-2).
@@ -342,7 +352,12 @@ pub(super) struct Program<'a> {
 /// ST-13).
 pub(super) struct Capture<'a> {
     pub(super) name: String,
-    pub(super) initializer: &'a CheckedBody,
+    pub(super) initializer: CaptureInitializer<'a>,
+}
+
+pub(super) enum CaptureInitializer<'a> {
+    Source(&'a CheckedBody),
+    Package(crate::value::ProtocolSlot),
 }
 
 /// A control's place in the `run` tree: its preorder position, the last
@@ -545,6 +560,7 @@ impl<'a> Program<'a> {
         if readers.len() != slots.len() {
             return Err(ProtocolRefusal::fault("readers-align-with-binders"));
         }
+        let package_binders = vec![None; slots.len()];
         // Slot 0 is the `over` input. Any other binder with no node (the
         // activation binder, a capture) has no value this system binds, so a
         // slot that reads one is refused before any state is built.
@@ -577,7 +593,7 @@ impl<'a> Program<'a> {
             .filter(|capture| capture.owner == CaptureOwner::Protocol)
             .map(|capture| Capture {
                 name: capture.name.clone(),
-                initializer: &capture.initializer,
+                initializer: CaptureInitializer::Source(&capture.initializer),
             })
             .collect();
         let capture_slots = captures
@@ -916,6 +932,7 @@ impl<'a> Program<'a> {
             channels,
             finish,
             slots,
+            package_binders,
             readers,
             binder_of,
             binder_types: protocol
@@ -924,7 +941,11 @@ impl<'a> Program<'a> {
                 .iter()
                 .map(|binder| binder.value_type.clone())
                 .collect(),
-            terminal: &protocol.slots.terminal,
+            terminal: match &protocol.slots.terminal {
+                CheckedTerminalMember::None => Terminal::None,
+                CheckedTerminalMember::Any => Terminal::Any,
+                CheckedTerminalMember::When { predicate, .. } => Terminal::SourceWhen(predicate),
+            },
             templates,
             effects: protocol
                 .edges
@@ -956,6 +977,333 @@ impl<'a> Program<'a> {
             }
         }
         program.reader_positions = keepers
+            .iter()
+            .map(|readers| ReaderPositions {
+                controls: readers
+                    .iter()
+                    .filter_map(|node| program.spans.get(node).map(|span| span.first))
+                    .collect(),
+                finish: readers.contains(&program.finish.node),
+            })
+            .collect();
+        Ok(program)
+    }
+
+    /// Build the sequence/parallel/attempt/send program directly from the admitted
+    /// package form. Package execution keeps expression slots out of the
+    /// source `CheckedBody` fields; callers evaluate them through the package
+    /// evaluator.
+    pub(super) fn new_package(
+        model: &ModelSystem<'_>,
+        package: &super::PackageProtocolProgram<'_>,
+    ) -> Result<Self, ProtocolRefusal> {
+        // A control's text spells the structural branch between a parallel and
+        // its body, as the source checker's does: the package path has no
+        // branch segment.
+        let mut by_depth: Vec<_> = package.controls.values().collect();
+        by_depth.sort_by_key(|control| control.path.len());
+        let mut texts: BTreeMap<ProtocolNodeId, String> = BTreeMap::new();
+        for control in by_depth {
+            let text = match control
+                .parent
+                .and_then(|parent| package.controls.get(&parent).zip(texts.get(&parent)))
+            {
+                Some((parent, parent_text)) => {
+                    let own = control.path.last().map_or("", String::as_str);
+                    match parent.branches.iter().find(|(_, body)| *body == control.id) {
+                        Some((label, _)) => format!("{parent_text}/{label}/{own}"),
+                        None => format!("{parent_text}/{own}"),
+                    }
+                }
+                None => control.path.join("/"),
+            };
+            texts.insert(control.id, text);
+        }
+        let mut controls = BTreeMap::new();
+        for control in package.controls.values() {
+            let step = match control.operation {
+                fsl_package::protocol_view::ControlOperation::Sequence => ControlStep::Sequence,
+                fsl_package::protocol_view::ControlOperation::Parallel => ControlStep::Parallel,
+                fsl_package::protocol_view::ControlOperation::Attempt => ControlStep::Attempt,
+                fsl_package::protocol_view::ControlOperation::Send => ControlStep::Send,
+                operation => {
+                    return Err(ProtocolRefusal::Unsupported(
+                        super::Unsupported::PackageControl(operation),
+                    ));
+                }
+            };
+            controls.insert(
+                control.id,
+                Control {
+                    step,
+                    name: control.name.clone(),
+                    text: texts[&control.id].clone(),
+                    parent: control.parent,
+                    children: control.children.clone(),
+                },
+            );
+        }
+
+        // Package protocol views keep the labelled branch body as the
+        // parallel's record target. The execution tree also needs the
+        // source checker’s structural branch control between the parallel
+        // and its body, so settle and parent walks see the same shape.
+        let mut next_synthetic_id = controls
+            .keys()
+            .map(|node| node.0)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        for parallel in package.controls.values().filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Parallel
+        }) {
+            let mut branch_ids = Vec::with_capacity(parallel.branches.len());
+            for (label, body) in &parallel.branches {
+                let branch = ProtocolNodeId(next_synthetic_id);
+                next_synthetic_id = next_synthetic_id.saturating_add(1);
+                let body_control = controls
+                    .get_mut(body)
+                    .ok_or_else(|| ProtocolRefusal::fault("a-package-branch-has-a-body"))?;
+                body_control.parent = Some(branch);
+                controls.insert(
+                    branch,
+                    Control {
+                        step: ControlStep::Branch,
+                        name: label.clone(),
+                        text: format!("{}/{}", texts[&parallel.id], label),
+                        parent: Some(parallel.id),
+                        children: vec![*body],
+                    },
+                );
+                branch_ids.push(branch);
+            }
+            let parallel_control = controls
+                .get_mut(&parallel.id)
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-parallel-is-a-control"))?;
+            parallel_control.children = branch_ids;
+        }
+
+        let mut attempts = BTreeMap::new();
+        let mut slots = vec![None];
+        let mut package_binders = vec![Some(package.over.clone())];
+        let mut binder_types = vec![package.over_type.clone()];
+        let mut capture_slots = Vec::new();
+        let captures = package
+            .captures
+            .iter()
+            .map(|capture| {
+                capture_slots.push(slots.len());
+                slots.push(None);
+                package_binders.push(Some(capture.binder.clone()));
+                binder_types.push(capture.value_type.clone());
+                Capture {
+                    name: capture.name.clone(),
+                    initializer: CaptureInitializer::Package(capture.initializer.clone()),
+                }
+            })
+            .collect();
+        let mut binder_of = BTreeMap::new();
+        for control in package.controls.values().filter(|control| {
+            matches!(
+                control.operation,
+                fsl_package::protocol_view::ControlOperation::Attempt
+                    | fsl_package::protocol_view::ControlOperation::Send
+            )
+        }) {
+            let binds = if let (Some(binder), Some(binder_type)) =
+                (&control.binder, &control.binder_type)
+            {
+                let slot = slots.len();
+                slots.push(Some(control.id));
+                package_binders.push(Some(binder.clone()));
+                binder_types.push(binder_type.clone());
+                binder_of.insert(control.id, slot);
+                Some(slot)
+            } else {
+                None
+            };
+            if control.operation == fsl_package::protocol_view::ControlOperation::Attempt {
+                let operation = package
+                    .operation_ref(control.id)
+                    .map_err(|_| ProtocolRefusal::fault("a-package-attempt-resolves"))?;
+                attempts.insert(
+                    control.id,
+                    Attempt {
+                        declaring: operation.declaring,
+                        operation: operation.name.to_owned(),
+                        receiver: operation.receiver,
+                        contracts: std::sync::Arc::new(
+                            control.contract_keys.iter().cloned().collect(),
+                        ),
+                        constraint: None,
+                        binds,
+                    },
+                );
+            }
+        }
+
+        let channels = package
+            .channels
+            .iter()
+            .map(|channel| Channel {
+                name: channel.name.clone(),
+                capacity: usize::try_from(channel.capacity).unwrap_or(usize::MAX),
+                overflow: channel.overflow,
+                delivery: channel.delivery,
+                send_ordered: matches!(
+                    channel.overflow,
+                    ChannelOverflow::Loss(LossSelector::Head | LossSelector::Tail)
+                ),
+                key: None,
+            })
+            .collect();
+        let mut messages = BTreeMap::new();
+        for control in package.controls.values().filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Send
+        }) {
+            let channel = package
+                .channels
+                .iter()
+                .position(|channel| Some(&channel.node) == control.channel.as_ref())
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-send-names-a-channel"))?;
+            let slot = binder_of
+                .get(&control.id)
+                .copied()
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-send-has-a-binder"))?;
+            let record_type = control
+                .binder_type
+                .clone()
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-send-has-a-payload-type"))?;
+            if !model.enumerates(&record_type) {
+                return Err(ProtocolRefusal::Unsupported(
+                    Unsupported::UnenumerableRecord,
+                ));
+            }
+            messages.insert(
+                control.id,
+                Message {
+                    record: Record {
+                        constraint: None,
+                        slot,
+                        record_type,
+                    },
+                    channel,
+                    from: None,
+                },
+            );
+        }
+
+        let mut joins = BTreeMap::new();
+        for control in package.controls.values().filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Parallel
+        }) {
+            let join = control
+                .join
+                .as_ref()
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-parallel-has-its-join"))?;
+            joins.insert(
+                control.id,
+                Join {
+                    policy: join.policy.clone(),
+                    joined: join.joined.clone(),
+                    outstanding: join.outstanding,
+                    branches: control.branches.clone(),
+                },
+            );
+        }
+
+        let finish_node = ProtocolNodeId(next_synthetic_id);
+        let finish_slot = slots.len();
+        slots.push(None);
+        package_binders.push(Some(package.finish_binder.clone()));
+        binder_types.push(package.finish_binder_type.clone());
+        let finish_name = package
+            .form
+            .finish
+            .node
+            .declaration
+            .as_ref()
+            .and_then(|declaration| declaration.qualified_name.get(2))
+            .ok_or_else(|| ProtocolRefusal::fault("a-package-finish-is-named"))?;
+        let finish = Finish {
+            node: finish_node,
+            text: finish_name.to_string(),
+            constraint: None,
+            binder: (finish_slot, package.finish_binder_type.clone()),
+        };
+        let mut readers = vec![BTreeSet::new(); slots.len()];
+        let binder_keys = package_binders
+            .iter()
+            .map(|binder| {
+                binder
+                    .as_ref()
+                    .and_then(|binder| model.evaluator().package_node_key(binder))
+            })
+            .collect::<Vec<_>>();
+        for (node, slot) in package
+            .controls
+            .values()
+            .filter_map(|control| control.constraint.as_ref().map(|slot| (control.id, slot)))
+            .chain(package.finish.as_ref().map(|slot| (finish_node, slot)))
+        {
+            for binder in package
+                .slot_binders(slot)
+                .map_err(|_| ProtocolRefusal::fault("a-package-slot-has-admitted-binder-reads"))?
+            {
+                let position = binder_keys
+                    .iter()
+                    .position(|key| key.as_ref() == Some(&binder))
+                    .ok_or_else(|| {
+                        ProtocolRefusal::fault("a-package-slot-reads-a-declared-binder")
+                    })?;
+                readers[position].insert(node);
+            }
+        }
+        let mut program = Self {
+            root: package.root,
+            controls,
+            attempts,
+            recommendations: BTreeMap::new(),
+            related: BTreeMap::new(),
+            joins,
+            loops: BTreeMap::new(),
+            choices: BTreeMap::new(),
+            awaits: BTreeMap::new(),
+            checks: BTreeMap::new(),
+            fences: BTreeMap::new(),
+            events: BTreeMap::new(),
+            messages,
+            channels,
+            finish,
+            slots,
+            package_binders,
+            readers,
+            binder_of,
+            binder_types,
+            terminal: match &package.terminal {
+                super::package_program::PackageTerminal::None => Terminal::None,
+                super::package_program::PackageTerminal::Any => Terminal::Any,
+                super::package_program::PackageTerminal::When(slot) => {
+                    Terminal::PackageWhen(slot.clone())
+                }
+            },
+            templates: Vec::new(),
+            effects: BTreeMap::new(),
+            spans: BTreeMap::new(),
+            reader_positions: Vec::new(),
+            loop_of: BTreeMap::new(),
+            replicated: Vec::new(),
+            acting: BTreeMap::new(),
+            activation: None,
+            activation_slot: None,
+            trigger_read: false,
+            captures,
+            capture_slots,
+        };
+        program.spans = program.spans()?;
+        program.loop_of = program.enclosing_loops()?;
+        program.reader_positions = program
+            .readers
             .iter()
             .map(|readers| ReaderPositions {
                 controls: readers

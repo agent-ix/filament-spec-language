@@ -11,6 +11,7 @@ mod analyze_composition_cli;
 mod analyze_last_stage;
 mod analyze_liveness_cli;
 mod analyze_package_selection;
+mod analyze_package_protocol;
 mod analyze_protocol_subject;
 mod analyze_reach_rulings;
 mod analyze_reduction_cli;

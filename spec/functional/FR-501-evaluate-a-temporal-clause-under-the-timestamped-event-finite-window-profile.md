@@ -164,6 +164,11 @@ as separate fields that no one field determines:
   ceiling SHALL give a distinct identity, with the earlier result neither reused
   nor rewritten (FR-043-AC-13).
 
+In each decision-support `(position, atom)` pair, the source and checked-package
+routes SHALL name `atom` by the source text of the whole atom from the
+caller-supplied `sources` element whose reference equals the atom's region's
+source, preserving FR-283's source-span and missing-source refusal contract.
+
 The shared semantic catalog's `Category` holds `Pending` and `Indeterminate`, so
 the FSL entry reads the label and the exit of these two outcomes from the catalog
 and keeps no local mapping (FR-285).

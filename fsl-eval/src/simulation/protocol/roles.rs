@@ -23,7 +23,7 @@ use filament_exact::{ObjectReference, Value};
 use super::compensation::Decided;
 use super::identity::{Actor, ProtocolTransition, StepKind, ThreadPath, WaitCause};
 use super::memory::MemoryModel;
-use super::program::{Cursor, Lifetime};
+use super::program::{CaptureInitializer, Cursor, Lifetime};
 use super::settle::{SettleError, Settled};
 use super::steps::Gathered;
 use super::{
@@ -81,8 +81,44 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             let mut frame = vec![Some(instance.over.clone())];
             frame.extend(self.activation_value(&instance));
             frame.extend(Self::protocol_values(&instance));
-            let owner = format!("{}::{}", self.protocol.name, capture.name);
-            match self.decide_body(&owner, capture.initializer, frame, model)? {
+            let owner = format!("{}::{}", self.protocol_name, capture.name);
+            let decided = match &capture.initializer {
+                CaptureInitializer::Source(body) => self.decide_body(&owner, body, frame, model)?,
+                CaptureInitializer::Package(slot) => {
+                    let package = self.package_program.as_ref().ok_or_else(super::broken)?;
+                    let observation = self.package_observation(model)?;
+                    // Bind by admitted identity; later captures have no value yet.
+                    frame.resize(self.program.slots.len(), None);
+                    let binders = self.package_binder_values(frame, &observation, slot)?;
+                    let supply = package
+                        .supply_for_slot(slot, binders, Some(&observation))
+                        .map_err(|_| super::broken())?;
+                    let result = self
+                        .evaluator
+                        .evaluate_package_protocol_slot(
+                            slot,
+                            &supply,
+                            &mut filament_exact::Meter::new(self.model.meter()),
+                        )
+                        .map_err(|_| super::broken())?;
+                    let crate::value::ProtocolSlotEvaluation::Evaluated(evaluation, _) = result
+                    else {
+                        return Err(super::broken().into());
+                    };
+                    match evaluation.outcome {
+                        filament_eval::FamilyOutcome::Evaluated(
+                            filament_exact::Outcome::Completed(value),
+                        ) => Decided::Value(value),
+                        outcome => match crate::simulation::model::verdict(&outcome) {
+                            Verdict::Undecided(outcome) => {
+                                Decided::Undecided(Box::new(undetermined(&owner, outcome)))
+                            }
+                            Verdict::True | Verdict::False => return Err(super::broken().into()),
+                        },
+                    }
+                }
+            };
+            match decided {
                 Decided::Value(value) => instance.captures.push(Bound {
                     enc: value_enc(&value, self.model.typing()),
                     value: Some(value),
@@ -363,7 +399,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     Verdict::Undecided(outcome) => {
                         gathered
                             .findings
-                            .push(undetermined(&self.protocol.name, outcome));
+                            .push(undetermined(&self.protocol_name, outcome));
                         continue;
                     }
                 }

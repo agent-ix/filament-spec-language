@@ -53,6 +53,8 @@ filament-checked = { workspace = true }
 # ADR-011 §6.1 layer SV: the expression `Location` and the `CheckingLimits`
 # the emitter reads, and the `UnitTable` the emitter's tests build.
 filament-semantic-value = { workspace = true }
+# The protocol package view carries the shared admitted memory orderings.
+fsl-forms = { path = "../fsl-forms" }
 serde = { version = "1.0.228", features = ["derive"] }
 # The hybrid reader reads an application operation through its public
 # `Serialize` form (the typed carrier keeps its raw record internal).
@@ -63,10 +65,6 @@ thiserror = { version = "2.0.20", default-features = false, optional = true }
 filament-specification = { workspace = true }
 # Observe actual thread-local allocations at denied row-adapter boundaries.
 allocation-counter = "0.8.1"
-# The emitter's tests build a one-function `PackageDeclarations`, whose
-# declarations are layer-2 parsed forms. Layer 2 is below this crate, so the
-# edge closes no cycle; TC-390 admits it in this table only.
-fsl-forms = { path = "../fsl-forms" }
 # The S1 -> S2 -> S3 -> S4 round trip (FR-091) parses its unit with S1.
 fsl-cst = { path = "../fsl-cst" }
 # FR-400-AC-9: `filament-checked`'s `test-support` (`DeclarationKey::fixture`, ...). Only this

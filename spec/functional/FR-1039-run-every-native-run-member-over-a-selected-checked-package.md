@@ -62,7 +62,9 @@ request member that would restate one of them (a `program`, `libraries`,
   that package's equality witness file (an FR-531 equality file, the
   `equality.json` an FR-517 handoff writes), or `{"directory": D}`, the
   path of an FR-517 handoff directory holding `checked-package.json`,
-  `identities.json` and, when present, `equality.json` (FR-850), each path
+  `identities.json`, when present `equality.json`, and the required
+  `dependencies.json` with its package/witness closure (FR-517; FR-850
+  "Dependency artifact admission"), each path
   resolved against the request file's directory, each file read counted
   toward `dependent_bytes`. `equality` is optional, a string, and admitted
   on the file form only. Beside `file`
@@ -117,6 +119,9 @@ request echo carrying `package` where a source request carries `program`.
   (below, with `details.member` `tl_lowering.cross_evaluate`) and run it over
   a `{directory}` selection. It SHALL NOT refuse the member as
   unimplemented, and SHALL NOT run another member in its place.
+- A `{directory}` selection SHALL admit and retain FR-850's complete dependency
+  artifact closure, with each dependency's own witnesses, through execution and
+  replay; it SHALL NOT recompile library source.
 - A `{directory}` selection SHALL attach the handoff's identity and equality
   rows as FR-850 "Admission" states. A member whose run builds states over
   the package's model world (a `clause` run, a plan synthesis, a

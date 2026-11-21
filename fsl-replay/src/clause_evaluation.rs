@@ -356,6 +356,20 @@ fn settle(disposition: ClauseDisposition) -> ClauseEvaluation {
         ClauseDisposition::MissingName { name } => {
             ClauseEvaluation::Refused(ClauseRefusal::MissingClause { name })
         }
+        ClauseDisposition::PackageAdmission(failure) => match *failure {
+            filament_eval::CallAdmissionFailure::Refused(admission) => coded(
+                stage,
+                category,
+                admission.record.catalog.code(),
+                admission.record.catalog.cause(),
+            ),
+            filament_eval::CallAdmissionFailure::Incomplete(admission) => {
+                ClauseEvaluation::Incomplete(ClauseIncomplete::Observation {
+                    code: admission.record.catalog.code(),
+                    cause: admission.record.catalog.cause(),
+                })
+            }
+        },
         ClauseDisposition::Admit(AdmissionFailure::Refused(record)) => {
             if is_wrong_observation(&record) {
                 ClauseEvaluation::Refused(ClauseRefusal::WrongObservation)

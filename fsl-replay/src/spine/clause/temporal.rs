@@ -29,7 +29,7 @@ use super::progress::{
     ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLedgerEntry,
     ProgressLowerBoundary, ProgressValue, Refusal,
 };
-use super::trace_refusal::ClauseSite;
+use super::trace_refusal::{ClauseSite, TraceSite};
 use super::{
     convert_call_failure, convert_outcome, ClauseDisposition, ClauseRunReport, ClauseRunUsage,
     CompiledRun, ConsequentEventRefusal, ConsequentSourceEvents, RunRefusal,
@@ -37,6 +37,11 @@ use super::{
     TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
 };
 use crate::proof_result::SettlementBasis;
+
+mod package_selection;
+pub use package_selection::{
+    run_package_snapshots, PackageSelectionNotRead, PackageSnapshotRequest,
+};
 
 /// FR-330 Inputs: the observations a temporal clause is run over, each a
 /// snapshot named by its labels (FR-106).
@@ -1033,13 +1038,29 @@ pub(crate) fn resolve_over(
     let ValueType::Reference(type_identity) = over_type else {
         return Err(OverMiss::NotReference);
     };
-    let universe = population_universe_for(
+    resolve_over_in(
         run.package.graph().model_inputs(),
         run.packages,
         run.model_limits,
-        type_identity.clone(),
+        type_identity,
+        over,
+        environment,
     )
-    .map_err(OverMiss::Universe)?;
+}
+
+/// [`resolve_over`] for the reference type `type_identity`, over the model
+/// selections a package route reads as well as a source route does.
+pub(crate) fn resolve_over_in(
+    selections: fsl_semantics::model::observation::ModelSelections<'_>,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    type_identity: &filament_exact::EffectiveId,
+    over: &OverObject,
+    environment: Option<&ObjectEnvironment>,
+) -> Result<filament_exact::ObjectReference, OverMiss> {
+    let universe =
+        population_universe_for(selections, packages, model_limits, type_identity.clone())
+            .map_err(OverMiss::Universe)?;
     environment
         .and_then(|environment| environment.objects().find(universe, &over.key))
         .cloned()
@@ -1064,12 +1085,52 @@ pub struct TemporalAuthentication<'a> {
 /// declaration identity comes from emission's exact `(NodeKey, occurrence)`
 /// mapping; the profile and clock are read from that declaration's admitted
 /// temporal subject.
+/// The model-time configuration read from the admitted timed model and its unit.
+fn admitted_model_time_binding(
+    package: &filament_contract_model::CheckedPackageV2,
+    subject: &fsl_package::checked_views::TemporalSubjectView<'_>,
+) -> Result<Option<TraceBinding>, Box<ClauseDisposition>> {
+    if subject.profile().definition.identity.as_ref() != TemporalProfile::Timed.identity() {
+        return Ok(None);
+    }
+    let invalid = || Box::new(refused("invalid-value", BTreeMap::new()));
+    let limit = u64::try_from(package.resolved_graph().nodes.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(3);
+    let Some(binding) = package
+        .model_time_for_clause(subject.declaration(), limit)
+        .map_err(|_| invalid())?
+    else {
+        return Ok(None);
+    };
+    let declaration = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| &node.node_id == binding.unit())
+        .and_then(|node| node.declaration.as_ref())
+        .ok_or_else(invalid)?;
+    let unit = declaration
+        .qualified_name
+        .iter()
+        .map(|part| part.as_ref())
+        .collect::<Vec<_>>()
+        .join("::");
+    Ok(Some(TraceBinding {
+        profile: subject.profile().definition.identity.to_string(),
+        clock_name: "model-time".to_owned(),
+        parameters: fsl_package::ClockConfiguration::Timed { unit: unit.into() },
+    }))
+}
+
 fn authenticate_binding(
     binding: Option<&TraceBinding>,
     subject: &fsl_package::checked_views::TemporalSubjectView<'_>,
     occurrence: u64,
+    package: &filament_contract_model::CheckedPackageV2,
 ) -> Result<crate::spine::AuthenticatedTemporalSelection, Box<ClauseDisposition>> {
-    let Some(binding) = binding else {
+    let model_time = admitted_model_time_binding(package, subject)?;
+    let Some(binding) = binding.or(model_time.as_ref()) else {
         return Err(Box::new(refused("invalid-value", BTreeMap::new())));
     };
     let binding = fsl_eval::temporal::evidence::TraceBinding {
@@ -1077,28 +1138,31 @@ fn authenticate_binding(
         clock_name: binding.clock_name.clone().into_boxed_str(),
         parameters: binding.parameters.clone(),
     };
-    let authenticated = binding
-        .authenticate(&fsl_eval::temporal::evidence::ClauseSelection {
-            declaration: subject.declaration(),
-            profile: subject.profile(),
-            // The clock row is the one keyed by this declaration's occurrence:
-            // a node several clauses share has a row per occurrence.
-            clock: subject
-                .occurrences()
-                .iter()
-                .find(|found| found.ordinal == occurrence)
-                .and_then(|found| subject.clock_of(found)),
-        })
-        .map_err(|mismatch| {
-            let mut fields = BTreeMap::from([
-                ("mismatched_dimension", mismatch.dimension.name().to_owned()),
-                ("asserted", mismatch.asserted),
-            ]);
-            if let Some(expected) = mismatch.expected {
-                fields.insert("expected", expected);
-            }
-            Box::new(refused("invalid-value", fields))
-        })?;
+    let selection = fsl_eval::temporal::evidence::ClauseSelection {
+        declaration: subject.declaration(),
+        profile: subject.profile(),
+        clock: subject
+            .occurrences()
+            .iter()
+            .find(|found| found.ordinal == occurrence)
+            .and_then(|found| subject.clock_of(found)),
+    };
+    let authenticated = match model_time.as_ref().map(|binding| &binding.parameters) {
+        Some(fsl_package::ClockConfiguration::Timed { unit }) => {
+            binding.authenticate_model_time(&selection, unit)
+        }
+        _ => binding.authenticate(&selection),
+    }
+    .map_err(|mismatch| {
+        let mut fields = BTreeMap::from([
+            ("mismatched_dimension", mismatch.dimension.name().to_owned()),
+            ("asserted", mismatch.asserted),
+        ]);
+        if let Some(expected) = mismatch.expected {
+            fields.insert("expected", expected);
+        }
+        Box::new(refused("invalid-value", fields))
+    })?;
     Ok(crate::spine::AuthenticatedTemporalSelection {
         declaration: authenticated.declaration,
         source_regions: subject.source_span().regions.clone(),
@@ -1118,6 +1182,46 @@ pub(super) fn refused(
         path: Vec::new(),
         kernel: None,
     })))
+}
+
+/// Authenticate a timed supplied trace against its selected package occurrence.
+fn authenticate_bare_timed(
+    package: &filament_contract_model::CheckedPackageV2,
+    name: &str,
+    trace: &TraceInput,
+) -> Result<Option<crate::spine::AuthenticatedTemporalSelection>, Box<ClauseDisposition>> {
+    let TraceInput::Timed { binding, .. } = trace else {
+        return Ok(None);
+    };
+    let row = package
+        .temporal_clause_names()
+        .unwrap_or_default()
+        .iter()
+        .find(|row| row.name.as_ref() == name)
+        .ok_or_else(|| {
+            Box::new(ClauseDisposition::MissingName {
+                name: name.to_owned(),
+            })
+        })?;
+    let subject = fsl_package::checked_views::temporal_subject(package, &row.declaration)
+        .map_err(|_| Box::new(refused("invalid-value", BTreeMap::new())))?;
+    let derived = subject
+        .occurrences()
+        .iter()
+        .find(|found| found.ordinal == row.occurrence)
+        .and_then(|found| subject.clock_of(found))
+        .map(|clock| TraceBinding {
+            profile: subject.profile().definition.identity.to_string(),
+            clock_name: clock.clock_name.to_string(),
+            parameters: clock.clock.clone(),
+        });
+    authenticate_binding(
+        binding.as_ref().or(derived.as_ref()),
+        &subject,
+        row.occurrence,
+        package,
+    )
+    .map(Some)
 }
 
 /// FR-330 Inputs and FR-522: the profile `node`'s clause reads `trace`
@@ -1173,7 +1277,7 @@ fn authenticate_trace(
     };
     let subject = fsl_package::checked_views::temporal_subject(admitted_package, declaration)
         .map_err(|_| fault("admitted-temporal-subject-resolves"))?;
-    authenticate_binding(binding, &subject, node.claim().ordinal()).map(Some)
+    authenticate_binding(binding, &subject, node.claim().ordinal(), admitted_package).map(Some)
 }
 
 /// FR-283: the profile fit and FR-522 authentication of `trace` for the
@@ -1469,26 +1573,21 @@ pub fn run_package_valuation(
     })
 }
 
-/// FR-330: [`run_temporal`] over the record samples of a checked package's
-/// clause, for the one route the package form reads: a clause under the
-/// infinite-trace profile over a finite trace or a lasso. A refused condition
-/// reports the source route's refusal code and cause, with no source span.
-pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRunReport> {
-    let (clause, key, samples, shape) = match package_samples(request) {
-        Ok(read) => read,
-        Err(report) => return report,
-    };
-    let mut meter = Meter::new(request.accounting);
-    let observed = fsl_eval::temporal::evaluate_package_positions(
-        request.evaluator,
-        clause,
-        key,
-        &samples,
-        shape,
-        &mut meter,
-    );
-    let inactive = observed.inactive;
-    let (disposition, refused_at) = match (observed.stopped, observed.result) {
+fn package_call_disposition(failure: filament_eval::CallFailure) -> ClauseDisposition {
+    match failure {
+        filament_eval::CallFailure::Admission(failure) => {
+            ClauseDisposition::PackageAdmission(failure)
+        }
+        failure => refusal_disposition(*convert_call_failure(failure)),
+    }
+}
+
+fn package_disposition(
+    stopped: Option<HoldsStop>,
+    result: Result<TemporalOutcome, TemporalRefusal>,
+    inactive: bool,
+) -> (ClauseDisposition, Option<u64>) {
+    match (stopped, result) {
         // A refused condition is the caller's: the source route's code and
         // cause, located at the package node, which has no source span.
         (Some(HoldsStop::Refused { at, evaluation }), _) => (
@@ -1498,9 +1597,7 @@ pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRun
             },
             Some(at.index()),
         ),
-        (Some(HoldsStop::Failed(failure)), _) => {
-            (refusal_disposition(*convert_call_failure(failure)), None)
-        }
+        (Some(HoldsStop::Failed(failure)), _) => (package_call_disposition(failure), None),
         (None, Ok(_)) if inactive => (ClauseDisposition::Temporal(TemporalVerdict::Inactive), None),
         (None, Ok(outcome)) => (ClauseDisposition::Temporal(verdict(outcome)), None),
         (None, Err(TemporalRefusal::Fault(fault))) => {
@@ -1510,13 +1607,106 @@ pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRun
             ClauseDisposition::TemporalRefusal(trace_refusal(refusal)),
             None,
         ),
+    }
+}
+
+/// FR-330: [`run_temporal`] over the record samples of a checked package's
+/// clause, for the one route the package form reads: a clause under the
+/// infinite-trace profile over a finite trace or a lasso. A refused condition
+/// reports the source route's refusal code and cause, with no source span.
+pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRunReport> {
+    run_sampled(request, None)
+}
+
+/// Run record samples with timed clock authentication from their admitted package.
+pub fn run_package_sampled_authenticated(
+    request: &PackageSampledRequest<'_>,
+    package: &filament_contract_model::CheckedPackageV2,
+) -> Box<ClauseRunReport> {
+    run_sampled(request, Some(package))
+}
+
+fn run_sampled(
+    request: &PackageSampledRequest<'_>,
+    package: Option<&filament_contract_model::CheckedPackageV2>,
+) -> Box<ClauseRunReport> {
+    if let Some((clause, _)) = request.clause {
+        let site = super::trace_refusal::PackageClauseSite { clause };
+        if !super::trace_refusal::profile_reads(clause.profile()).contains(&request.trace.kind()) {
+            return disposition_report(
+                ClauseDisposition::TraceRefused(Box::new(site.kind_mismatch(request.trace.kind()))),
+                ClauseRunUsage::default(),
+            );
+        }
+        if let Some(refusal) = empty_trace_refusal(&site, request.trace) {
+            return disposition_report(
+                ClauseDisposition::TraceRefused(Box::new(refusal)),
+                ClauseRunUsage::default(),
+            );
+        }
+    }
+    let authenticated = match package
+        .map(|package| authenticate_bare_timed(package, request.name, request.trace))
+        .transpose()
+    {
+        Ok(value) => value.flatten(),
+        Err(disposition) => return disposition_report(*disposition, ClauseRunUsage::default()),
     };
+    let (clause, key, samples, shape) = match package_samples(request) {
+        Ok(read) => read,
+        Err(report) => return report,
+    };
+    let mut meter = Meter::new(request.accounting);
+    let positions = fsl_eval::temporal::PackagePositions::Samples(&samples);
+    let observed = if let TraceInput::Timed {
+        prefix,
+        repeat,
+        period,
+        through,
+        ..
+    } = request.trace
+    {
+        fsl_eval::temporal::evaluate_package_timed(
+            request.evaluator,
+            clause,
+            key,
+            positions,
+            (
+                prefix
+                    .iter()
+                    .chain(repeat)
+                    .map(|p| p.stamp.clone())
+                    .collect(),
+                period.as_ref().map(|period| {
+                    (
+                        u64::try_from(prefix.len()).unwrap_or(u64::MAX),
+                        period.clone(),
+                    )
+                }),
+                through.clone(),
+            ),
+            &mut meter,
+        )
+    } else {
+        fsl_eval::temporal::evaluate_package_positions(
+            request.evaluator,
+            clause,
+            key,
+            &samples,
+            shape,
+            &mut meter,
+        )
+    };
+    let inactive = observed.inactive;
+    let (disposition, refused_at) =
+        package_disposition(observed.stopped, observed.result, inactive);
     let (disposition, counterexample) =
         with_counterexample(clause, request.trace, disposition, observed.undefined);
     let usage = ClauseRunUsage::from_meter(&meter, AdmissionUsage::default());
     let mut finished = disposition_report(disposition, usage);
     finished.counterexample = counterexample;
     finished.refused_at = refused_at;
+    finished.authenticated_temporal_selection = authenticated;
     finished
 }
 
@@ -1609,6 +1799,35 @@ pub(crate) fn with_subject_counterexample(
                 );
             }
         }
+    }
+}
+
+fn empty_trace_refusal(
+    site: &impl TraceSite,
+    trace: &TraceInput,
+) -> Option<super::trace_refusal::TraceRefusal> {
+    match trace {
+        TraceInput::Lasso { repeat, .. } if repeat.is_empty() => Some(site.empty_loop()),
+        TraceInput::Finite(positions)
+        | TraceInput::Progressed {
+            trace: positions, ..
+        } if positions.is_empty() => Some(site.empty_trace(trace.kind())),
+        TraceInput::Timed {
+            period: Some(_),
+            repeat,
+            ..
+        } if repeat.is_empty() => Some(site.empty_loop()),
+        TraceInput::Timed {
+            period: None,
+            prefix,
+            ..
+        } if prefix.is_empty() => Some(site.empty_trace(trace.kind())),
+        TraceInput::Timed { .. } => None,
+        TraceInput::Finite(_)
+        | TraceInput::Progressed { .. }
+        | TraceInput::Timestamped { .. }
+        | TraceInput::Lasso { .. }
+        | TraceInput::Model { .. } => None,
     }
 }
 
@@ -1769,29 +1988,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
 
     // FR-645: a trace with no position, or a lasso with no loop position, has
     // no observation to evaluate over.
-    let empty = match trace {
-        TraceInput::Lasso { repeat, .. } if repeat.is_empty() => Some(site.empty_loop()),
-        TraceInput::Finite(positions)
-        | TraceInput::Progressed {
-            trace: positions, ..
-        } if positions.is_empty() => Some(site.empty_trace(trace.kind())),
-        TraceInput::Timed {
-            period: Some(_),
-            repeat,
-            ..
-        } if repeat.is_empty() => Some(site.empty_loop()),
-        TraceInput::Timed {
-            period: None,
-            prefix,
-            ..
-        } if prefix.is_empty() => Some(site.empty_trace(trace.kind())),
-        TraceInput::Timed { .. } => None,
-        TraceInput::Finite(_)
-        | TraceInput::Progressed { .. }
-        | TraceInput::Timestamped { .. }
-        | TraceInput::Lasso { .. }
-        | TraceInput::Model { .. } => None,
-    };
+    let empty = empty_trace_refusal(&site, trace);
     if let Some(refusal) = empty {
         return early(ClauseDisposition::TraceRefused(Box::new(refusal)));
     }
@@ -3728,6 +3925,87 @@ pub(crate) fn trace_refusal(refusal: TemporalRefusal) -> TemporalTraceRefusal {
                 "temporal",
                 "step-evaluator-refusal",
             ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod package_admission_tests {
+    use super::*;
+    use filament_eval::{
+        CallAdmissionFailure, CallAdmissionLocus, CallAdmissionRecord, CallFailure,
+    };
+
+    /// The report retains checked-package attribution without claiming a
+    /// source location in the native result before one is available.
+    #[ix_trace_rs::trace("TC-3019", "FR-1039")]
+    #[test]
+    fn package_call_admission_retains_typed_locus_without_wire_locus() {
+        let node = filament_exact::NodeKey::new(
+            "fixture",
+            vec![filament_exact::PathSegment::Text("Low".into())],
+            1,
+        )
+        .expect("a clause node key");
+        for locus in [
+            CallAdmissionLocus::Package,
+            CallAdmissionLocus::Node(node),
+            CallAdmissionLocus::Member {
+                name: "holds".to_owned(),
+                index: Some(0),
+            },
+        ] {
+            for incomplete in [false, true] {
+                let catalog = if incomplete {
+                    CatalogCode::new("unavailable_observation", "missing-required-artifact")
+                } else {
+                    CatalogCode::new("invalid_runtime_input", "invalid-value")
+                };
+                let record = AdmissionRecord {
+                    catalog,
+                    fields: BTreeMap::from([("member", "holds[0]".to_owned())]),
+                    path: Vec::new(),
+                    kernel: None,
+                };
+                let admission = CallAdmissionRecord {
+                    record: record.clone(),
+                    locus: locus.clone(),
+                };
+                let failure = if incomplete {
+                    CallAdmissionFailure::Incomplete(admission)
+                } else {
+                    CallAdmissionFailure::Refused(admission)
+                };
+                let report = disposition_report(
+                    package_call_disposition(CallFailure::Admission(Box::new(failure.clone()))),
+                    ClauseRunUsage::default(),
+                );
+                let ClauseDisposition::PackageAdmission(retained) = &report.disposition else {
+                    panic!("the report retains the original package admission failure");
+                };
+                assert_eq!(retained.as_ref(), &failure);
+                assert_eq!(
+                    report.disposition.stage(),
+                    super::super::ClauseRunStage::Admit
+                );
+                let bytes = crate::spine::write_clause_run_result(&report)
+                    .expect("the admission report writes");
+                let wire: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+                assert_eq!(
+                    wire["disposition"]["refusal"]["code"],
+                    record.catalog.code()
+                );
+                assert_eq!(
+                    wire["disposition"]["refusal"]["cause"],
+                    record.catalog.cause()
+                );
+                assert_eq!(
+                    wire["disposition"]["refusal"]["fields"],
+                    serde_json::json!(record.fields)
+                );
+                assert!(wire["disposition"]["refusal"].get("locus").is_none());
+                crate::spine::read_native_run_result(&bytes).expect("the result reads");
+            }
         }
     }
 }
