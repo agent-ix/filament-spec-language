@@ -13,9 +13,11 @@ use std::path::Path;
 
 // The domain document supplies the operation frame; the authored spine
 // postcondition constrains that frame's possible post-states.
+// The postcondition needs both object navigation and Integer conversion;
+// its model layer includes graph and value forms. The plan uses temporal v.
 const PLAN_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.temporal.infinite-trace/v1\";\n\
-     profile g = \"filament.state.graph/v1\";\n\
+     profile g = \"filament.model.complete/v1\";\n\
      model Config = \"example/config-version\";\n\
      post VersionAdvances using g on Config::ConfigVersion::attemptUpdate {\n\
        (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)\n\
