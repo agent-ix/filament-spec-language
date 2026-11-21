@@ -210,7 +210,10 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
   never `invalid-value` and never a value over the other positions. A
   `missing` entry (FR-641) naming the aggregate atom at the member's
   position marks that observation as holding no valuation the aggregate
-  reads. The
+  reads. A carried state (FR-820) takes the atoms an observation holds no
+  valuation of with the observation, holds them with its position, and
+  counts them as content of the position (FR-993): a changed absence at a
+  covered index is a `Completeness` contradiction. The
   carried route (FR-820), which holds an open activation's window positions
   by value, and a run over a progressed trace (FR-502) SHALL give each
   aggregate atom the same possibility set as the whole-trace evaluation of
