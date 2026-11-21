@@ -129,6 +129,30 @@ fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks()
             .any(|other| other["state"] == row["state"]
                 && other["value"] == json!({"numerator":"1","denominator":"1"})));
     }
+    let above = numerator["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            let state = key(row);
+            state[5] == json!(["measure", "1", "active"]) && state[6][2] == json!(["above-bound"])
+        })
+        .expect("the above-bound amount is a distinct active row");
+    assert_eq!(above["value"], json!({"numerator":"0","denominator":"1"}));
+    assert!(numerator["ranking"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["state"] == above["state"] && row["rank"] == 1));
+    assert!(
+        numerator["values"].as_array().unwrap().iter().any(|row| {
+            let state = key(row);
+            state[5][2] == "censored"
+                && state[6][2] == json!(["censored"])
+                && row["value"] == json!({"numerator":"0","denominator":"1"})
+        }),
+        "horizon censoring must remain distinct from saturation"
+    );
     let accepted = check(&world, "Q", &doc);
     assert!(
         matches!(accepted, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
@@ -181,7 +205,34 @@ fn every_scheduler_checks_shifted_extrema_and_the_strict_zero_edge() {
     let doc = proof(&world, "Min", ratio(3, 80));
     assert_eq!(doc["objective"]["payoff"], "shifted");
     assert_eq!(doc["objective"]["optimization"], "minimum");
-    proof(&world, "Max", ratio(-1, 10));
+    for (remaining, amount, expected) in [
+        (3, json!("1"), ratio(-3, 20)),
+        (2, json!("2"), ratio(-2, 5)),
+        (1, json!(["above-bound"]), ratio(-2, 5)),
+    ] {
+        let row = doc["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| {
+                let state = key(row);
+                state[5][1] == remaining.to_string()
+                    && state[5][2] == "active"
+                    && state[6][2] == amount
+            })
+            .unwrap();
+        assert_eq!(
+            row["value"],
+            json!({"numerator":expected.numerator().to_string(),"denominator":expected.denominator().to_string()})
+        );
+    }
+    let maximum = proof(&world, "Max", ratio(-1, 10));
+    for row in maximum["values"].as_array().unwrap() {
+        let state = key(row);
+        if state[5][2] == "active" && state[6][2] != "0" {
+            assert_eq!(row["value"], json!({"numerator":"-3","denominator":"5"}));
+        }
+    }
     refuted(&world, "MinNo");
     refuted(&world, "MaxNo");
     let mut altered = doc.clone();
@@ -1669,9 +1720,18 @@ fn valid_mean_bounds_on_the_threshold_and_wrong_bound_roles_are_rejected() {
             .as_ref()
             .unwrap()
             .evidence();
-        let mut document = mean_bound(witness, correct_lower, true);
+        // Construct a valid bound for the opposite role, retaining complete
+        // coverage and the ranks required by that role. Only its direction
+        // is inappropriate for refuting this checked claim.
+        let mut document: Value =
+            serde_json::from_slice(witness.subsystem.as_ref().unwrap().as_bytes()).unwrap();
+        let base = document["objective"].take();
+        document["objective"] =
+            json!({"profile":"filament.probability-objective/value-bounds/v1","base":base});
         document["kind"] = json!(if correct_lower { "upper" } else { "lower" });
-        document.as_object_mut().unwrap().remove("policy");
+        if correct_lower {
+            document.as_object_mut().unwrap().remove("ranking");
+        }
         let root = URL_SAFE_NO_PAD.encode(witness.initial_key.as_bytes());
         document["values"]
             .as_array_mut()
