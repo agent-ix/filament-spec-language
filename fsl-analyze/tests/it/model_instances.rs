@@ -906,7 +906,7 @@ fn the_bound_parameter_reads_as_the_reference_of_the_object_held_under_its_key()
 /// at `k` and `d`, and the guarded property holds; a guard over `animals`
 /// alone is false at `d`. A subject whose only population holds only a `Cat`
 /// still has its instance.
-#[trace("TC-520", "FR-125-AC-12")]
+#[trace("TC-520", "FR-125-AC-12", "FR-940-AC-6")]
 #[test]
 fn a_key_holding_no_object_of_the_type_reads_absent_key() {
     let world = world(
@@ -1038,6 +1038,177 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
     assert!(matches!(
         cats.run_formula("Dog", "always holds(x.age >= 0)", only())
             .expect("checked"),
+        ModelCheckOutcome::Violated { .. }
+    ));
+
+    // Read the same Cat-under-Dog instance through authenticated package
+    // bytes, including the activation's distinct Over and Trigger slots.
+    let parity = |activation: &str, formula: &str, expected: &[AtomReading], guard: bool| {
+        use fsl_eval::simulation::model::PackageModelInput;
+        use fsl_foundation::source::provenance::OccurrenceKey;
+        use fsl_package::{BarePackage, BareSupply, EmitLimits, V2ReadLimits};
+
+        let package = world.clause_text("M::Dog", activation, formula);
+        let emission = fsl_package::emit_checked(&package, EmitLimits::fixture()).expect("emits");
+        let admitted = fsl_package::admit_checked_package(
+            emission.package().bytes(),
+            &world.packages,
+            V2ReadLimits::fixture(),
+        )
+        .expect("the written package admits");
+        let identities = emission
+            .identity_rows(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+            .expect("authentic identity rows");
+        let equality = emission
+            .equality_witness(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+            .expect("authentic equality rows");
+        let bare = BarePackage::new(&admitted)
+            .with_supply(
+                BareSupply {
+                    identities: &identities,
+                    equality: Some(&equality),
+                },
+                &mut V2ReadLimits::fixture().native_join_budget(),
+            )
+            .expect("the handoff admits");
+        let input =
+            PackageModelInput::of(&bare, &world.packages, ModelNormalizationLimits::default())
+                .expect("the model input rebuilds");
+        let source = world.subject(&package, bounded());
+        let mut bytes = world.subject(&package, bounded());
+        bytes.simulation.input = input.input();
+        assert!(bytes.simulation.source_package().is_none());
+        let source_system = ModelSystem::new(source.simulation.clone()).expect("source admits");
+        let bytes_system = ModelSystem::new(bytes.simulation.clone()).expect("package admits");
+        let node = &package.graph().temporal_clauses()[0];
+        let key = node.identity();
+        let clause = input
+            .temporal_clause(
+                &OccurrenceKey::new(key.clone(), node.claim().clone()),
+                CheckingLimits::default().nodes(),
+            )
+            .expect("the package clause rebuilds");
+        let source_letters = source_system.clause_letters(node).expect("source letters");
+        let bytes_letters = bytes_system
+            .package_clause_letters(&clause, &key)
+            .expect("package letters");
+        let read = |letters: &dyn ModelLetters,
+                    system: &ModelSystem<'_>,
+                    clause: &CheckedTemporalClause| {
+            let atom = clause
+                .formula()
+                .nodes()
+                .iter()
+                .position(|node| matches!(node, FormulaNode::Holds { .. }))
+                .expect("a holds atom");
+            let atom = clause
+                .formula()
+                .node_id(atom)
+                .expect("the atom belongs to the formula");
+            instances
+                .iter()
+                .map(|instance| {
+                    let mut meter = Meter::new(UNLIMITED);
+                    let start = &system.initial_states()[0];
+                    let reading = if guard {
+                        letters.activation(instance, start, &mut meter)
+                    } else {
+                        letters.atom(atom, instance, start, &mut meter)
+                    }
+                    .expect("the production letters evaluate");
+                    assert!(meter.consumed(filament_exact::LimitKind::WorkUnits) > 0);
+                    let charges = filament_exact::LimitKind::ALL.map(|kind| meter.consumed(kind));
+                    (reading, charges)
+                })
+                .collect::<Vec<_>>()
+        };
+        let from_source = read(&source_letters, &source_system, node.clause());
+        let from_bytes = read(&bytes_letters, &bytes_system, &clause);
+        assert_eq!(
+            from_bytes, from_source,
+            "readings and charges: {activation} {formula}"
+        );
+        assert_eq!(
+            from_bytes
+                .iter()
+                .map(|(reading, _)| reading.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let run = |subject, clause, letters| {
+            check_model(
+                ModelCheckRequest {
+                    temporal_clock_selections: &[],
+                    subject,
+                    item: ModelCheckItem::Clause { clause, letters },
+                    max_depth: None,
+                    limits: ModelCheckLimits::default(),
+                    reductions: Default::default(),
+                },
+                &Cancel::new(),
+            )
+            .expect("the model check runs")
+        };
+        let from_source = run(source, node.clause(), &source_letters);
+        let from_bytes = run(bytes, &clause, &bytes_letters);
+        assert_eq!(
+            from_bytes, from_source,
+            "outcome, instance, position and cause: {activation} {formula}"
+        );
+        from_bytes
+    };
+    let undefined = parity(
+        "on origin",
+        "always holds(x.age >= 0)",
+        &[true_.clone(), t.clone(), true_.clone()],
+        false,
+    );
+    let ModelCheckOutcome::Violated { counterexample, .. } = undefined else {
+        panic!("the absent field read must violate");
+    };
+    assert_eq!(counterexample.over_binding, Some(instance("animals", "t")));
+    let CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind else {
+        panic!("the field read is undefined");
+    };
+    assert_eq!(evaluation.site.position, 0);
+    assert_eq!(AtomReading::Undefined(evaluation.cause.clone()), absent_key);
+    assert!(matches!(
+        parity(
+            "on origin",
+            "always holds(true)",
+            &[true_.clone(), true_.clone(), true_.clone()],
+            false
+        ),
+        ModelCheckOutcome::Holds { .. }
+    ));
+    assert!(matches!(
+        parity(
+            "on origin",
+            &format!("always holds(({guard}) implies x.age >= 0)"),
+            &[true_.clone(), true_.clone(), true_.clone()],
+            false
+        ),
+        ModelCheckOutcome::Holds { .. }
+    ));
+    let activation =
+        "on each (y: M::Dog) when (present(lookup<M::Dog>(M::animals, y) absent empty))";
+    assert!(matches!(
+        parity(
+            activation,
+            "always holds(x.age >= 0)",
+            &[true_.clone(), false_.clone(), false_.clone()],
+            true
+        ),
+        ModelCheckOutcome::Holds { .. }
+    ));
+    let undefined_guard = parity(
+        "on each (y: M::Dog) when (y.age >= 0)",
+        "always holds(true)",
+        &[true_.clone(), t, true_],
+        true,
+    );
+    assert!(matches!(
+        undefined_guard,
         ModelCheckOutcome::Violated { .. }
     ));
 }
