@@ -1036,3 +1036,7 @@ impl quire_canonical::Reservation for ProbabilityKeyAdmission<'_> {
     }
 }
 ```
+
+## Subsequent exact-head runtime evidence
+
+Parent reports exact bd54ba0f8b40d960acb39086268fffd4269f3a13 first30-profile command COMPILE101/ZERO tests; commands2–16 held. Earlier CR023 compiler errors are gone and CR023 remains fixed. The newly observed blocker is three E0609 in existing liveness test code: liveness.rs1065 reads anchors[0].kind on Option<&SelectedAnchor>;1067 reads anchor.kind/name on &Option, following anchor().clone() captures at1048/1062. Raw /private/tmp/qsl-3285-bd54-1.log. Overall execution remains compile-blocked; no45-test acceptance or merge clearance. Parent has authorized the coder to require the actual anchor before cloning, preserving every assertion, with no production change. This addendum records supplied runtime evidence only; no new source inspection/full review was performed. Await the frozen correction and targeted test diff before verification. All previous source clearances, including CR021/022/023, remain preserved.
