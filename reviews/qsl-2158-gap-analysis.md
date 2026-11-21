@@ -643,3 +643,21 @@ Earlier scoped static matrix/diagnostic limits remain; no recomputation was need
 ## Subsequent exact-head runtime evidence
 
 Parent reports exact bd54ba0f8b40d960acb39086268fffd4269f3a13 first30-profile command COMPILE101/ZERO tests; commands2–16 held. Earlier CR023 compiler errors are gone and CR023 remains fixed. The newly observed blocker is three E0609 in existing liveness test code: liveness.rs1065 reads anchors[0].kind on Option<&SelectedAnchor>;1067 reads anchor.kind/name on &Option, following anchor().clone() captures at1048/1062. Raw /private/tmp/qsl-3285-bd54-1.log. Overall execution remains compile-blocked; no45-test acceptance or merge clearance. Parent has authorized the coder to require the actual anchor before cloning, preserving every assertion, with no production change. This addendum records supplied runtime evidence only; no new source inspection/full review was performed. Await the frozen correction and targeted test diff before verification. All previous source clearances, including CR021/022/023, remain preserved.
+
+## Targeted liveness compiler verification round 5
+
+Frozen source `df2460d71671b173a71a9b0fc7e38ace62030c43`; same independent Codex reviewer.
+
+**Latest targeted source verdict: PASS. Overall CONDITIONAL pending compile-only and focused runtime.** No remaining source finding or new defect identified within this targeted test correction.
+
+Targeted inspection only of the test compiler correction in commit5762aa5e5859e2550919316a5a760f46bb718178 (df246 is artifact custody). The actual source uses required_anchor().expect(...).clone() at the two existing initial/handler captures. required_anchor returns the real admitted anchor or a typed refusal; expect makes missing provenance fail the test explicitly. This captures SelectedAnchor values rather than Option<&SelectedAnchor>, resolving the reported E0609 member accesses without fabricating a default anchor.
+
+All existing assertions are preserved: one initial and one successor, values0/1/2/3, initialization kind, handler kinds/names, shared handler identity, terminal stutter, repeated state/value/key and distinct stutter-versus-inc identities. No production change, weakened test, changed fixture, removed trace or broadened review. No new defect found in the authorized correction. The late bd54 liveness compiler blocker is corrected by source inspection; this is not evidence that df246 compiles or the test runs.
+
+CR023 and all earlier source clearances remain fixed; rejected CR002 and architecture-deferred generic GA002 remain unchanged. CR021/022 preserve the accepted prepaid atomic validation boundary. All prior finding/history text remains verbatim. No new full code/gap/BASE/matrix/global audit or finding id. Source clean/frozen; read-only diff --check passes.
+
+Exact df2460d71671b173a71a9b0fc7e38ace62030c43 compile-only all seven touched packages with --tests has been requested under new architecture ruling before focused46tests/17commands; both compilation and runtime results pending. No acceptance or merge clearance claimed. Prior bd54 first30 command COMPILE101/ZERO tests, commands2–16 held, due this existing liveness test; CR023 compiler errors were gone. Raw /private/tmp/qsl-3285-bd54-1.log. No local cargo/tests or other gates run.
+
+Plan completion: not assessed
+
+No new gap analysis or matrix run; earlier scoped qualifications remain.
