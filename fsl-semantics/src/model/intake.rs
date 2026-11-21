@@ -4136,7 +4136,6 @@ pub(super) fn read_record_value_type(
     }
     let operations_at = format!("{at}.operations");
     let operations = ctx.array_field("operations")?;
-    refuse_repeated_operation_name(package, operations, &operations_at)?;
     for (position, operation) in operations.iter().enumerate() {
         records.push(DomainPackageRecord::OperationMember(read_operation_member(
             package,
