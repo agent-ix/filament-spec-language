@@ -529,7 +529,7 @@ pub(crate) fn compound_unit(
         let mut unit = None;
         let mut exponent = None;
         for member in members {
-            let CheckedTerm::Binding { name, value } = member else {
+            let CheckedTerm::Binding { name, value, .. } = member else {
                 return None;
             };
             match name.kind() {

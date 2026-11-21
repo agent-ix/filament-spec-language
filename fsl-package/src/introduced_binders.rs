@@ -82,7 +82,7 @@ pub(crate) fn is_ieee_operand(name: &str) -> bool {
 #[ix_trace_rs::string_edge]
 fn opening<'t>(identity: Option<&str>, arguments: &'t [CheckedTerm]) -> Opening<'t> {
     match (identity, arguments) {
-        (Some("filament.op.control.let"), [CheckedTerm::Binding { name, value }, body]) => {
+        (Some("filament.op.control.let"), [CheckedTerm::Binding { name, value, .. }, body]) => {
             Opening::Let {
                 name: name.as_ref(),
                 value,
@@ -97,13 +97,13 @@ fn opening<'t>(identity: Option<&str>, arguments: &'t [CheckedTerm]) -> Opening<
                 | "filament.op.collection.exists"
                 | "filament.op.collection.count",
             ),
-            [source, CheckedTerm::Binding { name, value }],
+            [source, CheckedTerm::Binding { name, value, .. }],
         ) => Opening::Query {
             source,
             name: name.as_ref(),
             body: value,
         },
-        (Some(identity), [source, CheckedTerm::Binding { name, value }])
+        (Some(identity), [source, CheckedTerm::Binding { name, value, .. }])
             if is_sum_identity(identity) =>
         {
             Opening::Query {
@@ -112,13 +112,14 @@ fn opening<'t>(identity: Option<&str>, arguments: &'t [CheckedTerm]) -> Opening<
                 body: value,
             }
         }
-        (Some("filament.op.collection.seq"), [low, high, CheckedTerm::Binding { name, value }]) => {
-            Opening::Seq {
-                bounds: [low, high],
-                name: name.as_ref(),
-                body: value,
-            }
-        }
+        (
+            Some("filament.op.collection.seq"),
+            [low, high, CheckedTerm::Binding { name, value, .. }],
+        ) => Opening::Seq {
+            bounds: [low, high],
+            name: name.as_ref(),
+            body: value,
+        },
         (Some("filament.op.control.case"), [_, ..]) => Opening::Case(arguments),
         _ => Opening::None,
     }
