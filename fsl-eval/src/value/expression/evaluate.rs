@@ -3359,7 +3359,29 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     .map_err(|_| invariant("quantity-operation-rejected"))?;
                     let expected = match node.value_type() {
                         ValueType::Quantity(unit) => unit,
-                        _ => return Err(invariant("quantity-result-type-expected")),
+                        ValueType::Boolean
+                        | ValueType::Integer
+                        | ValueType::Int(_)
+                        | ValueType::Rational(_)
+                        | ValueType::Decimal(_)
+                        | ValueType::Float(_)
+                        | ValueType::CarriedQuantity(_)
+                        | ValueType::Text(_)
+                        | ValueType::String
+                        | ValueType::Bytes
+                        | ValueType::JsonObject
+                        | ValueType::Uuid
+                        | ValueType::Timestamp
+                        | ValueType::Enum(_)
+                        | ValueType::Option(_)
+                        | ValueType::Composite(_)
+                        | ValueType::Collection(_)
+                        | ValueType::Map(_)
+                        | ValueType::BoundedQuantity(_)
+                        | ValueType::Reference(_)
+                        | ValueType::Population(_) => {
+                            return Err(invariant("quantity-result-type-expected"));
+                        }
                     };
                     let nominal = nominal
                         .id()
