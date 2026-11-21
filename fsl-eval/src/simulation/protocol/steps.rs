@@ -852,9 +852,6 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         observed: &ModelSimState,
         findings: &mut Vec<ModelFinding>,
     ) -> Result<bool, ExpansionStop> {
-        let Some(constraint) = constraint else {
-            return Ok(true);
-        };
         let Reader {
             instance,
             path,
@@ -864,7 +861,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         if let Some(entry) = frame.get_mut(slot) {
             *entry = Some(record.clone());
         }
-        Ok(match self.evaluate(constraint, frame, observed)? {
+        let verdict = if let Some(constraint) = constraint {
+            self.evaluate(constraint, frame, observed)?
+        } else {
+            self.evaluate_package_control(node, frame, observed)?
+                .unwrap_or(Verdict::True)
+        };
+        Ok(match verdict {
             Verdict::True => true,
             Verdict::False => false,
             Verdict::Undecided(outcome) => {
