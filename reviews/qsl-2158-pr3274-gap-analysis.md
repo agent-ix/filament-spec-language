@@ -68,3 +68,19 @@ Actual remote evidence at the original head, replacing the "pending" wording in 
 | FND-005 | fixed | The AC-26 tag was removed from `undefined_replay_checks_first_read_location_control_and_package_ownership`, which is now tagged AC-5 and AC-24. |
 | FND-006 | fixed | `undefined_evidence` asserts the wire `evidence.undefined.where.product_state.key` equals base64url of `product_state` for every produced witness. |
 | FND-007 | fixed | A tampered `Every`/`Bounded` scheduler entry through `exact_probabilistic_item_witness_tampered` settles `Inconclusive(ReplayRefused(InvalidRuntimeInput))` with no counterexample. `tamper_witness` is now threaded into `undefined::run`. |
+
+Round 2: fix head `eda0a92d3dd5ee71f2af1332ea20e5285895eb2f`. Remote evidence so far:
+
+- **`92c54c46a8`:** GREEN, 22 passed.
+- **`eda0a92d`:** 30-test rerun pending.
+
+New criterion-level evidence for FND-001 comes from two tests, both requirement-level tags (FR-201, FR-202), not AC tags:
+
+- `external_always_probability_certificate_remains_unsupported`
+- `external_always_path_set_remains_unsupported`
+
+The existing fsl-eval test `qualified_bounded_monitor.rs:147-154` (`new` refuses always) is satisfied again.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |

@@ -95,3 +95,18 @@ Evidence available this round:
 | FND-007 | fixed | The request is built lazily inside the `Undefined` arm, with `proof_bounds` moved by `mem::take`; the probabilistic builder does not read them. There is a comment bounding the second exploration. |
 | FND-008 | fixed | The doc comment and all `qualified-eventually-*` invariants were renamed to `qualified-bounded-*`. No test matches the old names. |
 | FND-009 | fixed | `wrong_item` renamed to `own_item`. |
+
+Round 2: fix head `eda0a92d3dd5ee71f2af1332ea20e5285895eb2f`, commit eda0a92d3d over `92c54c46a8`. Static review only; no cargo was run by the reviewer. The `reviews/` copies of the round-1 artifacts match the scratch versions (checked with `cmp`). `rustfmt --check` on the changed source files and `git diff --check` over the round both exit 0.
+
+Evidence available this round:
+
+- **Original head `96d6bd53e6`:** 19 passed, 1 failed. The failure was the fixture's `IncompleteWorkload` panic, which happened before replay.
+- **Fix-1 head `92c54c46a8`:** remote run GREEN, 22 passed (1/4/12/4/1, all exit 0), recorded in QSL-2158 comment 4a053bbc.
+- **Fix-2 head `eda0a92d`:** remote run of 30 tests (the 22, plus `external_always_` (2) and fsl-eval `qualified_bounded_monitor::` (6)) was pending when this round was written.
+
+At heads `96d6bd53e6` and `92c54c46a8`, the existing fsl-eval test `fsl-eval/tests/it/qualified_bounded_monitor.rs:147-154` (`new` must refuse `always[0,2]`) contradicted the widened `new` and would have failed. No run included fsl-eval. At `eda0a92d` it agrees with the code again, and it is in the pending run.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-010 | fixed | - |
