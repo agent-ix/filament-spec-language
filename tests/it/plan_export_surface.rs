@@ -1941,6 +1941,48 @@ fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
     )
 }
 
+/// The held-id precondition of a refuted transfer premise: the exact unit
+/// `transfer_run` writes (`TRANSFER_DECLARATIONS`, `CasRefinesCounter` and the
+/// three counter models) is emitted at the analyze run's emit limit and read
+/// back through the strict reader, as `analyze` does before it holds a result's
+/// node ids. A refusal fails the test with its typed cause, not `NotEmitted`.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-6")]
+fn the_transfer_unit_emits_and_strict_reads_its_package() {
+    use crate::support::refinement_cas::{self, Variant};
+    let packages = refinement_cas::packages(Variant::CAS);
+    let declarations = format!(
+        "{TRANSFER_DECLARATIONS}{}",
+        refinement_cas::cas_refines_counter()
+    );
+    let unit = refinement_cas::unit_text(&packages, &declarations, Variant::CAS);
+    let checked = crate::support::front_end::checked(
+        fsl_foundation::SourceIdentity::new("agent-ix", "unit.native"),
+        "unit.native",
+        unit.as_bytes(),
+        &packages,
+        &fsl_replay::spine::DependencyInput::default(),
+    )
+    .unwrap_or_else(|refusal| panic!("the transfer unit checks: {refusal}"));
+    let package = checked.package();
+    let emit = fsl_package::EmitLimits::new(fsl_replay::spine::EMIT_OUTPUT_BYTES_DEFAULT);
+    if let Err(refusal) = fsl_package::emit_checked(package, emit) {
+        panic!("the transfer unit's package is not emitted: {refusal:?}");
+    }
+    let identity = fsl_semantics::library::LibraryName::new(package.graph().package_name())
+        .expect("the package is named");
+    let read = fsl_package::read_evaluation_package(
+        package,
+        identity,
+        &packages,
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
+        emit,
+    );
+    if let Err(refusal) = &read {
+        panic!("the strict reader refuses the transfer unit's package: {refusal:?}");
+    }
+}
+
 /// The transfer result of `clause` in a `refinement_transfer` outcome.
 fn transfer<'a>(value: &'a Value, clause: &str) -> &'a Value {
     value["refinement_transfer"]["transfers"]
