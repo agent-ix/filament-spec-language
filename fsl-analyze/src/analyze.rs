@@ -817,6 +817,23 @@ impl DocumentGraphs {
     }
 }
 
+impl DocumentGraphs {
+    /// The graph of `package`, emitted and read back through the strict
+    /// reader against `packages`: the graph a result document of a run over
+    /// `package` indexes, so a reader of a request can resolve a document-held
+    /// id the run wrote (FSL FR-621 "Node ids in an item").
+    pub fn of_package(
+        package: &CheckedPackage,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        emit: fsl_package::EmitLimits,
+    ) -> Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable> {
+        match crate::provider::read_package(package, packages, emit) {
+            Ok(read) => Self::of_bytes(read.emission().package().bytes()),
+            Err(_) => Err(GraphUnavailable::NotEmitted),
+        }
+    }
+}
+
 impl std::fmt::Debug for DocumentGraphs {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
