@@ -4032,35 +4032,24 @@ fn a_finite_trace_and_a_lasso_report_no_authenticated_selection() {
     assert!(progressed.authenticated_temporal_selection.is_some());
 }
 
-/// FR-044-AC-7, FR-501-AC-10 (TC-1295): an `on each` guard that cannot be
-/// established is an incomplete activation naming that guard, not a false
-/// guard and not a violation.
-#[trace("TC-1295", "FR-501-AC-10")]
+/// FR-044-AC-7: incomplete scope evidence cannot establish inactivity even
+/// when every observed guard is false.
+#[trace("TC-1295", "FR-044-AC-7")]
 #[test]
-fn timestamped_undefined_guard_reports_a_named_incomplete_activation() {
-    let mut request = timestamped_with(Unit::TimestampedEach, &[0, 10], &[2, 2], 12, Some(12));
+fn timestamped_incomplete_guard_scope_remains_unknown() {
+    let mut request = timestamped_with(Unit::TimestampedEach, &[0, 10], &[0, 0], 12, None);
     let bytes = program_source_bytes(&mut request);
     let source = String::from_utf8(bytes.clone()).unwrap();
     *bytes = source
         .replace(
             "on each (q: Counters::Counter) { eventually[0,2] holds(c.value > 0) }",
-            "on each (q: Counters::Counter) when (3 mod (2 - q.value) >= 0) { eventually[0,2] holds(c.value > 0) }",
+            "on each (q: Counters::Counter) when (q.value = 1) { eventually[0,2] holds(c.value > 0) }",
         )
         .into_bytes();
     let report = report(request);
-    assert_eq!(report.category_label(), "incomplete");
-    assert_eq!(report.disposition.exit_code(), 22);
+    assert_eq!(outcome(&report), &TemporalVerdict::Pending);
+    assert_eq!(report.axes().activation, crate::ActivationAxis::Unknown);
     assert_eq!(report.disposition.truth(), None);
-    let ClauseDisposition::Temporal(TemporalVerdict::ActivationIncomplete { at, guard }) =
-        &report.disposition
-    else {
-        panic!(
-            "expected a named incomplete activation, got {:?}",
-            report.disposition
-        );
-    };
-    assert_eq!(*at, 0);
-    assert!(guard.path().is_empty());
 }
 
 /// The finite-window request of `TimestampedEach` with the guard `guard`.
@@ -4122,25 +4111,50 @@ fn a_finite_window_open_scope_with_every_guard_false_is_not_decided() {
     assert_eq!(window_report(&open).basis, SettlementBasis::Unsettled);
 }
 
-/// The finite-window route reports a guard that divides by zero as an
-/// incomplete activation. The standard requires a typed `undefined` there
-/// (the batch run reports it so), so this pins current behavior only: it
-/// is neither inactive nor decided and carries no truth.
-/// QSL follow-up: window route reports activation-incomplete for an undefined guard
+/// A defined undefined guard retains its position, guard locus and cause
+/// in both closed and open finite-window scopes.
+#[trace("TC-1278", "FR-267-AC-14", "FR-331-AC-9", "FR-044-AC-7")]
 #[test]
-fn a_finite_window_unknown_activation_is_neither_inactive_nor_decided() {
+fn a_finite_window_undefined_on_each_guard_retains_its_cause_and_locus() {
     for closed in [true, false] {
-        let window = timestamped_guarded_by("3 mod (2 - q.value) >= 0", &[2, 2], closed);
-        assert!(
-            matches!(
-                outcome(&window),
-                TemporalVerdict::ActivationIncomplete { .. }
-            ),
-            "closed={closed}: {:?}",
-            window.disposition
+        let request = timestamped_named(
+            Unit::GuardUndefined,
+            "GuardUndefined",
+            &[0, 10],
+            &[2, 2],
+            12,
+            Some(12),
         );
-        assert_eq!(window.axes().activation, crate::ActivationAxis::Unknown);
+        let window = report(timestamped_changed(request, |trace| {
+            trace.progress.scope = closure(closed);
+        }));
+        assert_eq!(
+            outcome(&window),
+            &TemporalVerdict::Undefined {
+                at: 0,
+                cause: crate::spine::TemporalUndefinedCause::Kernel(
+                    filament_exact::Undefined::DivisionByZero,
+                ),
+            },
+            "closed={closed}",
+        );
+        assert_eq!(window.disposition.exit_code(), 10);
         assert_eq!(window.disposition.truth(), None);
+        let counterexample = window
+            .counterexample
+            .as_ref()
+            .expect("undefined guard evidence");
+        assert_eq!(counterexample.trace_position.index(), 0);
+        assert_eq!(counterexample.prefix.len(), 1);
+        assert_eq!(
+            counterexample.kind,
+            crate::ObservedTemporalKind::UndefinedEvaluation {
+                locus: fsl_eval::temporal::ObservedLocus::Activation,
+                cause: fsl_eval::temporal::UndefinedCause::Kernel(
+                    filament_exact::Undefined::DivisionByZero,
+                ),
+            },
+        );
     }
 }
 
