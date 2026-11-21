@@ -673,6 +673,31 @@ adds no code-claim route (FR-180) or temporal-hyper implementation.
 The existing HP-1 engine and FR-163 independent checker retain
 their traversal, tuple order and certificate rules.
 
+**Declaration-order member contract.** The `claim`/`step_relation` body
+SHALL admit an optional final binding `subject_declaration_order`, a Group
+in source model declaration order whose entries use the existing
+`subjects` production: `Binding(alias, Reference(model_root))`. This is an
+ordered permutation of the existing subjects by `(alias, model_root)`
+identity: every subject alias occurs exactly once, no unknown, missing or
+duplicate alias is admitted, and every reference equals that alias's
+existing `subjects` reference. Two distinct aliases MAY reference the same
+`model_root`. The strict reader SHALL validate this production, its joins
+and exact coverage and preserve the sequence without sorting; it SHALL
+NOT infer declaration order from first execution use. FSL SHALL emit the
+witness from `CheckedModelRelation::aliases()` while retaining the existing
+first-use `subjects` and execution order. Absence SHALL remain globally
+admissible for legacy four-member packages: only selection of an HP-1
+package form SHALL return a typed missing-order-evidence refusal, mapped
+to the existing unsupported-projection outcome before exploration, without
+source fallback; sibling item families SHALL remain available. Present
+malformed evidence SHALL be a strict-reader whole-package refusal with
+the reader's existing code, cause and pointer. The FSL package form SHALL
+consume the admitted witness as its alias and certificate order. Source
+certificate order SHALL remain unchanged. Implementing this member
+requires the corresponding Contract IR producer/reader contract and its
+coherent dependency pin; its order SHALL NOT be reconstructed from facts
+the legacy package does not carry.
+
 - `AnalysisView::model_relation_form(occurrence)` SHALL return a typed
   `PackageModelRelationForm` from the occurrence's admitted
   `claim`/`step_relation` node. Both view implementations SHALL derive the
@@ -726,7 +751,8 @@ their traversal, tuple order and certificate rules.
   inputs and budgets, including a tuple stop's complete first unpaid tuple.
   A source file's absence or contents SHALL have no effect on package-route
   analysis, replay or certificate checking. No fact above SHALL cause an
-  `unsupported_construct`/`not-yet-implemented` refusal.
+  `unsupported_construct`/`not-yet-implemented` refusal, except for legacy
+  packages missing declaration-order evidence as specified above.
 - Strict-reader refusals SHALL retain FR-850's whole-request admission
   behavior. If an admitted relation cannot be projected because its body
   slots lack a unique contiguous binding to the execution members, or a
@@ -823,6 +849,7 @@ step.
 | FR-940-AC-24 | Source and package requests for FR-179-AC-1's secure `Det` both settle `proved`, certification `certified`, with equal terminal records and HP-1 certificates accepted by FR-163's independent checker. FR-179-AC-2's nondeterministic variant gives equal violated tuple paths and reproduced replay; FR-179-AC-4's undefined body gives equal undefined cause and replay. Evaluating their tuples on both routes gives equal charge logs. The requests with `max_relation_tuples` 63 stop at count 64 with the same first unpaid tuple; those with 64 complete; the depth-1 variant has equal bounded outcome. No package item is `unsupported` or `not-yet-implemented`. | Test |
 | FR-940-AC-25 | AC-24's package requests still produce the same proved, refuted, undefined and budget-stopped records after the source unit is overwritten with invalid bytes and the handoff's `sources/` is deleted. With no source present, FR-163's checker accepts the secure certificate, rejects variants that omit a reachable state, omit an applicable edge or alter its typed result, and under tuple allowance 63 stops at count 64 identifying the first unpaid tuple. Checking twice under 64 accepts twice, with fresh checker counters. | Test |
 | FR-940-AC-26 | Variants of AC-23's package with a duplicate or missing execution parameter level, an argument parameter with the wrong type, or an invalid step-relation body reference refuse the whole request before an engine runs, retaining the strict reader's code, cause and pointer. A test-only projection with a body model read assigned to no declared execution returns `MalformedNode` naming the relation node; its item has no verdict and a sibling valid item is unaffected. Neither case loads source or becomes a proved relation. | Test |
+| FR-940-AC-27 | AC-23's two-alias package carries `subject_declaration_order` entries `[A, B]` joining the same alias/root pairs as its first-use `subjects` entries `[B, A]`. The strict reader admits that witness and preserves `[A, B]`. Repeated aliases, unknown aliases, omitted aliases and an alias joined to the other subject's root each refuse with the reader's code, cause and member pointer. Distinct aliases sharing one root remain admitted. Removing only the optional member leaves the legacy package admitted globally, but its HP-1 model item settles through the existing unsupported-projection path before exploration, while a sibling state item runs normally and no source is read. | Test |
 
 ## Dependencies
 
