@@ -25,6 +25,8 @@ use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
 #[derive(Default)]
 struct Paths {
     addresses: HashMap<usize, usize>,
+    // Keep memoized link addresses alive, including independently built paths.
+    retained: Vec<Location>,
     children: HashMap<(usize, usize), usize>,
     // Entry zero is the empty path.
     links: Vec<(usize, usize, usize)>,
@@ -34,6 +36,12 @@ impl Paths {
     fn intern(&mut self, location: &Location) -> usize {
         if self.links.is_empty() {
             self.links.push((0, 0, 0));
+        }
+        if let Some(address) = location.chain_address() {
+            if let Some(known) = self.addresses.get(&address) {
+                return *known;
+            }
+            self.retained.push(location.clone());
         }
         let mut pending = Vec::new();
         let mut parent = 0;
@@ -381,9 +389,9 @@ mod tests {
     #[test]
     fn compact_tuple_body_walks_two_distinct_record_parents() {
         let (_, checked) = super::super::tests::package_from_text(
-            "record Cell { value: Integer; tag: Integer; }\n\
+            "record Cell { n: Integer; tag: Integer; }\n\
              tuple Pair(Cell, Cell);\n\
-             function pair using v(x: Integer): Pair pure { Pair(Cell { value: x - 1, tag: 0 }, Cell { value: x - 1, tag: 1 }) }\n",
+             function pair using v(x: Integer): Pair pure { Pair(Cell { n: x - 1, tag: 0 }, Cell { n: x - 1, tag: 1 }) }\n",
         );
         let emission =
             super::super::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
