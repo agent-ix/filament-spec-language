@@ -6,8 +6,8 @@
 
 use super::*;
 
-/// The emitted wire of `declarations`, with nothing omitted.
-fn emitted_wire(declarations: &str) -> Value {
+/// Emit and read `declarations`, with nothing omitted.
+fn emitted_package(declarations: &str) -> Emission {
     let (_, package) = package_from_text(declarations);
     let emission = emit_checked(&package).expect("the package emits");
     assert_eq!(emission.omitted, [], "nothing is omitted");
@@ -15,7 +15,12 @@ fn emitted_wire(declarations: &str) -> Value {
         matches!(read_back(&emission), Read::Verified { .. }),
         "IR admits the emitted binder link and its dependencies"
     );
-    wire(&emission)
+    emission
+}
+
+/// The emitted wire of `declarations`, with nothing omitted.
+fn emitted_wire(declarations: &str) -> Value {
+    wire(&emitted_package(declarations))
 }
 
 /// The one `filament.op.control.let` application of `wire`.
@@ -107,21 +112,58 @@ fn an_unread_binder_is_a_dependency_and_its_annotation_is_part_of_the_identity()
              {{ let y: {annotation} = x in true }}\n"
         )
     };
-    let wire = emitted_wire(&source("Int[0, 1000]"));
-    let wider = emitted_wire(&source("Int[0, 2000]"));
-    let application = the_let(&wire);
-    let binders = dependent_parameters(&wire, application, "y");
-    let [binder] = binders.as_slice() else {
-        panic!("the unread binder is a dependency: {binders:?}");
-    };
-    assert_eq!(
-        application["body"]["arguments"][0]["binder"], binder["node_id"],
-        "the unread binder remains explicitly linked"
+    let emission = emitted_package(&source("Int[0, 1000]"));
+    let wider_emission = emitted_package(&source("Int[0, 2000]"));
+    let wider = wire(&wider_emission);
+    let wire = wire(&emission);
+    let mut identities = Vec::new();
+    for (document, maximum) in [(&wire, "1000"), (&wider, "2000")] {
+        let application = the_let(document);
+        let binders = dependent_parameters(document, application, "y");
+        let [binder] = binders.as_slice() else {
+            panic!("the unread binder is a dependency: {binders:?}");
+        };
+        assert_eq!(
+            application["body"]["arguments"][0]["binder"], binder["node_id"],
+            "the unread binder remains explicitly linked"
+        );
+        assert_eq!(parameter_member(binder, "level"), &json!("1"));
+        let annotation = node_with(document, &binder["semantic_type"]);
+        assert_eq!(annotation["node_tag"], "bounded_domain");
+        assert_eq!(annotation["semantic_form"], "integer_range");
+        let base = node_with(document, &annotation["semantic_type"]);
+        assert_eq!(base["node_tag"], "scalar_type");
+        assert_eq!(base["semantic_form"], "integer");
+        assert_eq!(parameter_member(annotation, "min"), &json!("0"));
+        assert_eq!(parameter_member(annotation, "max"), &json!(maximum));
+        assert_eq!(annotation["body"]["members"].as_array().unwrap().len(), 2);
+
+        // Operand indices are local to each emitted graph. Resolve them before
+        // comparing structural identities across independently emitted packages.
+        let graph = WireGraph::of_node_values(nodes(document)).expect("the emitted graph");
+        let key = |node: &Value| {
+            graph
+                .key_of_value(&node["node_id"])
+                .expect("a structural key")
+        };
+        identities.push((key(application), key(binder), key(annotation)));
+    }
+    assert_ne!(
+        identities[0].2, identities[1].2,
+        "the annotation type changes"
     );
     assert_ne!(
-        application["node_id"],
-        the_let(&wider)["node_id"],
-        "the binder's annotation is part of the let's identity"
+        identities[0].1, identities[1].1,
+        "the linked binder identity changes"
+    );
+    assert_ne!(
+        identities[0].0, identities[1].0,
+        "the binder's annotation is part of the let's structural identity"
+    );
+    assert_ne!(
+        emission.package.bytes(),
+        wider_emission.package.bytes(),
+        "the canonical emitted packages retain the annotation distinction"
     );
 }
 
