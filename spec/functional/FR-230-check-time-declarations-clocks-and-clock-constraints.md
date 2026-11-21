@@ -3,6 +3,14 @@ id: FR-230
 title: "Check a state model's time declaration, clocks, clock constraints, time invariants and urgency"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-995
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-569
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-850
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-940
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
   - target: ix://agent-ix/filament-spec-language/ADR-026
@@ -469,8 +477,9 @@ what each such position means.
   **Presence is derived.** `present(p)` is the derived Boolean predicate of
   FSpec FR-415 "Presence is derived" and FR-322 "Timed-model nodes" (Presence),
   FR-322-AC-155 to FR-322-AC-157, not a field. The checker SHALL resolve it
-  through the place identity of "Place identity" (the owner object, the
-  `clock_place` node and the slots) and SHALL NOT declare an `Option<Boolean>`
+  through the place identity of "Place identity" (the authenticated outer
+  universe, owner local key, declared scope, normalized typed path and tagged
+  slot indices) and SHALL NOT declare an `Option<Boolean>`
   or any other member for it, so no model's declaration identity changes for
   holding an `Option<Clock>`. `p` MAY name a place of another object
   (`present(other.v)`, evaluated at `other`) and the element bound by a
@@ -947,15 +956,18 @@ what each such position means.
   slot, and never the clocks' values; they are data reads. A reference to a slot place names the
   slot, so it keeps naming that slot when the collection moves its element.
   **Place identity.** The place id of a `Reference<Clock>` SHALL be a
-  canonical, one-to-one encoding of the authenticated outer population/owner
-  universe, owner local key, declared type/model scope, canonical normalized
-  declared path and ordered tagged slot indices, so that it is distinct for every
+  canonical, one-to-one encoding of the authenticated original population
+  declaration, owner local key, declared type/model scope, canonical normalized
+  typed path and ordered tagged slot indices, so that it is distinct for every
   runtime place: `Call1.x` and `Call2.x` have distinct ids, as do slots 0 and 1
   of one collection, and one place always has one id. It is the UTF-8 text
-  beginning `place/v2/`, with one canonical encoding of those components for
-  both the source and bare checked routes. FSL SHALL retain authenticated
-  owner provenance in the declared type/model scope (SourceOwner authority and
-  identity, or selected Model identity and original declaration context), erase aliases, and
+  defined below, with one canonical encoding of those components for both
+  the source and bare checked routes. The existing outer K2 `UniverseId`
+  SHALL be retained and checked against the authenticated owner context; it
+  is not serialized as a raw node key inside this place id. In particular,
+  two populations of the same object type may share that outer universe;
+  their original population declarations still make their place ids distinct.
+  FSL SHALL retain authenticated owner provenance, erase aliases, and
   preserve the full ordered field, tuple, union-case and collection path tags
   and concrete slot positions. FSL SHALL use one shared authenticated
   declaration normalizer for both routes, including SourceOwner declaration
@@ -963,6 +975,103 @@ what each such position means.
   S3 allocation keys and S4 node ids are not persisted identity inputs.
   An inherited place retains its original declared template scope; the runtime
   object's subtype does not replace that scope.
+  A redefining member already admitted by the language retains the original
+  scope and path of that redefining declaration, not those of its hidden
+  ancestor member. This does not admit source field redeclaration (FR-569)
+  or bypass the unique timed-model binding check above (AC-38).
+  **Authentication and scope choice.** Authentication here means declaration
+  facts from the checked source graph with its retained `SourceOwner`
+  (FR-995), or from the admitted package's sealed read view and retained
+  original Model declaration context (FR-850, FR-940), not caller-asserted
+  names or opaque numeric handles. For a declaration with a retained
+  `SourceOwner`, use `S = ["source", authority, identity, originalTypeURI]`
+  on either route. Otherwise use
+  `S = ["model", selectedModelIdentity, originalTypeURI]`, where that
+  identity and URI belong to the admitted original declaring type. Alias
+  names, effective receiver subtypes and source-versus-bare route selection
+  never choose `S`. Population descriptor `P` uses the same choice and
+  array shapes, replacing `originalTypeURI` by the actual original
+  population declaration URI. No other scope form is admitted.
+
+  **Canonical text grammar.** The text is exactly
+  `place/v2/H(P)/H(K)/H(S)/H(T)/H(J)`, with the five components in that
+  order and `/` only as the separator. `K` is the owner's nonempty local key
+  string. `H(X)` is lowercase hexadecimal of the UTF-8 bytes of the RFC 8785
+  canonical JSON encoding of `X`, using the existing canonical JSON writer
+  used for FR-120 identity texts. Arrays retain their order; strings retain
+  their exact Unicode scalars with RFC 8785 string escaping and no Unicode
+  normalization. Every free-text value is a JSON string inside its hex
+  component; `/`, `.`, quotes, backslashes and non-ASCII text cannot become
+  separators. All integers below are JSON **strings** in grammar
+  `0 | [1-9][0-9]*`, never JSON numbers, signed values, exponent notation or
+  zero-padded decimals. An unbounded upper cardinality is JSON `null`.
+
+  `T` is the array of all normalized typed path entries, in traversal order:
+
+  - `["field", Sdecl, originalMemberURI, C]`: a field of its original
+    declaring object or record, retaining that declaration's scope and
+    original member URI after FR-995 normalization.
+  - `["tuple", position, C]`: the zero-based tuple position; source `pN`
+    and selected `tuple/N` both normalize to decimal string `N`.
+  - `["case", caseName, C]`: the declared union-case name, retaining the
+    case tag even if its payload has the same type as another case.
+  - `["collection", kind, minimum, maximum, C]`: an element of
+    `sequence`, `set`, `bag` or `ordered-set`, with the declared shape.
+    `Map` has no encoding in this grammar.
+  - `["option"]`: each semantic optional-presence layer, including a
+    field's optional presence, after the selecting entry and before traversal
+    of its payload. A source `Option` and its corresponding admitted field
+    presence normalize to the same layer, never two layers for one presence.
+
+  In a selecting entry, `C` is the alias-erased selected member or payload
+  carrier: `["clock"]` at the native Clock leaf;
+  `["declared", S]` for a named non-alias carrier; `["tuple"]`,
+  `["union"]` or `["record"]` for an anonymous carrier; recursively
+  `["option", C]` or `["collection", kind, minimum, maximum, C]`
+  for those wrappers. A named carrier retains its own original declaration
+  scope, while anonymous tuple positions and union cases are identified by
+  the full preceding typed path, never a generated type handle. This records
+  the types actually on the clock path, not unrelated sibling data fields.
+  The final selected leaf SHALL validate as Clock after alias resolution.
+  `ix://filament/native/Clock` is that fixed validated leaf's meaning and
+  the reference's fixed target type, not an additional variable identity
+  component. S3/S4 type-node ids never substitute for `C` or `Sdecl`.
+
+  `J` is the array `[ ["slot", pathPosition, index], ... ]`, one entry
+  per `collection` entry of `T`, in that entry's order. `pathPosition` is
+  its zero-based position in the canonical array `T`, not an S3/S4 id;
+  `index` is the concrete nonnegative positional selector. Cardinality and
+  presence validation use the declared model and existing run bounds.
+  The empty array has encoding `5b5d`: it is the exact no-index marker and
+  also the syntactic empty-path marker. An empty `T` names no declared Clock
+  field and is never admitted as a place. No omitted entry, extra entry or
+  alternative ordering is canonical. A decoder SHALL re-encode the decoded
+  components and require exact byte equality, rejecting uppercase hex,
+  whitespace variants, extra separators and noncanonical integer strings.
+
+  For the delimiter-bearing population URI `ix://i/calls`, source owner
+  `(a, i)`, local owner key `c/d`, declared type `ix://i/C` and field
+  `ix://i/C/x`, the components are exactly:
+
+  ```text
+  P = ["source","a","i","ix://i/calls"]
+  K = "c/d"
+  S = ["source","a","i","ix://i/C"]
+  T = [["field",["source","a","i","ix://i/C"],"ix://i/C/x",["clock"]]]
+  J = []
+  ```
+
+  The exact text is
+  `place/v2/5b22736f75726365222c2261222c2269222c2269783a2f2f692f63616c6c73225d/22632f6422/5b22736f75726365222c2261222c2269222c2269783a2f2f692f43225d/5b5b226669656c64222c5b22736f75726365222c2261222c2269222c2269783a2f2f692f43225d2c2269783a2f2f692f432f78222c5b22636c6f636b225d5d5d/5b5d`.
+  Replacing any hex letter by uppercase, or replacing `J` by the hex of
+  `[["slot","01","0"]]`, is noncanonical. The latter is invalid even
+  before checking whether that path has a collection step.
+
+  The array grammar, JSON string encoding and hex encoding are each
+  injective, and component boundaries are fixed. Equal text therefore
+  entails equal `P`, `K`, `S`, `T` and `J`; distinct declaration origins
+  that nevertheless claim one equal canonical tuple are refused by FR-1040's
+  table collision rule instead of being merged.
   This prerelease replaces `place/v1`, without parallel compatibility.
   Two place ids are equal exactly when their texts are byte equal. The id is
   stable for the same authenticated declaration/model scope across both routes
@@ -970,6 +1079,16 @@ what each such position means.
   `ill_typed`/`operator-ineligible`). An id from a different authenticated
   declaration/model scope names no place of this scope; a different checked
   representation of the same authenticated scope does not change its ids.
+  Re-adding the same authenticated declaration with the same path and kind
+  restores its identity; this is not a history/version token. Changing
+  `Clock` to `Option<Clock>`, changing a collection kind or declared shape,
+  or otherwise changing the normalized typed path changes the identity,
+  and the old reference is not a reference to the new place.
+  Raw admission enforces these scope and membership checks. Typed Rust
+  `StateModel::observation` and `protocol_observation` retain their trusted
+  same-run contract: they consume states produced or admitted in that run,
+  not hostile handcrafted or cross-run references to authenticate. This
+  change does not turn those typed interfaces into raw-input boundaries.
   FSpec FR-415 holds this place identity in the state key. Each tagged slot
   index is the concrete position of the instance at its `Slot` path step and
   is never part of a template node. A place under
@@ -977,7 +1096,7 @@ what each such position means.
   decimal slot index cannot name a key, so the place SHALL have no place id.
   The checker SHALL refuse `ref` of such a place `ill_typed`/`type-mismatch` at
   the `ref`, and `deref(r)` SHALL denote none. A snapshot `Reference<Clock>`
-  whose identity names the `clock_place` of a place under a `Map` value, with
+  whose identity claims the declared scope and path of a place under a `Map` value, with
   any slot indices, SHALL be refused `invalid_runtime_input`/`invalid-value`. The
   clocks of such a place are reached by selection by key and through `forall`
   and `exists` over the map, never through a reference.
@@ -993,10 +1112,18 @@ what each such position means.
   the owner) and `identity` the lowercase hex of the id
   text's UTF-8 bytes (filament-exact's `ObjectReference` takes any nonempty
   authored identity). A snapshot-supplied `Reference<Clock>` whose identity
-  does not decode to a place id of this form, or names a place the universe
-  and the checked package do not contain, SHALL be refused
-  `invalid_runtime_input`/`invalid-value` (FR-120 key encoding). The state key
+  does not decode canonically or disagrees with its authenticated outer
+  universe/scope SHALL be refused `invalid_runtime_input`/`invalid-value`
+  (FR-120 key encoding). A canonical reference in the authenticated scope
+  whose declared path has been removed follows FR-106's
+  `dangling_reference`/`absent-target-in-complete-population` rule, not
+  resolution to another place at an old allocation position. The state key
   holds the place id as that value and no clock value.
+
+  > Implementation boundary (QSL-2178 STEP2): this `place/v2` grammar and
+  > AC-43/AC-45/AC-49 are target obligations, currently unmet. STEP1's
+  > `place/v1` implementation is not evidence for them; FR-106's unchanged
+  > raw-admission boundary remains in force until implementation and proof.
 - **Clock constraints on a type.** A package constraint whose `appliesTo` is the clock type
   (`ix://filament/native/Clock` itself or an alias of it) is a **clock constraint**. The keywords
   admitted are `max`, with `operands.value` an exact non-negative rational number of the model's
@@ -1138,13 +1265,13 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-40 | `self.v = 0 ms` records a make-present of `v` with reset 0; `self.v = absent` records a drop that leaves `v` with no zone constraint, so a time invariant `when present(self.v) { value(self.v) <= 3 ms }` places no bound at a state where `v` was dropped. | Test |
 | FR-230-AC-41 | `present(...)` of `Option<Timer>`, of a union case `Armed(Boolean)` and of a slot of `q` is read from the snapshot's data, `member` or the collection's size, and those places hold no bit; `v: Option<Clock>` and each `Option<Clock>` element of `q` hold a bit whose initial value takes both values, giving `2` initial states for `v` alone. | Test |
 | FR-230-AC-42 | In a model with `v: Option<Clock>`, `q: Sequence<Option<Clock>>[0, 2]`, `o: Option<Timer>` and a union case `Armed(Boolean)`, only `v` and the live `Option<Clock>` elements of `q` carry a presence bit, encoded by their `option` shell as `{"type":"option","value":null}` (absent) or `{"type":"option","value":{"type":"tuple","name":"Clock","components":[]}}` (present); `semantic` stays a map; a one-element `q` has one bit and a dropped slot none; the keys of `o`, `Armed`, the slots of `q` and a model with no `Option<Clock>` are unchanged; two states that differ only in one bit have different state keys. | Test |
-| FR-230-AC-43 | In FR-230-AC-24's model, `ref(self.x)` of `Call1` and of `Call2` have different place ids, `ref(self.q[0])` and `ref(self.q[1])` have different place ids, `ref(self.m[k])` over a `Map` value refuses `ill_typed`/`type-mismatch`, `ref(self.x) = ref(other.x)` is false for two calls and true for one call, and both ids use the canonical `place/v2/` encoding of "Place identity", retaining distinct tagged slot positions. | Test |
+| FR-230-AC-43 | In FR-230-AC-24's model, `ref(self.x)` of `Call1` and of `Call2` have different place ids, `ref(self.q[0])` and `ref(self.q[1])` have different place ids, `ref(self.m[k])` over a `Map` value refuses `ill_typed`/`type-mismatch`, and `ref(self.x) = ref(other.x)` is false for two calls and true for one call. On both routes, the delimiter-bearing `ix://i/calls`, `c/d` vector in "Place identity" produces exactly the complete literal `place/v2/5b22736f75726365222c2261222c2269222c2269783a2f2f692f63616c6c73225d/22632f6422/5b22736f75726365222c2261222c2269222c2269783a2f2f692f43225d/5b5b226669656c64222c5b22736f75726365222c2261222c2269222c2269783a2f2f692f43225d2c2269783a2f2f692f432f78222c5b22636c6f636b225d5d5d/5b5d`. | Test (TC-3084) |
 | FR-230-AC-44 | A place id is stored in a field, a parameter, a result, a record component and a `Sequence<Reference<Clock>>` element and reads back equal; `=` over two ids is a data read, `<` refuses `ill_typed`/`operator-ineligible`; the id of `ref(self.q[0])` is unchanged after a reorder of `q`; and a package `reference` instance is FSpec FR-181's `reference` value whose `object_type` is the Clock type's effective id and whose `identity` is the hex of the id text. | Test |
-| FR-230-AC-45 | A snapshot `Reference<Clock>` whose identity is not of the canonical `place/v2/...` form, or names an owner or declared place absent from the authenticated universe and declaration/model scope, refuses `invalid_runtime_input`/`invalid-value`. | Test |
+| FR-230-AC-45 | A raw snapshot `Reference<Clock>` using the delimiter vector of AC-43 with an uppercase hex letter, with `J` replaced by the hex of `[["slot","01","0"]]`, with whitespace in decoded JSON, or with any extra component refuses `invalid_runtime_input`/`invalid-value`. The same refusal applies when the canonical payload disagrees with the authenticated outer universe/scope. A canonical old path removed within that scope follows FR-106-AC-73's dangling-reference refusal. Re-adding the exact same declaration/path/kind restores the AC-43 text; replacing that field's `Clock` by `Option<Clock>` changes `T` and refuses the old text as an undeclared place, without interpreting it as the new kind. | Test (TC-3084, TC-464) |
 | FR-230-AC-46 | Over `s: Sequence<Clock>[1, 3]`, `b: Bag<Clock>[0, 2]`, `r: Sequence<Timer>[1, 3]` with a snapshot of two `Timer` elements and `st: Sequence<Stopwatch>[0, 2]` (`Stopwatch { x: Clock }`): the initial count of `s` ranges over `[1, 3]` and gives three initial states, `b` over `[0, 2]`, `st` over `[0, 2]`, and `r` takes the count 2 from the snapshot; over `qo: Sequence<Option<Clock>>[0, 2]` an element at initial bit absent is unconstrained and every present initial clock is 0. | Test |
 | FR-230-AC-47 | `t: Set<Clock>[0, 5]`, `o: OrderedSet<Clock>[0, 5]`, `so: Set<Option<Clock>>[0, 5]` and a `Set<Stopwatch>[0, 5]` each range over `[0, 1]`; `Set<Clock>[2, 5]` leaves no initial state (`Undecided(NoInitialState)`); a `Map<Text, Clock>[0, 2]` is not pure-clock and takes its entries from the snapshot. | Test |
 | FR-230-AC-48 | Over `u: Sequence<Clock>` with no declared maximum, initial states are produced in ascending count from 0 and the analysis stops `incomplete` with `limit-reached` whose `limit` is `max_clocks` once the live clocks exceed it, and it does not return `NotSimulated::RequiresBound`. | Test |
-| FR-230-AC-49 | The emitted `clock_place` of `ts.x` below `ts: Sequence<Timer>[0, 3]` is one node for the three places `ts.0.x`, `ts.1.x` and `ts.2.x`, its slot step carries the symbolic element selector of FSpec FR-322-AC-148 and no index, and the place ids of slots 0 and 1 differ only in the final component of `<slots>`; the same holds for `Set`, `Bag`, `OrderedSet` and a nested `Sequence` (two `<slots>` components). | Test |
+| FR-230-AC-49 | The emitted `clock_place` of `ts.x` below `ts: Sequence<Timer>[0, 3]` is one node for the three places `ts.0.x`, `ts.1.x` and `ts.2.x`, and its slot step carries the symbolic element selector of FSpec FR-322-AC-148 and no index. For one owner and declared template, the v2 texts for slots 0 and 1 have identical `P`, `K`, `S` and `T`; decoded `J` differs only in the `index` string of the entry tagged with that collection's canonical path position, `"0"` versus `"1"`. The same holds for `Set`, `Bag` and `OrderedSet`; a nested `Sequence` has two ordered tagged `J` entries, and changing the inner index preserves the outer entry. | Test (TC-3084) |
 | FR-230-AC-50 | A clock-reading `pre` of `attemptUpdate`, `self.x >= 1 ms`, bound to the execution point `pre{operation: "attemptUpdate"}` emits its state clause on the point-qualified anchor and one `clock_guard` whose `operation` is the no-point anchor and whose final `point_anchor` names that point-qualified anchor, and reads back, never refusing `TimedModelNotEmitted`. A model with no guard emits empty aggregates and reads back (FSpec FR-322-AC-150). The excluded forms refuse `unsupported_construct`/`expression-form` at the form (FSpec FR-322-AC-267: `GJ-01`, `CW-01` to `CW-03`, `SD-01`): `self.x >= 1 ms or self.versionNumber > 0` at `self.versionNumber > 0`, `self.ts = sequence[...]` and `self.ts = filter(...)` at the write, `self.v = absent` at the write and `forall(e in self.ts: e.n > 1 implies e.x = 0 ms)` at `e.n > 1`; `self.x >= 0 ms or self.versionNumber > 0` is the one part `x >= 0 ms` (`GJ-03`). | Test (TC-2393) |
 | FR-230-AC-55 | Over `ts: Sequence<Timer>[0, 3]`, `forall(e in self.ts: e.x < 5 ms)` emits one `clock_guard` whose parts cover each possible live length; the zero-length part has no constraints and its predicate selects size zero, and each nonempty part carries the ordered typed place binders before its corresponding clock-constraint references. `exists(e in self.ts: e.x < 5 ms)` emits disjunctive parts for the selected live slots, each with the same ordered binder form, and emits no part for an empty `ts`. Thus `forall` is true and `exists` is false when `ts` is empty, and otherwise they denote conjunction and disjunction over the live places respectively. A quantified clock guard that reads element presence, such as `self.x >= 1 ms and forall(e in self.q: present(e))`, emits its part with the `presence_read` of the element place at the binder inside the quantified predicate (FR-230-AC-66). The guard binder uses the FSpec carrier and order rules (FR-322-AC-295) and quantifier semantics (FR-415-AC-24; CL-57, CL-58, CL-62). | Test |
 | FR-230-AC-56 | Over `ts: Sequence<Timer>[0, 3]`, `time invariant All when { true } { forall(e in self.ts: e.x <= 9 ms) }` emits one `time_invariant` with one ordered place binder `parameter` reference in `binders`, and one upper-bound `clock_constraint` on the `ts` element clock template whose ordered slot term is that binder; the bound applies to each live slot, and the invariant is vacuously true with no live slot. The same source form with `exists` parses and is refused `invalid_timed_model`/`time-invariant-shape` at the invariant without emitting partial timed nodes. The quantified presence predicate `time invariant HasElement when { forall(e in self.q: present(e)) } { self.x <= 9 ms }` emits one `time_invariant` whose predicate holds the `presence_read` of the element place at the binder (FR-230-AC-66). Binder typing and order follow FR-322-AC-295 and FR-415-AC-24 (CL-59, CL-60, CL-62). A clock-reading clause bound to an execution point is written as FR-230-AC-50 states, with its `point_anchor` (FSpec FR-342-AC-13). | Test |
@@ -1157,7 +1284,7 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-59 | Over AC-58's model, each declaration below the only time invariant or urgency declaration of its model, at a discrete state whose `calls` holds `c1` (`inflight` true, `waiting` false) and `c2` (`inflight` false, `waiting` true), with `x = 0` on both: `HasCalls` applies to neither object and bounds no clock, so a delay of 5 is admissible; `time invariant AnyInflight when { exists(c in Config::calls : c.inflight) } { self.x <= 1 ms }` reads no `self` and applies to both objects, so a delay of 1 is admissible and a delay of `1 + 1/1000` is not; `urgent CallsExist` makes the state urgent, so no positive delay is admissible, and with `c2.waiting` false instead it does not hold and a delay of 5 is admissible. `urgent Known` is evaluated once for each of `c1` and `c2` with `self` bound to it and holds of both. At a discrete state whose `calls` holds no object, `urgent Idle when { count(c in Config::calls where c.waiting) = 0 }` holds once at the state and makes it urgent, and `AnyInflight` and `time invariant AllInflight when { forall(c in Config::calls : c.inflight) } { self.x <= 1 ms }` bound no clock, so with either alone the state is quiescent. Each predicate gives the same truth as its `allInstances<Config::Call>(Config::calls)` spelling at the same state. | Test (TC-1334) |
 | FR-230-AC-60 | The package emitted for a unit holding AC-58's `HasCalls`, `CallsExist` and `Known` and the precondition `pre UsesCalls using v on Config::Call::reply { forall(c in Config::calls : true) }` holds exactly one `relation`/`population` reference node, keyed by `calls`' declaration key, which the `time_invariant` predicate of `HasCalls`, the `when` `urgency` predicates of `CallsExist` and `Known` (`Known` through its `lookup` application) and the precondition all reference; `CallsExist`'s predicate writes no `self` `parameter` node and `Known`'s writes one. I2 admits the package and reads back the same `TimedModel`, each predicate with its population operand. | Test (TC-1334) |
 | FR-230-AC-61 | A `time invariant when` or an `urgent when` in a timed model whose populations cover no object type refuses `missing_declaration`/`missing-name` at the declaration, and one in a timed model whose populations cover `Call` by two populations (`calls` and `archive`) refuses `ambiguous_declaration`/`ambiguous-name` at the declaration. A timed model whose populations cover two object types (`calls` of `Call` and `servers` of `Server`) has two candidate model nodes, so it refuses earlier, `ambiguous_declaration`/`ambiguous-name` at `Config` in `time Config dense unit ms` (FR-230-AC-38), and the declaration is never checked. Each case reports exactly that one refusal and no `TimedModel`, whether or not the predicate names a population. | Test (TC-1334) |
-| FR-230-AC-62 | Over FR-230-AC-19's `m` and a snapshot whose `m` holds the keys `"b"` and `"a"`, the live instances of `Call.m.[key].x` are those of `"a"` and then `"b"`, each with initial clock 0 and guarded by `m` holding its key. The emitted `clock_place` of `m.x` is one node whose slot step's selector references the `Text` key type node and not the `Integer` type node. With a precondition establishing that `m` holds `"a"` and a frame naming `m`, `self.m["a"].x = 0 ms` resets the `"a"` instance only, and the `"b"` instance keeps its clock; an operation that does not write `m` resets neither, and the same reset under a frame that does not name `m` refuses `invalid_timed_model`/`clock-write` at the reset. `ref(self.m["a"].x)` refuses `ill_typed`/`type-mismatch` at the `ref`. With `Call` also holding a clock `x` and a field `r: Reference<Clock>`, `deref(self.r) >= 1 ms` checks to the convex parts over the instances of `Call.x` only. A snapshot `Reference<Clock>` whose identity names the `clock_place` of `m.x` with `<slots>` `0` refuses `invalid_runtime_input`/`invalid-value`. | Test |
+| FR-230-AC-62 | Over FR-230-AC-19's `m` and a snapshot whose `m` holds the keys `"b"` and `"a"`, the live instances of `Call.m.[key].x` are those of `"a"` and then `"b"`, each with initial clock 0 and guarded by `m` holding its key. The emitted `clock_place` of `m.x` is one node whose slot step's selector references the `Text` key type node and not the `Integer` type node. With a precondition establishing that `m` holds `"a"` and a frame naming `m`, `self.m["a"].x = 0 ms` resets the `"a"` instance only, and the `"b"` instance keeps its clock; an operation that does not write `m` resets neither, and the same reset under a frame that does not name `m` refuses `invalid_timed_model`/`clock-write` at the reset. `ref(self.m["a"].x)` refuses `ill_typed`/`type-mismatch` at the `ref`. With `Call` also holding a clock `x` and a field `r: Reference<Clock>`, `deref(self.r) >= 1 ms` checks to the convex parts over the instances of `Call.x` only. A snapshot `Reference<Clock>` whose identity claims a `Map` collection entry in `T` and a tagged positional index `0` in `J` refuses `invalid_runtime_input`/`invalid-value`. | Test |
 | FR-230-AC-63 | Under `time dense` with tuple `Slot(Clock, Integer)` and `union Phase { Armed(Clock), Idle }` as fields `s` and `p` of a domain package whose tuple position and case `payloadType` are `ix://filament/native/Clock`: the package is admitted; the checker lists the places `s.0` (unguarded) and `p.Armed` (guarded by `present(self.p.Armed)`); the guard `present(self.p.Armed) and value(self.p.Armed) >= 1 ms` checks to one convex part carrying that data predicate, and `value(self.p.Armed) >= 1 ms` alone refuses `undefined_expression`/`unproved-presence`; `self.p = Phase::Armed(0 ms)` records a reset of `p.Armed`; `self.s.0 >= 2 ms` checks as a guard on `s.0`; `p1 = p2` over two `Phase` operands refuses `invalid_timed_model`/`clock-read-outside-constraint`. | Test (TC-1860) |
 | FR-230-AC-64 | In a unit selecting `filament.temporal.complete/v1`, `function f using t(c: Clock): Boolean pure { true }` and `predicate near using t(c: Clock, b: Quantity<ms>): Boolean { c <= b }` each check with no refusal, and no refusal of the unit has cause `not-yet-implemented`; the same declarations in a unit selecting only `filament.value.complete/v1` each refuse `unsupported_construct`/`declaration-form` from the facet gate, naming the required temporal layer. | Test (TC-1905) |
 | FR-230-AC-65 | Source route. A unit declaring `dimension Time;`, `unit ms : Time = rational(1, 1);`, `record W { c: Clock; }`, `object O { w: W; d: Clock; operation step() modifies self.d; }`, `object P { n: Integer; }` and `time O dense unit ms;` checks with no refusal: the checked time source retains the name `O` and `O`'s source declaration key `{package: I, node: "ix://I/O"}`, `I` the `SourceOwner` identity of the unit (FSpec FR-788, FR-995), not a model/object_type key, and the source model is a timed model whose clock places include `w.c` and `d`. Waits on QC-30 (target emission); FSpec FR-322 source-object section: the emitted timed-model root's `model` reference is that node. The same unit with `time Q dense unit ms;`, where `Q` names nothing, refuses `missing_declaration`/`missing-name` at `Q`; with a second member `time P dense unit ms;` it refuses `invalid_timed_model`/`duplicate-time-source` at the second, naming the first; with `time O tick O::step period 1 ms unit ms;` in place of the dense member it refuses `invalid_timed_model`/`clock-without-dense-time` at the span of the member `w`. With no source time member, and with the unit also selecting a model `M` that has `time M dense unit ms;`, it refuses `invalid_timed_model`/`clock-without-dense-time` at the span of the member `w`, and `M`'s time member times no clock of the source model. | Test (TC-2361) |
@@ -1168,6 +1295,10 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-70 | Over `ts: Sequence<Timer>[0, 3]`, a domain package that declares the clock bound `x <= 9 ms` on `Timer`'s clock `x` emits one `time_invariant` with the predicate `true`, one place binder named `ts#0` in `binders`, and one upper-bound `clock_constraint` on the `ts` element clock template whose slot term is that binder: the node a source `time invariant All when { true } { forall(e in self.ts: e.x <= 9 ms) }` emits except for the binder name, the binder `ts#0` taking the level the source binder `e` takes. With a second field `ws: Sequence<Holder>[0, 3]`, `Holder` holding `ys: Sequence<Timer>[0, 2]`, the same bound also emits a second `time_invariant` for the clock `x` of each `ys` element, with binders `ws#0` then `ys#1`. Emitting the package twice gives the same node ids. Over `us: Sequence<Timer>` with no declared maximum, `pre F using v on Config::ConfigVersion::attemptUpdate { forall(e in self.us: e.x < 5 ms) }` emits one `clock_guard` with one family part holding the place binder `e`, the `quantifier` binding `each` and one `clock_constraint` whose slot term is `e`; the same with `exists` emits the same part with `quantifier` `some`, so the two guards have different node ids; neither leaves an unwritten member. With `us` holding no element, the `each` guard is enabled and the `some` guard is not; with `us` holding two elements whose clocks read 3 ms and 7 ms, the `each` guard is not enabled and the `some` guard is. Over a bounded `ts`, the AC-55 parts carry no `quantifier` binding and keep their node ids. | Test (TC-3046; FSpec FR-322-AC-479) |
 
 ## Dependencies
+
+- FR-995: source declaration owner and original declaration-key spelling.
+- FR-569: original versus inherited/redefined source members.
+- FR-850 and FR-940: admitted package provenance and sealed bare read views.
 
 - ADR-026 §2 CK-1 to CK-9.
 - [FR-103](FR-103-admit-model-operations-and-frames-on-the-spine.md)

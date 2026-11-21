@@ -25,6 +25,16 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-995
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-569
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-480
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-850
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-940
+    type: depends_on
 ---
 # FR-1040: Check and lower clock-place references and presence reads in population forms
 
@@ -64,13 +74,24 @@ population holds, so there is no absent owner to test.
   identity within one declared model scope as
   `conflicting_declaration`/`duplicate-declaration`, naming both declaration
   origins and producing no partial table or checked package. Repeated import
-  aliases of the same authenticated declaration and effective path are one
-  view, not distinct places. Independently selected documents, inherited or
-  redefined members and union expansions SHALL undergo the same provenance
+  aliases of the same authenticated declaration and canonical normalized
+  declared path are one view, not distinct places. Independently selected
+  documents, admitted inherited or redefined members and union expansions SHALL undergo the same provenance
   resolution and collision check; equal bare paths across different scopes
   or populations alone are not collisions. Map-key identity remains outside
   this change: map reference forms retain their typed refusal.
   FSL SHALL NOT coerce map keys to positional integer indices.
+  This rule admits no new redefinition form: FR-569's source field-name
+  collision and FR-230's unique timed-model binding checks run first.
+  An admitted redefining member uses its own original declaring scope and
+  declared path, not the hidden ancestor member's scope and path. An
+  unredefined inherited member retains its original ancestor template.
+
+> Implementation boundary (QSL-2178 STEP2): the route-neutral identity and
+> uniqueness rules and AC-9 are targets, not delivered capabilities. They
+> remain unmet until STEP2 implementation and acceptance proof. FR-106's
+> STEP1 implementation boundary continues to apply to raw admission.
+
 - **Places with an id.** S3 SHALL check `ref(p)`, for `p` a place
   expression whose path names a clock place of its owner's type with no
   `Map` level, as a `PlaceReference` node over the owner, the place and one
@@ -176,6 +197,9 @@ form either lowers or refuses with one of the typed causes above.
 
 ## Acceptance Criteria
 
+Verification cells use this repository's `Test (TC-id)` convention: `Test`
+is the method and the parenthesized identifier names its owning procedure.
+
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1040-AC-1 | Over FSpec FR-415-AC-15's `Call` model, `ref(self.x)` and `ref(self.q[0])` (under `size(self.q) >= 1`) in a postcondition write `self.r = ref(self.x)` and in a precondition `self.r = ref(self.q[0])` check as `PlaceReference` nodes typed `Reference<Clock>` and lower to `filament.op.clock_reference.ref` applications with `result_type` the `scalar_type`/`clock_reference` node, and the unit compiles with no `unsupported-feature` refusal. | Test (TC-3084) |
@@ -186,11 +210,15 @@ form either lowers or refuses with one of the typed causes above.
 | FR-1040-AC-6 | Negative: `sum(c in M::calls: c.x)` and `only(c in M::calls: c.x)` refuse `invalid_timed_model`/`clock-read-outside-constraint` at `c.x`; `sum(c in M::calls: ref(c.x))` and `sum(c in M::calls: M::calls)` refuse `ill_typed`/`type-mismatch` at the summand; `ref(c.m[k].x)` in `pick`'s precondition, `k` its `Text` parameter, over a `Map` value refuses `ill_typed`/`type-mismatch` at the `ref`; `ref(c.x) < ref(c.y)` refuses `ill_typed`/`operator-ineligible`; and a call `late(c.x)` to a function `late(t: Clock): Boolean` in a `count` condition refuses `invalid_timed_model`/`clock-read-outside-constraint` at the call; and in a refinement row, `sum(c in M::calls: c.x) >= 0` refuses `unsupported_construct`/`expression-form` at `c.x` (FR-430). | Test (TC-3084) |
 | FR-1040-AC-7 | A pure function `same(a: Reference<Clock>, b: Reference<Clock>): Boolean { a = b }` has a function node whose parameters are typed by the `scalar_type`/`clock_reference` node, and a refinement row or clause calling it lowers its call to that node; with the function's body made ill-typed, the unit refuses once at the function body and not at the call. | Test (TC-3084) |
 | FR-1040-AC-8 | Over a domain package `acme/rpc` whose object type `Call` has clock fields `x` and `y` and a field `r` typed `ix://acme/rpc/ClockRef`, a type definition of `kind` `reference` with `target` `ix://filament/native/Clock`, intake gives `r` the type `Reference<Clock>` as a data member, and the postcondition `self.r = ref(self.x)` of an operation `point` whose frame names only `r` checks with no `clock-write` refusal and lowers the write to a `filament.op.clock_reference.ref` application typed by the `scalar_type`/`clock_reference` node, which also types the field; after `point` the state's `r` holds the place id of `self.x`, and two states that differ only in clock values have one state key. The same field typed `ix://filament/native/Clock` is a clock field and the same postcondition refuses `invalid_timed_model`/`clock-write`. An FSL model unit declaring `object Call { x: Clock; r: Reference<Clock>; }` under `domain "acme/rpc"` compiles to a document holding the type definition `ix://acme/rpc/Reference_Call_r` of `kind` `reference` with `target` `ix://filament/native/Clock` and the field `r` typed by it. | Test (TC-3084) |
-| FR-1040-AC-9 | TC-3084 step 7's source and bare checked routes produce equal full `place/v2` references for the same authenticated declarations through record aliases, nested tuples and union cases, preserving all path tags and selector indices; two populations with the same owner local key remain distinct. Each route refuses distinct declaration origins with one normalized identity in the same model scope as `conflicting_declaration`/`duplicate-declaration`, naming both origins and publishing no partial table; importing the same authenticated declaration through two aliases succeeds as one view. Admitted independently selected documents and union expansions have distinct identities when their authenticated scopes or full path prefixes differ; the inherited-member control retains the original Base template, and the redefinition controls refuse before clock lowering as TC-3084 states. | Test (TC-3084) |
+| FR-1040-AC-9 | Source and bare checked routes produce equal full canonical `place/v2` references for the same authenticated declarations through record aliases, nested tuples and union cases, preserving all typed path tags and selector indices; two populations with the same owner local key remain distinct. Each route refuses distinct declaration origins with one normalized identity in the same model scope as `conflicting_declaration`/`duplicate-declaration`, naming both origins and publishing no partial table; importing the same authenticated declaration through two aliases succeeds as one view. An ambiguous short-name ownership lookup refuses `ambiguous_declaration`/`ambiguous-name` at that lookup on each route, naming both competing origins and producing no place table. Admitted independently selected documents and union expansions have distinct identities when their authenticated scopes or full path prefixes differ. `Base { c: Clock }`, `Child extends Base {}` under `time Base dense unit ms` retains the original `Base.c` template for a Child receiver. Source `Child` redeclaring inherited field `c` refuses `ambiguous_declaration`/`ambiguous-name` at `Child.c` (FR-569). A selected package with both `Base` and `Child` as candidate timed-model nodes, including one with legal model field redefinition `Child/d -> Base/c`, refuses `ambiguous_declaration`/`ambiguous-name` at `M` in `time M dense unit ms` (FR-230-AC-38). Two source units each declaring `record W` refuse `ambiguous_declaration`/`ambiguous-name`, naming both declarations with their units (FR-480-AC-2). These three refusals precede canonical-table construction. | Test (TC-3084) |
 
 ## Dependencies
 
 - FR-230: clock places, place identity, selection and presence.
+- FR-995: authenticated source declaration owners and original identities.
+- FR-569: source inheritance, effective views and field-name collisions.
+- FR-480: cross-unit declared-name collisions and repeated model aliases.
+- FR-850 and FR-940: admitted bare package provenance and sealed read views.
 - FR-430: a clock read in a refinement row ("Timed refinement").
 - FR-139 and FR-391: the population forms in refinements and state clauses.
 - FR-093: lowering of checked value expressions to FSpec FR-322 terms.
