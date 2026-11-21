@@ -27,6 +27,7 @@ mod claim_family;
 mod clause_item;
 mod clause_route;
 mod closure_certificate;
+mod closure_replay;
 mod component_certificate;
 mod config_lasso_fairness;
 mod counter;

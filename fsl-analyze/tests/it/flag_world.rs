@@ -476,6 +476,7 @@ impl World {
                 expansion: ExpansionLimits {
                     max_candidates: 1_000_000,
                 },
+                stutter_closure: false,
             },
             payload,
             Some(clause_identity(&self.package, 0)),

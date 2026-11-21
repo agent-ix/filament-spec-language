@@ -369,6 +369,7 @@ fn behaviour(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 
@@ -929,6 +930,7 @@ impl Run<'_, '_> {
                 expansion: ExpansionLimits {
                     max_candidates: u64::MAX,
                 },
+                stutter_closure: false,
             },
             protocol: self.protocol.name.clone(),
             over: over.clone(),

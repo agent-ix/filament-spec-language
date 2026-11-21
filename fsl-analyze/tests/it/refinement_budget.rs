@@ -341,6 +341,7 @@ fn a_replay_over_the_budget_settles_incomplete_not_parity() {
         refinement: Some(recorded),
         blocked: Vec::new(),
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let settlement =
         replay_refinement_trace(world.refinement(), &systems, &payload).expect("the trace replays");

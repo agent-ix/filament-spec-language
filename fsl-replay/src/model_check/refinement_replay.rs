@@ -729,6 +729,8 @@ pub fn replay_refinement_trace(
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
+    // A refinement item never selects `stutter_closure`.
+    super::replay::refuse_closure_alphabet(payload)?;
     let Some(positions) = reexecute(&systems.concrete, payload)? else {
         return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
     };
@@ -795,6 +797,7 @@ fn replay_refinement_trace_with_time_source(
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
+    super::replay::refuse_closure_alphabet(payload)?;
     let Some((positions, states)) = timed_prefix(timed, payload)? else {
         return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
     };

@@ -1823,6 +1823,8 @@ const TRANSFER_DECLARATIONS: &str =
      always eventually holds(c.value = 2) }\n\
      temporal StuckTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
      on origin { always eventually holds(c.value = 2) }\n\
+     temporal PendingTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { always (holds(c.value = 1) implies eventually holds(c.value = 2)) }\n\
      temporal AtMostTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
      on origin { always holds(c.value <= 2) }\n\
      temporal BoundedTwo using ev over (c: Spec::Counter) clock \"model-steps\" \
@@ -1873,17 +1875,53 @@ fn transfer_member(
     })
 }
 
+/// `BoundedTwo`'s declaration inside [`TRANSFER_DECLARATIONS`]: a configured
+/// (event-position) clause, which the package emitter refuses without a clock
+/// selection, so the closure transfer unit, whose refuted premise needs its own
+/// emitted graph for held node ids, leaves it out.
+const BOUNDED_TWO: &str =
+    "temporal BoundedTwo using ev over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { eventually[0,2] holds(c.value = 2) }\n";
+
+/// The refinement unit's declarations: every original caller's is
+/// [`TRANSFER_DECLARATIONS`] and `CasRefinesCounter` unchanged; the closure
+/// transfer cases and their emission test use the same declarations without
+/// the unused configured clause `BoundedTwo`.
+fn transfer_declarations(closure_unit: bool) -> String {
+    let clauses = if closure_unit {
+        assert!(
+            TRANSFER_DECLARATIONS.contains(BOUNDED_TWO),
+            "the clause to omit is declared"
+        );
+        TRANSFER_DECLARATIONS.replacen(BOUNDED_TWO, "", 1)
+    } else {
+        TRANSFER_DECLARATIONS.to_owned()
+    };
+    format!(
+        "{clauses}{}",
+        crate::support::refinement_cas::cas_refines_counter()
+    )
+}
+
 /// Writes ADR-020 §8's counter models, a unit with `CasRefinesCounter` and
 /// [`TRANSFER_DECLARATIONS`], the initial snapshots and a `native-run/1`
 /// request carrying `members` (with the `Spec` model's entry dropped when
 /// `supply_spec` is false), runs it and returns its exit code and document.
 fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
+    transfer_run_over(members, supply_spec, false)
+}
+
+/// [`transfer_run`] over the emittable unit, without the configured clause
+/// `BoundedTwo`, when `closure_unit`: the unit for native outcomes that need
+/// held node ids.
+fn transfer_run_over(
+    members: &[(&str, Value)],
+    supply_spec: bool,
+    closure_unit: bool,
+) -> (u8, Value) {
     use crate::support::refinement_cas::{self, Variant};
     let directory = tempfile::tempdir().unwrap();
-    let declarations = format!(
-        "{TRANSFER_DECLARATIONS}{}",
-        refinement_cas::cas_refines_counter()
-    );
+    let declarations = transfer_declarations(closure_unit);
     let unit = refinement_cas::unit_text(
         &refinement_cas::packages(Variant::CAS),
         &declarations,
@@ -1939,6 +1977,45 @@ fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
     )
 }
 
+/// The held-id precondition of a refuted transfer premise: the exact closure
+/// unit the two closure transfer cases write (`transfer_declarations(true)`,
+/// `CasRefinesCounter` and the three counter models) is emitted at the analyze run's emit limit and read
+/// back through the strict reader, as `analyze` does before it holds a result's
+/// node ids. A refusal fails the test with its typed cause, not `NotEmitted`.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-6")]
+fn the_transfer_unit_emits_and_strict_reads_its_package() {
+    use crate::support::refinement_cas::{self, Variant};
+    let packages = refinement_cas::packages(Variant::CAS);
+    let declarations = transfer_declarations(true);
+    let unit = refinement_cas::unit_text(&packages, &declarations, Variant::CAS);
+    let checked = crate::support::front_end::checked(
+        fsl_foundation::SourceIdentity::new("agent-ix", "unit.native"),
+        "unit.native",
+        unit.as_bytes(),
+        &packages,
+        &fsl_replay::spine::DependencyInput::default(),
+    )
+    .unwrap_or_else(|refusal| panic!("the transfer unit checks: {refusal}"));
+    let package = checked.package();
+    let emit = fsl_package::EmitLimits::new(fsl_replay::spine::EMIT_OUTPUT_BYTES_DEFAULT);
+    if let Err(refusal) = fsl_package::emit_checked(package, emit) {
+        panic!("the transfer unit's package is not emitted: {refusal:?}");
+    }
+    let identity = fsl_semantics::library::LibraryName::new(package.graph().package_name())
+        .expect("the package is named");
+    let read = fsl_package::read_evaluation_package(
+        package,
+        identity,
+        &packages,
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
+        emit,
+    );
+    if let Err(refusal) = &read {
+        panic!("the strict reader refuses the transfer unit's package: {refusal:?}");
+    }
+}
+
 /// The transfer result of `clause` in a `refinement_transfer` outcome.
 fn transfer<'a>(value: &'a Value, clause: &str) -> &'a Value {
     value["refinement_transfer"]["transfers"]
@@ -1977,7 +2054,7 @@ fn transfer_premise(identity: &Value, result: &str) -> Value {
 #[trace("TC-2870", "FR-1020-AC-1")]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-1")]
 fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member(
@@ -1986,6 +2063,7 @@ fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
                 &["PrevSafe", "SoonTwo"],
             ),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 0, "{value}");
@@ -2018,7 +2096,7 @@ fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
 #[trace("FSpec-TC-1042", "FSpec-FR-380-AC-9")]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
 fn previous_transfers_only_through_a_step_for_step_refinement() {
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member(
@@ -2027,6 +2105,7 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
                 &["PrevSafe", "SoonTwo", "AtMostTwo"],
             ),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 0, "{value}");
@@ -2045,11 +2124,12 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
         );
     }
 
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevStutter"]),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 22, "{value}");
@@ -2060,7 +2140,7 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
     assert_eq!(result["cause"]["result"], "refuted", "{value}");
     assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
 
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member(
@@ -2069,6 +2149,7 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
                 &["PrevSafe", "SoonTwo", "AtMostTwo", "PastTwo"],
             ),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 22, "{value}");
@@ -2224,17 +2305,20 @@ fn an_any_arm_refinement_is_not_step_for_step() {
     assert_eq!(result["cause"]["operator"], "once[1,1]", "{value}");
 }
 
-/// FR-1030-AC-4: a liveness clause with no fairness is not proved over the
-/// abstract stutter closure, where the abstract model may repeat any state
-/// forever; its premise is a typed unproved slot 1.
+/// FR-1030-AC-6: a liveness clause with no fairness is violated by the
+/// abstract stutter closure's own self-loop at a nonterminal state. Slot 1
+/// settles `refuted` through the closure lasso that FR-128 replays, and the
+/// transfer is `inconclusive`, `premise-unproved` with that result, never
+/// `unsupported`.
 #[test]
-#[trace("TC-2920", "FR-1030-AC-4")]
-fn a_liveness_clause_that_the_stutter_closure_violates_is_not_proved() {
-    let (exit, value) = transfer_run(
+#[trace("TC-2920", "FR-1030-AC-6")]
+fn a_liveness_clause_that_the_stutter_closure_violates_refutes_its_premise() {
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["StuckTwo"]),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 22, "{value}");
@@ -2242,10 +2326,31 @@ fn a_liveness_clause_that_the_stutter_closure_violates_is_not_proved() {
     assert_eq!(result["value"], "inconclusive", "{value}");
     assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
     assert_eq!(result["cause"]["premise"], 1, "{value}");
-    // The only violating loop is the closure's own self-loop, which has no
-    // replayable lasso, so EN-1 refuses it as unsupported.
-    assert_eq!(result["cause"]["result"], "unsupported", "{value}");
-    assert_eq!(result["slots"][1]["value"], "unsupported", "{value}");
+    assert_eq!(result["cause"]["result"], "refuted", "{value}");
+    assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
+}
+
+/// FR-1030-AC-7: `PendingTwo` is violated only by the closure stutter at
+/// value 1, so its refutation needs a one-step real prefix; the transfer
+/// settles as `StuckTwo`'s does.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-7")]
+fn a_closure_violation_after_a_real_step_refutes_its_premise() {
+    let (exit, value) = transfer_run_over(
+        &[(
+            "refinement_transfer",
+            transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["PendingTwo"]),
+        )],
+        true,
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    let result = transfer(&value, "PendingTwo");
+    assert_eq!(result["value"], "inconclusive", "{value}");
+    assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
+    assert_eq!(result["cause"]["premise"], 1, "{value}");
+    assert_eq!(result["cause"]["result"], "refuted", "{value}");
+    assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
 }
 
 /// FSpec FR-820 slot 1 is keyed without `stutter_closure`, which the planner

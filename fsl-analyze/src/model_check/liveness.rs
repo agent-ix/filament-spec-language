@@ -116,11 +116,11 @@ use fsl_eval::simulation::{
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
-    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, CounterexampleKind,
-    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
-    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
-    Proviso, ReachedLimit, ReductionCause, RunStats, TemporalCounterexample, UndecidedCause,
-    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
+    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
+    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
+    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
+    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use quire_canonical::{Encode, Sink, Writer};
@@ -160,12 +160,6 @@ pub enum LivenessRefusal {
         /// The operation's resolved name.
         name: String,
     },
-    /// The only violating loop is the abstract stutter closure's own
-    /// self-loop at a state with enabled operations. A lasso has no model
-    /// step to repeat there and no terminal state to stutter at, so
-    /// replay cannot confirm it.
-    #[error("a violating loop of closure stutters alone has no replayable lasso")]
-    ClosureStutterLoop,
 }
 
 /// Decide a TP-4 clause (FR-126 first and second phase).
@@ -184,20 +178,23 @@ pub(super) fn check(
     };
     let symmetric = !request.reductions.symmetry.is_empty();
     // The clause's identity is resolved from the package, as the safety path
-    // does (FR-337-AC-5): a package that gives it no root refuses.
-    let package = request
-        .subject
-        .simulation
-        .source_package()
-        .ok_or_else(|| fault("liveness-reads-source-forms"))?;
-    let root_cancelled = match ClauseIdentity::resolve(
-        package,
-        request.subject.simulation.packages,
-        clause,
-        request.temporal_clock_selections,
-        cancel,
-        request.subject.simulation.emit,
-    ) {
+    // does (FR-337-AC-5): the source route from its own emission, the package
+    // route from its admitted bytes (FR-940); a package that gives it no root
+    // refuses.
+    let simulation = &request.subject.simulation;
+    let identity = match (simulation.source_package(), simulation.admitted_package()) {
+        (Some(package), _) => ClauseIdentity::resolve(
+            package,
+            simulation.packages,
+            clause,
+            request.temporal_clock_selections,
+            cancel,
+            simulation.emit,
+        ),
+        (None, Some(admitted)) => ClauseIdentity::of_admitted(admitted, clause),
+        (None, None) => return Err(fault("liveness-reads-a-package")),
+    };
+    let root_cancelled = match identity {
         Ok(_) => None,
         Err(ClauseRootRefusal::Cancelled(cause)) => Some(cause),
         Err(refusal) => return Err(ModelCheckRefusal::Item(ItemRefusal::ClauseRoot(refusal))),
@@ -2463,6 +2460,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         }))
     }
 
@@ -2513,6 +2511,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         }))
     }
 
@@ -2702,16 +2701,16 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 .filter(|edge| edge.transition == ProductTransition::TerminalStutter)
                 .count();
             let terminal_stutter = terminal_stutters > 0;
-            if !edges.is_empty()
+            // A loop of closure stutters alone is the sole-loop form FSpec
+            // FR-364 "Closure stutter" writes: no model step is lifted, so the
+            // entry key is kept here, where an initial-state entry has no
+            // last step to copy it from. A closure stutter that joins model
+            // steps is dropped by the lift (FR-364 "Named limit"), so the lasso
+            // is the subject's own without the closure.
+            let closure_loop = !edges.is_empty()
                 && edges
                     .iter()
-                    .all(|edge| edge.transition == ProductTransition::StutterClosure)
-            {
-                return Err(LiftStop::from(ModelCheckRefusal::from(
-                    LivenessRefusal::ClosureStutterLoop,
-                ))
-                .into());
-            }
+                    .all(|edge| edge.transition == ProductTransition::StutterClosure);
             if terminal_stutter && terminal_stutters != edges.len() {
                 return Err(
                     LiftStop::from(fault("a-loop-is-all-stutter-or-all-model-steps")).into(),
@@ -2747,6 +2746,15 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 blocked: Vec::new(),
                 refinement: None,
                 final_delay: None,
+                closure_stutters: if closure_loop {
+                    vec![ClosureStutter {
+                        site: StepSite::Loop(0),
+                        post_state: entry_state,
+                        delay: None,
+                    }]
+                } else {
+                    Vec::new()
+                },
             })
         })();
         match lifted {

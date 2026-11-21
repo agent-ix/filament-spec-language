@@ -481,6 +481,7 @@ impl Case {
                 initial: vec![self.documents.initial.clone()],
                 universes: self.documents.universes(),
                 expansion: subject.model.simulation.expansion,
+                stutter_closure: false,
             },
             protocol: "SB".to_owned(),
             over: core(),

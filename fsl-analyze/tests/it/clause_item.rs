@@ -829,3 +829,266 @@ fn a_package_over_the_emit_limit_reports_the_typed_cause_not_a_nested_id() {
         ),
     }
 }
+
+/// FR-128-AC-15: over the Counter world, the closure lasso at the initial state
+/// (empty stem) replays to `reproduced-with-evaluated-witness` from the source
+/// route and from the package route alike, for an item whose
+/// `temporal.stutter_closure` is true, and both refuse the closure step at
+/// `/loop/0/transition/type` for the same item without the flag. The package
+/// route replays the lasso; a refusal there would not satisfy the criterion.
+#[trace("TC-523", "FR-128-AC-15")]
+#[test]
+fn a_closure_lasso_replays_alike_on_the_source_and_the_package_routes() {
+    use fsl_analyze::analyze::{PackageClauseSubject, TemporalItem};
+    use fsl_eval::simulation::TransitionSystem;
+    use fsl_replay::{ClosureStutter, Lasso, ModelTraceRefusal, ReplayRefusal, StepSite};
+
+    let world = World::new(
+        model_world::counter(),
+        CONTRACT,
+        INFINITE,
+        &[Clause {
+            activation: "on origin",
+            formula: "always eventually holds(c.value = 3)",
+        }],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let node = &world.package.graph().temporal_clauses()[0];
+    let key = OccurrenceKey::new(node.identity(), node.claim().clone());
+    let temporal = |selected: bool| TemporalItem {
+        stutter_closure: Some(selected),
+        fairness: node.clause().fairness().to_vec(),
+        ..TemporalItem::default()
+    };
+
+    // The key of the initial state, the loop's entry.
+    let binding = world.binding(&["c"]);
+    let system = fsl_eval::simulation::model::ModelSystem::new(
+        fsl_eval::simulation::model::ModelSimulationRequest {
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
+            packages: binding.packages,
+            normalization: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+            snapshots: binding.snapshots,
+            initial: binding.initial.clone(),
+            universes: binding.universes.clone(),
+            observation: fsl_semantics::model::observation::ObservationLimits::default(),
+            expansion: fsl_eval::simulation::model::ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            meter: fsl_analyze::analyze::AnalyzeLimits::unbounded().accounting,
+            emit: fsl_package::EmitLimits::fixture(),
+        },
+    )
+    .expect("the subject admits");
+    let initial = system.initial()[0].clone();
+    let entry = fsl_eval::simulation::StateKey::from_canonical_bytes(
+        system.state_key(&initial).expect("the state encodes").0,
+    );
+    let payload = fsl_replay::TemporalCounterexample {
+        initial_state: 0,
+        prefix: Vec::new(),
+        over_binding: Some(fsl_eval::model_subject::ModelInstance {
+            population: world.domain.key(world.domain.population),
+            key: "c".to_owned(),
+        }),
+        fairness: node.clause().fairness().to_vec(),
+        kind: CounterexampleKind::Formula,
+        lasso: Some(Lasso {
+            entry: 0,
+            terminal_stutter: false,
+            terminal_stutter_delay: None,
+        }),
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+        closure_stutters: vec![ClosureStutter {
+            site: StepSite::Loop(0),
+            post_state: entry,
+            delay: None,
+        }],
+    };
+
+    let source = |selected: bool| {
+        subject(&world, ClauseLimits::default())
+            .configured(temporal(selected))
+            .replay_counterexample(&payload)
+    };
+    let package = |selected: bool| {
+        let mut replayed = None;
+        over_package_route(&world, |input, bytes, supply| {
+            replayed = Some(
+                PackageClauseSubject::new(
+                    input,
+                    bytes,
+                    supply,
+                    world.binding(&["c"]),
+                    AnalyzeLimits::unbounded(),
+                    &key,
+                    ClauseLimits::default(),
+                )
+                .expect("the package holds the clause")
+                .configured(temporal(selected))
+                .replay_counterexample(&payload),
+            );
+        });
+        replayed.expect("the package route ran")
+    };
+
+    let reproduced = ModelTraceSettlement::Reproduced {
+        value: ModelTraceValue::Truth(false),
+        trace_position: Some(0),
+    };
+    let from_source = source(true).expect("the source route replays the closure lasso");
+    let from_package = package(true).expect("the package route replays the closure lasso");
+    assert_eq!(from_source.settlement, reproduced);
+    assert_eq!(from_source, from_package);
+
+    for refused in [source(false), package(false)] {
+        let Err(ReplayRefusal::ModelTrace(refusal)) = refused else {
+            panic!("an item that does not select the flag refuses the step: {refused:?}");
+        };
+        assert!(
+            matches!(
+                refusal.as_ref(),
+                ModelTraceRefusal::ClosureStutter { pointer, .. }
+                    if pointer == "/loop/0/transition/type"
+            ),
+            "{refusal:?}"
+        );
+    }
+}
+
+/// The doc of both closure round trips below, over the Counter world, where
+/// no model step repeats, so the only loops that violate `formula` are closure
+/// stutters. For an item that selects `stutter_closure` both routes settle it
+/// `refuted`; the engine's lasso is the closure-only form after at least
+/// `stem` model steps, it is written with the closure tag and the item's
+/// `over` reference, read back by the auditor's reader, and the read-back
+/// object, not the engine's, replays to a reproduction over each route.
+fn closure_round_trip(formula: &str, stem: usize) {
+    use fsl_analyze::analyze::{PackageClauseSubject, TemporalItem};
+
+    let world = World::new(
+        model_world::counter(),
+        CONTRACT,
+        INFINITE,
+        &[Clause {
+            activation: "on origin",
+            formula,
+        }],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let node = &world.package.graph().temporal_clauses()[0];
+    let key = OccurrenceKey::new(node.identity(), node.claim().clone());
+    let temporal = || TemporalItem {
+        stutter_closure: Some(true),
+        fairness: node.clause().fairness().to_vec(),
+        ..TemporalItem::default()
+    };
+    fn settle(item: fsl_analyze::analyze::AnalyzeItem<'_>) -> fsl_analyze::analyze::AnalyzeRecord {
+        let mut engines = Engines::default();
+        engines
+            .with(Engine::model_check().expect("EN-1's own manifest is admitted"))
+            .expect("one engine");
+        analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    }
+
+    let source_subject = subject(&world, ClauseLimits::default()).configured(temporal());
+    let source = settle(source_subject.item(RequestIndex::new(0)));
+    assert_eq!(
+        source.terminal().expect("a terminal record").value(),
+        &TerminalValue::Refuted,
+        "{source:?}"
+    );
+    let found = source
+        .model_check
+        .as_ref()
+        .and_then(|model| model.counterexample.as_ref())
+        .expect("the record carries the counterexample");
+    assert!(found.closure_loop().is_some(), "{found:?}");
+
+    assert!(found.prefix.len() >= stem, "{found:?}");
+
+    // The auditor's reader reads FSpec FR-364's formula-kind, unfair subset
+    // with a null `over_binding` (the item fixes the instance, never the
+    // document), so the lasso is written unbound and the item's own instance
+    // is restored on the read-back object before it replays.
+    let mut unbound = found.clone();
+    unbound.over_binding = None;
+    let wire = fsl_replay::temporal_wire(&unbound, None, None).expect("the lasso is spelled");
+    assert_eq!(wire["loop"][0]["transition"]["type"], "closure-stutter");
+    assert_eq!(wire["loop"].as_array().map(Vec::len), Some(1));
+    let mut read = fsl_replay::read_temporal_counterexample::<
+        filament_semantic_value::model_transition::ModelTransition,
+    >(&wire)
+    .expect("the auditor's reader reads the written lasso");
+    assert_eq!(
+        read, unbound,
+        "the reader returns the lasso the engine wrote"
+    );
+    read.over_binding = found.over_binding.clone();
+    let reproduces =
+        |replayed: Result<fsl_replay::ModelTraceReplayResult, fsl_replay::ReplayRefusal>| {
+            assert!(
+                matches!(
+                    replayed.expect("the read-back lasso replays").settlement,
+                    ModelTraceSettlement::Reproduced {
+                        value: ModelTraceValue::Truth(false),
+                        ..
+                    }
+                ),
+                "the read-back lasso reproduces"
+            );
+        };
+    reproduces(source_subject.replay_counterexample(&read));
+
+    over_package_route(&world, |input, bytes, supply| {
+        let package = PackageClauseSubject::new(
+            input,
+            bytes,
+            supply,
+            world.binding(&["c"]),
+            AnalyzeLimits::unbounded(),
+            &key,
+            ClauseLimits::default(),
+        )
+        .expect("the package holds the clause")
+        .configured(temporal());
+        // The read-back lasso replays over the package bytes before the package
+        // item settles, so a mismatch names its stage.
+        reproduces(package.replay_counterexample(&read));
+        let record = settle(package.item(RequestIndex::new(0)));
+        // A package item that fails after its engine refuted names where: the
+        // engine's value and the `over` reference its wire is spelled with.
+        assert_eq!(
+            record.terminal().expect("a terminal record").value(),
+            &TerminalValue::Refuted,
+            "engine {:?}, over {:?}",
+            record.model_check.as_ref().map(|model| &model.value),
+            record.over_reference
+        );
+        assert_eq!(format!("{record:?}"), format!("{source:?}"));
+    });
+}
+
+/// FR-128-AC-14, AC-15 with FR-1030-AC-6's mechanism (`StuckTwo`'s shape): the
+/// violation is the closure stutter at the initial state.
+#[trace("TC-523", "FR-128-AC-14", "FR-128-AC-15")]
+#[trace("TC-2920", "FR-1030-AC-6")]
+#[test]
+fn a_closure_violation_settles_refuted_through_its_written_and_replayed_lasso() {
+    closure_round_trip("always eventually holds(c.value = 3)", 0);
+}
+
+/// FR-1030-AC-7's mechanism (`PendingTwo`'s shape): the violation is the
+/// closure stutter after one real step to value 1, so the written lasso keeps
+/// that step before its closure-only loop.
+#[trace("TC-523", "FR-128-AC-14")]
+#[trace("TC-2920", "FR-1030-AC-7")]
+#[test]
+fn a_closure_violation_after_a_real_step_settles_refuted_through_its_replayed_lasso() {
+    closure_round_trip(
+        "always (holds(c.value = 1) implies eventually holds(c.value = 3))",
+        1,
+    );
+}

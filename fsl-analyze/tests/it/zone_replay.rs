@@ -19,11 +19,12 @@ use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
-    CertificateLocus, CertificateRule, ClosedFormAnalysis, CounterexampleKind, DelayBar,
-    DisagreementCause, IncompleteCause, InconclusiveCause, Lasso, ModelCheckLimit, ModelStep,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceValue, ProofBasis,
-    ReplayRefusal, ResultLabel, SettlementBasis, StrongFairnessHint, TemporalCounterexample,
-    TerminalValue, UnavailabilityCause, ZoneCertificateVerdict,
+    CertificateLocus, CertificateRule, ClosedFormAnalysis, ClosureRule, ClosureStutter,
+    CounterexampleKind, DelayBar, DisagreementCause, IncompleteCause, InconclusiveCause, Lasso,
+    ModelCheckLimit, ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
+    ModelTraceValue, ProofBasis, ReplayRefusal, ResultLabel, SettlementBasis, StepSite,
+    StrongFairnessHint, TemporalCounterexample, TerminalValue, UnavailabilityCause,
+    ZoneCertificateVerdict,
 };
 use fsl_semantics::family::UnsupportedItem;
 use ix_trace_rs::trace;
@@ -144,6 +145,7 @@ fn payload(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 
@@ -239,6 +241,111 @@ fn a_counterexample_that_breaks_time_is_refused() {
     assert_eq!(cause, ModelTraceRefusal::LoopOpen { entry: 1, steps: 2 });
 }
 
+/// FR-128-AC-11: the timed alphabet has no closure step, so a listed one
+/// refuses at its `/transition/type` through the timed entry before any step
+/// is re-executed: the same payload without it refuses on its zero-delay
+/// loop, which the alphabet check precedes.
+#[trace("TC-523", "FR-128-AC-11")]
+#[test]
+fn a_timed_subject_refuses_a_closure_step_before_executing_the_loop() {
+    let world = lock();
+    let mut counterexample = payload(
+        &world,
+        walk(&world, &[("go", whole(0)), ("ping", whole(0))]),
+        CounterexampleKind::Formula,
+        Some(Lasso {
+            entry: 1,
+            terminal_stutter: false,
+            terminal_stutter_delay: None,
+        }),
+    );
+    let (cause, _) = refusal(replay(&world, &counterexample));
+    assert_eq!(cause, ModelTraceRefusal::LoopZeroDelay { entry: 1 });
+    counterexample.closure_stutters = vec![ClosureStutter {
+        site: StepSite::Loop(0),
+        post_state: counterexample.prefix[0].post_state.clone(),
+        delay: None,
+    }];
+    let (cause, code) = refusal(replay(&world, &counterexample));
+    assert_eq!(
+        cause,
+        ModelTraceRefusal::ClosureStutter {
+            pointer: "/loop/0/transition/type".to_owned(),
+            rule: ClosureRule::Alphabet,
+        }
+    );
+    assert_eq!(code, Code::InvalidRuntimeInput);
+}
+
+/// FR-128-AC-11: the request-side flag does not admit a closure step into the
+/// timed alphabet. Through `replay_model_trace`, whose subject names the timed
+/// reading, the flag selected and unselected both refuse a listed closure step
+/// at its `/transition/type` before any step runs.
+#[trace("TC-523", "FR-128-AC-11")]
+#[test]
+fn a_timed_request_selecting_the_flag_still_refuses_a_closure_step() {
+    let world = lock();
+    let mut counterexample = payload(
+        &world,
+        walk(&world, &[("go", whole(0)), ("ping", whole(0))]),
+        CounterexampleKind::Formula,
+        Some(Lasso {
+            entry: 1,
+            terminal_stutter: false,
+            terminal_stutter_delay: None,
+        }),
+    );
+    counterexample.closure_stutters = vec![ClosureStutter {
+        site: StepSite::Loop(0),
+        post_state: counterexample.prefix[0].post_state.clone(),
+        delay: None,
+    }];
+    let system = world.system();
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("letters");
+    let request = world.request();
+    for selected in [false, true] {
+        let refused = fsl_replay::replay_model_trace(
+            crate::model_settle::request(
+                &world.package,
+                &[],
+                &world.document,
+                world.snapshots.iter(),
+                &world.unit,
+            ),
+            &fsl_replay::ModelTraceSubject {
+                timed: Some(fsl_replay::TimedReplay {
+                    model: "M".to_owned(),
+                    exploration: Limits::default(),
+                    max_clocks: fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS,
+                    digital: false,
+                }),
+                initial: request.initial.clone(),
+                universes: request.universes.clone(),
+                expansion: request.expansion,
+                stutter_closure: selected,
+            },
+            &crate::model_settle::envelope_at(
+                counterexample.clone(),
+                node.identity(),
+                fsl_replay::OccurrenceKey::new(node.identity(), node.claim().clone()),
+            ),
+            &letters,
+            fsl_replay::ReplayLimits::default(),
+        );
+        let (cause, code) = refusal(refused.map(|result| result.settlement));
+        assert_eq!(
+            cause,
+            ModelTraceRefusal::ClosureStutter {
+                pointer: "/loop/0/transition/type".to_owned(),
+                rule: ClosureRule::Alphabet,
+            },
+            "selected {selected}"
+        );
+        assert_eq!(code, Code::InvalidRuntimeInput);
+    }
+}
+
 /// The strict-guard `Rpc` (ADR-026 §11): `reply` needs `x > 3 ms`,
 /// `timeout` `x > T`, `T = 3 ms`.
 fn strict(reply: &str) -> World {
@@ -259,6 +366,7 @@ fn time_lock(world: &World) -> TemporalCounterexample {
         over_binding: None,
         fairness: Vec::new(),
         final_delay: Some(whole(3)),
+        closure_stutters: Vec::new(),
         ..payload(
             world,
             walk(world, &[("send", whole(0))]),
@@ -332,6 +440,7 @@ fn stalled(world: &World, delay: Rational) -> TemporalCounterexample {
         over_binding: None,
         fairness: Vec::new(),
         final_delay: Some(delay),
+        closure_stutters: Vec::new(),
         ..payload(world, Vec::new(), CounterexampleKind::TimeLock, None)
     }
 }
@@ -1120,6 +1229,7 @@ fn malformed_timed_counterexamples_are_refused() {
     let counterexample = violated(claim(&three, ZoneCheckLimits::default(), &Cancel::new()));
     let stray = TemporalCounterexample {
         final_delay: Some(whole(1)),
+        closure_stutters: Vec::new(),
         ..counterexample.clone()
     };
     let (cause, code) = refusal(replay(&three, &stray));
@@ -1143,6 +1253,7 @@ fn malformed_timed_counterexamples_are_refused() {
     assert_eq!(cause, ModelTraceRefusal::TimeLockLasso);
     let undelayed = TemporalCounterexample {
         final_delay: None,
+        closure_stutters: Vec::new(),
         ..time_lock(&locked)
     };
     let (cause, _) = refusal(replay_on(&locked, &undelayed, true, &Limits::default()));

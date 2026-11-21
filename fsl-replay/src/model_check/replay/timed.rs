@@ -81,6 +81,8 @@ pub(super) fn settle(
     formula: Option<FormulaReplay<'_>>,
     exploration: &Limits,
 ) -> Result<(ModelTraceSettlement, Vec<StrongFairnessHint>), ReplayRefusal> {
+    // FSpec FR-364 "Closure stutter": a timed subject has no closure alphabet.
+    super::refuse_closure_alphabet(payload)?;
     // FR-236: `final_delay` belongs to a time-lock alone, and a time-lock is
     // a finite prefix.
     match (&payload.kind, &payload.final_delay, payload.lasso.as_ref()) {

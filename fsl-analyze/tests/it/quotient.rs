@@ -642,6 +642,7 @@ fn carries_only_concrete_members(counterexample: &TemporalCounterexample) {
         blocked,
         refinement,
         final_delay,
+        closure_stutters: _,
     } = counterexample;
     for ModelStep {
         transition: _,

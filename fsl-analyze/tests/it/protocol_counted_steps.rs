@@ -146,6 +146,7 @@ impl Case {
                         expansion: ExpansionLimits {
                             max_candidates: 1_000_000,
                         },
+                        stutter_closure: false,
                     },
                     protocol: protocol.to_owned(),
                     over: instance("c"),
@@ -251,6 +252,7 @@ impl Case {
                         expansion: ExpansionLimits {
                             max_candidates: 1_000_000,
                         },
+                        stutter_closure: false,
                     },
                     protocol: protocol.to_owned(),
                     over: instance("c"),

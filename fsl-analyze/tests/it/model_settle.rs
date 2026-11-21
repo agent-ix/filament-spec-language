@@ -306,6 +306,7 @@ fn trace_subject(case: &Case) -> ModelTraceSubject {
         expansion: ExpansionLimits {
             max_candidates: 1_000_000,
         },
+        stutter_closure: false,
     }
 }
 
@@ -1115,6 +1116,31 @@ fn an_invariant_counterexample_replays_by_the_invariant_rule() {
         ),
         "{settlement:?}"
     );
+
+    // FR-128-AC-11: the invariant alphabet has no closure step either, so a
+    // listed one refuses at its `/transition/type` ahead of the shape
+    // refusal a looped payload would otherwise get.
+    let mut closure = payload.clone();
+    closure.lasso = Some(fsl_replay::Lasso {
+        entry: 0,
+        terminal_stutter: false,
+        terminal_stutter_delay: None,
+    });
+    closure.closure_stutters = vec![fsl_replay::ClosureStutter {
+        site: fsl_replay::StepSite::Loop(0),
+        post_state: closure.prefix[0].post_state.clone(),
+        delay: None,
+    }];
+    match run(closure) {
+        Err(ReplayRefusal::ModelTrace(refusal)) => assert_eq!(
+            *refusal,
+            ModelTraceRefusal::ClosureStutter {
+                pointer: "/loop/0/transition/type".to_owned(),
+                rule: fsl_replay::ClosureRule::Alphabet,
+            }
+        ),
+        other => panic!("expected the alphabet refusal, got {other:?}"),
+    }
 
     let mut looped = payload.clone();
     looped.lasso = Some(fsl_replay::Lasso {

@@ -1598,6 +1598,7 @@ fn a_send_step_is_written_with_its_send_record() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let over = fsl_eval::simulation::protocol::over_reference(
         subject.model.simulation.clone(),

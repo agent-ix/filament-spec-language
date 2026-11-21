@@ -257,6 +257,7 @@ impl Unit {
                     initial: vec![self.documents.initial.clone()],
                     universes: self.documents.universes(),
                     expansion: subject.model.simulation.expansion,
+                    stutter_closure: false,
                 },
                 protocol: "SB".to_owned(),
                 over: core(),
@@ -759,6 +760,7 @@ fn replay_refuses_the_lasso_that_never_flushes_w() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let Err(ReplayRefusal::ModelTrace(refusal)) = unit.replay(&tso, payload) else {
         panic!("an unfair lasso refuses");
@@ -830,6 +832,7 @@ fn replay_refuses_an_ra_lasso_that_never_loads_the_mo_last_message() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let Err(ReplayRefusal::ModelTrace(refusal)) = unit.replay(&ra, payload) else {
         panic!("an unfair RA lasso refuses");

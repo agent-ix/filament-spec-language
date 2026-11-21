@@ -60,6 +60,7 @@ fn settled(
                 initial: world.initial.clone(),
                 universes: world.unlimited().simulation.universes,
                 expansion: world.unlimited().simulation.expansion,
+                stutter_closure: false,
             },
             &envelope_at(
                 counterexample.clone(),

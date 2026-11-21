@@ -164,6 +164,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
             max_clocks,
             digital: false,
         }),
+        stutter_closure: false,
     };
     let reductions = form.reductions.clone();
     let item = TimedItem {
@@ -323,6 +324,7 @@ pub(super) fn zone_derived_item<'a>(
                         max_clocks,
                         digital: false,
                     }),
+                    stutter_closure: false,
                 };
                 let reductions = form.reductions.clone();
                 let (zone_item, certified, obligation) = match kind {

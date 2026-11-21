@@ -318,6 +318,7 @@ pub(super) fn protocol_clause_item<'a>(
                         expansion: ExpansionLimits {
                             max_candidates: form.max_candidates,
                         },
+                        stutter_closure: false,
                     },
                     protocol: protocol.protocol.clone(),
                     over: over.clone(),
@@ -336,6 +337,7 @@ pub(super) fn protocol_clause_item<'a>(
                     provision,
                     max_candidates: form.max_candidates,
                     timed: None,
+                    stutter_closure: false,
                 };
                 let replay = |payload: &TemporalCounterexample<ProtocolTransition>| {
                     replay_protocol(&inputs, &trace, node, &claim, payload, letters)

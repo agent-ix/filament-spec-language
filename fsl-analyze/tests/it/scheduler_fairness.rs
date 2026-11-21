@@ -251,6 +251,7 @@ impl Chatter {
                     expansion: ExpansionLimits {
                         max_candidates: 1_000_000,
                     },
+                    stutter_closure: false,
                 },
                 protocol: "Chatter".to_owned(),
                 over: instance("c"),
