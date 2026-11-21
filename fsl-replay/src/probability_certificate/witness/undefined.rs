@@ -307,18 +307,7 @@ pub fn replay_probabilistic_undefined(
         if position >= limits.model.limits.max_transitions {
             return Err(ExactProbabilityGraphError::EdgeLimitReached.into());
         }
-        let ProductAction::Identity(schedule) = &step.choice else {
-            return Err(ProbabilityWitnessError::Refused);
-        };
-        let (Some(action), Some(transition), Some(draw)) =
-            (&step.action, &step.transition, &step.draw)
-        else {
-            return Err(ProbabilityWitnessError::Refused);
-        };
-        if step.elapsed != rational(0)
-            || crate::Schedule::of(system, action).as_ref() != Ok(schedule)
-            || workload.is_none() && scheduler.get(&key).copied() != Some(&step.choice)
-        {
+        if workload.is_none() && scheduler.get(&key).copied() != Some(&step.choice) {
             return Err(ProbabilityWitnessError::Refused);
         }
         used.insert(key);

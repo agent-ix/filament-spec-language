@@ -36,8 +36,9 @@ pub struct QualifiedBoundedMonitor {
 }
 
 impl QualifiedBoundedMonitor {
-    /// Whether this formula and profile have the qualified single-event
-    /// representation. Binding and occurrence admission remain contextual.
+    /// Whether the defined-value probability certificate path admits this
+    /// formula. Observation replay additionally admits bounded always through
+    /// [`Self::supports_observations`]. Binding admission remains contextual.
     pub fn supports(formula: &CheckedFormula, profile: TemporalProfile) -> bool {
         profile == TemporalProfile::EventPositionFalseExtension
             && matches!(

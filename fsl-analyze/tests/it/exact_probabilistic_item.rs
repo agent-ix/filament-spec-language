@@ -974,8 +974,20 @@ fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
         );
         assert!(
             matches!(
-                settled.value(),
-                TerminalValue::Incomplete(IncompleteCause::LimitReached { .. })
+                (budget, settled.value()),
+                (
+                    "work",
+                    TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                        limit: ModelCheckLimit::EvaluationMeter { .. },
+                        value: 0
+                    })
+                ) | (
+                    "expansion",
+                    TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                        limit: ModelCheckLimit::MaxCandidates,
+                        value: 0
+                    })
+                )
             ),
             "{budget}: {settled:?}"
         );
@@ -1095,7 +1107,9 @@ fn rekey_undefined(
                     .unwrap(),
                 );
             }
-            [PredicateReading::Undefined { .. }] => {}
+            [PredicateReading::Undefined { cause, .. }] => {
+                witness.evaluation.cause = cause.clone();
+            }
             other => panic!("unexpected letter: {other:?}"),
         }
         let monitor_key = match control {
@@ -1132,12 +1146,30 @@ fn undefined_replay_stops_at_decisions_with_matching_claim_keys() {
     let witness = undefined_evidence(&world, "Open");
     assert_eq!(witness.evaluation.site.position, 2);
     let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let mut decisions = Vec::new();
     for name in ["Initial", "Later"] {
         let mut forged = witness.clone();
         rekey_undefined(&world, name, &mut forged);
         let limits = world.request(name, ModelCheckLimits::default()).limits;
-        assert!(matches!(replay_probabilistic_undefined(&world.package, &system, &forged.path.item, &forged, &limits, &Cancel::new()), Ok(ProbabilityWitnessReplay::Parity)), "{name}: decided control must block the later undefined read even with its own matching keys");
+        decisions.push((
+            name,
+            matches!(
+                replay_probabilistic_undefined(
+                    &world.package,
+                    &system,
+                    &forged.path.item,
+                    &forged,
+                    &limits,
+                    &Cancel::new()
+                ),
+                Ok(ProbabilityWitnessReplay::Parity)
+            ),
+        ));
     }
+    assert!(
+        decisions.iter().all(|(_, parity)| *parity),
+        "decided controls must reject matching-key continuations: {decisions:?}"
+    );
 }
 
 #[trace("FR-201")]
@@ -1145,7 +1177,11 @@ fn undefined_replay_stops_at_decisions_with_matching_claim_keys() {
 fn defined_always_items_keep_their_prior_unsupported_disposition() {
     let claims = "probabilistic True using ev on M over (c: M::Coin) under Even on origin { probability >= 0.5 [ always[0,0] holds(c.v = 0) ] }\n\
         probabilistic False using ev on M over (c: M::Coin) under Even on origin { probability >= 0.5 [ always[0,0] holds(c.v = 1) ] }";
-    let world = World::new(&prob_world::coin(claims));
+    let mut model = prob_world::coin(claims);
+    model
+        .body
+        .push_str("\npre Never using v on M::Coin::drop { false }\n");
+    let world = World::new(&model);
     for name in ["True", "False"] {
         let record = settle(&world, name, ModelCheckLimits::default());
         assert!(
