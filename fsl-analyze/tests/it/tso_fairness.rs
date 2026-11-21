@@ -1384,7 +1384,7 @@ fn a_send_cut_met_only_by_the_model_only_pass_settles_channel_bound_reached() {
 /// beside `Lx` under `Zero` (`v <= 0`) reaches its boundary only after the
 /// flush, so the `tso` run stores more states than the `sc` run (both settle
 /// `ConstraintReached`).
-#[trace("TC-670", "FR-225-AC-4")]
+#[trace("TC-581", "FR-158-AC-5")]
 #[test]
 fn a_buffered_store_is_not_a_constraint_boundary_under_tso() {
     static AT_MOST_ONE_LOADED: R1 = R1(|value| value <= 1);

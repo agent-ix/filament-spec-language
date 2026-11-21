@@ -61,3 +61,18 @@ Read the PR diff and, at the PR head, liveness.rs (`successors`, `decide`, the m
 - FR-158-AC-5 (spec/functional/FR-158-cut-the-search-with-a-state-constraint.md): examined
 - FR-225 Decision (spec/functional/FR-225-bound-the-memory-component-by-modelchecklimits-budgets.md): examined
 - FR-126 method bounds (spec/functional/FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md): context_only
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | `a_buffered_store_is_not_a_constraint_boundary_under_tso` asserts FR-158-AC-5's tso rule ("`Zero` reads memory values"), but it is tagged FR-225-AC-4, the 21-state constraint-before-buffer-bound case | fsl-analyze/tests/it/tso_fairness.rs:1387 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Every `Written::Cut` site (store, RMW, compensation, pending access) and the channel-bound send now push an identity into `Cut::steps`. `LassoSystem::successors` extends `Finding::Enabled` with them, and `FairModel::build` numbers them, so a loop that starves a bound-cut step is unfair. The store sites push the real identity. The send pushes `control(Send, thread, node)`, which the scheduler and attempt-node classes match. Strong fairness counting the cut step as enabled is MF-4 as written, since MF-4 applies to enabledness (FA-2) for all strengths. No genuine refutation is lost: in the unbounded model the step is enabled at those states, so a loop that never takes it is unfair there too. Safety is unchanged: `steps` is read only by `cut_steps`, every other `Cut` reader tests the flags, and `Cut` is not in any state key. |
+| FND-002 | fixed | The model-only pass inserts a state into `dead_message_limited` when `cut.messages` is set, and `decide` unions that set into `message_limited` before settling. The test `a_send_cut_met_only_by_the_model_only_pass_settles_channel_bound_reached` (claim true at position 0, so every cut is seen in the model-only pass) settles `ChannelBoundReached`. |
+| FND-003 | fixed | The channel ordering test is retagged off FR-158-AC-5 to FR-225-AC-5, a constraint-versus-bound criterion; no FR-225 AC covers channel ordering. A constrained `tso` liveness test was added. Its tag is FND-005. |
+| FND-004 | fixed | The doc comment now reads "The request's state constraint (FR-158)." |
