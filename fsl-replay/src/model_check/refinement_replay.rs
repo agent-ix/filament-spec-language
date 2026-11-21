@@ -1661,8 +1661,7 @@ fn replay_lasso(
                 Category::Success,
             )));
         }
-        let violated = named == index;
-        violated
+        named == index
     } else {
         let mut enabled = Vec::with_capacity(loop_trail.len());
         for position in loop_trail {

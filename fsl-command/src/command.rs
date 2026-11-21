@@ -3,8 +3,10 @@
 
 mod analyze;
 mod clause;
+mod dependency_manifest;
 mod export;
 mod flow;
+mod handoff;
 mod items;
 mod model_based_test;
 pub mod monitor;
@@ -105,7 +107,7 @@ impl FileCategory {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct FileCounts {
     programs: usize,
     models: usize,
@@ -1527,13 +1529,12 @@ impl RunError {
                     None,
                     self.outcome_message(),
                 );
-                // FR-940-AC-12: a claim-name collision carries the row's path.
+                // Manifest and strict-reader refusals retain their original pointer.
                 let diagnostic = match pointer {
-                    Some(pointer) if self.cause.code() == Code::AmbiguousDeclaration => diagnostic
-                        .with_details(Some(serde_json::Map::from_iter([(
-                            "path".to_owned(),
-                            serde_json::Value::String(pointer.clone()),
-                        )]))),
+                    Some(pointer) => diagnostic.with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(pointer.clone()),
+                    )]))),
                     _ => diagnostic,
                 };
                 OutcomeDocument::new(operation, None, self.category())
@@ -1638,6 +1639,7 @@ struct Intake<'a> {
     dependent_limit: Option<DependentLimit>,
     prefetched_observations: std::collections::BTreeMap<String, Vec<u8>>,
     sources: Vec<Source>,
+    additional_files: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -1647,6 +1649,18 @@ enum DependentLimit {
 }
 
 impl Intake<'_> {
+    fn additional_file(&mut self) -> Result<()> {
+        if self.additional_files == 0 {
+            return Err(RunCause::Limit(LimitKind::SelectedFiles {
+                category: FileCategory::Program,
+                requested: 1,
+                remaining: 0,
+                maximum: FILES,
+            }));
+        }
+        self.additional_files -= 1;
+        Ok(())
+    }
     fn file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
         if let Some(bytes) = self.prefetched_observations.remove(path) {
             return Ok(bytes);
@@ -3821,7 +3835,10 @@ fn check_file_count(counts: FileCounts) -> Result<()> {
 
 fn intake(directory: &Path, counts: FileCounts) -> Result<Intake<'_>> {
     check_file_count(counts)?;
+    let additional_files =
+        FILES - counts.programs - counts.models - counts.observations - counts.extensions;
     Ok(Intake {
+        additional_files,
         directory,
         remaining: TOTAL_BYTES,
         maximum: TOTAL_BYTES,
@@ -3833,7 +3850,10 @@ fn intake(directory: &Path, counts: FileCounts) -> Result<Intake<'_>> {
 
 fn intake_with_bytes(directory: &Path, counts: FileCounts, maximum: usize) -> Result<Intake<'_>> {
     check_file_count(counts)?;
+    let additional_files =
+        FILES - counts.programs - counts.models - counts.observations - counts.extensions;
     Ok(Intake {
+        additional_files,
         directory,
         remaining: maximum,
         maximum,
@@ -3849,7 +3869,10 @@ fn intake_with_fixed_bytes(
     maximum: usize,
 ) -> Result<Intake<'_>> {
     check_file_count(counts)?;
+    let additional_files =
+        FILES - counts.programs - counts.models - counts.observations - counts.extensions;
     Ok(Intake {
+        additional_files,
         directory,
         remaining: maximum,
         maximum,
@@ -4012,11 +4035,13 @@ fn prepare_run_bytes_with_sources(
     prepared
 }
 
+type RequestPredicate = fn(&wire::Request) -> bool;
+
 /// The request members FR-1031's first row names beside `export`, in the
 /// order a refusal lists them, each with its presence in a typed request.
 /// `export_evidence` is read from the raw request body only, so it is never
 /// present in a typed request.
-const TRANSFER_EXCLUSIVE: [(&str, fn(&wire::Request) -> bool); 9] = [
+const TRANSFER_EXCLUSIVE: [(&str, RequestPredicate); 9] = [
     ("package", |request| request.package.is_some()),
     ("call", |request| request.call.is_some()),
     ("clause", |request| request.clause.is_some()),
@@ -4818,6 +4843,7 @@ mod tests {
             cause: RunCause::AnalyzeRefused(Box::new(
                 fsl_analyze::analyze::AnalyzeRefusal::Package(
                     fsl_package::PackageAdmissionRefusal {
+                        limit: None,
                         code: Code::InvalidPackage,
                         cause: Some("invalid-value".to_owned()),
                         pointer: Some("/claim_names/2".to_owned()),

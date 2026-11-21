@@ -1,0 +1,705 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Shared bytes-only directory admission (FR-850, FR-1039).
+
+use super::{dependency_manifest::Manifest, Intake, Result, RunCause};
+use filament_contract_model::CheckedPackageV2;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Component, Path},
+    sync::Arc,
+};
+
+pub(super) struct Admitted {
+    pub(super) package: CheckedPackageV2,
+    pub(super) identities: fsl_package::ReadIdentityRows,
+    pub(super) equality: Option<fsl_package::ReadEqualityRows>,
+    pub(super) budget: filament_contract_model::NativeJoinBudget,
+    pub(super) bytes: Vec<u8>,
+    pub(super) identity_bytes: Vec<u8>,
+    pub(super) equality_bytes: Option<Vec<u8>>,
+    pub(super) dependencies: Vec<fsl_package::DependencyArtifact>,
+}
+
+#[derive(Debug)]
+pub(super) enum AdmissionFailure {
+    Artifact(Box<RunCause>),
+    UnselectedModel { index: usize, identity: String },
+}
+
+impl From<RunCause> for AdmissionFailure {
+    fn from(cause: RunCause) -> Self {
+        Self::Artifact(Box::new(cause))
+    }
+}
+
+impl AdmissionFailure {
+    pub(super) fn for_run(self) -> RunCause {
+        match self {
+            Self::Artifact(cause) => *cause,
+            Self::UnselectedModel { index, identity } => RunCause::ClauseRequest {
+                member: format!("/request/models/{index}"),
+                reason: format!("the package records no model selection {identity}"),
+            },
+        }
+    }
+
+    pub(super) fn for_analyze(self) -> RunCause {
+        match self {
+            Self::Artifact(cause) => *cause,
+            Self::UnselectedModel { identity, .. } => {
+                refusal("models", "conflicting-definition", None, identity)
+            }
+        }
+    }
+}
+
+pub(super) fn refusal(
+    file: &str,
+    cause: &str,
+    pointer: Option<String>,
+    detail: impl std::fmt::Display,
+) -> RunCause {
+    RunCause::AnalyzePackage {
+        code: fsl_foundation::Code::InvalidPackage,
+        cause: Some(cause.to_owned()),
+        pointer,
+        message: format!("invalid_package/{cause}: {file}: {detail}"),
+    }
+}
+
+pub(super) fn read_file(
+    intake: &mut Intake<'_>,
+    directory: &str,
+    relative: &str,
+    additional: bool,
+) -> Result<Vec<u8>> {
+    if directory.contains('\\') {
+        return Err(refusal(
+            relative,
+            "invalid-value",
+            None,
+            "backslash in artifact path",
+        ));
+    }
+    let mut base = std::path::PathBuf::new();
+    for component in Path::new(directory).components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(component) => base.push(component),
+            _ => {
+                return Err(refusal(
+                    relative,
+                    "invalid-value",
+                    None,
+                    "nonconfined handoff directory",
+                ))
+            }
+        }
+    }
+    let selected = base.join(relative);
+    let mut current = intake.directory.to_path_buf();
+    for component in selected.components() {
+        let Component::Normal(component) = component else {
+            return Err(refusal(
+                relative,
+                "invalid-value",
+                None,
+                "nonconfined artifact path",
+            ));
+        };
+        current.push(component);
+        let metadata = std::fs::symlink_metadata(&current).map_err(|_| {
+            refusal(
+                relative,
+                "missing-file",
+                None,
+                "selected artifact is absent",
+            )
+        })?;
+        if metadata.file_type().is_symlink()
+            || (!metadata.is_dir() && current != intake.directory.join(&selected))
+        {
+            return Err(refusal(
+                relative,
+                "invalid-value",
+                None,
+                "unsafe artifact path",
+            ));
+        }
+    }
+    let metadata = std::fs::symlink_metadata(&current).map_err(|_| {
+        refusal(
+            relative,
+            "missing-file",
+            None,
+            "selected artifact is absent",
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(refusal(
+            relative,
+            "invalid-value",
+            None,
+            "artifact is not a regular file",
+        ));
+    }
+    if additional {
+        intake.additional_file()?;
+    }
+    intake.file(&selected.to_string_lossy(), intake.remaining)
+}
+
+fn package_failure(file: &str, error: fsl_package::PackageAdmissionRefusal) -> RunCause {
+    if let Some(limit) = &error.limit {
+        return RunCause::AnalyzePackage {
+            code: error.code,
+            cause: error.cause,
+            pointer: error.pointer,
+            message: format!("{file}: {limit:?}"),
+        };
+    }
+    RunCause::AnalyzePackage {
+        code: error.code,
+        cause: error.cause.clone(),
+        pointer: error.pointer.clone(),
+        message: format!("{file}: {}", error.label()),
+    }
+}
+
+fn identities(
+    bytes: &[u8],
+    package: &CheckedPackageV2,
+    budget: &mut filament_contract_model::NativeJoinBudget,
+    file: &str,
+) -> Result<fsl_package::ReadIdentityRows> {
+    fsl_package::ReadIdentityRows::read(bytes, package, budget).map_err(|error| {
+        let native = match &error {
+            fsl_package::IdentityFileRefusal::Native(native) => {
+                Some(fsl_package::NativeJoinFailure::from((**native).clone()))
+            }
+            fsl_package::IdentityFileRefusal::Rows(rows) => {
+                Some(fsl_package::NativeJoinFailure::from(*rows))
+            }
+            _ => None,
+        };
+        if let Some(denial) = native.and_then(|native| {
+            fsl_package::NativeJoinLimits::from_budget(budget).refusal(native, budget)
+        }) {
+            return RunCause::AnalyzePackage {
+                code: fsl_foundation::Code::StageLimitExceeded,
+                cause: Some(denial.limit.kind().catalog_cause().to_owned()),
+                pointer: None,
+                message: format!("{file}: {denial:?}"),
+            };
+        }
+        let cause = match &error {
+            fsl_package::IdentityFileRefusal::Malformed { .. } => "malformed-file",
+            fsl_package::IdentityFileRefusal::Format(_) => "unknown-format",
+            fsl_package::IdentityFileRefusal::Unjoined { .. } => "unjoined-row",
+            fsl_package::IdentityFileRefusal::Native(_)
+            | fsl_package::IdentityFileRefusal::Rows(_)
+            | fsl_package::IdentityFileRefusal::SourceObject(_)
+            | fsl_package::IdentityFileRefusal::SourceOperation(_) => "native-witness",
+        };
+        refusal(file, cause, None, error)
+    })
+}
+
+struct Pending {
+    identity: String,
+    directory: String,
+    bytes: Vec<u8>,
+    edges: Vec<String>,
+}
+
+// Lock inspection schedules strict admission only. No graph or semantic value
+// is derived here; every package is subsequently validated by the IR reader.
+fn header(bytes: &[u8]) -> (Option<String>, Vec<String>) {
+    use quire_canonical::Node;
+    let Ok(document) = quire_canonical::read(bytes, u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+    else {
+        return (None, Vec::new());
+    };
+    let name = member(document.root(), "name").and_then(|name| match name.node() {
+        Node::String(name) => Some(name.to_owned()),
+        _ => None,
+    });
+    let Some(lock) = member(document.root(), "lock") else {
+        return (name, Vec::new());
+    };
+    let Some(selections) = member(lock, "dependency_selections") else {
+        return (name, Vec::new());
+    };
+    let Node::Array(selections) = selections.node() else {
+        return (name, Vec::new());
+    };
+    let edges = selections
+        .into_iter()
+        .filter_map(|row| {
+            let identity = member(row, "identity")?;
+            let Node::String(identity) = identity.node() else {
+                return None;
+            };
+            Some(identity.to_owned())
+        })
+        .collect();
+    (name, edges)
+}
+
+fn member<'document>(
+    value: quire_canonical::NodeRef<'document>,
+    name: &str,
+) -> Option<quire_canonical::NodeRef<'document>> {
+    let quire_canonical::Node::Object(members) = value.node() else {
+        return None;
+    };
+    members
+        .into_iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| value)
+}
+
+pub(super) fn admit(
+    intake: &mut Intake<'_>,
+    directory: &str,
+    bytes: Vec<u8>,
+    supplied: &fsl_semantics::model::intake::PackageInput,
+    limits: fsl_package::V2ReadLimits,
+) -> std::result::Result<Admitted, AdmissionFailure> {
+    let manifest_bytes = read_file(intake, directory, "dependencies.json", true)?;
+    let manifest = Manifest::read(&manifest_bytes).map_err(|error| {
+        refusal(
+            "dependencies.json",
+            error.cause,
+            Some(error.pointer),
+            error.supplied_format.unwrap_or_default(),
+        )
+    })?;
+    let manifest_identities: Vec<_> = manifest
+        .dependencies
+        .iter()
+        .map(|row| row.identity.clone())
+        .collect();
+    let mut pending = BTreeMap::new();
+    for row in manifest.dependencies {
+        let file = format!("{}/checked-package.json", row.directory);
+        let bytes = read_file(intake, directory, &file, true)?;
+        pending.insert(
+            row.identity.clone(),
+            Pending {
+                identity: row.identity,
+                directory: row.directory,
+                edges: header(&bytes).1,
+                bytes,
+            },
+        );
+    }
+    let (root_name, root_edges) = header(&bytes);
+    // Detect the first back-edge in recorded order, including an edge back
+    // to the selected root, before the ready queue performs admission.
+    let mut active = BTreeSet::new();
+    let mut path = Vec::new();
+    let mut visited = BTreeSet::new();
+    // Root-selected edges take precedence. Remaining manifest rows are then
+    // traversed in their canonical order, so even an unreachable cycle keeps
+    // its actual importing artifact and back-edge rather than a queue error.
+    let mut stack: Vec<_> = pending
+        .iter()
+        .rev()
+        .map(|(identity, package)| {
+            (
+                identity.clone(),
+                false,
+                format!("{}/checked-package.json", package.directory),
+                0,
+            )
+        })
+        .collect();
+    if let Some(name) = root_name {
+        active.insert(name.clone());
+        path.push(name.clone());
+        stack.push((name, true, "checked-package.json".to_owned(), 0));
+    }
+    stack.extend(
+        root_edges
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, identity)| {
+                (
+                    identity.clone(),
+                    false,
+                    "checked-package.json".to_owned(),
+                    index,
+                )
+            }),
+    );
+    while let Some((identity, expanded, file, edge)) = stack.pop() {
+        if expanded {
+            active.remove(&identity);
+            path.pop();
+            visited.insert(identity);
+            continue;
+        }
+        if visited.contains(&identity) {
+            continue;
+        }
+        if !active.insert(identity.clone()) {
+            let cycle: Vec<_> = path
+                .iter()
+                .skip_while(|name| *name != &identity)
+                .cloned()
+                .chain(std::iter::once(identity.clone()))
+                .collect();
+            return Err(refusal(
+                &file,
+                "definition-cycle",
+                Some(format!("/lock/dependency_selections/{edge}")),
+                format!("{cycle:?}"),
+            )
+            .into());
+        }
+        path.push(identity.clone());
+        stack.push((identity.clone(), true, file, edge));
+        if let Some(package) = pending.get(&identity) {
+            for (index, child) in package.edges.iter().enumerate().rev() {
+                stack.push((
+                    child.clone(),
+                    false,
+                    format!("{}/checked-package.json", package.directory),
+                    index,
+                ));
+            }
+        }
+    }
+    let mut evidence = fsl_package::checked_package_evidence(supplied, &BTreeMap::new())
+        .map_err(|error| package_failure("models", error))?;
+    let mut dependencies = Vec::new();
+    let mut remaining = BTreeMap::new();
+    let mut importers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut ready = BTreeSet::new();
+    for (identity, package) in &pending {
+        let mut count = 0_usize;
+        for edge in &package.edges {
+            if pending.contains_key(edge) {
+                count += 1;
+                importers
+                    .entry(edge.clone())
+                    .or_default()
+                    .push(identity.clone());
+            }
+        }
+        remaining.insert(identity.clone(), count);
+        if count == 0 {
+            ready.insert(identity.clone());
+        }
+    }
+    let mut budget = limits
+        .native_join_limits()
+        .budget()
+        .with_read_storage_limit(u64::MAX);
+    while !pending.is_empty() {
+        let Some(identity) = ready.pop_first() else {
+            return Err(refusal(
+                "dependencies.json",
+                "definition-cycle",
+                None,
+                "no acyclic dependency is ready",
+            )
+            .into());
+        };
+        let Some(package) = pending.remove(&identity) else {
+            continue;
+        };
+        let file = format!("{}/checked-package.json", package.directory);
+        let read = fsl_package::admit_checked_package_with_evidence(
+            &package.bytes,
+            &evidence,
+            limits,
+            &mut budget,
+        )
+        .map_err(|error| package_failure(&file, error))?;
+        if read.name() != package.identity {
+            return Err(refusal(&file, "conflicting-definition", None, &package.identity).into());
+        }
+        let identity_file = format!("{}/identities.json", package.directory);
+        let equality_file = format!("{}/equality.json", package.directory);
+        let identity_bytes = read_file(intake, directory, &identity_file, true)?;
+        let equality_bytes = read_file(intake, directory, &equality_file, true)?;
+        let identities = identities(&identity_bytes, &read, &mut budget, &identity_file)?;
+        let equality = fsl_package::ReadEqualityRows::read(&equality_bytes, &read)
+            .map_err(|error| refusal(&equality_file, "refused-file", None, error))?;
+        let read = Arc::new(read);
+        evidence
+            .insert_dependency_package(identity.as_str(), Arc::clone(&read))
+            .map_err(|error| {
+                refusal(
+                    &file,
+                    "conflicting-definition",
+                    None,
+                    format!("{identity}: {error:?}"),
+                )
+            })?;
+        for importer in importers.get(&identity).into_iter().flatten() {
+            if let Some(count) = remaining.get_mut(importer) {
+                *count -= 1;
+                if *count == 0 {
+                    ready.insert(importer.clone());
+                }
+            }
+        }
+        dependencies.push(fsl_package::DependencyArtifact {
+            identity,
+            package: read,
+            bytes: package.bytes.into(),
+            identity_bytes: identity_bytes.into(),
+            equality_bytes: equality_bytes.into(),
+            identities,
+            equality,
+        });
+    }
+    let package =
+        fsl_package::admit_checked_package_with_evidence(&bytes, &evidence, limits, &mut budget)
+            .map_err(|error| package_failure("checked-package.json", error))?;
+    let mut reachable = BTreeSet::new();
+    let mut selected: Vec<_> = package.direct_dependencies().collect();
+    while let Some(dependency) = selected.pop() {
+        if reachable.insert(dependency.name()) {
+            selected.extend(dependency.direct_dependencies());
+        }
+    }
+    for (index, identity) in manifest_identities.iter().enumerate() {
+        if !reachable.contains(identity.as_str()) {
+            return Err(refusal(
+                "dependencies.json",
+                "invalid-value",
+                Some(format!("/dependencies/{index}/identity")),
+                "unreachable dependency artifact",
+            )
+            .into());
+        }
+    }
+    for (index, identity) in supplied.keys().enumerate() {
+        if !package
+            .selected_model_packages()
+            .any(|selected| selected == identity)
+            && !dependencies.iter().any(|dependency| {
+                dependency
+                    .package
+                    .selected_model_packages()
+                    .any(|selected| selected == identity)
+            })
+        {
+            return Err(AdmissionFailure::UnselectedModel {
+                index,
+                identity: identity.clone(),
+            });
+        }
+    }
+    let identity_bytes = read_file(intake, directory, "identities.json", false)?;
+    let identities = identities(&identity_bytes, &package, &mut budget, "identities.json")?;
+    let equality_bytes = if std::fs::symlink_metadata(
+        intake.directory.join(directory).join("equality.json"),
+    )
+    .is_ok()
+    {
+        Some(read_file(intake, directory, "equality.json", true)?)
+    } else if package
+        .checked_term_data()
+        .is_some_and(|data| !data.equality_decisions.is_empty())
+    {
+        return Err(refusal(
+            "equality.json",
+            "missing-file",
+            None,
+            "required equality witness is absent",
+        )
+        .into());
+    } else {
+        None
+    };
+    let equality = equality_bytes
+        .as_deref()
+        .map(|bytes| {
+            fsl_package::ReadEqualityRows::read(bytes, &package)
+                .map_err(|error| refusal("equality.json", "refused-file", None, error))
+        })
+        .transpose()?;
+    Ok(Admitted {
+        package,
+        identities,
+        equality,
+        budget,
+        bytes,
+        identity_bytes,
+        equality_bytes,
+        dependencies,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{checked_handoff, emit_checked_v2};
+    use ix_trace_rs::trace;
+
+    fn chain(directory: &Path) {
+        let header = "language \"ix:native\" edition \"1-draft\"; profile v = \"filament.value.complete/v1\";";
+        for (file, body) in [
+            ("a.native", "function answer using v(): Integer pure { 42 }"),
+            (
+                "z.native",
+                "import \"test/a\" as a; function answer using v(): Integer pure { a::answer() }",
+            ),
+            (
+                "unit.native",
+                "import \"test/z\" as z; function answer using v(): Integer pure { z::answer() }",
+            ),
+        ] {
+            std::fs::write(directory.join(file), format!("{header}\n{body}\n")).unwrap();
+        }
+        checked_handoff::write(
+            &checked_handoff::CheckedHandoffRequest {
+                emit: emit_checked_v2::Request {
+                    source: directory.join("unit.native"),
+                    package_name: "root".to_owned(),
+                    models: vec![],
+                    libraries: vec![
+                        ("test/a".to_owned(), directory.join("a.native")),
+                        ("test/z".to_owned(), directory.join("z.native")),
+                    ],
+                    execution_points: None,
+                    temporal_selections: vec![],
+                    out: None,
+                },
+                corpus: checked_handoff::Corpus::None,
+                native_join: fsl_package::NativeJoinLimits::new(1 << 40, 1 << 24),
+            },
+            &directory.join("handoff"),
+        )
+        .unwrap();
+    }
+
+    #[derive(Debug)]
+    struct NativeDenial {
+        native: fsl_package::NativeJoinFailure,
+        consumed: filament_contract_model::NativeJoinCharge,
+        unpaid: filament_contract_model::NativeJoinDeniedCharge,
+    }
+
+    fn load(
+        directory: &Path,
+        limits: fsl_package::V2ReadLimits,
+    ) -> std::result::Result<filament_contract_model::NativeJoinCharge, NativeDenial> {
+        let mut intake = super::super::intake_with_bytes(
+            directory,
+            super::super::FileCounts {
+                programs: 2,
+                ..Default::default()
+            },
+            1 << 28,
+        )
+        .expect("the fixture fits its intake allowance");
+        let bytes = read_file(&mut intake, "handoff", "checked-package.json", false)
+            .expect("the root fixture exists");
+        let mut loaded = admit(&mut intake, "handoff", bytes, &BTreeMap::new(), limits).expect(
+            "the one-short completed-pass bound still admits all strict reads and witness files",
+        );
+        let _view = fsl_package::BarePackage::new(&loaded.package)
+            .with_dependency_artifacts(&loaded.dependencies, &mut loaded.budget)
+            .and_then(|package| {
+                package.with_supply(
+                    fsl_package::BareSupply {
+                        identities: &loaded.identities,
+                        equality: loaded.equality.as_ref(),
+                    },
+                    &mut loaded.budget,
+                )
+            })
+            .map_err(|native| NativeDenial {
+                native,
+                consumed: loaded.budget.consumed(),
+                unpaid: loaded
+                    .budget
+                    .first_unpaid()
+                    .expect("a native denial retains its unpaid charge"),
+            })?;
+        Ok(loaded.budget.consumed())
+    }
+
+    #[test]
+    #[trace("FR-850-AC-15", "TC-2410")]
+    fn strict_reads_and_own_witness_joins_share_exact_closure_allowances() {
+        let directory = tempfile::tempdir().unwrap();
+        chain(directory.path());
+        let mut limits = fsl_package::V2ReadLimits::bounded(1 << 40);
+        limits.work = 1 << 40;
+        let measured =
+            load(directory.path(), limits).expect("measure complete root and dependency admission");
+        assert!(measured.work > 0 && measured.storage > 0);
+        limits.work = measured.work;
+        limits.storage = measured.storage;
+        assert_eq!(load(directory.path(), limits).unwrap(), measured);
+        for (shortened, setting, kind, completed) in [
+            (
+                fsl_package::V2ReadLimits {
+                    work: measured.work - 1,
+                    ..limits
+                },
+                fsl_foundation::Setting::I2WorkUnits,
+                filament_contract_model::NativeJoinChargeKind::Work,
+                measured.work,
+            ),
+            (
+                fsl_package::V2ReadLimits {
+                    storage: measured.storage - 1,
+                    ..limits
+                },
+                fsl_foundation::Setting::I2NativeJoinStorage,
+                filament_contract_model::NativeJoinChargeKind::Storage,
+                measured.storage,
+            ),
+        ] {
+            let refusal = load(directory.path(), shortened)
+                .expect_err("one-short cumulative allowance must stop the pass");
+            let original = refusal
+                .native
+                .limit()
+                .expect("the native owner attaches its typed stage limit");
+            assert!(
+                matches!(refusal.native, fsl_package::NativeJoinFailure::Limit(_)),
+                "{refusal:?}"
+            );
+            assert_eq!(refusal.native.setting(), Some(setting), "{refusal:?}");
+            assert_eq!(original.setting(), setting, "{refusal:?}");
+            assert_eq!(original.configured_bound(), completed - 1, "{refusal:?}");
+            assert_eq!(original.actual(), u128::from(completed), "{refusal:?}");
+            assert_eq!(refusal.unpaid.kind, kind, "{refusal:?}");
+            let consumed = match kind {
+                filament_contract_model::NativeJoinChargeKind::Work => refusal.consumed.work,
+                filament_contract_model::NativeJoinChargeKind::Storage => refusal.consumed.storage,
+            };
+            assert_eq!(
+                u128::from(consumed) + refusal.unpaid.amount,
+                u128::from(completed),
+                "the first unpaid charge retains the cumulative attempted total: {refusal:?}"
+            );
+            let fsl_package::NativeJoinFailure::Projection(projection) = refusal.native.native()
+            else {
+                panic!("the original projection owner is preserved: {refusal:?}");
+            };
+            let expected_code = match kind {
+                filament_contract_model::NativeJoinChargeKind::Work => {
+                    filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedWork
+                }
+                filament_contract_model::NativeJoinChargeKind::Storage => {
+                    filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage
+                }
+            };
+            assert_eq!(
+                projection.code, expected_code,
+                "the original typed owner code is preserved: {refusal:?}"
+            );
+        }
+    }
+}
