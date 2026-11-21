@@ -410,8 +410,8 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::DomainObject,
         s(vec![
-            opt(x("abstract")),
-            x("object"),
+            opt(contextual("abstract")),
+            contextual("object"),
             type_ident(),
             opt(s(vec![
                 x("extends"),
@@ -453,7 +453,7 @@ fn source_and_types(g: &mut Grammar) {
             r(P::TypeReference),
             opt(x("?")),
             opt(r(P::DomainMultiplicity)),
-            opt(s(vec![x("subsets"), ident()])),
+            opt(s(vec![contextual("subsets"), ident()])),
             opt(s(vec![x("redefines"), ident(), x("::"), ident()])),
             x(";"),
         ]),
@@ -466,7 +466,7 @@ fn source_and_types(g: &mut Grammar) {
             x(":"),
             ident(),
             r(P::DomainMultiplicity),
-            opt(s(vec![x("inverse"), ident(), r(P::DomainMultiplicity)])),
+            opt(s(vec![contextual("inverse"), ident(), r(P::DomainMultiplicity)])),
             x(";"),
         ]),
     );
@@ -485,7 +485,7 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::DomainPopulation,
         s(vec![
-            opt(x("open")),
+            opt(contextual("open")),
             opt(x("symmetric")),
             contextual("population"),
             ident(),
@@ -498,7 +498,7 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::DomainOperation,
         s(vec![
-            x("operation"),
+            contextual("operation"),
             ident(),
             x("("),
             opt(list(|| r(P::Parameter))),
@@ -551,8 +551,8 @@ fn source_and_types(g: &mut Grammar) {
             x("event"),
             ident(),
             x("{"),
-            star(c(vec![r(P::DomainField), r(P::DomainInvariant)])),
-            x("occurs"),
+            backtracking_star(c(vec![r(P::DomainField), r(P::DomainInvariant)])),
+            contextual("occurs"),
             ident(),
             x(";"),
             x("}"),
@@ -561,7 +561,7 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::MachineDeclaration,
         s(vec![
-            x("machine"),
+            contextual("machine"),
             ident(),
             opt(s(vec![
                 x("extends"),
@@ -569,12 +569,12 @@ fn source_and_types(g: &mut Grammar) {
                 star(s(vec![x(","), ident()])),
             ])),
             x("{"),
-            star(c(vec![
+            backtracking_star(c(vec![
                 r(P::DomainField),
                 r(P::DomainOperation),
                 r(P::DomainInvariant),
             ])),
-            x("states"),
+            contextual("states"),
             x("("),
             ident(),
             star(s(vec![x(","), ident()])),
@@ -594,14 +594,14 @@ fn source_and_types(g: &mut Grammar) {
             x("on"),
             ident(),
             opt(s(vec![x("when"), r(P::Block)])),
-            opt(s(vec![x("emits"), ident(), star(s(vec![x(","), ident()]))])),
+            opt(s(vec![contextual("emits"), ident(), star(s(vec![x(","), ident()]))])),
             x(";"),
         ]),
     );
     g.insert(
         P::ProcessDeclaration,
         s(vec![
-            x("process"),
+            contextual("process"),
             ident(),
             opt(s(vec![
                 x("extends"),
@@ -621,25 +621,25 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::StepDeclaration,
         s(vec![
-            x("step"),
+            contextual("step"),
             ident(),
             x(":"),
             ident(),
             opt(s(vec![
-                x("consumes"),
+                contextual("consumes"),
                 ident(),
                 star(s(vec![x(","), ident()])),
             ])),
-            opt(s(vec![x("emits"), ident(), star(s(vec![x(","), ident()]))])),
+            opt(s(vec![contextual("emits"), ident(), star(s(vec![x(","), ident()]))])),
             x(";"),
         ]),
     );
     g.insert(
         P::StoreDeclaration,
         s(vec![
-            x("store"),
+            contextual("store"),
             ident(),
-            x("persists"),
+            contextual("persists"),
             ident(),
             star(s(vec![x(","), ident()])),
             x("{"),
@@ -650,16 +650,16 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::NamespaceDeclaration,
         s(vec![
-            x("namespace"),
+            contextual("namespace"),
             ident(),
             x("{"),
             opt(s(vec![
-                x("members"),
+                contextual("members"),
                 ident(),
                 star(s(vec![x(","), ident()])),
                 x(";"),
             ])),
-            star(s(vec![x("term"), ident(), x("="), text(), x(";")])),
+            star(s(vec![contextual("term"), ident(), x("="), text(), x(";")])),
             x("}"),
         ]),
     );
@@ -689,12 +689,12 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::PortDeclaration,
         s(vec![
-            x("port"),
+            contextual("port"),
             ident(),
             x(":"),
             ident(),
             r(P::DomainMultiplicity),
-            c(vec![x("in"), x("out"), x("inout")]),
+            c(vec![x("in"), contextual("out"), contextual("inout")]),
             x("on"),
             ident(),
             x(";"),
@@ -703,7 +703,7 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::ConnectionDeclaration,
         s(vec![
-            x("connection"),
+            contextual("connection"),
             ident(),
             ident(),
             x("."),
@@ -718,7 +718,7 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::AllocationDeclaration,
         s(vec![
-            x("allocate"),
+            contextual("allocate"),
             ident(),
             x("from"),
             ident(),

@@ -127,3 +127,50 @@ fn a_domain_after_a_profile_refuses_at_the_word() {
         Some(text.find("domain").unwrap() as u64)
     );
 }
+
+/// The words only a model-unit declaration begins or continues with are
+/// identifiers everywhere else: record fields, parameters and expressions.
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn model_unit_words_parse_as_identifiers_outside_their_declarations() {
+    let words = [
+        "abstract",
+        "allocate",
+        "connection",
+        "consumes",
+        "emits",
+        "inout",
+        "inverse",
+        "machine",
+        "members",
+        "namespace",
+        "object",
+        "occurs",
+        "open",
+        "operation",
+        "out",
+        "persists",
+        "port",
+        "process",
+        "states",
+        "step",
+        "store",
+        "subsets",
+        "term",
+    ];
+    let fields: String = words.iter().map(|word| format!("{word}: Integer; ")).collect();
+    let parameters = words
+        .iter()
+        .map(|word| format!("{word}: Integer"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sum = words.join(" + ");
+    let text = format!(
+        "{HEADER}profile Complete = \"filament.value.complete/v1\";\n\
+         record Words {{ {fields}}}\n\
+         function total using Complete({parameters}): Integer pure {{ {sum} }}\n"
+    );
+    let parsed = parse(&text);
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    assert_eq!(parsed.cst().render(), text.as_bytes());
+}
