@@ -55,6 +55,7 @@ pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 pub(crate) mod probabilistic;
 mod reference_bindings;
+mod replay_over;
 mod restore;
 pub use restore::{ModelRestoreBudget, ModelRestoreError};
 mod refine;
