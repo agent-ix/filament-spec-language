@@ -1203,10 +1203,22 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
         &[true_.clone(), false_.clone(), false_.clone()],
         true,
     );
-    assert!(
-        matches!(&guarded, ModelCheckOutcome::Holds { .. }),
-        "{guarded:?}"
-    );
+    // FR-125 reads every atom at each claimed position even when the
+    // activation guard is false: it controls activation, not definedness.
+    let ModelCheckOutcome::Violated { counterexample, .. } = guarded else {
+        panic!("the absent field atom must remain undefined under a false activation guard");
+    };
+    assert_eq!(counterexample.over_binding, Some(instance("animals", "t")));
+    assert!(counterexample.prefix.is_empty());
+    let CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind else {
+        panic!("the absent field atom is undefined");
+    };
+    assert_eq!(evaluation.site.position, 0);
+    assert!(matches!(
+        evaluation.site.locus,
+        fsl_replay::UndefinedLocus::Atom(_)
+    ));
+    assert_eq!(AtomReading::Undefined(evaluation.cause.clone()), absent_key);
     let undefined_guard = parity(
         "on each (y: M::Dog) when (y.age >= 0)",
         "always holds(true)",
