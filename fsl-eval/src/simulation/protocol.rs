@@ -1578,18 +1578,15 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 protocol: subject.protocol.clone(),
             })?;
         let package = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
-            .map_err(|refusal| {
-                eprintln!("RECEIVE-FIFO-DIAG package-program {refusal:?}");
-                match refusal {
-                    PackageProgramRefusal::Memory(refusal) => ProtocolRefusal::Memory(refusal),
-                    PackageProgramRefusal::Unsupported(operation) => {
-                        ProtocolRefusal::Unsupported(Unsupported::PackageControl(operation))
-                    }
-                    PackageProgramRefusal::Correlation { .. } => {
-                        ProtocolRefusal::Unsupported(Unsupported::PackageCorrelation)
-                    }
-                    _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
+            .map_err(|refusal| match refusal {
+                PackageProgramRefusal::Memory(refusal) => ProtocolRefusal::Memory(refusal),
+                PackageProgramRefusal::Unsupported(operation) => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageControl(operation))
                 }
+                PackageProgramRefusal::Correlation { .. } => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageCorrelation)
+                }
+                _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
             })?;
         if let Some(binding) = subject.capacities.first() {
             return Err(ProtocolRefusal::Capacity(CapacityRefusal::UnknownName {
@@ -1666,9 +1663,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         {
             return Err(ProtocolRefusal::Unsupported(Unsupported::WeakMemory));
         }
-        let program = Program::new_package(&model, &package).inspect_err(|failure| {
-            eprintln!("RECEIVE-FIFO-DIAG normalized-program {failure:?}");
-        })?;
+        let program = Program::new_package(&model, &package)?;
         let mut enabled = WeakAccesses::default();
         let mut weak = WeakAccesses::default();
         for over in &over_values {
@@ -2846,16 +2841,10 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let binders = self.package_binder_values(frame, &observation, slot)?;
         let supply = package
             .supply_for_slot(slot, binders, Some(&observation))
-            .map_err(|failure| {
-                eprintln!("RECEIVE-FIFO-DIAG control-supply node={node:?} {failure:?}");
-                broken()
-            })?;
+            .map_err(|_| broken())?;
         let result = package
             .evaluate_control_constraint(node, &supply, &mut Meter::new(self.model.meter()))
-            .map_err(|failure| {
-                eprintln!("RECEIVE-FIFO-DIAG control-evaluate node={node:?} {failure:?}");
-                broken()
-            })?;
+            .map_err(|_| broken())?;
         package_slot_verdict(result).map(Some)
     }
 
@@ -2917,10 +2906,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 state.state(),
                 self.model.observation_of(state)?.identity,
             )
-            .map_err(|failure| {
-                eprintln!("RECEIVE-FIFO-DIAG observation {failure:?}");
-                broken()
-            })
+            .map_err(|_| broken())
     }
 
     fn package_binder_values(
@@ -2965,29 +2951,13 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let filament_semantic_value::admission::ObservationAdmission::Admitted(observation) =
             observation
         else {
-            use filament_semantic_value::admission::ObservationAdmission;
-            match observation {
-                ObservationAdmission::Refused(record) => {
-                    eprintln!("RECEIVE-FIFO-DIAG supply-observation-refused {record:?}")
-                }
-                ObservationAdmission::Incomplete(record) => {
-                    eprintln!("RECEIVE-FIFO-DIAG supply-observation-incomplete {record:?}")
-                }
-                ObservationAdmission::Fault(failure) => {
-                    eprintln!("RECEIVE-FIFO-DIAG supply-observation-fault {failure:?}")
-                }
-                ObservationAdmission::Admitted(_) => {}
-            }
             return Err(broken());
         };
         let subject = self.package_subject.ok_or_else(broken)?;
         let package = self.package_program.as_ref().ok_or_else(broken)?;
         let required: BTreeSet<_> = package
             .slot_binders(slot)
-            .map_err(|failure| {
-                eprintln!("RECEIVE-FIFO-DIAG supply-binders {failure:?}");
-                broken()
-            })?
+            .map_err(|_| broken())?
             .into_iter()
             .collect();
         binders
@@ -3005,10 +2975,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                             &value,
                             subject.model.simulation.input.types,
                         )
-                        .map_err(|_| {
-                            eprintln!("RECEIVE-FIFO-DIAG reference-walk binder={binder:?}");
-                            broken()
-                        })?
+                        .map_err(|_| broken())?
                         {
                             let environment = observation.environment();
                             let population = if binder == &package.over {
@@ -3027,10 +2994,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                                     })
                                     .and_then(|population| environment.population_node(population))
                                     .cloned()
-                                    .ok_or_else(|| {
-                                        eprintln!("RECEIVE-FIFO-DIAG reference-population binder={binder:?}");
-                                        broken()
-                                    })?
+                                    .ok_or_else(broken)?
                             };
                             references.push(crate::value::ProtocolReferenceOccurrence {
                                 path,

@@ -167,11 +167,28 @@ fn package_receive_fifo_runs_the_complete_example_body() {
 #[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-4", "FR-211-AC-5")]
 #[test]
 fn package_receive_fifo_preserves_key_partition_and_head_blocking() {
-    for (name, second_key, expected) in [("same", 0, "refuted"), ("different", 1, "proved")] {
+    for (name, second_key, expected, cause) in [
+        ("same", 0, "refuted", Some("head-blocked")),
+        ("different", 1, "proved", None),
+        ("ne-same-reference", 1, "proved", None),
+        ("ne-distinct-reference", 1, "proved", None),
+        ("eq-distinct-reference", 1, "refuted", Some("constraint")),
+    ] {
         let ws = Workspace::new(&format!("package-receive-fifo-head-{name}"));
+        let distinct = matches!(name, "ne-distinct-reference" | "eq-distinct-reference");
+        let mut second = receive_fifo_send("Second", "sentTwo", second_key);
+        if distinct {
+            second = second.replace("sentTwo.target = k", "sentTwo.target <> k");
+        }
+        let receive = match name {
+            "ne-same-reference" => "got.ok and not (got.target <> k)",
+            "ne-distinct-reference" => "got.ok and got.target <> k",
+            "eq-distinct-reference" => "got.ok and got.target = k",
+            _ => "got.ok",
+        };
         let controls = receive_fifo_send("First", "sentOne", 0)
-            + &receive_fifo_send("Second", "sentTwo", second_key)
-            + &receive_fifo_receive("Received", "Second", "got", "got.ok");
+            + &second
+            + &receive_fifo_receive("Received", "Second", "got", receive);
         let path = receive_fifo_request(
             &ws,
             "m.n",
@@ -181,15 +198,21 @@ fn package_receive_fifo_preserves_key_partition_and_head_blocking() {
             &controls,
             "closing",
         );
+        if distinct {
+            let snapshots = channel_snapshots(&[("c", 0), ("d", 0)]);
+            ws.write("snapshot-0.json", &snapshots[0]);
+        }
         let item = channel_send_parity(&ws, &path, expected);
-        if expected == "refuted" {
+        if let Some(cause) = cause {
             let blocked = item["counterexample"]["blocked"]
                 .as_array()
                 .expect("blocked receive");
             assert_eq!(blocked.len(), 1, "{item}");
             assert_eq!(blocked[0]["rest"]["node"], "Main/Received", "{item}");
-            assert_eq!(blocked[0]["cause"]["type"], "head-blocked", "{item}");
-            assert_eq!(blocked[0]["cause"]["channel"], "Flow::Release", "{item}");
+            assert_eq!(blocked[0]["cause"]["type"], cause, "{item}");
+            if cause == "head-blocked" {
+                assert_eq!(blocked[0]["cause"]["channel"], "Flow::Release", "{item}");
+            }
         }
     }
 }
@@ -370,6 +393,12 @@ fn finite_channel_model() -> Value {
     model
 }
 
+fn channel_snapshots(cells: &[(&str, i64)]) -> Vec<Vec<u8>> {
+    let mut documents = crate::fill::Documents::new();
+    documents.start("s0", cells);
+    documents.snapshots.into_values().collect()
+}
+
 fn channel_request(
     ws: &Workspace,
     model: Value,
@@ -389,9 +418,7 @@ fn channel_request(
     );
     let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
     let model = serde_json::to_vec(&model).expect("the channel model serializes");
-    let mut documents = crate::fill::Documents::new();
-    documents.start("s0", &[("c", 0)]);
-    let snapshots: Vec<Vec<u8>> = documents.snapshots.values().cloned().collect();
+    let snapshots = channel_snapshots(&[("c", 0)]);
     crate::analyze_cli_support::request_over(
         ws,
         &unit,

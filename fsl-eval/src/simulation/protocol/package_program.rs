@@ -218,9 +218,8 @@ fn channels(
         let key = match protocol_view::channel_ordering(channel).map_err(|_| absent())? {
             ChannelOrdering::Unordered => None,
             ChannelOrdering::Fifo => {
-                // The key slot may be a literal, whereas `fifo_key` exposes
-                // expression-node keys. The binder is admitted independently
-                // of that term's shape in the ordering group.
+                // Read the payload binder separately; the admitted key slot
+                // owns expression evaluation and its binder inventory.
                 let binder = member(&channel.body, "ordering")
                     .and_then(|ordering| member(ordering, "binder"))
                     .and_then(|term| match term {
