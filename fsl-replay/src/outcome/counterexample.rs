@@ -122,6 +122,14 @@ pub fn replay_task_product_trace<T: Spelling + Clone + 'static>(
             pointer: "/prefix/0/transition/type".to_owned(),
         });
     }
+    // The task alphabet has no `closure-stutter` step (FSpec FR-364): a
+    // listed one is refused at its `/transition/type`, before the product
+    // expands.
+    if let Some(step) = counterexample.closure_stutters.first() {
+        return Err(TaskProductTraceReplayRefusal::TraceAlphabet {
+            pointer: format!("{}/transition/type", step.site.pointer()),
+        });
+    }
     let mut steps = Vec::with_capacity(counterexample.prefix.len());
     for (index, step) in counterexample.prefix.iter().enumerate() {
         let Some(delay) = step.delay.clone() else {

@@ -1043,7 +1043,28 @@ fn a_closure_violation_settles_refuted_through_its_written_and_replayed_lasso() 
         )
         .expect("the package holds the clause")
         .configured(temporal());
+        // The source engine's lasso replays over the package bytes before the
+        // package item settles, so a mismatch names its stage.
+        let replayed = package
+            .replay_counterexample(found)
+            .expect("the engine's lasso replays over the package route");
+        assert!(matches!(
+            replayed.settlement,
+            ModelTraceSettlement::Reproduced {
+                value: ModelTraceValue::Truth(false),
+                ..
+            }
+        ));
         let record = settle(package.item(RequestIndex::new(0)));
+        // A package item that fails after its engine refuted names where: the
+        // engine's value and the `over` reference its wire is spelled with.
+        assert_eq!(
+            record.terminal().expect("a terminal record").value(),
+            &TerminalValue::Refuted,
+            "engine {:?}, over {:?}",
+            record.model_check.as_ref().map(|model| &model.value),
+            record.over_reference
+        );
         assert_eq!(format!("{record:?}"), format!("{source:?}"));
     });
 }

@@ -5,16 +5,19 @@
 //! through `ModelTraceSubject` or, on the reference-literal source route,
 //! through the entry's own argument.
 
+use filament_exact::Cancel;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
-    replay_checked_source_model_trace, replay_model_trace_with_temporal_selections, ClosureRule,
-    ClosureStutter, CounterexampleKind, DisagreementCause, Lasso, ModelStep, ModelTraceRefusal,
-    ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue, ReplayLimits,
-    ReplayRefusal, StepSite, TemporalCounterexample,
+    replay_checked_source_model_trace, replay_model_trace_with_temporal_selections,
+    settle_model_check_over_stutter_closure, ClosureRule, ClosureStutter, CounterexampleKind,
+    DisagreementCause, InconclusiveCause, Lasso, ModelCheckLimits, ModelCheckOutcome, ModelStep,
+    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
+    ModelTraceValue, ReplayLimits, ReplayRefusal, RunStats, StepSite, TemporalCounterexample,
+    TerminalValue,
 };
 use ix_trace_rs::trace;
 
@@ -236,6 +239,47 @@ fn a_closure_lasso_reproduces_over_an_empty_and_a_non_empty_stem() {
     }
 }
 
+/// FR-128-AC-11 and FR-330 "Admit": the native model entry reads the closed
+/// alphabet, selecting no `stutter_closure`, so it refuses a closure lasso at
+/// its `/loop/0/transition/type` as the alphabet refusal, never as an open
+/// loop, while the selected model entry reproduces the same payload.
+#[trace("TC-523", "FR-128-AC-11")]
+#[test]
+fn the_native_admit_entry_refuses_a_closure_lasso_at_its_alphabet() {
+    let fixture = counter(document(false), "", FORMULA);
+    let (stem, key) = walk(&fixture, &[]);
+    let payload = closure_lasso(&fixture, stem, key);
+    assert_eq!(
+        reproduced_at(replay_entry(
+            &fixture,
+            payload.clone(),
+            &crate::counter::Letters { atom: is_three },
+            true,
+        )),
+        Some(0)
+    );
+    let system = system(&fixture);
+    let letters = system
+        .clause_letters(&fixture.package.graph().temporal_clauses()[0])
+        .expect("the clause's letters");
+    let Err(ReplayRefusal::ModelTrace(refusal)) = fsl_replay::evaluate_model_trace(
+        &system,
+        &payload,
+        &fixture.clauses[0],
+        &letters,
+        UNLIMITED,
+    ) else {
+        panic!("the native entry refuses the closure lasso");
+    };
+    assert_eq!(
+        *refusal,
+        ModelTraceRefusal::ClosureStutter {
+            pointer: "/loop/0/transition/type".to_owned(),
+            rule: ClosureRule::Alphabet,
+        }
+    );
+}
+
 /// FR-128-AC-11: each refusal names FSpec FR-364's pointer, in its order, and
 /// settles no result; the reference-literal source route refuses each alike.
 #[trace("TC-523", "FR-128-AC-11")]
@@ -452,6 +496,31 @@ fn a_closure_lasso_the_evaluator_does_not_refute_disagrees() {
             "{cause:?}"
         );
     }
+
+    // The item that offered the lasso settles `inconclusive` with the item
+    // cause `ReplayParity`, carrying that disagreement.
+    let undefined = Letters { atom: |_| None };
+    let settled = settle_model_check_over_stutter_closure(
+        &ModelCheckOutcome::Violated {
+            counterexample: Box::new(payload.clone()),
+            stats: RunStats::default(),
+        },
+        &ModelCheckLimits::default(),
+        &fixture.certificate_request(&undefined, UNLIMITED),
+        &Cancel::new(),
+        |found| replay_entry(&fixture, found.clone(), &undefined, true),
+    );
+    assert!(
+        matches!(
+            &settled.value,
+            TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
+                DisagreementCause::NoValue { .. }
+            ))
+        ),
+        "{:?}",
+        settled.value
+    );
+    assert!(settled.counterexample.is_none());
 }
 
 /// FR-128-AC-13, FSpec FR-364 "Named limit": a constructed engine lasso with a

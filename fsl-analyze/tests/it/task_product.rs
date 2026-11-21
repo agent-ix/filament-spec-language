@@ -604,6 +604,34 @@ fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
     fsl_replay::replay_task_product_trace(&product, &typed_counterexample)
         .expect("the typed task trace independently replays");
 
+    // FR-128-AC-11: the task alphabet has no `closure-stutter` step, so the
+    // typed entry refuses a listed one at its `/transition/type` before the
+    // product expands: a first step whose key is wrong would otherwise
+    // refuse at its `/post_state`.
+    for site in [
+        fsl_replay::StepSite::Prefix(0),
+        fsl_replay::StepSite::Loop(0),
+    ] {
+        let mut closure = typed_counterexample.clone();
+        closure.prefix[0].post_state =
+            fsl_eval::simulation::StateKey::from_canonical_bytes(b"{}".to_vec());
+        assert!(
+            fsl_replay::replay_task_product_trace(&product, &closure).is_err(),
+            "the control: the wrong key alone refuses"
+        );
+        closure.closure_stutters = vec![fsl_replay::ClosureStutter {
+            site,
+            post_state: closure.prefix[0].post_state.clone(),
+            delay: None,
+        }];
+        assert_eq!(
+            fsl_replay::replay_task_product_trace(&product, &closure),
+            Err(fsl_replay::TaskProductTraceReplayRefusal::TraceAlphabet {
+                pointer: format!("{}/transition/type", site.pointer()),
+            })
+        );
+    }
+
     let initial = product.initial().into_iter().next().expect("initial state");
     let source_step = product
         .source_steps(&initial)

@@ -2226,6 +2226,52 @@ fn an_any_arm_refinement_is_not_step_for_step() {
     assert_eq!(result["cause"]["operator"], "once[1,1]", "{value}");
 }
 
+/// The written FR-364 model-arm counterexample document a transfer outcome
+/// carries for its refuted slot, wherever the outcome nests it.
+fn written_model_trace(value: &Value) -> Option<&Value> {
+    match value {
+        Value::Object(members) => {
+            if members.get("trace").is_some_and(|trace| trace == "model")
+                && members.contains_key("loop")
+            {
+                return Some(value);
+            }
+            members.values().find_map(written_model_trace)
+        }
+        Value::Array(items) => items.iter().find_map(written_model_trace),
+        _ => None,
+    }
+}
+
+/// FR-128-AC-14: the lasso a transfer outcome writes for a refuted closure
+/// slot is the sole `closure-stutter` loop step after `stem` model steps, and
+/// the auditor's reader reads it back as that closure lasso. The slot itself
+/// settles `refuted` only through the replay that reproduced it.
+fn assert_closure_lasso_reads_back(value: &Value, stem: usize) {
+    let document = written_model_trace(value)
+        .unwrap_or_else(|| panic!("the refuted slot carries its written lasso: {value}"));
+    assert_eq!(
+        document["prefix"].as_array().map(Vec::len),
+        Some(stem),
+        "{value}"
+    );
+    assert_eq!(
+        document["loop"].as_array().map(Vec::len),
+        Some(1),
+        "{value}"
+    );
+    assert_eq!(
+        document["loop"][0]["transition"]["type"], "closure-stutter",
+        "{value}"
+    );
+    let read = fsl_replay::read_temporal_counterexample::<
+        filament_semantic_value::model_transition::ModelTransition,
+    >(document)
+    .unwrap_or_else(|refusal| panic!("the reader refuses the written lasso: {refusal:?}: {value}"));
+    assert!(read.closure_loop().is_some(), "{value}");
+    assert_eq!(read.prefix.len(), stem, "{value}");
+}
+
 /// FR-1030-AC-6: a liveness clause with no fairness is violated by the
 /// abstract stutter closure's own self-loop at a nonterminal state. Slot 1
 /// settles `refuted` through the closure lasso that FR-128 replays, and the
@@ -2248,6 +2294,7 @@ fn a_liveness_clause_that_the_stutter_closure_violates_refutes_its_premise() {
     assert_eq!(result["cause"]["premise"], 1, "{value}");
     assert_eq!(result["cause"]["result"], "refuted", "{value}");
     assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
+    assert_closure_lasso_reads_back(&value, 0);
 }
 
 /// FR-1030-AC-7: `PendingTwo` is violated only by the closure stutter at
@@ -2270,6 +2317,9 @@ fn a_closure_violation_after_a_real_step_refutes_its_premise() {
     assert_eq!(result["cause"]["premise"], 1, "{value}");
     assert_eq!(result["cause"]["result"], "refuted", "{value}");
     assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
+    // `Spec::Counter` moves to 1 by `inc`; the one real step precedes the
+    // closure-only loop at value 1.
+    assert_closure_lasso_reads_back(&value, 1);
 }
 
 /// FSpec FR-820 slot 1 is keyed without `stutter_closure`, which the planner

@@ -2875,6 +2875,10 @@ pub fn evaluate_model_trace(
     letters: &ClauseLetters<'_, '_>,
     limits: ScalarLimits,
 ) -> Result<ModelTraceEnd, ReplayRefusal> {
+    // FR-330's admit reads the closed native alphabet: no item selects
+    // `stutter_closure` here, so a listed closure step is refused at its
+    // `/transition/type` before any step runs (FSpec FR-364).
+    refuse_closure_alphabet(payload)?;
     let positions = match replay_prefix_stopped(system, payload, &MODEL_STEPS)? {
         Ok((positions, _)) => positions,
         Err(stop) => return Ok(ModelTraceEnd::Stopped(stop)),
@@ -2902,7 +2906,7 @@ pub fn evaluate_model_trace(
             }
             trace_of(
                 lasso.clone(),
-                payload.closure_loop().is_some(),
+                false,
                 positions.len(),
             )
         }
@@ -3137,6 +3141,7 @@ pub fn evaluate_protocol_trace<M: MemoryModel>(
     letters: &dyn ModelLetters,
     limits: ScalarLimits,
 ) -> Result<ProtocolTraceEnd, ReplayRefusal> {
+    refuse_closure_alphabet(payload)?;
     if payload.lasso.is_some() {
         return Err(fault("a-finite-behaviour-has-no-loop"));
     }

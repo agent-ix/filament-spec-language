@@ -446,6 +446,13 @@ impl<T: SubjectTransition> FamilyPayload for TemporalCounterexample<T> {
                         .saturating_add(present(&step.delay)),
                 )
             }))
+            .saturating_add(self.closure_stutters.iter().fold(0_usize, |bytes, step| {
+                bytes.saturating_add(
+                    std::mem::size_of::<ClosureStutter>()
+                        .saturating_sub(delay)
+                        .saturating_add(present(&step.delay)),
+                )
+            }))
             .saturating_add(
                 self.fairness
                     .len()
@@ -593,4 +600,57 @@ fn path_bytes(path: &ThreadPath) -> usize {
                 .saturating_add(std::mem::size_of_val(step))
                 .saturating_add(step.text_len())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn payload(closure_stutters: Vec<ClosureStutter>) -> TemporalCounterexample<ModelTransition> {
+        TemporalCounterexample {
+            initial_state: 0,
+            over_binding: None,
+            fairness: Vec::new(),
+            kind: CounterexampleKind::Formula,
+            lasso: None,
+            prefix: Vec::new(),
+            blocked: Vec::new(),
+            refinement: None,
+            final_delay: None,
+            closure_stutters,
+        }
+    }
+
+    fn step(site: StepSite, delay: Option<Rational>) -> ClosureStutter {
+        ClosureStutter {
+            site,
+            post_state: StateKey::from_canonical_bytes(b"{}".to_vec()),
+            delay,
+        }
+    }
+
+    /// FR-128-AC-14: the payload bound counts each listed closure step, and
+    /// a `delay` it carries counts as it does on a model step, so a payload
+    /// of many closure steps cannot measure as an empty one.
+    #[trace("TC-523", "FR-128-AC-14")]
+    #[test]
+    fn the_measured_size_counts_each_closure_step_and_its_delay() {
+        let none = payload(Vec::new()).measured_bytes();
+        let one = payload(vec![step(StepSite::Loop(0), None)]).measured_bytes();
+        let two = payload(vec![
+            step(StepSite::Prefix(0), None),
+            step(StepSite::Loop(0), None),
+        ])
+        .measured_bytes();
+        assert!(one > none, "{one} > {none}");
+        assert_eq!(two - one, one - none);
+        let zero = Rational::new(
+            filament_exact::Integer::from(0_i64),
+            filament_exact::Integer::from(1_i64),
+        )
+        .expect("a nonzero denominator");
+        let delayed = payload(vec![step(StepSite::Loop(0), Some(zero))]).measured_bytes();
+        assert!(delayed > one, "{delayed} > {one}");
+    }
 }
