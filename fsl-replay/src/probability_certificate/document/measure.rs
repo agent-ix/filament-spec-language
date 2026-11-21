@@ -432,6 +432,7 @@ struct State {
 }
 struct Graph {
     initial: ProbabilityProductKey,
+    initials: Vec<(u32, ProbabilityProductKey)>,
     states: BTreeMap<ProbabilityProductKey, State>,
 }
 
@@ -453,9 +454,9 @@ fn enumerate(
         return Err(exceeded(ProbabilityDocumentLimit::States, 0, 1));
     }
     let initial = system.initial();
-    let [initial] = initial.as_slice() else {
-        return Err(ProbabilityDocumentError::Unsupported);
-    };
+    if initial.is_empty() {
+        return Err(ProbabilityDocumentError::Malformed);
+    }
     let read = |state: &ModelSimState| -> Result<Vec<bool>, ProbabilityDocumentError> {
         let predicates = plan
             .predicates
@@ -483,13 +484,6 @@ fn enumerate(
             })
             .collect()
     };
-    let truths = read(initial)?;
-    let (control, accumulator) = plan
-        .control
-        .start(&truths, meter)
-        .map_err(ProbabilityDocumentError::from)?;
-    let control = control.ok_or(ProbabilityDocumentError::Malformed)?;
-    let accumulator = accumulator.ok_or(ProbabilityDocumentError::Malformed)?;
     let key_of = |state: &ModelSimState,
                   control: MonitorState,
                   accumulator: &Accumulator,
@@ -520,16 +514,55 @@ fn enumerate(
             storage,
         )
     };
-    let root = key_of(initial, control, &accumulator, meter, storage)?;
-    let mut queue = VecDeque::from([(
-        root.clone(),
-        initial.clone(),
-        control,
-        accumulator,
-        truths,
-        None::<Resolution>,
-    )]);
-    let mut seen = BTreeSet::from([root.clone()]);
+    let mut queue = VecDeque::new();
+    let mut seen = BTreeSet::new();
+    let mut initials = Vec::new();
+    for (index, initial) in initial.iter().enumerate() {
+        poll(cancel)?;
+        let truths = read(initial)?;
+        let (control, accumulator) = plan
+            .control
+            .start(&truths, meter)
+            .map_err(ProbabilityDocumentError::from)?;
+        let control = control.ok_or(ProbabilityDocumentError::Malformed)?;
+        let accumulator = accumulator.ok_or(ProbabilityDocumentError::Malformed)?;
+        let root = key_of(initial, control, &accumulator, meter, storage)?;
+        charge(
+            storage,
+            limits.storage_bytes,
+            u64::try_from(
+                root.as_bytes()
+                    .len()
+                    .saturating_add(std::mem::size_of::<(u32, ProbabilityProductKey)>()),
+            )
+            .unwrap_or(u64::MAX),
+        )?;
+        initials.push((
+            u32::try_from(index).map_err(|_| ProbabilityDocumentError::Malformed)?,
+            root.clone(),
+        ));
+        if seen.insert(root.clone()) {
+            if seen.len() > limits.states {
+                return Err(exceeded(
+                    ProbabilityDocumentLimit::States,
+                    u64::try_from(limits.states).unwrap_or(u64::MAX),
+                    u64::try_from(seen.len()).unwrap_or(u64::MAX),
+                ));
+            }
+            queue.push_back((
+                root,
+                initial.clone(),
+                control,
+                accumulator,
+                truths,
+                None::<Resolution>,
+            ));
+        }
+    }
+    let root = seen
+        .first()
+        .cloned()
+        .ok_or(ProbabilityDocumentError::Malformed)?;
     let mut states = BTreeMap::new();
     let mut edges = 0usize;
     while let Some((key, model, control, accumulator, truths, resolution)) = queue.pop_front() {
@@ -864,6 +897,7 @@ fn enumerate(
     }
     Ok(Graph {
         initial: root,
+        initials,
         states,
     })
 }
@@ -1723,6 +1757,7 @@ fn acceptance(
     bytes: &[u8],
 ) -> ExactProbabilityCertificateCheck {
     ExactProbabilityCertificateCheck::Accepted(ExactProbabilityAcceptance {
+        initial_values: None,
         value,
         side,
         certificate: ExactProbabilityCertificate {
@@ -1823,17 +1858,7 @@ pub(super) fn check(
         {
             return Err(ProbabilityDocumentError::MalformedMember("conditional"));
         }
-        let graph = enumerate(
-            system,
-            claim,
-            &plan,
-            limits,
-            cancel,
-            &mut meter,
-            &mut storage,
-            None,
-        )?;
-        let mut initial = Vec::new();
+        let mut checked_parts = Vec::new();
         for (part, part_name) in [
             (numerator, ProbabilityCertificatePart::Numerator),
             (denominator, ProbabilityCertificatePart::Denominator),
@@ -1874,45 +1899,84 @@ pub(super) fn check(
                     return Ok(rejection);
                 }
             };
-            initial.push(
-                values
-                    .get(&graph_part.initial)
-                    .ok_or(ProbabilityDocumentError::Malformed)?
-                    .clone(),
-            );
+            checked_parts.push((graph_part, values));
         }
-        if initial[1].is_zero() {
-            return Ok(rejected(
-                ProbabilityCertificateRule::InequalityFails,
-                graph.initial,
-            ));
+        let [(numerator_graph, numerator_values), (denominator_graph, denominator_values)] =
+            checked_parts.as_slice()
+        else {
+            return Err(ProbabilityDocumentError::Malformed);
+        };
+        if numerator_graph.initials != denominator_graph.initials {
+            return Err(ProbabilityDocumentError::Malformed);
         }
-        let value = arithmetic(
-            filament_exact::RationalArithmetic::Divide(&initial[0], &initial[1]),
-            &mut meter,
-            cancel,
-        )?;
         let threshold = match &plan.bound {
             Bound::AtLeast(value) | Bound::AtMost(value) => value,
         };
-        let holds = ordered(
-            if plan.strict {
-                Order::Less
-            } else {
-                Order::GreaterOrEqual
-            },
-            &value,
-            threshold,
-            &mut meter,
-            cancel,
-        )?;
-        if !holds {
-            return Ok(rejected(
-                ProbabilityCertificateRule::ThresholdMissed,
-                graph.initial,
-            ));
+        let mut coverage = Vec::new();
+        let mut least: Option<Rational> = None;
+        for (index, key) in &denominator_graph.initials {
+            let numerator = numerator_values
+                .get(key)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            let denominator = denominator_values
+                .get(key)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            if denominator.is_zero() {
+                // checked_values proves the full nonnegative activation Bellman
+                // system, hence zero at this initial proves no positive activation.
+                if !numerator.is_zero() {
+                    return Err(ProbabilityDocumentError::Malformed);
+                }
+                coverage.push((*index, None));
+                continue;
+            }
+            let value = arithmetic(
+                filament_exact::RationalArithmetic::Divide(numerator, denominator),
+                &mut meter,
+                cancel,
+            )?;
+            if !ordered(
+                if plan.strict {
+                    Order::Less
+                } else {
+                    Order::GreaterOrEqual
+                },
+                &value,
+                threshold,
+                &mut meter,
+                cancel,
+            )? {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::ThresholdMissed,
+                    key.clone(),
+                ));
+            }
+            let replace = match &least {
+                None => true,
+                Some(old) => ordered(
+                    if plan.strict {
+                        Order::Greater
+                    } else {
+                        Order::Less
+                    },
+                    &value,
+                    old,
+                    &mut meter,
+                    cancel,
+                )?,
+            };
+            if replace {
+                least = Some(value.clone());
+            }
+            coverage.push((*index, Some(value)));
         }
-        return Ok(acceptance(
+        let Some(value) = least else {
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                denominator_graph.initial.clone(),
+            ));
+        };
+        let mut accepted = acceptance(
             &document,
             value,
             if plan.strict {
@@ -1921,7 +1985,11 @@ pub(super) fn check(
                 ProbabilityBoundSide::AtMost
             },
             bytes,
-        ));
+        );
+        if let ExactProbabilityCertificateCheck::Accepted(token) = &mut accepted {
+            token.initial_values = Some(coverage);
+        }
+        return Ok(accepted);
     }
     if matches!(claim.form, ProbForm::Quantile { .. })
         && document.payoff != MeasurePayoffKind::Shifted
@@ -1938,6 +2006,9 @@ pub(super) fn check(
         &mut storage,
         None,
     )?;
+    if graph.initials.len() != 1 {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
     if matches!(claim.form, ProbForm::Quantile { .. })
         && !graph.states.values().any(|state| state.activated)
     {

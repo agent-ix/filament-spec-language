@@ -93,8 +93,8 @@ pub(super) fn run(
         }
         Err(error) => return build_refusal(error, subject),
     };
-    let [(_, _, initial)] = product.initial.as_slice() else {
-        return not_yet();
+    let Some((_, _, initial)) = product.initial.first() else {
+        return broken();
     };
     let initial = *initial;
     if matches!(claim.form, ProbForm::Quantile { .. })
@@ -297,9 +297,6 @@ pub(super) fn run(
                 FhResult::Exact { values, .. } => values,
                 _ => return Err(ProbabilityDocumentError::Malformed),
             };
-            let vacuous = denominator
-                .get(initial.index())
-                .is_some_and(Rational::is_zero);
             let denominator = measure_probability_certificate_document(
                 &system,
                 claims,
@@ -309,11 +306,7 @@ pub(super) fn run(
                 document_limits,
                 cancel,
             )?;
-            if vacuous {
-                numerator.into_vacuous()?
-            } else {
-                conditional_measure_probability_certificate(numerator, denominator)?
-            }
+            conditional_measure_probability_certificate(numerator, denominator)?
         } else {
             numerator
         };

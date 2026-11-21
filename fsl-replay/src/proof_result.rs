@@ -1703,18 +1703,50 @@ impl TerminalRecord {
             return None;
         };
         let value = ExactRational::new(accepted.value().clone());
+        let entries = match accepted.initial_values() {
+            Some(coverage) => {
+                if coverage.is_empty()
+                    || coverage
+                        .iter()
+                        .enumerate()
+                        .any(|(index, (initial, _))| usize::try_from(*initial).ok() != Some(index))
+                {
+                    return None;
+                }
+                let entries = coverage
+                    .iter()
+                    .filter_map(|(initial, value)| {
+                        value.as_ref().map(|value| ExactEntry {
+                            initial: *initial,
+                            binding: binding.clone(),
+                            value: ExactOrBounds::Exact {
+                                value: ExactRational::new(value.clone()),
+                            },
+                            extremum,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if entries.is_empty() {
+                    return None;
+                }
+                entries
+            }
+            None => vec![ExactEntry {
+                initial: 0,
+                binding,
+                value: ExactOrBounds::Exact {
+                    value: value.clone(),
+                },
+                extremum,
+            }],
+        };
         let mut record = Self::with_backend(
             request_index,
             backend,
             TerminalValue::Proved {
                 basis: ProofBasis::ExactValue {
                     value: value.clone(),
-                    entries: vec![ExactEntry {
-                        initial: 0,
-                        binding,
-                        value: ExactOrBounds::Exact { value },
-                        extremum,
-                    }],
+                    entries,
                     reductions: Vec::new(),
                 },
                 certification: Certification::Certified,

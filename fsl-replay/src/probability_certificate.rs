@@ -639,6 +639,9 @@ pub enum ProbabilityCertificateLocus {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExactProbabilityAcceptance {
+    // Total admitted initial coverage. None retains the older single-root profiles;
+    // a None value in this list is independently proved nonactivation.
+    initial_values: Option<Vec<(u32, Option<Rational>)>>,
     value: Rational,
     side: ProbabilityBoundSide,
     certificate: ExactProbabilityCertificate,
@@ -654,9 +657,14 @@ impl ExactProbabilityAcceptance {
     pub fn certificate(&self) -> &ExactProbabilityCertificate {
         &self.certificate
     }
-    /// The independently checked initial value.
+    /// The independently checked initial value, or the least favourable
+    /// activating initial value for a conditional measure certificate.
     pub fn value(&self) -> &Rational {
         &self.value
+    }
+
+    pub(crate) fn initial_values(&self) -> Option<&[(u32, Option<Rational>)]> {
+        self.initial_values.as_deref()
     }
 
     /// The authored bound side checked against that value.
@@ -1726,6 +1734,7 @@ fn check_exact_reachability(
     poll_cancel(cancel)?;
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
+            initial_values: None,
             document: None,
             value: initial.clone(),
             certificate: certificate.clone(),
@@ -2474,6 +2483,7 @@ mod tests {
         assert_eq!(
             result,
             ExactProbabilityCertificateCheck::Accepted(ExactProbabilityAcceptance {
+                initial_values: None,
                 document: None,
                 value: Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap(),
                 side: ProbabilityBoundSide::AtLeast,

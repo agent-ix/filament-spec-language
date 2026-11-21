@@ -2327,3 +2327,52 @@ fn object_parameter_reward_undefined_is_replayed_with_its_actual_draw() {
         );
     }
 }
+
+#[trace("TC-3152", "FR-1043-AC-1", "FR-203-AC-12")]
+#[test]
+fn mixed_initial_quantile_settles_only_activating_initial_one() {
+    let model = retry(&claim("Mixed", "Steady", "quantile 0.5 of (steps from holds(not m.delivered) until holds(m.delivered) within 4) <= 2"));
+    let world = World::with_initials(
+        &model,
+        &[json!({"delivered":true}), json!({"delivered":false})],
+    );
+    let record = settle(&world, "Mixed", ModelCheckLimits::default());
+    let terminal = record
+        .terminal()
+        .unwrap_or_else(|| panic!("{:?}", record.settlement));
+    let TerminalValue::Proved {
+        basis: fsl_replay::ProofBasis::ExactValue { value, entries, .. },
+        ..
+    } = terminal.value()
+    else {
+        panic!("expected checked numeric proof, got {:?}", terminal.value());
+    };
+    assert_eq!(value.value(), &ratio(3, 4));
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].initial, 1);
+    let document: Value =
+        serde_json::from_slice(terminal.exact_certificate_document().unwrap()).unwrap();
+    let accepted = check(&world, "Mixed", &document).unwrap();
+    let ExactProbabilityCertificateCheck::Accepted(accepted) = accepted else {
+        panic!("{accepted:?}");
+    };
+    assert_eq!(accepted.value(), &ratio(3, 4));
+    // Total certificate coverage still includes the nonactivating initial.
+    let mut forged = document;
+    for part in ["numerator", "denominator"] {
+        let rows = forged["conditional"][part]["values"]
+            .as_array_mut()
+            .unwrap();
+        let old = rows.len();
+        rows.retain(|row| key(row)[5][2] != "inactive");
+        assert!(
+            rows.len() < old,
+            "fixture must contain nonactivating control keys"
+        );
+    }
+    let rejected = check(&world, "Mixed", &forged);
+    assert!(
+        matches!(rejected, Ok(ExactProbabilityCertificateCheck::Rejected(_))),
+        "{rejected:?}"
+    );
+}

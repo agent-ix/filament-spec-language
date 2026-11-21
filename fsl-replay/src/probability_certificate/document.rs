@@ -2044,6 +2044,7 @@ fn check_threshold(
     poll(cancel)?;
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
+            initial_values: None,
             certificate: ExactProbabilityCertificate {
                 values: values
                     .iter()
