@@ -1820,8 +1820,12 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
             constraint: Some(single(node, "condition")?),
         },
         ControlOperation::Fence => ControlBody::Fence {
-            ordering: optional_ordering(node, "ordering")?
-                .ok_or_else(|| missing(&node.node_id, "ordering"))?,
+            ordering: ordering_word(
+                node,
+                "ordering",
+                text(required(node, "ordering")?)
+                    .ok_or_else(|| malformed(&node.node_id, "ordering"))?,
+            )?,
         },
         other => ControlBody::Other(other),
     })
@@ -1832,15 +1836,23 @@ fn optional_ordering(
     member: &'static str,
 ) -> Result<Option<fsl_forms::AccessOrdering>, ViewRefusal> {
     optional_text(node, member)?
-        .map(|word| match word {
-            "relaxed" => Ok(fsl_forms::AccessOrdering::Relaxed),
-            "acquire" => Ok(fsl_forms::AccessOrdering::Acquire),
-            "release" => Ok(fsl_forms::AccessOrdering::Release),
-            "acq_rel" => Ok(fsl_forms::AccessOrdering::AcqRel),
-            "seq_cst" => Ok(fsl_forms::AccessOrdering::SeqCst),
-            _ => Err(malformed(&node.node_id, member)),
-        })
+        .map(|word| ordering_word(node, member, word))
         .transpose()
+}
+
+fn ordering_word(
+    node: &Node,
+    member: &'static str,
+    word: &str,
+) -> Result<fsl_forms::AccessOrdering, ViewRefusal> {
+    match word {
+        "relaxed" => Ok(fsl_forms::AccessOrdering::Relaxed),
+        "acquire" => Ok(fsl_forms::AccessOrdering::Acquire),
+        "release" => Ok(fsl_forms::AccessOrdering::Release),
+        "acq_rel" => Ok(fsl_forms::AccessOrdering::AcqRel),
+        "seq_cst" => Ok(fsl_forms::AccessOrdering::SeqCst),
+        _ => Err(malformed(&node.node_id, member)),
+    }
 }
 
 /// Every node the decision facts of the `choice` control `choice` read: the
