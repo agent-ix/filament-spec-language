@@ -2934,32 +2934,57 @@ fn tableau_export(limit: u64, target: Target) -> (u8, Value) {
         json!({"profile": target.profile(), "obligations": ["T"]}),
     );
     let model_path = dir.path().join("counter.json");
-    let mut model: Value = serde_json::from_slice(&std::fs::read(&model_path).unwrap()).unwrap();
-    let fields = model["types"][1]["fields"].as_array_mut().unwrap();
+    let model = std::fs::read_to_string(&model_path)
+        .unwrap()
+        .replace("Counter", "Lamp");
+    let mut model: Value = serde_json::from_str(&model).unwrap();
+    let object = &mut model["types"][1];
+    let fields = object["fields"].as_array_mut().unwrap();
     let template = fields[0].clone();
     let snapshot_path = dir.path().join("counter-0.json");
     let mut snapshot: Value =
         serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
-    let values = &mut snapshot["populations"][0]["objects"][0]["fields"];
+    let row = &mut snapshot["populations"][0]["objects"][0];
+    let identity = "ix://example/counter-third/Lamp";
+    row["type"] = json!(identity);
+    let values = &mut row["fields"];
     for name in ["safe", "seen", "pending", "ready"] {
         let mut field = template.clone();
-        field["identity"] = json!(format!("ix://example/counter-third/Counter/{name}"));
+        field["identity"] = json!(format!("{identity}/{name}"));
         field["name"] = json!(name);
         field["typeRef"] = json!("ix://filament/native/Boolean");
         fields.push(field);
         values[name] = json!({"boolean": false});
     }
+    let mut light = object["operations"][0].clone();
+    light["identity"] = json!(format!("{identity}/light"));
+    light["name"] = json!("light");
+    light["frame"]["modifies"] = json!([
+        format!("{identity}/safe"),
+        format!("{identity}/seen"),
+        format!("{identity}/pending"),
+    ]);
+    let mut noop = light.clone();
+    noop["identity"] = json!(format!("{identity}/noop"));
+    noop["name"] = json!("noop");
+    noop["frame"]["modifies"] = json!([]);
+    object["operations"] = json!([light, noop]);
     std::fs::write(model_path, model.to_string()).unwrap();
     std::fs::write(snapshot_path, snapshot.to_string()).unwrap();
-    let unit = COUNTER_UNIT.replace(
-        "model Counter",
-        "profile t = \"filament.temporal.infinite-trace/v1\";\nmodel Counter",
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile t = \"filament.temporal.infinite-trace/v1\";\n\
+         model Lamp = \"example/counter-third\";\n\
+         pre CanLight using v on Lamp::Lamp::light {{ not self.safe }}\n\
+         post Light using v on Lamp::Lamp::light {{ self.safe and self.seen and not self.pending }}\n\
+         post Keep using v on Lamp::Lamp::noop {{ true }}\n\
+         temporal T using t over (l: Lamp::Lamp) clock \"model-steps\" on origin {{\n\
+           (eventually always holds(l.safe)) and (always eventually holds(l.seen)) and\n\
+           (always (holds(l.pending) implies eventually[{limit}, {limit}] holds(l.ready)))\n\
+         }}\n"
     );
-    let tail = clause_tail(&format!(
-        "(eventually always holds(c.safe)) and (always eventually holds(c.seen)) and \
-         (always (holds(c.pending) implies eventually[{limit}, {limit}] holds(c.ready)))"
-    ));
-    std::fs::write(dir.path().join("unit.native"), format!("{unit}{tail}")).unwrap();
+    std::fs::write(dir.path().join("unit.native"), unit).unwrap();
     match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
         Ok(result) => (
             result.exit_code,
@@ -2978,16 +3003,16 @@ fn tableau_checks_mixed_acceptance_over_the_total_product() {
     assert_eq!(exit, 0, "{tla}");
     let text = tla["export"]["target_text"].as_str().unwrap();
     for fragment in [
-        "m_T \\in [Ids_Counter -> F_bits_T]",
-        "m_T' \\in [Ids_Counter -> F_bits_T]",
-        "F_check_T(o_c, q, r) ==",
-        "m_T_h0' = [o_c \\in Ids_Counter |->",
-        "m_T_h0[o_c] /\\ F_check_T(o_c, m_T[o_c], m_T'[o_c])",
+        "m_T \\in [Ids_Lamp -> F_bits_T]",
+        "m_T' \\in [Ids_Lamp -> F_bits_T]",
+        "F_check_T(o_l, q, r) ==",
+        "m_T_h0' = [o_l \\in Ids_Lamp |->",
+        "m_T_h0[o_l] /\\ F_check_T(o_l, m_T[o_l], m_T'[o_l])",
         "m_T_h1' = ~m_T_h1",
-        "F_progress_T(m_T_c0[o_c], m_T[o_c])",
+        "F_progress_T(m_T_c0[o_l], m_T[o_l])",
         "Next_T == (Next \\/ (~ENABLED Next /\\ UNCHANGED vars)) /\\ Mon_T",
         "WF_vars_T(Next_T)",
-        "~([]<>accept_T(o_c))",
+        "~([]<>accept_T(o_l))",
     ] {
         assert!(text.contains(fragment), "missing {fragment}: {text}");
     }
@@ -3023,6 +3048,48 @@ fn tableau_checks_mixed_acceptance_over_the_total_product() {
         lean["export"]["records"][0]["disposition"], "preserved",
         "{lean}"
     );
+}
+
+#[test]
+#[trace("FSpec-FR-812-AC-1", "FSpec-FR-813-AC-6", "FSpec-TC-1972")]
+fn tableau_keeps_source_fairness_when_lamp_has_a_noop() {
+    let (exit, tla) = tableau_export(1, Target::Tla);
+    assert_eq!(exit, 0, "{tla}");
+    let text = tla["export"]["target_text"].as_str().unwrap();
+    let body = |name| {
+        text.split_once(name)
+            .unwrap()
+            .1
+            .split("\n\n")
+            .next()
+            .unwrap()
+    };
+    assert!(text.lines().any(|line| line == "vars == <<v_Lamp>>"));
+    let init = body("Init ==\n");
+    for field in ["pending", "safe", "seen"] {
+        assert!(init.contains(&format!("fld_{field} |-> FALSE")), "{init}");
+    }
+    let noop = body("op_noop(r_self) ==\n");
+    for field in ["pending", "ready", "safe", "seen", "value"] {
+        assert!(
+            noop.contains(&format!("v_Lamp'[k].fld_{field} = v_Lamp[k].fld_{field}")),
+            "{noop}"
+        );
+    }
+    let light = body("op_light(r_self) ==\n");
+    for constraint in [
+        "~v_Lamp[r_self].fld_safe",
+        "v_Lamp'[r_self].fld_safe",
+        "v_Lamp'[r_self].fld_seen",
+        "~v_Lamp'[r_self].fld_pending",
+    ] {
+        assert!(light.contains(constraint), "missing {constraint}: {light}");
+    }
+    let next = body("Next ==\n");
+    assert!(next.contains("op_noop(r_self)"), "{next}");
+    assert!(next.contains("op_light(r_self)"), "{next}");
+    let spec = r"Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T) /\ WF_vars(Next)";
+    assert!(text.lines().any(|line| line == spec), "{text}");
 }
 
 #[test]

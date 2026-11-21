@@ -411,7 +411,10 @@ pub(super) fn emit(
         next,
         format!("{next} == (Next \\/ (~ENABLED Next /\\ UNCHANGED vars)) /\\ {mon}"),
     );
-    let mut spec_body = format!("{spec} == {init} /\\ [][{next}]_{vars} /\\ WF_{vars}({next})");
+    // A monitor-only change is a product step but cannot satisfy the
+    // subject's fairness on state-changing steps.
+    let mut spec_body =
+        format!("{spec} == {init} /\\ [][{next}]_{vars} /\\ WF_{vars}({next}) /\\ WF_vars(Next)");
     for condition in fairness(ctx)? {
         spec_body.push_str(" /\\ ");
         spec_body.push_str(&condition);
@@ -606,5 +609,15 @@ mod tests {
             0
         ));
         assert!(accepts_negation(&formula, &[[true, true, true, false]], 0));
+
+        // Lamp starts unlit. Repeating noop forever falsifies the clause,
+        // but light remains enabled and changes the subject state. Every
+        // base-fair trace reaches lit after finitely many noops, then stays
+        // lit. The bounded response is vacuous on both traces.
+        let unlit = [false, false, false, false];
+        let lit = [true, true, false, false];
+        assert!(accepts_negation(&formula, &[unlit], 0));
+        assert!(!accepts_negation(&formula, &[unlit, lit], 1));
+        assert!(!accepts_negation(&formula, &[unlit, unlit, lit], 2));
     }
 }
