@@ -941,31 +941,63 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
         ),
         (2, 4, 2, 2, 2, 2)
     );
-    for (guarantee, (component, identity, name, _, expected_position)) in
-        guarantees.iter().zip(&expected_guarantees)
+    for (at, (guarantee, (component, identity, name, _, expected_position))) in
+        guarantees.iter().zip(&expected_guarantees).enumerate()
     {
         assert_eq!(guarantee.component.as_ref(), *component);
-        let reference = admitted
-            .resolve_node_held(position, &guarantee.clause)
-            .expect("resolve the composition's foreign operand slot");
-        let [filament_contract_model::CheckedNodePathSegment::Dependency { package, node }] =
-            reference.path.as_slice()
-        else {
-            panic!("the guarantee retains a dependency position: {reference:?}");
-        };
-        assert_eq!(package.as_ref(), *identity);
-        assert_eq!(
-            *node, *expected_position,
-            "{component}::{name} keeps its actual dependency target"
-        );
         let owner = admitted
             .direct_dependencies()
             .find(|owner| owner.name() == *identity)
             .expect("the authenticated component owner");
+        // Compare the complete raw reference with the independently found
+        // dependency document position. Every foreign operand slot must
+        // name the same owner's exact document index before expansion.
+        let mut raw_target: CheckedNodeId =
+            serde_json::from_value(node["body"]["guarantees"][at]["clause"].clone())
+                .expect("the emitted raw clause reference");
+        assert_eq!(raw_target.package.as_ref(), *identity);
+        let mut slots = 0;
+        for segment in &mut raw_target.path {
+            if let filament_contract_model::CheckedNodePathSegment::Operand(slot) = segment {
+                let operand: CheckedOperandEntry = serde_json::from_value(
+                    written["semantic_graph"]["operand_rows"][position]
+                        [usize::try_from(*slot).expect("operand slot")]
+                    .clone(),
+                )
+                .expect("the raw holder's operand entry");
+                let CheckedOperandEntry::Dependency(operand) = operand else {
+                    panic!("the foreign clause operand must name its dependency");
+                };
+                assert_eq!(operand.package.as_ref(), *identity);
+                assert!(owner
+                    .structural_key_at(
+                        usize::try_from(operand.node).expect("foreign operand position")
+                    )
+                    .is_some());
+                *segment = filament_contract_model::CheckedNodePathSegment::Index(operand.node);
+                slots += 1;
+            }
+        }
+        assert!(slots > 0, "the raw clause retains foreign operand slots");
+        let expected_position = usize::try_from(*expected_position).expect("dependency position");
+        assert_eq!(
+            Some(&raw_target),
+            owner.document_held_id(expected_position),
+            "{component}::{name} keeps its exact dependency document target"
+        );
         let clause_key = owner
-            .structural_key_at(usize::try_from(*node).expect("dependency position"))
+            .structural_key_at(expected_position)
             .expect("the foreign clause exists in its own graph");
         assert!(owner.term(clause_key).is_some());
+        let reference = admitted
+            .resolve_node_held(position, &guarantee.clause)
+            .expect("resolve the composition's foreign operand slots");
+        assert_eq!(reference.package.as_ref(), *identity);
+        assert_eq!(
+            owner.structural_key(&reference),
+            Some(clause_key),
+            "the expanded reference resolves in its authenticated owner"
+        );
         let names: Vec<_> = owner
             .temporal_clause_names()
             .expect("authenticated temporal names")
