@@ -322,3 +322,17 @@ pub fn run(operands: &[OsString]) -> Result<Outcome> {
 pub fn run_with_provider(operands: &[OsString], provider: &dyn Provider) -> Result<Outcome> {
     driver::execute(operands, provider)
 }
+
+/// Run explicitly selected corpus items through the real FSL resolver.
+///
+/// Keys name corpus vector IDs. Vectors absent from `items` retain automatic
+/// requirement discovery. Selections must leave the backend unnamed so FR-075
+/// discovers the complete candidate set before each backend is compared.
+/// This API does not change the standalone command's automatic discovery.
+pub fn run_with_selected_items(
+    operands: &[OsString],
+    provider: &dyn Provider,
+    items: &std::collections::BTreeMap<String, Vec<fsl_analyze::analyze::document::ItemSelection>>,
+) -> Result<Outcome> {
+    driver::execute_with_items(operands, provider, items)
+}

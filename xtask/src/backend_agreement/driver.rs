@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use filament_exact::{Cancel, Value as RuntimeValue};
-use fsl_analyze::analyze::document::{resolve_items, ResolvedItem, SubjectSelection};
+use fsl_analyze::analyze::document::{
+    resolve_items, ItemSelection, ResolvedItem, SubjectSelection,
+};
 use fsl_analyze::analyze::{AnalyzeLimits, Engines, SubjectBinding};
 use fsl_foundation::{BackendId, SourceIdentity};
 use fsl_replay::spine::{self, CheckedUnit, DependencyInput, ParseRequest};
@@ -402,6 +404,7 @@ fn compile(
     root: &Path,
     limits: &fsl_replay::CallerLimits,
     registry: &Registry,
+    items: Option<&[ItemSelection]>,
 ) -> std::result::Result<CompiledVector, Entry> {
     let mut inputs = Vec::new();
     for input in &vector.input.files {
@@ -501,7 +504,7 @@ fn compile(
     let resolved = resolve_items(
         checked.package(),
         &subject,
-        None,
+        items,
         registry,
         &[checked.source().reference().clone()],
         &binding,
@@ -535,8 +538,28 @@ fn panic_detail(payload: Box<dyn std::any::Any + Send>) -> String {
 }
 
 pub(super) fn execute(operands: &[OsString], provider: &dyn Provider) -> Result<Outcome> {
+    execute_with_items(operands, provider, &std::collections::BTreeMap::new())
+}
+
+pub(super) fn execute_with_items(
+    operands: &[OsString],
+    provider: &dyn Provider,
+    items: &std::collections::BTreeMap<String, Vec<ItemSelection>>,
+) -> Result<Outcome> {
+    if items.values().flatten().any(|item| item.backend.is_some()) {
+        return Err(refusal("item selection must leave the backend unnamed"));
+    }
     let fspec = corpus::fspec_dir();
     let prepared = corpus::prepare(fspec.path(), operands)?;
+    if items.keys().any(|id| {
+        !prepared
+            .corpus
+            .vectors
+            .iter()
+            .any(|vector| &vector.id == id)
+    }) {
+        return Err(refusal("item selection names an unknown corpus vector"));
+    }
     let mut compiled = Vec::new();
     let mut entries = Vec::new();
     for vector in &prepared.corpus.vectors {
@@ -556,6 +579,7 @@ pub(super) fn execute(operands: &[OsString], provider: &dyn Provider) -> Result<
                 &prepared.corpus_root,
                 &prepared.limits,
                 provider.registry(),
+                items.get(&vector.id).map(Vec::as_slice),
             )
         })) {
             Ok(Ok(vector)) => compiled.push(vector),
@@ -684,11 +708,39 @@ mod tests {
         let driver = Driver::new(Path::new("/unused/fsl")).unwrap();
         let limits = fsl_replay::CallerLimits::default();
         let root = directory.path().canonicalize().unwrap();
-        let compiled = compile(&vector, &root, &limits, driver.registry()).unwrap();
-        let claim = compiled.claims.first().expect("the Boolean claim resolves");
+        let compiled = compile(&vector, &root, &limits, driver.registry(), None).unwrap();
+        // This decoder fixture is an explicit native analyze request. A pure
+        // Boolean function has no automatic scalar proof obligation.
+        let documents = DocumentProvision::default();
+        let packages = fsl_semantics::model::intake::PackageInput::default();
+        let subject = SubjectSelection::default_over(&documents);
+        let binding = SubjectBinding {
+            packages: &packages,
+            snapshots: &documents,
+            initial: Vec::new(),
+            universes: Vec::new(),
+        };
+        let selection = [fsl_analyze::analyze::document::ItemSelection {
+            claim: Some("Claim".to_owned()),
+            kind: Some("value-validity".to_owned()),
+            ..Default::default()
+        }];
+        let mut resolved = resolve_items(
+            compiled.checked.package(),
+            &subject,
+            Some(&selection),
+            driver.registry(),
+            &[compiled.checked.source().reference().clone()],
+            &binding,
+            &AnalyzeLimits::unbounded(),
+        );
+        assert_eq!(resolved.len(), 1, "the native request names one claim");
+        let Some(ResolvedItem::Claim(claim)) = resolved.pop() else {
+            panic!("the explicitly requested Boolean claim resolves")
+        };
         let item = Item {
             checked: &compiled.checked,
-            claim,
+            claim: &claim,
             request: &compiled.request,
             limits: &limits,
             overrides: &[],

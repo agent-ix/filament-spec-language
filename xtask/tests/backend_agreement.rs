@@ -2,7 +2,7 @@
 //! FR-448 agreement over real corpus compilation and reference evaluation.
 
 mod backend_agreement {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::ffi::OsString;
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -71,7 +71,17 @@ mod backend_agreement {
             .unwrap();
             let mut args = vec![OsString::from("--corpus"), self.directory.path().into()];
             args.extend(options.iter().map(OsString::from));
-            gate::run_with_provider(&args, provider)
+            let items = BTreeMap::from_iter(["P", "R"].map(|id| {
+                (
+                    id.to_owned(),
+                    vec![fsl_analyze::analyze::document::ItemSelection {
+                        claim: Some("Claim".to_owned()),
+                        kind: Some("value-validity".to_owned()),
+                        ..Default::default()
+                    }],
+                )
+            }));
+            gate::run_with_selected_items(&args, provider, &items)
         }
     }
 
@@ -466,18 +476,28 @@ mod backend_agreement {
     fn compiled_vectors_without_verification_items_remain_in_the_report() {
         let provider = FixtureProvider::new(Plan::Reference, 2);
         let mut corpus = Corpus::new();
+        // These vectors have no explicit selection. A real automatic scalar
+        // obligation is compared, while a Boolean helper remains unrequested.
+        corpus.add("A", "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Claim using v(x: Int[0,10]): Int[1,11] pure { x + 1 }\n");
+        corpus.add("B", FAILS);
         corpus.add("D", "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nrecord Data { x: Integer; }\n");
         let outcome = corpus.run(&provider, &[]).unwrap();
         let report = document(&outcome);
         assert_eq!(outcome.code, 0, "{}", outcome.stdout);
-        assert_eq!(report["entries"].as_array().unwrap().len(), 3);
-        assert_eq!(report["entries"][0]["vector"], "D");
-        assert_eq!(report["entries"][0]["settlement"], "not-compared");
+        assert_eq!(report["entries"].as_array().unwrap().len(), 5);
+        assert_eq!(report["entries"][0]["vector"], "A");
+        assert_eq!(report["entries"][0]["settlement"], "agree");
         assert_eq!(
-            report["entries"][0]["failure"]["reason"],
+            report["entries"][1]["failure"]["reason"],
             "no-resolved-verification-item"
         );
-        assert_eq!(report["counts"]["agree"], 2);
+        assert_eq!(report["entries"][1]["vector"], "B");
+        assert_eq!(report["entries"][2]["vector"], "D");
+        assert_eq!(
+            report["entries"][2]["failure"]["reason"],
+            "no-resolved-verification-item"
+        );
+        assert_eq!(report["counts"]["agree"], 3);
     }
 
     #[test]
