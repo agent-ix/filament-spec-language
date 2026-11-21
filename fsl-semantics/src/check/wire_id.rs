@@ -769,7 +769,10 @@ fn is_nested_structural(value: &serde_json::Value) -> bool {
         .is_some_and(|path| path.iter().any(|segment| segment.get("package").is_some()))
 }
 
-fn foreign_id_container(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+/// Whether `object` is a foreign id container, `{package, node}` or a
+/// `dependency_reference`: it names a node of another package by string, and
+/// no id walk converts what it holds.
+pub fn foreign_id_container(object: &serde_json::Map<String, serde_json::Value>) -> bool {
     (object.len() == 2
         || (object.len() == 3
             && object.get("term").and_then(serde_json::Value::as_str)

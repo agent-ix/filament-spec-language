@@ -796,6 +796,17 @@ impl Default for DocumentGraphs {
     }
 }
 
+impl GraphUnavailable {
+    /// The catalog code of the stop: the emit limit reached, or a package the
+    /// reader cannot read.
+    pub fn code(&self) -> fsl_foundation::Code {
+        match self {
+            Self::NotEmitted => fsl_foundation::Code::ResourceExhausted,
+            Self::Unreadable(_) => fsl_foundation::Code::InvalidPackage,
+        }
+    }
+}
+
 impl DocumentGraphs {
     /// The graph of the package whose emission is `bytes`.
     pub fn of_bytes(
@@ -811,7 +822,10 @@ impl std::fmt::Debug for DocumentGraphs {
         formatter
             .debug_struct("DocumentGraphs")
             .field("own", &self.own.as_ref().map(|_| ()))
-            .field("dependencies", &self.dependencies.keys().collect::<Vec<_>>())
+            .field(
+                "dependencies",
+                &self.dependencies.keys().collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -944,6 +958,12 @@ pub enum AnalyzeRefusal {
     /// own code, cause and pointer, never an internal failure.
     #[error("the package the run compiled is not admitted: {}", .0.label())]
     Package(fsl_package::PackageAdmissionRefusal),
+    /// The package the run analyzes, or a dependency an item is analyzed
+    /// over, has no admitted emission, so the result's node ids cannot be
+    /// held (FSL FR-621 "Node ids in an item"): the run ends before any item
+    /// runs.
+    #[error("the result's node ids cannot be held: {0:?}")]
+    Emission(GraphUnavailable),
 }
 
 /// The deadline stated by the frontend, which owns its timer.
@@ -1095,6 +1115,17 @@ impl AnalyzeRefusal {
                     refusal.code.category(),
                 )
                 .with_diagnostics(vec![diagnostic])
+            }
+            Self::Emission(cause) => {
+                let code = cause.code();
+                OutcomeDocument::new(Operation::Analyze, None, code.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        None,
+                        code.as_str(),
+                        None,
+                        self.to_string(),
+                    )],
+                )
             }
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();

@@ -233,12 +233,7 @@ pub(super) fn resolve(
         return settled(failed(index, name));
     };
     if let Some(caller) = selection.premises.as_ref() {
-        // A caller restates the list a result wrote, whose ids that name a
-        // dependency's node are held in that dependency's graph (FR-621 "Node
-        // ids in an item"); it is compared in the structural form the list is
-        // derived in.
-        let caller = super::structural_in_dependencies(caller, &dependency_graphs(ctx.package));
-        if caller != Value::Array(listed.clone()) {
+        if *caller != Value::Array(listed.clone()) {
             let mut detail = Map::new();
             detail.insert("member".to_owned(), json!("premises"));
             detail.insert(
@@ -524,24 +519,4 @@ fn premise_item(ctx: &Context<'_>, index: RequestIndex, premise: Premise) -> Res
             }))
         }
     }
-}
-
-/// The graph of each direct dependency of `package` that emits, by package
-/// identity text.
-fn dependency_graphs(
-    package: &CheckedPackage,
-) -> std::collections::BTreeMap<String, fsl_semantics::check::wire_id::WireGraph> {
-    let emit = super::super::AnalyzeLimits::unbounded().emit;
-    package
-        .dependencies()
-        .values()
-        .filter_map(|dependency| {
-            let emission = fsl_package::emit_checked(dependency, emit).ok()?;
-            let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
-                emission.package().bytes(),
-            )
-            .ok()?;
-            Some((dependency.graph().package_name().to_owned(), graph))
-        })
-        .collect()
 }

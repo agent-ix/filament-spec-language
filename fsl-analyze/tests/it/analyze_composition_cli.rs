@@ -393,6 +393,7 @@ fn a_provider_proof_is_refused_over_an_unsupported_component_guarantee() {
 /// FR-1044 "Behavior" (the provider proof gate): two compositions of one request whose `Capped` guarantees
 /// are equal on the wire and differ in assumptions each read their own item.
 /// `Sys`'s proved `Capped` never discharges `SysRely`'s assumed one.
+#[trace("TC-3154", "FR-621-AC-17")]
 #[test]
 fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
     let (run, sent) = through_provider(
@@ -785,7 +786,6 @@ fn a_cycle_without_a_lattice_refuses_the_item() {
 /// derive them, and a guarantee under another assumption set is another
 /// item with an equal request.
 #[trace("FR-1044-AC-8")]
-#[trace("TC-3154", "FR-621-AC-17")]
 #[test]
 fn a_shared_premise_is_written_once() {
     let ws = Workspace::new("compose-ac8");

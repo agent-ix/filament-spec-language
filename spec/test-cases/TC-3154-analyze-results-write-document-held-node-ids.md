@@ -22,7 +22,7 @@ Tag the tests `#[trace("TC-3154", "FR-621-AC-16")]` and `#[trace("TC-3154", "FR-
 
 ## Expected Results
 
-- The proved item's identity and document, and both claim loci, validate; the refuted `counterexample` validates as a `CounterexampleEntry`.
+- The proved item's identity and document, and both claim loci, validate; the refuted `counterexample` holds no node id object in any node id's path; the test does not assert that the `counterexample` validates against `CounterexampleEntry`.
 - The checker accepts the document as written.
 - A premise item names its dependency in `package` and holds no nested node id object; an own-package item has no `package` member.
 - The over-limit run reports the typed `NotEmitted` graph cause or the strict reader refusal, never a result with a nested node id.

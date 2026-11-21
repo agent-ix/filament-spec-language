@@ -94,6 +94,7 @@ pub(super) fn settle_call(
     };
     settle_run(run, settle.negotiate, settle.cancel).map_err(|error| match error {
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
-        AnalyzeDocumentError::Fault | AnalyzeDocumentError::Identity(_) => RunCause::AnalyzeFault,
+        AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+        AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
     })
 }

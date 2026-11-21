@@ -330,6 +330,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::AnalyzeUniverse(_)
         | RunCause::AnalyzeNotYetImplemented { .. }
         | RunCause::AnalyzeRefused(_)
+        | RunCause::AnalyzeEmission(_)
         | RunCause::MonitorRefused(_)
         | RunCause::TlCorrespondence { .. }
         | RunCause::IntegerDivisionLaw { .. }

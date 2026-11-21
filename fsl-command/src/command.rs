@@ -1066,6 +1066,12 @@ pub enum RunCause {
     /// An analyze run faulted while writing its document.
     #[error("the analyze run faulted")]
     AnalyzeFault,
+    /// FSL FR-621 "Node ids in an item": the request's package, or a dependency
+    /// an item is analyzed over, has no admitted emission, so the document's
+    /// node ids cannot be held. The run stops with the limit or the reader's
+    /// own category and writes no document, never an internal failure.
+    #[error("the result's node ids cannot be held: {0:?}")]
+    AnalyzeEmission(fsl_analyze::analyze::GraphUnavailable),
     /// FR-644: a monitor run faulted.
     #[error("the monitor run faulted")]
     MonitorFault,
@@ -1244,6 +1250,7 @@ impl RunCause {
                 .first()
                 .and_then(|diagnostic| Code::from_code(diagnostic.code()))
                 .unwrap_or(Code::RuntimeInvariant),
+            Self::AnalyzeEmission(cause) => cause.code(),
             Self::AnalyzeFault | Self::MonitorFault | Self::ItemsFault | Self::MonitorCancelled => {
                 Code::RuntimeInvariant
             }
@@ -1284,6 +1291,18 @@ impl RunCause {
             }
             _ => self.code().category(),
         }
+    }
+}
+
+/// The run cause of a result whose node ids could not be held: the typed
+/// emission cause when its package has no graph, an internal failure when an
+/// id has no held form.
+pub(crate) fn identity_cause(error: fsl_analyze::analyze::document::HeldIdentityError) -> RunCause {
+    match error {
+        fsl_analyze::analyze::document::HeldIdentityError::NoGraph(cause) => {
+            RunCause::AnalyzeEmission(cause)
+        }
+        fsl_analyze::analyze::document::HeldIdentityError::NotInGraph(_) => RunCause::AnalyzeFault,
     }
 }
 
@@ -1471,6 +1490,7 @@ impl RunError {
             | RunCause::CompleteRunSelection(_)
             | RunCause::AnalyzeRequest { .. }
             | RunCause::AnalyzeUniverse(_)
+            | RunCause::AnalyzeEmission(_)
             | RunCause::AnalyzeFault
             | RunCause::MonitorFault
             | RunCause::MonitorCancelled
@@ -4831,6 +4851,30 @@ mod tests {
     use super::*;
     use filament_semantic_value::catalog::InternalFault;
     use ix_trace_rs::trace;
+
+    /// FR-621-AC-17: a result whose package has no graph for its node ids ends
+    /// the run with the emission cause and a category that is no internal
+    /// failure; an id with no held form stays an analyze fault.
+    #[test]
+    #[trace("TC-3154", "FR-621-AC-17")]
+    fn a_package_without_a_graph_ends_the_run_with_the_typed_emission_cause() {
+        use fsl_analyze::analyze::document::HeldIdentityError;
+        use fsl_analyze::analyze::GraphUnavailable;
+        let cause = identity_cause(HeldIdentityError::NoGraph(GraphUnavailable::NotEmitted));
+        assert!(matches!(
+            cause,
+            RunCause::AnalyzeEmission(GraphUnavailable::NotEmitted)
+        ));
+        assert_eq!(cause.code(), Code::ResourceExhausted);
+        assert_ne!(
+            cause.category(),
+            filament_semantic_value::catalog::Category::InternalFailure
+        );
+        assert!(matches!(
+            identity_cause(HeldIdentityError::NotInGraph(String::new())),
+            RunCause::AnalyzeFault
+        ));
+    }
 
     /// FR-866 / FR-869: a raised `s1.input_bytes` raises check's source read
     /// ceiling, so the S1 limit is the bound that refuses.
