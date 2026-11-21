@@ -1560,7 +1560,7 @@ fn native_replay_refuses_single_outcome_ordinals_and_wrong_receivers() {
     use fsl_analyze::plan_search::replay;
     let world = native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,1]; object Counter { number: ValueRange; operation settle() modifies self.number; } object Other { number: ValueRange; } population counters: Counter;",
-        "post Set using v on M::Counter::settle { self.number = 1 }\n",
+        "post Settles using v on M::Counter::settle { self.number = 1 }\n",
         &[("c",json!({"number":{"integer":"0"}}))]);
     let system = world_system(&world);
     let mut rules = Counter::new(&world, &system, 1);
