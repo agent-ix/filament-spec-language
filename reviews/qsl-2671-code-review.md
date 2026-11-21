@@ -29,3 +29,12 @@ Tests: filtered `cli_contract::monitor` run at head, 9 passed. Mutation in a thr
 ## Verdict
 
 CONDITIONAL — the code change is correct and the two new tests are real (mutation-verified). FND-001 should get one batch-form test (a records file ending in `\n` with no `{"end":true}`, and one with a trailing blank line, compared with the same stream) in this PR; FND-002 is a test-wording/assertion tightening. Driver-side blank-line splitting is out of scope here.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+
+Round 1 at head `e86c995a98` (fix commit e86c995a98, tests only). FND-001: `a_records_file_gives_the_events_of_the_same_stream` (fsl-command/tests/it/cli_contract/monitor.rs:351-371) runs a records file ending in a newline with no `end` record, and one with a trailing blank line, through `command::run` and compares refused count, events, records and clauses with the same bytes as a stream. Reviewer mutation (strip_suffix reverted in file_lines) fails it at monitor.rs:366; the other 9 pass. FND-002: the blank/whitespace test now compares the good records' events and clauses with the stream without the two blanks (indices after 2 shifted by 2), and its doc names the `b""` case an empty stdin stream, not an absent source. Filtered `cli_contract::monitor` at e86c995a98: 10 passed.

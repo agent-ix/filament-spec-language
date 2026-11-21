@@ -25,3 +25,11 @@ Ticket: QSL-2671. Manual criterion-to-test check of the criteria this PR touches
 ## Verdict
 
 PASS with one low finding. The behavior is backed by FR-644 Inputs and Behavior and by mutation-verified tests; the trace tag follows the existing precedent (`malformed_and_truncated_records_are_refusal_events` is also tagged AC-2 for a truncated record), so the finding is a judgement call on criterion precision rather than a coverage hole. The untested batch `file_lines` path is code-review SR-202611210437430 FND-001.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+
+Round 1 at head `e86c995a98`: the three blank-record and records-file tests are tagged `#[trace("FR-644")]` (fsl-command/tests/it/cli_contract/monitor.rs:176, 213, 356; FR-level tags have precedent, e.g. cli_contract/compile.rs:92), and FR-644-AC-2 stays only on the unknown-member test. The records-file terminator rule is now asserted against FR-644 Inputs' batch-equals-stream sentence; FR-644 text is unchanged and needs no change for this behavior.
