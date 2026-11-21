@@ -1428,7 +1428,11 @@ fn check_message_one(first: &CheckRefusal) -> String {
         | CheckCause::ClockReadingCall(name) => {
             message = format!("{message}: `{name}`");
         }
-        CheckCause::UnknownField { owner, field, .. } => {
+        CheckCause::PlanUnsupported { form, .. } => {
+            message = format!("{message}: {form}");
+        }
+        CheckCause::PlanUnknownField { owner, field, .. }
+        | CheckCause::UnknownField { owner, field, .. } => {
             message = format!("{message}: `{owner}` has no field `{field}`");
         }
         CheckCause::UndeclaredVariantCase { owner, case } => {

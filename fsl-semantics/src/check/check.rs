@@ -1553,6 +1553,69 @@ impl Scope {
             .find(|operation| operation.name() == name)
     }
 
+    /// This scope with a plan synthesis's plan value declared (FSpec
+    /// FR-800): its `composites` and the `operations` enum, whose cases a
+    /// qualified name `Alias::Op::case` reads. `None` when the type
+    /// environment does not admit the composites beside its own.
+    pub(crate) fn with_plan_types(
+        &self,
+        composites: Vec<filament_semantic_value::declaration::CompositeDeclaration>,
+        operations: EnumBinding,
+    ) -> Option<Self> {
+        let mut scope = self.clone();
+        scope.types = TypeEnvironment::new(
+            self.types.composites().cloned().chain(composites),
+            self.types.object_types().cloned(),
+        )
+        .ok()?
+        .with_units(self.types.units().clone());
+        let position = scope.enums.len();
+        for member in &operations.members {
+            scope.index.enum_member_index.record(member.clone());
+        }
+        let cases = scope
+            .index
+            .enum_members
+            .entry(operations.name.clone())
+            .or_default();
+        for (member, value) in operations.members.iter().enumerate() {
+            cases
+                .entry(value.case().to_owned())
+                .or_default()
+                .push((position, member));
+        }
+        let shape = operations.shape();
+        if !scope.index.enum_shapes.contains_key(&shape) {
+            let members = scope
+                .index
+                .enum_member_index
+                .filtered(shape.variants().cloned());
+            scope.index.enum_shapes.insert(shape, (position, members));
+        }
+        scope.enums.push(operations);
+        Some(scope)
+    }
+
+    /// Seal one generated plan union with the actual lowered declaration id.
+    pub(crate) fn seal_plan_union(&mut self, handle: NodeKey, settled: NodeKey) -> Option<()> {
+        let CompositeShape::Union(members) = self.types.composite(handle.clone())?.shape() else {
+            return None;
+        };
+        let bindings = members
+            .iter()
+            .map(|member| {
+                filament_exact::UnionMember::from_admitted(
+                    settled.clone(),
+                    member.identifier().to_owned(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        self.types
+            .seal_union_verified(handle, settled, bindings)
+            .ok()
+    }
+
     /// This scope with the object types the admitted models' `symmetric`
     /// populations cover (FR-150).
     pub(crate) fn with_symmetric_objects(
@@ -2567,6 +2630,7 @@ pub(crate) struct NamedScope {
     /// Every model alias of the unit: a two-segment name under one that
     /// names no population is missing at its second segment.
     pub(crate) aliases: Vec<String>,
+    pub(crate) plan_operations: Vec<(String, EffectiveId, String)>,
 }
 
 /// One population a population position may name (FR-391).
@@ -2594,6 +2658,7 @@ impl NamedScope {
         let mut populations = Vec::new();
         let mut ambiguous = Vec::new();
         let mut aliases = Vec::new();
+        let mut plan_operations = Vec::new();
         for model in models {
             let Some(alias) = model.alias() else {
                 continue;
@@ -2603,6 +2668,12 @@ impl NamedScope {
                 continue;
             }
             aliases.push(alias.to_owned());
+            plan_operations.extend(
+                model
+                    .plan_operation_order()
+                    .into_iter()
+                    .map(|(owner, name)| (alias.to_owned(), owner, name)),
+            );
             if scope.names_enum(alias) {
                 ambiguous.push(alias.to_owned());
             }
@@ -2622,6 +2693,7 @@ impl NamedScope {
             populations,
             ambiguous,
             aliases,
+            plan_operations,
         }
     }
 
@@ -5684,10 +5756,18 @@ impl<'a> Typer<'a> {
             .ok_or_else(|| {
                 refuse(
                     location,
-                    CheckCause::UnknownField {
-                        owner: declaration.name().into(),
-                        field: field.into(),
-                        span: member_span,
+                    if key.package() == super::plan_value::PLAN_PACKAGE {
+                        CheckCause::PlanUnknownField {
+                            owner: declaration.name().into(),
+                            field: field.into(),
+                            span: member_span,
+                        }
+                    } else {
+                        CheckCause::UnknownField {
+                            owner: declaration.name().into(),
+                            field: field.into(),
+                            span: member_span,
+                        }
                     },
                 )
             })?;

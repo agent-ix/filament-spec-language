@@ -194,13 +194,16 @@ pub use source_model::{
     object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
     SourceRowObject, SourceRowOperation, SourceRowParameter,
 };
+mod plan_value;
 pub(crate) mod state_clause;
 mod state_graph_claim;
 mod state_model;
 mod step_simulation;
 mod sum_case;
 mod synthesis;
-pub use synthesis::{CheckedSynthesis, CheckedSynthesisClaim};
+pub use synthesis::{
+    CheckedPlan, CheckedSynthesis, CheckedSynthesisClaim, PlanOperation, PlanPopulation, PlanShape,
+};
 mod task_set;
 mod temporal_clause;
 mod terminal;
@@ -2535,7 +2538,7 @@ impl PackageDeclarations {
                                                     span: source.unit.span,
                                                 },
                                             )),
-                                        })
+                                        });
                                     }
                                     Err(cause) => {
                                         return Some(CheckRefusal {
@@ -2546,7 +2549,7 @@ impl PackageDeclarations {
                                                     span: source.unit.span,
                                                 },
                                             )),
-                                        })
+                                        });
                                     }
                                 };
                                 let mut tick_operation_key = None;
@@ -2587,7 +2590,7 @@ impl PackageDeclarations {
                                                             span: period.magnitude.span,
                                                         },
                                                     )),
-                                                })
+                                                });
                                             }
                                             Err(probabilistic::ExactFault::AboveCeiling {
                                                 bits,
@@ -2607,7 +2610,7 @@ impl PackageDeclarations {
                                                             ),
                                                         },
                                                     )),
-                                                })
+                                                });
                                             }
                                         };
                                         let converted = match units.convert(
@@ -3212,7 +3215,19 @@ impl PackageDeclarations {
             .select_declared_ieee_profile(&signatures, has_ieee_literal)
             .map_err(|refusal| vec![refusal])?;
         let signatures = Signatures::new(signatures);
-        let checked_syntheses = synthesis::check_forms(&self.synthesis_forms, &scope, &signatures)?;
+        let plan_populations = NamedScope::of(&self.models, &scope, None);
+        let checked_syntheses = synthesis::check_forms(
+            &self.synthesis_forms,
+            &scope,
+            &signatures,
+            &plan_populations,
+            &self.source,
+            &self.source_owners,
+            &self.package_name,
+            &self.models,
+            &dispatch_tables,
+            &mut contract_meter,
+        )?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {
             if !seen_operations.insert((operation.receiver_type.clone(), operation.member.clone()))
@@ -4417,7 +4432,7 @@ impl PackageDeclarations {
                             cause: pending_refusal(failure),
                         }],
                         &deferred,
-                    ))
+                    ));
                 }
                 Err(model_conformance::StageDenial::MissingModel(identity)) => {
                     return Err(with_deferred(
@@ -4428,7 +4443,7 @@ impl PackageDeclarations {
                             )),
                         }],
                         &deferred,
-                    ))
+                    ));
                 }
                 Err(model_conformance::StageDenial::Incomplete(incomplete)) => {
                     return Err(with_deferred(
@@ -4437,7 +4452,7 @@ impl PackageDeclarations {
                             cause: CheckCause::ModelIncomplete(incomplete),
                         }],
                         &deferred,
-                    ))
+                    ));
                 }
                 Err(model_conformance::StageDenial::Refused(failures)) => {
                     return Err(with_deferred(
@@ -4449,7 +4464,7 @@ impl PackageDeclarations {
                             })
                             .collect(),
                         &deferred,
-                    ))
+                    ));
                 }
             }
         }

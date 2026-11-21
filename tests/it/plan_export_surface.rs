@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Request-surface stubs for the plan outcome document, the plan search
+//! Request-surface tests for the plan outcome document, the plan search
 //! limits, plan refusals and the reference planning examples (FR-1010 to
 //! FR-1014), and for the TLA+ and Lean export outcome, mappers and golden
 //! corpus (FR-1015 to FR-1018). Each feeds source and a `native-run/1`
 //! request through the command adapter (`fsl_command::command::run`) and
-//! asserts on the output document, because the engines do not exist yet.
+//! asserts on the output document. Separately staged extensions retain named ignores.
 
 use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
@@ -14,6 +14,18 @@ use std::path::{Path, PathBuf};
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.model.complete/v1\";\n\
      model Config = \"example/config-version\";\n";
+
+// The domain document supplies the operation frame; the authored spine
+// postcondition constrains that frame's possible post-states.
+// The postcondition needs both object navigation and Integer conversion;
+// its model layer includes graph and value forms. The plan uses temporal v.
+const PLAN_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.temporal.infinite-trace/v1\";\n\
+     profile g = \"filament.model.complete/v1\";\n\
+     model Config = \"example/config-version\";\n\
+     post VersionAdvances using g on Config::ConfigVersion::attemptUpdate {\n\
+       (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)\n\
+       and (not result implies self.versionNumber = pre(self.versionNumber)) }\n";
 
 /// FR-447's `Braking` without `t`, with `SlowEnough` over it.
 const BRAKING: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -72,11 +84,11 @@ fn names(value: &Value, member: &str) {
     );
 }
 
-/// A plan synthesis over the spine model with `lengths`, `goal` and an
+/// A plan synthesis over the explicitly named finite planning model with an
 /// optional objective, plus the two temporal clauses a policy may name.
 fn plan_unit(lengths: &str, objective: &str, goal: &str) -> String {
     format!(
-        "{MODEL_HEADER}type Lengths = {lengths};\n\
+        "{PLAN_HEADER}type Lengths = {lengths};\n\
          temporal SomeTime using v over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ eventually holds(c.versionNumber = 3) }}\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
@@ -85,11 +97,50 @@ fn plan_unit(lengths: &str, objective: &str, goal: &str) -> String {
 }
 
 fn plan(unit: &str, synthesis: Value) -> (u8, Value) {
-    let mut member = json!({"declaration": "Reach", "initial": "spine-snapshot.json"});
+    let directory = tempfile::tempdir().unwrap();
+    crate::support::plan_model::write(directory.path());
+    plan_in(
+        directory.path(),
+        unit,
+        "planning-model.semantic-ir.json",
+        "planning-initial.json",
+        synthesis,
+    )
+}
+
+/// Plan over the genuine corpus model without substituting its type domain.
+fn spine_plan(unit: &str, synthesis: Value) -> (u8, Value) {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
+    plan_in(
+        directory.path(),
+        unit,
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        synthesis,
+    )
+}
+
+fn plan_in(
+    directory: &Path,
+    unit: &str,
+    model: &str,
+    initial: &str,
+    synthesis: Value,
+) -> (u8, Value) {
+    std::fs::write(directory.join("unit.native"), unit).unwrap();
+    let mut member = json!({"declaration": "Reach", "initial": initial});
     for (key, value) in synthesis.as_object().into_iter().flatten() {
         member[key] = value.clone();
     }
-    run(unit, true, ("synthesis", member))
+    write_request(
+        directory,
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": source(model)}],
+            "program": {"source": source("unit.native")}, "synthesis": member
+        }}),
+    )
 }
 
 // ---- QSL-1978: planner and optimizer ------------------------------------
@@ -97,35 +148,45 @@ fn plan(unit: &str, synthesis: Value) -> (u8, Value) {
 /// FR-1010-AC-1 and FSpec FR-805-AC-1: an optimal plan writes the
 /// `filament.plan-outcome/v1` document with all its members and exits 0.
 #[test]
-#[trace("TC-2860", "FR-1010-AC-1")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-1")]
-#[trace("FSpec-TC-1950", "FSpec-FR-800-AC-1")]
-#[ignore = "QSL-1978: the plan outcome document is not implemented yet"]
 fn an_optimal_plan_writes_the_plan_outcome_document() {
-    let (exit, value) = plan(&plan_unit("Int[0, 3]", "", "Reach.length >= 1"), json!({}));
-    let outcome = &value["synthesis"];
-    assert_eq!(outcome["format"], "filament.plan-outcome/v1", "{value}");
-    assert_eq!(outcome["status"], "optimal", "{value}");
-    for member in [
-        "objective",
-        "plan",
-        "replay",
-        "certificate",
-        "certification",
-        "explored",
-        "limits",
-    ] {
-        assert!(outcome.get(member).is_some(), "{member}: {value}");
+    for objective in ["", "minimize Reach.length"] {
+        let (exit, value) = plan(
+            &plan_unit("Int[0, 3]", objective, "Reach.length >= 1"),
+            json!({}),
+        );
+        let outcome = &value["synthesis"];
+        assert_eq!(outcome["format"], "filament.plan-outcome/v1", "{value}");
+        assert_eq!(outcome["status"], "optimal", "{value}");
+        for member in [
+            "objective",
+            "plan",
+            "replay",
+            "certificate",
+            "certification",
+            "explored",
+            "limits",
+        ] {
+            assert!(outcome.get(member).is_some(), "{member}: {value}");
+        }
+        assert_eq!(outcome["replay"]["outcome"], "reproduced", "{value}");
+        let steps = outcome["plan"]["steps"].as_array().expect("steps");
+        assert_eq!(steps.len(), 1, "the shortest admissible plan: {value}");
+        assert_eq!(steps[0]["index"], 0, "{value}");
+        assert_eq!(
+            outcome["objective"]["value"],
+            json!({"type": "integer", "value": "1"}),
+            "{value}"
+        );
+        assert_eq!(outcome["certificate"]["type"], "potential", "{value}");
+        assert_eq!(outcome["certification"], "certified", "{value}");
+        assert_eq!(
+            outcome["plan"]["states"].as_array().map(Vec::len),
+            Some(steps.len() + 1),
+            "{value}"
+        );
+        assert_eq!(exit, 0, "{value}");
     }
-    assert_eq!(outcome["replay"]["outcome"], "reproduced", "{value}");
-    let steps = outcome["plan"]["steps"].as_array().expect("steps");
-    assert_eq!(steps[0]["index"], 0, "{value}");
-    assert_eq!(
-        outcome["plan"]["states"].as_array().map(Vec::len),
-        Some(steps.len() + 1),
-        "{value}"
-    );
-    assert_eq!(exit, 0, "{value}");
 }
 
 /// FR-1010-AC-2 and FSpec FR-805-AC-2/AC-4, FR-806-AC-5: `infeasible`
@@ -135,7 +196,6 @@ fn an_optimal_plan_writes_the_plan_outcome_document() {
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-2")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-4")]
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-5")]
-#[ignore = "QSL-1978: plan outcome exits and the strict plan request reader are not implemented yet"]
 fn an_infeasible_plan_exits_ten_and_a_malformed_request_refuses() {
     let unit = plan_unit("Int[0, 0]", "", "Reach.length >= 1");
     let (exit, value) = plan(&unit, json!({}));
@@ -154,7 +214,6 @@ fn an_infeasible_plan_exits_ten_and_a_malformed_request_refuses() {
 #[trace("TC-2861", "FR-1011-AC-1")]
 #[trace("FSpec-TC-1951", "FSpec-FR-801-AC-1")]
 #[trace("FSpec-TC-1951", "FSpec-FR-801-AC-6")]
-#[ignore = "QSL-1978: plan_search limits are not implemented yet"]
 fn the_plan_search_stops_at_its_named_limits() {
     let unit = plan_unit("Int[0, 3]", "", "Reach.length >= 3");
     for (member, setting) in [
@@ -175,7 +234,6 @@ fn the_plan_search_stops_at_its_named_limits() {
 #[test]
 #[trace("FSpec-TC-2003", "FSpec-FR-801-AC-7")]
 #[trace("TC-2861", "FR-1011-AC-3")]
-#[ignore = "QSL-1978: plan_search limit defaults and their refusals are not implemented yet"]
 fn plan_search_limits_have_published_defaults_and_refuse_invalid_values() {
     let unit = plan_unit("Int[0, 3]", "", "Reach.length >= 1");
     let defaults = json!({
@@ -220,7 +278,6 @@ fn plan_search_limits_have_published_defaults_and_refuse_invalid_values() {
 #[test]
 #[trace("TC-2861", "FR-1011-AC-2")]
 #[trace("FSpec-TC-1951", "FSpec-FR-801-AC-2")]
-#[ignore = "QSL-1978: the plan search does not charge the evaluation meter yet"]
 fn an_exhausted_evaluation_meter_names_its_accounting_setting() {
     let (_, value) = plan(
         &plan_unit("Int[0, 3]", "", "Reach.length >= 3"),
@@ -237,8 +294,7 @@ fn an_exhausted_evaluation_meter_names_its_accounting_setting() {
 /// each completed plan, never refused.
 #[test]
 #[trace("TC-2862", "FR-1012-AC-1")]
-#[trace("FSpec-TC-1953", "FSpec-FR-803-AC-2")]
-#[ignore = "QSL-1978: non-safety plan policies are not implemented yet"]
+#[ignore = "QSL-1978: positive-length canonical policy monitors remain required after wiring and lambda"]
 fn a_non_safety_policy_is_evaluated_on_each_completed_plan() {
     let (exit, value) = plan(
         &plan_unit("Int[0, 3]", "", "Reach.length >= 1"),
@@ -263,7 +319,6 @@ fn a_non_safety_policy_is_evaluated_on_each_completed_plan() {
 #[test]
 #[trace("TC-2862", "FR-1012-AC-2")]
 #[trace("FSpec-TC-1954", "FSpec-FR-804-AC-4")]
-#[ignore = "QSL-1978: deterministic plan outcomes are not implemented yet"]
 fn equal_plan_requests_give_byte_identical_outcomes() {
     let unit = plan_unit("Int[0, 3]", "", "Reach.length >= 2");
     let (_, first) = plan(&unit, json!({}));
@@ -278,7 +333,7 @@ fn equal_plan_requests_give_byte_identical_outcomes() {
 #[trace("TC-2862", "FR-1012-AC-3")]
 #[trace("FSpec-TC-1952", "FSpec-FR-802-AC-1")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-3")]
-#[ignore = "QSL-1978: exact decimal plan objectives are not implemented yet"]
+#[ignore = "lambda objective form lands in the follow-up grammar PR (QSL-1978)"]
 fn a_decimal_step_cost_is_exact_and_certified() {
     let (_, value) = plan(
         &plan_unit(
@@ -304,11 +359,17 @@ fn a_decimal_step_cost_is_exact_and_certified() {
 #[test]
 #[trace("TC-2863", "FR-1013-AC-1")]
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-2")]
-#[ignore = "QSL-1978: plan declaration refusals at S3 are not implemented yet"]
 fn plan_declarations_refuse_at_check() {
     let (exit, value) = plan(&plan_unit("Int[-1, 3]", "", "Reach.length >= 1"), json!({}));
     assert_eq!(exit, 20, "{value}");
     names(&value, "type-mismatch");
+}
+
+/// FSpec FR-806-AC-2: a read of `elapsed` over an untimed model refuses
+/// `missing-name`.
+#[test]
+#[trace("FSpec-TC-1956", "FSpec-FR-806-AC-2")]
+fn an_elapsed_read_over_an_untimed_plan_refuses_missing_name() {
     let (exit, value) = plan(
         &plan_unit("Int[0, 3]", "minimize Reach.elapsed", "Reach.length >= 1"),
         json!({}),
@@ -378,7 +439,9 @@ fn the_six_reference_planning_examples_plan_as_specified() {
 // ---- QSL-1979: TLA+ and Lean export -------------------------------------
 
 fn low_unit() -> String {
-    format!("{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n")
+    format!(
+        "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
+    )
 }
 
 fn export(unit: &str, with_model: bool, member: Value) -> (u8, Value) {
@@ -1373,18 +1436,32 @@ fn probabilistic_plans_compute_exact_probabilities() {
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-3")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-4")]
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-4")]
-#[ignore = "QSL-1978: plan request admission refusals are not implemented yet"]
 fn plan_requests_refuse_at_admission() {
     let unit = format!(
         "{}type Digit = Int[0, 9];\n\
          synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 7 }};\n\
-         profile p = \"filament.temporal.infinite-trace/v1\";\n{}",
-        plan_unit("Int[0, 3]", "", "Reach.length >= 1"),
-        BRAKING
-            .split_once("hybrid")
-            .map(|(_, rest)| format!("hybrid{rest}"))
-            .unwrap(),
+         temporal OtherPolicy using p over (o: Other::Widget) clock \"model-steps\" \
+         on origin {{ always holds(true) }}\n",
+        plan_unit("Int[0, 3]", "", "Reach.length >= 1").replacen(
+            PLAN_HEADER,
+            &PLAN_HEADER.replace(
+                "model Config",
+                "profile p = \"filament.temporal.infinite-trace/v1\";\nmodel Other = \"acme/orders\";\nmodel Config"
+            ),
+            1
+        ),
     );
+    let admitted = tempfile::tempdir().unwrap();
+    spine::write(admitted.path(), Case::Healthy).unwrap();
+    crate::support::plan_model::write_initial(admitted.path(), "spine-initial.json");
+    std::fs::write(admitted.path().join("unit.native"), &unit).unwrap();
+    // A genuine existing model policy in another selected model exercises
+    // wrong binding; an unknown name separately exercises missing-name.
+    std::fs::write(
+        admitted.path().join("other-plan-model.semantic-ir.json"),
+        crate::support::spine_model::DOCUMENT,
+    )
+    .unwrap();
     for (synthesis, cause, pointer) in [
         (
             json!({"declaration": "Pick"}),
@@ -1402,12 +1479,24 @@ fn plan_requests_refuse_at_admission() {
             "/synthesis/policy/0",
         ),
         (
-            json!({"policy": ["SlowEnough"]}),
+            json!({"policy": ["OtherPolicy"]}),
             "type-mismatch",
             "/synthesis/policy/0",
         ),
     ] {
-        let (exit, value) = plan(&unit, synthesis);
+        let mut member = json!({"declaration":"Reach", "initial":"spine-initial.json"});
+        for (key, value) in synthesis.as_object().unwrap() {
+            member[key] = value.clone();
+        }
+        let (exit, value) = write_request(
+            admitted.path(),
+            &json!({"format":"native-run/1", "request":{
+                "models":[
+                    {"format":"semantic-ir/2.0.0", "source":source("spine-model.semantic-ir.json")},
+                    {"format":"semantic-ir/2.0.0", "source":source("other-plan-model.semantic-ir.json")}
+                ], "program":{"source":source("unit.native")}, "synthesis":member
+            }}),
+        );
         assert_eq!(exit, 20, "{value}");
         names(&value, cause);
         names(&value, pointer);
@@ -1423,15 +1512,19 @@ fn plan_requests_refuse_at_admission() {
             + "bound HistoryBound on Config::config_history [1]\n",
     )
     .unwrap();
+    crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
     let (exit, value) = write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": {
             "models": [{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}],
             "program": {"source": source("unit.native")},
-            "synthesis": {"declaration": "Reach", "initial": "spine-snapshot.json"}}}),
+            "synthesis": {"declaration": "Reach", "initial": "spine-initial.json"}}}),
     );
     assert_eq!(exit, 20, "{value}");
-    names(&value, "/synthesis/initial");
+    assert_eq!(value["code"], "cardinality_out_of_bound", "{value}");
+    assert_eq!(value["cause"], "above-maximum", "{value}");
+    names(&value, "/request/synthesis/initial");
+    names(&value, "spine-initial.json");
     assert!(value["synthesis"].get("status").is_none(), "{value}");
 }
 
@@ -2172,4 +2265,660 @@ fn evidence_for_an_unrepresented_record_is_refused() {
     );
     assert_eq!(exit, 20, "{value}");
     names(&value, "/export_evidence/obligation");
+}
+
+/// Policy evaluation spends the request's accounting budget before a
+/// trivial empty-plan goal can give a planning verdict.
+#[test]
+#[trace("FR-1011-AC-2", "FSpec-FR-801-AC-2")]
+fn policy_accounting_exhaustion_is_an_incomplete_run() {
+    let unit = plan_unit("Int[0, 0]", "", "true");
+    let (unlimited_exit, unlimited) = plan(&unit, json!({"policy": ["SomeTime"]}));
+    assert_eq!(unlimited_exit, 10, "{unlimited}");
+    assert_eq!(
+        unlimited["synthesis"]["status"], "infeasible",
+        "{unlimited}"
+    );
+    let (exit, limited) = plan(
+        &unit,
+        json!({"policy": ["SomeTime"], "accounting": {"work_units": 1}}),
+    );
+    assert_eq!(exit, 22, "{limited}");
+    assert_eq!(limited["synthesis"]["status"], "incomplete", "{limited}");
+    assert_eq!(
+        limited["synthesis"]["cause"]["setting"], "accounting.work_units",
+        "{limited}"
+    );
+}
+
+/// A typed numeric family awaiting its planning ordering/certificate
+/// implementation refuses before a low search budget can produce a verdict.
+#[test]
+#[trace("FR-1013")]
+fn unsupported_numeric_objectives_refuse_before_plan_search() {
+    for (family, declarations, expression) in [
+        (
+            "Float",
+            "function Cost using n(): Float32[nearest-even] pure { float32(bits:0x3f800000) }\n",
+            "Cost()",
+        ),
+        (
+            "Float",
+            "function Cost using n(): Float32[nearest-even] pure { float32(bits:0x7fc00001) }\n",
+            "Cost()",
+        ),
+        (
+            "Quantity",
+            "dimension Time;\nunit s : Time = rational(1, 1);\nfunction Cost using n(): Quantity<s> pure { 1 s }\n",
+            "Cost()",
+        ),
+    ] {
+        let header = PLAN_HEADER.replace(
+            "model Config",
+            "profile n = \"filament.value.complete/v1\";\nmodel Config",
+        );
+        let unit = format!(
+            "{header}{declarations}type Lengths = Int[0,3];\n\
+            synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+            minimize {expression} satisfies {{ true }};\n"
+        );
+        let (exit, value) = plan(&unit, json!({"limits": {"max_work": 1}}));
+        assert_eq!(exit, 21, "{value}");
+        assert_eq!(value["code"], "unsupported_construct", "{value}");
+        assert_eq!(value["cause"], "not-yet-implemented", "{value}");
+        names(&value, family);
+        assert_eq!(value["details"]["path"], "unit.native", "{value}");
+        assert_eq!(
+            value["details"]["span"]["start"]["byte"],
+            unit.rfind(expression).unwrap(),
+            "{value}"
+        );
+        assert_eq!(
+            value["details"]["span"]["end"]["byte"],
+            unit.rfind(expression).unwrap() + expression.len(),
+            "{value}"
+        );
+        assert!(
+            value.get("synthesis").is_none(),
+            "no truth/plan outcome is written: {value}"
+        );
+    }
+}
+
+/// Supported objective families keep their exact typed outcome values and
+/// produce a natively replayed, certified result.
+#[test]
+#[trace("FR-1010")]
+fn supported_numeric_objectives_keep_their_exact_typed_values() {
+    for (result_type, body, expected) in [
+        ("Integer", "7", json!({"type": "integer", "value": "7"})),
+        (
+            "Rational[0, 3; 1, 4]",
+            "rational(3,4)",
+            json!({"type": "rational", "numerator": "3", "denominator": "4"}),
+        ),
+        (
+            "Decimal[-100,100;2,2;exact]",
+            "decimal(75,2)",
+            json!({"type": "decimal", "coefficient": "75", "scale": "2"}),
+        ),
+    ] {
+        let header = PLAN_HEADER.replace(
+            "model Config",
+            "profile n = \"filament.value.complete/v1\";\nmodel Config",
+        );
+        let unit = format!(
+            "{header}function Cost using n(): {result_type} pure {{ {body} }}\n\
+            type Lengths = Int[0,1];\n\
+            synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+            minimize Cost() satisfies {{ Reach.length >= 1 }};\n"
+        );
+        let (exit, value) = plan(&unit, json!({}));
+        assert_eq!(exit, 0, "{value}");
+        assert_eq!(value["synthesis"]["status"], "optimal", "{value}");
+        assert_eq!(
+            value["synthesis"]["objective"]["value"], expected,
+            "{value}"
+        );
+        assert_eq!(
+            value["synthesis"]["replay"]["outcome"], "reproduced",
+            "{value}"
+        );
+        assert_eq!(value["synthesis"]["certification"], "certified", "{value}");
+    }
+}
+
+/// The genuine spine model supports an optimal empty plan without enumerating
+/// its broad mutable field domain.
+#[test]
+#[trace("TC-2860", "FR-1010-AC-1")]
+fn a_genuine_spine_empty_plan_writes_the_complete_outcome() {
+    let (exit, value) = spine_plan(&plan_unit("Int[0, 0]", "", "true"), json!({}));
+    assert_eq!(exit, 0, "{value}");
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["format"], "filament.plan-outcome/v1", "{value}");
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    for member in [
+        "objective",
+        "plan",
+        "replay",
+        "certificate",
+        "certification",
+        "explored",
+        "limits",
+    ] {
+        assert!(outcome.get(member).is_some(), "{member}: {value}");
+    }
+    assert_eq!(outcome["plan"]["steps"], json!([]), "{value}");
+    assert_eq!(
+        outcome["plan"]["states"].as_array().map(Vec::len),
+        Some(1),
+        "{value}"
+    );
+    assert_eq!(
+        outcome["objective"]["value"],
+        json!({"type":"integer", "value":"0"}),
+        "{value}"
+    );
+    assert_eq!(outcome["replay"]["outcome"], "reproduced", "{value}");
+    assert_eq!(outcome["certification"], "certified", "{value}");
+}
+
+/// A zero-step policy still reads the genuine spine's full initial state;
+/// positive-length monitor construction has a separate explicit boundary.
+#[test]
+#[trace("TC-2862", "FR-1012-AC-1")]
+fn a_genuine_spine_zero_step_policy_is_evaluated() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
+    let path = directory.path().join("spine-initial.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for object in snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .expect("objects")
+    {
+        object["fields"]["versionNumber"] = json!({"integer": "3"});
+    }
+    std::fs::write(path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    let unit = plan_unit("Int[0, 0]", "", "true");
+    let (exit, value) = plan_in(
+        directory.path(),
+        &unit,
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({"policy":["SomeTime"]}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    assert_eq!(outcome["plan"]["steps"], json!([]), "{value}");
+    let states = outcome["plan"]["states"]
+        .as_array()
+        .expect("a reported plan");
+    assert_eq!(states.len(), 1, "{value}");
+    let objects = states[0]["populations"][0]["objects"]
+        .as_array()
+        .expect("the genuine spine population");
+    assert_eq!(objects.len(), 2, "{value}");
+    for object in objects {
+        assert_eq!(
+            object["fields"]["versionNumber"],
+            json!({"type":"integer", "value":"3"}),
+            "{value}"
+        );
+    }
+    assert_eq!(outcome["replay"]["outcome"], "reproduced", "{value}");
+    assert_eq!(outcome["certification"], "certified", "{value}");
+}
+
+/// The positive-length adapter boundary precedes exploration and gives no
+/// planning verdict or certificate for an unavailable canonical monitor.
+#[test]
+#[trace("FR-1012")]
+fn positive_length_policy_planning_refuses_before_search() {
+    let (exit, value) = plan(
+        &plan_unit("Int[0, 1]", "", "true"),
+        json!({"policy":["SomeTime"], "limits":{"max_work":1}}),
+    );
+    assert_eq!(exit, 21, "{value}");
+    assert_eq!(value["code"], "unsupported_construct", "{value}");
+    assert_eq!(value["cause"], "not-yet-implemented", "{value}");
+    names(&value, "policy");
+    assert!(value.get("synthesis").is_none(), "{value}");
+}
+
+/// One step exposes its exact argument values and adjacent states to the
+/// checked goal, then reports the same invocation and states after replay.
+#[test]
+#[trace("FSpec-FR-800", "FR-1010")]
+fn a_plan_goal_reads_finite_arguments_and_step_before_and_after() {
+    const MODEL: &str = r#"language "ix:native" edition "1-draft";
+domain "example/config-version";
+type Amount = Int[0,3];
+object ConfigVersion {
+  versionNumber: Amount;
+  parent: ConfigVersion?;
+  operation assign(amount: Amount, accepted: Boolean): Boolean modifies self.versionNumber;
+}
+object Other { operation aardvark(): Boolean; }
+population config_history: ConfigVersion;
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    crate::support::plan_model::write(directory.path());
+    std::fs::write(
+        directory.path().join("argument-model.semantic-ir.json"),
+        crate::support::plan_model::compile(MODEL),
+    )
+    .unwrap();
+    let path = directory.path().join("planning-initial.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .expect("objects")
+        .truncate(1);
+    std::fs::write(path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    let unit = r#"language "ix:native" edition "1-draft";
+profile v = "filament.temporal.infinite-trace/v1";
+profile g = "filament.state.graph/v1";
+model Config = "example/config-version";
+post Assigned using g on Config::ConfigVersion::assign { self.versionNumber = amount }
+type Lengths = Int[1,1];
+synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
+  Reach.length = 1 and forall(s in Reach.steps:
+    s.index = 0 and s.operation = Config::Op::assign
+    and s.receiver = s.receiver
+    and present(s.outcome_ordinal) and value(s.outcome_ordinal) = 0
+    and present(s.arguments.amount) and value(s.arguments.amount) = 3
+    and present(s.arguments.accepted) and value(s.arguments.accepted)
+    and s.before.versionNumber = 1 and s.after.versionNumber = 3)
+};
+"#;
+    let (exit, value) = plan_in(
+        directory.path(),
+        unit,
+        "argument-model.semantic-ir.json",
+        "planning-initial.json",
+        json!({}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    assert_eq!(
+        outcome["plan"]["steps"],
+        json!([{"index":0,"operation":"assign", "receiver":{"type":"reference", "identity":"root", "object_type":{"original":{"package":"example/config-version","node":"ix://example/config-version/ConfigVersion"},"owner_effective_type":null}, "universe":{"package":"example/config-version","path":["model","object_type","ix://example/config-version/ConfigVersion"],"ordinal":0}}, "outcome_ordinal":0, "arguments":[{"parameter":"amount","value":{"type":"integer","value":"3"}}, {"parameter":"accepted","value":{"type":"boolean","value":true}}]}]),
+        "{value}"
+    );
+    let states = outcome["plan"]["states"].as_array().expect("plan states");
+    assert_eq!(states.len(), 2, "{value}");
+    for (state, version) in states.iter().zip(["1", "3"]) {
+        assert_eq!(
+            state["populations"][0]["objects"][0]["fields"]["versionNumber"],
+            json!({"type":"integer", "value":version}),
+            "{value}"
+        );
+    }
+    assert_eq!(outcome["replay"]["outcome"], "reproduced", "{value}");
+    assert_eq!(outcome["certification"], "certified", "{value}");
+}
+
+/// Strict member defects win over unreadable source, before the compiler runs.
+#[test]
+#[trace("FR-1010", "FSpec-FR-823-AC-4")]
+fn malformed_plan_members_refuse_before_source_compilation() {
+    for (member, pointer, cause) in [
+        (
+            json!({"engines":[]}),
+            "/request/synthesis/engines",
+            "unknown-member",
+        ),
+        (
+            json!({"limits":{"max_work":0}}),
+            "/request/synthesis/limits/max_work",
+            "invalid-value",
+        ),
+        (
+            json!({"policy":7}),
+            "/request/synthesis/policy",
+            "wrong-value-kind",
+        ),
+    ] {
+        let (exit, value) = plan("this is not an FSL unit", member);
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+        assert_eq!(value["cause"], cause, "{value}");
+        names(&value, pointer);
+    }
+}
+
+/// The selected model-object grammar requires its initial snapshot regardless
+/// of whether other plan-only members are present.
+#[test]
+#[trace("FR-1010", "FR-1013")]
+fn a_plan_without_initial_refuses_its_missing_snapshot() {
+    let unit = plan_unit("Int[0,0]", "", "true");
+    for synthesis in [
+        json!({"declaration":"Reach"}),
+        json!({"declaration":"Reach", "policy":[]}),
+        json!({"declaration":"Reach", "limits":{"max_states":1}}),
+    ] {
+        let (exit, value) = run(&unit, true, ("synthesis", synthesis));
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+        assert_eq!(value["cause"], "missing-member", "{value}");
+        names(&value, "/request/synthesis/initial");
+    }
+}
+
+/// The genuine spine type domain stays intact. A single admitted receiver
+/// and an authored unchanged postcondition make its one-step case finite
+/// without raising any request budget.
+#[test]
+#[trace("TC-2860", "FR-1010-AC-3")]
+fn genuine_spine_outcomes_preserve_status_members_and_typed_objective() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    crate::support::plan_model::write_initial(directory.path(), "spine-initial.json");
+    let path = directory.path().join("spine-initial.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .expect("objects")
+        .truncate(1);
+    std::fs::write(path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    let header = PLAN_HEADER
+        .split_once("post VersionAdvances")
+        .expect("the header precedes its contract")
+        .0;
+    let unit = |domain: &str| {
+        format!(
+            "{header}post Unchanged using g on Config::ConfigVersion::attemptUpdate {{ self.versionNumber = pre(self.versionNumber) }}\n\
+        type Lengths = {domain};\n\
+        synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {{ Reach.length >= 1 }};\n"
+        )
+    };
+    let (exit, value) = plan_in(
+        directory.path(),
+        &unit("Int[0,0]"),
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({}),
+    );
+    assert_eq!(exit, 10, "{value}");
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "infeasible", "{value}");
+    assert_eq!(
+        outcome["objective"],
+        json!({"direction":"minimize", "expression":"length", "value":null}),
+        "{value}"
+    );
+    for member in ["plan", "replay", "bound"] {
+        assert!(
+            outcome.get(member).is_some_and(Value::is_null),
+            "{member}: {value}"
+        );
+    }
+    let (exit, value) = plan_in(
+        directory.path(),
+        &unit("Int[0,1]"),
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({}),
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(value["synthesis"]["status"], "optimal", "{value}");
+    assert_eq!(
+        value["synthesis"]["objective"]["value"],
+        json!({"type":"integer", "value":"1"}),
+        "{value}"
+    );
+    assert_eq!(
+        value["synthesis"]["replay"]["outcome"], "reproduced",
+        "{value}"
+    );
+    assert_eq!(value["synthesis"]["certification"], "certified", "{value}");
+    let (exit, value) = plan_in(
+        directory.path(),
+        &unit("Int[0,1]"),
+        "spine-model.semantic-ir.json",
+        "spine-initial.json",
+        json!({"engines":[]}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "unknown-member", "{value}");
+    names(&value, "/request/synthesis/engines");
+}
+
+/// Operation contracts and state invariants consume the same accounting
+/// session as goal evaluation, including before the first eligible goal.
+#[test]
+#[trace("FR-1011-AC-2", "FSpec-FR-801-AC-2")]
+fn model_operations_and_invariants_share_the_request_accounting_meter() {
+    for invariant in [
+        "",
+        "invariant Nonnegative using g on Config::ConfigVersion at current { self.versionNumber >= 0 }\n",
+    ] {
+        let unit = plan_unit("Int[1,1]", "", "true") + invariant;
+        let (exit, value) = plan(&unit, json!({}));
+        assert_eq!(exit, 0, "{value}");
+        assert_eq!(value["synthesis"]["status"], "optimal", "{value}");
+        assert_eq!(
+            value["synthesis"]["replay"]["outcome"], "reproduced",
+            "{value}"
+        );
+        let (exit, value) = plan(&unit, json!({"accounting":{"work_units":1}}));
+        assert_eq!(exit, 22, "{value}");
+        assert_eq!(value["synthesis"]["status"], "incomplete", "{value}");
+        assert_eq!(
+            value["synthesis"]["cause"]["setting"], "accounting.work_units",
+            "{value}"
+        );
+        assert!(value["synthesis"]["certificate"].is_null(), "{value}");
+    }
+}
+
+/// An ambiguous multi-object inline projection is a capability refusal,
+/// never a certified no-goal verdict caused by a fabricated undefined value.
+#[test]
+#[trace("FSpec-FR-800", "FR-1013")]
+fn ambiguous_multi_object_plan_projections_refuse_before_search() {
+    for (objective, goal) in [
+        ("", "Reach.final.versionNumber = 3"),
+        ("minimize Reach.final.versionNumber", "true"),
+    ] {
+        let (exit, value) = plan(
+            &plan_unit("Int[0,1]", objective, goal),
+            json!({"limits":{"max_work":1}}),
+        );
+        assert_eq!(exit, 21, "{value}");
+        assert_eq!(value["code"], "unsupported_construct", "{value}");
+        assert_eq!(value["cause"], "not-yet-implemented", "{value}");
+        names(&value, "ambiguous grammar-object state-field projection");
+        assert!(value.get("synthesis").is_none(), "{value}");
+    }
+}
+
+/// Unbounded domains retain their projection refusal and authored domain
+/// locus; a negative finite domain remains a typing refusal.
+#[test]
+#[trace("FR-1013")]
+fn an_unbounded_plan_domain_names_its_unbounded_extent() {
+    let unit = plan_unit("Integer", "", "true");
+    let (exit, value) = plan(&unit, json!({}));
+    assert_ne!(exit, 0, "{value}");
+    assert_eq!(value["code"], "unsupported_projection", "{value}");
+    assert_eq!(value["cause"], "unbounded-extent", "{value}");
+    let at = unit.rfind("domain Lengths").expect("domain name") + "domain ".len();
+    assert_eq!(value["details"]["span"]["start"]["byte"], at, "{value}");
+    assert_eq!(
+        value["details"]["span"]["end"]["byte"],
+        at + "Lengths".len(),
+        "{value}"
+    );
+}
+
+/// A runtime's internal argument/frame enumeration cannot preempt the
+/// canonical apply/admit/goal charge order or discard its admitted prefix.
+#[test]
+#[trace("FR-1011-AC-1", "FSpec-FR-801", "FSpec-FR-804-AC-4")]
+fn source_step_expansion_preserves_the_canonical_work_prefix() {
+    let unit = plan_unit("Int[1,1]", "", "true");
+    for (work, states, expected_plan) in [(1, 2, false), (3, 3, true)] {
+        let (exit, value) = plan(&unit, json!({"limits":{"max_work":work}}));
+        let (repeat_exit, repeat) = plan(&unit, json!({"limits":{"max_work":work}}));
+        assert_eq!(repeat_exit, exit, "{repeat}");
+        assert_eq!(
+            repeat.to_string(),
+            value.to_string(),
+            "canonical prefix outcomes are deterministic"
+        );
+        assert_eq!(exit, 22, "{value}");
+        let outcome = &value["synthesis"];
+        assert_eq!(outcome["status"], "incomplete", "{value}");
+        assert_eq!(
+            outcome["cause"]["setting"], "plan_search.max_work",
+            "{value}"
+        );
+        assert_eq!(outcome["explored"]["work"], work, "{value}");
+        assert_eq!(outcome["explored"]["states"], states, "{value}");
+        assert_eq!(!outcome["plan"].is_null(), expected_plan, "{value}");
+        if expected_plan {
+            assert_eq!(
+                outcome["objective"]["value"],
+                json!({"type":"integer","value":"1"}),
+                "{value}"
+            );
+            assert_eq!(outcome["replay"]["outcome"], "reproduced", "{value}");
+        }
+    }
+}
+
+/// The retained native outcome sequence has its own per-value size bound;
+/// it is denied before a partial invocation can admit search nodes.
+#[test]
+#[trace("FR-1011-AC-2", "FSpec-FR-801-AC-2")]
+fn a_native_outcome_collection_stop_names_its_evaluation_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    crate::support::plan_model::write(directory.path());
+    let model = r#"language "ix:native" edition "1-draft";
+domain "example/config-version";
+object ConfigVersion {
+  versionNumber: Int[0,1];
+  operation choose(): Boolean modifies self.versionNumber;
+}
+population config_history: ConfigVersion;
+"#;
+    std::fs::write(
+        directory
+            .path()
+            .join("retained-outcomes-model.semantic-ir.json"),
+        crate::support::plan_model::compile(model),
+    )
+    .unwrap();
+    let path = directory.path().join("planning-initial.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let objects = snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .unwrap();
+    objects.truncate(1);
+    objects[0]["fields"] = json!({"versionNumber":{"integer":"0"}});
+    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    let unit = r#"language "ix:native" edition "1-draft";
+profile v = "filament.temporal.infinite-trace/v1";
+model Config = "example/config-version";
+type Lengths = Int[1,1];
+synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
+"#;
+    let (exit, value) = plan_in(
+        directory.path(),
+        unit,
+        "retained-outcomes-model.semantic-ir.json",
+        "planning-initial.json",
+        json!({"accounting":{"value_occurrences":6}}),
+    );
+    assert_eq!(exit, 22, "{value}");
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "incomplete", "{value}");
+    assert_eq!(
+        outcome["cause"],
+        json!({"type":"limit-reached", "limit":"value_occurrences", "value":6, "setting":"accounting.value_occurrences"}),
+        "{value}"
+    );
+    assert_eq!(outcome["explored"]["states"], 1, "{value}");
+    assert_eq!(outcome["explored"]["work"], 1, "{value}");
+    assert!(outcome["plan"].is_null(), "{value}");
+}
+
+/// Native result-domain capability is checked before a search budget can
+/// produce an incomplete or infeasible verdict for a non-enumerable family.
+#[test]
+#[trace("FR-1013")]
+fn unsupported_native_result_domains_refuse_before_plan_search() {
+    // This is an authored SemanticIR source fixture, built from the real
+    // spine document. Native model-unit aliases currently cannot declare
+    // Rational/Decimal policies, so no compiler output is patched here.
+    for family in ["Float", "Rational", "Decimal"] {
+        let directory = tempfile::tempdir().unwrap();
+        crate::support::plan_model::write(directory.path());
+        let mut model: Value = serde_json::from_slice(include_bytes!(
+            "../../examples/config-version/model.semantic-ir.json"
+        ))
+        .unwrap();
+        let result_ref = if family == "Float" {
+            "ix://filament/native/Float32".to_owned()
+        } else {
+            let identity = "ix://example/config-version/Reply";
+            let origin = json!({"generated":{"generatorIdentity":identity,"generatorVersion":"1.0.0","inputIdentities":[identity]}});
+            let constraints = if family == "Rational" {
+                [("minNumerator",0), ("maxNumerator",1), ("minDenominator",1), ("maxDenominator",2)].into_iter().map(|(keyword, value)| json!({
+                    "identity":format!("{identity}/constraints/{keyword}"), "keyword":keyword,
+                    "operands":{"value":value}, "appliesTo":identity, "diagnosticCode":format!("bound.{keyword}"), "origin":origin.clone()
+                })).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            let mut declaration = json!({"identity":identity,"displayName":"Reply", "kind":{"module":"example/config-version","name":"value_type"}, "roles":[], "origin":origin, "extensions":[], "unknownPolicy":"reject", "scalar":family.to_ascii_lowercase(), "constraints":constraints});
+            if family == "Decimal" {
+                declaration["decimal"] = json!({"precision":2,"scale":1});
+            }
+            model["types"].as_array_mut().unwrap().push(declaration);
+            identity.to_owned()
+        };
+        let owner = model["types"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|node| node["identity"] == "ix://example/config-version/ConfigVersion")
+            .unwrap();
+        owner["operations"][0]["returns"]["typeRef"] = json!(result_ref);
+        std::fs::write(
+            directory
+                .path()
+                .join("numeric-result-model.semantic-ir.json"),
+            serde_json::to_vec(&model).unwrap(),
+        )
+        .unwrap();
+        let unit = r#"language "ix:native" edition "1-draft";
+profile v = "filament.temporal.infinite-trace/v1";
+model Config = "example/config-version";
+type Lengths = Int[1,1];
+synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
+"#;
+        let (exit, value) = plan_in(
+            directory.path(),
+            unit,
+            "numeric-result-model.semantic-ir.json",
+            "planning-initial.json",
+            json!({"limits":{"max_work":1}}),
+        );
+        assert_eq!(exit, 21, "{value}");
+        assert_eq!(value["code"], "unsupported_construct", "{value}");
+        assert_eq!(value["cause"], "not-yet-implemented", "{value}");
+        names(&value, "attemptUpdate");
+        names(&value, family);
+        names(&value, "result");
+        assert_eq!(value["details"]["path"], "unit.native", "{value}");
+        assert!(value.get("synthesis").is_none(), "{value}");
+    }
 }

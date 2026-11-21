@@ -180,6 +180,45 @@ pub(super) fn apply(
     application: &Application,
     clauses: &Selected<'_>,
     budget: &mut Budget,
+    mut outputs: Outputs<'_>,
+) -> Result<(), ExpansionStop> {
+    let domains = argument_domains(walk, application)?;
+    let frames = ArgumentFrames::default();
+    let mut arguments = Odometer::new(domains.iter().map(Domain::len).collect());
+    while let Some(digits) = arguments.next_digits() {
+        let args = arguments_of(application, &domains, &digits)?;
+        apply_argument(
+            walk,
+            row,
+            application,
+            clauses,
+            args,
+            &frames,
+            budget,
+            Outputs {
+                contract: &mut *outputs.contract,
+                successors: &mut *outputs.successors,
+                enabled: outputs.enabled.as_deref_mut(),
+                enabled_transitions: outputs.enabled_transitions.as_deref_mut(),
+                recommendations: outputs.recommendations.as_deref_mut(),
+                selected_transitions: outputs.selected_transitions,
+                charged: outputs.charged.as_deref_mut(),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// Apply one typed argument vector through the same native relation used by
+/// every model caller. Enumeration and source-plan cursors share this path.
+fn apply_argument(
+    walk: &Walk<'_, '_>,
+    row: &Row,
+    application: &Application,
+    clauses: &Selected<'_>,
+    args: Vec<(String, Value)>,
+    frames: &ArgumentFrames,
+    budget: &mut Budget,
     outputs: Outputs<'_>,
 ) -> Result<(), ExpansionStop> {
     let Outputs {
@@ -192,126 +231,302 @@ pub(super) fn apply(
         mut charged,
     } = outputs;
     let system = walk.system;
-    let domains = argument_domains(walk, application)?;
     let preconditions = &clauses.preconditions;
     let postconditions = &clauses.postconditions;
+    // Every argument vector counts, enabled or not: a false or undecided
+    // precondition would otherwise let one expansion run unbounded.
+    budget.charge()?;
+    let transition = transition_of(row, application, &args, walk.system.typing())?;
+    if selected_transitions.is_some_and(|selected| !selected.contains(&transition)) {
+        return Ok(());
+    }
+    let transition_bytes =
+        quire_canonical::to_vec(&transition, text_limits()).map_err(|_| stop(BROKEN))?;
+    let footprint = walk
+        .enforcement
+        .filter(|_| recommendations.is_none())
+        .map(|enforcement| {
+            enforcement.footprint_of(system, application, &row.reference, &args, &transition)
+        })
+        .transpose()?;
 
-    let frames = ArgumentFrames::default();
-    let mut arguments = Odometer::new(domains.iter().map(Domain::len).collect());
-    while let Some(digits) = arguments.next_digits() {
-        let args = arguments_of(application, &domains, &digits)?;
-        // Every argument vector counts, enabled or not: a false or undecided
-        // precondition would otherwise let one expansion run unbounded.
-        budget.charge()?;
-        let transition = transition_of(row, application, &args, walk.system.typing())?;
-        if selected_transitions.is_some_and(|selected| !selected.contains(&transition)) {
-            continue;
+    let check = walk
+        .enforcement
+        .zip(footprint.as_ref())
+        .map(|(enforcement, footprint)| {
+            ReadCheck::new(&system.model, enforcement, footprint, &transition)
+        });
+    let verdict = conjunction(walk, preconditions, |info| {
+        let observations = pre_observations(walk, info, row, &args);
+        match &check {
+            Some(check) => check.attach(observations),
+            None => observations,
         }
-        let transition_bytes =
-            quire_canonical::to_vec(&transition, text_limits()).map_err(|_| stop(BROKEN))?;
-        let footprint = walk
-            .enforcement
-            .filter(|_| recommendations.is_none())
-            .map(|enforcement| {
-                enforcement.footprint_of(system, application, &row.reference, &args, &transition)
-            })
-            .transpose()?;
-
-        let check = walk
-            .enforcement
-            .zip(footprint.as_ref())
-            .map(|(enforcement, footprint)| {
-                ReadCheck::new(&system.model, enforcement, footprint, &transition)
-            });
-        let verdict = conjunction(walk, preconditions, |info| {
-            let observations = pre_observations(walk, info, row, &args);
-            match &check {
-                Some(check) => check.attach(observations),
-                None => observations,
-            }
-        })?;
-        if let Some(check) = &check {
-            check.verify()?;
-        }
-        match verdict {
-            Conjunction::True => {}
-            Conjunction::False(_) => continue,
-            Conjunction::Undecided(undecided) => {
-                for (clause, evaluation) in undecided {
-                    contract.push(ContractFinding {
-                        transition: transition_bytes.clone(),
-                        candidate: None,
-                        clause: clause.clone(),
-                        finding: ModelFinding::ContractUndetermined {
-                            transition: transition.clone(),
-                            candidate: None,
-                            clause,
-                            evaluation,
-                        },
-                        case: Box::new(FindingCase {
-                            receiver: row.reference.clone(),
-                            arguments: args.iter().map(|(_, value)| value.clone()).collect(),
-                            post: None,
-                        }),
-                    });
+    })?;
+    if let Some(check) = &check {
+        check.verify()?;
+    }
+    match verdict {
+        Conjunction::True => {}
+        Conjunction::False(_) => return Ok(()),
+        Conjunction::Undecided(undecided) => {
+            for (clause, evaluation) in undecided {
+                if walk.candidate_visitor.is_some() {
+                    walk.visit(super::NativeCandidateEvent::Undetermined {
+                        transition: &transition,
+                        outcome: &evaluation,
+                    })?;
+                    continue;
                 }
-                continue;
+                contract.push(ContractFinding {
+                    transition: transition_bytes.clone(),
+                    candidate: None,
+                    clause: clause.clone(),
+                    finding: ModelFinding::ContractUndetermined {
+                        transition: transition.clone(),
+                        candidate: None,
+                        clause,
+                        evaluation,
+                    },
+                    case: Box::new(FindingCase {
+                        receiver: row.reference.clone(),
+                        arguments: args.iter().map(|(_, value)| value.clone()).collect(),
+                        post: None,
+                    }),
+                });
             }
+            return Ok(());
         }
+    }
 
-        if let Some(recommendations) = recommendations.as_deref_mut() {
-            recommendations.push(super::application::RecommendedApplication {
-                operation: application.text.clone(),
-                receiver: row.reference.clone(),
-                arguments: args.into_iter().map(|(_, value)| value).collect(),
-            });
-            continue;
-        }
+    if let Some(recommendations) = recommendations.as_deref_mut() {
+        recommendations.push(super::application::RecommendedApplication {
+            operation: application.text.clone(),
+            receiver: row.reference.clone(),
+            arguments: args.into_iter().map(|(_, value)| value).collect(),
+        });
+        return Ok(());
+    }
 
-        let application_run = Run {
-            walk,
-            row,
-            application,
-            args: &args,
-            transition: &transition,
-            transition_bytes: &transition_bytes,
-            postconditions,
-            footprint: footprint.as_ref(),
-            references: reference_arguments(&args),
-            frames: &frames,
-        };
+    let application_run = Run {
+        walk,
+        row,
+        application,
+        args: &args,
+        transition: &transition,
+        transition_bytes: &transition_bytes,
+        postconditions,
+        footprint: footprint.as_ref(),
+        references: reference_arguments(&args),
+        frames,
+    };
 
-        // FR-220 access classification needs only whether this transition
-        // completes when no attempt constraint reads a completed result. Keep
-        // the transition only if at least one candidate post-state succeeds.
-        let before = budget.used();
-        if let Some(transitions) = enabled_transitions.as_deref_mut() {
-            let mut first_successor = Vec::new();
-            let completes =
-                application_run.first_candidate(budget, contract, &mut first_successor)?;
-            if let Some(charged) = charged.as_deref_mut() {
-                charged.push((transition.clone(), budget.used() - before));
-            }
-            if completes {
-                transitions.push(transition);
-            }
-            continue;
-        }
-
-        let first = successors.len();
-        application_run.candidates(budget, contract, successors)?;
+    // FR-220 access classification needs only whether this transition
+    // completes when no attempt constraint reads a completed result. Keep
+    // the transition only if at least one candidate post-state succeeds.
+    let before = budget.used();
+    if let Some(transitions) = enabled_transitions.as_deref_mut() {
+        let mut first_successor = Vec::new();
+        let completes = application_run.first_candidate(budget, contract, &mut first_successor)?;
         if let Some(charged) = charged.as_deref_mut() {
             charged.push((transition.clone(), budget.used() - before));
         }
-        if let Some(enabled) = enabled.as_deref_mut() {
-            enabled.push(EnabledVector {
-                receiver: row.reference.clone(),
-                declaring: application.declaring.clone(),
-                name: application.name.clone(),
-                operation: application.text.clone(),
+        if completes {
+            transitions.push(transition);
+        }
+        return Ok(());
+    }
+
+    let first = successors.len();
+    application_run.candidates(budget, contract, successors)?;
+    if let Some(charged) = charged.as_deref_mut() {
+        charged.push((transition.clone(), budget.used() - before));
+    }
+    if let Some(enabled) = enabled.as_deref_mut() {
+        enabled.push(EnabledVector {
+            receiver: row.reference.clone(),
+            declaring: application.declaring.clone(),
+            name: application.name.clone(),
+            operation: application.text.clone(),
+            args,
+            successors: first..successors.len(),
+        });
+    }
+    Ok(())
+}
+
+/// Declaration -> receiver -> typed argument order, reusing apply_argument.
+/// The supported scalar domains are indexed lazily rather than collected.
+pub(super) fn visit_operation(
+    walk: &Walk<'_, '_>,
+    declaring: &filament_exact::EffectiveId,
+    name: &str,
+    budget: &mut Budget,
+) -> Result<(), ExpansionStop> {
+    let mut rows: Vec<_> = walk
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let application =
+                walk.system
+                    .applications
+                    .get(&row.type_id())?
+                    .iter()
+                    .find(|application| {
+                        &application.declaring == declaring && application.name == name
+                    })?;
+            Some((row, application))
+        })
+        .collect();
+    for at in 1..rows.len() {
+        let mut next = at;
+        while next > 0 {
+            budget.charge()?;
+            if !rows[next - 1]
+                .0
+                .reference
+                .cmp(&rows[next].0.reference)
+                .is_gt()
+            {
+                break;
+            }
+            rows.swap(next - 1, next);
+            next -= 1;
+        }
+    }
+    for (row, application) in rows {
+        // Receiver-scoped frame caches must never be reused by another row.
+        let frames = ArgumentFrames::default();
+        if application
+            .declaration
+            .parameters()
+            .iter()
+            .any(|(_, value_type)| !matches!(value_type, ValueType::Boolean | ValueType::Int(_)))
+        {
+            return Err(stop(BROKEN));
+        }
+        let domains = argument_domains(walk, application)?;
+        let mut arguments = Odometer::new(domains.iter().map(Domain::len).collect());
+        while let Some(digits) = arguments.next_digits() {
+            let args = arguments_of(application, &domains, &digits)?;
+            let transition = transition_of(row, application, &args, walk.system.typing())?;
+            match walk.visit(super::NativeCandidateEvent::Begin(&transition))? {
+                super::NativeCandidateControl::Skip => {
+                    // Replay selection still accounts for walking the finite
+                    // invocation identities that precede its selected one.
+                    budget.charge()?;
+                    continue;
+                }
+                super::NativeCandidateControl::Continue => {}
+                super::NativeCandidateControl::Stop => return Err(stop(BROKEN)),
+            }
+            walk.retained_occurrences
+                .replace(filament_exact::Integer::one());
+            let clauses = walk.selected(row, application, |_| true);
+            let mut contract = Vec::new();
+            let mut successors = Vec::new();
+            apply_argument(
+                walk,
+                row,
+                application,
+                &clauses,
                 args,
-                successors: first..successors.len(),
-            });
+                &frames,
+                budget,
+                Outputs {
+                    contract: &mut contract,
+                    successors: &mut successors,
+                    enabled: None,
+                    enabled_transitions: None,
+                    recommendations: None,
+                    selected_transitions: None,
+                    charged: None,
+                },
+            )?;
+            debug_assert!(contract.is_empty());
+            // Sort only this already accounted invocation's outcomes. At
+            // most two bounded canonical state keys are temporary at once.
+            for at in 1..successors.len() {
+                let mut next = at;
+                while next > 0 {
+                    budget.charge()?;
+                    let left = &successors[next - 1];
+                    let right = &successors[next];
+                    let result = match (&left.result, &right.result) {
+                        (None, None) => std::cmp::Ordering::Equal,
+                        (Some(left), Some(right)) => crate::value::compare_map_keys(left, right)
+                            .ok_or_else(|| stop(BROKEN))?,
+                        (None, Some(_)) | (Some(_), None) => return Err(stop(BROKEN)),
+                    };
+                    let order = if result.is_eq() {
+                        let left_key = walk
+                            .system
+                            .state_key(&left.state)
+                            .map_err(|_| stop(BROKEN))?
+                            .0;
+                        let right_key = walk
+                            .system
+                            .state_key(&right.state)
+                            .map_err(|_| stop(BROKEN))?
+                            .0;
+                        left_key.cmp(&right_key)
+                    } else {
+                        result
+                    };
+                    if !order.is_gt() {
+                        break;
+                    }
+                    successors.swap(next - 1, next);
+                    next -= 1;
+                }
+            }
+            // The ordinal names a distinct (result, post-state) outcome,
+            // not duplicate raw assignments that computed the same value.
+            let mut at = 0;
+            while at + 1 < successors.len() {
+                budget.charge()?;
+                let left = &successors[at];
+                let right = &successors[at + 1];
+                let same_result = match (&left.result, &right.result) {
+                    (None, None) => true,
+                    (Some(left), Some(right)) => crate::value::compare_map_keys(left, right)
+                        .ok_or_else(|| stop(BROKEN))?
+                        .is_eq(),
+                    (None, Some(_)) | (Some(_), None) => return Err(stop(BROKEN)),
+                };
+                let same_state = same_result
+                    && walk
+                        .system
+                        .state_key(&left.state)
+                        .map_err(|_| stop(BROKEN))?
+                        .0
+                        == walk
+                            .system
+                            .state_key(&right.state)
+                            .map_err(|_| stop(BROKEN))?
+                            .0;
+                if same_state {
+                    budget.charge_many(successors.len() - at - 1)?;
+                    successors.remove(at + 1);
+                } else {
+                    at += 1;
+                }
+            }
+            if successors.is_empty() {
+                walk.visit(super::NativeCandidateEvent::Disabled(&transition))?;
+            }
+            let multiple = successors.len() > 1;
+            for (index, applied) in successors.iter().enumerate() {
+                let outcome = multiple
+                    .then(|| u64::try_from(index))
+                    .transpose()
+                    .map_err(|_| stop(BROKEN))?;
+                walk.visit(super::NativeCandidateEvent::Completed {
+                    transition: &applied.transition,
+                    state: &applied.state,
+                    outcome,
+                })?;
+            }
         }
     }
     Ok(())
@@ -829,7 +1044,8 @@ impl Run<'_, '_, '_> {
     /// enumeration's.
     fn narrowing(&self) -> Result<Option<Narrowing>, ExpansionStop> {
         let effect = self.effect();
-        if self.postconditions.is_empty()
+        if self.walk.system.shares_evaluation_meter()
+            || self.postconditions.is_empty()
             || !effect.creates.is_empty()
             || !effect.deletes.is_empty()
             || effect.deletes_receiver
@@ -871,7 +1087,7 @@ impl Run<'_, '_, '_> {
             let found = self.walk.system.evaluator().evaluate_post_targets(
                 &info.qualified,
                 &observations,
-                &mut || self.walk.meter(),
+                &mut || filament_exact::Meter::new(self.walk.system.meter),
             );
             let Ok(found) = found else {
                 return Ok(None);
@@ -1788,18 +2004,44 @@ impl Run<'_, '_, '_> {
     ) -> Result<(), ExpansionStop> {
         let mut effect = self.effect_of(&candidate, delta)?;
         effect.written = written;
-        let ordered = self.result_order(post_references)?;
-        let picks: Vec<Option<u128>> = match &ordered {
-            None => vec![None],
-            Some((_, order)) => order.iter().copied().map(Some).collect(),
+        let plain = if self.walk.candidate_visitor.is_some() {
+            self.application
+                .declaration
+                .result()
+                .map(|result_type| {
+                    self.walk
+                        .value_domain(result_type, post_references)
+                        .ok_or_else(|| stop(BROKEN))
+                })
+                .transpose()?
+        } else {
+            None
         };
+        let ordered = if self.walk.candidate_visitor.is_some() {
+            None
+        } else {
+            self.result_order(post_references)?
+        };
+        let count = plain
+            .as_ref()
+            .map(Domain::len)
+            .or_else(|| ordered.as_ref().map(|(_, order)| order.len() as u128))
+            .unwrap_or(1);
         let mut evidence: Option<Evidence> = None;
-        for pick in picks {
-            let result = match (&ordered, pick) {
-                (Some((domain, _)), Some(index)) => {
-                    Some(domain.nth(index).ok_or_else(|| stop(BROKEN))?)
-                }
-                _ => None,
+        for pick in 0..count {
+            let result = match (&plain, &ordered) {
+                (Some(domain), None) => Some(domain.nth(pick).ok_or_else(|| stop(BROKEN))?),
+                (None, Some((domain, order))) => Some(
+                    domain
+                        .nth(
+                            *order
+                                .get(usize::try_from(pick).map_err(|_| stop(BROKEN))?)
+                                .ok_or_else(|| stop(BROKEN))?,
+                        )
+                        .ok_or_else(|| stop(BROKEN))?,
+                ),
+                (None, None) => None,
+                (Some(_), Some(_)) => return Err(stop(BROKEN)),
             };
             if self.application.declaration.result().is_some() {
                 budget.charge()?;
@@ -1812,25 +2054,29 @@ impl Run<'_, '_, '_> {
                         .as_ref()
                         .map(|value| text_of(value, self.walk.system.typing()))
                         .transpose()?;
-                    let successor = |candidate, effect, result| Applied {
+                    let applied = Applied {
                         transition: self.transition.clone(),
                         state: self.walk.state.reached(
-                            candidate,
+                            candidate.clone(),
                             handler_anchor(&self.application.text),
-                            effect,
+                            effect.clone(),
                         ),
                         receiver: self.row.reference.clone(),
                         arguments: self.args.iter().map(|(_, value)| value.clone()).collect(),
                         result,
                     };
+                    if self.walk.candidate_visitor.is_some() {
+                        retain_outcome(self.walk, &applied)?;
+                        successors.try_reserve(1).map_err(|_| stop(EXHAUSTED))?;
+                        successors.push(applied);
+                        continue;
+                    }
                     match self.walk.result_policy {
                         super::walk::ResultPolicy::FirstResult => {
-                            successors.push(successor(candidate, effect, result));
+                            successors.push(applied);
                             return Ok(());
                         }
-                        super::walk::ResultPolicy::AllResults => {
-                            successors.push(successor(candidate.clone(), effect.clone(), result));
-                        }
+                        super::walk::ResultPolicy::AllResults => successors.push(applied),
                     }
                 }
                 Conjunction::False(_) => {}
@@ -1848,6 +2094,13 @@ impl Run<'_, '_, '_> {
                         .map_err(|_| stop(BROKEN)),
                     }?;
                     for (clause, evaluation) in undecided {
+                        if self.walk.candidate_visitor.is_some() {
+                            self.walk.visit(super::NativeCandidateEvent::Undetermined {
+                                transition: self.transition,
+                                outcome: &evaluation,
+                            })?;
+                            continue;
+                        }
                         super::key_budget::reserve(self.walk.key_policy, contract, 1)?;
                         contract.push(ContractFinding {
                             transition: self.transition_bytes.to_vec(),
@@ -1883,6 +2136,48 @@ impl Run<'_, '_, '_> {
         }
         Ok(())
     }
+}
+
+/// Bound the retained outcome collection before allocating another entry.
+/// This is one implicit sequence per invocation: its highwater size includes
+/// the sequence root, each state/population/object container, every field value
+/// occurrence and each result. ValueOccurrences bounds that one collection;
+/// ResultRetain charges newly retained occurrences cumulatively. Duplicate raw
+/// outcomes count until deduplication, so sorting cannot hide retained memory.
+fn retain_outcome(walk: &Walk<'_, '_>, next: &Applied) -> Result<(), ExpansionStop> {
+    let occurrences = |applied: &Applied| {
+        let mut count = filament_exact::Integer::one();
+        for objects in applied.state.state.populations.values() {
+            count = count.add(&filament_exact::Integer::one());
+            for object in objects.values() {
+                count = count.add(&filament_exact::Integer::one());
+                for value in object.fields.values() {
+                    count = count.add(&value.occ());
+                }
+            }
+        }
+        if let Some(result) = &applied.result {
+            count = count.add(&result.occ());
+        }
+        count
+    };
+    let next_size = occurrences(next);
+    let size = walk.retained_occurrences.borrow().add(&next_size);
+    walk.meter()
+        .charge(
+            filament_exact::Charge::new(filament_exact::ChargePoint::CollectionResultRetain)
+                .exact_size(filament_exact::LimitKind::ValueOccurrences, size.clone())
+                .exact_results(next_size),
+        )
+        .map_err(|incomplete| {
+            super::walk::exhausted(
+                crate::simulation::expansion::ExpansionLimit::EvaluationMeter(
+                    incomplete.limit_kind,
+                ),
+            )
+        })?;
+    walk.retained_occurrences.replace(size);
+    Ok(())
 }
 
 /// `objects` as the frame decision reads them.

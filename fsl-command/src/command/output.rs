@@ -305,6 +305,58 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             types::Stage::Request,
             types::Details::Identifier(diagnostic),
         ),
+        RunCause::SynthesisSnapshot { file, record } => {
+            let path = record
+                .path
+                .iter()
+                .map(|step| match step {
+                    fsl_semantics::model::observation::PathStep::Field(name) => {
+                        serde_json::json!({"field": name})
+                    }
+                    fsl_semantics::model::observation::PathStep::Index(index) => {
+                        serde_json::json!({"index": index})
+                    }
+                    fsl_semantics::model::observation::PathStep::OptionValue => {
+                        serde_json::json!({"option": true})
+                    }
+                })
+                .collect::<Vec<_>>();
+            let kernel = record.kernel.as_ref().map(|cause| {
+                use filament_exact::ConstructionCause;
+                match cause {
+                    ConstructionCause::MissingField => serde_json::json!({"cause": "missing-field"}),
+                    ConstructionCause::UndeclaredField => serde_json::json!({"cause": "undeclared-field"}),
+                    ConstructionCause::DuplicateField => serde_json::json!({"cause": "duplicate-field"}),
+                    ConstructionCause::NullForRequiredField => serde_json::json!({"cause": "null-for-required-field"}),
+                    ConstructionCause::WrongArity { declared, supplied } => serde_json::json!({"cause": "wrong-arity", "declared": declared, "supplied": supplied}),
+                    ConstructionCause::TypeMismatch => serde_json::json!({"cause": "type-mismatch"}),
+                    ConstructionCause::MissingAdmissionAuthority => serde_json::json!({"cause": "missing-admission-authority"}),
+                    ConstructionCause::DuplicateMember => serde_json::json!({"cause": "duplicate-member"}),
+                    ConstructionCause::UuidNoncanonical => serde_json::json!({"cause": "uuid-noncanonical"}),
+                    ConstructionCause::TimestampNoncanonical => serde_json::json!({"cause": "timestamp-noncanonical"}),
+                    ConstructionCause::TimestampOutOfDomain => serde_json::json!({"cause": "timestamp-out-of-domain"}),
+                }
+            });
+            (
+                types::Stage::Request,
+                types::Details::Object(serde_json::Map::from_iter([
+                    ("file".to_owned(), serde_json::json!(file)),
+                    ("document_path".to_owned(), serde_json::json!(path)),
+                    (
+                        "pointer".to_owned(),
+                        serde_json::json!("/request/synthesis/initial"),
+                    ),
+                    ("fields".to_owned(), serde_json::json!(record.fields)),
+                    ("kernel".to_owned(), serde_json::json!(kernel)),
+                ])),
+            )
+        }
+        RunCause::SynthesisUnsupported {
+            diagnostic: native, ..
+        } => (
+            types::Stage::Native(native.phase),
+            types::Details::Native(diagnostic(native)),
+        ),
         RunCause::Native(error) => (
             types::Stage::Native(error.phase),
             types::Details::Native(diagnostic(error)),
@@ -457,6 +509,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             | RunCause::PlanRequest { cause, .. }
             | RunCause::SynthesisRequest { cause, .. }
             | RunCause::ModelBasedTestRequest { cause, .. } => Some(*cause),
+            RunCause::SynthesisUnsupported { .. } => Some("not-yet-implemented"),
             RunCause::ExportOutput { .. } => Some("output-failure"),
             RunCause::TransferSelection { cause, .. } => Some(cause),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
@@ -465,7 +518,9 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 Some("unsupported-selection")
             }
             RunCause::TlClause { .. } => Some("missing-name"),
-            RunCause::TlSubject(record) => Some(record.catalog.cause()),
+            RunCause::SynthesisSnapshot { record, .. } | RunCause::TlSubject(record) => {
+                Some(record.catalog.cause())
+            }
             RunCause::UnknownExtensionCapability(_) => Some("unknown-feature"),
             _ => None,
         },

@@ -1473,6 +1473,22 @@ impl AdmittedModel {
             && self.types == other.types
     }
 
+    /// Direct operations in the admitted domain document's declaration order.
+    pub(crate) fn plan_operation_order(&self) -> Vec<(EffectiveId, String)> {
+        self.index
+            .package()
+            .records
+            .iter()
+            .filter_map(|record| {
+                let DomainPackageRecord::OperationMember(operation) = record else {
+                    return None;
+                };
+                self.object_type_id(&operation.owner)?;
+                self.operation_anchor_declaration(&operation.key)
+            })
+            .collect()
+    }
+
     /// Every object type of this package: its declaration key and its
     /// effective identity.
     pub(crate) fn object_types(&self) -> impl Iterator<Item = (&DeclarationKey, EffectiveId)> {
@@ -1825,11 +1841,11 @@ impl AdmittedModel {
             match named {
                 ValueTypeRef::Clock => break "ix://filament/native/Clock".to_owned(),
                 ValueTypeRef::Native(native) => {
-                    break format!("ix://filament/native/{}", native.as_str())
+                    break format!("ix://filament/native/{}", native.as_str());
                 }
                 ValueTypeRef::Unit(name) => break name.clone(),
                 ValueTypeRef::Resolved(value_type) => {
-                    break self.resolved_identity(value_type).unwrap_or_default()
+                    break self.resolved_identity(value_type).unwrap_or_default();
                 }
                 ValueTypeRef::Package(key) => match self.records.get(key) {
                     Some(DomainPackageRecord::AliasType(alias)) if steps <= self.records.len() => {
@@ -3340,7 +3356,7 @@ impl<'a> Lowering<'a> {
                         .map(|(root, exponent)| (root.clone(), exponent.clone()))
                         .collect(),
                     Some(QuantityUnit::Declared(_)) | None => {
-                        return Err(fault(location, KeyFault::UnheldUnit(unit)))
+                        return Err(fault(location, KeyFault::UnheldUnit(unit)));
                     }
                 };
                 let mut members = Vec::with_capacity(terms.len());
