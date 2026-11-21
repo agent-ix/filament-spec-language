@@ -404,7 +404,9 @@ fn members(term: &CheckedTerm) -> Result<&[CheckedTerm], HybridReadError> {
 /// The value bound to `name` in the aggregate `term`.
 fn bound<'t>(term: &'t CheckedTerm, name: &str) -> Result<&'t CheckedTerm, HybridReadError> {
     shape(members(term)?.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name: bound, value } if is_text(bound, name) => Some(&**value),
+        CheckedTerm::Binding {
+            name: bound, value, ..
+        } if is_text(bound, name) => Some(&**value),
         _ => None,
     }))
 }
@@ -886,7 +888,7 @@ impl Reader<'_> {
 
         let mut written = Vec::new();
         for capture in members(captures_argument)? {
-            let CheckedTerm::Binding { name, value } = capture else {
+            let CheckedTerm::Binding { name, value, .. } = capture else {
                 return Err(HybridReadError::Fault(SHAPE));
             };
             written.push((

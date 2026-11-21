@@ -111,7 +111,9 @@ fn binding<'a>(node: &'a CheckedSemanticNodeV2, name: &str) -> Option<&'a Checke
         return None;
     };
     members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name: bound, value } if &**bound == name => Some(&**value),
+        CheckedTerm::Binding {
+            name: bound, value, ..
+        } if &**bound == name => Some(&**value),
         _ => None,
     })
 }

@@ -253,7 +253,7 @@ impl<'g> Graph<'g> {
         members
             .iter()
             .find_map(|member| match member {
-                CheckedTerm::Binding { name, value } if name.as_ref() == "operation" => {
+                CheckedTerm::Binding { name, value, .. } if name.as_ref() == "operation" => {
                     text(value).ok()
                 }
                 _ => None,
@@ -296,7 +296,7 @@ impl<'g> Graph<'g> {
                 }
                 key.push(Token::Close);
             }
-            CheckedTerm::Binding { name, value } => {
+            CheckedTerm::Binding { name, value, .. } => {
                 key.push(Token::Text(name.as_ref().into()));
                 self.term(value, key, depth + 1)?;
             }
@@ -563,7 +563,9 @@ fn binding<'t>(term: &'t CheckedTerm, name: &str) -> Result<&'t CheckedTerm, Ord
     members_of(term)?
         .iter()
         .find_map(|member| match member {
-            CheckedTerm::Binding { name: held, value } if held.as_ref() == name => Some(&**value),
+            CheckedTerm::Binding {
+                name: held, value, ..
+            } if held.as_ref() == name => Some(&**value),
             _ => None,
         })
         .ok_or(OrderFault::Malformed)

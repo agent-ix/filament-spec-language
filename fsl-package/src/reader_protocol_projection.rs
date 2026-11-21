@@ -2168,7 +2168,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         else {
             return Err(fault("reader-union-declaration-has-checked-members").into());
         };
-        let [CheckedTerm::Binding { name, value }] = members else {
+        let [CheckedTerm::Binding { name, value, .. }] = members else {
             return Err(fault("reader-union-value-has-one-member").into());
         };
         let filament_contract_model::CheckedBindingNameKind::Other(member_name) = name.kind()
@@ -2204,7 +2204,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         let declaration = declaration.clone();
         let mut values = Vec::with_capacity(members.len());
         for member in members {
-            let CheckedTerm::Binding { name, value } = member else {
+            let CheckedTerm::Binding { name, value, .. } = member else {
                 return Err(fault("reader-record-value-has-checked-field-binding").into());
             };
             if !matches!(
@@ -2244,7 +2244,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         let identity = operation.identity();
         match identity {
             Some("filament.op.control.let") => {
-                let [CheckedTerm::Binding { name, value }, body] = arguments else {
+                let [CheckedTerm::Binding { name, value, .. }, body] = arguments else {
                     return Err(fault("reader-let-has-binding-and-body").into());
                 };
                 let filament_contract_model::CheckedBindingNameKind::Other(_) = name.kind() else {
@@ -2543,7 +2543,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                             | "filament.op.collection.count"
                     ) =>
             {
-                let [source_term, CheckedTerm::Binding { name, value }] = arguments else {
+                let [source_term, CheckedTerm::Binding { name, value, .. }] = arguments else {
                     return Err(fault("reader-collection-query-has-source-and-binder").into());
                 };
                 let filament_contract_model::CheckedBindingNameKind::Other(_) = name.kind() else {
@@ -2578,7 +2578,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
             Some("filament.op.collection.seq") => {
                 // FR-322 `seq`: two bounds outside the binder, the body inside.
-                let [low_term, high_term, CheckedTerm::Binding { name, value }] = arguments else {
+                let [low_term, high_term, CheckedTerm::Binding { name, value, .. }] = arguments
+                else {
                     return Err(fault("reader-seq-has-two-bounds-and-binder").into());
                 };
                 let slot = self.next_slot(context, locals);
@@ -2985,7 +2986,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             .map_or(0, |slot| slot.saturating_add(1))
             .max(first_free);
         for argument in arguments.iter().skip(1) {
-            let CheckedTerm::Binding { name, value } = argument else {
+            let CheckedTerm::Binding { name, value, .. } = argument else {
                 return Err(fault("reader-union-case-arm-is-binding").into());
             };
             let filament_contract_model::CheckedBindingNameKind::Other(member_name) = name.kind()
@@ -3345,7 +3346,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         let member_type = members
             .iter()
             .find_map(|member| match member {
-                CheckedTerm::Binding { name, value } => {
+                CheckedTerm::Binding { name, value, .. } => {
                     use filament_contract_model::CheckedBindingNameKind as Kind;
                     let named = match name.kind() {
                         Kind::Parameters => "parameters",
@@ -3686,7 +3687,7 @@ fn rational_range_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeEr
             return None;
         };
         members.iter().find_map(|member| {
-            let CheckedTerm::Binding { name, value } = member else {
+            let CheckedTerm::Binding { name, value, .. } = member else {
                 return None;
             };
             (name.as_ref() == wanted).then(|| match value.literal_read()?.value {
@@ -3715,7 +3716,7 @@ fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
         return None;
     };
     members.iter().find_map(|member| {
-        let CheckedTerm::Binding { name, value } = member else {
+        let CheckedTerm::Binding { name, value, .. } = member else {
             return None;
         };
         (name.as_ref() == wanted).then(|| match value.literal_read()?.value {
@@ -3793,7 +3794,7 @@ pub(crate) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
         return None;
     };
     members.iter().find_map(|member| {
-        let CheckedTerm::Binding { name, value } = member else {
+        let CheckedTerm::Binding { name, value, .. } = member else {
             return None;
         };
         (name.as_ref() == "name").then(|| match value.literal_read()?.value {
@@ -3813,7 +3814,7 @@ fn parameter_level(term: &CheckedTerm) -> Option<u64> {
         return None;
     };
     members.iter().find_map(|member| {
-        let CheckedTerm::Binding { name, value } = member else {
+        let CheckedTerm::Binding { name, value, .. } = member else {
             return None;
         };
         if name.as_ref() != "level" {
@@ -3933,7 +3934,7 @@ fn function_parts(term: &CheckedTerm) -> Option<(&[CheckedTerm], &CheckedTerm)> 
     let mut parameters = None;
     let mut body = None;
     for member in members {
-        let CheckedTerm::Binding { name, value } = member else {
+        let CheckedTerm::Binding { name, value, .. } = member else {
             continue;
         };
         match name.kind() {
