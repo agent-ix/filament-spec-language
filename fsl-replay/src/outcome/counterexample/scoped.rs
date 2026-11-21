@@ -92,7 +92,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
             terminal_key,
             true,
             |s, transition| s.task_product_transition_wire(transition),
-            |s, fairness| s.canonical(fairness),
+            |s, fairness| s.fairness_wire(fairness),
         )
     }
 
@@ -287,7 +287,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
                 let constraint = constraint
                     .as_ref()
                     .ok_or_else(|| self.carrier_refusal("divergence constraint"))?;
-                let constraint = self.at_pointer("/constraint", |s| s.canonical(constraint))?;
+                let constraint = self.at_pointer("/constraint", |s| s.fairness_wire(constraint))?;
                 ("Divergence", self.record([("constraint", constraint)])?)
             }
             RefinementFailure::AbstractUnfair { constraint }
@@ -297,7 +297,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
                 } else {
                     "HiddenUnfair"
                 };
-                let constraint = self.at_pointer("/constraint", |s| s.canonical(constraint))?;
+                let constraint = self.at_pointer("/constraint", |s| s.fairness_wire(constraint))?;
                 (kind, self.record([("constraint", constraint)])?)
             }
             RefinementFailure::RefusalNotPermitted { position, label } => {
@@ -369,10 +369,14 @@ impl ReferenceScope<'_, '_, '_, '_> {
             terminal_key,
             false,
             |s, transition| s.encode_task_transition(transition),
-            |s, fairness| s.canonical(fairness),
+            |s, fairness| s.fairness_wire(fairness),
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one carrier builder retains original context and alphabet-specific encoders"
+    )]
     fn temporal_full<T: SubjectTransition>(
         &mut self,
         counterexample: &TemporalCounterexample<T>,

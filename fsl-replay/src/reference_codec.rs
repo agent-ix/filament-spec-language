@@ -169,10 +169,13 @@ impl ReferenceScope<'_, '_, '_, '_> {
         Ok(())
     }
 
-    pub(crate) fn canonical(
+    // This leaf's Encode implementation is borrowed. Protocol identities
+    // build an Enc tree in Encode and must use a separate borrowed projection.
+    pub(crate) fn fairness_wire(
         &mut self,
-        value: &(impl quire_canonical::Encode + ?Sized),
+        value: &filament_semantic_value::fairness::FairnessConstraint,
     ) -> Result<Value, ReferenceCodecError> {
+        use quire_canonical::Encode as _;
         let admission = Admission::new(&mut *self.scope.budget, self.scope.cancel);
         let result = admission.encoded(self.limits, |writer| value.encode_into(writer));
         let bytes = admission
@@ -274,8 +277,9 @@ impl ReferenceScope<'_, '_, '_, '_> {
         &mut self,
         key: &fsl_eval::simulation::StateKey,
     ) -> Result<Value, ReferenceCodecError> {
-        // Retain the existing authoritative base64url state adapter. Admit
-        // its temporary string plus serde's owned string before either exists.
+        use base64::Engine as _;
+        // The same URL_SAFE_NO_PAD encoding as TimedStateWire; admit and
+        // fallibly allocate its complete output before encoding opaque bytes.
         let encoded = key
             .as_bytes()
             .len()
@@ -285,19 +289,12 @@ impl ReferenceScope<'_, '_, '_, '_> {
             .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
         self.scope.work(key.as_bytes().len())?;
         self.scope.work(encoded)?;
-        let storage = encoded
-            .checked_mul(2)
-            .and_then(|n| n.checked_add(size_of::<(String, Value)>() * 4))
-            .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
-        self.scope.reserve(storage)?;
-        let mut wire =
-            crate::state_key_wire(key).map_err(|cause| ReferenceCodecError::Carrier {
-                cause,
-                pointer: std::mem::take(&mut self.scope.path),
-            })?;
-        wire.as_object_mut()
-            .and_then(|map| map.remove("key"))
-            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))
+        self.scope.reserve(encoded)?;
+        let mut text = String::new();
+        text.try_reserve_exact(encoded)
+            .map_err(|_| self.scope.allocation(encoded))?;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode_string(key.as_bytes(), &mut text);
+        Ok(Value::String(text))
     }
 
     pub(crate) fn text(&mut self, value: &str) -> Result<Value, ReferenceCodecError> {
