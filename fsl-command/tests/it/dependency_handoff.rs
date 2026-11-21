@@ -799,3 +799,79 @@ fn every_raw_manifest_member_refusal_keeps_its_exact_pointer_before_analysis() {
         "the unchanged positive control completes: {outcome}"
     );
 }
+
+#[test]
+#[trace("FR-850-AC-13", "TC-2410")]
+fn duplicate_and_unreachable_selected_identities_refuse_at_the_manifest_row() {
+    use fsl_command::{checked_handoff, emit_checked_v2};
+    let directory = tempfile::tempdir().unwrap();
+    prepare(directory.path(), false);
+    let manifest_file = directory.path().join("handoff/dependencies.json");
+    let original = std::fs::read(&manifest_file).unwrap();
+    let mut manifest: Value = serde_json::from_slice(&original).unwrap();
+    manifest["dependencies"][1]["identity"] = manifest["dependencies"][0]["identity"].clone();
+    std::fs::write(&manifest_file, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let (exit, outcome) = run(directory.path(), json!({"directory": "handoff"}));
+    assert_eq!(exit, 20, "{outcome}");
+    assert_eq!(outcome["cause"], "invalid-value", "{outcome}");
+    assert_eq!(
+        outcome["details"]["path"], "/dependencies/1/identity",
+        "{outcome}"
+    );
+
+    let source = directory.path().join("unrelated.native");
+    std::fs::write(
+        &source,
+        format!("{HEADER}function unrelated using v(): Integer pure {{ 7 }}"),
+    )
+    .unwrap();
+    let unrelated = directory.path().join("unrelated");
+    checked_handoff::write(
+        &checked_handoff::CheckedHandoffRequest {
+            emit: emit_checked_v2::Request {
+                source,
+                package_name: "test/zz".to_owned(),
+                models: vec![],
+                libraries: vec![],
+                execution_points: None,
+                temporal_selections: vec![],
+                out: None,
+            },
+            corpus: checked_handoff::Corpus::None,
+            native_join: fsl_package::NativeJoinLimits::new(1 << 40, 1 << 28),
+        },
+        &unrelated,
+    )
+    .unwrap();
+    let extra = directory.path().join("handoff/dependencies/2");
+    std::fs::create_dir(&extra).unwrap();
+    for name in ["checked-package.json", "identities.json", "equality.json"] {
+        std::fs::copy(unrelated.join(name), extra.join(name)).unwrap();
+    }
+    let mut manifest: Value = serde_json::from_slice(&original).unwrap();
+    manifest["dependencies"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "identity": "test/zz", "directory": "dependencies/2"
+        }));
+    std::fs::write(&manifest_file, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let (exit, outcome) = run(directory.path(), json!({"directory": "handoff"}));
+    assert_eq!(exit, 20, "{outcome}");
+    assert_eq!(outcome["code"], "invalid_package", "{outcome}");
+    assert_eq!(outcome["cause"], "invalid-value", "{outcome}");
+    assert_eq!(
+        outcome["details"]["path"], "/dependencies/2/identity",
+        "{outcome}"
+    );
+    assert!(
+        outcome.to_string().contains("dependencies.json"),
+        "{outcome}"
+    );
+    std::fs::write(manifest_file, original).unwrap();
+    let (exit, outcome) = run(directory.path(), json!({"directory": "handoff"}));
+    assert_eq!(
+        exit, 0,
+        "unlisted physical artifacts are never searched: {outcome}"
+    );
+}
