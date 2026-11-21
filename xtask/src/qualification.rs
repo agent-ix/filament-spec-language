@@ -18,6 +18,9 @@ use crate::Outcome;
 
 mod adapters;
 
+#[path = "backend_agreement.rs"]
+pub mod backend_agreement;
+
 const USAGE: &str = "usage: cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]";
 const CORPUS_FILE: &str = "complete-v1.json";
 const SCHEMA_FILE: &str = "proposals/conformance-corpus-v1/schema.json";
@@ -407,11 +410,10 @@ pub fn execute_with_fspec(fspec: &Path, operands: &[OsString]) -> Result<Executi
 /// is `qualified` only when the corpus and every FR-567 part pass. The parts
 /// beyond the corpus run after every preflight refusal, so a refused run
 /// executes no matrix case.
-pub(crate) fn execute_with_parts(
+fn prepare(
     fspec: &Path,
     operands: &[OsString],
-    matrix: Option<&[fsl_conformance::MatrixCell]>,
-) -> Result<Execution> {
+) -> Result<PreparedCorpus> {
     let args = parse_args(operands)?;
     let limits = fsl_replay::CallerLimits::from_operands(args.limits.iter().map(String::as_str))
         .map_err(|error| Error::QualificationRefusal(error.to_string()))?;
@@ -535,6 +537,26 @@ pub(crate) fn execute_with_parts(
         .iter()
         .map(|cap| cap.capability_id.clone())
         .collect::<Vec<_>>();
+    Ok(PreparedCorpus { args, limits, corpus_root, adapters, corpus, scope_ids, default_scope })
+}
+
+struct PreparedCorpus {
+    args: Args,
+    limits: fsl_replay::CallerLimits,
+    corpus_root: PathBuf,
+    adapters: adapters::Schemas,
+    corpus: Corpus,
+    scope_ids: Vec<String>,
+    default_scope: bool,
+}
+
+pub(crate) fn execute_with_parts(
+    fspec: &Path,
+    operands: &[OsString],
+    matrix: Option<&[fsl_conformance::MatrixCell]>,
+) -> Result<Execution> {
+    let PreparedCorpus { args, limits, corpus_root, adapters, corpus, scope_ids, default_scope } = prepare(fspec, operands)?;
+    let scope = corpus.coverage.primary.iter().filter(|cap| scope_ids.contains(&cap.capability_id)).collect::<Vec<_>>();
     let mut vector_reports = BTreeMap::<String, Vec<VectorReport>>::new();
     let mut vector_outcomes = BTreeMap::<String, Vec<(String, VectorOutcome)>>::new();
     let mut outputs = BTreeMap::new();

@@ -14,7 +14,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use xtask::{
-    canonical_types, checked_input, conformance, consumer_facades,
+    backend_agreement, canonical_types, checked_input, conformance, consumer_facades,
     error::{Error, Result},
     examples_check, facade_tests, pin_check, qualification, refinement, route_lint, seam_probe,
     string_edge, test_suites, Outcome,
@@ -53,6 +53,9 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
     }
     if command == "qualify" {
         return qualification::run(operands);
+    }
+    if command == "backend-agreement" {
+        return backend_agreement::run(operands);
     }
     if command == "pin-check" {
         return pin_check::run(&workspace_root, operands);
