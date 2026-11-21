@@ -1034,11 +1034,16 @@ fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
         .is_some_and(|path| path.as_str() == pointer)));
     let name = emitted.emission.package.name().to_owned();
     emitted.emission.package = EmittedPackage::new(&name, |_| Ok::<_, ()>(bytes)).expect("package");
+    let documents = emitted
+        .documents
+        .iter()
+        .map(|document| (package_identity(document), document.clone()))
+        .collect();
     let source = crate::read_evaluation_emission(
         &emitted.package,
         &emitted.emission,
         library(),
-        &BTreeMap::new(),
+        &documents,
         V2ReadLimits::fixture(),
         crate::EmitLimits::fixture(),
         crate::SourceWitnessSupplier::new(&emitted.emission),
@@ -1050,7 +1055,7 @@ fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
     };
     let V2ReadRefusal::Envelope {
         refusal: source, ..
-    } = refusal.into_refused().expect("native refusal")
+    } = (*refusal).into_refused().expect("native refusal")
     else {
         panic!("the native reader must retain its envelope");
     };
