@@ -229,3 +229,31 @@ fn a_liveness_claim_under_a_constraint_settles_constraint_reached_never_holds() 
     );
     assert_eq!(actual.stats().stutter_edges, 0);
 }
+
+#[trace("FR-158-AC-2")]
+#[test]
+fn a_model_only_boundary_state_with_an_undefined_letter_refutes_instead_of_cutting() {
+    let world = constrained_count(&[infinite("eventually holds(x.v = 3)")]);
+    // The atom holds at the initial position, so the negation automaton has no
+    // move there and the model-only pass reads the rest of the model. Value 2
+    // is a `Low` boundary state (FR-158: boundary states are read) whose
+    // letter is undefined (FR-126: every model-only letter is read).
+    let actual = world
+        .run(
+            Some(0),
+            vec![atom(|v| match v {
+                0 => Some(true),
+                2 => None,
+                _ => Some(false),
+            })],
+            constraint("Low"),
+            None,
+            ModelCheckLimits::default(),
+        )
+        .expect("the constrained liveness run admits");
+    let evidence = violation(&actual);
+    assert!(
+        matches!(evidence.kind, CounterexampleKind::UndefinedEvaluation(_)),
+        "{evidence:?}"
+    );
+}

@@ -1749,6 +1749,17 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 stats,
             });
         }
+        // FR-158 (ADR-025 MB-4, ADR-027 AE-4): a run that found no violation
+        // and stored a boundary state settles `ConstraintReached` first,
+        // never a proof.
+        if !constrained.is_empty() {
+            return Ok(ModelCheckOutcome::Reduction {
+                cause: ReductionCause::ConstraintReached {
+                    boundary_states: widen(constrained.len()),
+                },
+                stats,
+            });
+        }
         if let (Some(bound), false) = (self.memory_bound, limited.is_empty()) {
             return Ok(ModelCheckOutcome::Memory {
                 cause: MemoryCause::BoundReached {
@@ -1769,16 +1780,6 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         }
         if ignored_fairness_lasso {
             return Ok(ModelCheckOutcome::RefutedIgnoringConstraints { stats });
-        }
-        // FR-158: a run that found no violation and stored a boundary state
-        // settles `ConstraintReached`, never a proof.
-        if !constrained.is_empty() {
-            return Ok(ModelCheckOutcome::Reduction {
-                cause: ReductionCause::ConstraintReached {
-                    boundary_states: widen(constrained.len()),
-                },
-                stats,
-            });
         }
         if let (Some(bound), false) = (self.instance_bound, totals.instance_limited.is_empty()) {
             return Ok(ModelCheckOutcome::Undecided {
@@ -2196,6 +2197,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 }
             };
             let mut constraint_undefined = None;
+            let mut boundary_unexpanded = false;
             if let Some(name) = self.constraint {
                 match self.system.constraint_value(&model, name) {
                     Ok(ConstraintValue::Holds) => {}
@@ -2203,7 +2205,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         self.dead_constrained
                             .borrow_mut()
                             .insert(self.state_key(&model)?);
-                        continue;
+                        // FR-158: a boundary state is read, so an undefined
+                        // letter still refutes (FR-126 model-only pass).
+                        if !matches!(reading, Reading::Undefined { .. }) {
+                            continue;
+                        }
+                        boundary_unexpanded = true;
                     }
                     Ok(ConstraintValue::Undefined { cause, .. }) => {
                         constraint_undefined = Some((name, cause));
@@ -2215,7 +2222,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     }
                 }
             }
-            let (expansion, cut) = if constraint_undefined.is_some() {
+            let (expansion, cut) = if constraint_undefined.is_some() || boundary_unexpanded {
                 (
                     Expansion {
                         successors: Vec::new(),
