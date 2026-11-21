@@ -580,8 +580,8 @@ fn unselected_receipt_metadata_uses_the_existing_closed_identity() {
         assert_eq!(outcome.exit, 20, "{}", outcome.document);
         assert!(outcome
             .bytes
-            .windows(b"/documents/0/identity".len())
-            .any(|window| window == b"/documents/0/identity"));
+            .windows(b"/documents/1/identity".len())
+            .any(|window| window == b"/documents/1/identity"));
     }
 }
 
