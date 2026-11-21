@@ -2,6 +2,7 @@
 //! TC-3152: finite-horizon products, independent payoff/rank checking and limits.
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use fsl_replay::ExactProbabilityCertificate;
 use serde_json::{json, Value};
 
 fn retry(claims: &str) -> prob_world::Model {
@@ -2091,7 +2092,7 @@ fn a_live_mean_bound_checker_limit_or_cancellation_cannot_produce_a_token() {
         ),
         "valid control: {accepted:?}"
     );
-    let mut exhausted = limits.clone();
+    let mut exhausted = limits;
     exhausted.model.limits.max_states = 1;
     let stopped = replay(&exhausted, &Cancel::new());
     assert!(
