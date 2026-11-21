@@ -97,6 +97,11 @@ pub enum FhError {
     /// Precision limits are inconsistent or cannot be represented.
     #[error("the precision limits are invalid")]
     InvalidPrecision,
+    /// Policy iteration over a zero-time component reached the caller's
+    /// iteration bound (`max_policy_iterations`) before settling: a limit
+    /// stop, not a cycle.
+    #[error("policy iteration reached the iteration limit")]
+    PolicyIterationLimit,
 }
 
 /// Decide a bounded formula event on an already-built product (FR-197).
@@ -306,6 +311,7 @@ fn collapse_zero_time_components(
             UnboundedError::InvalidProbability | UnboundedError::MaxRationalBits => {
                 FhError::InvalidProbability
             }
+            UnboundedError::MaxPolicyIterations => FhError::PolicyIterationLimit,
             UnboundedError::Singular
             | UnboundedError::MaxPolicyIterations
             | UnboundedError::MissingReward
@@ -1587,6 +1593,31 @@ mod tests {
 
     /// Trace: TC-632, FR-197-AC-4
     #[trace("TC-632", "FR-197-AC-4")]
+    /// A zero-time cycle that stays reachable but has no end component is solved
+    /// by policy iteration; reaching the caller's iteration bound is a typed limit
+    /// stop, not a cycle (QSL-2156 FND-006).
+    #[test]
+    fn policy_iteration_bound_is_a_limit_stop_not_a_cycle() {
+        let mut looping = product();
+        looping.kind = ProductKind::Mdp;
+        looping.edges[0].to = ProbStateId(0);
+        looping.edges[0].probability = rational(1, 2);
+        looping.edges[1].to = ProbStateId(1);
+        looping.edges[1].probability = rational(1, 2);
+        let terminal = [None, Some(rational(1, 1)), Some(rational(0, 1))];
+        let result = backward_induction_with_policy_limit(
+            &looping,
+            &terminal,
+            FhObjective::Min,
+            &rational(1, 2),
+            64,
+            4,
+            8,
+            0,
+        );
+        assert_eq!(result.err(), Some(FhError::PolicyIterationLimit));
+    }
+
     #[test]
     fn precision_budget_contains_an_exact_threshold() {
         let result = backward_induction(

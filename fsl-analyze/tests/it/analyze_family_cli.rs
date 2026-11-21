@@ -359,7 +359,7 @@ fn a_nested_reference_row_checks_and_proves() {
 #[test]
 fn non_interference_proves_and_refutes() {
     use crate::hyper_world::{
-        EQUAL_INPUTS, STARTS, Vault, non_interference, request_files_over_starts,
+        non_interference, request_files_over_starts, Vault, EQUAL_INPUTS, STARTS,
     };
     for (vault, expected) in [(Vault::Secure, "proved"), (Vault::Leaky, "refuted")] {
         let (unit, model, snapshots) =

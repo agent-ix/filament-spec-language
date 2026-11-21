@@ -25,8 +25,8 @@ mod scale;
 mod search;
 mod settle;
 mod state_graph;
-mod task_product;
 mod task_certificate;
+mod task_product;
 mod task_symbolic;
 mod time_lock;
 
@@ -39,11 +39,6 @@ pub use refine::{
 pub mod manifest;
 pub use dbm::{Bound, Dbm, DbmError};
 pub use scale::{scale_constants, ScaledConstants};
-pub use task_certificate::{read_back_unchanged, task_product_certificate, TaskCertificateRefusal};
-pub use task_symbolic::{
-    explore as explore_task_symbolic, SymbolicEdge, SymbolicGraph, SymbolicIdentity, SymbolicStop,
-    SymbolicVertex,
-};
 pub use search::{
     canonical_symbolic_state, check_timed_model, concretise_timed_state_graph_path,
     explore_timed_state_graph, TimedStateGraph, TimedStateGraphEdge, TimedStateGraphNode,
@@ -54,8 +49,13 @@ pub use settle::{
     settle_timed_refinement, settle_zone_check, ZoneCheckRecord, ZoneItem, ZONE_CERTIFIED,
 };
 pub use state_graph::{decide_timed_state_graph, TimedStateGraphDecision};
+pub use task_certificate::{read_back_unchanged, task_product_certificate, TaskCertificateRefusal};
 pub use task_product::{
     check_task_product, check_task_product_with_cancel, TaskProductSearchFrontier,
     TaskProductSearchLimits, TaskProductSearchOutcome, TaskProductSearchRefusal,
     TaskProductSearchRefutation, TaskProductSearchStop,
+};
+pub use task_symbolic::{
+    explore as explore_task_symbolic, SymbolicEdge, SymbolicGraph, SymbolicIdentity, SymbolicStop,
+    SymbolicVertex,
 };
