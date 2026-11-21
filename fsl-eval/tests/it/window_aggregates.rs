@@ -1457,3 +1457,68 @@ fn the_read_past_the_limit_is_charged_and_the_budget_stops_before_the_limit() {
         matches!(outcome(5), Err(LetterStop::Incomplete(record)) if record.limit_kind == LimitKind::WorkUnits)
     );
 }
+
+fn stamped(stamps: &[i64]) -> (WindowTrace, Rows) {
+    let trace = WindowTrace::timed(stamps.iter().copied().map(whole).collect()).expect("ordered");
+    (trace, Rows::values(&vec![1; stamps.len()]))
+}
+
+fn count_is(window: PastWindow, trace: &WindowTrace, rows: &mut Rows, position: u64) -> Vec<u64> {
+    let atom = AggregateAtom::new(
+        term(AggregateKind::Count, window, 0),
+        ComparisonOperator::GreaterOrEqual,
+        whole(0),
+    );
+    assert!(truth(read(&atom, trace, rows, UNLIMITED, position)));
+    rows.visited.clone()
+}
+
+/// FR-194 "Evaluation": both ends of a duration window are closed, so an
+/// event exactly `b` before the anchor and one exactly `a` before it are
+/// in the window.
+#[trace("TC-629", "FR-194-AC-1")]
+#[test]
+fn a_duration_window_is_closed_at_both_ends() {
+    let (trace, mut rows) = stamped(&[0, 5, 10]);
+    assert_eq!(count_is(seconds(0, 5), &trace, &mut rows, 2), [1, 2]);
+    let (trace, mut rows) = stamped(&[0, 5, 10]);
+    assert_eq!(count_is(seconds(5, 10), &trace, &mut rows, 2), [0, 1]);
+}
+
+/// FR-194 "Evaluation": an event after the anchor is never read, so of events
+/// that share a stamp only those at or before the anchor are in its window.
+#[trace("TC-629", "FR-194-AC-1")]
+#[test]
+fn events_sharing_a_stamp_are_read_up_to_the_anchor_only() {
+    let (trace, mut rows) = stamped(&[1, 1, 1]);
+    assert_eq!(count_is(seconds(0, 0), &trace, &mut rows, 1), [0, 1]);
+}
+
+/// FR-194 "Evaluation", AC-9: a window with no event short of `min_count` is
+/// `InsufficientData` with a count of 0, never a truth value.
+#[trace("TC-629", "FR-194-AC-9")]
+#[test]
+fn an_empty_duration_window_is_insufficient_data() {
+    let (trace, mut rows) = stamped(&[3, 4]);
+    let atom = AggregateAtom::new(
+        term(AggregateKind::Count, seconds(1, 2), 1),
+        ComparisonOperator::GreaterOrEqual,
+        whole(1),
+    );
+    assert_eq!(
+        read(&atom, &trace, &mut rows, UNLIMITED, 0).unwrap(),
+        AtomReading::Undefined(UndefinedCause::InsufficientData(InsufficientData {
+            count: 0,
+            min_count: 1,
+        }))
+    );
+}
+
+/// FR-194 "Evaluation": a trace shorter than the window holds what it has,
+/// and no position before the first.
+#[trace("TC-629", "FR-194-AC-2")]
+#[test]
+fn a_trace_shorter_than_its_window_reads_every_position_it_has() {
+    let (trace, mut rows) = stamped(&[0, 1, 2]);
+    assert_eq!(count_is(seconds(0, 300), &trace, &mut rows, 2), [0, 1, 2]);
+}
