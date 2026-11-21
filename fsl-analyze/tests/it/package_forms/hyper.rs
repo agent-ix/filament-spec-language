@@ -293,7 +293,7 @@ fn package_hyper_local_aliases_preserve_component_values_and_complete_charges() 
             let package = crate::counter::package_from_text(document, &source);
             let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
                 .expect("the Linked clause emits");
-            assert!(emission.omitted.is_empty());
+            assert!(emission.omitted().is_empty());
             let limits = fsl_package::V2ReadLimits::fixture();
             let admitted =
                 fsl_package::admit_checked_package(emission.package().bytes(), &packages, limits)
