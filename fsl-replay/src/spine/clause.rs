@@ -615,7 +615,6 @@ fn canonical_condition_record_fields(
             let _ = node.kind().map_ref(
                 |child| {
                     children.push(*child);
-                    ()
                 },
                 Clone::clone,
             );
@@ -696,7 +695,6 @@ fn canonical_condition_functions(
             let _ = node.kind().map_ref(
                 |child| {
                     children.push(*child);
-                    ()
                 },
                 Clone::clone,
             );
@@ -777,7 +775,6 @@ fn canonical_condition_declarations(
             let _ = node.kind().map_ref(
                 |child| {
                     children.push(*child);
-                    ()
                 },
                 Clone::clone,
             );
