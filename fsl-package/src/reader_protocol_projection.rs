@@ -91,8 +91,8 @@ impl ReaderProtocolProjection {
             .and_then(|node| node.location.as_ref())
     }
 
-    /// The occurrence key of the node at an arena index when it has just one `expression`
-    /// occurrence; `None` otherwise.
+    /// The occurrence bound to this walk position by its captured location
+    /// row, or its unique admitted expression occurrence when no row applies.
     pub fn occurrence(
         &self,
         index: usize,
@@ -100,6 +100,132 @@ impl ReaderProtocolProjection {
         self.nodes
             .get(index)
             .and_then(|node| node.occurrence.as_ref())
+    }
+
+    /// Resolve a captured semantic location through its actual occurrence
+    /// and the owning admitted package. Equal locations with unequal source
+    /// attributions are ambiguous; a structural match never chooses a site.
+    pub fn source_at_location(
+        &self,
+        package: &crate::BarePackage<'_>,
+        location: &Location,
+    ) -> Result<
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        self.resolve_source_at_location(package, location, None)
+    }
+
+    /// Resolve root expression regions only within the selected declaration.
+    /// Captured function-body rows retain their own admitted source identity.
+    pub fn source_at_location_within(
+        &self,
+        package: &crate::BarePackage<'_>,
+        location: &Location,
+        declaration: &fsl_foundation::source::provenance::SourceRegion,
+    ) -> Result<
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        self.resolve_source_at_location(package, location, Some(declaration))
+    }
+
+    fn resolve_source_at_location(
+        &self,
+        package: &crate::BarePackage<'_>,
+        location: &Location,
+        declaration: Option<&fsl_foundation::source::provenance::SourceRegion>,
+    ) -> Result<
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        let mut selected = None;
+        for node in self
+            .nodes
+            .iter()
+            .filter(|node| node.location.as_ref() == Some(location))
+        {
+            let Some(application) = &node.term else {
+                continue;
+            };
+            let owner = if application.package.as_ref() == package.package().name() {
+                package
+            } else {
+                package
+                    .dependency_views()
+                    .iter()
+                    .find(|view| view.package().name() == application.package.as_ref())
+                    .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownNode)?
+            };
+            let admitted = owner
+                .package()
+                .resolved_graph()
+                .nodes
+                .iter()
+                .find(|candidate| candidate.node_id == *application)
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownNode)?;
+            if let Some(declaration) = declaration.filter(|_| !node.captured_body) {
+                let mut found = false;
+                for row in owner.package().source_map().iter().filter(|row| {
+                    row.node_id == *application
+                        && row.role == filament_contract_model::CheckedOccurrenceRole::Expression
+                }) {
+                    for region in &row.regions {
+                        let region = crate::checked_v2::source_region(region).map_err(|_| {
+                            crate::occurrence_source::OccurrenceSourceRefusal::MissingRegion
+                        })?;
+                        if region.source() != declaration.source()
+                            || region.start() < declaration.start()
+                            || region.end() > declaration.end()
+                        {
+                            continue;
+                        }
+                        found = true;
+                        if selected
+                            .as_ref()
+                            .is_some_and(|previous| previous != &region)
+                        {
+                            return Err(
+                                crate::occurrence_source::OccurrenceSourceRefusal::AmbiguousRegion,
+                            );
+                        }
+                        selected = Some(region);
+                    }
+                }
+                if !found {
+                    return Err(crate::occurrence_source::OccurrenceSourceRefusal::MissingRegion);
+                }
+                continue;
+            }
+            let occurrence = node
+                .occurrence
+                .as_ref()
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence)?;
+            let admitted_occurrence = admitted
+                .occurrences
+                .iter()
+                .find(|candidate| {
+                    candidate.ordinal == occurrence.origin().ordinal()
+                        && crate::checked_v2::role_spelling(&candidate.role)
+                            == occurrence.origin().role().as_str()
+                })
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence)?;
+            let region = crate::occurrence_source::occurrence_source(
+                owner.package(),
+                application,
+                admitted_occurrence,
+                None,
+            )?
+            .region;
+            if selected
+                .as_ref()
+                .is_some_and(|previous| previous != &region)
+            {
+                return Err(crate::occurrence_source::OccurrenceSourceRefusal::AmbiguousRegion);
+            }
+            selected = Some(region);
+        }
+        Ok(selected)
     }
 
     /// Ordered child node indices.
@@ -165,7 +291,7 @@ impl ReaderProtocolProjection {
                 function.clone()
             })
             .collect();
-        let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<Location>>> =
+        let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>>> =
             BTreeMap::new();
         for projected in &self.functions {
             let function = &projected.node;
@@ -196,16 +322,31 @@ impl ReaderProtocolProjection {
                         .and_then(|group| group.get(*visit));
                     *visit += 1;
                     if node.term.as_ref() == Some(application) {
-                        let location =
+                        let captured =
                             row.ok_or_else(|| fault("projected-body-term-has-captured-location"))?;
-                        located.push((position, location.clone()));
+                        let key = node
+                            .key
+                            .as_ref()
+                            .ok_or_else(|| fault("captured-body-application-has-admitted-key"))?;
+                        let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+                            key.clone(),
+                            filament_exact::Origin::new(
+                                filament_exact::Role::new(crate::checked_v2::role_spelling(
+                                    &captured.occurrence.role,
+                                )),
+                                captured.occurrence.ordinal,
+                            ),
+                        );
+                        located.push((position, captured.location.clone(), occurrence));
                     }
                 }
             }
         }
-        for (position, location) in located {
+        for (position, location, occurrence) in located {
             if let Some(node) = self.nodes.get_mut(position) {
                 node.location = Some(location);
+                node.occurrence = Some(occurrence);
+                node.captured_body = true;
             }
         }
         // A `let`, conditional or `case` is no term and has no row (FSpec
@@ -2291,6 +2432,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             absorbed: None,
             type_argument,
             occurrence: self.sole_expression_occurrence(id, node),
+            captured_body: false,
+            key: Some(self.index.key(id)?),
         }))
     }
 
@@ -4066,12 +4209,17 @@ fn location(admitted: &CheckedProtocolLocation) -> Option<Location> {
 /// Reconstruct through the admitted lending cursor. An exhausted cursor or an
 /// unrepresentable coordinate fails the whole function before any projection
 /// node receives a location.
+struct CapturedBodyLocation {
+    location: Location,
+    occurrence: filament_contract_model::CheckedOccurrence,
+}
+
 fn reconstructed_body_locations(
     admitted: &CheckedPackageV2,
     function: &CheckedNodeId,
     work_limit: u64,
-) -> Result<BTreeMap<CheckedNodeId, Vec<Location>>, InternalFault> {
-    let mut rows: BTreeMap<CheckedNodeId, Vec<Location>> = BTreeMap::new();
+) -> Result<BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>>, InternalFault> {
+    let mut rows: BTreeMap<CheckedNodeId, Vec<CapturedBodyLocation>> = BTreeMap::new();
     let mut cursor = admitted
         .body_locations(function, work_limit)
         .map_err(|_| fault("admitted-body-locations-reconstruct"))?;
@@ -4083,9 +4231,13 @@ fn reconstructed_body_locations(
         let location = body_location(&view.row.location, &previous)
             .ok_or_else(|| fault("body-location-coordinates-fit"))?;
         previous = location.clone();
+        let occurrence = view.row.occurrence.clone();
         rows.entry(view.row.application.clone())
             .or_default()
-            .push(location);
+            .push(CapturedBodyLocation {
+                location,
+                occurrence,
+            });
     }
     Ok(rows)
 }
@@ -4437,8 +4589,12 @@ struct ReaderProjectedNode {
     /// other node, the wire carrying no location of its own for it.
     location: Option<Location>,
     children: Vec<usize>,
-    /// The occurrence of the node at this position, when it has just one.
+    /// The admitted occurrence bound to this particular walk position.
     occurrence: Option<fsl_foundation::source::provenance::OccurrenceKey>,
+    captured_body: bool,
+    /// The shared key already rebuilt by the owning admitted index. A row
+    /// can bind a repeated occurrence without rebuilding this structural key.
+    key: Option<NodeKey>,
     /// The application this slot-walk position is a term of (FR-383).
     term: Option<CheckedNodeId>,
     /// A quantity conversion the walk visits directly above this node,
@@ -4460,6 +4616,8 @@ impl ReaderProjectedNode {
             absorbed: None,
             type_argument: None,
             occurrence: None,
+            captured_body: false,
+            key: None,
         }
     }
 
@@ -4618,7 +4776,11 @@ mod order_tests {
         let allowance =
             body_location_allowance(&package, function).expect("a finite DAG allowance");
         let locations = reconstructed_body_locations(&package, function, allowance).unwrap();
-        let mut paths: Vec<_> = locations.values().flatten().map(Location::path).collect();
+        let mut paths: Vec<_> = locations
+            .values()
+            .flatten()
+            .map(|row| row.location.path())
+            .collect();
         paths.sort();
         assert_eq!(paths, vec![vec![], vec![0], vec![1]]);
         assert!(

@@ -34,7 +34,8 @@ pub(crate) use temporal::{replay_locus_wire, replay_outcome_wire};
 pub use temporal::{
     ClosureRead, CounterexampleRead, DimensionRead, EffectiveIdRead, FairnessGranularityRead,
     FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead,
-    ProgressValueRead, TemporalRecord, UndefinedLocusRead,
+    ModelBindingRead, ModelStepRead, ModelTransitionRead, ProgressValueRead, StateRead,
+    TemporalRecord, UndefinedLocusRead,
 };
 
 /// Why a clause-run report could not be written as a canonical document.
@@ -53,6 +54,12 @@ pub enum NativeRunResultError {
     /// position (FR-330 Outputs), or one of the other refutation kind.
     #[error("a temporal violation needs its observed counterexample at its position")]
     Counterexample,
+    /// A carried model witness needs the actual request's expansion ceiling.
+    #[error("a model counterexample requires its actual model selection")]
+    ModelSelectionRequired,
+    /// A body-walk failure reached a boundary that only reads occurrence metadata.
+    #[error("unexpected body-walk attribution at a metadata boundary: {}", .0.reason)]
+    SourceAttributionInvariant(Box<super::clause::PackageAtomAttributionFailure>),
     /// A temporal report's basis is not its verdict's FR-266 Temporal row.
     #[error("temporal basis disagrees with its verdict")]
     TemporalBasis,
@@ -2385,6 +2392,19 @@ pub fn read_native_run_result_bounded(
         }
         if let Some(value) = &document.disposition.temporal {
             let record = temporal::decode(value)?;
+            let counterexample = match &record {
+                TemporalRecord::Violated { counterexample, .. } => Some(counterexample),
+                TemporalRecord::Undefined { counterexample, .. } => counterexample.as_ref(),
+                _ => None,
+            };
+            if counterexample.is_some_and(|counterexample| {
+                counterexample.is_model() != document.limits.is_some()
+            }) {
+                return Err(NativeRunReadError::Invalid {
+                    member: "disposition.temporal.counterexample.trace",
+                    reason: "counterexample arm must match the model limits context",
+                });
+            }
             temporal::validate_temporal(
                 &document.disposition,
                 &record,
@@ -2959,7 +2979,7 @@ struct AdmittedWire {
 impl Disposition {
     fn of(
         value: &ClauseDisposition,
-        counterexample: Option<&crate::ObservedTemporalCounterexample>,
+        counterexample: Option<&crate::ClauseRunCounterexample>,
         selection: Option<&super::ClauseRunSelection>,
     ) -> Result<Self, NativeRunResultError> {
         let mut result = Self {
@@ -3574,6 +3594,8 @@ pub fn temporal_disposition_json(
 }
 
 /// Serialize one FR-109 report as RFC 8785 `native-run-result/2` bytes.
+/// A carried model witness requires [`write_clause_run_result_for`] with its
+/// actual model selection; this entry refuses rather than guessing its limits.
 pub fn write_clause_run_result(report: &ClauseRunReport) -> Result<Vec<u8>, NativeRunResultError> {
     write_clause_run_result_for(report, None)
 }
@@ -3595,6 +3617,18 @@ pub fn write_clause_run_result_for_with_extraction(
     selection: Option<&super::ClauseRunSelection>,
     extraction: Option<serde_json::Value>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
+    if matches!(
+        report.counterexample,
+        Some(crate::ClauseRunCounterexample::Model(_))
+    ) && !matches!(
+        selection,
+        Some(super::ClauseRunSelection::Temporal {
+            trace: super::TraceInput::Model { .. },
+            ..
+        })
+    ) {
+        return Err(NativeRunResultError::ModelSelectionRequired);
+    }
     if report.basis.is_decisive() != report.witness.is_some() {
         return Err(NativeRunResultError::BasisWitness);
     }

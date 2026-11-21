@@ -465,7 +465,7 @@ pub(crate) fn raw_source_ref(source: &CheckedSourceRef) -> Result<RawSourceRef, 
     Ok(RawSourceRef::new(&*source.authority, &*source.identity)?)
 }
 
-fn source_region(region: &CheckedSourceRegion) -> Result<SourceRegion, SourceMapDefect> {
+pub(crate) fn source_region(region: &CheckedSourceRegion) -> Result<SourceRegion, SourceMapDefect> {
     Ok(SourceRegion::new(
         raw_source_ref(&region.source)?,
         region.start,

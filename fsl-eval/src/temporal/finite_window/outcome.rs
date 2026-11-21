@@ -174,6 +174,9 @@ pub struct ResultIdentity(pub String);
 pub struct WindowEvaluation {
     /// The verdict.
     pub verdict: WindowVerdict,
+    /// The actual atom selected by an undefined evaluation; absent for a
+    /// capture failure or a verdict that selected no undefined atom.
+    pub undefined_atom: Option<FormulaNodeId>,
     /// The basis.
     pub basis: Basis,
     /// The decision support, in position then atom order.

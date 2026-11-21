@@ -63,14 +63,15 @@ use temporal::TemporalRun;
 pub use temporal::SAMPLE_AUTHORITY;
 pub use temporal::{
     admit_progress, authenticate_package_trace, clause_trace_binding, disposition_report,
-    name_clause_atom, run_package_sampled, run_package_sampled_authenticated,
+    name_clause_atom, render_clause_atom, run_package_sampled, run_package_sampled_authenticated,
     run_package_snapshots, run_package_temporal, run_package_temporal_bounded,
     run_package_valuation, sample_position, AdmittedLate, FiniteWindowAssessment,
     FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
-    OverObject, PackageSampledRequest, PackageSelectionNotRead, PackageSnapshotRequest,
-    PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimedObservation,
-    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
+    OverObject, PackageAtomAttributionFailure, PackageSampledRequest, PackageSelectionNotRead,
+    PackageSnapshotRequest, PackageTemporalRequest, ProgressRefusal, RenderedClauseAtom,
+    TemporalAuthentication, TimedObservation, TimestampedCover, TimestampedMissingValuation,
+    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    DEFAULT_MODEL_MAX_CANDIDATES,
 };
 pub(crate) use temporal::{trace_refusal, verdict};
 pub use trace_refusal::profile_reads;
@@ -518,6 +519,9 @@ pub struct OperationContractViolation {
 pub struct TemporalValuation {
     /// The checked clause.
     pub clause: fsl_semantics::check::CheckedTemporalClause,
+    /// Actual producer keys of the formula's `holds` nodes, retained from
+    /// lowering so source and package atom numbering agree under sharing.
+    pub atom_identities: BTreeMap<fsl_semantics::check::FormulaNodeId, filament_exact::NodeKey>,
     /// The checked Boolean condition of each `holds` atom, keyed by the
     /// formula node whose valuation the clause report carries. These views
     /// let command adapters render a package-independent canonical label.
@@ -557,6 +561,7 @@ impl TemporalValuation {
     ) -> Self {
         let clause = node.clause();
         let mut checked_conditions = Vec::new();
+        let mut atom_identities = BTreeMap::new();
         for index in 0..clause.formula().nodes().len() {
             let Some(atom) = clause.formula().node_id(index) else {
                 continue;
@@ -570,13 +575,34 @@ impl TemporalValuation {
             if let Some((condition, _)) = node.condition(atom) {
                 checked_conditions.push((atom, condition.body().clone()));
             }
+            if let Some(key) = node.formula_node_key(atom) {
+                atom_identities.insert(atom, key.clone());
+            }
         }
-        let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
-        let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
-        let canonical_record_fields = canonical_condition_record_fields(graph, &checked_conditions);
-        let canonical_union_members = canonical_condition_union_members(graph, &checked_conditions);
+        let mut roots = checked_conditions
+            .iter()
+            .map(|(_, body)| body.root())
+            .collect::<Vec<_>>();
+        for index in clause.aggregates().keys() {
+            if let Some(parts) = node.aggregate_conditions(
+                fsl_semantics::check::FormulaNodeId::from_arena_index(*index),
+            ) {
+                roots.extend(
+                    [parts.value, parts.filter, parts.predicate]
+                        .into_iter()
+                        .flatten()
+                        .map(|(root, _)| root),
+                );
+                roots.push(parts.threshold.0);
+            }
+        }
+        let canonical_declarations = canonical_condition_declarations(graph, &roots);
+        let canonical_functions = canonical_condition_functions(graph, &roots);
+        let canonical_record_fields = canonical_condition_record_fields(graph, &roots);
+        let canonical_union_members = canonical_condition_union_members(graph, &roots);
         Self {
             clause: clause.clone(),
+            atom_identities,
             checked_conditions,
             canonical_declarations,
             canonical_functions,
@@ -590,14 +616,11 @@ impl TemporalValuation {
 
 fn canonical_condition_record_fields(
     graph: &CheckedGraph,
-    conditions: &[(
-        fsl_semantics::check::FormulaNodeId,
-        fsl_semantics::check::CheckedBody,
-    )],
+    conditions: &[fsl_semantics::check::CheckedNode<'_>],
 ) -> BTreeMap<filament_exact::NodeKey, Vec<String>> {
     let mut records = BTreeMap::new();
-    for (_, body) in conditions {
-        let mut pending = vec![body.root()];
+    for root in conditions {
+        let mut pending = vec![*root];
         let mut visited = std::collections::HashSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node.id()) {
@@ -630,14 +653,11 @@ fn canonical_condition_record_fields(
 
 fn canonical_condition_union_members(
     graph: &CheckedGraph,
-    conditions: &[(
-        fsl_semantics::check::FormulaNodeId,
-        fsl_semantics::check::CheckedBody,
-    )],
+    conditions: &[fsl_semantics::check::CheckedNode<'_>],
 ) -> BTreeMap<filament_exact::NodeKey, Vec<String>> {
     let mut unions = BTreeMap::new();
-    for (_, body) in conditions {
-        let mut pending = vec![body.root()];
+    for root in conditions {
+        let mut pending = vec![*root];
         let mut visited = std::collections::HashSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node.id()) {
@@ -675,14 +695,11 @@ fn canonical_condition_union_members(
 
 fn canonical_condition_functions(
     graph: &CheckedGraph,
-    conditions: &[(
-        fsl_semantics::check::FormulaNodeId,
-        fsl_semantics::check::CheckedBody,
-    )],
+    conditions: &[fsl_semantics::check::CheckedNode<'_>],
 ) -> BTreeMap<usize, String> {
     let mut functions = BTreeMap::new();
-    for (_, body) in conditions {
-        let mut pending = vec![body.root()];
+    for root in conditions {
+        let mut pending = vec![*root];
         let mut visited = std::collections::HashSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node.id()) {
@@ -710,10 +727,7 @@ fn canonical_condition_functions(
 
 fn canonical_condition_declarations(
     graph: &CheckedGraph,
-    conditions: &[(
-        fsl_semantics::check::FormulaNodeId,
-        fsl_semantics::check::CheckedBody,
-    )],
+    conditions: &[fsl_semantics::check::CheckedNode<'_>],
 ) -> BTreeMap<filament_exact::NodeKey, String> {
     let mut declarations = BTreeMap::new();
     for (key, declaration) in graph.semantic_graph().source_enum_declarations() {
@@ -731,8 +745,8 @@ fn canonical_condition_declarations(
             ),
         );
     }
-    for (_, body) in conditions {
-        let mut pending = vec![body.root()];
+    for root in conditions {
+        let mut pending = vec![*root];
         let mut visited = std::collections::HashSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node.id()) {
@@ -1457,11 +1471,11 @@ pub struct ClauseRunReport {
     /// FR-330, FR-501 "Result report": the basis, decision support, premises
     /// and result identity of a finite-window run; `None` for every other run.
     pub finite_window: Option<FiniteWindowReport>,
-    /// FR-330 Outputs: the observed-arm counterexample (FSpec FR-364) of a
+    /// FR-330 Outputs: the observed or model counterexample (FSpec FR-364) of a
     /// temporal `violation`, a `Completed(false)` or an `Undefined` that is
     /// a violation, built from what the entry ran; `None` for every other
     /// report.
-    pub counterexample: Option<crate::ObservedTemporalCounterexample>,
+    pub counterexample: Option<crate::ClauseRunCounterexample>,
     /// FR-330 Outputs, FR-283: the decisive information of a temporal
     /// violation (`Completed(false)`) whose deciding `holds` atom FR-107's
     /// evaluator decides, beside `counterexample` and never inside it;

@@ -1059,12 +1059,15 @@ fn retained_identities_end_a_pending_clause_incomplete() {
         format!("{:?}", world.batch_report("Never", &[0, 0, 2]).disposition)
     );
     assert_eq!(
-        never.counterexample.as_ref().map(|c| c.prefix.len()),
+        never
+            .counterexample
+            .as_ref()
+            .map(|c| super::monitor::observed_counterexample(c).prefix.len()),
         world
             .batch_report("Never", &[0, 0, 2])
             .counterexample
             .as_ref()
-            .map(|c| c.prefix.len())
+            .map(|c| super::monitor::observed_counterexample(c).prefix.len())
     );
     // `Below` ended on `monitor.retained_identities` at step 4 and a further
     // observation leaves its report unchanged.
@@ -1624,7 +1627,10 @@ fn each_advance_reports_the_batch_report_over_the_prefix() {
     }
     let report = last.expect("a report").report;
     assert_eq!(
-        report.counterexample.as_ref().map(|c| c.prefix.len()),
+        report
+            .counterexample
+            .as_ref()
+            .map(|c| super::monitor::observed_counterexample(c).prefix.len()),
         Some(5)
     );
 }

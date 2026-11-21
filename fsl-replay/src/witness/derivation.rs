@@ -503,44 +503,82 @@ pub(crate) fn decisive_stop<'e>(
     };
     let mut node = root;
     loop {
-        let next = match node.kind() {
-            NodeKind::Let { body, .. } => body,
-            NodeKind::If {
-                then, otherwise, ..
-            } => {
-                if decision(node)? {
-                    then
-                } else {
-                    otherwise
-                }
-            }
-            NodeKind::Not(operand) => operand,
-            // A connective the checker synthesized (a float ordering's
-            // composition) records no decision: the path ends there.
-            NodeKind::Connective(_, ConnectiveOrigin::Synthesized, _, _) => return Ok(None),
-            NodeKind::Connective(connective, ConnectiveOrigin::Authored, left, right) => {
-                let left_value = decision(node)?;
-                let stopped_on_left = match connective {
-                    Connective::And | Connective::Implies => !left_value,
-                    Connective::Or => left_value,
-                };
-                if stopped_on_left {
-                    left
-                } else {
-                    right
-                }
-            }
-            NodeKind::Query {
-                visit: Visit::Forall | Visit::Exists,
-                ..
-            } => return Ok(evaluation.stop(node.location())),
-            // ADR-031 SW-2: "The path ends at the first node of any other
-            // kind" -- the rule itself is the catch-all, so a node kind
-            // added later ends the walk too.
-            _ => return Ok(None),
-        };
-        node = node.at(*next);
+        match decisive_step(node.kind(), || decision(node))? {
+            DecisiveStep::Child(next) => node = node.at(*next),
+            DecisiveStep::Quantifier => return Ok(evaluation.stop(node.location())),
+            DecisiveStep::End => return Ok(None),
+        }
     }
+}
+
+/// The same decision walk over the admitted evaluator projection. Locations
+/// are the projection's actual checker paths, including repeated visits.
+pub(crate) fn decisive_package_stop<'e>(
+    projection: &fsl_package::ReaderProtocolProjection,
+    evaluation: &'e ClauseEvaluation,
+) -> Result<Option<&'e StopReport>, InternalFault> {
+    let fault = || InternalFault::new("witness", "decision-path-node-recorded");
+    let mut node = projection.root();
+    loop {
+        let kind = projection.kind(node).ok_or_else(fault)?;
+        let location = projection.location(node).ok_or_else(fault)?;
+        match decisive_step(kind, || evaluation.decision(location).ok_or_else(fault))? {
+            DecisiveStep::Child(next) => node = *next,
+            DecisiveStep::Quantifier => return Ok(evaluation.stop(location)),
+            DecisiveStep::End => return Ok(None),
+        }
+    }
+}
+
+enum DecisiveStep<'a, N> {
+    Child(&'a N),
+    Quantifier,
+    End,
+}
+
+fn decisive_step<N, L>(
+    kind: &NodeKind<N, L>,
+    decision: impl FnOnce() -> Result<bool, InternalFault>,
+) -> Result<DecisiveStep<'_, N>, InternalFault> {
+    let next = match kind {
+        NodeKind::Let { body, .. } => body,
+        NodeKind::If {
+            then, otherwise, ..
+        } => {
+            if decision()? {
+                then
+            } else {
+                otherwise
+            }
+        }
+        NodeKind::Not(operand) => operand,
+        // A connective the checker synthesized (a float ordering's
+        // composition) records no decision: the path ends there.
+        NodeKind::Connective(_, ConnectiveOrigin::Synthesized, _, _) => {
+            return Ok(DecisiveStep::End)
+        }
+        NodeKind::Connective(connective, ConnectiveOrigin::Authored, left, right) => {
+            let left_value = decision()?;
+            let stopped_on_left = match connective {
+                Connective::And | Connective::Implies => !left_value,
+                Connective::Or => left_value,
+            };
+            if stopped_on_left {
+                left
+            } else {
+                right
+            }
+        }
+        NodeKind::Query {
+            visit: Visit::Forall | Visit::Exists,
+            ..
+        } => return Ok(DecisiveStep::Quantifier),
+        // ADR-031 SW-2: "The path ends at the first node of any other
+        // kind" -- the rule itself is the catch-all, so a node kind
+        // added later ends the walk too.
+        _ => return Ok(DecisiveStep::End),
+    };
+    Ok(DecisiveStep::Child(next))
 }
 
 fn closed_scope() -> Derived {

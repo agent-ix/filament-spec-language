@@ -21,7 +21,7 @@ use tl_syntax::{
 
 use super::{Result, RunCause};
 
-mod canonical;
+use fsl_replay::canonical_atom as canonical;
 mod package_observed;
 pub(super) use package_observed::PackageRun;
 
@@ -572,6 +572,9 @@ fn lowering_record(
         }
     };
     let mut lowered = Lowered::default();
+    if let Native::Source(valuation) = subject.native {
+        lowered.atom_identities = Some(&valuation.atom_identities);
+    }
     let root = lowered.lower(nodes, subject.root, &labels)?;
     let tl = lowered.document(classified, root)?;
     record.insert("disposition".to_owned(), json!("supported"));
@@ -681,14 +684,16 @@ impl LoweredFormula<'_> {
 
 /// A native formula lowered to a `tl-syntax` arena, operands first.
 #[derive(Default)]
-struct Lowered {
+struct Lowered<'a> {
     nodes: Vec<Node>,
     /// Each TL proposition's native `holds` node and its source text, in
     /// proposition order.
     atoms: Vec<(FormulaNodeId, String)>,
+    /// Source arena uses paired with the keys the producer actually lowered.
+    atom_identities: Option<&'a BTreeMap<FormulaNodeId, filament_exact::NodeKey>>,
 }
 
-impl Lowered {
+impl Lowered<'_> {
     /// The lowered arena as a `tl-syntax` document of the edition `target`
     /// reads: the bounded edition for the finite-trace targets, the unbounded
     /// edition for the infinite-trace one.
@@ -749,7 +754,23 @@ impl Lowered {
             FormulaNode::Constant(true) => NodeKind::True,
             FormulaNode::Constant(false) => NodeKind::False,
             FormulaNode::Holds { .. } => {
-                let index = match self.atoms.iter().position(|(atom, _)| *atom == id) {
+                let identity = self
+                    .atom_identities
+                    .map(|identities| {
+                        identities
+                            .get(&id)
+                            .ok_or_else(|| "holds atom has a producer-assigned identity".to_owned())
+                    })
+                    .transpose()?;
+                let index = match self.atoms.iter().position(|(atom, _)| {
+                    match (self.atom_identities, identity) {
+                        (Some(identities), Some(identity)) => {
+                            identities.get(atom) == Some(identity)
+                        }
+                        (None, None) => *atom == id,
+                        _ => false,
+                    }
+                }) {
                     Some(index) => index,
                     None => {
                         let text = labels

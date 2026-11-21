@@ -52,6 +52,8 @@ mod build_inventory;
 mod call_replay_context;
 mod call_requirements;
 mod call_site;
+/// Canonical checked-expression atom labels shared by lowering and reporting.
+pub mod canonical_atom;
 mod certificate;
 mod clause_evaluation;
 mod compile;
@@ -277,10 +279,11 @@ pub use identity::{
 };
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{
-    undefined_finding, ClaimPredicate, CounterexampleKind, Lasso, LoopProofCounterexample,
-    LoopProofFailure, LoopProofObligation, MappingSite, ModelStep, ObservedTemporalCounterexample,
-    ObservedTemporalKind, ObservedTemporalStep, Race, TemporalCounterexample, TimedPoint,
-    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    undefined_finding, ClaimPredicate, ClauseRunCounterexample, CounterexampleKind, Lasso,
+    LoopProofCounterexample, LoopProofFailure, LoopProofObligation, MappingSite,
+    ModelClauseCounterexample, ModelStep, ObservedTemporalCounterexample, ObservedTemporalKind,
+    ObservedTemporalStep, Race, TemporalCounterexample, TimedPoint, UndefinedEvaluation,
+    UndefinedLocus, UndefinedSite,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
 pub use model_check::existential_settle::{settle_existential, ExistentialRecord};

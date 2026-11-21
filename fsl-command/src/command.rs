@@ -14,6 +14,7 @@ mod output;
 mod output_file;
 mod package_run;
 pub mod plan;
+mod runtime_sources;
 pub use package_run::PreparedPackageRun;
 pub mod plan_request;
 mod replay;
@@ -3803,12 +3804,14 @@ fn with_request_limits<T>(
             sources: crate::Sources::default(),
         })
     })?;
-    action(path.parent().unwrap_or(Path::new(".")), &bytes).map_err(|cause| {
-        Box::new(RunError {
-            cause,
-            sources: crate::Sources::default(),
+    runtime_sources::validate_bytes(&bytes)
+        .and_then(|()| action(path.parent().unwrap_or(Path::new(".")), &bytes))
+        .map_err(|cause| {
+            Box::new(RunError {
+                cause,
+                sources: crate::Sources::default(),
+            })
         })
-    })
 }
 
 /// Request settings a caller supplies beside the request file rather than
@@ -3864,7 +3867,20 @@ fn request<T: wire::RequestKind>(bytes: &[u8]) -> Result<T> {
     if envelope.format != T::FORMAT.as_str() {
         return Err(RunCause::Format);
     }
-    let Object(request) = serde_json::from_str(envelope.request.get())?;
+    let Object(request): Object<T> =
+        serde_json::from_str(envelope.request.get()).map_err(|error| {
+            if T::FORMAT == fsl_foundation::wire_format::WireFormat::RunRequest
+                && error.to_string().starts_with("duplicate field `sources`")
+            {
+                RunCause::ClauseRequest {
+                    member: "/request/sources".to_owned(),
+                    reason: "repeated member".to_owned(),
+                }
+            } else {
+                RunCause::Json(error)
+            }
+        })?;
+    request.validate()?;
     Ok(request)
 }
 
@@ -3960,7 +3976,21 @@ fn prepare_run_bytes_with_sources(
     // FR-100, FR-1039: a selected checked package runs from its own records,
     // refusing every member that would restate them before any file is read.
     if let Some(package) = &request.package {
-        let prepared = package_run::prepare(directory, &request, package, dependent_bytes);
+        let progress_capacity = overrides.limits.map_or_else(
+            || {
+                fsl_replay::spine::SpineLimits::default()
+                    .progress
+                    .covered_positions
+            },
+            |limits| limits.progress.covered_positions,
+        );
+        let prepared = package_run::prepare(
+            directory,
+            &request,
+            package,
+            dependent_bytes,
+            progress_capacity,
+        );
         if let Ok(prepared) = &prepared {
             *admitted_sources = prepared.sources();
         }

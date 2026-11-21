@@ -47,6 +47,55 @@ pub fn run_package(
     objects: &ObjectEnvironment,
     cancel: &Cancel,
 ) -> Result<CallOutcome, Box<RunRefusal>> {
+    run_package_with_sources(package, call, objects, &[], cancel).outcome
+}
+
+/// A package call's original result beside any unavailable source attribution.
+/// Attribution does not replace the evaluated code, cause or fields.
+#[derive(Debug)]
+pub struct PackageCallResult {
+    /// The unchanged execution result, with a rendered locus when available.
+    pub outcome: Result<CallOutcome, Box<RunRefusal>>,
+    /// An admitted location whose occurrence attribution was unavailable.
+    pub attribution: Option<PackageSourceAttributionFailure>,
+}
+
+/// A source-attribution failure retained beside the original evaluated result.
+#[derive(Debug)]
+pub struct PackageSourceAttributionFailure {
+    /// The actual semantic location selected by evaluation.
+    pub selector: filament_semantic_value::location::ExpressionLocation,
+    /// The helper's original typed reason, without diagnostic normalization.
+    pub reason: fsl_package::occurrence_source::OccurrenceSourceRefusal,
+    /// The original budget denial, when a metered owner supplied one.
+    pub budget_context: Option<fsl_foundation::diagnostic::BudgetDenial>,
+}
+
+/// Run the admitted package with caller-admitted rendering sources. Source
+/// paths and text supply no package semantics or authentication.
+pub fn run_package_with_sources(
+    package: &BarePackage<'_>,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    sources: &[fsl_foundation::Source],
+    cancel: &Cancel,
+) -> PackageCallResult {
+    let attribution = std::cell::RefCell::new(None);
+    let outcome = run_package_resolving(package, call, objects, sources, cancel, &attribution);
+    PackageCallResult {
+        outcome,
+        attribution: attribution.into_inner(),
+    }
+}
+
+fn run_package_resolving(
+    package: &BarePackage<'_>,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    sources: &[fsl_foundation::Source],
+    cancel: &Cancel,
+    attribution: &std::cell::RefCell<Option<PackageSourceAttributionFailure>>,
+) -> Result<CallOutcome, Box<RunRefusal>> {
     // FR-296: a backend the caller did not supply refuses before any stage.
     SuppliedBackends::default()
         .member(call.backend)
@@ -129,9 +178,21 @@ pub fn run_package(
                 ))),
             }
         }
-        // The bytes carry no source, so a refusal's location resolves to no
-        // source region (FR-531 "Outputs").
-        _ => convert_outcome_resolving(evaluation, |_| None, &[]),
+        _ => convert_outcome_resolving(
+            evaluation,
+            |location| match projection.source_at_location(package, location) {
+                Ok(region) => region,
+                Err(reason) => {
+                    *attribution.borrow_mut() = Some(PackageSourceAttributionFailure {
+                        selector: location.clone(),
+                        reason,
+                        budget_context: None,
+                    });
+                    None
+                }
+            },
+            sources,
+        ),
     }
 }
 

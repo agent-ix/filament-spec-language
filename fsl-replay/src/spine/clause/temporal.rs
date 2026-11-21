@@ -39,9 +39,12 @@ use super::{
 use crate::proof_result::SettlementBasis;
 
 mod package_selection;
+mod package_window;
+mod source_render;
 pub use package_selection::{
     run_package_snapshots, PackageSelectionNotRead, PackageSnapshotRequest,
 };
+pub use package_window::PackageAtomAttributionFailure;
 
 /// FR-330 Inputs: the observations a temporal clause is run over, each a
 /// snapshot named by its labels (FR-106).
@@ -1190,8 +1193,11 @@ fn authenticate_bare_timed(
     name: &str,
     trace: &TraceInput,
 ) -> Result<Option<crate::spine::AuthenticatedTemporalSelection>, Box<ClauseDisposition>> {
-    let TraceInput::Timed { binding, .. } = trace else {
-        return Ok(None);
+    let (binding, derive) = match trace {
+        TraceInput::Timed { binding, .. } => (binding.as_ref(), binding.is_none()),
+        TraceInput::Progressed { binding, .. } => (Some(binding), false),
+        TraceInput::Timestamped { window, .. } => (window.binding.as_ref(), false),
+        _ => return Ok(None),
     };
     let row = package
         .temporal_clause_names()
@@ -1216,7 +1222,7 @@ fn authenticate_bare_timed(
             parameters: clock.clock.clone(),
         });
     authenticate_binding(
-        binding.as_ref().or(derived.as_ref()),
+        binding.or_else(|| derive.then_some(derived.as_ref()).flatten()),
         &subject,
         row.occurrence,
         package,
@@ -1442,6 +1448,14 @@ pub(crate) fn run_package_temporal_over(
 /// FR-330: one temporal clause a checked package carries, read over a trace of
 /// record samples through the package's own evaluator.
 pub struct PackageSampledRequest<'a> {
+    /// The owning admitted package and its retained dependency views.
+    pub package: &'a fsl_package::BarePackage<'a>,
+    /// Caller-admitted sources, without file intake or compilation.
+    pub sources: &'a [fsl_foundation::Source],
+    /// The caller's progress ledger, if the trace asserts progress.
+    pub ledger: Option<&'a ProgressLedger>,
+    /// The existing covered-position limit for the whole ledger admission.
+    pub progress_capacity: u64,
     /// The package's evaluator.
     pub evaluator: &'a dyn fsl_eval::simulation::model::ModelEvaluator,
     /// The temporal clause's declared name.
@@ -1454,8 +1468,8 @@ pub struct PackageSampledRequest<'a> {
     )>,
     /// The package's type environment, which types each sample.
     pub types: &'a filament_semantic_value::declaration::TypeEnvironment,
-    /// The samples, each position the canonical text of one record value; a
-    /// finite trace or a lasso with a non-empty loop.
+    /// The record samples as canonical value text in the selected finite,
+    /// lasso, timed, progressed or timestamped trace.
     pub trace: &'a TraceInput,
     /// The evaluation meter's accounting limits.
     pub accounting: filament_exact::ScalarLimits,
@@ -1506,6 +1520,21 @@ fn package_samples<'a>(
     ),
     Box<ClauseRunReport>,
 > {
+    package_samples_from(request, request.trace)
+}
+
+fn package_samples_from<'a>(
+    request: &PackageSampledRequest<'a>,
+    sampled_from: &TraceInput,
+) -> Result<
+    (
+        &'a fsl_semantics::check::CheckedTemporalClause,
+        &'a filament_exact::NodeKey,
+        Vec<Value>,
+        TemporalTrace,
+    ),
+    Box<ClauseRunReport>,
+> {
     let early = |disposition| disposition_report(disposition, ClauseRunUsage::default());
     let Some((clause, key)) = request.clause else {
         return Err(early(ClauseDisposition::MissingName {
@@ -1522,7 +1551,7 @@ fn package_samples<'a>(
         )));
     };
     let mut samples: Vec<Value> = Vec::new();
-    for (index, document) in request.trace.documents().enumerate() {
+    for (index, document) in sampled_from.documents().enumerate() {
         match fsl_semantics::model::observation::admit_record_sample(
             request.types,
             record,
@@ -1610,61 +1639,132 @@ fn package_disposition(
     }
 }
 
-/// FR-330: [`run_temporal`] over the record samples of a checked package's
-/// clause, for the one route the package form reads: a clause under the
-/// infinite-trace profile over a finite trace or a lasso. A refused condition
-/// reports the source route's refusal code and cause, with no source span.
-pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRunReport> {
-    run_sampled(request, None)
+/// FR-330: run the admitted package's temporal clause over record samples.
+/// Progress and clock-bearing traces authenticate against the package's own
+/// selected declaration. Names and loci read only caller-supplied sources.
+pub fn run_package_sampled(
+    request: &PackageSampledRequest<'_>,
+) -> Result<Box<ClauseRunReport>, PackageSelectionNotRead> {
+    run_sampled(request, Some(request.package.package()))
 }
 
 /// Run record samples with timed clock authentication from their admitted package.
 pub fn run_package_sampled_authenticated(
     request: &PackageSampledRequest<'_>,
     package: &filament_contract_model::CheckedPackageV2,
-) -> Box<ClauseRunReport> {
+) -> Result<Box<ClauseRunReport>, PackageSelectionNotRead> {
     run_sampled(request, Some(package))
 }
 
 fn run_sampled(
     request: &PackageSampledRequest<'_>,
     package: Option<&filament_contract_model::CheckedPackageV2>,
-) -> Box<ClauseRunReport> {
-    if let Some((clause, _)) = request.clause {
-        let site = super::trace_refusal::PackageClauseSite { clause };
-        if !super::trace_refusal::profile_reads(clause.profile()).contains(&request.trace.kind()) {
-            return disposition_report(
-                ClauseDisposition::TraceRefused(Box::new(site.kind_mismatch(request.trace.kind()))),
-                ClauseRunUsage::default(),
-            );
-        }
-        if let Some(refusal) = empty_trace_refusal(&site, request.trace) {
-            return disposition_report(
-                ClauseDisposition::TraceRefused(Box::new(refusal)),
-                ClauseRunUsage::default(),
-            );
-        }
+) -> Result<Box<ClauseRunReport>, PackageSelectionNotRead> {
+    let early = |disposition| Ok(disposition_report(disposition, ClauseRunUsage::default()));
+    let Some((clause, key)) = request.clause else {
+        return early(ClauseDisposition::MissingName {
+            name: request.name.to_owned(),
+        });
+    };
+    let site = super::trace_refusal::PackageClauseSite { clause };
+    if !super::trace_refusal::profile_reads(clause.profile()).contains(&request.trace.kind()) {
+        return early(ClauseDisposition::TraceRefused(Box::new(
+            site.kind_mismatch(request.trace.kind()),
+        )));
     }
     let authenticated = match package
         .map(|package| authenticate_bare_timed(package, request.name, request.trace))
         .transpose()
     {
         Ok(value) => value.flatten(),
-        Err(disposition) => return disposition_report(*disposition, ClauseRunUsage::default()),
+        Err(disposition) => return early(*disposition),
     };
-    let (clause, key, samples, shape) = match package_samples(request) {
-        Ok(read) => read,
-        Err(report) => return report,
+    let renamed = match indexed_samples(request.trace) {
+        Ok(trace) => trace,
+        Err(fault) => return early(ClauseDisposition::EvaluateFault(fault)),
     };
+    let listed = renamed.as_ref().unwrap_or(request.trace);
+    let screened = match package_window::screen(clause, listed) {
+        Ok(screened) => screened,
+        Err(disposition) => return early(disposition),
+    };
+    let trace = screened.as_ref().map_or(listed, |screened| &screened.trace);
+    if request.ledger.is_some() && !trace.carries_progress() {
+        return early(ClauseDisposition::TraceRefused(Box::new(
+            site.ledger_without_progress(),
+        )));
+    }
+    if let Some(refusal) = empty_trace_refusal(&site, trace) {
+        return early(ClauseDisposition::TraceRefused(Box::new(refusal)));
+    }
     let mut meter = Meter::new(request.accounting);
+    let progressed = match package_window::progressed(clause, trace, &mut meter) {
+        Ok(trace) => trace,
+        Err(disposition) => return early(disposition),
+    };
+    let kept;
+    let sampled_from = match (request.trace, screened.as_ref()) {
+        (TraceInput::Timestamped { observations, .. }, Some(screened)) => {
+            let TraceInput::Timestamped {
+                progress, window, ..
+            } = &screened.trace
+            else {
+                return Err(PackageSelectionNotRead::Selection {
+                    member: "clause.selection.trace",
+                    reason: "screening retains the timestamped trace kind".to_owned(),
+                });
+            };
+            kept = TraceInput::Timestamped {
+                observations: screened
+                    .kept
+                    .iter()
+                    .filter_map(|position| observations.get(*position).cloned())
+                    .collect(),
+                progress: *progress,
+                window: window.clone(),
+            };
+            &kept
+        }
+        _ => request.trace,
+    };
+    let (_, _, samples, _) = match package_samples_from(request, sampled_from) {
+        Ok(read) => read,
+        Err(report) => return Ok(report),
+    };
+    let Some(shape) = trace.shape() else {
+        return early(refused("invalid-value", BTreeMap::new()));
+    };
     let positions = fsl_eval::temporal::PackagePositions::Samples(&samples);
+    let context = package_window::Context::new(
+        request.package,
+        request.evaluator,
+        clause,
+        key,
+        request.name,
+        request.sources,
+    )?;
+    if trace.carries_progress() {
+        let mut finished = package_window::run(
+            &context,
+            positions,
+            trace,
+            screened.as_ref(),
+            progressed.as_ref(),
+            request.ledger,
+            request.progress_capacity,
+            AdmissionUsage::default(),
+            &mut meter,
+        )?;
+        finished.authenticated_temporal_selection = authenticated;
+        return Ok(Box::new(finished));
+    }
     let observed = if let TraceInput::Timed {
         prefix,
         repeat,
         period,
         through,
         ..
-    } = request.trace
+    } = trace
     {
         fsl_eval::temporal::evaluate_package_timed(
             request.evaluator,
@@ -1698,16 +1798,20 @@ fn run_sampled(
         )
     };
     let inactive = observed.inactive;
-    let (disposition, refused_at) =
-        package_disposition(observed.stopped, observed.result, inactive);
+    let (disposition, refused_at) = match observed.stopped {
+        Some(HoldsStop::Refused { at, evaluation }) => {
+            (context.refused(evaluation)?, Some(at.index()))
+        }
+        stopped => package_disposition(stopped, observed.result, inactive),
+    };
     let (disposition, counterexample) =
-        with_counterexample(clause, request.trace, disposition, observed.undefined);
+        with_counterexample(clause, trace, disposition, observed.undefined);
     let usage = ClauseRunUsage::from_meter(&meter, AdmissionUsage::default());
     let mut finished = disposition_report(disposition, usage);
-    finished.counterexample = counterexample;
+    finished.counterexample = counterexample.map(Into::into);
     finished.refused_at = refused_at;
     finished.authenticated_temporal_selection = authenticated;
-    finished
+    Ok(finished)
 }
 
 /// FR-820: FR-330's report of the sampled clause `node` over a `Finite` trace
@@ -1764,7 +1868,7 @@ pub(crate) fn streamed_sample_report(
         usage,
         ledger: None,
         finite_window: None,
-        counterexample,
+        counterexample: counterexample.map(Into::into),
         decisive: None,
         authenticated_temporal_selection: None,
         refused_at,
@@ -1789,7 +1893,7 @@ pub(crate) fn with_subject_counterexample(
     };
     if needs {
         match counterexample(node.clause(), trace, &report.disposition, first_undefined) {
-            Some(built) => report.counterexample = Some(built),
+            Some(built) => report.counterexample = Some(built.into()),
             None => {
                 report.disposition = ClauseDisposition::EvaluateFault(
                     filament_semantic_value::catalog::InternalFault::new(
@@ -1980,6 +2084,9 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             authenticated_temporal_selection,
         );
         finished.decisive = model.decisive;
+        finished.counterexample = model
+            .counterexample
+            .map(crate::ClauseRunCounterexample::Model);
         return finished;
     }
     let Some(shape) = trace.shape() else {
@@ -2298,7 +2405,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             with_counterexample(node.clause(), trace, disposition, timed.undefined);
         let usage = ClauseRunUsage::from_meter(&meter, admitted);
         let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
-        finished.counterexample = counterexample;
+        finished.counterexample = counterexample.map(Into::into);
         finished.refused_at = refused_at;
         return finished;
     }
@@ -2547,7 +2654,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
         finished.finite_window = window.report;
         finished.refused_at = window.refused_at;
-        finished.counterexample = counterexample;
+        finished.counterexample = counterexample.map(Into::into);
         finished.decisive = decisive;
         if accepted {
             finished.ledger = accepted_ledger.or_else(|| ledger.cloned());
@@ -2595,7 +2702,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
         finished.finite_window = window.report;
         finished.refused_at = window.refused_at;
-        finished.counterexample = counterexample;
+        finished.counterexample = counterexample.map(Into::into);
         if accepted {
             finished.ledger = accepted_ledger.or_else(|| ledger.cloned());
         }
@@ -2668,7 +2775,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     let mut usage = ClauseRunUsage::from_meter(&meter, admitted);
     usage.ledger_positions = u64::try_from(ledger_positions).unwrap_or(u64::MAX);
     let mut report = report(disposition, usage, authenticated_temporal_selection);
-    report.counterexample = counterexample;
+    report.counterexample = counterexample.map(Into::into);
     report.decisive = decisive;
     report.refused_at = refused_at;
     if accepted {
@@ -2736,16 +2843,53 @@ fn run_finite_window(
     trace_positions: &mut usize,
     meter: &mut Meter,
 ) -> WindowRun {
+    let classes = atom_classes(run, node);
+    let result: Result<WindowRun, std::convert::Infallible> = run_finite_window_core(
+        node.clause(),
+        &node.identity(),
+        (input, screened),
+        &classes,
+        admission,
+        trace_positions,
+        meter,
+        |trace, absent, meter| {
+            Ok(run_window(
+                run,
+                node,
+                trace,
+                (absent, None),
+                observing,
+                carried,
+                meter,
+            ))
+        },
+    );
+    match result {
+        Ok(window) => window,
+        Err(never) => match never {},
+    }
+}
+
+/// Shared canonical trace admission and late-data reporting for both routes.
+fn run_finite_window_core<E>(
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    key: &filament_exact::NodeKey,
+    (input, screened): (&Timestamped<'_>, Option<&super::late_data::Screened>),
+    classes: &[usize],
+    admission: Option<&std::cell::RefCell<CarriedAdmission>>,
+    trace_positions: &mut usize,
+    meter: &mut Meter,
+    evaluate: impl FnOnce(&TimestampedTrace, &[(u64, u64)], &mut Meter) -> Result<WindowRun, E>,
+) -> Result<WindowRun, E> {
     use fsl_eval::temporal::{
         LowerBoundary, TimestampedObservation as WindowObservation, Watermark, WindowClock,
         WindowProgress,
     };
     let fault = |invariant: &'static str| {
-        WindowRun::stopped(ClauseDisposition::EvaluateFault(
+        Ok(WindowRun::stopped(ClauseDisposition::EvaluateFault(
             filament_semantic_value::catalog::InternalFault::new("temporal", invariant),
-        ))
+        )))
     };
-    let clause = node.clause();
     let clock = WindowClock {
         name: clause.clock().to_owned(),
         profile: clause.profile().identity().to_string(),
@@ -2784,7 +2928,7 @@ fn run_finite_window(
     };
     // FR-522 "Result identity": the checked clause identity, the package
     // identity and the declaration, both of which its node key spells.
-    let Ok(clause_identity) = fsl_foundation::node_wire::node_key_to_text(&node.identity()) else {
+    let Ok(clause_identity) = fsl_foundation::node_wire::node_key_to_text(key) else {
         return fault("clause-node-key-has-a-text-spelling");
     };
     // FR-820: a carried state lists its positions in canonical order, each
@@ -2828,7 +2972,7 @@ fn run_finite_window(
         let Some(trace) = held.trace.as_ref() else {
             return fault("carried-timestamped-trace-is-held");
         };
-        return run_window(run, node, trace, (&[], None), observing, carried, meter);
+        return evaluate(trace, &[], meter);
     }
     *trace_positions = input.observations.len();
     let ordered = ordered_timestamped_positions(input);
@@ -2872,7 +3016,6 @@ fn run_finite_window(
     };
     // Nodes whose `holds` conditions read the same in the unit are one atom
     // and share one valuation at a position.
-    let classes = atom_classes(run, node);
     let same_atom = |valuations: Vec<(u64, u64)>| -> Vec<(u64, u64)> {
         valuations
             .iter()
@@ -2890,15 +3033,7 @@ fn run_finite_window(
             .collect()
     };
     let absent = same_atom(canonical(&input.window.missing_valuations));
-    let mut window = run_window(
-        run,
-        node,
-        &trace,
-        (&absent, None),
-        observing,
-        carried,
-        meter,
-    );
+    let mut window = evaluate(&trace, &absent, meter)?;
     if let (Some(screened), Some(report)) = (screened, window.report.as_mut()) {
         let reach = match fsl_eval::temporal::window_reach(
             &fsl_eval::temporal::evidence::ClauseFacts::of_checked(clause),
@@ -2928,7 +3063,7 @@ fn run_finite_window(
         report.admitted_late.clone_from(&screened.admitted);
         report.unmatched_admissions.clone_from(&screened.unmatched);
     }
-    window
+    Ok(window)
 }
 
 /// FR-501, FR-504: evaluate `clause` over the admitted `trace` and report its
@@ -2997,8 +3132,13 @@ fn run_window(
             WindowRun::stopped(refusal_disposition(*convert_call_failure(failure)))
         }
         (None, Ok(evaluation)) => {
+            let regions = std::cell::RefCell::new(BTreeMap::new());
+            let named_region = std::cell::RefCell::new(None);
             let names = |atom: fsl_semantics::check::FormulaNodeId| {
-                atom_name(run.package, run.sources, node, atom)
+                let rendered = source_render::atom_name(run.package, run.sources, node, atom)?;
+                regions.borrow_mut().insert(atom, rendered.region.clone());
+                *named_region.borrow_mut() = Some(rendered.region);
+                Ok::<_, Box<RunRefusal>>(rendered.name)
             };
             let fsl_eval::temporal::WindowEvaluation {
                 verdict,
@@ -3007,24 +3147,28 @@ fn run_window(
                 premises,
                 identity,
                 visits,
+                undefined_atom,
             } = evaluation;
-            let verdict = match window_verdict(verdict, &names, guard_location(node)) {
-                Ok(Some(verdict)) => verdict,
-                Ok(None) => {
-                    return WindowRun::stopped(ClauseDisposition::EvaluateFault(
-                        filament_semantic_value::catalog::InternalFault::new(
-                            "temporal",
-                            "unresolved-guard-has-a-guard",
-                        ),
-                    ));
-                }
-                Err(refusal) => return WindowRun::stopped(refusal_disposition(*refusal)),
-            };
-            let report = match finite_window_report(run, node, (basis, support, premises, identity))
-            {
-                Ok(report) => report,
-                Err(refusal) => return WindowRun::stopped(refusal_disposition(*refusal)),
-            };
+            let verdict =
+                match window_verdict(verdict, &names, guard_location(node), undefined_atom) {
+                    Ok(Some(verdict)) => verdict,
+                    Ok(None) => {
+                        return WindowRun::stopped(ClauseDisposition::EvaluateFault(
+                            filament_semantic_value::catalog::InternalFault::new(
+                                "temporal",
+                                "named-window-evaluation-retains-its-attribution",
+                            ),
+                        ));
+                    }
+                    Err(refusal) => return WindowRun::stopped(refusal_disposition(*refusal)),
+                };
+            let mut report =
+                match finite_window_report(run, node, (basis, support, premises, identity)) {
+                    Ok(report) => report,
+                    Err(refusal) => return WindowRun::stopped(refusal_disposition(*refusal)),
+                };
+            report.atom_regions.extend(regions.into_inner());
+            report.named_atom_region = named_region.into_inner();
             WindowRun {
                 disposition: ClauseDisposition::Temporal(verdict),
                 visits,
@@ -3143,10 +3287,10 @@ fn with_decisive(
 /// [`with_decisive`] reading the decisive record of the atom the search
 /// found through `record` (FR-820: a carried snapshot state reads it from the
 /// snapshot it holds).
-pub(crate) fn with_decisive_by(
+pub(crate) fn with_decisive_by<C>(
     search: Option<DecisiveSearch>,
     disposition: ClauseDisposition,
-    counterexample: Option<crate::ObservedTemporalCounterexample>,
+    counterexample: Option<C>,
     record: impl FnOnce(
         DecisiveAtom,
         &mut Meter,
@@ -3154,7 +3298,7 @@ pub(crate) fn with_decisive_by(
     meter: &mut Meter,
 ) -> (
     ClauseDisposition,
-    Option<crate::ObservedTemporalCounterexample>,
+    Option<C>,
     Option<crate::TemporalDecisive>,
 ) {
     let stopped = |disposition| (disposition, None, None);
@@ -3359,7 +3503,7 @@ fn with_counterexample(
 /// The first `Steps` interval of the clause's operators, in operator order.
 /// A time-bounded operator's interval names ticks, not trace positions, and
 /// FR-364's observed arm carries none.
-fn step_interval(
+pub(super) fn step_interval(
     clause: &fsl_semantics::check::CheckedTemporalClause,
 ) -> Option<fsl_foundation::bound::TemporalInterval> {
     clause
@@ -3460,37 +3604,27 @@ fn counterexample(
 /// Each formula node's atom class: the index of the first `holds` node whose
 /// condition reads the same in the unit, or the node's own index.
 fn atom_classes(
-    run: &CompiledRun<'_>,
+    _run: &CompiledRun<'_>,
     node: &fsl_semantics::check::TemporalClauseNode,
 ) -> Vec<usize> {
     let nodes = node.clause().formula().nodes();
-    let source = clause_source(run.package, run.sources, node);
-    let text = |index: usize| match nodes.get(index) {
-        Some(FormulaNode::Holds { span }) => source.and_then(|source| source.slice(*span)),
-        _ => None,
-    };
     (0..nodes.len())
-        .map(|index| match text(index) {
-            Some(own) => (0..index)
-                .find(|earlier| text(*earlier) == Some(own))
-                .unwrap_or(index),
-            None => index,
+        .map(|index| {
+            if !matches!(nodes.get(index), Some(FormulaNode::Holds { .. })) {
+                return index;
+            }
+            let key =
+                node.formula_node_key(fsl_semantics::check::FormulaNodeId::from_arena_index(index));
+            key.and_then(|key| {
+                (0..index).find(|earlier| {
+                    node.formula_node_key(fsl_semantics::check::FormulaNodeId::from_arena_index(
+                        *earlier,
+                    )) == Some(key)
+                })
+            })
+            .unwrap_or(index)
         })
         .collect()
-}
-
-/// The supplied source the clause `node` is declared in: the element of
-/// `run.sources` whose reference equals its declaration's region (FR-283
-/// "Behavior"), when one is supplied.
-fn clause_source<'a>(
-    package: &fsl_package::CheckedPackage,
-    sources: &'a [Source],
-    node: &fsl_semantics::check::TemporalClauseNode,
-) -> Option<&'a Source> {
-    let reference = clause_source_ref(package, node)?;
-    sources
-        .iter()
-        .find(|source| source.reference() == &reference)
 }
 
 /// The source the clause `node` is declared in, as its declaration's region
@@ -3515,15 +3649,37 @@ fn guard_location(
 fn finite_window_report(
     run: &CompiledRun<'_>,
     node: &fsl_semantics::check::TemporalClauseNode,
-    (basis, support, premises, identity): (
+    parts: (
         fsl_eval::temporal::Basis,
         Vec<fsl_eval::temporal::SupportPair>,
         fsl_eval::temporal::Premises,
         fsl_eval::temporal::ResultIdentity,
     ),
 ) -> Result<FiniteWindowReport, Box<RunRefusal>> {
+    let regions = std::cell::RefCell::new(BTreeMap::new());
+    let mut report = finite_window_report_named(parts, evidence_key(run, node)?, &|atom| {
+        let rendered = source_render::atom_name(run.package, run.sources, node, atom)?;
+        regions.borrow_mut().insert(atom, rendered.region);
+        Ok::<_, Box<RunRefusal>>(rendered.name)
+    })?;
+    report.atom_regions = regions.into_inner();
+    Ok(report)
+}
+
+fn finite_window_report_named<E>(
+    (basis, support, premises, identity): (
+        fsl_eval::temporal::Basis,
+        Vec<fsl_eval::temporal::SupportPair>,
+        fsl_eval::temporal::Premises,
+        fsl_eval::temporal::ResultIdentity,
+    ),
+    key: super::correction::EvidenceKey,
+    names: &dyn Fn(fsl_semantics::check::FormulaNodeId) -> Result<String, E>,
+) -> Result<FiniteWindowReport, E> {
     use fsl_eval::temporal::{Assessment, Basis, ClockCover, LowerBoundary};
     Ok(FiniteWindowReport {
+        atom_regions: BTreeMap::new(),
+        named_atom_region: None,
         basis: match basis {
             Basis::ClosedScope => SettlementBasis::ClosedScope,
             Basis::DecisiveWitness => SettlementBasis::DecisiveWitness,
@@ -3536,10 +3692,10 @@ fn finite_window_report(
             .map(|pair| {
                 Ok(FiniteWindowSupport {
                     position: pair.position.index(),
-                    atom: atom_name(run.package, run.sources, node, pair.atom)?,
+                    atom: names(pair.atom)?,
                 })
             })
-            .collect::<Result<_, Box<RunRefusal>>>()?,
+            .collect::<Result<_, E>>()?,
         premises: FiniteWindowPremises {
             scope: premises.scope.into(),
             execution: premises.execution.into(),
@@ -3562,7 +3718,7 @@ fn finite_window_report(
         admitted_late: Vec::new(),
         unmatched_admissions: Vec::new(),
         correction: None,
-        key: evidence_key(run, node)?,
+        key,
     })
 }
 
@@ -3604,35 +3760,50 @@ pub(super) fn atom_name(
     node: &fsl_semantics::check::TemporalClauseNode,
     atom: fsl_semantics::check::FormulaNodeId,
 ) -> Result<String, Box<RunRefusal>> {
-    let Some(FormulaNode::Holds { span } | FormulaNode::Aggregate { span }) =
-        node.clause().formula().nodes().get(atom.index()).cloned()
-    else {
-        // An atom is a `holds` or aggregate node; FR-283 never names one by
-        // its formula node index.
-        return Err(Box::new(RunRefusal::Fault(
+    source_render::atom_name(package, sources, node, atom).map(|rendered| rendered.name)
+}
+
+/// Caller text or canonical shared text beside its actual selected source region.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderedClauseAtom {
+    /// The monitor atom name under FR-283.
+    pub name: String,
+    /// The unique expression or actual coarser claim declaration region.
+    pub region: fsl_foundation::source::provenance::SourceRegion,
+}
+
+/// Render an atom and retain the exact region selected by FR-283's rules.
+///
+/// # Errors
+/// Returns the same source and selection refusals as [`name_clause_atom`].
+pub fn render_clause_atom(
+    package: &fsl_package::CheckedPackage,
+    sources: &[Source],
+    name: &str,
+    atom: usize,
+) -> Result<RenderedClauseAtom, Box<RunRefusal>> {
+    let node = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == name)
+        .ok_or_else(|| {
+            Box::new(RunRefusal::Fault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "monitor",
+                    "named-atom-clause-is-declared",
+                ),
+            ))
+        })?;
+    let atom = node.clause().formula().node_id(atom).ok_or_else(|| {
+        Box::new(RunRefusal::Fault(
             filament_semantic_value::catalog::InternalFault::new(
-                "temporal",
-                "named-atom-is-a-holds-or-aggregate-node",
+                "monitor",
+                "named-atom-is-a-formula-node",
             ),
-        )));
-    };
-    let Some(reference) = clause_source_ref(package, node) else {
-        return Err(Box::new(RunRefusal::Fault(
-            filament_semantic_value::catalog::InternalFault::new(
-                "temporal",
-                "clause-declaration-has-a-region",
-            ),
-        )));
-    };
-    let text = clause_source(package, sources, node).and_then(|source| source.slice(span));
-    text.map(str::to_owned).ok_or_else(|| {
-        Box::new(RunRefusal::SourceNotSupplied {
-            reference: fsl_foundation::SourceIdentity::new(
-                reference.authority(),
-                reference.identity(),
-            ),
-        })
-    })
+        ))
+    })?;
+    source_render::atom_name(package, sources, node, atom)
 }
 
 /// FR-283 "Behavior": the name of the atom with formula occurrence `atom` of
@@ -3669,11 +3840,12 @@ pub fn name_clause_atom(
 
 /// The spine's own form of the finite-window evaluator's verdict
 /// (FR-100-AC-8).
-fn window_verdict(
+fn window_verdict<E>(
     verdict: fsl_eval::temporal::WindowVerdict,
-    names: &dyn Fn(fsl_semantics::check::FormulaNodeId) -> Result<String, Box<RunRefusal>>,
+    names: &dyn Fn(fsl_semantics::check::FormulaNodeId) -> Result<String, E>,
     guard: Option<filament_semantic_value::location::ExpressionLocation>,
-) -> Result<Option<TemporalVerdict>, Box<RunRefusal>> {
+    undefined_atom: Option<fsl_semantics::check::FormulaNodeId>,
+) -> Result<Option<TemporalVerdict>, E> {
     use fsl_eval::temporal::{IndeterminateReason, WindowVerdict};
     Ok(Some(match verdict {
         WindowVerdict::Holds => TemporalVerdict::Holds,
@@ -3709,6 +3881,23 @@ fn window_verdict(
                 IndeterminateReason::StraddlesBound => TemporalIndeterminateReason::StraddlesBound,
             },
         },
+        WindowVerdict::Undefined(UndefinedEvaluation {
+            at,
+            cause: UndefinedCause::InsufficientData(data),
+        }) => {
+            let Some(atom) = undefined_atom else {
+                return Ok(None);
+            };
+            names(atom)?;
+            TemporalVerdict::Undefined {
+                at: at.index(),
+                cause: TemporalUndefinedCause::InsufficientData {
+                    atom: atom.index(),
+                    count: data.count,
+                    min_count: data.min_count,
+                },
+            }
+        }
         WindowVerdict::Undefined(undefined) => verdict_of_undefined(undefined),
         WindowVerdict::Incomplete(incomplete) => TemporalVerdict::Incomplete(incomplete),
         WindowVerdict::WindowLimitReached(reached) => TemporalVerdict::WindowLimitReached {
@@ -3802,6 +3991,13 @@ pub struct FiniteWindowReport {
     pub basis: SettlementBasis,
     /// The decision support, as `(position, atom)` pairs.
     pub support: Vec<FiniteWindowSupport>,
+    /// Actual source regions of the named checked atoms, keyed by producer formula id.
+    pub atom_regions: BTreeMap<
+        fsl_semantics::check::FormulaNodeId,
+        fsl_foundation::source::provenance::SourceRegion,
+    >,
+    /// Region of the atom named by an indeterminate verdict, when one is named.
+    pub named_atom_region: Option<fsl_foundation::source::provenance::SourceRegion>,
     /// The premises.
     pub premises: FiniteWindowPremises,
     /// The result identity: a content identity over the inputs.

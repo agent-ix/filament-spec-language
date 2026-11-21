@@ -2296,18 +2296,21 @@ pub(super) fn reexecute(
 /// enabled, and one whose replayed result differs from the recorded one
 /// (ADR-027 PX-2's send record; a model step records no result).
 struct StepRules<T> {
+    same_identity: fn(&T, &T) -> bool,
     not_enabled: fn(usize, &T) -> ModelTraceRefusal,
     result: fn(usize, &T, &T) -> Option<ModelTraceRefusal>,
 }
 
 /// The rules of a model step.
 const MODEL_STEPS: StepRules<ModelTransition> = StepRules {
+    same_identity: crate::certificate::task_product::same_source_transition,
     not_enabled: model_not_enabled,
     result: |_, _, _| None,
 };
 
 /// The rules of a protocol step.
 const PROTOCOL_STEPS: StepRules<ProtocolTransition> = StepRules {
+    same_identity: |left, right| left == right,
     not_enabled: protocol_not_enabled,
     result: protocol_result,
 };
@@ -2405,7 +2408,7 @@ fn replay_prefix_stopped_with_mismatch_explanation<S: SubjectSystem>(
         let mut reached = None;
         let mut state_keys = Vec::new();
         for (transition, next) in expansion.successors {
-            if transition != step.transition {
+            if !(rules.same_identity)(&transition, &step.transition) {
                 continue;
             }
             enabled = true;
@@ -2695,6 +2698,10 @@ fn check_formula<S: SubjectSystem>(
 /// behaviour supplied as a request, not as a counterexample to settle.
 #[derive(Debug)]
 pub struct ModelTraceRun {
+    /// The typed reference actually bound in the admitted initial state.
+    pub bound_over: Option<filament_exact::ObjectReference>,
+    /// The actual final state's canonical key, including an initial terminal state.
+    pub terminal_state: fsl_eval::simulation::StateKey,
     /// The original package call failure, before the letter engine boundary.
     pub call_failure: Option<filament_eval::CallFailure>,
     /// What the FR-329 (or FR-328, for a finite prefix) evaluator returned.
@@ -2787,7 +2794,27 @@ pub fn evaluate_model_trace(
         }
         _ => None,
     };
+    let initial = positions
+        .first()
+        .ok_or_else(|| fault("a-replayed-initial-state-exists"))?;
+    let bound_over = payload
+        .over_binding
+        .as_ref()
+        .map(|instance| {
+            letters
+                .over_reference(instance, &system.atom_state(&initial.state))
+                .map_err(|_| fault("the-replayed-clause-binding-is-readable"))
+        })
+        .transpose()?
+        .flatten();
+    let terminal_state = positions
+        .last()
+        .ok_or_else(|| fault("a-replayed-final-state-exists"))?
+        .state_key
+        .clone();
     Ok(ModelTraceEnd::Evaluated(Box::new(ModelTraceRun {
+        bound_over,
+        terminal_state,
         call_failure: letters.take_call_failure(),
         outcome,
         decisive,

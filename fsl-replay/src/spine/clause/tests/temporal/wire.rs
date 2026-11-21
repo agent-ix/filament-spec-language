@@ -119,7 +119,11 @@ fn a_lasso_violation_writes_its_observed_counterexample() {
         panic!("a violated row");
     };
     assert_eq!(*position, 0);
-    let expected = violation.counterexample.as_ref().expect("a counterexample");
+    let crate::ClauseRunCounterexample::Observed(expected) =
+        violation.counterexample.as_ref().expect("a counterexample")
+    else {
+        panic!("an observed counterexample");
+    };
     assert_eq!(
         counterexample
             .loop_documents()
@@ -772,7 +776,10 @@ fn insufficient_data_window_limit_and_family_undefined_rows_round_trip() {
     let Some(crate::ObservedTemporalKind::UndefinedEvaluation { cause, .. }) = absent
         .counterexample
         .as_mut()
-        .map(|counterexample| &mut counterexample.kind)
+        .and_then(|counterexample| match counterexample {
+            crate::ClauseRunCounterexample::Observed(observed) => Some(&mut observed.kind),
+            crate::ClauseRunCounterexample::Model(_) => None,
+        })
     else {
         panic!("an undefined-evaluation counterexample");
     };
