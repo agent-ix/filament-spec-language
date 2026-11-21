@@ -3,10 +3,12 @@
 
 use filament_contract_model::{
     CheckedComponentClause, CheckedCompositionComponent, CheckedCompositionPremise,
-    CheckedEnvironmentEntry, CheckedFairnessSupply, CheckedNodeId, CheckedOccurrence,
-    CheckedOccurrenceRole, CheckedPackageV2, CheckedTerm, ClaimNameRow,
+    CheckedEnvironmentEntry, CheckedFairnessSupply, CheckedNodeId, CheckedNodePathSegment,
+    CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry, CheckedPackageV2, CheckedTerm,
+    ClaimNameRow, NativeJoinBudget, NativeJoinLocus,
 };
 
+use crate::native_row::{self, NativeRowError};
 use crate::occurrence_source::{self, OccurrenceSource, OccurrenceSourceRefusal};
 
 /// Why an admitted node cannot supply the requested composition fact.
@@ -33,6 +35,61 @@ pub enum CompositionViewRefusal {
     /// The selected occurrence lacks its exact admitted source attribution.
     #[error(transparent)]
     Source(#[from] OccurrenceSourceRefusal),
+    /// The invocation's existing native work or logical storage was exhausted.
+    #[error(transparent)]
+    Native(#[from] NativeRowError),
+}
+
+impl From<occurrence_source::MeteredOccurrenceSourceRefusal> for CompositionViewRefusal {
+    fn from(value: occurrence_source::MeteredOccurrenceSourceRefusal) -> Self {
+        match value {
+            occurrence_source::MeteredOccurrenceSourceRefusal::Source(source) => {
+                Self::Source(source)
+            }
+            occurrence_source::MeteredOccurrenceSourceRefusal::Native(native) => {
+                Self::Native(native)
+            }
+        }
+    }
+}
+
+struct ProjectionWork<'a> {
+    budget: Option<&'a mut NativeJoinBudget>,
+    locus: Option<NativeJoinLocus>,
+}
+
+impl<'a> ProjectionWork<'a> {
+    fn unmetered() -> Self {
+        Self {
+            budget: None,
+            locus: None,
+        }
+    }
+    fn metered(budget: &'a mut NativeJoinBudget) -> Result<Self, CompositionViewRefusal> {
+        let locus = native_row::start(budget, "component_composition")?;
+        Ok(Self {
+            budget: Some(budget),
+            locus: Some(locus),
+        })
+    }
+    fn visit(&mut self) -> Result<(), CompositionViewRefusal> {
+        if let (Some(budget), Some(locus)) = (&mut self.budget, self.locus) {
+            native_row::work(budget, locus, 1)?;
+        }
+        Ok(())
+    }
+    fn node(&mut self, node: &CheckedNodeId) -> Result<(), CompositionViewRefusal> {
+        if let (Some(budget), Some(locus)) = (&mut self.budget, self.locus) {
+            native_row::node(budget, locus, node)?;
+        }
+        Ok(())
+    }
+    fn text(&mut self, text: &str) -> Result<(), CompositionViewRefusal> {
+        if let (Some(budget), Some(locus)) = (&mut self.budget, self.locus) {
+            native_row::text(budget, locus, text)?;
+        }
+        Ok(())
+    }
 }
 
 /// A resolved reference together with its exact admitted owning package.
@@ -147,6 +204,22 @@ impl<'p> CompositionView<'p> {
     pub fn members(
         &self,
     ) -> impl Iterator<Item = Result<CompositionMember<'p>, CompositionViewRefusal>> + '_ {
+        self.members_with_work(Ok(ProjectionWork::unmetered()))
+    }
+
+    /// Read each visited member's attribution against the same cumulative
+    /// native budget as admission and projection. Denial precedes its work.
+    pub fn members_with_budget<'a>(
+        &'a self,
+        budget: &'a mut NativeJoinBudget,
+    ) -> impl Iterator<Item = Result<CompositionMember<'p>, CompositionViewRefusal>> + 'a {
+        self.members_with_work(ProjectionWork::metered(budget))
+    }
+
+    fn members_with_work<'a>(
+        &'a self,
+        mut work: Result<ProjectionWork<'a>, CompositionViewRefusal>,
+    ) -> impl Iterator<Item = Result<CompositionMember<'p>, CompositionViewRefusal>> + 'a {
         self.components
             .iter()
             .map(CompositionMemberValue::Component)
@@ -168,18 +241,30 @@ impl<'p> CompositionView<'p> {
                     .map(CompositionMemberValue::Environment),
             )
             .enumerate()
-            .map(|(index, value)| {
+            .map(move |(index, value)| {
+                let work = work.as_mut().map_err(|error| error.clone())?;
+                work.visit()?;
                 let occurrence = CheckedOccurrence {
                     role: CheckedOccurrenceRole::Generated,
                     ordinal: u64::try_from(index)
                         .map_err(|_| CompositionViewRefusal::MemberOrdinal)?,
                 };
-                let source = occurrence_source::occurrence_source(
-                    self.package,
-                    self.node,
-                    &occurrence,
-                    None,
-                )?;
+                let source = match &mut work.budget {
+                    Some(budget) => occurrence_source::composition_occurrence_source(
+                        self.package,
+                        self.node,
+                        &occurrence,
+                        self.source.occurrence.node(),
+                        budget,
+                    )
+                    .map_err(CompositionViewRefusal::from)?,
+                    None => occurrence_source::occurrence_source(
+                        self.package,
+                        self.node,
+                        &occurrence,
+                        None,
+                    )?,
+                };
                 Ok(CompositionMember {
                     value,
                     occurrence,
@@ -193,8 +278,26 @@ impl<'p> CompositionView<'p> {
         &self,
         component: &str,
     ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
-        let component = self.component(component)?;
-        self.target(component, &component.subject)
+        self.component_subject_with_work(component, &mut ProjectionWork::unmetered())
+    }
+
+    /// Resolve a subject while charging actual component/dependency visits
+    /// and the small held reference copy to the caller's native budget.
+    pub fn component_subject_with_budget(
+        &self,
+        component: &str,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
+        self.component_subject_with_work(component, &mut ProjectionWork::metered(budget)?)
+    }
+
+    fn component_subject_with_work(
+        &self,
+        name: &str,
+        work: &mut ProjectionWork<'_>,
+    ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
+        let component = self.component(name, work)?;
+        self.target(component, &component.subject, work)
     }
 
     /// Resolve a component clause from this composition's typed body in the
@@ -203,43 +306,94 @@ impl<'p> CompositionView<'p> {
         &self,
         clause: &CheckedComponentClause,
     ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
-        let admitted = self
-            .guarantees
-            .iter()
-            .chain(
-                self.relies
-                    .iter()
-                    .chain(self.liveness_dependencies.iter())
-                    .flat_map(|premise| [&premise.guarantee, &premise.on]),
-            )
-            .any(|entry| std::ptr::eq(entry, clause));
+        self.clause_with_work(clause, &mut ProjectionWork::unmetered())
+    }
+
+    /// Resolve an admitted clause using the caller's cumulative work/storage
+    /// budget, preserving native limit denials as typed refusals.
+    pub fn clause_with_budget(
+        &self,
+        clause: &CheckedComponentClause,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
+        self.clause_with_work(clause, &mut ProjectionWork::metered(budget)?)
+    }
+
+    fn clause_with_work(
+        &self,
+        clause: &CheckedComponentClause,
+        work: &mut ProjectionWork<'_>,
+    ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
+        let candidates = self.guarantees.iter().chain(
+            self.relies
+                .iter()
+                .chain(self.liveness_dependencies.iter())
+                .flat_map(|premise| [&premise.guarantee, &premise.on]),
+        );
+        let mut admitted = false;
+        for entry in candidates {
+            work.visit()?;
+            if std::ptr::eq(entry, clause) {
+                admitted = true;
+                break;
+            }
+        }
         if !admitted {
             return Err(CompositionViewRefusal::UnknownTarget);
         }
-        let component = self.component(&clause.component)?;
-        self.target(component, &clause.clause)
+        let component = self.component(&clause.component, work)?;
+        self.target(component, &clause.clause, work)
     }
 
     fn component(
         &self,
         name: &str,
+        work: &mut ProjectionWork<'_>,
     ) -> Result<&'p CheckedCompositionComponent, CompositionViewRefusal> {
-        self.components
-            .iter()
-            .find(|component| component.name.as_ref() == name)
-            .ok_or(CompositionViewRefusal::UnknownComponent)
+        for component in self.components {
+            work.visit()?;
+            if component.name.as_ref() == name {
+                return Ok(component);
+            }
+        }
+        Err(CompositionViewRefusal::UnknownComponent)
     }
 
     fn target(
         &self,
         component: &CheckedCompositionComponent,
         target: &CheckedNodeId,
+        work: &mut ProjectionWork<'_>,
     ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
-        let owner = self
-            .package
-            .direct_dependencies()
-            .find(|owner| owner.name() == component.package.as_ref())
-            .ok_or(CompositionViewRefusal::MissingOwner)?;
+        let mut owner = None;
+        for dependency in self.package.direct_dependencies() {
+            work.visit()?;
+            if dependency.name() == component.package.as_ref() {
+                owner = Some(dependency);
+                break;
+            }
+        }
+        let owner = owner.ok_or(CompositionViewRefusal::MissingOwner)?;
+        work.node(target)?;
+        // resolve_node_held copies dependency operand package strings, while
+        // local index/structural operands retain shared handles.
+        for segment in &target.path {
+            if let CheckedNodePathSegment::Operand(slot) = segment {
+                let operand = usize::try_from(*slot)
+                    .ok()
+                    .and_then(|slot| {
+                        self.package
+                            .resolved_graph()
+                            .operand_rows
+                            .get(self.holder)
+                            .and_then(|row| row.get(slot))
+                    })
+                    .ok_or(CompositionViewRefusal::UnknownTarget)?;
+                if let CheckedOperandEntry::Dependency(operand) = operand {
+                    work.text(&operand.package)?;
+                }
+            }
+        }
         let reference = self
             .package
             .resolve_node_held(self.holder, target)
@@ -258,13 +412,31 @@ pub(crate) fn composition_view<'p>(
     package: &'p CheckedPackageV2,
     selected: &CheckedNodeId,
 ) -> Result<CompositionView<'p>, CompositionViewRefusal> {
-    let (holder, node) = package
-        .resolved_graph()
-        .nodes
-        .iter()
-        .enumerate()
-        .find(|(_, node)| node.node_id == *selected)
-        .ok_or(CompositionViewRefusal::NotComposition)?;
+    composition_view_with_work(package, selected, &mut ProjectionWork::unmetered())
+}
+
+pub(crate) fn composition_view_with_budget<'p>(
+    package: &'p CheckedPackageV2,
+    selected: &CheckedNodeId,
+    budget: &mut NativeJoinBudget,
+) -> Result<CompositionView<'p>, CompositionViewRefusal> {
+    composition_view_with_work(package, selected, &mut ProjectionWork::metered(budget)?)
+}
+
+fn composition_view_with_work<'p>(
+    package: &'p CheckedPackageV2,
+    selected: &CheckedNodeId,
+    work: &mut ProjectionWork<'_>,
+) -> Result<CompositionView<'p>, CompositionViewRefusal> {
+    let mut found = None;
+    for (holder, node) in package.resolved_graph().nodes.iter().enumerate() {
+        work.visit()?;
+        if node.node_id == *selected {
+            found = Some((holder, node));
+            break;
+        }
+    }
+    let (holder, node) = found.ok_or(CompositionViewRefusal::NotComposition)?;
     let CheckedTerm::ComponentComposition {
         rule,
         components,
@@ -283,13 +455,34 @@ pub(crate) fn composition_view<'p>(
         role: CheckedOccurrenceRole::Declaration,
         ordinal: 0,
     };
-    let name = package
-        .claim_names()
-        .unwrap_or_default()
-        .iter()
-        .find(|row| row.declaration == node.node_id && row.occurrence == occurrence)
-        .ok_or(CompositionViewRefusal::MissingName)?;
-    let source = occurrence_source::occurrence_source(package, &node.node_id, &occurrence, None)?;
+    let mut name = None;
+    for row in package.claim_names().unwrap_or_default() {
+        work.visit()?;
+        if row.declaration == node.node_id && row.occurrence == occurrence {
+            name = Some(row);
+            break;
+        }
+    }
+    let name = name.ok_or(CompositionViewRefusal::MissingName)?;
+    let source = if work.budget.is_some() {
+        let structural = package
+            .structural_key(&node.node_id)
+            .ok_or(CompositionViewRefusal::NotComposition)?;
+        work.node(structural)?;
+        let key = fsl_semantics::check::wire_id::node_key(structural)
+            .map_err(|_| CompositionViewRefusal::NotComposition)?;
+        occurrence_source::composition_occurrence_source(
+            package,
+            &node.node_id,
+            &occurrence,
+            &key,
+            work.budget
+                .as_deref_mut()
+                .ok_or(CompositionViewRefusal::NotComposition)?,
+        )?
+    } else {
+        occurrence_source::occurrence_source(package, &node.node_id, &occurrence, None)?
+    };
     Ok(CompositionView {
         package,
         node: &node.node_id,
