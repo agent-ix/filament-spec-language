@@ -610,6 +610,15 @@ fn package_await_ineligible_matches_refuse_in_both_routes() {
         assert_eq!(baseline.item(0), source.item(0), "{}", baseline.document());
         assert_eq!(baseline.exit, source.exit);
         let mut wire: Value = serde_json::from_slice(&bytes).expect("the emitted package");
+        let original = wire.clone();
+        fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+            .expect("resolve node-held IDs through their actual operand rows");
+        let mut roundtrip = wire.clone();
+        fsl_semantics::check::wire_id::write_operand_rows(&mut roundtrip);
+        assert_eq!(
+            roundtrip, original,
+            "the official conversion preserves every unedited wire fact"
+        );
         let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire)
             .expect("the emitted identities");
         let nodes = wire["semantic_graph"]["nodes"]
@@ -681,6 +690,7 @@ fn package_await_ineligible_matches_refuse_in_both_routes() {
             .as_array_mut()
             .expect("dependencies")
             .sort_by_key(|target| graph.key_of_value(target).expect("an emitted identity"));
+        fsl_semantics::check::wire_id::write_operand_rows(&mut wire);
         let event = if kind == "send" {
             channel_send("Inspected", "seen", "seen.n = handed.n")
         } else {

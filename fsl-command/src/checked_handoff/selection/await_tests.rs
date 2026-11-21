@@ -29,7 +29,7 @@ impl Fixture {
             .collect::<Vec<_>>()
             .join("\n");
         let temporal = if names.len() == 2 {
-            "temporal Due using t over (view: M::Widget) clock \"line-clock\" on origin { always[0,1] true }"
+            "temporal Due using t over (view: M::Widget) clock \"model-steps\" on origin { always[0,1] true }"
         } else {
             ""
         };
