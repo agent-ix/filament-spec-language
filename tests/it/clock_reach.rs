@@ -395,6 +395,11 @@ fn a_window_member_without_a_valuation_is_a_missing_valuation() {
     // the observation at position 18 holds no valuation for it, so every
     // window that reads position 18 is a missing valuation.
     trace["timestamped"]["missing"] = json!([{"position": 18, "atom": 1}]);
+    // FR-641: the entry marks an admitted observation's valuation absent; the
+    // observation itself still admits, so its sample keeps a `latency`, here one
+    // that would decide the quantile if it were read.
+    trace["timestamped"]["observations"][18]["position"]["sample"]["latency"]["magnitude"]
+        ["numerator"] = json!("100");
     for quantile in ["0.95", "0.9"] {
         let (exit, document) = run(
             directory.path(),
@@ -412,5 +417,34 @@ fn a_window_member_without_a_valuation_is_a_missing_valuation() {
             document["disposition"]["temporal"]["reason"]["kind"], "missing-valuation",
             "{quantile}: {document}"
         );
+        assert_eq!(
+            document["disposition"]["temporal"]["reason"]["position"], 18,
+            "{quantile}: {document}"
+        );
     }
+}
+
+/// FR-194-AC-16, `min_count 30`, closed: complete through 300000 with
+/// watermark 300000 the clause is undefined with
+/// `InsufficientData{where: position 0, count: 1, min_count: 30}`.
+///
+/// The same unit complete only through 9 (watermark 19) reports the same
+/// `insufficient-data` at position 0, not the `pending-window` the ruling
+/// states: FR-501 "Verdicts" returns an `Undefined` atom, in evaluation order,
+/// before any `Pending` activation, and the atoms at positions 0 to 9 are
+/// covered and short of 30 values. That half is asserted by the atom-level
+/// tests, not here, until the spec settles the order.
+#[test]
+#[trace("TC-629", "FR-194-AC-16")]
+fn a_covered_window_short_of_min_count_is_undefined_through_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    let unit =
+        aggregate_unit("quantile 0.95 of r.latency over past[0 ms, 300 s] min_count 30 <= 5 ms");
+    let (_, closed) = run(directory.path(), &unit, clocks, "P", responses());
+    let temporal = &closed["disposition"]["temporal"];
+    assert_eq!(temporal["kind"], "insufficient-data", "{temporal}");
+    assert_eq!(temporal["position"], 0, "{temporal}");
+    assert_eq!(temporal["count"], 1, "{temporal}");
+    assert_eq!(temporal["min_count"], 30, "{temporal}");
 }

@@ -45,6 +45,7 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     unit ms : Time = rational(1, 1000) * s;\n\
     temporal Counted using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (count over past[0 ms, 3 ms] min_count 0 <= 9) }\n\
     temporal Twos using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (count where holds(r.level = 2) over past[0 ms, 3 ms] min_count 0 <= 1) }\n\
+    temporal TwosMin using w over (r: Reading) clock \"plant-ms\" on origin { always[2,5] (sum of r.level where holds(r.level = 2) over past[0 ms, 3 ms] min_count 2 <= 100) }\n\
     temporal Median using w over (r: Reading) clock \"plant-ms\" on origin { always[0,5] (quantile 0.5 of r.level over past[0 ms, 3 ms] <= 1) }\n\
     temporal E using e over (r: Reading) clock \"events\" on origin { eventually[0,2] holds(r.level = 2) }\n\
     temporal T using w over (r: Reading) clock \"plant-ms\" on origin { eventually[0,5] holds(r.level > 0) }\n\
@@ -3691,10 +3692,11 @@ fn a_long_carried_timestamped_stream_holds_only_its_windows() {
     }
 }
 
-/// The carried report and the batch report of `Twos` over `levels` after each
+/// The carried report and the batch report of clause `name` over `levels` after each
 /// progress assertion of `steps` (completeness `through`, `watermark`), the
 /// assertions made one after another on one carried state.
-fn twos_progressed(
+fn clause_progressed(
+    name: &str,
     levels: &[i64],
     steps: &[(u64, u64)],
 ) -> Vec<(std::sync::Arc<ClauseRunReport>, ClauseRunReport)> {
@@ -3702,7 +3704,7 @@ fn twos_progressed(
     let cancel = Cancel::new();
     let mut state = ClauseState::open(
         world.unit.package(),
-        clause_node(&world, "Twos"),
+        clause_node(&world, name),
         &clause_open(
             &world,
             ClauseTraceKind::Timestamped,
@@ -3713,10 +3715,7 @@ fn twos_progressed(
     .expect("opens");
     for (index, level) in levels.iter().enumerate() {
         state
-            .advance(
-                admitted(&world, "Twos", &text(*level), index as u64),
-                &cancel,
-            )
+            .advance(admitted(&world, name, &text(*level), index as u64), &cancel)
             .expect("advances");
     }
     steps
@@ -3731,10 +3730,18 @@ fn twos_progressed(
             let advance = state
                 .assert_progress(&assertion, &cancel)
                 .expect("progress");
-            let batch = batch_over(&world, "Twos", &stamped_levels(levels, assertion));
+            let batch = batch_over(&world, name, &stamped_levels(levels, assertion));
             (advance.report, batch)
         })
         .collect()
+}
+
+/// [`clause_progressed`] for `Twos`.
+fn twos_progressed(
+    levels: &[i64],
+    steps: &[(u64, u64)],
+) -> Vec<(std::sync::Arc<ClauseRunReport>, ClauseRunReport)> {
+    clause_progressed("Twos", levels, steps)
 }
 
 /// The carried report and the batch report of `Twos` over `levels` with
@@ -3762,7 +3769,7 @@ fn a_carried_window_not_asserted_complete_equals_the_batch() {
 /// FR-194-AC-16: the atom at stamp 3 reaches stamps the completeness through 2
 /// does not cover, so a later event could still enter its window and the
 /// result is never a final `violated`. The levels refute the clause only at
-/// stamps 3 and 4, where the window is not asserted complete (`[2, 0, 2, ..]`
+/// stamps 3, 4 and 5, where the window is not asserted complete (`[2, 0, 2, ..]`
 /// would refute it at the covered stamp 2, which is final: see
 /// `a_refutation_by_a_complete_atom_stays_final`).
 #[test]
@@ -3801,4 +3808,41 @@ fn a_window_becomes_a_final_verdict_once_completeness_covers_it() {
         })
         .collect();
     assert_eq!(finality, [false, true, true]);
+}
+
+/// FR-194-AC-16, `min_count`: `TwosMin` sums the 2s of `past[0 ms, 3 ms]`
+/// with `min_count 2` at stamps 2 to 5. Over levels `[2, 0, 2, 0, 1, 1]` the
+/// windows at stamps 4 and 5 hold one value, short of 2. With completeness
+/// through 5 that is `InsufficientData`; with completeness through 2 those
+/// windows are not asserted complete, so the atoms are two-valued, never
+/// `InsufficientData`, and the result is pending, not undefined.
+#[test]
+#[trace("TC-629", "FR-194-AC-16")]
+fn an_incomplete_window_short_of_min_count_is_two_valued() {
+    let levels = [2, 0, 2, 0, 1, 1];
+    let covered = clause_progressed("TwosMin", &levels, &[(5, 5)]).remove(0);
+    assert_eq!(members(&covered.0), members(&covered.1));
+    assert!(
+        matches!(
+            covered.1.disposition,
+            spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Undefined { .. })
+        ),
+        "{:?}",
+        covered.1.disposition
+    );
+    let (carried, batch) = clause_progressed("TwosMin", &levels, &[(2, 5)]).remove(0);
+    assert_eq!(members(&carried), members(&batch));
+    assert!(
+        !format!("{:?}", batch.disposition).contains("InsufficientData"),
+        "{:?}",
+        batch.disposition
+    );
+    assert!(
+        !matches!(
+            batch.disposition,
+            spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Undefined { .. })
+        ),
+        "{:?}",
+        batch.disposition
+    );
 }

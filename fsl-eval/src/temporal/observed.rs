@@ -1185,10 +1185,15 @@ impl TemporalLetters for ObservedLetters<'_> {
             return None;
         };
         let lower = &window.lower;
-        let denominator = filament_exact::NonZeroInteger::try_from(lower.denominator()).ok()?;
-        let (whole, rest) = lower.numerator().div_rem_truncating(denominator);
-        let whole = i128::from(whole.to_u64()?);
-        Some(if rest.is_zero() { whole } else { whole + 1 })
+        // A bound that does not convert reads as 0, the latest window end:
+        // the most conservative reading, never a window taken as complete.
+        let ceiling = || {
+            let denominator = filament_exact::NonZeroInteger::try_from(lower.denominator()).ok()?;
+            let (whole, rest) = lower.numerator().div_rem_truncating(denominator);
+            let whole = i128::from(whole.to_u64()?);
+            Some(if rest.is_zero() { whole } else { whole + 1 })
+        };
+        Some(ceiling().unwrap_or(0))
     }
 
     fn valuation(
