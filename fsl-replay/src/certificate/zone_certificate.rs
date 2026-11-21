@@ -2299,8 +2299,14 @@ impl<O> Checker<'_, '_, O> {
                 let edge = &certificate.edges[index];
                 let target = &certificate.nodes[edge.to];
                 for (position, successor) in successors.iter().enumerate() {
-                    let same = successor.step.as_ref().map(GuardedStep::transition)
-                        == edge.transition.as_ref()
+                    let own = successor.step.as_ref().map(GuardedStep::transition);
+                    let identity_matches = match (own, edge.transition.as_ref()) {
+                        (Some(own), Some(listed)) if self.release_ops.is_some() => {
+                            super::task_product::same_source_transition(own, listed)
+                        }
+                        (own, listed) => own == listed,
+                    };
+                    let same = identity_matches
                         && successor.part == edge.part
                         && successor.horizon == edge.horizon
                         && successor.state_key == target.state_key
