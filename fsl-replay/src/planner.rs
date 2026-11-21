@@ -66,9 +66,9 @@ pub use key::{
 };
 pub use mismatch::{interface_mismatch, InterfaceMismatch, MismatchReason};
 pub use request::{
-    read_settlement_request, Discharge, Discharger, EnvironmentRecord, ItemRef, PremiseResult,
-    ReadLimits, RecordSupplies, RequestRefusal, RequestSlot, SettlementRequest, SlotFill,
-    DEFAULT_MAX_WORK, FORMAT,
+    dependency_graphs, read_settlement_request, DependencyGraphs, DependencyGraphsRefusal,
+    Discharge, Discharger, EnvironmentRecord, ItemRef, PremiseResult, ReadLimits, RecordSupplies,
+    RequestRefusal, RequestSlot, SettlementRequest, SlotFill, DEFAULT_MAX_WORK, FORMAT,
 };
 pub use settle::{
     settle, Budget, Conclusion, ConclusionExtent, PlannerCause, PlannerResult, PlannerValue,

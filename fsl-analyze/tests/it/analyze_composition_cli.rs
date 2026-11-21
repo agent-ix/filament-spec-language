@@ -176,15 +176,6 @@ fn roles(item: &Value) -> Vec<&str> {
         .collect()
 }
 
-/// A claim locus with the operand segments of its node id removed.
-fn claim_without_operands(claim: &Value) -> Value {
-    let mut claim = claim.clone();
-    if let Some(path) = claim["node"]["path"].as_array_mut() {
-        path.retain(Value::is_string);
-    }
-    claim
-}
-
 /// A routed composition item: the derived slot list, no candidates, and an
 /// `unsupported` disposition.
 fn assert_routed(item: &Value) {
@@ -225,15 +216,10 @@ fn a_routed_composition_is_unsupported_beside_its_proved_premises() {
         // the premise item checks.
         let key = &items[0]["request"]["premises"][slot]["key"];
         assert_eq!(key["kind"], "temporal-satisfaction", "{document}");
-        // FR-621 "Node ids in an item": the composition keeps the dependency's
-        // node ids structural, and the premise item holds them against the
-        // dependency's graph, so the two name one claim in two spellings of its
-        // operands: the owner, ordinal, occurrence and text segments are equal.
-        assert_eq!(
-            claim_without_operands(&key["claim"]),
-            claim_without_operands(&item["request"]["claim"]),
-            "{document}"
-        );
+        // FSpec FR-322 "Scope": the composition writes the key's ids in the
+        // component's graph, the graph the premise item's own claim indexes, so
+        // the two name one claim in one spelling.
+        assert_eq!(key["claim"], item["request"]["claim"], "{document}");
     }
     assert_eq!(run.exit, 21, "{document}");
 }
@@ -709,13 +695,15 @@ fn a_caller_may_only_restate_the_derived_premise_keys() {
     let slots = listed.as_array().expect("the list").clone();
     let mut relabelled = slots.clone();
     relabelled[1]["role"] = json!("rely");
+    // A swapped list puts a key of another component's package at slot 0, which
+    // FSpec FR-322 "Scope" refuses at that key.
     let variants = [
-        json!([slots[0]]),
-        json!([slots[1], slots[0]]),
-        Value::Array(relabelled),
+        (json!([slots[0]]), "/items/0/premises"),
+        (json!([slots[1], slots[0]]), "/items/0/premises/0/key"),
+        (Value::Array(relabelled), "/items/0/premises"),
     ];
     for name in ["Sys", "SysAG"] {
-        for premises in &variants {
+        for (premises, pointer) in &variants {
             let run = analyze(&request(
                 &ws,
                 &system(),
@@ -731,7 +719,7 @@ fn a_caller_may_only_restate_the_derived_premise_keys() {
             );
             assert_eq!(cause(&items[0]), "invalid-value", "{document}");
             assert_eq!(
-                items[0]["record"]["diagnostic"]["detail"]["pointer"], "/items/0/premises",
+                items[0]["record"]["diagnostic"]["detail"]["pointer"], *pointer,
                 "{document}"
             );
             assert_eq!(
@@ -1594,5 +1582,93 @@ fn the_package_route_settles_the_same_items() {
     assert_eq!(
         by_package.document()["items"],
         by_source.document()["items"]
+    );
+}
+
+/// FSpec FR-322-AC-520 (NI-25, NI-27, NI-28) through `analyze`: the held
+/// premise keys a result wrote are restated as written and resolve in the
+/// component's graph; an index the component graph does not hold is refused
+/// `malformed_wire` at its `node` member, and a key of another package
+/// `invalid_runtime_input`/`invalid-value` at the key, before the range
+/// check.
+#[trace("FSpec-FR-322-AC-520")]
+#[test]
+fn a_held_premise_key_resolves_in_its_components_graph() {
+    let ws = Workspace::new("compose-held");
+    let plain = analyze(&request(&ws, &system(), json!([composition("Sys")])));
+    let listed = plain.item(0)["request"]["premises"].clone();
+    let operand = |premises: &Value| {
+        premises[0]["key"]["claim"]["node"]["path"]
+            .as_array()
+            .expect("a path")
+            .iter()
+            .position(Value::is_object)
+            .expect("an operand segment")
+    };
+    let at = operand(&listed);
+    // The written list, restated, is the item itself.
+    let restated = analyze(&request(
+        &ws,
+        &system(),
+        json!([with_premises("Sys", &listed)]),
+    ));
+    assert_eq!(plain.document()["items"], restated.document()["items"]);
+    // An index outside the component graph names its `node` member.
+    let mut beyond = listed.clone();
+    beyond[0]["key"]["claim"]["node"]["path"][at] = json!({"node": 100_000});
+    let run = analyze(&request(
+        &ws,
+        &system(),
+        json!([with_premises("Sys", &beyond)]),
+    ));
+    let item = run.item(0);
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "malformed_wire",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["pointer"],
+        format!("/items/0/premises/0/key/claim/node/path/{at}/node"),
+        "{item}"
+    );
+    // FSpec FR-272: `malformed_wire` carries no cause.
+    assert!(
+        item["record"]["diagnostic"].get("cause").is_none(),
+        "{item}"
+    );
+    // A subject identity of another package is refused at the key, even with
+    // an index beyond the graph.
+    let mut foreign = beyond.clone();
+    foreign[0]["key"]["temporal"]["subject"]["identity"] = json!("other/package using m");
+    let run = analyze(&request(
+        &ws,
+        &system(),
+        json!([with_premises("Sys", &foreign)]),
+    ));
+    let item = run.item(0);
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(cause(&item), "invalid-value", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["pointer"], "/items/0/premises/0/key",
+        "{item}"
+    );
+    // The subject package is checked on every `component-guarantee` key, with
+    // or without an index segment (NI-28).
+    let mut bare = listed.clone();
+    bare[0]["key"]["claim"]["node"]["path"][at] = json!("plain");
+    bare[0]["key"]["temporal"]["subject"]["identity"] = json!("other/package using m");
+    let run = analyze(&request(
+        &ws,
+        &system(),
+        json!([with_premises("Sys", &bare)]),
+    ));
+    let item = run.item(0);
+    assert_eq!(cause(&item), "invalid-value", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["pointer"], "/items/0/premises/0/key",
+        "{item}"
     );
 }

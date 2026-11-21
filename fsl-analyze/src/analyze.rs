@@ -780,9 +780,12 @@ pub struct DocumentGraphs {
 /// Why a package has no graph to write a result's node ids against.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GraphUnavailable {
-    /// The package emitted no complete admitted bytes: the emitter refused
-    /// or reached its limit, and the strict reader named no refusal.
+    /// The package emitted no complete admitted bytes, and neither the
+    /// emitter nor the strict reader named a refusal.
     NotEmitted,
+    /// The emitter refused the package, or reached its limit: its own typed
+    /// refusal, with the code and cause it carries (FSL FR-621-AC-17).
+    EmitRefused(Box<fsl_package::EmitRefusal>),
     /// The admitted bytes hold no readable `semantic_graph`.
     Unreadable(String),
 }
@@ -797,13 +800,28 @@ impl Default for DocumentGraphs {
 }
 
 impl GraphUnavailable {
-    /// The catalog code of the stop: the emit limit reached, or a package the
-    /// reader cannot read.
+    /// The catalog code of the stop: the emitter's own code for its refusal
+    /// (the emit limit is `stage_limit_exceeded`), or `invalid_package` for a
+    /// package that emitted no admitted bytes or whose bytes cannot be read.
     pub fn code(&self) -> fsl_foundation::Code {
         match self {
-            Self::NotEmitted => fsl_foundation::Code::ResourceExhausted,
-            Self::Unreadable(_) => fsl_foundation::Code::InvalidPackage,
+            Self::EmitRefused(refusal) => refusal.code(),
+            Self::NotEmitted | Self::Unreadable(_) => fsl_foundation::Code::InvalidPackage,
         }
+    }
+
+    /// The emitter's own catalog cause of its refusal, where it has one.
+    pub fn cause(&self) -> Option<&'static str> {
+        match self {
+            Self::EmitRefused(refusal) => refusal.cause(),
+            Self::NotEmitted | Self::Unreadable(_) => None,
+        }
+    }
+
+    /// The stop of a package whose read ended without an admission refusal:
+    /// the emitter's refusal when it named one.
+    pub(crate) fn of_not_admitted(refusal: Option<Box<fsl_package::EmitRefusal>>) -> Self {
+        refusal.map_or(Self::NotEmitted, Self::EmitRefused)
     }
 }
 
@@ -839,9 +857,9 @@ impl DocumentGraphs {
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 Err(AnalyzeRefusal::Package(refusal))
             }
-            Err(crate::provider::NotAdmitted::Other) => {
-                Err(AnalyzeRefusal::Emission(GraphUnavailable::NotEmitted))
-            }
+            Err(crate::provider::NotAdmitted::Other(refusal)) => Err(AnalyzeRefusal::Emission(
+                GraphUnavailable::of_not_admitted(refusal),
+            )),
         }
     }
 }
