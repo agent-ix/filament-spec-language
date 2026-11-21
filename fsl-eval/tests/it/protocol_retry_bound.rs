@@ -377,14 +377,15 @@ fn registration_status<'a>(
     }
 }
 
-/// Find the first recovery step in a bounded breadth-first walk. This visits
-/// only the prefix needed by the assertion and stops after 256 unique states.
-fn recovery_cend_successors(
-    system: &ProtocolSystem<'_, Sc>,
-) -> Option<(
+/// A recovery path's wire steps and the cend successors reached after it.
+type CendSuccessors = (
     Vec<serde_json::Value>,
     Vec<(ProtocolTransition, ProtocolState<Sc>)>,
-)> {
+);
+
+/// Find the first recovery step in a bounded breadth-first walk. This visits
+/// only the prefix needed by the assertion and stops after 256 unique states.
+fn recovery_cend_successors(system: &ProtocolSystem<'_, Sc>) -> Option<CendSuccessors> {
     use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 
     const MAX_STATES: usize = 256;

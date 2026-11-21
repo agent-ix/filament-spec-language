@@ -334,7 +334,7 @@ protocol Watch using P over (view: M::Node) on origin {
   finish Closed as (closed: M::Receipt) { true };
 }
 "#;
-    let graph = reachable_with_document(&source, document);
+    let graph = reachable_with_document(source, document);
     let changed: Vec<_> = graph
         .states
         .iter()
