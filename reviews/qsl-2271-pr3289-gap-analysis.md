@@ -165,3 +165,15 @@ bindings:
   ac_id: FR-211-AC-2
   trace: correct
 ```
+
+## Disposition round 1 scope
+
+Reviewed fix delta from 9b5dc648ea9521f5ff9a7b22cbadbcdc486247e8 to 5d3de7a37ee2986b05109eb3701851392e3460c0 (excluding the trailing review-document copies). Initial runtime evidence from Draco was 0 passed / 4 failed, exit 101: malformed fixture grammar and unsupported package declaration selection prevented the intended behavioral checks. The prior static PASS was not runtime acceptance.
+
+The fix corrects fixture grammar (sequence root, nonreserved attempt binder, captures before role), uses the already source-supported explicit temporal-satisfaction/deadlock-freedom selection, and requires an item record before the existing label checks. Expected proved/refuted/inconclusive labels, full item/exit equality, deleted-source replay and named replay refusal checks remain. The package resolver adds only the matching named protocol-declaration deadlock route and classifies its extent bounded like source; race freedom retains its existing unbounded extent. Declaration-global-conformance and remaining control families stay on the parent.
+
+Checked source namespace resolution and protocol declaration ownership against document.rs; the new path resolves the declaration via admitted protocol_execution_named and retains OccurrenceKey::declaration. No source behavior or terminal engine implementation changes in this round. FR-940 and FR-620 own route parity, and FR-206 owns the attempt/structural-step fixture behavior. No spec change is required. No cargo/runtime/matrix/full gate was run in this round. The lead reports successful locked compile and fmt/diff checks; rerun of the four runtime tests on 5d3de7a is pending.
+
+## Round 1 verdict
+
+CONDITIONAL: no new bounded reverse-gap or hollow-assertion defect found. Matrix/full-tree assurance remains unassessed, and runtime evidence remains pending. Code-review SR-1795253271046542315 FND-002 records the malformed-subject record discrepancy; it is not duplicated here.

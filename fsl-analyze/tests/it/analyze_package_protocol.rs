@@ -226,6 +226,61 @@ fn package_terminal_preserves_replay_refusal_code_and_cause() {
     assert_eq!(package.exit, source.exit);
 }
 
+/// Invalid deadlock subjects refuse before exploration with identical typed records.
+#[trace("TC-2958", "FR-940-AC-6", "FR-850-AC-11")]
+#[test]
+fn package_terminal_invalid_subject_records_match_source() {
+    for (name, member) in [
+        ("missing", "temporal.subject.protocol"),
+        ("mismatched", "temporal.subject.protocol"),
+        ("capacity", "capacities"),
+    ] {
+        let ws = Workspace::new(&format!("package-terminal-invalid-{name}"));
+        let path = terminal_request(&ws, "", "terminal any;", false);
+        let mut document: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("source request"))
+                .expect("request JSON");
+        let subject = &mut document["request"]["items"][0]["temporal"]["subject"];
+        match name {
+            "missing" => {
+                subject
+                    .as_object_mut()
+                    .expect("subject object")
+                    .remove("protocol");
+            }
+            "mismatched" => subject["protocol"]["protocol"] = json!("Other"),
+            "capacity" => subject["protocol"]["capacities"] = json!({"unused": "-1"}),
+            _ => unreachable!("the listed malformed cases"),
+        }
+        std::fs::write(&path, document.to_string()).expect("write malformed selection");
+        let source = analyze(&path);
+        let item = source.item(0);
+        assert_eq!(item["category"], "refusal", "{}", source.document());
+        assert_eq!(
+            item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+            "{item}"
+        );
+        assert_eq!(
+            item["record"]["diagnostic"]["cause"], "invalid-value",
+            "{item}"
+        );
+        assert_eq!(
+            item["record"]["diagnostic"]["detail"]["member"], member,
+            "{item}"
+        );
+        assert!(
+            item.get("exploration").is_none(),
+            "invalid selection explored states: {item}"
+        );
+        assert_eq!(source.exit, 20, "{}", source.document());
+        let (package_path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package refusal");
+        let package = analyze(&package_path);
+        assert_eq!(package.item(0), item, "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+    }
+}
+
 /// FR-940-AC-6: the store-buffering litmus claim under TSO has equal records,
 /// counterexamples and package-byte replay on both analyze routes.
 #[trace("TC-2958", "FR-940-AC-6", "TC-3050", "FR-850-AC-11")]

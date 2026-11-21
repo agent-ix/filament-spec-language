@@ -1136,6 +1136,22 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .input
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
         let own_subject = self.own_subject(index, selection)?;
+        if selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.item_kind)
+            == Some(super::ItemKindSelection::DeadlockFreedom)
+            && !own_subject
+                .protocol
+                .as_ref()
+                .is_some_and(|selected| selected.protocol == protocol_name)
+        {
+            return Ok(Resolution::Settled(super::invalid_value(
+                index,
+                name,
+                "temporal.subject.protocol",
+            )));
+        }
         let Some(selected) = own_subject.protocol.as_ref() else {
             let mut detail = Map::new();
             detail.insert("member".to_owned(), json!("temporal.subject.protocol"));
