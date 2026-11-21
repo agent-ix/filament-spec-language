@@ -20,3 +20,26 @@ Every criterion is bound. AC-4 includes three ignored stub binders (see FND-002 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | The fsl-eval change that records findings at a stopped final state (sample, rebuild_model_trace, replay) has no focused test showing that a stopped trace's last-state finding is recorded and then matched on replay. The coverage is indirect, through the request-surface state-clause tests. | fsl-eval/src/simulation/sample.rs:148-162, fsl-eval/src/simulation/trace.rs:172-181, fsl-eval/src/simulation/model.rs:2471-2486 |
+
+## Dispositions
+
+### Round 1
+
+Checked at head a868ede0ed22a5896e79d0feaa70785330f49674 (fix commit c4719fa3dc). The added finite-simulation test checks a stopped state's own findings and their replay, and its tampered twin is refused.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: fixed
+    after_excerpt: |-
+      fn a_stopped_sample_keeps_the_stopped_states_own_findings() {
+          let stopping = short_chain().with_stop("1", EXHAUSTED).with_stopped_finding("1", "own");
+          let trace = sample_474(&stopping, 1, 4);
+          assert_eq!(trace.findings[0].depth, 1);
+          assert_eq!(replay(&stopping, &trace, IdentityLimits::default()), Ok(()));
+          ... assert!(replay(&tampered_system, &trace, IdentityLimits::default()).is_err());
+```
