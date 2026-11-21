@@ -43,8 +43,18 @@ pub(super) fn run(
         cancel,
     ) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
+            let quantile_bound;
             let bound = match &claim.form {
-                ProbForm::Reach { bound, .. } | ProbForm::Probability { bound, .. } => bound,
+                ProbForm::Reach { bound, .. }
+                | ProbForm::Probability { bound, .. }
+                | ProbForm::MeanOfFraction { bound, .. } => bound,
+                ProbForm::Quantile { q, threshold, .. } => {
+                    quantile_bound = match threshold {
+                        Bound::AtMost(_) => Bound::AtLeast(q.clone()),
+                        Bound::AtLeast(_) => Bound::AtMost(q.clone()),
+                    };
+                    &quantile_bound
+                }
                 _ => return not_yet(),
             };
             let scope = package.graph().scope();
@@ -133,6 +143,47 @@ fn materialize_inner(
         .map_err(|_| ProbabilityWitnessError::Refused)?;
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|binding| &binding.reference);
+    let measured = matches!(
+        &claim.form,
+        ProbForm::Quantile { .. }
+            | ProbForm::MeanOfFraction { .. }
+            | ProbForm::Probability {
+                event: Event::Compare { .. },
+                ..
+            }
+    );
+    let document_limits = ProbabilityDocumentLimits {
+        bytes: limits.document.bytes,
+        storage_bytes: limits.document.storage_bytes,
+        states: limits.model.limits.max_states,
+        edges: limits.model.limits.max_transitions,
+        scalar_bits: limits.max_rational_bits,
+        accounting: system.meter_limits(),
+    };
+    let mut measure_meter =
+        filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut measure_storage = 0;
+    let reward = if measured {
+        let kind = match claim.form {
+            ProbForm::Quantile { .. } => fsl_replay::MeasurePayoffKind::Satisfied,
+            ProbForm::MeanOfFraction { .. } => fsl_replay::MeasurePayoffKind::Fraction,
+            _ => fsl_replay::MeasurePayoffKind::Event,
+        };
+        fsl_replay::measure_probability_objective(
+            system,
+            claim,
+            kind,
+            document_limits,
+            cancel,
+            &mut measure_meter,
+            &mut measure_storage,
+        )
+        .map_err(ProbabilityWitnessError::from)?
+        .1
+    } else {
+        None
+    };
+    let measure_scope = std::cell::RefCell::new((measure_meter, measure_storage));
     let monitor = match (&claim.form, monitor) {
         (
             ProbForm::Probability {
@@ -153,11 +204,17 @@ fn materialize_inner(
             )
         }
         (ProbForm::Reach { .. }, None) => None,
+        (_, None) if measured => None,
         _ => return Err(ProbabilityWitnessError::Refused),
     };
     let key = |state: &crate::exact_probabilistic::ProbKey| -> Result<ProbabilityProductKey, ProbabilityWitnessError> {
         match monitor.as_ref() {
             Some(monitor) => bounded_product_key(state, reference, monitor, limits.document, cancel).map_err(ProbabilityWitnessError::from),
+            None if measured => {
+                let mut scope=measure_scope.borrow_mut();
+                let (meter,storage)=&mut *scope;
+                fsl_replay::measure_probability_product_key(reference,&state.model,state.monitor.ok_or(ProbabilityWitnessError::Refused)?,state.accumulator.as_ref().ok_or(ProbabilityWitnessError::Refused)?,reward.as_ref(),document_limits,cancel,meter,storage).map_err(ProbabilityWitnessError::from)
+            },
             None => ProbabilityProductKey::for_model_state_with_limits(reference, &state.model, limits.document, cancel).map_err(ProbabilityWitnessError::from),
         }
     };
@@ -226,6 +283,51 @@ fn materialize_inner(
             .map_err(|_| ProbabilityWitnessError::Refused)?;
         ProbabilityProductKey::for_formula_state(reference, &raw, &control, limits.document, cancel)
             .map_err(ProbabilityWitnessError::from)?
+    } else if measured {
+        let mut scope = measure_scope.borrow_mut();
+        let (meter, storage) = &mut *scope;
+        let kind = match claim.form {
+            ProbForm::Quantile { .. } => fsl_replay::MeasurePayoffKind::Satisfied,
+            ProbForm::MeanOfFraction { .. } => fsl_replay::MeasurePayoffKind::Fraction,
+            _ => fsl_replay::MeasurePayoffKind::Event,
+        };
+        let (control, sums) = kind
+            .initial_control(
+                system,
+                claim,
+                false,
+                document_limits,
+                cancel,
+                meter,
+                storage,
+            )
+            .map_err(ProbabilityWitnessError::from)?;
+        let mut admission = fsl_replay::ProbabilityKeyAdmission::new(
+            meter,
+            storage,
+            document_limits.storage_bytes,
+            cancel,
+        );
+        let raw = system
+            .state_key_bytes_with_budget(
+                initial,
+                fsl_foundation::IdentityLimits::default(),
+                &mut admission,
+                cancel,
+            )
+            .map_err(|error| ProbabilityWitnessError::from(admission.refusal(error)))?;
+        fsl_replay::measure_probability_product_key(
+            reference,
+            &raw,
+            control.ok_or(ProbabilityWitnessError::Refused)?,
+            sums.as_ref().ok_or(ProbabilityWitnessError::Refused)?,
+            reward.as_ref(),
+            document_limits,
+            cancel,
+            meter,
+            storage,
+        )
+        .map_err(ProbabilityWitnessError::from)?
     } else {
         let (raw, _) = system
             .state_key(initial)

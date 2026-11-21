@@ -391,3 +391,285 @@ pub(super) fn replay(
         },
     )))
 }
+
+pub(super) fn replay_undefined(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    witness: &ProbabilityUndefinedWitness,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    let evidence = &witness.path;
+    let [path] = evidence.paths.as_slice() else {
+        return Err(ProbabilityWitnessError::Refused);
+    };
+    if limits.max_witness_paths == 0 {
+        return Err(ProbabilityWitnessError::Limit {
+            limit: ModelCheckLimit::ExactProbMaxWitnessPaths,
+            value: 0,
+        });
+    }
+    let document_limits = limits_of(system, limits);
+    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let kind = match &claim.form {
+        ProbForm::Quantile { .. } => MeasurePayoffKind::Satisfied,
+        ProbForm::MeanOfFraction { .. } => MeasurePayoffKind::Fraction,
+        _ => MeasurePayoffKind::Event,
+    };
+    let selected = replay_control(
+        system,
+        claim,
+        kind,
+        document_limits,
+        cancel,
+        &mut meter,
+        &mut storage,
+    )
+    .map_err(bounded::document_error)?;
+    let binding = claim_binding(system, claim)?;
+    let reference = binding.as_ref().map(|binding| &binding.reference);
+    if reference != evidence.binding.as_ref() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    let workload = claim_workload(system, claim)?;
+    if workload.is_some() && !evidence.scheduler.is_empty() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    let scheduler = step::scheduler(
+        &evidence.scheduler,
+        limits,
+        &mut meter,
+        &mut storage,
+        cancel,
+    )?;
+    let initials = system.initial();
+    let [initial] = initials.as_slice() else {
+        return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
+    };
+    let (control, sums) = selected
+        .control
+        .initial_control(&mut meter)
+        .map_err(measure_error)?;
+    let mut control = control.ok_or(ProbabilityWitnessError::Refused)?;
+    let mut sums = sums.ok_or(ProbabilityWitnessError::Refused)?;
+    if key(
+        system,
+        reference,
+        initial,
+        control,
+        &sums,
+        selected.reward.as_ref(),
+        document_limits,
+        &mut meter,
+        &mut storage,
+        cancel,
+    )? != key(
+        system,
+        reference,
+        &evidence.initial,
+        control,
+        &sums,
+        selected.reward.as_ref(),
+        document_limits,
+        &mut meter,
+        &mut storage,
+        cancel,
+    )? || initial.anchor() != evidence.initial.anchor()
+        || initial.reached_by() != evidence.initial.reached_by()
+    {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    let mut state = initial.clone();
+    let mut previous_truths = Vec::new();
+    let mut rewards = Vec::new();
+    let mut mass = rational(1);
+    let mut seen = BTreeSet::new();
+    let mut used = BTreeSet::new();
+    let mut edges = 0;
+    for position in 0..=path.steps.len() {
+        bounded::visit(&mut meter, cancel)?;
+        if position > 0 && control.is_decided() {
+            return Ok(ProbabilityWitnessReplay::Parity);
+        }
+        let pre_key = key(
+            system,
+            reference,
+            &state,
+            control,
+            &sums,
+            selected.reward.as_ref(),
+            document_limits,
+            &mut meter,
+            &mut storage,
+            cancel,
+        )?;
+        let (_, state_key) = system
+            .state_key(&state)
+            .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
+        let inputs = selected
+            .predicates
+            .iter()
+            .map(|predicate| (*predicate, reference))
+            .collect::<Vec<_>>();
+        let readings = system
+            .state_predicates_with_cancel(&state, &inputs, cancel)
+            .map_err(|stop| cancelled_expansion(stop, cancel))?;
+        let mut truths = Vec::new();
+        for (index, reading) in readings.into_iter().enumerate() {
+            match reading {
+                PredicateReading::True => truths.push(true),
+                PredicateReading::False => truths.push(false),
+                PredicateReading::Refused(outcome) => {
+                    return Err(ProbabilityWitnessError::Build(Box::new(
+                        crate::ExactProbBuildIssue::Predicate(outcome),
+                    )))
+                }
+                PredicateReading::Undefined { cause, .. } => {
+                    let predicate = if selected.predicates.len() == 1 {
+                        crate::ClaimPredicate::Target
+                    } else if index == 0 {
+                        crate::ClaimPredicate::From
+                    } else {
+                        crate::ClaimPredicate::Until
+                    };
+                    let evaluation = crate::UndefinedEvaluation {
+                        site: crate::UndefinedSite {
+                            position: u64::try_from(position).unwrap_or(u64::MAX),
+                            state_key,
+                            locus: crate::UndefinedLocus::ClaimPredicate(predicate),
+                            transition: None,
+                            time: None,
+                        },
+                        cause,
+                    };
+                    let offered = if position == 0 {
+                        &evidence.initial_key
+                    } else {
+                        &path.steps[position - 1].post_key
+                    };
+                    if position != path.steps.len()
+                        || evaluation != witness.evaluation
+                        || pre_key != witness.product_state
+                        || offered != &pre_key
+                        || scheduler.keys().any(|key| !used.contains(*key))
+                    {
+                        return Ok(ProbabilityWitnessReplay::Parity);
+                    }
+                    bounded::admit_state(&pre_key, &mut seen, &mut storage, limits)?;
+                    check_bits(&mass, limits.max_rational_bits)?;
+                    poll_cancel(cancel)?;
+                    return Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
+                        ReproducedProbabilityWitness {
+                            evidence: evidence.clone(),
+                            mass,
+                            undefined: Some(Box::new(witness.clone())),
+                        },
+                    )));
+                }
+            }
+        }
+        let (next, next_sums) = if position == 0 {
+            selected.control.start(&truths, &mut meter)
+        } else {
+            selected.control.step(
+                Some(control),
+                Some(&sums),
+                &previous_truths,
+                &truths,
+                &rewards,
+                &mut meter,
+            )
+        }
+        .map_err(measure_error)?;
+        control = next.ok_or(ProbabilityWitnessError::Refused)?;
+        sums = next_sums.ok_or(ProbabilityWitnessError::Refused)?;
+        let current = key(
+            system,
+            reference,
+            &state,
+            control,
+            &sums,
+            selected.reward.as_ref(),
+            document_limits,
+            &mut meter,
+            &mut storage,
+            cancel,
+        )?;
+        let offered = if position == 0 {
+            &evidence.initial_key
+        } else {
+            &path.steps[position - 1].post_key
+        };
+        if offered != &current || control.is_decided() {
+            return Ok(ProbabilityWitnessReplay::Parity);
+        }
+        bounded::admit_state(&current, &mut seen, &mut storage, limits)?;
+        let Some(offered_step) = path.steps.get(position) else {
+            return Ok(ProbabilityWitnessReplay::Parity);
+        };
+        if workload.is_none() && !matches!(offered_step.choice, ProductAction::TerminalStutter) {
+            if scheduler.get(&current).copied() != Some(&offered_step.choice) {
+                return Err(ProbabilityWitnessError::Refused);
+            }
+            used.insert(current);
+        }
+        let (probability, post, next_rewards) = step::replay(
+            system,
+            &state,
+            workload,
+            offered_step,
+            limits,
+            &mut meter,
+            &mut storage,
+            &mut edges,
+            cancel,
+            step::ActionRefusal::UnsupportedDraw,
+            |post, rewards, meter, storage| {
+                let actual = key(
+                    system,
+                    reference,
+                    post,
+                    control,
+                    &sums,
+                    selected.reward.as_ref(),
+                    document_limits,
+                    meter,
+                    storage,
+                    cancel,
+                )?;
+                let offered = key(
+                    system,
+                    reference,
+                    &offered_step.post,
+                    control,
+                    &sums,
+                    selected.reward.as_ref(),
+                    document_limits,
+                    meter,
+                    storage,
+                    cancel,
+                )?;
+                bounded::retain(
+                    rewards.len().saturating_mul(std::mem::size_of::<(
+                        filament_exact::Identifier,
+                        SemanticValue,
+                    )>()),
+                    storage,
+                    limits,
+                )?;
+                Ok((actual == offered).then(|| rewards.to_vec()))
+            },
+        )?;
+        mass = bounded::arithmetic(
+            filament_exact::RationalArithmetic::Multiply(&mass, &probability),
+            &mut meter,
+            cancel,
+        )?;
+        check_bits(&mass, limits.max_rational_bits)?;
+        previous_truths = truths;
+        rewards = next_rewards;
+        state = post;
+    }
+    Ok(ProbabilityWitnessReplay::Parity)
+}

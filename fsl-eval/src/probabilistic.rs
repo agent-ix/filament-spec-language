@@ -259,18 +259,23 @@ impl MeasurePlan<'_> {
     ) -> Result<(Option<MonitorState>, Option<Accumulator>), MeasureError> {
         tick(meter)?;
         match self {
-            Self::Measure {
-                reward,
-                threshold,
-                within,
-            } => measure_state(
-                reward.is_none(),
-                *within,
-                Activation::Inactive,
-                &Amount::Exact(zero()),
-                threshold,
-                meter,
-            ),
+            Self::Measure { reward, within, .. } => Ok((
+                Some(MonitorState::Measure {
+                    remaining: *within,
+                    phase: MeasurePhase::Inactive,
+                }),
+                Some(if reward.is_none() {
+                    Accumulator::Steps {
+                        activated: false,
+                        amount: Amount::Exact(zero()),
+                    }
+                } else {
+                    Accumulator::Reward {
+                        activated: false,
+                        amount: Amount::Exact(zero()),
+                    }
+                }),
+            )),
             Self::Fraction { window, weight } => Ok((
                 Some(MonitorState::Fraction {
                     remaining: window
@@ -544,8 +549,22 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
+    fn scalar_limits() -> filament_exact::ScalarLimits {
+        filament_exact::ScalarLimits {
+            integer_bits: 256,
+            decimal_digits: 256,
+            scale_expansion: 256,
+            text_input_bytes: 4096,
+            text_scalars: 4096,
+            normalized_scalars: 4096,
+            unit_edges: 256,
+            value_occurrences: 4096,
+            work_units: 4096,
+            result_units: 4096,
+        }
+    }
     fn meter() -> Meter {
-        Meter::new(filament_exact::ScalarLimits::default())
+        Meter::new(scalar_limits())
     }
 
     fn steps(within: u64) -> MeasurePlan<'static> {
@@ -675,7 +694,7 @@ mod tests {
     #[trace("TC-3152", "FR-1043-AC-7")]
     #[test]
     fn shared_control_retains_the_denied_caller_charge() {
-        let mut limits = filament_exact::ScalarLimits::default();
+        let mut limits = scalar_limits();
         limits.work_units = 0;
         let error = steps(4)
             .initial_control(&mut Meter::new(limits))

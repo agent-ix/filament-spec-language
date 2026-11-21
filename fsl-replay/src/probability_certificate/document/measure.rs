@@ -375,7 +375,7 @@ pub fn measure_probability_product_key(
 struct State {
     terminal: Option<Rational>,
     rank: u64,
-    choices: Vec<Vec<CheckerEdge>>,
+    choices: Vec<Vec<ProbabilityEdge>>,
     activated: bool,
 }
 struct Graph {
@@ -550,11 +550,11 @@ fn enumerate(
                         .iter()
                         .filter(|reward| reward.operation().model() == claim.subject.alias)
                         .map(|reward| {
-                            (
+                            Ok((
                                 filament_exact::Identifier::new(reward.name())
                                     .map_err(|_| ProbabilityDocumentError::Malformed)?,
                                 filament_exact::Value::Integer(Integer::zero()),
-                            )
+                            ))
                         })
                         .collect::<Result<Vec<_>, ProbabilityDocumentError>>()?;
                     vec![vec![(rational(1), model.clone(), rewards)]]
@@ -619,7 +619,7 @@ fn enumerate(
                                 .as_bytes()
                                 .len()
                                 .saturating_mul(3)
-                                .saturating_add(std::mem::size_of::<CheckerEdge>()),
+                                .saturating_add(std::mem::size_of::<ProbabilityEdge>()),
                         )
                         .unwrap_or(u64::MAX),
                     )?;
@@ -633,7 +633,7 @@ fn enumerate(
                         }
                         queue.push_back((target.clone(), post, next, sums, post_truths));
                     }
-                    choice.push(CheckerEdge {
+                    choice.push(ProbabilityEdge {
                         target,
                         probability,
                     });
@@ -1357,7 +1357,7 @@ fn check_value_bits(value: &Rational, bits: u64) -> Result<(), ProbabilityDocume
     Ok(())
 }
 fn action_sum(
-    choice: &[CheckerEdge],
+    choice: &[ProbabilityEdge],
     values: &BTreeMap<ProbabilityProductKey, Rational>,
     meter: &mut filament_exact::Meter,
     cancel: &Cancel,
@@ -1709,4 +1709,62 @@ pub(in crate::probability_certificate) fn replay_control<'a>(
         payoff: plan.payoff,
         reward: plan.objective.reward,
     })
+}
+
+impl MeasurePayoffKind {
+    /// Initialize the shared measure control against the admitted subject.
+    /// `unread` preserves position-zero control before any predicate is read.
+    ///
+    /// # Errors
+    /// Unsupported shape, undefined/refused predicates, or actual caller stops.
+    #[allow(clippy::too_many_arguments)]
+    pub fn initial_control(
+        self,
+        system: &ModelSystem<'_>,
+        claim: &CheckedProbabilisticClaim,
+        unread: bool,
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+        meter: &mut filament_exact::Meter,
+        storage: &mut u64,
+    ) -> Result<(Option<MonitorState>, Option<Accumulator>), ProbabilityDocumentError> {
+        let selected = replay_control(system, claim, self, limits, cancel, meter, storage)?;
+        if unread {
+            return selected
+                .control
+                .initial_control(meter)
+                .map_err(scalar_error);
+        }
+        let binding = claim_binding(system, claim)?;
+        let reference = binding.as_ref().map(|binding| &binding.reference);
+        let initial = system.initial();
+        let [initial] = initial.as_slice() else {
+            return Err(ProbabilityDocumentError::Unsupported);
+        };
+        let inputs = selected
+            .predicates
+            .iter()
+            .map(|predicate| (*predicate, reference))
+            .collect::<Vec<_>>();
+        let truths = system
+            .state_predicates_with_cancel(initial, &inputs, cancel)
+            .map_err(|error| {
+                ProbabilityDocumentError::Build(Box::new(crate::ExactProbBuildIssue::Expansion(
+                    error,
+                )))
+            })?
+            .into_iter()
+            .map(|reading| match reading {
+                PredicateReading::True => Ok(true),
+                PredicateReading::False => Ok(false),
+                PredicateReading::Refused(outcome) => Err(ProbabilityDocumentError::Build(
+                    Box::new(crate::ExactProbBuildIssue::Predicate(outcome)),
+                )),
+                PredicateReading::Undefined { cause, .. } => {
+                    Err(ProbabilityDocumentError::UndefinedPredicate(cause))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        selected.control.start(&truths, meter).map_err(scalar_error)
+    }
 }

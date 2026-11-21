@@ -38,6 +38,17 @@ pub fn replay_probabilistic_undefined(
         return Err(ProbabilityWitnessError::Refused);
     }
     let claim = bind_claim(package.graph().probabilistic_model().claims(), item, cancel)?;
+    if matches!(
+        &claim.form,
+        ProbForm::Quantile { .. }
+            | ProbForm::MeanOfFraction { .. }
+            | ProbForm::Probability {
+                event: Event::Compare { .. },
+                ..
+            }
+    ) {
+        return super::measure::replay_undefined(system, claim, witness, limits, cancel);
+    }
     if !matches!(
         TimedSystem::new(system, &claim.subject.alias),
         Err(TimedSubjectRefusal::NoTimedModel { .. })

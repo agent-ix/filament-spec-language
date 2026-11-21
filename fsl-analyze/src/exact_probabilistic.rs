@@ -66,7 +66,7 @@ pub use witness::{
     action_steps, entry_choice, policy_action, produce_witness, witness_scheduler, EntryChoice,
     ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
 };
-pub(crate) use witness::{produce_witness_stopping, WitnessWork};
+pub(crate) use witness::{produce_quantile_witness, produce_witness_stopping, WitnessWork};
 
 pub(crate) fn timed_region_route(
     timed: &fsl_eval::simulation::model::TimedSystem<'_, '_>,

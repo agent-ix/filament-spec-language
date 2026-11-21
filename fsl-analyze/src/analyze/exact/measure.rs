@@ -265,7 +265,23 @@ pub(super) fn run(
             cancel,
         )
     })();
-    let _ = (initial, policy);
+    let failed_bound = matches!(&checked, Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) if rejection.rule == ProbabilityCertificateRule::ThresholdMissed || matches!(&claim.form,ProbForm::Quantile { threshold:Bound::AtLeast(_),.. }) && values.get(initial.index()).is_some_and(Rational::is_zero));
+    if failed_bound && tamper.is_none() {
+        return refute(
+            &system,
+            claim,
+            &product,
+            &policy,
+            initial,
+            reference,
+            &limits,
+            cancel,
+            subject,
+            tamper_witness,
+            meter,
+            storage,
+        );
+    }
     let extremum = match optimization {
         ProbabilityObjective::Minimum => Some(Extremum::Min),
         ProbabilityObjective::Maximum => Some(Extremum::Max),
@@ -279,5 +295,165 @@ fn scalar_failure(error: fsl_eval::probabilistic::MeasureError) -> ProbabilityDo
             ProbabilityDocumentError::Accounting(error)
         }
         fsl_eval::probabilistic::MeasureError::Broken(_) => ProbabilityDocumentError::Malformed,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn refute(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    product: &ProbProduct,
+    policy: &[Option<usize>],
+    initial: crate::exact_probabilistic::ProbStateId,
+    binding: Option<&ObjectReference>,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    mut meter: filament_exact::Meter,
+    mut storage: u64,
+) -> EngineReport {
+    use crate::exact_probabilistic::{
+        produce_quantile_witness, produce_witness, WitnessError, WitnessScope, WitnessWork,
+    };
+    let document_limits = ProbabilityDocumentLimits {
+        bytes: limits.document.bytes,
+        storage_bytes: limits.document.storage_bytes,
+        states: limits.model.limits.max_states,
+        edges: limits.model.limits.max_transitions,
+        scalar_bits: limits.max_rational_bits,
+        accounting: system.meter_limits(),
+    };
+    let kind = if matches!(claim.form, ProbForm::Quantile { .. }) {
+        MeasurePayoffKind::Satisfied
+    } else {
+        MeasurePayoffKind::Event
+    };
+    let (payoff, _, _) = match measure_probability_objective(
+        system,
+        claim,
+        kind,
+        document_limits,
+        cancel,
+        &mut meter,
+        &mut storage,
+    ) {
+        Ok(selected) => selected,
+        Err(error) => return document_failure(error, subject),
+    };
+    let terminal = match product
+        .states
+        .iter()
+        .map(|state| {
+            payoff
+                .terminal(
+                    state.monitor.ok_or(ProbabilityDocumentError::Malformed)?,
+                    state
+                        .accumulator
+                        .as_ref()
+                        .ok_or(ProbabilityDocumentError::Malformed)?,
+                    &mut meter,
+                )
+                .map_err(scalar_failure)
+        })
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(terminal) => terminal,
+        Err(error) => return document_failure(error, subject),
+    };
+    let scope = match claim.scheduler {
+        ProbScheduler::Every => WitnessScope::EveryScheduler,
+        ProbScheduler::Workload(_) => WitnessScope::Workload,
+    };
+    let mut issue = None;
+    let mut control = |work: WitnessWork<'_>| {
+        witness_payload_bytes(work, system)
+            .and_then(|bytes| witness_charge(&mut meter, &mut storage, bytes, limits, cancel))
+            .map_err(|failure| {
+                issue = Some(failure);
+                WitnessError::InvalidState
+            })
+    };
+    let produced = match &claim.form {
+        ProbForm::Quantile { q, threshold, .. } => {
+            let strict = matches!(threshold, Bound::AtLeast(_));
+            let never = product
+                .states
+                .iter()
+                .map(|state| {
+                    matches!(
+                        state.accumulator,
+                        Some(
+                            fsl_eval::probabilistic::Accumulator::Steps {
+                                activated: false,
+                                ..
+                            } | fsl_eval::probabilistic::Accumulator::Reward {
+                                activated: false,
+                                ..
+                            }
+                        )
+                    ) && state
+                        .monitor
+                        .is_some_and(fsl_eval::probabilistic::MonitorState::is_decided)
+                })
+                .collect::<Vec<_>>();
+            let accepting = terminal
+                .iter()
+                .enumerate()
+                .map(|(i, value)| {
+                    never[i]
+                        || value.as_ref().is_some_and(|value| {
+                            if strict {
+                                value == &Rational::from_integer(1_i64.into())
+                            } else {
+                                value.is_zero() && !never[i]
+                            }
+                        })
+                })
+                .collect::<Vec<_>>();
+            produce_quantile_witness(
+                product,
+                policy,
+                scope,
+                initial,
+                &accepting,
+                &never,
+                q,
+                strict,
+                limits,
+                &mut control,
+            )
+        }
+        ProbForm::Probability { bound, .. } => {
+            let accepting = terminal
+                .iter()
+                .map(|value| {
+                    value.as_ref().is_some_and(|value| match bound {
+                        Bound::AtLeast(_) => value.is_zero(),
+                        Bound::AtMost(_) => value == &Rational::from_integer(1_i64.into()),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let past = match bound {
+                Bound::AtLeast(value) => Rational::from_integer(1_i64.into()).sub(value),
+                Bound::AtMost(value) => value.clone(),
+            };
+            produce_witness(product, policy, scope, initial, &accepting, &past, limits)
+        }
+        _ => return not_yet(),
+    };
+    if let Some(issue) = issue {
+        return settled(&issue, subject);
+    }
+    match produced {
+        Ok(Some(produced)) => replay_produced_witness(
+            system, claim, product, produced, initial, binding, None, limits, cancel, subject,
+            tamper, meter, storage,
+        ),
+        Ok(None) => not_yet(),
+        Err(WitnessError::Limit { limit, value }) => {
+            settled(&ExactProbBuildIssue::Limit { limit, value }, subject)
+        }
+        Err(_) => broken(),
     }
 }
