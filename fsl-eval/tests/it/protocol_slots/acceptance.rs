@@ -25,6 +25,11 @@ mod source_node;
 mod state_compensation;
 
 #[path = "../../../../fsl-semantics/tests/support/tc1070.rs"]
+#[allow(
+    dead_code,
+    clippy::duplicate_mod,
+    reason = "the shared TC-1070 model fixture is used by sibling integration tests"
+)]
 mod tc1070;
 use tc1070::{document, document_ep, model, SOURCE};
 

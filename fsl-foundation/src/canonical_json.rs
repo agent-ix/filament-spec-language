@@ -117,10 +117,7 @@ mod tests {
     fn object_keys_use_utf16_code_unit_order() {
         let value = serde_json::json!({"\u{E000}": 1, "\u{1F600}": 2});
         let encoded = encode(&value).expect("the value is canonical JSON");
-        assert_eq!(
-            encoded,
-            r#"{"😀":2,"":1}"#.as_bytes(),
-        );
+        assert_eq!(encoded, r#"{"😀":2,"":1}"#.as_bytes(),);
     }
 
     /// FR-286-AC-32 (TC-3117): unsafe integers refuse with their JSON pointer.

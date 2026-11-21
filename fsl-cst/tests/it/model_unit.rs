@@ -161,7 +161,10 @@ fn model_unit_words_parse_as_identifiers_outside_their_declarations() {
         "subsets",
         "term",
     ];
-    let fields: String = words.iter().map(|word| format!("{word}: Integer; ")).collect();
+    let fields: String = words
+        .iter()
+        .map(|word| format!("{word}: Integer; "))
+        .collect();
     let parameters = words
         .iter()
         .map(|word| format!("{word}: Integer"))

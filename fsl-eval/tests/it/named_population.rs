@@ -25,9 +25,9 @@ use fsl_semantics::model::state::StateModel;
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
+mod evaluator_closure_cases;
 #[path = "../../../fsl-semantics/tests/support/named_population.rs"]
 mod fixture;
-mod evaluator_closure_cases;
 
 use fixture::{checked, ident, key, PACKAGE};
 

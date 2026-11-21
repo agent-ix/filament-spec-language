@@ -19,9 +19,9 @@ use std::ops::ControlFlow;
 
 use super::dispatch::{Construct, FormsRefusal};
 use super::protocol_control::{
-    AwaitForm, ChannelOrdering, FenceForm, ParallelForm, ProtocolMemberForm, RepeatForm,
-    TerminalForm, access_ordering, await_form, channel_form, choice_form, member_forms,
-    parallel_form, repeat_form, role_form,
+    access_ordering, await_form, channel_form, choice_form, member_forms, parallel_form,
+    repeat_form, role_form, AwaitForm, ChannelOrdering, FenceForm, ParallelForm,
+    ProtocolMemberForm, RepeatForm, TerminalForm,
 };
 use super::spans::DeclarationSpans;
 use super::syntax::{
@@ -35,8 +35,8 @@ use super::syntax::{
 };
 use super::temporal_clause::{capture_form, expression_form, interval_form, parameter_form};
 use super::value::{
-    Item, declared_name, expression, has_token, items, name_form, nodes_of, only, production_node,
-    text, tokens_of, type_form, unexpected,
+    declared_name, expression, has_token, items, name_form, nodes_of, only, production_node, text,
+    tokens_of, type_form, unexpected, Item,
 };
 
 /// The protocol form's output collections, threaded together through every

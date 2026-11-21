@@ -7,7 +7,7 @@
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, DEFAULT_MAX_CLOCKS};
-use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTransition};
+use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal, ProtocolTransition};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
@@ -806,10 +806,7 @@ pub fn derived_protocol_item<'a, S>(
     let models = match (&obligation.kind, kind) {
         (ObligationKind::ProtocolDeadlockFreedom { models }, ItemKind::DeadlockFreedom)
         | (ObligationKind::RaceFreedom { models }, ItemKind::RaceFreedom) => models,
-        (
-            ObligationKind::ProtocolLoopInvariant { models, repeat },
-            ItemKind::LoopInvariant,
-        ) => {
+        (ObligationKind::ProtocolLoopInvariant { models, repeat }, ItemKind::LoopInvariant) => {
             if !matches!(item.request.item, ModelCheckItem::LoopInvariant { repeat: found } if found == *repeat)
                 || !matches!(item.certificate.item, ModelCheckItem::LoopInvariant { repeat: found } if found == *repeat)
             {
@@ -817,10 +814,7 @@ pub fn derived_protocol_item<'a, S>(
             }
             models
         }
-        (
-            ObligationKind::ProtocolLoopTermination { models, repeat },
-            ItemKind::LoopTermination,
-        ) => {
+        (ObligationKind::ProtocolLoopTermination { models, repeat }, ItemKind::LoopTermination) => {
             if !matches!(item.request.item, ModelCheckItem::LoopTermination { repeat: found } if found == *repeat)
                 || !matches!(item.certificate.item, ModelCheckItem::LoopTermination { repeat: found } if found == *repeat)
             {
@@ -908,9 +902,7 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
         | ItemKind::RaceFreedom
         | ItemKind::Refinement
         | ItemKind::LoopInvariant
-        | ItemKind::LoopTermination => {
-            return Err(DerivedItemMismatch::NotDerived { index })
-        }
+        | ItemKind::LoopTermination => return Err(DerivedItemMismatch::NotDerived { index }),
     };
     if !runs {
         return Err(DerivedItemMismatch::OtherItem { index, kind });
@@ -1044,9 +1036,7 @@ pub(super) fn zone_refusal(refusal: &ZoneCheckRefusal) -> Refusal {
         // The forms EN-6 does not decide yet.
         ZoneCheckRefusal::UnsupportedForm
         | ZoneCheckRefusal::CarriedClocks
-        | ZoneCheckRefusal::HiddenFieldTimedAbstract => {
-            Refusal::Unsupported(NOT_YET)
-        }
+        | ZoneCheckRefusal::HiddenFieldTimedAbstract => Refusal::Unsupported(NOT_YET),
         // A request defect: an obligation that is not the item's.
         ZoneCheckRefusal::ObligationMismatch => Refusal::Failed(INVALID_VALUE),
         // Engine defects, and refusals whose types name no catalog code:
@@ -1166,10 +1156,20 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         | ModelCheckRefusal::Hyper(
             HyperRefusal::UnknownOperation { .. } | HyperRefusal::SubjectCount { .. },
         ) => Refusal::Failed(INVALID_VALUE),
-        // FSpec FR-785-AC-3: a refused capacity binding is the request's own
-        // `invalid_runtime_input`, naming its cause.
+        // FR-1033 and FR-205: a refused capacity binding is invalid input,
+        // naming the capacity rather than reporting an engine failure.
         ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)) => {
-            Refusal::Failed(CatalogCode::new(refusal.code().as_str(), refusal.cause()))
+            let name = match refusal {
+                CapacityRefusal::UnknownName { name }
+                | CapacityRefusal::InvalidValue { name, .. }
+                | CapacityRefusal::Duplicate { name }
+                | CapacityRefusal::Missing { name } => name,
+            };
+            named_decline(
+                CatalogCode::new(refusal.code().as_str(), refusal.cause()),
+                "capacity",
+                name.clone(),
+            )
         }
         // FSL FR-1033: a protocol binding FR-205's subject builder refuses is
         // the request's own `invalid_runtime_input`, so the item settles
@@ -1263,6 +1263,7 @@ mod tests {
             Refusal::Declined(_, _, code)
             | Refusal::DeclinedWithDetail(_, _, code, _)
             | Refusal::Unsupported(code)
+            | Refusal::UnsupportedWithDetail(code, _)
             | Refusal::FailedWithDetail(code, _)
             | Refusal::Failed(code) => Some(code.to_string()),
             Refusal::RequiresBound

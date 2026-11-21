@@ -8,8 +8,8 @@ use filament_exact::{Outcome, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_semantics::model::observation::{AdmissionUsage, AdmittedObservations, SelfKind};
 
-use super::walk::{Row, Walk, exhausted, rows_of, stop};
-use super::{BROKEN, ClauseInfo, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem};
+use super::walk::{exhausted, rows_of, stop, Row, Walk};
+use super::{ClauseInfo, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::value::ClauseSetOutcome;
 

@@ -8,7 +8,7 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::DomainPackageRecord;
 use fsl_semantics::model::intake::{
-    PackageInput, UnitIntakeCause, admit, admit_unit, package_input, read_records,
+    admit, admit_unit, package_input, read_records, PackageInput, UnitIntakeCause,
 };
 use fsl_semantics::model::normalize::ModelRefusalCause;
 use ix_trace_rs::trace;
@@ -233,12 +233,10 @@ fn a_model_unit_writes_supertypes_subsets_and_redefinitions_into_the_document() 
             _ => None,
         })
         .expect("Child.total is a field");
-    assert!(
-        total
-            .redefines
-            .as_ref()
-            .is_some_and(|key| key.node == "ix://example/shop/Base/total")
-    );
+    assert!(total
+        .redefines
+        .as_ref()
+        .is_some_and(|key| key.node == "ix://example/shop/Base/total"));
 }
 
 #[trace("FR-082-AC-2", "TC-1942")]

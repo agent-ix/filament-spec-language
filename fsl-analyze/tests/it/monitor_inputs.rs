@@ -118,9 +118,7 @@ fn selections(parsed: &fsl_cst::ParsedSource) -> Vec<TemporalClockSelection> {
                         timestamp_unit: "ms".into(),
                     }
                 }
-                "filament.temporal.timed/v1" => ClockConfiguration::Timed {
-                    unit: "ms".into(),
-                },
+                "filament.temporal.timed/v1" => ClockConfiguration::Timed { unit: "ms".into() },
                 _ => return None,
             };
             Some(TemporalClockSelection::new(
@@ -870,9 +868,7 @@ fn timed_trace_uses_its_authenticated_clock_and_through_boundary() {
     let world = world();
     let timed = compile(&world.documents, timed_unit());
     let integer = |value| Rational::from_integer(Integer::from(value));
-    let sample = |level| {
-        spine::sample_position(&format!(r#"{{"level":{{"integer":"{level}"}}}}"#))
-    };
+    let sample = |level| spine::sample_position(&format!(r#"{{"level":{{"integer":"{level}"}}}}"#));
     let pending = TraceInput::Timed {
         prefix: vec![spine::TimedObservation {
             document: sample(1),

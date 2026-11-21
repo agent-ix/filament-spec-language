@@ -401,7 +401,11 @@ fn compile_and_map(
         });
     }
     let counts = FileCounts {
-        programs: compile.libraries.as_ref().map_or(0, Vec::len).saturating_add(1),
+        programs: compile
+            .libraries
+            .as_ref()
+            .map_or(0, Vec::len)
+            .saturating_add(1),
         models: compile.models.as_ref().map_or(0, Vec::len),
         observations: usize::from(request.initial.is_some()),
         extensions: compile.extensions.len(),

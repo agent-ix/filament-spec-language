@@ -18,10 +18,10 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{
-    DocumentProvision, DocumentRef, ObservationLimits, document_reference,
+    document_reference, DocumentProvision, DocumentRef, ObservationLimits,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[path = "../../../fsl-semantics/tests/support/tc1070.rs"]
 #[allow(dead_code, clippy::duplicate_mod)]
@@ -334,7 +334,7 @@ protocol Watch using P over (view: M::Node) on origin {
   finish Closed as (closed: M::Receipt) { true };
 }
 "#;
-    let graph = reachable_with_document(&source, document);
+    let graph = reachable_with_document(source, document);
     let changed: Vec<_> = graph
         .states
         .iter()

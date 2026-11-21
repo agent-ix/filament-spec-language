@@ -1128,14 +1128,14 @@ fn project_guard(node: &CheckedSemanticNodeV2) -> Result<CheckedClockGuard, &'st
         .map(|part| {
             let members = aggregate(part)?;
             let (predicate, remaining) = members.split_first().ok_or("a guard part is empty")?;
-            let CheckedTerm::Binding { name, value } = predicate else {
+            let CheckedTerm::Binding { name, value, .. } = predicate else {
                 return Err("a guard part does not begin with its predicate");
             };
             if name.as_ref() != "predicate" {
                 return Err("a guard part does not begin with its predicate");
             }
             let (binders, constraints) = match remaining.split_first() {
-                Some((CheckedTerm::Binding { name, value }, rest))
+                Some((CheckedTerm::Binding { name, value, .. }, rest))
                     if name.as_ref() == "binders" =>
                 {
                     (reference_list(value)?, rest)
@@ -1259,6 +1259,7 @@ fn binding<'a>(value: &'a CheckedTerm, name: &str) -> Result<&'a CheckedTerm, &'
             CheckedTerm::Binding {
                 name: member_name,
                 value,
+                ..
             } if member_name.as_ref() == name => Some(value.as_ref()),
             _ => None,
         })
@@ -1273,6 +1274,7 @@ fn optional_binding<'a>(value: &'a CheckedTerm, name: &str) -> Option<&'a Checke
             CheckedTerm::Binding {
                 name: member_name,
                 value,
+                ..
             } if member_name.as_ref() == name => Some(value.as_ref()),
             _ => None,
         })
@@ -1399,6 +1401,7 @@ mod intake_proofs {
                 CheckedTerm::Binding {
                     name: actual,
                     value,
+                    ..
                 } if actual.as_ref() == name => Some(value),
                 _ => None,
             })

@@ -4,7 +4,7 @@
 use fsl_forms::cst::{self, CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
 use fsl_foundation::diagnostic::{Code, Diagnostic};
 use fsl_foundation::{Phase, Source, SourceIdentity, Span};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::model::accounting::ModelNormalizationLimits;
 
@@ -2486,14 +2486,12 @@ fn read_process(
     }
     process.wire["kind"]["name"] = json!("process");
     process.wire["identityFields"] = if process.links.supertypes.is_empty() {
-        json!(
-            process.wire["fields"]
-                .as_array()?
-                .iter()
-                .filter_map(|field| field.get("identity").and_then(Value::as_str))
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        )
+        json!(process.wire["fields"]
+            .as_array()?
+            .iter()
+            .filter_map(|field| field.get("identity").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect::<Vec<_>>())
     } else {
         json!([])
     };

@@ -27,11 +27,8 @@ fn assert_locus(source: &str, code: &str, cause: &str, token: &str, subject: &st
             panic!("expected a source protocol refusal: {refusal:?}");
         };
         let span = anchor.span();
-        assert_eq!(usize::try_from(span.start).expect("start"), expected);
-        assert_eq!(
-            usize::try_from(span.end).expect("end"),
-            expected + token.len()
-        );
+        assert_eq!(span.start, expected);
+        assert_eq!(span.end, expected + token.len());
         assert!(token.len() < source.len());
         assert!(format!("{anchor:?}").contains(subject), "{anchor:?}");
     }

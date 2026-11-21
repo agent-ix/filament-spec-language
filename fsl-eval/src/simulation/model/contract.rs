@@ -31,7 +31,7 @@ use fsl_semantics::model::state::{ModelState, StateObject};
 use super::application::OperationRef;
 use super::domain::{Domain, Odometer};
 use super::frames;
-use super::walk::{Applied, rows_of, walk_of};
+use super::walk::{rows_of, walk_of, Applied};
 use super::{ClauseInfo, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem};
 use crate::simulation::expansion::ExpansionStop;
 

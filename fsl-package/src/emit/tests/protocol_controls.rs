@@ -706,8 +706,7 @@ fn a_related_clause_carries_its_relationship_and_both_ends_into_the_package() {
             }),
         ],
     );
-    let NormalizeOutcome::Completed(view) =
-        normalize(&model, ModelNormalizationLimits::UNLIMITED)
+    let NormalizeOutcome::Completed(view) = normalize(&model, ModelNormalizationLimits::UNLIMITED)
     else {
         panic!("the related-by model normalizes");
     };
@@ -1558,21 +1557,19 @@ fn decisions_without_a_node_form_are_not_written() {
     use super::protocol_graph::checked;
     use super::protocol_reference::not_emitted;
     use fsl_semantics::check::ProtocolConstruct;
-    let cases = [
-        (
-            ProtocolConstruct::ProtocolReferenceInBody,
-            "QSL-1121g",
-            format!(
-                "{}protocol Other using p over (input: M::Order) on origin {{\n\
+    let cases = [(
+        ProtocolConstruct::ProtocolReferenceInBody,
+        "QSL-1121g",
+        format!(
+            "{}protocol Other using p over (input: M::Order) on origin {{\n\
                  role Buyer on M::Order;\nrun sequence Main {{ }}\n\
                  finish End as (outcome: Boolean) {{ true }};\n}}\n",
-                flow(
-                    "sequence Main { repeat Loop by Buyer visible () while { protocol Other } \
+            flow(
+                "sequence Main { repeat Loop by Buyer visible () while { protocol Other } \
                      sequence Body { event Tick by Buyer as (tick: Boolean) { true }; } }",
-                )
-            ),
+            )
         ),
-    ];
+    )];
     for (construct, ticket, text) in cases {
         assert_eq!(construct.tracking(), ticket);
         let refusals = checked(&text, false).expect_err(&text);
@@ -1930,9 +1927,16 @@ fn a_pre_test_decision_that_reads_its_body_is_written() {
     ] {
         let lowered = emitted(&deciding(run));
         let repeat = run_control(&lowered.wire, "Loop");
-        assert_eq!(names(repeat), REPEAT, "a pre-test repeat has no test member");
+        assert_eq!(
+            names(repeat),
+            REPEAT,
+            "a pre-test repeat has no test member"
+        );
         let visible = argument(repeat, &REPEAT, "visible");
-        if let Some(entry) = visible["members"].as_array().and_then(|members| members.first()) {
+        if let Some(entry) = visible["members"]
+            .as_array()
+            .and_then(|members| members.first())
+        {
             assert_eq!(target(&lowered.wire, entry)["node_tag"], "expression");
         }
     }

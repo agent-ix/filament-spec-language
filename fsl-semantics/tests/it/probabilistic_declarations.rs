@@ -3143,9 +3143,8 @@ fn a_quantile_over_a_fraction_refuses() {
 #[trace("FR-612-AC-1")]
 #[test]
 fn an_indexed_read_in_a_probability_condition_refuses_as_hyper_only() {
-    let source = claim(
-        "{ probability >= 0.5 [ always[0,10] holds(s.phase @ a = Service::Phase::Idle) ] }",
-    );
+    let source =
+        claim("{ probability >= 0.5 [ always[0,10] holds(s.phase @ a = Service::Phase::Idle) ] }");
     assert_eq!(
         located(&service(None, &source)),
         [(

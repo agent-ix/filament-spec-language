@@ -392,16 +392,6 @@ fn adjusted_exponent(
     i128::from(coefficient_digits) - 1 - i128::from(scale) + signed_exponent
 }
 
-#[cfg(test)]
-mod tests {
-    use super::adjusted_exponent;
-
-    #[test]
-    fn exponent_cancellation_precedes_extreme_classification() {
-        assert_eq!(adjusted_exponent(1, 100_000_001, false, 100_000_001), 0);
-    }
-}
-
 fn decimal_to_rational(decimal: Decimal) -> Option<Rational> {
     let representation = decimal.representation();
     Rational::new(
@@ -435,7 +425,7 @@ fn positive(text: &str) -> bool {
 }
 
 fn ascii_digit(byte: u8) -> bool {
-    (b'0'..=b'9').contains(&byte)
+    byte.is_ascii_digit()
 }
 
 fn malformed() -> Stop {
@@ -466,5 +456,15 @@ fn negative_zero_value(width: IeeeWidth) -> IeeeValue {
     match width {
         IeeeWidth::Binary32 => IeeeValue::binary32(0x8000_0000),
         IeeeWidth::Binary64 => IeeeValue::binary64(0x8000_0000_0000_0000),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adjusted_exponent;
+
+    #[test]
+    fn exponent_cancellation_precedes_extreme_classification() {
+        assert_eq!(adjusted_exponent(1, 100_000_001, false, 100_000_001), 0);
     }
 }

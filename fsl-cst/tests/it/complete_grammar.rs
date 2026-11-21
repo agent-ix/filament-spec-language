@@ -570,11 +570,7 @@ fn corpus() -> Vec<(&'static str, String)> {
     ]
 }
 
-#[trace(
-    "FSpec-TC-180",
-    "FSpec-FR-339-AC-2",
-    "FR-003-AC-14"
-)]
+#[trace("FSpec-TC-180", "FSpec-FR-339-AC-2", "FR-003-AC-14")]
 #[test]
 fn every_named_production_has_positive_vectors_and_exact_boundaries() {
     assert_eq!(Production::all(), ACCEPTED_PRODUCTIONS);

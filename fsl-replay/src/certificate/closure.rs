@@ -69,9 +69,11 @@ use fsl_eval::automaton::{
 use fsl_eval::model_subject::{
     refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
 };
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
+use fsl_eval::simulation::model::{
+    ModelFinding, ModelSimState, ModelSystem, ProtocolDefinition, TerminalClass,
+};
 use fsl_eval::simulation::protocol::{
-    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities,
+    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities, MemoryModel,
     ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolRefusal,
     ProtocolSystem, Sc, SubjectMemory,
 };
@@ -434,30 +436,44 @@ fn check_protocol(
     cancel: &Cancel,
 ) -> Result<TemporalCertificateCheck, ClosureRefusal> {
     let model = admit(request.subject.model.simulation.clone())?;
-    let evaluator = request.subject.model.simulation.input.evaluator;
-    let protocol = evaluator
-        .protocol(&request.subject.protocol)
+    let input = &request.subject.model.simulation.input;
+    let definition = input
+        .protocol_definition(&request.subject.protocol)
         .ok_or_else(|| {
             ClosureRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
                 protocol: request.subject.protocol.clone(),
             })
         })?;
-    let capacities = Capacities::admit(protocol, &request.subject.capacities)
-        .map_err(|refusal| ClosureRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
-    check_protocol_bounds(&model, protocol, &capacities, evaluator, BOUND_POSITIONS)
+    let source = match definition {
+        ProtocolDefinition::Source(protocol) => Some(protocol),
+        ProtocolDefinition::Package(_) => None,
+    };
+    if let Some(protocol) = source {
+        let capacities = Capacities::admit(protocol, &request.subject.capacities)
+            .map_err(|refusal| ClosureRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
+        check_protocol_bounds(
+            &model,
+            protocol,
+            &capacities,
+            input.evaluator,
+            BOUND_POSITIONS,
+        )
         .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
+    }
     let subject = &request.subject;
     let live_instances = live_instance_bound(request.max_live_instances);
-    let instance = activates_on_each(protocol).then_some(InstanceBound {
-        value: live_instances,
-    });
+    let instance = source
+        .is_some_and(activates_on_each)
+        .then_some(InstanceBound {
+            value: live_instances,
+        });
     match SubjectMemory::of(
         &subject.memory,
         request.max_store_buffer,
         request.max_messages,
     ) {
         SubjectMemory::Sc => {
-            let system = ProtocolSystem::new_with_loop_proof(
+            let system = new_protocol_system(
                 model,
                 subject,
                 Sc,
@@ -484,7 +500,7 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxStoreBuffer,
                 value: tso.max_store_buffer(),
             };
-            let system = ProtocolSystem::new_with_loop_proof(
+            let system = new_protocol_system(
                 model,
                 subject,
                 tso,
@@ -511,7 +527,7 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxMessages,
                 value: ra.max_messages(),
             };
-            let system = ProtocolSystem::new_with_loop_proof(
+            let system = new_protocol_system(
                 model,
                 subject,
                 ra,
@@ -533,6 +549,36 @@ fn check_protocol(
                 cancel,
             )
         }
+    }
+}
+
+/// The protocol system of `subject` over its source or package definition.
+fn new_protocol_system<'a, M: MemoryModel>(
+    model: ModelSystem<'a>,
+    subject: &'a ProtocolSubject<'a>,
+    memory: M,
+    loop_proof_target: Option<ProtocolLoopProofTarget>,
+) -> Result<ProtocolSystem<'a, M>, ProtocolRefusal> {
+    match subject
+        .model
+        .simulation
+        .input
+        .protocol_definition(&subject.protocol)
+    {
+        Some(ProtocolDefinition::Source(_)) => {
+            ProtocolSystem::new_with_loop_proof(model, subject, memory, loop_proof_target)
+        }
+        Some(ProtocolDefinition::Package(_)) if loop_proof_target.is_some() => {
+            Err(ProtocolRefusal::Unsupported(
+                fsl_eval::simulation::protocol::Unsupported::PackageControl(
+                    fsl_package::protocol_view::ControlOperation::Repeat,
+                ),
+            ))
+        }
+        Some(ProtocolDefinition::Package(_)) => ProtocolSystem::new_package(model, subject, memory),
+        None => Err(ProtocolRefusal::UnknownProtocol {
+            protocol: subject.protocol.clone(),
+        }),
     }
 }
 

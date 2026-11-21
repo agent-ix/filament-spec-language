@@ -1680,7 +1680,8 @@ fn a_context_set_field_follows_the_collection_rules_of_an_object_field() {
 #[test]
 fn a_context_field_refusal_carries_a_pointer_that_resolves_in_the_snapshot() {
     let orders = Orders::new(false);
-    let edits: [(fn(&mut Json), &str); 3] = [
+    type Edit = (fn(&mut Json), &'static str);
+    let edits: [Edit; 3] = [
         // A wrong kind resolves to the field value itself.
         (
             |document| document["contexts"][0]["fields"]["placed"] = json!({"integer": "1"}),

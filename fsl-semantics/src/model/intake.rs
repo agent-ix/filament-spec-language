@@ -209,8 +209,8 @@ pub fn native_budget_setting(
 mod model_unit;
 mod unit;
 pub use model_unit::{
-    CompiledModelUnit, compile_model_unit, compile_model_unit_with_causes, is_model_unit_source,
-    package_input_from_sources,
+    compile_model_unit, compile_model_unit_with_causes, is_model_unit_source,
+    package_input_from_sources, CompiledModelUnit,
 };
 pub use unit::{
     admit_unit, admit_unit_with_cancel, admit_units_with_cancel, OperationClauseFailure,
@@ -3105,7 +3105,9 @@ fn read_operation_parameter(
         other => {
             return Err(ctx.malformed_in(
                 "presence",
-                format!("{other:?} is not required/optional, the only presences this reader recognizes"),
+                format!(
+                    "{other:?} is not required/optional, the only presences this reader recognizes"
+                ),
             ))
         }
     };
@@ -4160,6 +4162,10 @@ pub(super) fn read_object_type(
 ///
 /// `type_meanings` maps each type identity of the document to the meaning
 /// its `kind` resolves to.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "record intake shares the document's identity context and distinct output collections"
+)]
 pub(super) fn read_record_value_type(
     package: &str,
     type_value: &Value,
@@ -8160,9 +8166,8 @@ mod tests {
     #[trace("FR-056-AC-65", "FSpec-FR-154-AC-40")]
     #[test]
     fn operation_parameter_presence_is_required_and_rejects_unknown_values() {
-        let mut document = option_wire_document(Some(serde_json::json!(
-            "ix://filament/native/Integer"
-        )));
+        let mut document =
+            option_wire_document(Some(serde_json::json!("ix://filament/native/Integer")));
         document["types"][1]["operations"][0]["params"][0]["typeRef"] =
             serde_json::json!("ix://filament/native/Integer");
         document["types"][1]["operations"][0]["params"][0]["presence"] =
@@ -8187,49 +8192,52 @@ mod tests {
             &parse_document(optional_option.to_string().as_bytes()),
         )
         .expect_err("optional presence cannot wrap an Option<T> parameter twice");
-        assert!(refusals.iter().any(|refusal| {
-            refusal.code == Code::InvalidModelBinding
-                && matches!(
-                    &refusal.cause,
-                    ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
-                        if node == "ix://acme/optionals/Holder/read/value"
-                            && *member == MemberPath::type_definition()
-                                .name("operations")
-                                .index(0)
-                                .name("params")
-                                .index(0)
-                                .name("presence")
-                )
-        }), "{refusals:?}");
+        assert!(
+            refusals.iter().any(|refusal| {
+                refusal.code == Code::InvalidModelBinding
+                    && matches!(
+                        &refusal.cause,
+                        ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
+                            if node == "ix://acme/optionals/Holder/read/value"
+                                && *member == MemberPath::type_definition()
+                                    .name("operations")
+                                    .index(0)
+                                    .name("params")
+                                    .index(0)
+                                    .name("presence")
+                    )
+            }),
+            "{refusals:?}"
+        );
 
-        let required_option = option_wire_document(Some(serde_json::json!(
-            "ix://filament/native/Integer"
-        )));
+        let required_option =
+            option_wire_document(Some(serde_json::json!("ix://filament/native/Integer")));
         let records = read_records(
             "acme/optionals",
             &parse_document(required_option.to_string().as_bytes()),
         )
         .expect("a required Option<T> parameter is admitted");
-        assert!(records.iter().any(|record| matches!(
-            record,
-            DomainPackageRecord::OperationMember(operation)
-                if operation.parameters.len() == 1
-                    && operation.parameters[0].presence == Presence::Required
-                    && operation.parameters[0].value_type
-                        == ValueTypeRef::Package(declaration_key(
-                            "acme/optionals",
-                            "ix://acme/optionals/OptInt",
-                        ))
-        )), "{records:?}");
+        assert!(
+            records.iter().any(|record| matches!(
+                record,
+                DomainPackageRecord::OperationMember(operation)
+                    if operation.parameters.len() == 1
+                        && operation.parameters[0].presence == Presence::Required
+                        && operation.parameters[0].value_type
+                            == ValueTypeRef::Package(declaration_key(
+                                "acme/optionals",
+                                "ix://acme/optionals/OptInt",
+                            ))
+            )),
+            "{records:?}"
+        );
 
         for invalid_presence in [serde_json::Value::Null, serde_json::json!("sometimes")] {
-            let mut invalid = option_wire_document(Some(serde_json::json!(
-                "ix://filament/native/Integer"
-            )));
+            let mut invalid =
+                option_wire_document(Some(serde_json::json!("ix://filament/native/Integer")));
             invalid["types"][1]["operations"][0]["params"][0]["typeRef"] =
                 serde_json::json!("ix://filament/native/Integer");
-            invalid["types"][1]["operations"][0]["params"][0]["presence"] =
-                invalid_presence;
+            invalid["types"][1]["operations"][0]["params"][0]["presence"] = invalid_presence;
             let refusals = read_unvalidated(
                 "acme/optionals",
                 &parse_document(invalid.to_string().as_bytes()),

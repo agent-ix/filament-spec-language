@@ -556,8 +556,13 @@ fn claim_rule(
                         sources.push((first, false));
                     }
                     if dwell.depth < p {
-                        for k in dwell.first..=dwell.last {
-                            if may_end[k] {
+                        for (k, may_end_here) in may_end
+                            .iter()
+                            .enumerate()
+                            .take(dwell.last + 1)
+                            .skip(dwell.first)
+                        {
+                            if *may_end_here {
                                 sources.push((k, true));
                             }
                         }

@@ -1108,7 +1108,7 @@ pub enum RunCause {
         #[source]
         error: fsl_replay::CauseCodecError,
         /// The all-or-nothing outcome document for this failed row.
-        outcome: fsl_replay::OutcomeDocument,
+        outcome: Box<fsl_replay::OutcomeDocument>,
     },
     /// An item run violated an internal runtime invariant.
     #[error("an items run faulted")]
@@ -1347,7 +1347,7 @@ impl RunError {
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
             RunCause::Replay(failure) => failure.outcome.clone(),
-            RunCause::ReplayOutput { outcome, .. } => outcome.clone(),
+            RunCause::ReplayOutput { outcome, .. } => outcome.as_ref().clone(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
@@ -4065,8 +4065,12 @@ const TRANSFER_EXCLUSIVE: [(&str, fn(&wire::Request) -> bool); 9] = [
     ("clause", |request| request.clause.is_some()),
     ("items", |request| request.items.is_some()),
     ("tl_lowering", |request| request.tl_lowering.is_some()),
-    ("model_based_test", |request| request.model_based_test.is_some()),
-    ("verification_plan", |request| request.verification_plan.is_some()),
+    ("model_based_test", |request| {
+        request.model_based_test.is_some()
+    }),
+    ("verification_plan", |request| {
+        request.verification_plan.is_some()
+    }),
     ("synthesis", |request| request.synthesis.is_some()),
     ("export_evidence", |_| false),
 ];
@@ -4171,7 +4175,11 @@ fn validate_transfer_member(
             }
         }
     }
-    if request.models.iter().any(|model| !is_model_input_format(model)) {
+    if request
+        .models
+        .iter()
+        .any(|model| !is_model_input_format(model))
+    {
         return Err(RunCause::CompleteRunSelection(
             CompleteRunSelection::NativeModel,
         ));
@@ -4812,7 +4820,9 @@ mod tests {
         let codec = fsl_replay::CauseCodecError::Empty("result row");
         let error = RunError {
             cause: RunCause::ReplayOutput {
-                outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(1, &codec),
+                outcome: Box::new(fsl_replay::OutcomeDocument::from_replay_output_failure(
+                    1, &codec,
+                )),
                 error: codec,
             },
             sources: crate::Sources::default(),

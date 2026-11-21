@@ -51,28 +51,28 @@ use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
-use fsl_eval::simulation::BOUND_POSITIONS;
 use fsl_eval::simulation::model::{
-    GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
-    TimedSubjectRefusal, TimedSystem, check_model_bounds,
+    check_model_bounds, GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem,
+    PlaceConstraint, TimedSubjectRefusal, TimedSystem,
 };
+use fsl_eval::simulation::BOUND_POSITIONS;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CertifiedPosition, ConcreteStep, CounterexampleKind, ReachedLimit, RefinementFailure,
-    RefinementPart, RefinementPosition, RefinementSystems, StepVerdict, SubjectRefusal, Taken,
-    TemporalCounterexample, UndefinedEvaluation, Undetermined,
-    ZoneCertificate, check_initial, check_step, open_systems,
+    check_initial, check_step, open_systems, CertifiedPosition, ConcreteStep, CounterexampleKind,
+    ReachedLimit, RefinementFailure, RefinementPart, RefinementPosition, RefinementSystems,
+    StepVerdict, SubjectRefusal, Taken, TemporalCounterexample, UndefinedEvaluation, Undetermined,
+    ZoneCertificate,
 };
 use fsl_route::deadlock::ItemObligation;
 use fsl_semantics::check::{CheckedRefinement, ClockOp};
 use fsl_semantics::model::observation::DocumentRef;
 
 use super::certificate::Proof;
-use super::concretise::{Stage, Target, concretise};
+use super::concretise::{concretise, Stage, Target};
 use super::divergence::{Escape, EscapeWitness};
 use super::search::{
-    Arrival, Halt, Inserted, Judged, Run, Searched, ZoneCheckLimits, ZoneCheckRefusal, ZoneStats,
-    ZoneStop, ZoneUndecided, not_simulated, widen,
+    not_simulated, widen, Arrival, Halt, Inserted, Judged, Run, Searched, ZoneCheckLimits,
+    ZoneCheckRefusal, ZoneStats, ZoneStop, ZoneUndecided,
 };
 use super::{Bound, Dbm};
 

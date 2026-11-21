@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -14,26 +14,26 @@ mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity,
+    check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
 };
 pub use mdp::{
-    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
+    cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
-    read_probability_proof_document, write_probability_proof_document,
+    read_probability_proof_document, write_probability_proof_document, ProbabilityProofDocument,
 };
 mod long_run;
+#[cfg(feature = "test-support")]
 pub use long_run::{
-    LongRunProbabilityComponent, LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
+    check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
+};
+pub use long_run::{
     long_run_probability_certificate_document, read_long_run_probability_certificate,
     read_weighted_long_run_probability_certificate,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate,
-};
-#[cfg(feature = "test-support")]
-pub use long_run::{
-    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity,
+    write_weighted_long_run_probability_certificate, LongRunProbabilityComponent,
+    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
 };
 mod timed;
 mod unit;

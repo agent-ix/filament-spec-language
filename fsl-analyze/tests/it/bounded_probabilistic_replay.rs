@@ -463,9 +463,12 @@ fn all_workload_first_hit_cylinders_have_exact_mass_fifty_five_over_sixty_four()
                     && previous.steps.iter().zip(&steps).all(|(a, b)| {
                         a.action == b.action
                             && a.transition == b.transition
-                        && a.draw.as_deref().zip(b.draw.as_deref()).is_some_and(|(a, b)| {
-                            fsl_eval::simulation::model::same_values(a, b)
-                        })
+                            && a.draw
+                                .as_deref()
+                                .zip(b.draw.as_deref())
+                                .is_some_and(|(a, b)| {
+                                    fsl_eval::simulation::model::same_values(a, b)
+                                })
                     })
             }) {
                 accepting

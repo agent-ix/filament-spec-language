@@ -14,22 +14,22 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use crate::simulation::order::Expanded;
 use crate::simulation::{
-    EncodingRefusal, Limits,
     expansion::{ExpansionLimit, ExpansionStop},
     trace::{Step, Trace},
+    EncodingRefusal, Limits,
 };
 
-use super::domain::{Domain, admitted_text_value};
-use super::{AdmissionFailure, ContractClause, ContractClauseKind};
+use super::domain::{admitted_text_value, Domain};
 use super::{
-    ModelBoundaryPartition, ModelCheckInput, ModelFinding, ModelOperation, ModelOperationCase,
-    ModelOperationCoverageEntry, ModelOperationCoverageLimit, ModelOperationCoverageLimits,
-    ModelOperationCoverageReason, ModelOperationCoverageReasonKind,
+    model_operation_coverage, sample_model_with_omitted_clause,
+    shrink_model_trace_with_omitted_clause, ModelBoundaryPartition, ModelCheckInput, ModelFinding,
+    ModelOperation, ModelOperationCase, ModelOperationCoverageEntry, ModelOperationCoverageLimit,
+    ModelOperationCoverageLimits, ModelOperationCoverageReason, ModelOperationCoverageReasonKind,
     ModelOperationCoverageSummaryStatus, ModelPartitionStatus, ModelPartitionUncoveredReason,
     ModelSampleError, ModelShrinkError, ModelSimState, ModelSimulationRequest, ModelSystem,
-    ModelTrace, model_operation_coverage, sample_model_with_omitted_clause,
-    shrink_model_trace_with_omitted_clause,
+    ModelTrace,
 };
+use super::{AdmissionFailure, ContractClause, ContractClauseKind};
 use crate::simulation::choice::ChoicePoint;
 use crate::simulation::trace::SampleProvenance;
 use crate::value::{CheckedPackageEvaluation, QualifiedName};
@@ -1403,6 +1403,10 @@ fn run_model_based_value_function_entry(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the model-based value-function run threads the model, checked package, function and its run parameters"
+)]
 fn run_model_based_value_function(
     package: &fsl_package::CheckedPackage,
     identity: &NodeKey,
@@ -3024,23 +3028,6 @@ fn require_refusal(admitted: bool, parameter: String) -> Result<(), ModelBasedTe
     }
 }
 
-#[cfg(test)]
-mod refusal_tests {
-    use super::{ModelBasedTestError, ModelBasedTestResult, require_refusal};
-
-    /// FR-752-AC-8: if admission accepts a refusal partition, the run exits
-    /// through the API error and produces no model-based result record.
-    #[test]
-    fn an_admitted_refusal_returns_no_test_result() {
-        let result: Result<ModelBasedTestResult, ModelBasedTestError> =
-            require_refusal(true, "by".to_owned()).map(|()| unreachable!("oracle disagreement"));
-        assert!(matches!(
-            result,
-            Err(ModelBasedTestError::OracleDisagreement { parameter }) if parameter == "by"
-        ));
-    }
-}
-
 #[allow(
     clippy::too_many_arguments,
     reason = "the tool-failure record preserves the exact request limits"
@@ -4056,4 +4043,21 @@ fn replayed_invocation_prefix(
             String::from_utf8(bytes).map_err(|_| ModelBasedTestError::Coverage)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::{require_refusal, ModelBasedTestError, ModelBasedTestResult};
+
+    /// FR-752-AC-8: if admission accepts a refusal partition, the run exits
+    /// through the API error and produces no model-based result record.
+    #[test]
+    fn an_admitted_refusal_returns_no_test_result() {
+        let result: Result<ModelBasedTestResult, ModelBasedTestError> =
+            require_refusal(true, "by".to_owned()).map(|()| unreachable!("oracle disagreement"));
+        assert!(matches!(
+            result,
+            Err(ModelBasedTestError::OracleDisagreement { parameter }) if parameter == "by"
+        ));
+    }
 }

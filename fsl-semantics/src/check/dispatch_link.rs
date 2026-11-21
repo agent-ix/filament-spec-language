@@ -27,13 +27,13 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{BinaryOperator, DeclaredClauseKind, ExprNode, Expression, StateClauseKind};
-use fsl_foundation::Span;
 use fsl_foundation::diagnostic::Code;
+use fsl_foundation::Span;
 
 use super::check::DispatchOperation;
 use super::checked_dispatch::{
-    DispatchBridgeRefusal, DispatchRoot, OperationClauses, body_clause, body_function,
-    checked_dispatch_core, rename_names,
+    body_clause, body_function, checked_dispatch_core, rename_names, DispatchBridgeRefusal,
+    DispatchRoot, OperationClauses,
 };
 use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::ModelClause;
@@ -383,8 +383,11 @@ impl PackageDeclarations {
             model.alias() == Some("")
                 && model.selection().identity == view.domain_package().model_selection.identity
         });
-        clauses.source_owner_identity = source_model
-            .then(|| super::node_key::SourceOwner::from(&self.source).identity().to_owned());
+        clauses.source_owner_identity = source_model.then(|| {
+            super::node_key::SourceOwner::from(&self.source)
+                .identity()
+                .to_owned()
+        });
         for record in &view.domain_package().records {
             let DomainPackageRecord::OperationMember(operation) = record else {
                 continue;

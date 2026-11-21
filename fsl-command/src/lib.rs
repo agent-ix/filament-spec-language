@@ -54,6 +54,11 @@ pub fn diagnostic_pairs() -> Vec<fsl_foundation::diagnostic::CatalogCode> {
     pairs
 }
 
+/// Build the renderer's source provision from the admitted sources in an outcome.
+pub fn render_sources(sources: &Sources) -> fsl_inspect::RenderSources {
+    fsl_inspect::RenderSources::from_sources(sources.as_slice().iter().cloned())
+}
+
 #[cfg(test)]
 mod hint_catalog_tests {
     use fsl_foundation::diagnostic::Code;
@@ -72,10 +77,7 @@ mod hint_catalog_tests {
         for row in HINTS {
             assert_eq!(hint_for(row.code, row.cause), Some(row.text));
         }
-        assert_eq!(
-            hint_for(Code::OutputFailure, Some("output-failure")),
-            None
-        );
+        assert_eq!(hint_for(Code::OutputFailure, Some("output-failure")), None);
         assert_eq!(hint_for(Code::InvalidRequest, None), None);
 
         let unknown = [HintRow {
@@ -113,9 +115,4 @@ mod hint_catalog_tests {
             Err(HintCatalogError::MalformedText { .. })
         ));
     }
-}
-
-/// Build the renderer's source provision from the admitted sources in an outcome.
-pub fn render_sources(sources: &Sources) -> fsl_inspect::RenderSources {
-    fsl_inspect::RenderSources::from_sources(sources.as_slice().iter().cloned())
 }

@@ -10,11 +10,11 @@ use fsl_semantics::check::{
     MemberTerm, NodeRef, NodeTag, PlaceStep, SlotRef,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::model_operations::{version_number_value_type, wire_construct, wire_field, wire_type};
 use crate::timed_model::{
-    PACKAGE, UNITS, call, check, exact, field, refused, rpc_document_with, shown_parts, timed,
+    call, check, exact, field, refused, rpc_document_with, shown_parts, timed, PACKAGE, UNITS,
 };
 use fsl_semantics::model::intake::meaning;
 
@@ -2252,10 +2252,8 @@ fn a_population_clock_presence_read_uses_the_visited_reference() {
     let [read] = reads.as_slice() else {
         panic!("one population presence_read: {reads:?}");
     };
-    let [
-        MemberTerm::Leaf(LeafTerm::Reference { target: place }),
-        MemberTerm::Leaf(LeafTerm::Reference { target: owner }),
-    ] = read.arguments.as_slice()
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: place }), MemberTerm::Leaf(LeafTerm::Reference { target: owner })] =
+        read.arguments.as_slice()
     else {
         panic!("presence_read has the template then the owner term: {read:?}");
     };
@@ -2674,12 +2672,9 @@ fn absent_lowers_to_the_none_literal_of_its_option() {
         Some(ty),
         function.semantic_type().map(NodeRef::Admitted).as_ref()
     );
-    assert!(
-        nodes
-            .iter()
-            .any(|node| node.semantic_form() == "option"
-                && node.node_tag() == NodeTag::CompositeType)
-    );
+    assert!(nodes
+        .iter()
+        .any(|node| node.semantic_form() == "option" && node.node_tag() == NodeTag::CompositeType));
 }
 
 /// FR-230 "Presence bit" (TC-685), part of FR-230-AC-39: a top-level
@@ -3153,13 +3148,11 @@ fn quantified_presence_over_an_option_sequence_is_a_data_predicate() {
     };
     assert_eq!(inner_binding.name, "slot");
     assert_eq!(inner_body.admitted().cloned(), Some(presence_node.key()));
-    assert!(
-        check(
-            &document,
-            &format!("{UNITS}{DENSE}urgent U when {{ present(self.q) }};\n"),
-        )
-        .is_err()
-    );
+    assert!(check(
+        &document,
+        &format!("{UNITS}{DENSE}urgent U when {{ present(self.q) }};\n"),
+    )
+    .is_err());
 }
 
 /// SR-1763001 FND-003 (TC-685, STD-526 PR-03): over `q:
@@ -3283,10 +3276,8 @@ fn a_ref_names_a_clock_place_of_its_owner() {
         })
         .collect();
     assert_eq!(reads.len(), 1, "one shared place-reference node");
-    let [
-        MemberTerm::Leaf(LeafTerm::Reference { target: place }),
-        MemberTerm::Leaf(LeafTerm::Reference { target: owner }),
-    ] = reads[0].arguments.as_slice()
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: place }), MemberTerm::Leaf(LeafTerm::Reference { target: owner })] =
+        reads[0].arguments.as_slice()
     else {
         panic!(
             "place reference carries template then owner: {:?}",
@@ -3402,10 +3393,8 @@ fn a_ref_crosses_an_object_reference_field() {
         })
         .collect();
     assert_eq!(reads.len(), 1, "equal place-reference terms share one node");
-    let [
-        MemberTerm::Leaf(LeafTerm::Reference { target: place }),
-        MemberTerm::Leaf(LeafTerm::Reference { target: owner }),
-    ] = reads[0].arguments.as_slice()
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: place }), MemberTerm::Leaf(LeafTerm::Reference { target: owner })] =
+        reads[0].arguments.as_slice()
     else {
         panic!(
             "place reference carries template then owner: {:?}",

@@ -9,12 +9,10 @@ fn checked_recipe(condition: &str, declarations: &str) -> Recipe {
     let text = std::fs::read_to_string(&request.emit.source).unwrap();
     let attempt = "as (attempted: Boolean) { attempted };";
     assert_eq!(text.matches(attempt).count(), 1);
-    let text = text
-        .replace(FULL_RECOVER, condition)
-        .replace(
-            "model M = \"agent-ix/checked-handoff\";",
-            &format!("model M = \"agent-ix/checked-handoff\";\n{declarations}"),
-        );
+    let text = text.replace(FULL_RECOVER, condition).replace(
+        "model M = \"agent-ix/checked-handoff\";",
+        &format!("model M = \"agent-ix/checked-handoff\";\n{declarations}"),
+    );
     let unit = holder.path().join("unit.native");
     std::fs::write(&unit, text).unwrap();
     request.emit.source = unit;

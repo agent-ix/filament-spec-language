@@ -285,7 +285,9 @@ fn result_value(result: &PlanResult, package: &str) -> Result<Value, serde_json:
             entry
         }
         PlanResult::Simulation(runs) => runs.clone(),
-        PlanResult::ModelBasedTest(record) => super::super::model_based_test::result_json(record, package),
+        PlanResult::ModelBasedTest(record) => {
+            super::super::model_based_test::result_json(record, package)
+        }
         PlanResult::NotRun {
             code,
             cause,

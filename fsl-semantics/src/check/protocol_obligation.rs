@@ -34,19 +34,21 @@ use filament_semantic_value::location::{
 };
 use fsl_forms::{
     ActivationForm, AnchorSite, BinderKind, CaptureForm, ClauseKind, CompensationCommit,
-    CompensationForm, DeclaredName, ExpressionForm, IntervalUpper, ProtocolDeclarationForm, StateClauseKind,
-    TypeForm, TypeFormHead,
+    CompensationForm, DeclaredName, ExpressionForm, IntervalUpper, ProtocolDeclarationForm,
+    StateClauseKind, TypeForm, TypeFormHead,
 };
 use fsl_foundation::Span;
 
-use super::check::{NamedScope, Scope, StateContext, Typer, bind_parameters, reserved_slot_refusal};
+use super::check::{
+    bind_parameters, reserved_slot_refusal, NamedScope, Scope, StateContext, Typer,
+};
 use super::facts::Definedness;
 use super::ir::CheckedBody;
-use super::lowering::{ProtocolSite, protocol_location};
+use super::lowering::{protocol_location, ProtocolSite};
 use super::observation::Observations;
 use super::protocol_clause::{CheckedProtocol, ProtocolNodeId};
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{ClauseDeclarations, ClauseOperation, PopulationDomain, population_of};
+use super::state_clause::{population_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
 use super::type_form::resolve_form;
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
@@ -571,7 +573,10 @@ impl Checker<'_, '_> {
         }
         names.extend(protocol.captures.iter().map(|capture| {
             let name = &capture.parameter.name;
-            (name, protocol_location(owner, ProtocolSite::Capture(&name.name)))
+            (
+                name,
+                protocol_location(owner, ProtocolSite::Capture(&name.name)),
+            )
         }));
         for template in &protocol.compensations {
             let at = || protocol_location(owner, ProtocolSite::Compensation(&template.name.name));

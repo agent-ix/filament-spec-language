@@ -64,8 +64,12 @@ fn child() -> Value {
 }
 
 fn spine_dir(functions: &str) -> tempfile::TempDir {
+    spine_dir_for_case(Case::Healthy, functions)
+}
+
+fn spine_dir_for_case(case: Case, functions: &str) -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
-    spine::write(directory.path(), Case::Healthy).unwrap();
+    spine::write(directory.path(), case).unwrap();
     let unit = std::fs::read_to_string(directory.path().join("spine-unit.native")).unwrap();
     std::fs::write(
         directory.path().join("spine-unit.native"),
@@ -450,6 +454,64 @@ fn a_population_result_is_a_set_of_references() {
         .map(|member| serde_json::to_vec(member).unwrap())
         .collect();
     assert!(bytes[0] < bytes[1], "{value}");
+}
+
+#[test]
+#[trace("TC-128", "FR-046-AC-6")]
+fn source_queries_aggregate_a_complete_population_view() {
+    let directory = spine_dir(
+        "type Total = Int[0, 4000];\n\
+         type Count = Int[0, 4];\n\
+         function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure {\
+           sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber)\
+         }\n\
+         function countNewer using v(p: Population<Config::ConfigVersion>[4]): Count pure {\
+           count<Count>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber > 1)\
+         }\n",
+    );
+    let arguments = json!([{"parameter": "p", "value": {"population": population()}}]);
+
+    let sum = completed(&spine_call(
+        directory.path(),
+        "totalVersions",
+        arguments.clone(),
+    ));
+    assert_eq!(sum, json!({"integer": "3"}));
+
+    let count = completed(&spine_call(directory.path(), "countNewer", arguments));
+    assert_eq!(count, json!({"integer": "1"}));
+}
+
+#[test]
+#[trace("TC-128", "FR-046-AC-6")]
+fn an_aggregate_over_an_incomplete_population_is_not_a_total() {
+    let directory = spine_dir_for_case(
+        Case::Incomplete,
+        "type Total = Int[0, 4000];\n\
+         function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure {\
+           sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber)\
+         }\n",
+    );
+    let output = spine_call(
+        directory.path(),
+        "totalVersions",
+        json!([{"parameter": "p", "value": {"population": population()}}]),
+    );
+
+    assert_eq!(output.status.code(), Some(22), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["outcome"]["kind"], "refused", "{document}");
+    assert_eq!(
+        document["outcome"]["code"], "incomplete_population",
+        "{document}"
+    );
+    assert_eq!(
+        document["outcome"]["cause"], "incomplete-scope",
+        "{document}"
+    );
+    assert_eq!(document["outcome"]["fields"]["population"], population());
+    assert!(document["outcome"]["location"].is_object(), "{document}");
+    assert!(document["outcome"].get("value").is_none(), "{document}");
 }
 
 #[test]

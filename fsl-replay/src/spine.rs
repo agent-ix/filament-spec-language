@@ -232,28 +232,32 @@ pub use call::{
 pub(crate) use call::{run_compiled, CallSources};
 pub(crate) use call::{run_reading, run_reading_with_integer_division};
 pub use identity_form::{effective_form, node_key_form, universe_form};
+pub(crate) use identity_form::is_effective_form;
 pub use package_call::run_package;
 pub use run_value::ArgumentDefect;
 
 pub(crate) mod clause;
 pub use clause::{
     admit_progress, assertion_json, assertion_of, authenticate_emission,
-    authenticate_package_trace, clause_trace_binding, incomplete_json, incomplete_of,
-    name_clause_atom, pending_report, profile_reads, read_evidence_ledger, read_ledger, run_clause,
-    run_clause_batch, run_clause_with_temporal_selections, disposition_report, run_package_behaviours, run_package_sampled, run_package_valuation,
-    run_package_temporal, run_package_temporal_bounded, run_package_trace_subject,
-    run_program_batch, run_temporal_behaviours, run_temporal_valuation, run_trace_subject_clause,
-    sample_position, settle_correction, settle_run_correction, temporal_batch_exit_code,
-    temporal_batch_outcome, write_ledger, AdmittedLate, AdmittedPosition, AdmittedValue, Advance,
-    AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument, ClauseArgumentValue,
-    ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseRunBatchOutcome,
-    ClauseRunBatchRefusal, ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection,
-    ClauseRunSource, ClauseRunStage, ClauseRunUsage, ClauseState, ClauseTraceKind,
-    ConsequentEventRefusal, ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState,
-    ContradictedDimension, CorrectionRecord, CorrectionRefusal, EvidenceLedgerFile,
-    EvidenceLedgerReadError, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
-    FiniteWindowSupport, LateEntry, LateInputs, LedgerBinding, LedgerReadError, ObservedPosition,
-    OperationName, OverObject, PackageAuthentication, PackageBehaviours, PackageSampledRequest, PackageTemporalRequest,
+    authenticate_package_trace, clause_trace_binding, disposition_report, incomplete_json,
+    incomplete_of, name_clause_atom, pending_report, profile_reads, read_evidence_ledger,
+    read_ledger, run_clause, run_clause_batch, run_clause_with_temporal_selections,
+    run_package_behaviours, run_package_sampled, run_package_sampled_authenticated,
+    run_package_snapshots, run_package_temporal, run_package_temporal_bounded,
+    run_package_trace_subject, run_package_valuation, run_program_batch, run_temporal_behaviours,
+    run_temporal_valuation, run_trace_subject_clause, sample_position, settle_correction,
+    settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome, write_ledger,
+    AdmittedLate, AdmittedPosition, AdmittedValue, Advance, AuthenticatedTemporalSelection,
+    AuthenticationFailure, ClauseArgument, ClauseArgumentValue, ClauseDisposition, ClauseLimits,
+    ClauseMark, ClauseOpen, ClauseRefusal, ClauseRunBatchOutcome, ClauseRunBatchRefusal,
+    ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
+    ClauseRunStage, ClauseRunUsage, ClauseState, ClauseTraceKind, ConsequentEventRefusal,
+    ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState, ContradictedDimension,
+    CorrectionRecord, CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError,
+    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
+    LateEntry, LateInputs, LedgerBinding, LedgerReadError, ObservedPosition, OperationName,
+    OverObject, PackageAuthentication, PackageBehaviours, PackageSampledRequest,
+    PackageSelectionNotRead, PackageSnapshotRequest, PackageTemporalRequest,
     PackageTraceSubjectRequest, PackagesStage, ProgramBatchCallOutcome, ProgramBatchItemResult,
     ProgramBatchOutcome, ProgramBatchRefusal, ProgramBatchSelection, ProgramCompilationRequest,
     ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
@@ -1196,6 +1200,9 @@ fn assembly_error_message(cause: &AssemblyCause) -> String {
         }
         AssemblyCause::NominalAdmission(_) => {
             "an enum declaration could not be admitted".to_owned()
+        }
+        AssemblyCause::DimensionClassProjection(refusal) => {
+            format!("admitted dimension classes could not be projected: {refusal}")
         }
         AssemblyCause::UnsuppliedImport { identity } => {
             format!("`import \"{identity}\"` names a library no dependency input supplies")

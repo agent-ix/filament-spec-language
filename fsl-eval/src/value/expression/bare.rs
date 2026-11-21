@@ -24,12 +24,13 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::evaluate::reader_source::ReaderNode;
 use super::evaluate::{Machine, World};
-use super::protocol_slot::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply, resolve};
-use super::slot_supply::{AdmittedSupply, SlotHost, SourceView, admit_slot_supply};
+use super::protocol_slot::{resolve, ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply};
+use super::slot_supply::{admit_slot_supply, AdmittedSupply, SlotHost, SourceView};
 use super::{
-    ApplicationObservation, ApplicationObservationOptions, CheckedPackageEvaluation,
-    ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation, QualifiedName, Separation,
-    SuppliedFailure, SuppliedLimits, SuppliedRun, ValueInvariantEvaluation, unsupported_projection,
+    unsupported_projection, ApplicationObservation, ApplicationObservationOptions,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation,
+    QualifiedName, Separation, SuppliedFailure, SuppliedLimits, SuppliedRun,
+    ValueInvariantEvaluation,
 };
 
 /// Evaluate a reader projection over the local frame with the shared
@@ -870,6 +871,38 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             .map_err(CallFailure::Fault)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &super::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_holds(&atom.clause, atom.position)
+            .map_err(|failure| refusal(self, failure))?;
+        let arguments = clause_arguments(&term, &over, captures)?;
+        let reads = BTreeMap::new();
+        Machine::with_world(
+            World::Bytes(&world),
+            objects,
+            None,
+            Some(&reads),
+            meter,
+            &[],
+        )
+        .with_reference_bindings(reference_bindings)
+        .run(
+            ReaderNode::root(term.projection()),
+            term.projection().frame_slots(),
+            arguments,
+        )
+        .map_err(CallFailure::Fault)
+    }
+
     fn evaluate_holds_traced(
         &self,
         atom: &super::HoldsAtom,
@@ -942,6 +975,40 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 arguments,
             )
             .map_err(CallFailure::Fault)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_guard(clause)
+            .map_err(|failure| refusal(self, failure))?
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
+        let arguments = clause_arguments(&term, &over, &[])?;
+        let reads = BTreeMap::new();
+        Machine::with_world(
+            World::Bytes(&world),
+            objects,
+            None,
+            Some(&reads),
+            meter,
+            &[],
+        )
+        .with_reference_bindings(reference_bindings)
+        .run(
+            ReaderNode::root(term.projection()),
+            term.projection().frame_slots(),
+            arguments,
+        )
+        .map_err(CallFailure::Fault)
     }
 
     fn evaluate_hyper_holds(
@@ -1042,6 +1109,39 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
     ) -> Result<Option<super::collection_write::WrittenCollection>, CallFailure> {
         Err(unmet(self, SOURCE_DECLARATION))
     }
+}
+
+/// FR-411, FR-940: the `terminal when` condition `predicate` on the package
+/// route, read from its admitted node and run through the shared evaluator at
+/// the state whose objects are `objects`, with `self` bound to `self_object`
+/// when the condition reads it. Like an invariant's, the condition reads no
+/// `pre(..)`, so every model read observes `objects`.
+///
+/// # Errors
+///
+/// An internal fault when the package's world does not read.
+pub(crate) fn evaluate_terminal_predicate(
+    package: &BarePackage<'_>,
+    predicate: &fsl_package::BareTerminalPredicate,
+    objects: &ObjectEnvironment,
+    self_object: Option<filament_exact::ObjectReference>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let world = package
+        .world()
+        .map_err(|_| InternalFault::new("FR-940", "terminal-predicate-world"))?;
+    let bindings = if predicate.reads_self() {
+        vec![Value::Reference(self_object.ok_or_else(|| {
+            InternalFault::new("FR-124", "terminal-self-object")
+        })?)]
+    } else {
+        Vec::new()
+    };
+    Machine::from_bare_package(&world, objects, meter).run(
+        ReaderNode::root(predicate.projection()),
+        predicate.projection().frame_slots(),
+        bindings,
+    )
 }
 
 #[cfg(test)]
@@ -1473,37 +1573,4 @@ mod tests {
             Some(value)
         );
     }
-}
-
-/// FR-411, FR-940: the `terminal when` condition `predicate` on the package
-/// route, read from its admitted node and run through the shared evaluator at
-/// the state whose objects are `objects`, with `self` bound to `self_object`
-/// when the condition reads it. Like an invariant's, the condition reads no
-/// `pre(..)`, so every model read observes `objects`.
-///
-/// # Errors
-///
-/// An internal fault when the package's world does not read.
-pub(crate) fn evaluate_terminal_predicate(
-    package: &BarePackage<'_>,
-    predicate: &fsl_package::BareTerminalPredicate,
-    objects: &ObjectEnvironment,
-    self_object: Option<filament_exact::ObjectReference>,
-    meter: &mut Meter,
-) -> Result<Evaluation, InternalFault> {
-    let world = package
-        .world()
-        .map_err(|_| InternalFault::new("FR-940", "terminal-predicate-world"))?;
-    let bindings = if predicate.reads_self() {
-        vec![Value::Reference(self_object.ok_or_else(|| {
-            InternalFault::new("FR-124", "terminal-self-object")
-        })?)]
-    } else {
-        Vec::new()
-    };
-    Machine::from_bare_package(&world, objects, meter).run(
-        ReaderNode::root(predicate.projection()),
-        predicate.projection().frame_slots(),
-        bindings,
-    )
 }

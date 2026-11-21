@@ -967,7 +967,7 @@ impl LosslessCst {
 #[cfg(test)]
 mod tests {
     use super::{LosslessCst, Production, SourceChange};
-    use crate::{Limits, parse};
+    use crate::{parse, Limits};
     use fsl_foundation::{SourceIdentity, Span};
 
     const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\n";

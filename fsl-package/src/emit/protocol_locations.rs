@@ -34,14 +34,14 @@ pub(super) const MAX_SAFE: u64 = 9_007_199_254_740_991;
 
 /// One row before its `term_ordinal` is assigned.
 pub(super) struct PendingRow<L = CheckedProtocolLocation> {
-    application: CheckedNodeId,
-    occurrence: CheckedOccurrence,
+    pub(super) application: CheckedNodeId,
+    pub(super) occurrence: CheckedOccurrence,
     /// The origin `name`, which orders the origins of one group.
-    origin_name: String,
+    pub(super) origin_name: String,
     /// The visit's place in the emitter's walk of every slot, which orders
     /// the rows of one origin by visit.
-    visit: usize,
-    location: L,
+    pub(super) visit: usize,
+    pub(super) location: L,
 }
 
 /// Every `protocol_locations` row of the emitted protocols, in the
@@ -105,6 +105,10 @@ pub(super) fn slot_rows(
     )
 }
 
+/// A row's wire path and located payload, or `None` when the node is not
+/// written.
+type WireRow<L> = Option<(String, L)>;
+
 /// The rows of the walk from `root`, appended to `pending` in visit order,
 /// each located by `wire`. `deref_by_record` keys the `deref` of every
 /// attribute the checker recorded one for, not only of a derefed one.
@@ -114,7 +118,7 @@ pub(super) fn term_rows<L>(
     applications: &HashMap<&Location, Vec<(NodeKey, filament_exact::Origin)>>,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     pending: &mut Vec<PendingRow<L>>,
-    wire: &dyn Fn(&Location, &CheckedNodeId, &CheckedOccurrence) -> Option<(String, L)>,
+    wire: &dyn Fn(&Location, &CheckedNodeId, &CheckedOccurrence) -> WireRow<L>,
     deref_by_record: bool,
 ) -> Result<(), EmitRefusal> {
     let positions = walk(root);

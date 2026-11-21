@@ -251,8 +251,7 @@ impl<'a> PackageInvariantSubject<'a> {
         let identifier = filament_exact::Identifier::new(&self.clause.name)
             .map_err(|_| fault("invariant-name"))?;
         let name = QualifiedName::new(vec![identifier]).map_err(|_| fault("invariant-name"))?;
-        let package =
-            super::clause_item::read_package(self.package_bytes, &self.limits)?;
+        let package = super::clause_item::read_package(self.package_bytes, &self.limits)?;
         let (wire, envelope) = super::clause_item::request_and_envelope(
             super::clause_item::WireParts {
                 package,

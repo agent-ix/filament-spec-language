@@ -342,7 +342,7 @@ fn header_syntax_error_does_not_attach_protocol_results() {
     assert!(
         failure
             .payload()
-            .map_or(true, |payload| payload.protocol_results.is_empty()),
+            .is_none_or(|payload| payload.protocol_results.is_empty()),
         "{failure:?}"
     );
 }
@@ -362,7 +362,7 @@ fn unbounded_protocol_eof_does_not_attach_protocol_results() {
     assert!(
         failure
             .payload()
-            .map_or(true, |payload| payload.protocol_results.is_empty()),
+            .is_none_or(|payload| payload.protocol_results.is_empty()),
         "{failure:?}"
     );
 }
@@ -438,7 +438,7 @@ fn unbounded_nonprotocol_eof_does_not_attach_protocol_results() {
     assert!(
         failure
             .payload()
-            .map_or(true, |payload| payload.protocol_results.is_empty()),
+            .is_none_or(|payload| payload.protocol_results.is_empty()),
         "{failure:?}"
     );
 }

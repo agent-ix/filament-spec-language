@@ -14,6 +14,7 @@ use filament_contract_model::CheckedSemanticNodeV2;
 #[cfg(feature = "std")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WireTag {
+    Expression,
     ScalarType,
     CompositeType,
     Model,
@@ -29,6 +30,7 @@ impl WireTag {
     #[ix_trace_rs::string_edge]
     pub(crate) fn from_wire(word: &str) -> Option<Self> {
         Some(match word {
+            "expression" => Self::Expression,
             "scalar_type" => Self::ScalarType,
             "composite_type" => Self::CompositeType,
             "model" => Self::Model,

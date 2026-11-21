@@ -18,9 +18,9 @@ use filament_checked::node::{
     NodeKind, OrderedKind, RecordField, RecordSlot, Visit,
 };
 use filament_contract_model::{
-    CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedBodySemanticLocation, CheckedNodeId,
-    CheckedPackageV2, CheckedProtocolLocation, CheckedProtocolSemanticLocation,
-    CheckedSemanticNodeV2, CheckedTerm, OperationModeKind,
+    CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedNodeId, CheckedPackageV2,
+    CheckedProtocolLocation, CheckedProtocolSemanticLocation, CheckedSemanticNodeV2, CheckedTerm,
+    OperationModeKind,
 };
 use filament_exact::{
     admit_text, ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload,
@@ -153,26 +153,32 @@ impl ReaderProtocolProjection {
     /// function, in (occurrence, `term_ordinal`) order. A node the wire
     /// carries no row for keeps no location, and the evaluator faults rather
     /// than invent one (FR-390).
-    fn locate_function_bodies(&mut self, admitted: &CheckedPackageV2) {
+    fn locate_function_bodies(&mut self, admitted: &CheckedPackageV2) -> Result<(), InternalFault> {
         let Some(data) = admitted.checked_term_data() else {
-            return;
+            return Ok(());
         };
-        let mut rows: BTreeMap<
-            &CheckedNodeId,
-            BTreeMap<&CheckedNodeId, Vec<&CheckedBodySemanticLocation>>,
-        > = BTreeMap::new();
-        for row in &data.body_locations {
-            let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
-            rows.entry(function)
-                .or_default()
-                .entry(&row.application)
-                .or_default()
-                .push(row);
+        let has_rows: BTreeSet<CheckedNodeId> = data
+            .body_locations
+            .iter()
+            .map(|row| {
+                let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+                function.clone()
+            })
+            .collect();
+        let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<Location>>> =
+            BTreeMap::new();
+        for projected in &self.functions {
+            let function = &projected.node;
+            if !has_rows.contains(function) {
+                continue;
+            }
+            let work_limit = body_location_allowance(admitted, function)
+                .ok_or_else(|| fault("body-location-reconstruction-size-fits"))?;
+            rows.insert(
+                function.clone(),
+                reconstructed_body_locations(admitted, function, work_limit)?,
+            );
         }
-        for group in rows.values_mut().flat_map(BTreeMap::values_mut) {
-            group.sort_by_key(|row| (&row.occurrence, row.term_ordinal));
-        }
-        let has_rows: BTreeSet<CheckedNodeId> = rows.keys().map(|node| (*node).clone()).collect();
         let mut located = Vec::new();
         for function in &self.functions {
             let Some(applications) = rows.get(&function.node) else {
@@ -190,9 +196,9 @@ impl ReaderProtocolProjection {
                         .and_then(|group| group.get(*visit));
                     *visit += 1;
                     if node.term.as_ref() == Some(application) {
-                        if let Some(location) = row.and_then(|row| body_location(&row.location)) {
-                            located.push((position, location));
-                        }
+                        let location =
+                            row.ok_or_else(|| fault("projected-body-term-has-captured-location"))?;
+                        located.push((position, location.clone()));
                     }
                 }
             }
@@ -233,6 +239,7 @@ impl ReaderProtocolProjection {
                 }
             }
         }
+        Ok(())
     }
 
     fn locate_from(&mut self, root: usize, owner: Origin) {
@@ -700,6 +707,8 @@ fn is_equality_identity(identity: &str) -> bool {
             | "filament.op.decimal.ne"
             | "filament.op.quantity.eq"
             | "filament.op.quantity.ne"
+            | "filament.op.reference.eq"
+            | "filament.op.reference.ne"
             | "filament.op.structural.eq"
             | "filament.op.structural.ne"
     )
@@ -1027,7 +1036,7 @@ impl<'wire> WireIndex<'wire> {
             frame_slots: builder.root_slots,
             locals: local_keys,
         };
-        projection.locate_function_bodies(self.admitted);
+        projection.locate_function_bodies(self.admitted)?;
         Ok(projection)
     }
 
@@ -1068,7 +1077,7 @@ impl<'wire> WireIndex<'wire> {
             frame_slots,
             locals: BTreeMap::new(),
         };
-        projection.locate_function_bodies(self.admitted);
+        projection.locate_function_bodies(self.admitted)?;
         Ok(projection)
     }
 }
@@ -1516,7 +1525,9 @@ impl<'wire> BareWalker<'wire> {
             level_offset,
         })?;
         projection.locate_under(owner);
-        projection.locate_function_bodies(self.index.admitted);
+        projection
+            .locate_function_bodies(self.index.admitted)
+            .map_err(WalkFailure::Fault)?;
         Ok(projection)
     }
 
@@ -1929,16 +1940,14 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
     /// is taken at once, as the nested projection would. `None` once the node
     /// waits for no child.
     fn next_child(&mut self, parents: &mut [Frame]) -> Result<Option<Frame>, BuildError> {
-        loop {
-            let Some(parent) = parents.last_mut() else {
-                return Ok(None);
-            };
-            let Some((ordinal, wanted)) = parent.queue.pop() else {
-                return Ok(None);
-            };
-            parent.waiting = ordinal;
-            return Ok(Some(self.enter(wanted)));
-        }
+        let Some(parent) = parents.last_mut() else {
+            return Ok(None);
+        };
+        let Some((ordinal, wanted)) = parent.queue.pop() else {
+            return Ok(None);
+        };
+        parent.waiting = ordinal;
+        Ok(Some(self.enter(wanted)))
     }
 
     /// A frame for `request`, entered at the context's current frame size.
@@ -1978,6 +1987,51 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         }
         let node = self.node(id)?;
         let (kind, children, term) = match &node.body {
+            CheckedTerm::Literal { .. }
+                if matches!(
+                    node.body.literal_read().map(|literal| literal.value),
+                    Some(filament_contract_model::CheckedLiteralValue::Reference(_))
+                ) =>
+            {
+                let Some(filament_contract_model::CheckedLiteralValue::Reference(identity)) =
+                    node.body.literal_read().map(|literal| literal.value)
+                else {
+                    return Err(fault("reader-reference-literal-has-identity").into());
+                };
+                let ValueType::Reference(ref object_type) = self.value_type(id)? else {
+                    return Err(fault("reader-reference-literal-has-object-type").into());
+                };
+                let bytes = identity.as_bytes();
+                let canonical = !bytes.is_empty()
+                    && bytes.len() % 2 == 0
+                    && bytes
+                        .iter()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
+                let identity = canonical
+                    .then(|| {
+                        bytes
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|pair| {
+                                u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .flatten()
+                    .ok_or_else(|| BuildError::Unsupported {
+                        reason: UnsupportedReason::MissingLiteralProjection,
+                        node: id.clone(),
+                    })?;
+                (
+                    NodeKind::ReferenceLiteral {
+                        object_type: object_type.clone(),
+                        identity,
+                    },
+                    Vec::new(),
+                    None,
+                )
+            }
             CheckedTerm::Literal { .. } => {
                 let literal = node
                     .body
@@ -2127,7 +2181,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         else {
             return Err(fault("reader-union-declaration-has-checked-members").into());
         };
-        let [CheckedTerm::Binding { name, value }] = members else {
+        let [CheckedTerm::Binding { name, value, .. }] = members else {
             return Err(fault("reader-union-value-has-one-member").into());
         };
         let filament_contract_model::CheckedBindingNameKind::Other(member_name) = name.kind()
@@ -2163,7 +2217,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         let declaration = declaration.clone();
         let mut values = Vec::with_capacity(members.len());
         for member in members {
-            let CheckedTerm::Binding { name, value } = member else {
+            let CheckedTerm::Binding { name, value, .. } = member else {
                 return Err(fault("reader-record-value-has-checked-field-binding").into());
             };
             if !matches!(
@@ -2203,12 +2257,10 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         let identity = operation.identity();
         match identity {
             Some("filament.op.control.let") => {
-                let [CheckedTerm::Binding { name, value }, body] = arguments else {
+                let [CheckedTerm::Binding { name, value, .. }, body] = arguments else {
                     return Err(fault("reader-let-has-binding-and-body").into());
                 };
-                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
-                    name.kind()
-                else {
+                let filament_contract_model::CheckedBindingNameKind::Other(_) = name.kind() else {
                     return Err(fault("reader-let-binder-has-name").into());
                 };
                 let slot = self.next_slot(context, locals);
@@ -2504,12 +2556,10 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                             | "filament.op.collection.count"
                     ) =>
             {
-                let [source_term, CheckedTerm::Binding { name, value }] = arguments else {
+                let [source_term, CheckedTerm::Binding { name, value, .. }] = arguments else {
                     return Err(fault("reader-collection-query-has-source-and-binder").into());
                 };
-                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
-                    name.kind()
-                else {
+                let filament_contract_model::CheckedBindingNameKind::Other(_) = name.kind() else {
                     return Err(fault("reader-collection-query-binder-has-name").into());
                 };
                 let slot = self.next_slot(context, locals);
@@ -2541,7 +2591,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
             Some("filament.op.collection.seq") => {
                 // FR-322 `seq`: two bounds outside the binder, the body inside.
-                let [low_term, high_term, CheckedTerm::Binding { name, value }] = arguments else {
+                let [low_term, high_term, CheckedTerm::Binding { name, value, .. }] = arguments
+                else {
                     return Err(fault("reader-seq-has-two-bounds-and-binder").into());
                 };
                 let slot = self.next_slot(context, locals);
@@ -2679,6 +2730,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     _ => ArithmeticOperator::Divide,
                 };
                 Ok((NodeKind::Quantity(operator, *left, *right), children))
+            }
+            Some("filament.op.quantity.pow") => {
+                let children = self.project_arguments(id, Some(arguments), context, locals)?;
+                let [base, exponent] = children.as_slice() else {
+                    return Err(fault("reader-quantity-power-has-two-operands").into());
+                };
+                Ok((NodeKind::QuantityPower(*base, *exponent), children))
             }
             Some("filament.op.numeric.narrow") => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;
@@ -2948,7 +3006,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             .map_or(0, |slot| slot.saturating_add(1))
             .max(first_free);
         for argument in arguments.iter().skip(1) {
-            let CheckedTerm::Binding { name, value } = argument else {
+            let CheckedTerm::Binding { name, value, .. } = argument else {
                 return Err(fault("reader-union-case-arm-is-binding").into());
             };
             let filament_contract_model::CheckedBindingNameKind::Other(member_name) = name.kind()
@@ -3308,7 +3366,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         let member_type = members
             .iter()
             .find_map(|member| match member {
-                CheckedTerm::Binding { name, value } => {
+                CheckedTerm::Binding { name, value, .. } => {
                     use filament_contract_model::CheckedBindingNameKind as Kind;
                     let named = match name.kind() {
                         Kind::Parameters => "parameters",
@@ -3649,7 +3707,7 @@ fn rational_range_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeEr
             return None;
         };
         members.iter().find_map(|member| {
-            let CheckedTerm::Binding { name, value } = member else {
+            let CheckedTerm::Binding { name, value, .. } = member else {
                 return None;
             };
             (name.as_ref() == wanted).then(|| match value.literal_read()?.value {
@@ -3678,7 +3736,7 @@ fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
         return None;
     };
     members.iter().find_map(|member| {
-        let CheckedTerm::Binding { name, value } = member else {
+        let CheckedTerm::Binding { name, value, .. } = member else {
             return None;
         };
         (name.as_ref() == wanted).then(|| match value.literal_read()?.value {
@@ -3756,7 +3814,7 @@ pub(crate) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
         return None;
     };
     members.iter().find_map(|member| {
-        let CheckedTerm::Binding { name, value } = member else {
+        let CheckedTerm::Binding { name, value, .. } = member else {
             return None;
         };
         (name.as_ref() == "name").then(|| match value.literal_read()?.value {
@@ -3776,7 +3834,7 @@ fn parameter_level(term: &CheckedTerm) -> Option<u64> {
         return None;
     };
     members.iter().find_map(|member| {
-        let CheckedTerm::Binding { name, value } = member else {
+        let CheckedTerm::Binding { name, value, .. } = member else {
             return None;
         };
         if name.as_ref() != "level" {
@@ -3838,24 +3896,152 @@ fn location(admitted: &CheckedProtocolLocation) -> Option<Location> {
     Some(Location::at(origin, &path))
 }
 
+/// Reconstruct through the admitted lending cursor. An exhausted cursor or an
+/// unrepresentable coordinate fails the whole function before any projection
+/// node receives a location.
+fn reconstructed_body_locations(
+    admitted: &CheckedPackageV2,
+    function: &CheckedNodeId,
+    work_limit: u64,
+) -> Result<BTreeMap<CheckedNodeId, Vec<Location>>, InternalFault> {
+    let mut rows: BTreeMap<CheckedNodeId, Vec<Location>> = BTreeMap::new();
+    let mut cursor = admitted
+        .body_locations(function, work_limit)
+        .map_err(|_| fault("admitted-body-locations-reconstruct"))?;
+    let mut previous = Location::root(Origin::Expression);
+    while let Some(view) = cursor
+        .next_location()
+        .map_err(|_| fault("admitted-body-locations-reconstruct"))?
+    {
+        let location = body_location(&view.row.location, &previous)
+            .ok_or_else(|| fault("body-location-coordinates-fit"))?;
+        previous = location.clone();
+        rows.entry(view.row.application.clone())
+            .or_default()
+            .push(location);
+    }
+    Ok(rows)
+}
+
+/// This projection predates a caller-owned work meter. Bound reconstruction
+/// from the admitted DAG instead: count lending-cursor tasks with memoized
+/// subtree costs, retaining multiplicity at shared references. No full paths
+/// are rebuilt to establish the allowance. Overflow or a cycle is a fault.
+fn body_location_allowance(admitted: &CheckedPackageV2, function: &CheckedNodeId) -> Option<u64> {
+    let nodes: BTreeMap<_, _> = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .map(|node| (&node.node_id, node))
+        .collect();
+    let function = nodes.get(function)?;
+    let CheckedTerm::Aggregate { members } = &function.body else {
+        return None;
+    };
+    let start = members.iter().find_map(|term| match term {
+        CheckedTerm::Binding { name, value, .. }
+            if name.kind() == filament_contract_model::CheckedBindingNameKind::Body =>
+        {
+            Some(value.as_ref())
+        }
+        _ => None,
+    })?;
+    let mut pending = Vec::new();
+    if let CheckedTerm::Reference { target } = start {
+        if target.package.as_ref() == admitted.name() {
+            pending.push((target, false));
+        }
+    }
+    let root = pending.first().map(|(id, _)| *id);
+    let mut costs: BTreeMap<&CheckedNodeId, Option<u64>> = BTreeMap::new();
+    while let Some((id, finish)) = pending.pop() {
+        if !finish && costs.contains_key(id) {
+            costs.get(id).copied().flatten()?;
+            continue;
+        }
+        let node = nodes.get(id)?;
+        let mut terms = vec![&node.body];
+        let mut own = 1_u64; // One Node task, then every inline Term task.
+        let mut children = Vec::new();
+        while let Some(term) = terms.pop() {
+            own = own.checked_add(1)?;
+            match term {
+                CheckedTerm::Reference { target } => {
+                    if target.package.as_ref() != admitted.name() {
+                        continue;
+                    }
+                    if let Some(child) = nodes.get(target) {
+                        if has_tag(child, WireTag::Expression)
+                            || has_form(child, WireTag::Value, WireForm::RecordValue)
+                            || has_form(child, WireTag::Value, WireForm::TupleValue)
+                        {
+                            children.push(target);
+                        }
+                    }
+                }
+                CheckedTerm::Application { arguments, .. } => terms.extend(arguments),
+                CheckedTerm::Aggregate { members } => terms.extend(members),
+                CheckedTerm::Binding { value, .. } => terms.push(value),
+                _ => {}
+            }
+        }
+        if finish {
+            let total = children.into_iter().try_fold(own, |total, child| {
+                total.checked_add(costs.get(child).copied().flatten()?)
+            })?;
+            costs.insert(id, Some(total));
+        } else {
+            costs.insert(id, None);
+            pending.push((id, true));
+            pending.extend(children.into_iter().rev().map(|child| (child, false)));
+        }
+    }
+    let tasks = root.map_or(Some(0), |root| costs.get(root).copied().flatten())?;
+    let rows = &admitted.checked_term_data()?.body_locations;
+    let mut encoded = 0_u64;
+    for row in rows {
+        encoded = encoded.checked_add(row.location.up)?;
+        encoded = encoded.checked_add(u64::try_from(row.location.down.len()).ok()?)?;
+        for ordinal in &row.location.down {
+            if let filament_contract_model::CheckedKeyOrdinal::BeyondSafe(text) = ordinal {
+                encoded = encoded.checked_add(u64::try_from(text.len()).ok()?)?;
+            }
+        }
+    }
+    // Each task pays at most three traversal/push charges. Doubling pending
+    // capacity costs less than two tasks per task; six leaves slack for the
+    // first allocation. Three encoded units cover deltas and doubled path
+    // capacity. Setup pays nodes, all rows twice, and matching rows once.
+    tasks
+        .checked_mul(6)?
+        .checked_add(u64::try_from(nodes.len()).ok()?)?
+        .checked_add(u64::try_from(rows.len()).ok()?.checked_mul(3)?)?
+        .checked_add(encoded.checked_mul(3)?)?
+        .checked_add(16)
+}
+
 /// The checker's location of a function-body term, as its row captured it.
-fn body_location(admitted: &CheckedBodyLocation) -> Option<Location> {
+fn body_location(admitted: &CheckedBodyLocation, previous: &Location) -> Option<Location> {
     let CheckedBodyLocationOrigin::FunctionBody { name, index, .. } = &admitted.origin;
     let origin = Origin::Body {
         function: name.to_string(),
         index: usize::try_from(*index).ok()?,
     };
-    let path = admitted
-        .path
-        .iter()
-        .map(|ordinal| match ordinal {
+    let mut location = previous.clone();
+    for _ in 0..admitted.up {
+        location = location.parent()?;
+    }
+    location.origin = origin;
+    for ordinal in &admitted.down {
+        let index = match ordinal {
             filament_contract_model::CheckedKeyOrdinal::Safe(value) => usize::try_from(*value).ok(),
             filament_contract_model::CheckedKeyOrdinal::BeyondSafe(value) => {
                 value.parse::<usize>().ok()
             }
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some(Location::at(origin, &path))
+        }?;
+        location = location.child(index);
+    }
+    Some(location)
 }
 
 /// The name of a function node: its declared name, or empty for a clause
@@ -3896,7 +4082,7 @@ fn function_parts(term: &CheckedTerm) -> Option<(&[CheckedTerm], &CheckedTerm)> 
     let mut parameters = None;
     let mut body = None;
     for member in members {
-        let CheckedTerm::Binding { name, value } = member else {
+        let CheckedTerm::Binding { name, value, .. } = member else {
             continue;
         };
         match name.kind() {
@@ -4111,6 +4297,24 @@ impl UnsupportedView {
     }
 }
 
+/// The effective identity a print walk gives the model object type whose
+/// declaration node is `key`: the original declaration key alone.
+fn print_effective_id(key: &NodeKey) -> filament_exact::EffectiveId {
+    let node = key
+        .view()
+        .path()
+        .filter_map(|segment| match segment {
+            filament_exact::PathSegmentView::Text(text) => Some(text),
+            filament_exact::PathSegmentView::Node(_) => None,
+        })
+        .last()
+        .unwrap_or_default();
+    filament_exact::EffectiveId::new(
+        None,
+        filament_exact::OriginalDeclarationKey::new(key.package(), node),
+    )
+}
+
 #[cfg(test)]
 mod order_tests {
     use super::*;
@@ -4161,6 +4365,83 @@ mod order_tests {
         assert!(
             projection.has_unrepresented_types(&types),
             "accepting the earlier reference must not hide a later unrepresented composite under wrappers"
+        );
+    }
+
+    /// Real emitted bytes exercise the consumer's lending-cursor boundary;
+    /// exhaustion returns a typed fault instead of a partly located function.
+    #[trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
+    #[test]
+    fn compact_body_projection_reconstructs_paths_and_refuses_exhaustion() {
+        let (_, checked) = crate::emit::tests::package_from_text(
+            "function f using v(x: Integer): Integer pure { (x + 1) * (x - 2) }\n",
+        );
+        let emission =
+            crate::emit::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let package = match filament_contract_model::read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the authentic emitted body must read: {other:?}"),
+        };
+        let rows = &package.checked_term_data().unwrap().body_locations;
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &rows[0].location.origin;
+        let allowance =
+            body_location_allowance(&package, function).expect("a finite DAG allowance");
+        let locations = reconstructed_body_locations(&package, function, allowance).unwrap();
+        let mut paths: Vec<_> = locations.values().flatten().map(Location::path).collect();
+        paths.sort();
+        assert_eq!(paths, vec![vec![], vec![0], vec![1]]);
+        assert!(
+            reconstructed_body_locations(&package, function, 0).is_err(),
+            "an unpaid cursor must fail the whole projection boundary"
+        );
+        let mut cursor = package.body_locations(function, allowance).unwrap();
+        while cursor.next_location().unwrap().is_some() {}
+        let consumed = cursor.work_consumed();
+        assert!(consumed <= allowance);
+        assert!(
+            reconstructed_body_locations(&package, function, consumed - 1).is_err(),
+            "late exhaustion must discard every reconstructed partial row"
+        );
+        assert_eq!(
+            reconstructed_body_locations(&package, function, consumed)
+                .unwrap()
+                .len(),
+            locations.len()
+        );
+    }
+
+    #[trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
+    #[test]
+    fn compact_body_projection_refuses_a_captured_coordinate_that_cannot_fit() {
+        let (_, checked) = crate::emit::tests::package_from_text(
+            "function f using v(x: Integer): Integer pure { x + 1 }\n",
+        );
+        let emission =
+            crate::emit::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let mut wire: serde_json::Value =
+            serde_json::from_slice(emission.package().bytes()).unwrap();
+        wire["checked_term_data"]["body_locations"][0]["location"]["down"] =
+            serde_json::json!(["18446744073709551616"]);
+        let package = match filament_contract_model::read_checked_package(
+            &serde_json::to_vec(&wire).unwrap(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => {
+                panic!("the reader retains arbitrary producer-selected coordinates: {other:?}")
+            }
+        };
+        let row = &package.checked_term_data().unwrap().body_locations[0];
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+        let allowance = body_location_allowance(&package, function).unwrap();
+        assert!(
+            reconstructed_body_locations(&package, function, allowance).is_err(),
+            "native usize projection must not drop or truncate a captured coordinate"
         );
     }
 
@@ -4270,22 +4551,4 @@ mod order_tests {
             "missing-type-representation"
         );
     }
-}
-
-/// The effective identity a print walk gives the model object type whose
-/// declaration node is `key`: the original declaration key alone.
-fn print_effective_id(key: &NodeKey) -> filament_exact::EffectiveId {
-    let node = key
-        .view()
-        .path()
-        .filter_map(|segment| match segment {
-            filament_exact::PathSegmentView::Text(text) => Some(text),
-            filament_exact::PathSegmentView::Node(_) => None,
-        })
-        .last()
-        .unwrap_or_default();
-    filament_exact::EffectiveId::new(
-        None,
-        filament_exact::OriginalDeclarationKey::new(key.package(), node),
-    )
 }

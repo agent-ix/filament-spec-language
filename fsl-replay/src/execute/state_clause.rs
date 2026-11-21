@@ -261,6 +261,7 @@ pub fn replay_state_clause(
         | ClauseDisposition::NotAPredicate { .. }
         | ClauseDisposition::ArgumentRefusal(_)
         | ClauseDisposition::Temporal(_)
+        | ClauseDisposition::PackageAdmission(_)
         | ClauseDisposition::TemporalRefusal(_)
         | ClauseDisposition::TraceRefused(_)
         | ClauseDisposition::ProgressContradiction(_)

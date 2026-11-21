@@ -979,8 +979,8 @@ mod foundation_tests {
     use alloc::{string::ToString, vec, vec::Vec};
 
     use super::{
-        CATALOG_CATEGORIES, Code, Phase, Source, SourceIdentity, Span, SyntaxLimit, category_of,
-        resource_exhausted,
+        category_of, resource_exhausted, Code, Phase, Source, SourceIdentity, Span, SyntaxLimit,
+        CATALOG_CATEGORIES,
     };
     use filament_semantic_value::catalog::{CatalogCode, Category, InternalFault};
     use ix_trace_rs::trace;

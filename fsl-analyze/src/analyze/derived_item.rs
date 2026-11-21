@@ -323,8 +323,7 @@ impl<'a> PackageDeadlockSubject<'a> {
         let fault =
             |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
         let target = derived_target().ok_or_else(|| fault("derived-target"))?;
-        let package =
-            super::clause_item::read_package(self.package_bytes, &self.limits)?;
+        let package = super::clause_item::read_package(self.package_bytes, &self.limits)?;
         let (wire, envelope) = request_and_envelope(
             WireParts {
                 package,

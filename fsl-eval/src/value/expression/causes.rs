@@ -217,13 +217,12 @@ impl CatalogCoded for ObjectFieldIllTyped {
     }
 }
 
-/// FR-391 "Evaluation": a clause or a `holds` atom names a population the
-/// observation's snapshot does not list `complete`. FR-106 requires every
-/// population a clause names, so the read stops naming it, whichever path
-/// admitted the snapshot: `incomplete_population`/`missing-required-artifact`
-/// when the snapshot has no row for it and `incomplete_population`/
-/// `incomplete-scope` when its row is not `complete` (FR-106 check 7; FSpec
-/// FR-153-AC-14).
+/// FR-391 "Evaluation": a clause, `holds` atom, or source population query
+/// reads a population the observation's snapshot does not list `complete`.
+/// FR-106 requires a complete finite view before any such read: the read
+/// stops with `incomplete_population`/`missing-required-artifact` when the
+/// snapshot has no row for it and `incomplete_population`/`incomplete-scope`
+/// when its row is not `complete` (FR-106 check 7; FSpec FR-153-AC-14).
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct NamedPopulationIncomplete {
     /// The population's declaration identity.

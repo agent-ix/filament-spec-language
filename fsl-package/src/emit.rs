@@ -1764,6 +1764,17 @@ impl BodyNames {
             }
             BodyTerm::Leaf(_) | BodyTerm::Aggregate(_) => {}
         }
+        // FSpec FR-322 "The binder link": a `let` depends on its binder node,
+        // read by its body or not.
+        if let BodyTerm::Application(application) = body {
+            for argument in &application.arguments {
+                if let MemberTerm::Binding(binding) = argument {
+                    if let Some(binder) = &binding.binder {
+                        names.dependencies.insert(admitted(binder)?);
+                    }
+                }
+            }
+        }
         for leaf in body.leaves() {
             match leaf {
                 LeafTerm::Literal { ty, .. } => {
@@ -2344,6 +2355,7 @@ fn extension_term(
             .map(|clause| {
                 Ok(CheckedTerm::Binding {
                     name: clause.name().into(),
+                    binder: None,
                     value: Box::new(CheckedTerm::Reference {
                         target: admitted_id(ids, clause.value())?,
                     }),
@@ -2388,6 +2400,7 @@ fn group_term(ids: &StructuralIds, group: &GroupTerm) -> Result<CheckedTerm, Emi
                 GroupMember::Leaf(leaf) => leaf_term(ids, leaf),
                 GroupMember::Binding(binding) => Ok(CheckedTerm::Binding {
                     name: binding.name.as_str().into(),
+                    binder: None,
                     value: Box::new(leaf_term(ids, &binding.value)?),
                 }),
             })
@@ -2432,6 +2445,11 @@ fn member_term(ids: &StructuralIds, member: &MemberTerm) -> Result<CheckedTerm, 
             };
             CheckedTerm::Binding {
                 name: binding.name.as_str().into(),
+                binder: binding
+                    .binder
+                    .as_ref()
+                    .map(|binder| admitted_id(ids, binder))
+                    .transpose()?,
                 value: Box::new(value),
             }
         }
@@ -4436,6 +4454,10 @@ fn checked_dispatch_tables(
 
 /// Combine the independently retained producer decision families into the
 /// one FR-322 checked-term carrier.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one internal combinator of the independently retained producer decision families"
+)]
 fn checked_term_data(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -5339,6 +5361,7 @@ fn quantity_spelling(value: &filament_exact::Rational) -> String {
 fn claim_binding(name: &str, value: CheckedTerm) -> CheckedTerm {
     CheckedTerm::Binding {
         name: name.into(),
+        binder: None,
         value: Box::new(value),
     }
 }
@@ -6149,7 +6172,7 @@ fn timed_body_operands(
                 timed_body_operands(member, operands)?;
             }
         }
-        CheckedTerm::Binding { name, value } => {
+        CheckedTerm::Binding { name, value, .. } => {
             operands.push(PathSegment::Text(name.as_ref().to_owned()));
             timed_body_operands(value, operands)?;
         }
@@ -6440,6 +6463,7 @@ pub fn emit_timed_models(
     rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut checked_term_data)?;
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
     write_index_segments(
+        ids,
         &mut nodes,
         &mut source_map,
         &mut [],
@@ -7438,6 +7462,7 @@ fn emit_package_inner(
     };
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
     let emitted_node_ids = write_index_segments(
+        ids,
         &mut nodes,
         &mut source_map,
         &mut step_rows,
@@ -9786,6 +9811,7 @@ impl ForeignNodes {
 ///
 /// [`StructuralKeys`]: fsl_semantics::check::wire_id::StructuralKeys
 fn write_index_segments(
+    ids: &StructuralIds,
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
     step_rows: &mut [filament_contract_model::CheckedRefinementStepRowRegion],
@@ -9794,7 +9820,9 @@ fn write_index_segments(
 ) -> Result<HashMap<NodeKey, CheckedNodeId>, EmitRefusal> {
     use filament_contract_model::CheckedNodePathSegment as Segment;
     let is_operand = |segment: &Segment| matches!(segment, Segment::Node(_));
-    let mut keys = fsl_semantics::check::wire_id::StructuralKeys::default();
+    // Retain the encoder's original operand keys. Rebuilding an independent
+    // key table makes every later source-key equality walk its full depth.
+    let mut keys = ids.key_reader();
     let invariant = |_| EmitRefusal::SourceMapInvariant;
     let graph_keys = nodes
         .iter()

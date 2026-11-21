@@ -24,23 +24,23 @@ pub use failure::{
     RefinementFailure, StepRejection, StepResult, StepVerdict, Taken, TerminalSuccessDirection,
     Undetermined,
 };
-pub use history::{HistoryValues, initial_history, step_history};
+pub use history::{initial_history, step_history, HistoryValues};
 pub use liveness::{
-    AbstractClass, CandidateFairState, CandidateFairStep, CandidateLivenessError, abstract_classes,
-    candidate_lasso_has_fair_run,
+    abstract_classes, candidate_lasso_has_fair_run, AbstractClass, CandidateFairState,
+    CandidateFairStep, CandidateLivenessError,
 };
 pub use map::{
-    EvalFailure, HiddenSlot, MappedState, MappingFailure, MappingRowRef, MappingUndetermined,
-    ObjectKey, StepArgument, map_state,
+    map_state, EvalFailure, HiddenSlot, MappedState, MappingFailure, MappingRowRef,
+    MappingUndetermined, ObjectKey, StepArgument,
 };
 pub use outcome::{LivenessHalf, RefinementOutcome, SafetyOutcome, SafetyUndecided};
 pub use protocol_system::{
     AbstractProtocolSystem, ProtocolAssumptionFairness, ProtocolCandidate, RequiredTemporalFairness,
 };
 pub use step::{
-    ConcreteStep, ProtocolRelationError, ProtocolStateRelation, RefinementPosition, check_initial,
-    check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
-    protocol_observation_label,
+    check_initial, check_protocol_initial, check_protocol_state_relations, check_protocol_step,
+    check_step, protocol_observation_label, ConcreteStep, ProtocolRelationError,
+    ProtocolStateRelation, RefinementPosition,
 };
 
 /// Canonical abstract step class spelling for one admitted protocol
@@ -53,12 +53,12 @@ pub fn protocol_transition_class(
 }
 pub use protocol_witness::{RefinementWitness, RefinementWitnessError};
 pub use step_view::{
-    ProtocolStep, ProtocolStepView, ProtocolSteps, StateIndex, StepViewRefusal, UnsteppedConstruct,
-    step_view_over,
+    step_view_over, ProtocolStep, ProtocolStepView, ProtocolSteps, StateIndex, StepViewRefusal,
+    UnsteppedConstruct,
 };
 pub use subject::{
-    AbstractInitial, ProtocolSystemsRefusal, RefinementSystems, SubjectRefusal,
-    open_protocol_systems, open_systems,
+    open_protocol_systems, open_systems, AbstractInitial, ProtocolSystemsRefusal,
+    RefinementSystems, SubjectRefusal,
 };
 
 pub(crate) use step::stop_verdict;

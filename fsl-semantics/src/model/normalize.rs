@@ -109,11 +109,11 @@ use crate::model::domain_package::{
 };
 use crate::model::index::{ModelIndex, RecordIndex, Redefiner};
 use crate::model::key::{
-    EffectiveDeclarationPreimage, EffectiveId, Fact, RULE_INHERIT, RULE_QUALIFY, RULE_REDEFINE,
-    RULE_SUBSET, RuleRef,
+    EffectiveDeclarationPreimage, EffectiveId, Fact, RuleRef, RULE_INHERIT, RULE_QUALIFY,
+    RULE_REDEFINE, RULE_SUBSET,
 };
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Cancel, Presence, length_amount};
+use filament_exact::{length_amount, Cancel, Presence};
 use fsl_foundation::diagnostic::{Code, JsonPointer};
 
 /// Re-exported from [`crate::model::refusal`] (#141 finding 4): that module
@@ -5008,12 +5008,11 @@ mod tests {
         else {
             panic!("the declared operation may own its contract clause");
         };
-        assert!(
-            view.domain_package()
-                .records
-                .iter()
-                .any(|record| record.key() == &clause_key)
-        );
+        assert!(view
+            .domain_package()
+            .records
+            .iter()
+            .any(|record| record.key() == &clause_key));
     }
 
     /// Quire container clauses refuse even when constructed after intake.
@@ -5215,12 +5214,11 @@ mod tests {
                 let NormalizeOutcome::Completed(view) = outcome else {
                     panic!("a foreign-language clause is retained: {outcome:?}");
                 };
-                assert!(
-                    view.domain_package()
-                        .records
-                        .iter()
-                        .any(|record| record.key() == &clause_key)
-                );
+                assert!(view
+                    .domain_package()
+                    .records
+                    .iter()
+                    .any(|record| record.key() == &clause_key));
             }
         }
 

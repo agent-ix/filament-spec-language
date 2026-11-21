@@ -8,26 +8,26 @@
 //! validates the whole I04 contract unconditionally.
 
 use filament_contract_model::{
-    CHECKED_PACKAGE_V2, CheckedArtifactRef, CheckedExtensionDefinition, CheckedPackageEvidence,
-    CheckedPackageRefusalCause, CheckedPackageRefusalCode,
+    CheckedArtifactRef, CheckedExtensionDefinition, CheckedPackageEvidence,
+    CheckedPackageRefusalCause, CheckedPackageRefusalCode, CHECKED_PACKAGE_V2,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::{
-    Read, V2ReadLimits, V2ReadRefusal, fixture_artifact_identity, read_checked_package_v2, read_v2,
+    fixture_artifact_identity, read_checked_package_v2, read_v2, Read, V2ReadLimits, V2ReadRefusal,
 };
 use std::collections::BTreeMap;
 
 use filament_exact::{NodeKey, Origin, Role};
 use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, Category};
-use fsl_foundation::Setting;
 use fsl_foundation::diagnostic::{Code, LimitExceeded, LimitKind, Locus};
 use fsl_foundation::node_wire::node_key_from_json;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_semantics::check::CheckCause;
+use fsl_foundation::Setting;
 use fsl_semantics::check::imports::ImportedNames;
 use fsl_semantics::check::wire_id::WireGraph;
+use fsl_semantics::check::CheckCause;
 use fsl_semantics::library::{ImportView, LibraryName};
 
 mod protocol_corpus;
@@ -1591,10 +1591,10 @@ fn conformance_a_model_with_every_variable_clocked_is_refused_at_a_class_literal
         .iter()
         .position(|node| node["semantic_form"] == "hybrid_model")
         .expect("the Tank model node");
-    let variables =
-        candidate["semantic_graph"]["nodes"][model]["body"]["members"][0]["value"]["members"]
-            .as_array_mut()
-            .expect("variables");
+    let variables = candidate["semantic_graph"]["nodes"][model]["body"]["members"][0]["value"]
+        ["members"]
+        .as_array_mut()
+        .expect("variables");
     for variable in variables {
         variable["members"][1]["value"]["value"] = json!("clock");
     }
@@ -1736,13 +1736,11 @@ fn conformance_tick_timed_model_has_operation_anchor_and_no_clock_places() {
         .unwrap();
     assert_eq!(operation["node_tag"], "state");
     assert_eq!(operation["semantic_form"], "operation_anchor");
-    assert!(
-        admitted
-            .resolved_graph()
-            .nodes
-            .iter()
-            .any(|node| serde_json::to_value(&node.node_id).unwrap() == *operation_id)
-    );
+    assert!(admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .any(|node| serde_json::to_value(&node.node_id).unwrap() == *operation_id));
 }
 
 /// FR-415-AC-17 / FR-322-AC-122: the typed timed-model writer re-emits all
@@ -2580,7 +2578,7 @@ fn binder_groups(
 
     match term {
         CheckedTerm::Aggregate { members } => members.iter().flat_map(binder_groups).collect(),
-        CheckedTerm::Binding { name, value } if name.as_ref() == "binders" => {
+        CheckedTerm::Binding { name, value, .. } if name.as_ref() == "binders" => {
             let CheckedTerm::Aggregate { members } = value.as_ref() else {
                 panic!("a binder binding contains an aggregate");
             };
@@ -2978,8 +2976,8 @@ fn unknown_temporal_profile_is_unknown_profile(base: &Value) {
         .expect("the temporal clause names its profile")
         .to_owned();
     let unknown_profile = "filament.fixture.temporal-profile/v1";
-    package["semantic_graph"]["nodes"][clause]["body"]["operation"]["laws"][0]["definition"]["identity"] =
-        json!(unknown_profile);
+    package["semantic_graph"]["nodes"][clause]["body"]["operation"]["laws"][0]["definition"]
+        ["identity"] = json!(unknown_profile);
     let original_node_id = package["semantic_graph"]["nodes"][clause]["node_id"].clone();
     let node_id = &mut package["semantic_graph"]["nodes"][clause]["node_id"];
     let identity_path = node_id["path"]

@@ -18,20 +18,20 @@ use filament_contract_model::{
 use filament_exact::{NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
-use fsl_semantics::check::{protocol_site, ProtocolSite, RelatedSide};
+use fsl_semantics::check::{ProtocolSite, RelatedSide, protocol_site};
 
 use crate::bare::{BarePackage, IdentityWitnessRefusal};
 use crate::checked_v2::wire_graph;
 use crate::equality_file::EqualityWitnessRefusal;
 use crate::protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
 use crate::protocol_view::{
-    argument, control_operation, group_member, integer, reference, text, ControlOperation,
+    ControlOperation, argument, control_operation, group_member, integer, reference, text,
 };
 use crate::reader_protocol_projection::{
     node_value_type, BareWalker, FunctionSelector, ReaderProtocolProjection, TypeError, TypeReader,
     UnsupportedView, WalkFailure,
 };
-use crate::wire_form::{has_tag, WireTag};
+use crate::wire_form::{WireTag, has_tag};
 
 type Node = CheckedSemanticNodeV2;
 
@@ -435,6 +435,41 @@ fn tied_order<'n>(
 }
 
 impl<'p> BarePackage<'p> {
+    /// The value type of one admitted protocol binder node (FR-531).
+    pub fn protocol_parameter_type(
+        &self,
+        binder: &CheckedNodeId,
+    ) -> Result<ValueType, BareSelectionFailure> {
+        let package = self.package();
+        let (_supply, identities) = self.witness()?;
+        let graph = wire_graph(package).map_err(|_| fault("bare-package-has-structural-keys"))?;
+        let nodes: BTreeMap<&CheckedNodeId, &Node> = package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .map(|node| (&node.node_id, node))
+            .collect();
+        let reader = TypeReader {
+            admitted: package,
+            identities,
+            nodes: &nodes,
+            graph: &graph,
+            projections: self.exact_type_projections(),
+        };
+        match node_value_type(&reader, binder) {
+            Ok(value_type) => Ok(value_type),
+            Err(TypeError::Unsupported) => {
+                let key = graph
+                    .key(binder)
+                    .map_err(|_| fault("bare-package-has-structural-keys"))?;
+                Err(BareSelectionFailure::Unsupported(Box::new(
+                    UnsupportedView::missing_type(package.name(), key),
+                )))
+            }
+            Err(TypeError::Fault(failure)) => Err(SlotSelectionFailure::Fault(failure).into()),
+        }
+    }
+
     /// Select the slot `descriptor` names from the package's nodes, with the
     /// binders its expression reads and the origin FR-533 "Slot naming on
     /// the bytes route" resolves (FR-533). Charges nothing and takes no
@@ -532,10 +567,10 @@ impl<'p> BarePackage<'p> {
                         Err(TypeError::Unsupported) => {
                             return Err(BareSelectionFailure::Unsupported(Box::new(
                                 UnsupportedView::missing_type(package.name(), key),
-                            )))
+                            )));
                         }
                         Err(TypeError::Fault(failure)) => {
-                            return Err(SlotSelectionFailure::Fault(failure).into())
+                            return Err(SlotSelectionFailure::Fault(failure).into());
                         }
                     };
                     sources.push(BareSource {

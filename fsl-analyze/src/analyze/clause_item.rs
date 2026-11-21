@@ -19,24 +19,34 @@
 use filament_exact::Identifier;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::PropertyForm;
-use fsl_eval::simulation::Limits;
+use fsl_eval::model_subject::{ModelLetters, ModelSubject, ProtocolSubject};
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PackageModelInput,
 };
+use fsl_eval::simulation::protocol::{PackageProtocolProgram, ProtocolTransition};
+use fsl_eval::simulation::Limits;
 use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    replay_model_trace, CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits,
-    ModelTraceReplayResult, ModelTraceSubject, QualifiedName, ReplayPackage,
-    PackageReadRefusal, ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire,
-    StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope, WitnessPacket,
+    replay_model_trace, replay_protocol_trace_from_package, CertificateRequest, EnvelopeSource,
+    ModelCheckItem, ModelCheckLimits, ModelTraceReplayResult, ModelTraceSubject,
+    PackageReadRefusal, ProtocolCertificateRequest, ProtocolTraceSubject, QualifiedName,
+    ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers,
+    RequestTargetWire, StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope,
+    WitnessPacket,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 
-use super::items::{BROKEN, CLAUSE_FAMILY, ModelItem, admission, settle_model_item};
-use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding};
-use crate::model_check::{ModelCheckRequest, manifest as en1};
+use super::items::{
+    admission, settle_model_item, settle_protocol_item, ModelItem, ProtocolItem, BROKEN,
+    CLAUSE_FAMILY,
+};
+use super::request::ProtocolBinding;
+use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
+use crate::analyze::derived_item::{derived_target, NoLetters};
+use crate::analyze::protocol_item::over_instance;
+use crate::model_check::{manifest as en1, ModelCheckRequest, ProtocolCheckRequest};
 
 /// The replay source an EN-1 authored-clause counterexample carries: a
 /// witness transcript with no values, since the clause's lasso is the
@@ -450,9 +460,9 @@ pub(super) fn replay_over(
 /// other failure the internal fault `fallback`.
 fn envelope_refusal(error: fsl_replay::WitnessRefusal, fallback: ReplayRefusal) -> ReplayRefusal {
     match error {
-        fsl_replay::WitnessRefusal::BoundExceeded(bound) => ReplayRefusal::Request(
-            fsl_replay::ReplayRequestRefusal::BoundExceeded(bound),
-        ),
+        fsl_replay::WitnessRefusal::BoundExceeded(bound) => {
+            ReplayRefusal::Request(fsl_replay::ReplayRequestRefusal::BoundExceeded(bound))
+        }
         _ => fallback,
     }
 }
@@ -517,10 +527,7 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
         inputs.limits.emit,
     )
     .map_err(|_| fault("package-emission"))?;
-    let package = read_package(
-        emission.package().bytes(),
-        inputs.limits,
-    )?;
+    let package = read_package(emission.package().bytes(), inputs.limits)?;
     request_and_envelope(
         WireParts {
             package,
@@ -659,17 +666,13 @@ pub(crate) fn replay_protocol_over(
         occurrence,
         transcript: text,
     } = shape;
-    let emission =
-        fsl_package::emit_checked_with_temporal_selections(
-            inputs.package,
-            &model_selections(inputs.package),
-            inputs.limits.emit,
-        )
-        .map_err(|_| fault("package-emission"))?;
-    let package = read_package(
-        emission.package().bytes(),
-        inputs.limits,
-    )?;
+    let emission = fsl_package::emit_checked_with_temporal_selections(
+        inputs.package,
+        &model_selections(inputs.package),
+        inputs.limits.emit,
+    )
+    .map_err(|_| fault("package-emission"))?;
+    let package = read_package(emission.package().bytes(), inputs.limits)?;
     let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
     let wire = ReplayRequestWire {
         certificate: None,
@@ -817,6 +820,28 @@ impl<'a> PackageClauseSubject<'a> {
         self.proof_bounds.clone_from(&temporal.proof_bounds);
         self.temporal = Some(temporal);
         self
+    }
+
+    /// Run this authored clause over its package protocol form when the
+    /// request's subject selects a protocol.
+    pub(super) fn protocol_item(
+        self,
+        index: RequestIndex,
+        protocol: ProtocolBinding,
+    ) -> AnalyzeItem<'a> {
+        PackageProtocolWork {
+            input: self.input,
+            clause: Some(self.clause),
+            key: self.key,
+            occurrence: self.occurrence,
+            binding: self.binding,
+            limits: self.limits,
+            form: self.temporal.unwrap_or_default(),
+            package_bytes: self.package_bytes,
+            supply: self.supply,
+            protocol,
+        }
+        .item(index)
     }
 
     /// The `temporal-satisfaction` item that runs the package-form clause
@@ -970,6 +995,328 @@ impl<'a> PackageClauseSubject<'a> {
                     max_candidates: self.run.max_candidates,
                 },
             },
+            &envelope,
+            letters,
+            self.limits.replay,
+        )
+    }
+}
+
+/// The package-native protocol item over either an authored temporal clause
+/// or a derived protocol freedom item.
+struct PackageProtocolWork<'a> {
+    input: ModelCheckInput<'a>,
+    clause: Option<fsl_semantics::check::CheckedTemporalClause>,
+    key: filament_exact::NodeKey,
+    occurrence: OccurrenceKey,
+    binding: SubjectBinding<'a>,
+    limits: AnalyzeLimits,
+    form: TemporalItem,
+    package_bytes: &'a [u8],
+    supply: fsl_replay::HandoffSupply<'a>,
+    protocol: ProtocolBinding,
+}
+
+/// FR-850/FR-940: a derived protocol freedom item anchored at the package
+/// protocol declaration, with its resolved request form.
+pub(super) struct PackageProtocolSelection<'a> {
+    /// The declaration occurrence that anchors this item.
+    pub(super) claim: &'a OccurrenceKey,
+    /// The requested temporal item and its bounds.
+    pub(super) form: &'a TemporalItem,
+    /// The resolved protocol subject and memory bindings.
+    pub(super) protocol: ProtocolBinding,
+    /// This item's position in the request.
+    pub(super) index: RequestIndex,
+}
+
+/// FR-850/FR-940: a derived protocol freedom item anchored at the package
+/// protocol declaration, to be run and replayed through the package protocol
+/// transition system.
+pub(super) fn package_protocol_freedom_item<'a>(
+    package: &'a PackageModelInput<'a>,
+    package_bytes: &'a [u8],
+    supply: fsl_replay::HandoffSupply<'a>,
+    binding: SubjectBinding<'a>,
+    limits: AnalyzeLimits,
+    selection: PackageProtocolSelection<'_>,
+) -> AnalyzeItem<'a> {
+    let PackageProtocolSelection {
+        claim,
+        form,
+        protocol,
+        index,
+    } = selection;
+    PackageProtocolWork {
+        input: package.input(),
+        clause: None,
+        key: claim.node().clone(),
+        occurrence: claim.clone(),
+        binding,
+        limits,
+        form: form.clone(),
+        package_bytes,
+        supply,
+        protocol,
+    }
+    .item(index)
+}
+
+impl<'a> PackageProtocolWork<'a> {
+    fn item(self, index: RequestIndex) -> AnalyzeItem<'a> {
+        let claim = self.occurrence.clone();
+        let family = match self.form.item_kind {
+            fsl_route::request::ItemKind::Formula => CLAUSE_FAMILY,
+            fsl_route::request::ItemKind::DeadlockFreedom
+            | fsl_route::request::ItemKind::RaceFreedom => {
+                Some(fsl_semantics::check::DeclarationFamily::Protocol)
+            }
+            _ => None,
+        };
+        AnalyzeItem::new(
+            index,
+            Capability::TemporalSatisfaction,
+            family,
+            Mode::Bounded,
+            en1::BACKEND_ID,
+            move |cancel| {
+                let unsupported = || {
+                    EngineReport::Refused(Refusal::Unsupported(
+                        filament_semantic_value::catalog::CatalogCode::new(
+                            "unsupported_construct",
+                            "not-yet-implemented",
+                        ),
+                    ))
+                };
+                if !matches!(
+                    self.form.item_kind,
+                    fsl_route::request::ItemKind::Formula
+                        | fsl_route::request::ItemKind::DeadlockFreedom
+                        | fsl_route::request::ItemKind::RaceFreedom
+                ) || !self.form.reductions.symmetry.is_empty()
+                    || self.form.reductions.partial_order
+                {
+                    return unsupported();
+                }
+                let Some(over) = self
+                    .protocol
+                    .over
+                    .as_ref()
+                    .map(|over| over_instance(&self.binding, over))
+                else {
+                    let mut detail = serde_json::Map::new();
+                    detail.insert("member".to_owned(), serde_json::json!("over"));
+                    return EngineReport::Refused(Refusal::DeclinedWithDetail(
+                        fsl_replay::ProofRefusalCause::InvalidInput,
+                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        filament_semantic_value::catalog::CatalogCode::new(
+                            "invalid_runtime_input",
+                            "missing-member",
+                        ),
+                        detail,
+                    ));
+                };
+                let program = match PackageProtocolProgram::new(
+                    &self.input,
+                    &self.protocol.protocol,
+                    &self.protocol.memory,
+                ) {
+                    Ok(program) => program,
+                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Unsupported(_)) => {
+                        return unsupported();
+                    }
+                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Correlation {
+                        node,
+                    }) => {
+                        let mut detail = serde_json::Map::new();
+                        detail.insert("fact".to_owned(), serde_json::json!("correlation"));
+                        detail.insert("node".to_owned(), serde_json::json!(node));
+                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                            filament_semantic_value::catalog::CatalogCode::new(
+                                "unsupported_construct",
+                                "not-yet-implemented",
+                            ),
+                            detail,
+                        ));
+                    }
+                    Err(_) => {
+                        return EngineReport::Refused(Refusal::Declined(
+                            fsl_replay::ProofRefusalCause::InvalidInput,
+                            fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                            filament_semantic_value::catalog::CatalogCode::new(
+                                "invalid_runtime_input",
+                                "invalid-value",
+                            ),
+                        ));
+                    }
+                };
+                let resolved_memory = program.memory.clone();
+                drop(program);
+                let simulation = self.simulation();
+                let system = match ModelSystem::new(simulation.clone()) {
+                    Ok(system) => system,
+                    Err(failure) => return EngineReport::Refused(admission(&failure)),
+                };
+                let clause_letters;
+                let letters: &dyn ModelLetters = match self.clause.as_ref() {
+                    Some(clause) => {
+                        clause_letters = match system.package_clause_letters(clause, &self.key) {
+                            Ok(letters) => letters,
+                            Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+                        };
+                        &clause_letters
+                    }
+                    None => &NoLetters,
+                };
+                let make_item = || match self.clause.as_ref() {
+                    Some(clause) => ModelCheckItem::Clause { clause, letters },
+                    None if self.form.item_kind == fsl_route::request::ItemKind::RaceFreedom => {
+                        ModelCheckItem::RaceFreedom
+                    }
+                    None if self.form.item_kind
+                        == fsl_route::request::ItemKind::DeadlockFreedom =>
+                    {
+                        ModelCheckItem::DeadlockFreedom
+                    }
+                    None => ModelCheckItem::DeadlockFreedom,
+                };
+                let make_subject = || ProtocolSubject {
+                    model: ModelSubject {
+                        simulation: self.simulation(),
+                        proof_bounds: self.form.proof_bounds.clone(),
+                    },
+                    protocol: self.protocol.protocol.clone(),
+                    over: over.clone(),
+                    roles: self.protocol.roles.clone(),
+                    capacities: self.protocol.capacities.clone(),
+                    memory: resolved_memory.clone(),
+                };
+                let run_subject = make_subject();
+                let certificate_subject = make_subject();
+                let request = ProtocolCheckRequest {
+                    temporal_clock_selections: &[],
+                    subject: run_subject,
+                    item: make_item(),
+                    max_depth: self.clause.as_ref().and(self.form.max_depth),
+                    max_store_buffer: self.form.max_store_buffer,
+                    max_messages: self.form.max_messages,
+                    ignore_memory_constraints: false,
+                    max_live_instances: None,
+                    limits: self.form.limits,
+                };
+                let certificate = ProtocolCertificateRequest {
+                    temporal_clock_selections: &[],
+                    subject: certificate_subject,
+                    item: make_item(),
+                    max_store_buffer: self.form.max_store_buffer,
+                    max_messages: self.form.max_messages,
+                    max_live_instances: None,
+                };
+                let trace = ProtocolTraceSubject {
+                    model: ModelTraceSubject {
+                        timed: None,
+                        initial: self.binding.initial.clone(),
+                        universes: self.binding.universes.clone(),
+                        expansion: ExpansionLimits {
+                            max_candidates: self.form.max_candidates,
+                        },
+                    },
+                    protocol: self.protocol.protocol.clone(),
+                    over,
+                    roles: self.protocol.roles.clone(),
+                    capacities: self.protocol.capacities.clone(),
+                    memory: resolved_memory,
+                    max_store_buffer: self.form.max_store_buffer,
+                    max_messages: self.form.max_messages,
+                    max_live_instances: None,
+                };
+                let constraint = self.form.reductions.constraint.clone();
+                let replay = Box::new(|payload: &TemporalCounterexample<ProtocolTransition>| {
+                    self.replay(&trace, letters, payload)
+                });
+                settle_protocol_item(
+                    ProtocolItem {
+                        request,
+                        certificate,
+                        replay,
+                    },
+                    constraint.as_deref(),
+                    cancel,
+                )
+            },
+        )
+        .claimed(claim)
+    }
+
+    fn simulation(&self) -> ModelSimulationRequest<'a> {
+        ModelSimulationRequest {
+            input: self.input.clone(),
+            packages: self.binding.packages,
+            normalization: self.limits.normalization,
+            snapshots: self.binding.snapshots,
+            initial: self.binding.initial.clone(),
+            universes: self.binding.universes.clone(),
+            observation: self.limits.observation,
+            expansion: ExpansionLimits {
+                max_candidates: self.form.max_candidates,
+            },
+            meter: self.limits.accounting,
+            emit: self.limits.emit,
+        }
+    }
+
+    fn replay(
+        &self,
+        trace: &ProtocolTraceSubject,
+        letters: &dyn ModelLetters,
+        payload: &TemporalCounterexample<ProtocolTransition>,
+    ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+        let fault =
+            |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
+        let shape = match self.clause.as_ref() {
+            Some(clause) => {
+                let name = named(clause).map_err(|_| fault("clause-name"))?;
+                ReplayShape {
+                    target: RequestTargetWire::state_clause(name.clone()),
+                    members: ReplayTargetMembers::state_clause(name),
+                    node: self.key.clone(),
+                    occurrence: self.occurrence.clone(),
+                    transcript: CLAUSE_TRANSCRIPT,
+                }
+            }
+            None => {
+                let target = derived_target().ok_or_else(|| fault("derived-target"))?;
+                ReplayShape {
+                    target: RequestTargetWire::function(target.clone(), self.occurrence.clone()),
+                    members: ReplayTargetMembers::function(target),
+                    node: self.key.clone(),
+                    occurrence: self.occurrence.clone(),
+                    transcript: if self.form.item_kind == fsl_route::request::ItemKind::RaceFreedom
+                    {
+                        "<<<assertion|model_check|race|>>>"
+                    } else {
+                        "<<<assertion|model_check|deadlock|>>>"
+                    },
+                }
+            }
+        };
+        let package = read_package(self.package_bytes, &self.limits)?;
+        let (wire, envelope) = request_and_envelope(
+            WireParts {
+                package,
+                dependencies: Vec::new(),
+                binding: &self.binding,
+                limits: &self.limits,
+                byte_provision: Vec::new(),
+                backend: en1::BACKEND_ID,
+            },
+            shape,
+            payload,
+        )?;
+        replay_protocol_trace_from_package(
+            wire,
+            self.supply,
+            trace,
             &envelope,
             letters,
             self.limits.replay,

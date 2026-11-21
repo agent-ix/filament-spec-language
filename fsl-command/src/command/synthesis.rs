@@ -98,7 +98,13 @@ pub(super) enum Halt {
     /// A limit stopped the run: it reports `incomplete` with this cause.
     Stop(StopCause),
     /// The request cannot be run: it is refused.
-    Refuse(super::RunCause),
+    Refuse(Box<super::RunCause>),
+}
+
+impl From<super::RunCause> for Halt {
+    fn from(cause: super::RunCause) -> Self {
+        Self::Refuse(Box::new(cause))
+    }
 }
 
 /// The disposition of a bounded integer search.
@@ -342,7 +348,7 @@ pub(super) fn search_integer_domain(
         let accepted = match satisfies(&candidate) {
             Ok(accepted) => accepted,
             Err(Halt::Stop(cause)) => return result(SearchDisposition::Incomplete(cause), visited),
-            Err(Halt::Refuse(refusal)) => return Err(refusal),
+            Err(Halt::Refuse(refusal)) => return Err(*refusal),
         };
         if limits.deadline_passed() {
             return result(SearchDisposition::Incomplete(StopCause::Deadline), visited);
@@ -399,7 +405,7 @@ fn rank_by_objective(
                     work: done.saturating_add(1),
                 });
             }
-            Err(Halt::Refuse(refusal)) => return Err(refusal),
+            Err(Halt::Refuse(refusal)) => return Err(*refusal),
         }
     }
     ranked.sort_by(|left, right| match direction {
@@ -482,7 +488,7 @@ pub(super) fn run_value_synthesis(
     let result = search_integer_domain(order, limits, spent, |candidate| {
         match searcher.block(candidate)? {
             filament_exact::Value::Boolean(holds) => Ok(holds),
-            other => Err(Halt::Refuse(refused(
+            other => Err(Halt::from(refused(
                 "/request/synthesis",
                 format!("satisfies expression returned {other:?}"),
             ))),
@@ -613,7 +619,7 @@ fn completed(
     evaluation: Result<filament_eval::FamilyOutcome<filament_exact::Value>, String>,
 ) -> Result<filament_exact::Value, Halt> {
     match evaluation {
-        Err(fault) => Err(Halt::Refuse(refused("/request/synthesis", fault))),
+        Err(fault) => Err(Halt::from(refused("/request/synthesis", fault))),
         Ok(filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(value))) => {
             Ok(value)
         }
@@ -623,7 +629,7 @@ fn completed(
             limit: incomplete.limit_kind.as_str(),
             value: incomplete.limit,
         })),
-        Ok(outcome) => Err(Halt::Refuse(refused(
+        Ok(outcome) => Err(Halt::from(refused(
             "/request/synthesis",
             format!("checked synthesis expression did not complete: {outcome:?}"),
         ))),
@@ -972,7 +978,7 @@ impl CandidateEvaluator for SourceEvaluator<'_> {
         let body = self
             .checked
             .objective()
-            .ok_or_else(|| Halt::Refuse(refused("/request/synthesis/objective", "no objective")))?;
+            .ok_or_else(|| Halt::from(refused("/request/synthesis/objective", "no objective")))?;
         self.evaluate(body, candidate)
     }
 }
@@ -1130,7 +1136,7 @@ impl CandidateEvaluator for PackageEvaluator<'_> {
         let projected = self.projected;
         let objective = projected
             .objective()
-            .ok_or_else(|| Halt::Refuse(refused("/request/synthesis/objective", "no objective")))?;
+            .ok_or_else(|| Halt::from(refused("/request/synthesis/objective", "no objective")))?;
         self.evaluate(objective.expression(), candidate)
     }
 }

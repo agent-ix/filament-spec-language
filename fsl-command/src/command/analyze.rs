@@ -10,18 +10,18 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, PackageRun, PackageRunError,
-    SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
+    resolve_items, settle_package_run, settle_run, AnalyzeDocumentError, AnalyzeRun, ItemSelection,
+    Negotiate, PackageRun, PackageRunError, SettledRun, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
+use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::settle::Settle;
 use super::{
-    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
     check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
-    wire,
+    wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -106,6 +106,69 @@ fn validate_activated_population(
     Ok(())
 }
 
+/// Whether `role` is one of FSpec FR-331's five `premises` roles a
+/// composition item names.
+fn is_premise_role(role: fsl_replay::planner::SlotRole) -> bool {
+    use fsl_replay::planner::SlotRole;
+    matches!(
+        role,
+        SlotRole::ComponentGuarantee
+            | SlotRole::Rely
+            | SlotRole::LivenessDependency
+            | SlotRole::Fairness
+            | SlotRole::Environment
+    )
+}
+
+/// FR-1044: a composition item's `premises` is an array of closed
+/// `{role, key}` objects whose `role` is one of FSpec FR-331's five, each
+/// `key` an object. Whether the list is the derived one is decided against
+/// the checked declaration, per item.
+fn validate_composition_premises(
+    position: usize,
+    premises: &serde_json::Value,
+) -> std::result::Result<(), (String, String)> {
+    let base = format!("/items/{position}/premises");
+    let Some(entries) = premises.as_array() else {
+        return Err((base, "premises must be an array".to_owned()));
+    };
+    for (entry_index, entry) in entries.iter().enumerate() {
+        let pointer = format!("{base}/{entry_index}");
+        let Some(entry) = entry.as_object() else {
+            return Err((pointer, "a premise must be an object".to_owned()));
+        };
+        if let Some(member) = entry
+            .keys()
+            .find(|member| !matches!(member.as_str(), "role" | "key"))
+        {
+            return Err((
+                format!("{pointer}/{}", pointer_token(member)),
+                format!("unknown premise member `{member}`"),
+            ));
+        }
+        match entry.get("role").and_then(serde_json::Value::as_str) {
+            Some(role)
+                if fsl_replay::planner::SlotRole::parse(role).is_some_and(is_premise_role) => {}
+            Some(role) => {
+                return Err((
+                    format!("{pointer}/role"),
+                    format!("`{role}` is not a premise role"),
+                ));
+            }
+            None => {
+                return Err((
+                    format!("{pointer}/role"),
+                    "role must be a string".to_owned(),
+                ))
+            }
+        }
+        if !entry.get("key").is_some_and(serde_json::Value::is_object) {
+            return Err((format!("{pointer}/key"), "key must be an object".to_owned()));
+        }
+    }
+    Ok(())
+}
+
 fn pointer_token(value: &str) -> String {
     value.replace('~', "~0").replace('/', "~1")
 }
@@ -165,11 +228,7 @@ pub fn prepare_analyze(
     })
 }
 
-fn prepare_bytes(
-    directory: &Path,
-    bytes: &[u8],
-    limits: RunLimits,
-) -> Result<PreparedAnalyze> {
+fn prepare_bytes(directory: &Path, bytes: &[u8], limits: RunLimits) -> Result<PreparedAnalyze> {
     match read(directory, bytes, limits)? {
         Readout::Source(input, _) => Ok(PreparedAnalyze {
             input: Box::new(input),
@@ -204,9 +263,7 @@ struct PackageSelection {
 /// FR-850, FR-940: analyze a `package` request over the `BarePackage` of
 /// its admitted package, read through `AnalysisView`, never compiling
 /// source, with the caller's `negotiate` under `cancel` and its deadline.
-/// An item whose engine family has no package form yet refuses the request
-/// whole, as not yet implemented and naming the family, rather than settle
-/// `unsupported`.
+/// Each item reads the admitted package form its engine family supports.
 fn run_package(
     selection: PackageSelection,
     negotiate: &dyn Negotiate,
@@ -232,16 +289,6 @@ fn run_package(
         identity_bytes,
         equality_bytes,
     } = admitted;
-    // FSL FR-1033: the package route binds no protocol subject yet, so no
-    // `memory` entry is read over it.
-    if !memory.is_empty() {
-        return Err(RunCause::AnalyzeNotYetImplemented {
-            member: "package",
-            detail: ": the memory member names a protocol subject, which has no package form yet"
-                .to_owned(),
-            locus: None,
-        });
-    }
     let package = fsl_package::BarePackage::new(&admitted)
         .with_supply(
             fsl_package::BareSupply {
@@ -265,9 +312,18 @@ fn run_package(
         })?;
     let RunMembers {
         documents,
-        subject,
+        mut subject,
         limits,
     } = *members;
+    check_memory_using(&memory, |protocol, entries| {
+        use fsl_package::AnalysisView;
+        package
+            .protocol_execution_named(protocol)
+            .ok()
+            .flatten()
+            .map(|form| ResolvedMemory::resolve_package(&form, entries))
+    })?;
+    subject.memory = memory;
     let binding = subject.binding(&supplied, &documents);
     let run = PackageRun {
         package: &package,
@@ -978,11 +1034,28 @@ fn check_memory(
     package: &fsl_package::CheckedPackage,
     memory: &[fsl_eval::simulation::protocol::MemorySelection],
 ) -> Result<()> {
+    check_memory_using(memory, |protocol, entries| {
+        package
+            .graph()
+            .protocol(protocol)
+            .map(|checked| ResolvedMemory::resolve(checked, entries))
+    })
+}
+
+/// Admit every request memory entry before resolving any item, using the
+/// selected route's protocol facts and the same refusal pointers.
+fn check_memory_using(
+    memory: &[MemorySelection],
+    resolve: impl Fn(
+        &str,
+        &[MemorySelection],
+    ) -> Option<std::result::Result<ResolvedMemory, MemorySelectionRefusal>>,
+) -> Result<()> {
     let refused = |member: String, reason: String| RunCause::AnalyzeMemory { member, reason };
     let mut protocols: Vec<&str> = Vec::new();
     for (position, entry) in memory.iter().enumerate() {
         let protocol = entry.parallel.split("::").next().unwrap_or_default();
-        if package.graph().protocol(protocol).is_none() {
+        if resolve(protocol, &[]).is_none() {
             return Err(refused(
                 format!("/memory/{position}/parallel"),
                 format!("{} names no protocol of the package", entry.parallel),
@@ -993,17 +1066,12 @@ fn check_memory(
         }
     }
     for protocol in protocols {
-        let Some(checked) = package.graph().protocol(protocol) else {
-            continue;
-        };
         let entries: Vec<_> = memory
             .iter()
             .filter(|entry| entry.parallel.split("::").next() == Some(protocol))
             .cloned()
             .collect();
-        if let Err(refusal) =
-            fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &entries)
-        {
+        if let Some(Err(refusal)) = resolve(protocol, &entries) {
             let member = memory
                 .iter()
                 .position(|entry| entries.first().is_some_and(|first| first == entry))
@@ -1050,6 +1118,12 @@ fn read_run_members(
 /// `simulation` member to a simulation item alone.
 pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
     for (position, item) in items.unwrap_or_default().iter().enumerate() {
+        if item.kind.as_deref() == Some(fsl_semantics::check::Capability::Composition.to_wire()) {
+            if let Some(premises) = &item.premises {
+                validate_composition_premises(position, premises)
+                    .map_err(|(pointer, reason)| invalid(&pointer, reason))?;
+            }
+        }
         if item.recording.is_some()
             && item.kind.as_deref()
                 != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())

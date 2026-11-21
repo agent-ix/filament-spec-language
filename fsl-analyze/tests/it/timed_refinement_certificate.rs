@@ -228,7 +228,10 @@ fn the_treq_certificate_is_a_refinement_form_the_checker_accepts() {
             "{taken:?}"
         );
     }
-    assert_eq!(certificate.admitted.as_ref().unwrap().start, certificate.initials[0]);
+    assert_eq!(
+        certificate.admitted.as_ref().unwrap().start,
+        certificate.initials[0]
+    );
     assert_eq!(
         verdict(&world, &certificate),
         ZoneCertificateVerdict::Accepted
