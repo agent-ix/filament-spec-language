@@ -160,6 +160,9 @@ impl Request {
 struct Letters<'a> {
     fixture: &'a Fixture,
     by_admitted: Vec<HashMap<&'static str, &'static str>>,
+    /// What the `when` guard reads at every position; `None` for a clause
+    /// without one.
+    guard: Option<bool>,
 }
 
 impl<'a> Letters<'a> {
@@ -175,7 +178,14 @@ impl<'a> Letters<'a> {
         Self {
             fixture,
             by_admitted,
+            guard: None,
         }
+    }
+
+    /// The same letter with its `when` guard reading `reading` everywhere.
+    fn guarded(mut self, reading: bool) -> Self {
+        self.guard = Some(reading);
+        self
     }
 
     fn name(&self, atom: FormulaNodeId) -> &str {
@@ -243,7 +253,11 @@ impl TemporalLetters for Letters<'_> {
         _position: TemporalPosition,
         _meter: &mut Meter,
     ) -> Result<AtomReading, LetterStop> {
-        panic!("these clauses have no `when` condition");
+        match self.guard {
+            Some(true) => Ok(AtomReading::True),
+            Some(false) => Ok(AtomReading::False),
+            None => panic!("these clauses have no `when` condition"),
+        }
     }
 }
 
@@ -1930,4 +1944,87 @@ fn one_sided_bounds_decide_eligibility_on_the_scaled_endpoints() {
         scan("2,1000", open_anchor, open_candidate, 0),
         WindowVerdict::Holds
     );
+}
+
+/// FR-820-AC-1 (finite-window route), FR-044-AC-7: a guarded `on each` clause
+/// whose every guard reads false, carried one stamp at a time with a silent
+/// sample after each admitted observation, reports after each step the
+/// verdict, basis and premises of FR-501's batch run over the prefix: not
+/// decided while the scope is open, inactive once it is closed and complete,
+/// even after the state has dropped every observation it held.
+#[trace("TC-2320", "FR-820-AC-1", "FR-044-AC-7")]
+#[test]
+fn a_carried_window_state_with_every_guard_false_reports_the_batch_result() {
+    let fixture = clause(
+        "on each (q: Counter) when (q.value = 1)",
+        "eventually[0,2] holds(p)",
+    );
+    let facts = fsl_eval::temporal::evidence::ClauseFacts::of_checked(&fixture.clause);
+    let rows: Vec<Row> = (0..8).map(|index| p(index * 3, "F")).collect();
+    let full = request(rows, 0, None);
+    for scope in [ProgressClosure::Open, ProgressClosure::Closed] {
+        let whole = full.admit(&fixture).expect("the trace admits");
+        let mut letters = Letters::new(&fixture, &full, &whole).guarded(false);
+        let mut state = fsl_eval::temporal::WindowState::open(
+            &facts,
+            fixture.clause.name(),
+            whole.clock().clone(),
+        )
+        .expect("the state opens");
+        let positions = whole.positions();
+        let mut dropped = false;
+        for (index, position) in positions.iter().enumerate() {
+            state.admit(position.clone());
+            let last = index + 1 == positions.len();
+            let progress = WindowProgress {
+                watermark: Watermark::Inclusive(position.stamp),
+                completeness: ProgressCompleteness::Complete {
+                    through: position.stamp,
+                },
+                scope: if last { scope } else { ProgressClosure::Open },
+                execution: ProgressClosure::Open,
+                lower_boundary: full.lower,
+            };
+            let mut prefix = full.clone();
+            prefix.rows = full.rows[..=index].to_vec();
+            prefix.watermark = progress.watermark;
+            prefix.complete = progress.completeness;
+            prefix.scope = progress.scope;
+            prefix.execution = progress.execution;
+            let batch = {
+                let whole = prefix.admit(&fixture).expect("the prefix admits");
+                let mut letters = Letters::new(&fixture, &prefix, &whole).guarded(false);
+                let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+                fsl_eval::temporal::evaluate_finite_window(&facts, &whole, &mut letters, &mut meter)
+                    .expect("the batch run evaluates")
+            };
+            let silent = [TimestampedObservation {
+                stamp: position.stamp + 1,
+                order_key: None,
+                observation: format!("silent-{index}"),
+            }];
+            let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+            let carried = state
+                .evaluate(
+                    &facts,
+                    &silent,
+                    progress,
+                    progress,
+                    &mut letters,
+                    &mut meter,
+                )
+                .expect("the carried run evaluates");
+            assert_eq!(carried.verdict, batch.verdict, "step {index}, {scope:?}");
+            assert_eq!(carried.basis, batch.basis, "step {index}, {scope:?}");
+            assert_eq!(carried.premises, batch.premises, "step {index}, {scope:?}");
+            let expected = if last && scope == ProgressClosure::Closed {
+                (WindowVerdict::Inactive, Basis::ClosedScope)
+            } else {
+                (WindowVerdict::ActivationUnknown, Basis::Unsettled)
+            };
+            assert_eq!((carried.verdict, carried.basis), expected, "step {index}");
+            dropped |= state.retained() == 0;
+        }
+        assert!(dropped, "the state froze every observation it held");
+    }
 }

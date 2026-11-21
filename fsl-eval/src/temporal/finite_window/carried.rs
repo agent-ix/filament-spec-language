@@ -46,6 +46,8 @@ pub struct WindowState {
     base: usize,
     /// The stamp of position 0.
     first: Option<u64>,
+    /// The stamp of the last observation held so far.
+    last_observed: Option<u64>,
     /// The first activation anchor the summary does not cover.
     cursor: usize,
     prior: Prior,
@@ -143,6 +145,7 @@ impl WindowState {
             fresh: 0,
             base: 0,
             first: None,
+            last_observed: None,
             cursor: 0,
             prior: Prior::default(),
             seed: Seed::default(),
@@ -239,6 +242,7 @@ impl WindowState {
             clause_identity: self.clause_identity.clone(),
             base: self.base,
             first,
+            last_observed: self.last_observed,
             // A carried state reads no interval stamp and no late-data cutoff:
             // those runs take the whole-trace evaluation.
             intervals: Vec::new(),
@@ -362,6 +366,12 @@ impl WindowState {
         if let Some((key, cause)) = first_undefined {
             seed.undefined.insert(key, cause);
         }
+        let last_observed = trace
+            .positions
+            .get(..held)
+            .and_then(<[_]>::last)
+            .map(|position| position.stamp)
+            .or(self.last_observed);
         let mut positions = trace.positions;
         positions.truncate(held);
         let drop = frontier.saturating_sub(self.base).min(positions.len());
@@ -371,6 +381,7 @@ impl WindowState {
         self.fresh = 0;
         self.base = frontier;
         self.first = Some(first);
+        self.last_observed = last_observed;
         self.cursor = cursor;
         self.prior = prior;
         self.seed = seed;

@@ -4117,17 +4117,16 @@ fn a_finite_window_open_scope_with_every_guard_false_is_not_decided() {
     let open = timestamped_guarded_by("q.value = 1", &[0, 0], false);
     assert_eq!(outcome(&open), &TemporalVerdict::Pending);
     assert_eq!(open.disposition.truth(), None);
-    assert!(matches!(
-        open.axes().truth,
-        None | Some(crate::TruthAxis::Pending)
-    ));
+    assert_eq!(open.axes().activation, crate::ActivationAxis::Unknown);
+    assert_eq!(open.axes().truth, Some(crate::TruthAxis::Pending));
+    assert_eq!(window_report(&open).basis, SettlementBasis::Unsettled);
 }
 
-/// FR-044-AC-7: a guard that cannot be established is an unknown activation
-/// on the finite-window path, closed or open: it is neither inactive nor
-/// decided, and it carries no truth. (The batch run reports the same guard
-/// `Undefined`; that difference predates this change.)
-#[trace("TC-1278", "FR-044-AC-7")]
+/// The finite-window route reports a guard that divides by zero as an
+/// incomplete activation. The standard requires a typed `undefined` there
+/// (the batch run reports it so), so this pins current behavior only: it
+/// is neither inactive nor decided and carries no truth.
+/// QSL follow-up: window route reports activation-incomplete for an undefined guard
 #[test]
 fn a_finite_window_unknown_activation_is_neither_inactive_nor_decided() {
     for closed in [true, false] {

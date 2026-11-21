@@ -1388,23 +1388,29 @@ impl<L: TemporalLetters> Run<'_, L> {
                             // instance exists, so the clause has no truth.
                             // A closed, complete scope is inactive; any other
                             // scope may still activate and is unknown.
+                            // The observations this run holds start at `base`;
+                            // a carried state that dropped them all keeps the
+                            // stamp of the last one.
+                            let held = self.trace.observed.saturating_sub(self.base);
                             let last = self
                                 .stamps
                                 .iter()
-                                .take(self.trace.observed)
+                                .take(held)
                                 .max()
                                 .copied()
-                                .unwrap_or(0);
-                            let complete = covers(
-                                self.trace.asserted.completeness,
-                                last.saturating_add(self.margin),
-                            );
+                                .or(self.trace.last_observed.map(i128::from));
+                            let complete = last.is_some_and(|last| {
+                                covers(
+                                    self.trace.asserted.completeness,
+                                    last.saturating_add(self.margin),
+                                )
+                            });
                             if scope_closed && complete {
                                 (WindowVerdict::Inactive, Basis::ClosedScope, Vec::new())
                             } else {
                                 (
                                     WindowVerdict::ActivationUnknown,
-                                    Basis::Unavailable,
+                                    Basis::Unsettled,
                                     Vec::new(),
                                 )
                             }
