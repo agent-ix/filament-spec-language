@@ -63,3 +63,25 @@ lane, without another PR, test run or review.
 
 QSL-2760 remains open until the driver actually adopts the coordinated run API.
 No full suite, aggregate gate, profiling, or peer-fixture rerun was performed.
+
+Review fix round 1 (same PR, same reviewer): the held-identity owner repair
+`be3ad51571bb5e7b9c0e86588cfa32611053ed3d` is inherited, with its owner's pass
+trusted and no rerun of that unchanged test. The original 27 accepted tests
+were not repeated. The first focused compile failed on the shared reader's
+non-exhaustive error enum; the actual failure is retained in
+`logs/review-fix-round1-replay.log` (exit 101).
+
+`cargo test --locked -p fsl-replay --lib review_fix_ -- --test-threads=1`
+passes all three new tests in `logs/review-fix-round1-replay-2.log` (exit 0):
+old unscoped certificate reference roundtrip; canonical conversion refusal
+before staging a large input under a zero conversion budget; and an explicit
+depth-63 refusal paired with unlimited-policy acceptance of a valid depth-100
+typed value. Conversion work and reservation remain on the supplied owners.
+
+`cargo test --locked -p fsl-command --test it cli_contract::run::review_fix_deep_completed_values_use_actual_depth_policy -- --exact --test-threads=1`
+passes in `logs/review-fix-round1-command.log` (exit 0). It executes two real
+depth-100 record results, first without models and then with an authentic
+ConfigVersion reference through the source call catalog. Both complete with
+exit 0 and preserve their canonical leaf value. The test's wire reader
+explicitly disables serde's test-reader recursion cap; production admission
+uses the shared stack-backed reader and charged iterative conversion.
