@@ -2396,6 +2396,24 @@ impl PackageDeclarations {
         continue_state_clause_refusals: bool,
         protocol_check_refusals: &mut Vec<ProtocolCheckRefusal>,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+        let classes = EquivalenceClasses::new(&self.dimension_equivalences);
+        self.units = self
+            .units
+            .with_dimension_equivalences(&classes.memberships())
+            .map_err(|refusal| {
+                vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::InternalFault(Box::new(KeyFault::DimensionClassProjection(
+                        refusal,
+                    ))),
+                }]
+            })?;
+        // An assembled type table already holds these nominal ids. Replace
+        // those entries with the projection before appending other types'
+        // units: UnitTable::append deliberately retains the first entry.
+        let mut units = filament_semantic_value::quantity::UnitTable::declared(&self.units);
+        units.append(self.types.units().clone());
+        self.types = std::mem::take(&mut self.types).with_units(units);
         for plan in &self.verification_plans {
             if let Some(cause) = verification_plan_refusal(&self, plan) {
                 return Err(vec![CheckRefusal {
@@ -2987,7 +3005,6 @@ impl PackageDeclarations {
                 .collect(),
         )
         .with_declared_units(&self.units)
-        .with_dimension_equivalences(&self.dimension_equivalences)
         .with_protocols(
             self.protocols
                 .iter()

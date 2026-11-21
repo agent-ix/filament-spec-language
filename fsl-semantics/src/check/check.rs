@@ -1166,10 +1166,6 @@ pub struct Scope {
     index: ScopeIndex,
     /// Each admitted import by its qualifier (ADR-015 D-5).
     imports: BTreeMap<String, super::AdmittedImport>,
-    /// The unit's dimension equivalence classes (FR-091, FSpec FR-142
-    /// "Dimension equivalence"): a `convert` between units of two dimensions
-    /// of one class is admitted (FR-093).
-    dimension_classes: super::assemble::EquivalenceClasses,
 }
 
 fsl_foundation::debug_with_struct!(Scope, "Scope" { types: plain, model_records: with, relationships: plain, enums: plain, variant_types: with, operations: plain, ieee_profile: plain, ieee_operation: plain, integer_division: plain, complete_value: plain, known_populations: plain, clock_places: plain, clock_presence_places: plain, clock_reading: plain, history_names: plain, complete_model: plain, dispatch_operations: plain, symmetric_objects: plain, index: plain, imports: values });
@@ -1542,7 +1538,6 @@ impl Scope {
             symmetric_objects: BTreeMap::new(),
             index,
             imports: BTreeMap::new(),
-            dimension_classes: super::assemble::EquivalenceClasses::default(),
         }
     }
 
@@ -1888,79 +1883,6 @@ impl Scope {
         units.append(declared);
         self.types = std::mem::take(&mut self.types).with_units(units);
         self
-    }
-
-    /// This scope with the unit's admitted dimension equivalences (FR-091):
-    /// a `convert` across one class is admitted (FR-093).
-    pub(crate) fn with_dimension_equivalences(
-        mut self,
-        equivalences: &[super::assemble::DimensionEquivalence],
-    ) -> Self {
-        self.dimension_classes = super::assemble::EquivalenceClasses::new(equivalences);
-        self
-    }
-
-    /// The classes of dimension nodes the unit's equivalences make.
-    pub fn dimension_classes(&self) -> &super::assemble::EquivalenceClasses {
-        &self.dimension_classes
-    }
-
-    /// Whether `source` and `target` are declared non-affine units of two
-    /// distinct dimension nodes of one equivalence class (FR-093 "Dimension
-    /// equivalence"): the conversions the kernel's same-dimension relation
-    /// refuses and an equivalence admits.
-    fn across_class<'u>(
-        &self,
-        source: &'u filament_semantic_value::quantity::QuantityUnit,
-        target: &'u filament_semantic_value::quantity::QuantityUnit,
-    ) -> Option<(
-        &'u filament_semantic_value::unit::Unit,
-        &'u filament_semantic_value::unit::Unit,
-    )> {
-        use filament_semantic_value::quantity::QuantityUnit;
-        let (QuantityUnit::Declared(source), QuantityUnit::Declared(target)) = (source, target)
-        else {
-            return None;
-        };
-        let (from, to) = (source.dimension_node(), target.dimension_node());
-        let related = from != to
-            && !source.is_affine()
-            && !target.is_affine()
-            && self.dimension_classes.class(from).0 == self.dimension_classes.class(to).0;
-        related.then_some((&**source, &**target))
-    }
-
-    /// Whether a quantity of `source` converts to `target`: the kernel's
-    /// same-dimension relation, or an equivalence class relates the two
-    /// units' dimensions ([`Self::across_class`]).
-    pub(crate) fn units_convert(
-        &self,
-        source: &filament_semantic_value::quantity::QuantityUnit,
-        target: &filament_semantic_value::quantity::QuantityUnit,
-    ) -> bool {
-        source.converts_to(target) || self.across_class(source, target).is_some()
-    }
-
-    /// `magnitude` of `source` converted exactly to `target` across an
-    /// equivalence class (FR-093 "Dimension equivalence"): through the class
-    /// root, `magnitude` times `source`'s canonical scale times its
-    /// dimension's root size over the target's, over `target`'s canonical
-    /// scale. `None` when the pair is not across a class, which the kernel
-    /// converts.
-    pub fn class_convert(
-        &self,
-        magnitude: &filament_exact::Rational,
-        source: &filament_semantic_value::quantity::QuantityUnit,
-        target: &filament_semantic_value::quantity::QuantityUnit,
-    ) -> Option<filament_exact::Rational> {
-        let (from, to) = self.across_class(source, target)?;
-        let (_, from_size) = self.dimension_classes.class(from.dimension_node());
-        let (_, to_size) = self.dimension_classes.class(to.dimension_node());
-        magnitude
-            .mul(from.canonical().scale())
-            .mul(&from_size)
-            .div(&to_size)?
-            .div(to.canonical().scale())
     }
 
     /// The unit `name`, written in the source unit `source`, names as a
@@ -6137,15 +6059,7 @@ impl<'a> Typer<'a> {
                     .units
                     .get(source_unit.clone())
                     .zip(self.units.get(target_unit.clone()))
-                    .is_some_and(|(from, to)| {
-                        // A class-only conversion is admitted between plain
-                        // quantities; the kernel converts every other pair.
-                        from.converts_to(to)
-                            || (matches!(
-                                (&operand.value_type, target),
-                                (ValueType::Quantity(_), ValueType::Quantity(_))
-                            ) && self.scope.units_convert(from, to))
-                    });
+                    .is_some_and(|(source, target)| source.converts_to(target));
                 if !compatible {
                     return Err(mismatch(location));
                 }

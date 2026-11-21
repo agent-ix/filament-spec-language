@@ -478,6 +478,9 @@ pub enum AssemblyCause {
     /// refused a form the checks above admitted: a broken invariant of
     /// `check`, never a property of the source.
     NominalAdmission(InvalidSemanticGraph),
+    /// Admitted dimension classes could not be projected onto their own
+    /// unit graph: an invariant of assembly, not a source-language refusal.
+    DimensionClassProjection(filament_semantic_value::unit::DimensionEquivalenceRefusal),
     /// A type position names a declaration of an imported library
     /// (`a::R` for an import qualifier `a`): an imported name stands only
     /// as a callee (ADR-015 D-5; `ill_typed`/`operator-ineligible`).
@@ -702,7 +705,9 @@ impl AssemblyCause {
             Self::IdentityAllocation { .. }
             | Self::StorageAllocation { .. }
             | Self::StorageCapacity { .. } => Code::ResourceExhausted,
-            Self::Handle(_) | Self::NominalAdmission(_) => Code::RuntimeInvariant,
+            Self::Handle(_) | Self::NominalAdmission(_) | Self::DimensionClassProjection(_) => {
+                Code::RuntimeInvariant
+            }
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
             | Self::TimedNotChecked(_) => Code::UnsupportedConstruct,
@@ -815,7 +820,9 @@ impl AssemblyCause {
             Self::TypeLimit(limit) | Self::IdentityLimit(limit) => limit.kind().catalog_cause(),
             Self::IdentityAllocation { .. } | Self::StorageAllocation { .. } => "allocation-failed",
             Self::StorageCapacity { .. } => "reservation-size-overflow",
-            Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
+            Self::Handle(_) | Self::NominalAdmission(_) | Self::DimensionClassProjection(_) => {
+                "established-invariant-broken"
+            }
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
             Self::TimedNotChecked(_) => "not-yet-implemented",
@@ -5137,7 +5144,7 @@ impl PackageDeclarations {
         // packages, in FR-091's phases: the base pairs before the first
         // dimension turn, every other pair after the last.
         let owners = quantity_owners;
-        let (quantities, equivalences) = match quantity_result {
+        let (mut quantities, equivalences) = match quantity_result {
             Ok(quantities) => {
                 let equivalences = equivalence::assemble(
                     &unit.equivalences,
@@ -5186,6 +5193,21 @@ impl PackageDeclarations {
                 (None, Vec::new())
             }
         };
+
+        if let Some(quantities) = quantities.as_mut() {
+            let classes = EquivalenceClasses::new(&equivalences);
+            quantities.graph = quantities
+                .graph
+                .with_dimension_equivalences(&classes.memberships())
+                .map_err(|refusal| AssemblyRefusal {
+                    errors: vec![AssemblyError {
+                        span: equivalences
+                            .first()
+                            .map_or(Span { start: 0, end: 0 }, |equivalence| equivalence.span),
+                        cause: AssemblyCause::DimensionClassProjection(refusal),
+                    }],
+                })?;
+        }
 
         let mut names = Names {
             unit_table: std::cell::RefCell::new(

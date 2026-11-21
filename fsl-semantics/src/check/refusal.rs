@@ -3465,6 +3465,9 @@ pub enum ExecutionPointRefusal {
 /// broke it.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum KeyFault {
+    /// Admitted dimension classes could not be projected onto their unit
+    /// graph before checking the package's quantities.
+    DimensionClassProjection(filament_semantic_value::unit::DimensionEquivalenceRefusal),
     /// An accepted execution point its clause cannot carry (FSpec FR-341,
     /// FR-342): the variant is inapplicable to the clause kind, or its
     /// operation is not the clause's.
@@ -3578,6 +3581,7 @@ impl KeyFault {
     /// The violated invariant's stable identifier (ADR-013 T-4).
     pub fn invariant(&self) -> &'static str {
         match self {
+            Self::DimensionClassProjection(_) => "dimension-classes-project-on-admitted-units",
             Self::MissingAdmittedModel(_) => "intake-owner-has-assembled-model",
             Self::PendingField(_) => "conformance-reads-admitted-member-pair",
             Self::UnknownEffectiveId(_) => "reference-target-admitted",
