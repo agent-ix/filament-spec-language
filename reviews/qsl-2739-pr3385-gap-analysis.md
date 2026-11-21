@@ -42,3 +42,7 @@ Disposition round 1 at fix head fe5e3881a9987aefbe900da708cfb8743e22def4. Bounde
 | --- | --- | --- |
 | FND-001 | fixed | `#[trace("FR-530-AC-1", "FR-530-AC-10", ...)]` is now on `a_non_assume_guarantee_rule_derives_a_request_item`, `#[trace("FR-1044-AC-5", "FR-530-AC-10")]` on `an_interface_composition_derives_no_assumption_set`, and FR-530-AC-10 on the new `components_of_one_package_are_distinct_assumed_peers`. |
 | FND-002 | deferred: external | FR-1044-AC-10 package parity stays OPEN with its existing owner, terra:QSL:package-consumer-api. The ignored test's reason says so, and it carries no trace, so it claims no coverage. No new issue or scope. |
+
+### Disposition round 1, continuation (final head 11c4db178296af2965c5a5e1c950c0776c956bc8)
+
+No outcome changed. FR-530-AC-10 stays tagged. The removed fixture is replaced by `an_undeclared_peer_is_no_assumption` (fsl-package) and `only_a_declared_peer_is_an_assumption_of_the_slot_key` (root), both tagged FR-530-AC-10, and both passed at 11c4. FR-1044-AC-10 stays deferred: it is external, OPEN with terra:QSL:package-consumer-api, and its ignored test is untagged. Nothing new was untagged by the continuation.
