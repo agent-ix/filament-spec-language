@@ -31,43 +31,33 @@ pub struct ClockPlaceId {
     pub selectors: Vec<u64>,
 }
 
-/// Run-local clock-place templates retained from one checked graph for typed
-/// values. Producer-local v1 keys do not authenticate transported identities.
+/// Checked declaration context retained for the trusted same-run Rust-state
+/// seam. This is not admission authority for externally supplied references.
 #[derive(Clone, Debug, Default)]
-pub struct DeclaredClockPlaces(Vec<(filament_exact::EffectiveId, NodeKey, Vec<Option<u64>>)>);
+pub struct DeclaredClockPlaces {
+    declarations: normalization::ClockDeclarationTable,
+}
 
 impl DeclaredClockPlaces {
-    /// Retain the templates the checked timed models declare, with their
-    /// owner types and positional selector domains.
-    pub fn new(models: &[crate::check::TimedModel]) -> Self {
-        Self(
-            models
-                .iter()
-                .flat_map(|model| {
-                    model
-                        .clocks()
-                        .iter()
-                        .zip(model.place_nodes())
-                        .filter(|(clock, _)| !clock.slots().any(|shape| shape.map))
-                        .map(|(clock, node)| {
-                            let slots = clock
-                                .path()
-                                .iter()
-                                .filter_map(|step| match step {
-                                    crate::check::PlaceStep::Slot(shape) => Some(shape.max),
-                                    _ => None,
-                                })
-                                .collect();
-                            (clock.owner(), node.clone(), slots)
-                        })
-                })
-                .collect(),
-        )
+    /// A context without original declaration provenance cannot validate a
+    /// transported v2 identity. Callers with an admitted table attach it below.
+    pub fn new(_models: &[crate::check::TimedModel]) -> Self {
+        Self::default()
     }
 
-    /// Decide whether `reference` names a declared instance owned by `owner`.
-    /// Both values must belong to the same checked run. The caller supplies
-    /// an owner admitted from that run's referenced population.
+    /// Retain the exact checked declaration table once for model observations.
+    pub fn with_declaration_table(
+        _models: &[crate::check::TimedModel],
+        table: &normalization::ClockDeclarationTable,
+    ) -> Self {
+        Self {
+            declarations: table.clone(),
+        }
+    }
+
+    /// Check a reference already produced or admitted within this model run.
+    /// The caller has the real owner from that run. Population membership of
+    /// hostile raw input belongs to raw admission, never to this trusted seam.
     pub fn contains(
         &self,
         reference: &ObjectReference,
@@ -77,20 +67,71 @@ impl DeclaredClockPlaces {
         if !is_clock_type(reference.object_type()) || reference.universe() != owner.universe() {
             return false;
         }
-        let Ok(place) = ClockPlaceId::decode(reference.object().as_str()) else {
+        let text = reference.object().as_str();
+        let limit = u64::try_from(text.len()).unwrap_or(u64::MAX);
+        let Ok(identity) =
+            identity::PlaceIdentity::decode(text, quire_canonical::Limits::new(limit))
+        else {
             return false;
         };
-        place.owner == owner.object().as_str()
-            && self.0.iter().any(|(declaring, template, slots)| {
-                template == &place.template
-                    && types.conforms(owner.object_type().clone(), declaring.clone())
-                    && slots.len() == place.selectors.len()
-                    && slots
-                        .iter()
-                        .zip(&place.selectors)
-                        .all(|(maximum, index)| maximum.is_none_or(|maximum| *index < maximum))
-            })
+        is_declared_identity(
+            &identity,
+            &identity.population,
+            owner,
+            &self.declarations,
+            types,
+        )
     }
+}
+
+/// Validate a decoded identity against an explicitly authenticated population,
+/// real owner and the checked declaration table. This never searches for a
+/// population by an owner's type, universe or local key.
+///
+/// The outer K2 universe and native Clock target are retained by
+/// [`encode_identity`]; callers validating an existing typed reference check
+/// those outer fields as well. Raw admission obtains them from its real owner.
+pub fn is_declared_identity(
+    identity: &identity::PlaceIdentity,
+    population: &identity::DeclarationScope,
+    owner: &ObjectReference,
+    declarations: &normalization::ClockDeclarationTable,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+) -> bool {
+    if &identity.population != population
+        || identity.owner != owner.object().as_str()
+        || declarations.origin(&identity.template).is_none()
+    {
+        return false;
+    }
+    if !declarations.run_places().any(|(_, place)| {
+        place.template.as_ref() == &identity.template
+            && types.conforms(owner.object_type().clone(), place.owner.clone())
+    }) {
+        return false;
+    }
+    let mut indices = identity.indices.iter();
+    for (position, step) in identity.template.path.iter().enumerate() {
+        let identity::PathEntry::Collection { shape, .. } = step else {
+            continue;
+        };
+        let Some(index) = indices.next() else {
+            return false;
+        };
+        if index.path_position.as_str() != position.to_string() {
+            return false;
+        }
+        if let Some(maximum) = &shape.maximum {
+            // Canonical nonnegative decimal metadata orders by digit count,
+            // then bytes. No selector is truncated to a machine integer.
+            let index = index.index.as_str();
+            let maximum = maximum.as_str();
+            if (index.len(), index) >= (maximum.len(), maximum) {
+                return false;
+            }
+        }
+    }
+    indices.next().is_none()
 }
 
 /// Native-clock reference leaves in data values, including nested wrappers.

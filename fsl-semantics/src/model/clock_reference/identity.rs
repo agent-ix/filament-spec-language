@@ -285,6 +285,16 @@ impl PlaceIdentity {
         if self.owner.is_empty() || self.template.path.is_empty() {
             return Err(IdentityError::Malformed);
         }
+        let leaf = self.template.path.iter().rev().find_map(|step| match step {
+            PathEntry::Field { carrier, .. }
+            | PathEntry::Tuple { carrier, .. }
+            | PathEntry::Case { carrier, .. }
+            | PathEntry::Collection { carrier, .. } => Some(&carrier.leaf),
+            PathEntry::Option => None,
+        });
+        if !matches!(leaf, Some(CarrierLeaf::Clock)) {
+            return Err(IdentityError::Malformed);
+        }
         let mut indices = self.indices.iter();
         for (position, entry) in self.template.path.iter().enumerate() {
             if matches!(entry, PathEntry::Collection { .. }) {
@@ -656,6 +666,9 @@ mod tests {
             VECTOR.replacen("22632f6422", "2022632f6422", 1),
             format!("{VECTOR}/5b5d"),
             VECTOR.replacen("place/v2", "place/v1", 1),
+            // The fixed terminal Clock role is part of the contract grammar,
+            // even when another carrier leaf is individually well formed.
+            VECTOR.replacen("22636c6f636b22", "227265636f726422", 1),
         ] {
             assert!(
                 matches!(
