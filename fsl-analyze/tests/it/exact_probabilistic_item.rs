@@ -627,7 +627,7 @@ fn p95_settles_proved_with_its_exact_value() {
 /// FR-203-AC-5 (TC-641): FR-196-AC-5's `Coin` refutation, a claim read
 /// undefined (`absent-key`) at a state of positive probability, settles
 /// `refuted` with its replayed undefined path, whatever the threshold.
-#[trace("TC-641", "FR-203-AC-5")]
+#[trace("TC-641", "FR-203-AC-5", "TC-3153", "FR-202-AC-24")]
 #[test]
 fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
     for threshold in ["0.5", "0.01"] {
@@ -767,7 +767,9 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
     let claims = "probabilistic Work using inf on M over (c: M::Coin) under Even on origin \
         { probability >= 0.5 [ eventually holds(c.v = 1) ] }\n\
         probabilistic Every using inf on M over (c: M::Coin) under every scheduler on origin \
-        { probability >= 0.5 [ eventually holds(c.v = 1) ] }";
+        { probability >= 0.5 [ eventually holds(c.v = 1) ] }\n\
+        probabilistic Bounded using ev on M over (c: M::Coin) under every scheduler on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
     let mut model = prob_world::coin(claims);
     model.operations.push(prob_world::Operation {
         name: "keep",
@@ -779,6 +781,11 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let mut workload = undefined_evidence(&world, "Work");
     let every = undefined_evidence(&world, "Every");
+    let bounded = undefined_evidence(&world, "Bounded");
+    let pre_read: serde_json::Value =
+        serde_json::from_slice(every.product_state.as_bytes()).unwrap();
+    assert!(pre_read[5].is_null(), "unbounded monitor is null");
+    assert!(pre_read[6].is_null(), "unbounded accumulator is null");
     let limits = world.request("Work", ModelCheckLimits::default()).limits;
     let initial = system.initial().remove(0);
     let workload_decl = system.input().probabilistic.workload("Even").unwrap();
@@ -828,14 +835,15 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
         .into_iter()
         .find(|action| action.identity.operation.contains("keep"))
         .unwrap();
-    let mut wrong = every.clone();
-    wrong.path.scheduler[0].1 = fsl_replay::ProductAction::Identity(
-        fsl_replay::Schedule::of(&system, &keep.identity).unwrap(),
-    );
-    assert!(matches!(
-        replay(&wrong),
-        Err(ProbabilityWitnessError::Refused)
-    ));
+    for mut wrong in [every.clone(), bounded] {
+        wrong.path.scheduler[0].1 = fsl_replay::ProductAction::Identity(
+            fsl_replay::Schedule::of(&system, &keep.identity).unwrap(),
+        );
+        assert!(matches!(
+            replay(&wrong),
+            Err(ProbabilityWitnessError::Refused)
+        ));
+    }
     let wrong_item = fsl_replay::probabilistic_claim_identity(world.claim("Work")).unwrap();
     assert!(TerminalRecord::refuted_by_probability_witness(
         RequestIndex::new(0),
@@ -860,8 +868,8 @@ fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
     use fsl_replay::{
         replay_probabilistic_undefined, ProbabilityWitnessError, ProbabilityWitnessReplay,
     };
-    let claim = "probabilistic Dropped using inf on M over (c: M::Coin) under Even on origin \
-        { probability >= 0.5 [ eventually holds(c.v = 1) ] }";
+    let claim = "probabilistic Dropped using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
     let world = World::new(&prob_world::coin(claim));
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let witness = undefined_evidence(&world, "Dropped");

@@ -401,6 +401,20 @@ pub fn replay_probabilistic_undefined(
         if probability <= rational(0) {
             return Err(ProbabilityWitnessError::Refused);
         }
+        let action_bytes = system
+            .scheduled_identity_key(action)
+            .map_err(|stop| cancelled_expansion(stop, cancel))?;
+        let transition_bytes = system
+            .transition_key(transition)
+            .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
+        bounded::retain(
+            action_bytes
+                .len()
+                .saturating_add(transition_bytes.len().saturating_mul(2))
+                .saturating_add(std::mem::size_of::<ProbabilityWitnessStep>()),
+            &mut storage,
+            limits,
+        )?;
         mass = bounded::arithmetic(
             filament_exact::RationalArithmetic::Multiply(&mass, &probability),
             &mut meter,
