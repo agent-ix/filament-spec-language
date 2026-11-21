@@ -7,8 +7,8 @@
 //! refuses with a typed cause and no output.
 //!
 use crate::{
-    CompleteCause, CompleteCode, CompleteDiagnostic, CstToken, ParsedSource, Production,
-    TokenClass, TokenKind,
+    CompleteCause, CompleteCode, CompleteDiagnostic, CstElement, CstToken, ParsedSource,
+    Production, TokenClass, TokenKind,
 };
 use fsl_foundation::source::MAX_SOURCE_BYTES;
 use fsl_foundation::{Phase, Setting, SettingLimits, Span};
@@ -154,6 +154,21 @@ pub fn format_with_limits(
         .filter(|node| node.production() == Production::PopulationBound)
         .map(|node| node.span().end)
         .collect();
+    // A population bound's `[` is none of FR-003's unspaced brackets (type
+    // bounds, indexes, collection values, intervals), so it keeps the space.
+    let bound_brackets: std::collections::BTreeSet<usize> = parsed
+        .cst()
+        .nodes()
+        .iter()
+        .filter(|node| node.production() == Production::PopulationBound)
+        .flat_map(|node| node.children().iter())
+        .filter_map(|child| match *child {
+            CstElement::Token(index) => parsed.cst().tokens().get(index),
+            CstElement::Node(_) => None,
+        })
+        .filter(|token| token.spelling() == b"[")
+        .map(|token| token.span().start)
+        .collect();
     let tokens: Vec<_> = parsed
         .cst()
         .tokens()
@@ -196,6 +211,7 @@ pub fn format_with_limits(
             token,
             &output.text,
             generic_angles[index],
+            bound_brackets.contains(&span.start),
             index
                 .checked_sub(1)
                 .is_some_and(|previous| generic_angles[previous]),
@@ -271,6 +287,7 @@ fn needs_space(
     current: &CstToken,
     output: &str,
     current_is_generic_angle: bool,
+    current_is_bound_bracket: bool,
     previous_is_generic_angle: bool,
 ) -> bool {
     let Some(previous) = previous else {
@@ -281,6 +298,9 @@ fn needs_space(
     }
     if current_is_generic_angle {
         return false;
+    }
+    if current_is_bound_bracket {
+        return true;
     }
     if current.spelling() == b"#" || previous.spelling() == b"#" {
         return false;
@@ -549,7 +569,6 @@ mod tests {
     /// still ends its own line.
     #[trace("TC-013", "FR-003-AC-3")]
     #[test]
-    #[ignore = "QSL-2679: population-bound brackets require a preceding space under FR-003 canonical style"]
     fn a_population_bound_ends_its_own_line() {
         let parsed = parse(&format!(
             "{HEADER}bound A on M::orders [8] bound B on M::people [2] invariant I using v on M::Order at current {{ true }} bound C on M::staff [0]\n"

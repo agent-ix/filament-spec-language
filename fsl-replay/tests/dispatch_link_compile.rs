@@ -1838,3 +1838,34 @@ fn a_body_on_an_operation_without_a_declared_result_refuses_type_mismatch() {
     ));
     compiled(&document, ok, SpineLimits::default());
 }
+
+/// FSpec FR-500-AC-1 (QSL-2685): the spine's own `parse` entry refuses a unit
+/// that declares an edition other than `1-draft` with `unknown_edition` at the
+/// edition literal and no other diagnostic, as `fsl-command`'s header check does.
+#[trace("FSpec-FR-500-AC-1")]
+#[test]
+fn the_spine_parse_refuses_an_unsupported_edition_at_its_literal() {
+    let source = SourceIdentity::new("a", "u");
+    let text = "language \"ix:native\" edition \"0-draft\";\nfunction f(): Boolean pure { true }";
+    let failure = match spine::parse(
+        &ParseRequest {
+            source: &source,
+            path: "unit.native",
+            bytes: text.as_bytes(),
+        },
+        SpineLimits::default().source,
+        &Cancel::new(),
+    ) {
+        Ok(_) => panic!("an unsupported edition is refused"),
+        Err(failure) => failure,
+    };
+    let refusal = spine::refusal_or_fault(failure).expect("a refusal, not a fault");
+    match *refusal {
+        CompileRefusal::Source(diagnostic) => {
+            assert_eq!(diagnostic.code.as_str(), "unknown_edition");
+            let span = diagnostic.byte_span().expect("located");
+            assert_eq!(&text[span.start..span.end], "\"0-draft\"");
+        }
+        other => panic!("expected the source refusal, got {other:?}"),
+    }
+}

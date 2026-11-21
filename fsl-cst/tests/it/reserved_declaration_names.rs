@@ -116,7 +116,6 @@ fn a_qualified_member_name_admits_the_four_spellings() {
 
 #[trace("TC-113", "FR-035-AC-7")]
 #[test]
-#[ignore = "QSL-2684: reserved record names must not generate cascade diagnostics"]
 fn lowercase_tuple_still_refuses_as_a_record_name() {
     let text = unit("{P}record @ { datum: Integer; }", "tuple");
     let parsed = parse(&text);
@@ -130,43 +129,19 @@ fn lowercase_tuple_still_refuses_as_a_record_name() {
 
 #[trace("TC-113", "FR-035-AC-7")]
 #[test]
-fn collection_constructor_words_are_refused_as_parameter_names() {
+fn collection_constructor_words_are_admitted_as_parameter_and_binder_names() {
+    // QSL-2683: lowercase `set`, `bag` and `orderedSet` are in neither reserved
+    // inventory of the shared grammar (the capitalised forms are), so they are
+    // ordinary identifiers in a name position.
     for name in ["set", "bag", "orderedSet"] {
-        let text = unit(
+        for declaration in [
             "{P}function f using v(@: Integer): Boolean pure { true }",
-            name,
-        );
-        let parsed = parse(&text);
-        assert!(!parsed.is_admissible(), "{text}");
-        let [refusal] = parsed.diagnostics() else {
-            panic!("one refusal for {text}: {:?}", parsed.diagnostics());
-        };
-        assert_eq!(refusal.code, CompleteCode::InvalidSyntax, "{text}");
-        assert_eq!(refusal.cause, CompleteCause::UnexpectedToken, "{text}");
-        assert!(refusal.message.contains(name), "{text}: {refusal:?}");
-        assert_eq!(
-            refusal.byte_span().expect("located").start,
-            text.find(name).expect("parameter name"),
-            "{text}"
-        );
-    }
-
-    for name in ["set", "bag", "orderedSet"] {
-        let text = unit(
             "{P}function f using v(x: Integer): Boolean pure { let @ = x in true }",
-            name,
-        );
-        let parsed = parse(&text);
-        assert!(!parsed.is_admissible(), "{text}");
-        assert!(
-            parsed.diagnostics().iter().any(|refusal| {
-                refusal.code == CompleteCode::InvalidSyntax
-                    && refusal.cause == CompleteCause::UnexpectedToken
-                    && refusal.message.contains(name)
-            }),
-            "{text}: {:?}",
-            parsed.diagnostics()
-        );
+        ] {
+            let text = unit(declaration, name);
+            let parsed = parse(&text);
+            assert!(parsed.is_admissible(), "{text}: {:?}", parsed.diagnostics());
+        }
     }
 
     for declarations in [

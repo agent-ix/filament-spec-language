@@ -917,7 +917,6 @@ fn qualified_calls_with_a_trailing_comma_or_missing_argument_refuse_at_the_token
 
 #[test]
 #[trace("FSpec-FR-339-AC-4")]
-#[ignore = "QSL-2621: a gap after reference # reports a zero-width key locus"]
 fn separated_reference_keys_refuse_at_the_complete_string_token() {
     for value in ["Store::Row# \"r\"", "Store::Row#//gap\n\"r\""] {
         refused(&expression(value), "\"r\"", 3);

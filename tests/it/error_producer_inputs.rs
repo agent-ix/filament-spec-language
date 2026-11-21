@@ -139,7 +139,6 @@ fn an_unselected_declaration_form_is_a_real_unsupported_construct() {
 
 #[test]
 #[trace("FR-762-AC-6")]
-#[ignore = "QSL-2688: the syntax diagnostic cut must name s1.diagnostics"]
 fn the_diagnostic_limit_is_reached_by_independent_source_errors() {
     let declarations = (0..101)
         .map(|index| format!("record Item{index} {{ amount: ; }}\n"))
@@ -318,7 +317,6 @@ fn a_cancelled_real_parse_stops_at_its_public_entry() {
 }
 
 #[test]
-#[ignore = "QSL-2687: malformed escapes must not produce unrelated selection-identity refusals"]
 #[trace("FR-002-AC-6")]
 fn an_invalid_escape_reaches_its_lexical_producer_before_selection_cascades() {
     let text = source("enum Caption { Label = \"bad\\q\" }");

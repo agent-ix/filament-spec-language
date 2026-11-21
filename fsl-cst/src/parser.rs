@@ -145,7 +145,6 @@ pub(super) fn parse(
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, &compounds, cancel)?;
     if diagnostics.len() > SYNTAX_DIAGNOSTIC_BOUND {
-        let omitted = diagnostics.len() - SYNTAX_DIAGNOSTIC_BOUND;
         let cut_span = diagnostics[SYNTAX_DIAGNOSTIC_BOUND]
             .byte_span()
             .unwrap_or(Span {
@@ -161,7 +160,7 @@ pub(super) fn parse(
             cut_span.start,
             cut_span.end,
             format!(
-                "{omitted} additional syntax errors omitted after the fixed limit of {SYNTAX_DIAGNOSTIC_BOUND}"
+                "the diagnostic list was cut after {SYNTAX_DIAGNOSTIC_BOUND} syntax errors; raise s1.diagnostics to see the rest"
             ),
         ));
     }
@@ -175,13 +174,15 @@ pub(super) fn parse(
             limits,
             cancel,
         )?;
-    let parser_failed = !parser_diagnostics.is_empty();
+    // A lexical refusal fails the parse as a parser diagnostic does: the
+    // declarations behind it never matched, so the selections they hold are
+    // unread rather than malformed (FR-762 "Lexical errors").
+    let parser_failed = !parser_diagnostics.is_empty() || !diagnostics.is_empty();
     diagnostics.append(&mut parser_diagnostics);
     recoveries.extend(parser_recoveries);
     diagnostics
         .sort_by_key(|diagnostic| diagnostic.byte_span().map_or(usize::MAX, |span| span.start));
 
-    let has_forest = matched.is_some();
     let (mut nodes, root) = if let Some(forest) = matched {
         lower_tree(&source, &parse_significant, &forest)
     } else {
@@ -197,7 +198,9 @@ pub(super) fn parse(
             0,
         )
     };
-    if !has_forest {
+    // A declaration the recovery skipped is kept as a `Declaration` node,
+    // whether or not the declarations around it matched (FR-762-AC-3, AC-9).
+    {
         let starts = declaration_starts(&grammar);
         let recovered_declarations: Vec<_> = recoveries
             .iter()
@@ -217,8 +220,19 @@ pub(super) fn parse(
                 span,
                 children: Vec::new(),
             });
+            let at = nodes.get(root).map_or(0, |unit| {
+                unit.children
+                    .iter()
+                    .take_while(|sibling| match sibling {
+                        CstElement::Node(index) => nodes
+                            .get(*index)
+                            .is_none_or(|node| node.span.start < span.start),
+                        CstElement::Token(_) => true,
+                    })
+                    .count()
+            });
             if let Some(unit) = nodes.get_mut(root) {
-                unit.children.push(CstElement::Node(child));
+                unit.children.insert(at, CstElement::Node(child));
             }
         }
     }
@@ -306,7 +320,7 @@ fn reference_literal_spacing(source: &Source, cst: &LosslessCst) -> Vec<Complete
         }
         let mut name_end = None;
         let mut hash = None;
-        let mut text_start = None;
+        let mut text_span = None;
         for child in node.children() {
             match *child {
                 CstElement::Node(index)
@@ -331,12 +345,12 @@ fn reference_literal_spacing(source: &Source, cst: &LosslessCst) -> Vec<Complete
                         .get(index)
                         .is_some_and(|t| t.kind() == TokenKind::Text) =>
                 {
-                    text_start = cst.tokens().get(index).map(|t| t.span().start);
+                    text_span = cst.tokens().get(index).map(|t| t.span());
                 }
                 _ => {}
             }
         }
-        let (Some(name_end), Some(hash), Some(text_start)) = (name_end, hash, text_start) else {
+        let (Some(name_end), Some(hash), Some(text_span)) = (name_end, hash, text_span) else {
             continue;
         };
         let invalid = if name_end != hash.start {
@@ -344,12 +358,9 @@ fn reference_literal_spacing(source: &Source, cst: &LosslessCst) -> Vec<Complete
                 hash,
                 "the `#` of a reference literal must touch its type name",
             ))
-        } else if hash.end != text_start {
+        } else if hash.end != text_span.start {
             Some((
-                Span {
-                    start: text_start,
-                    end: text_start,
-                },
+                text_span,
                 "the string key of a reference literal must touch its `#`",
             ))
         } else {
@@ -502,14 +513,19 @@ fn parse_with_declaration_recovery(
                 // declaration form (FR-354 "Admission"), refused as such
                 // rather than recovered as a malformed header.
                 let unknown_declaration = engine.starts_unknown_declaration(failure.position);
-                let header_start = if recovered_any || unknown_declaration {
+                // FSpec FR-500-AC-1: a language or edition the header names but this
+                // grammar does not admit is the unit's one refusal, ahead of any recovery
+                // that would report the header as malformed syntax.
+                let selection_preflight =
+                    !recovered_any && selection_code(&tokens, failure.position).is_some();
+                let header_start = if recovered_any || unknown_declaration || selection_preflight {
                     None
                 } else {
                     header_start_for_failure(grammar, &tokens, failure.position)
                 };
                 let declaration_start = if header_start.is_some() {
                     header_start
-                } else if unknown_declaration {
+                } else if unknown_declaration || selection_preflight {
                     None
                 } else {
                     engine
@@ -521,6 +537,22 @@ fn parse_with_declaration_recovery(
                             (index < tokens.len() && *started).then_some(index)
                         })
                         .next_back()
+                        // A declaration word the engine tried right after another
+                        // one (`record tuple`) is a name slot of that declaration, not
+                        // a second declaration: recover from the first word, so the
+                        // failed declaration is one skipped region with one diagnostic.
+                        .map(|mut start| {
+                            while start > 0
+                                && engine
+                                    .declaration_starts
+                                    .get(start - 1)
+                                    .copied()
+                                    .unwrap_or(false)
+                            {
+                                start -= 1;
+                            }
+                            start
+                        })
                 };
                 let Some(start) = declaration_start else {
                     if recovered_any {
@@ -550,13 +582,7 @@ fn parse_with_declaration_recovery(
                         selection_code(&tokens, failure.position).map_or(
                             (
                                 CompleteCode::InvalidSyntax,
-                                if failure.position == tokens.len() {
-                                    CompleteCause::UnexpectedEnd
-                                } else if malformed_decimal_argument(&tokens, failure.position) {
-                                    CompleteCause::InvalidToken
-                                } else {
-                                    CompleteCause::UnexpectedToken
-                                },
+                                failure_cause(&tokens, failure.position),
                             ),
                             |code| (code, CompleteCause::UnsupportedSelection),
                         )
@@ -619,11 +645,20 @@ fn parse_with_declaration_recovery(
                 let next = if is_header_start(&tokens[start]) {
                     next_header_resumption(grammar, &tokens, start, failure.position)
                 } else {
+                    // A failing word that directly follows a declaration word is that
+                    // declaration's own name slot, so the resumption point is after it.
+                    let in_name_slot = failure.position > start
+                        && failure.position.checked_sub(1).is_some_and(|before| {
+                            engine.declaration_starts.get(before).copied() == Some(true)
+                        });
                     next_declaration_start(
                         grammar,
                         source,
                         &tokens,
-                        failure.position.max(start.saturating_add(1)),
+                        failure
+                            .position
+                            .saturating_add(usize::from(in_name_slot))
+                            .max(start.saturating_add(1)),
                         start,
                     )
                 };
@@ -731,12 +766,6 @@ fn parse_with_declaration_recovery(
                         &Failure::expected(failure.position, expected.clone()),
                     )
                     .or_else(|| {
-                        reserved_collection_name_hint(
-                            &tokens,
-                            &Failure::expected(failure.position, expected.clone()),
-                        )
-                    })
-                    .or_else(|| {
                         declared_type_name_hint(
                             &tokens,
                             &Failure::expected(failure.position, expected.clone()),
@@ -757,11 +786,7 @@ fn parse_with_declaration_recovery(
                         diagnostics.push(*super::diagnostic::error(
                             source,
                             CompleteCode::InvalidSyntax,
-                            if failure.position == tokens.len() {
-                                CompleteCause::UnexpectedEnd
-                            } else {
-                                CompleteCause::UnexpectedToken
-                            },
+                            failure_cause(&tokens, failure.position),
                             Phase::Parse,
                             span.start,
                             span.end,
@@ -796,6 +821,19 @@ fn parse_with_declaration_recovery(
     }
 }
 
+/// The cause of a parse failure at `position`: a malformed numeric spelling is a
+/// lexical `invalid-token` (FR-091-AC-58) wherever the failure is recovered, the
+/// end of input is `unexpected-end`, and anything else `unexpected-token`.
+fn failure_cause(tokens: &[Significant], position: usize) -> CompleteCause {
+    if position == tokens.len() {
+        CompleteCause::UnexpectedEnd
+    } else if malformed_decimal_argument(tokens, position) {
+        CompleteCause::InvalidToken
+    } else {
+        CompleteCause::UnexpectedToken
+    }
+}
+
 fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Span {
     tokens.get(position).map_or(
         Span {
@@ -827,7 +865,7 @@ fn append_omitted_diagnostic(
         span.start,
         span.end,
         format!(
-            "{omitted_count} additional syntax errors omitted after the fixed limit of {SYNTAX_DIAGNOSTIC_BOUND}"
+            "the diagnostic list was cut after {SYNTAX_DIAGNOSTIC_BOUND} syntax errors; raise s1.diagnostics to see the rest"
         ),
     ));
 }
@@ -1507,6 +1545,12 @@ fn scan(
             // the recognizer holds unsupported for the historical grammar,
             // are ordinary identifiers under `1-draft`.
             Ok(Kind::Unsupported) => (TokenClass::Token, Some(Kind::Identifier(spelling.into()))),
+            // FSpec shared-grammar lexical contract (QSL-2683): the lowercase collection
+            // constructor spellings are in neither reserved inventory, so they are
+            // ordinary identifiers; `CollectionValue` recognizes them by spelling.
+            Ok(Kind::SetValue | Kind::BagValue | Kind::OrderedSetValue) => {
+                (TokenClass::Token, Some(Kind::Identifier(spelling.into())))
+            }
             Ok(kind) => (TokenClass::Token, Some(kind)),
             Err(reason) => {
                 // The string token pattern admits no raw control character, so a
@@ -1962,20 +2006,6 @@ fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<
     is_query(type_argument_start).then_some(
         "`count`, `sum`, `fold`, and `reduce` require a declared type name here; declare an alias such as `type Total = Integer;` and use the declared alias as the type argument",
     )
-}
-
-/// Name a collection constructor when it is refused in an identifier slot.
-fn reserved_collection_name_hint(
-    tokens: &[Significant],
-    failure: &Failure,
-) -> Option<&'static str> {
-    let spelling = tokens.get(failure.position)?.spelling.as_ref();
-    match spelling {
-        "set" => Some("reserved word `set` cannot be used as a name"),
-        "bag" => Some("reserved word `bag` cannot be used as a name"),
-        "orderedSet" => Some("reserved word `orderedSet` cannot be used as a name"),
-        _ => None,
-    }
 }
 
 /// An empty unknown declaration body is malformed syntax, while a non-empty

@@ -73,10 +73,13 @@ fn an_empty_align_skip_reaches_s3_and_refuses_at_the_list() {
     let request = corpus().join("projection-empty-skip.request.json");
     let source = std::fs::read_to_string(corpus().join("projection-empty-skip.native"))
         .expect("the authored program");
-    let error = command::compile_outcome(&request).expect_err("S3 refuses the empty align-skip list");
+    let error = match command::compile_outcome(&request) {
+        Ok(_) => panic!("S3 refuses the empty align-skip list"),
+        Err(error) => error,
+    };
     let outcome: Value = serde_json::from_slice(
         &error
-            .outcome_document(Operation::Compile)
+            .outcome_document(Operation::Package)
             .to_bytes()
             .unwrap(),
     )

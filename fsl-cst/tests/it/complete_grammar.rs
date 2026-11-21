@@ -756,7 +756,6 @@ fn undeclared_extension_refuses_at_the_extension_token() {
 
 #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1")]
 #[test]
-#[ignore = "QSL-2683: lowercase collection constructor names are contextual identifiers"]
 fn contextual_complete_words_remain_eligible_identifiers() {
     let contextual = [
         "exact",
@@ -830,7 +829,7 @@ fn first_diagnostic(id: &str, bytes: &[u8]) -> (CompleteCode, CompleteCause) {
 
 #[trace("FSpec-TC-047", "FSpec-FR-047-AC-3")]
 #[test]
-#[ignore = "QSL-2681: lexical dollar tokens require invalid-token, not unexpected-token"]
+#[ignore = "QSL-2681: the invalid-token vector authors the reserved word `value` as a field name, so the first diagnostic is correctly the reserved word at byte 98; see invalid_dollar_token_is_a_lexical_refusal"]
 fn complete_source_diagnostics_carry_their_catalogued_typed_cause() {
     let profile = |identity: &str| {
         format!(
