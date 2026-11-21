@@ -5,8 +5,8 @@ use std::collections::{HashMap, VecDeque};
 
 use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{ClockValuation, TimedState, TimedStop, TimedSystem};
+use fsl_eval::simulation::StateKey;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 

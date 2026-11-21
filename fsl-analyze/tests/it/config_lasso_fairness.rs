@@ -68,7 +68,7 @@ fn the_update_lasso_is_false_under_weak_and_refused_unfair_under_weak_each() {
     let weak = config(false, WHOLE);
     let outcome = decide(&weak);
     let lasso_payload = violated(&outcome).clone();
-    let lasso = lasso_payload.lasso.expect("a lasso");
+    let lasso = lasso_payload.lasso.as_ref().expect("a lasso");
     assert_eq!((lasso.entry, lasso.terminal_stutter), (0, false));
     let receivers: Vec<char> = lasso_payload.prefix.iter().map(receiver).collect();
     assert_eq!(receivers.len(), 3, "a three-step loop");

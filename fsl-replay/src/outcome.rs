@@ -27,7 +27,15 @@ mod counterexample;
 pub mod hint;
 pub use counterexample::{
     CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
-    probabilistic_wire, protocol_temporal_wire, temporal_wire,
+    probabilistic_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
+    task_temporal_wire_with_queue_growth,
+    task_source_transition_wire, task_transition_wire,
+    replay_model_trace_document, state_key_wire, task_product_transition_wire, ReadCounterexample,
+    TraceAlphabet,
+    read_temporal_counterexample, TemporalCounterexampleReadRefusal,
+    replay_task_product_trace, TaskProductTraceReplayRefusal,
+    read_task_temporal_counterexample,
+    read_task_temporal_document, TaskProductCounterexampleDocument,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -414,6 +422,9 @@ pub struct ItemDiagnostic {
 pub struct ItemCause {
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<&'static str>,
+    /// A `bounded-search-incomplete` cause's reason.
+    #[serde(rename = "reason", skip_serializing_if = "Option::is_none")]
+    search_reason: Option<&'static str>,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
     at: Option<ItemWhere>,
     /// A `timed-form-shape` cause's claim: its checked-package
@@ -569,6 +580,110 @@ struct TimedTransitionWire {
     arguments: Vec<serde_json::Value>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(super) struct TaskSourceTransitionWire {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    operation: String,
+    receiver: Option<serde_json::Value>,
+    arguments: Vec<serde_json::Value>,
+}
+
+impl From<&filament_semantic_value::model_transition::ModelTransition>
+    for TaskSourceTransitionWire
+{
+    fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
+        let operation: serde_json::Value = serde_json::from_str(identity.operation())
+            .expect("canonical source operation identity");
+        let operation = operation
+            .as_str()
+            .or_else(|| operation.get("name").and_then(serde_json::Value::as_str))
+            // Checked model transitions carry the canonical node identity,
+            // not the authored operation spelling. FR-364's source arm
+            // keeps that stable identity as its operation string.
+            .or_else(|| operation.get("node").and_then(serde_json::Value::as_str))
+            .map(str::to_owned)
+            // ModelTransition validates canonical JSON, not a particular
+            // operation-identity object shape. Preserve any other valid
+            // canonical identity instead of panicking on it.
+            .unwrap_or_else(|| identity.operation().to_owned());
+        let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
+        Self {
+            kind: "transition",
+            operation,
+            receiver: identity.receiver().map(value),
+            arguments: identity
+                .arguments()
+                .iter()
+                .map(|text| value(text))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct TaskTransitionWire {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    action: &'static str,
+    taskset: String,
+    task: String,
+    job: u64,
+    slot: u64,
+    generation: u64,
+    release: TaskSourceTransitionWire,
+    source_transition: Option<TaskSourceTransitionWire>,
+    demand: serde_json::Value,
+    jitter: serde_json::Value,
+    deadline: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    budget_delta: Option<serde_json::Value>,
+}
+
+fn task_rational(value: &filament_exact::Rational) -> serde_json::Value {
+    serde_json::json!({
+        "numerator": value.numerator().to_string(),
+        "denominator": value.denominator().to_string(),
+    })
+}
+
+impl From<&crate::TaskTransitionIdentity> for TaskTransitionWire {
+    fn from(identity: &crate::TaskTransitionIdentity) -> Self {
+        use crate::TaskTransitionAction as Action;
+        let action = match identity.action {
+            Action::Activate => "activate",
+            Action::Release => "release",
+            Action::Dispatch => "dispatch",
+            Action::Preempt => "preempt",
+            Action::Resume => "resume",
+            Action::Complete => "complete",
+            Action::BudgetChange => "budget-change",
+            Action::DeadlineMiss => "deadline-miss",
+        };
+        Self {
+            kind: "task-transition",
+            action,
+            taskset: identity.task_set.clone(),
+            task: identity.task.clone(),
+            job: identity.job,
+            slot: identity.slot,
+            generation: identity.generation,
+            release: TaskSourceTransitionWire::from(&identity.release),
+            source_transition: identity
+                .source_transition
+                .as_ref()
+                .map(TaskSourceTransitionWire::from),
+            demand: task_rational(&identity.demand),
+            jitter: task_rational(&identity.jitter),
+            deadline: task_rational(&identity.deadline),
+            priority: identity.priority,
+            budget_delta: identity.budget_delta.as_ref().map(task_rational),
+        }
+    }
+}
+
 impl From<&fsl_eval::simulation::StateKey> for TimedStateWire {
     fn from(key: &fsl_eval::simulation::StateKey) -> Self {
         use base64::Engine;
@@ -684,6 +799,7 @@ impl ItemCause {
     fn kind(kind: &'static str) -> Self {
         Self {
             kind: Some(kind),
+            search_reason: None,
             at: None,
             locus: None,
             code: None,
@@ -1264,6 +1380,12 @@ impl OutcomeItem {
                     IncompleteCause::PrecisionBudget { lower, upper } => {
                         item.lower = Some((**lower).clone());
                         item.upper = Some((**upper).clone());
+                    }
+                    IncompleteCause::UnresolvedDynamics => {
+                        item.search_reason = Some("unresolved-dynamics");
+                    }
+                    IncompleteCause::CertificateUnchecked => {
+                        item.search_reason = Some("certificate-unchecked");
                     }
                     IncompleteCause::TimedOut | IncompleteCause::ResourceExhausted => {}
                 }
@@ -3183,6 +3305,41 @@ mod tests {
         let generic =
             OutcomeDiagnostic::new(None, Code::InvalidRequest.as_str(), None, "invalid request");
         assert_eq!(generic.hint, None);
+
+    }
+
+    /// FR-181 source transitions retain their canonical operation node when
+    /// the checked identity carries a node/package pair instead of a name.
+    #[trace("FR-237-AC-10", "FSpec-FR-364-AC-23")]
+    #[test]
+    fn task_source_transition_wire_accepts_canonical_operation_nodes() {
+        let transition = filament_semantic_value::model_transition::ModelTransition::new(
+            r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#.to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("valid canonical model transition");
+
+        let wire = task_source_transition_wire(&transition).expect("canonical operation node");
+
+        assert_eq!(wire["operation"], "ix://test/timed/Call/send");
+    }
+
+    #[trace("FR-237-AC-10")]
+    #[test]
+    fn task_source_transition_wire_preserves_other_canonical_operation_identities() {
+        let transition = filament_semantic_value::model_transition::ModelTransition::new(
+            "[]".to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("canonical operation identity");
+
+        let wire = task_source_transition_wire(&transition).expect("canonical operation identity");
+
+        assert_eq!(wire["operation"], "[]");
     }
 
     /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.

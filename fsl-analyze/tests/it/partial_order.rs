@@ -486,7 +486,7 @@ fn fairness_visibility_keeps_the_fair_violation() {
         let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
             panic!("expected a violation, got {outcome:?}");
         };
-        let lasso = counterexample.lasso.expect("a lasso");
+        let lasso = counterexample.lasso.as_ref().expect("a lasso");
         assert_eq!(lasso.entry, 0, "an empty stem");
         let positions = fixture.positions(counterexample);
         assert_eq!(
@@ -707,7 +707,7 @@ fn with_no_fairness_the_arming_ample_sets_remain_and_the_violation_is_found() {
                 ModelTraceSettlement::Reproduced { .. }
             ));
             (
-                counterexample.lasso.expect("a lasso").entry,
+                counterexample.lasso.as_ref().expect("a lasso").entry,
                 counterexample
                     .prefix
                     .iter()
@@ -746,7 +746,7 @@ fn a_guard_in_a_postcondition_keeps_the_arming_operations_visible() {
         let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {
             panic!("expected a violation, got {outcome:?}");
         };
-        assert_eq!(counterexample.lasso.expect("a lasso").entry, 0);
+        assert_eq!(counterexample.lasso.as_ref().expect("a lasso").entry, 0);
         assert_eq!(
             fixture
                 .positions(counterexample)

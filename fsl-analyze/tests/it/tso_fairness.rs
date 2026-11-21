@@ -719,6 +719,7 @@ fn replay_refuses_the_lasso_that_never_flushes_w() {
         lasso: Some(Lasso {
             entry: prefix.len() - 1,
             terminal_stutter: false,
+            terminal_stutter_delay: None,
         }),
         prefix,
         over_binding: Some(core()),
@@ -791,6 +792,7 @@ fn replay_refuses_an_ra_lasso_that_never_loads_the_mo_last_message() {
         lasso: Some(Lasso {
             entry: prefix.len() - 1,
             terminal_stutter: false,
+            terminal_stutter_delay: None,
         }),
         prefix,
         over_binding: Some(core()),

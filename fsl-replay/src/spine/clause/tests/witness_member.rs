@@ -4,11 +4,11 @@
 //! (`Sequence<VersionNumber>[0, 3]`). The record's value path names the
 //! stored member, in the observation the claim reads it from.
 
-use super::*;
 use super::frame_replay::unit_for;
+use super::*;
 use crate::{ObservationIdentity, RuntimeValuePath, ValuePathStep, ValuePathSubject};
-use fsl_semantics::model::observation::SelectedObject;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::observation::SelectedObject;
 
 /// The claims over `history`: a direct read, a set conversion of it, and a
 /// precondition of `attemptUpdate` reading it.

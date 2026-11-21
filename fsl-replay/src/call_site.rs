@@ -36,9 +36,9 @@ use crate::execute::{
     value_parity_preimage, ValueParityPreimage,
 };
 use crate::identity::QualifiedName;
-use fsl_package::{ModelIdentity, ObligationIdentity};
 use crate::spine::{self, CompileRefusal, DependencyInput, DependencyInputRefusal, OperationName};
 use crate::{FrameOperation, SourceRegion};
+use fsl_package::{ModelIdentity, ObligationIdentity};
 
 /// What [`call_site`] can locate in the compiled package, and what it
 /// answers for each:

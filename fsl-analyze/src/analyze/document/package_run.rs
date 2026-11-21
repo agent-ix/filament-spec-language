@@ -1154,6 +1154,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             options: ItemOptions {
                 required: selection.required.unwrap_or(true),
                 max_cases: None,
+                max_task_product_work: None,
                 trace: None,
                 recording: None,
                 population: None,
@@ -1339,6 +1340,11 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
     ItemOptions {
         required: selection.required.unwrap_or(true),
         max_cases: selection.check.map(|check| check.limits.max_cases),
+        max_task_product_work: selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.limits)
+            .and_then(|limits| limits.max_task_product_work),
         trace: selection
             .trace
             .as_ref()

@@ -396,7 +396,7 @@ fn blink(fairness: &str) -> World {
 fn strong_fairness_reads_enabledness_between_positions() {
     let weak = blink("fair weak M::Call::fire;");
     let counterexample = violated(decide(&weak));
-    let lasso = counterexample.lasso.expect("a lasso");
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
     let looped = &operations(&counterexample)[lasso.entry..];
     assert!(
         !looped.is_empty() && looped.iter().all(|step| step == "tick"),

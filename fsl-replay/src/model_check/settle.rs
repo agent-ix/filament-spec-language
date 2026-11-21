@@ -781,6 +781,8 @@ impl Row {
                     IncompleteCause::TimedOut
                     | IncompleteCause::Cancelled { .. }
                     | IncompleteCause::ResourceExhausted
+                    | IncompleteCause::UnresolvedDynamics
+                    | IncompleteCause::CertificateUnchecked
                     | IncompleteCause::PrecisionBudget { .. } => None,
                 };
                 Self::incomplete(cause, limit_reached)

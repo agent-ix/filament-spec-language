@@ -49,6 +49,7 @@ pub use declaration::{
 };
 pub use entry::{
     read_result_entry, EntryCause, EntryOrigin, LimitFacts, ResultEntry, ResultEntryRefusal,
+    TaskSearchEdge, TaskSearchEvidence, TaskSearchFrontier, TaskSearchNode,
 };
 pub use from_package::{subject_text, DeclarationRefusal};
 pub use item::{read_premise_item, PremiseItem};

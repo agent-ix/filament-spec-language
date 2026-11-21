@@ -17,12 +17,12 @@ use fsl_foundation::bound::ProofBound;
 use fsl_foundation::diagnostic::Code;
 
 use crate::execute::ReplayRefusal;
-use fsl_package::ObligationIdentity;
 use crate::proof_result::{
     Certification, IncompleteCause, InconclusiveCause, ProofBasis, TerminalValue,
 };
 use crate::scalar::{OperandRefusal, ScalarAgreement};
 use crate::witness::WitnessValue;
+use fsl_package::ObligationIdentity;
 
 /// One equality evaluation's outcome: the verdict under the claimed
 /// operator and the occurrence-pair count, counted with no early exit after

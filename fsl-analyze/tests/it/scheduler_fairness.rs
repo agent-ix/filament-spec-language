@@ -405,7 +405,7 @@ fn scheduling_adversarial_admits_the_lasso_that_starves_a_branch() {
     let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {
         panic!("{outcome:?}");
     };
-    let lasso = counterexample.lasso.expect("a lasso");
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert!(!lasso.terminal_stutter);
     assert!(counterexample.fairness.is_empty());
     let (stem, cycle) = counterexample.prefix.split_at(lasso.entry);

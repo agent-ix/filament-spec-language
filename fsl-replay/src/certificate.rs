@@ -267,5 +267,6 @@ pub mod scc;
 pub mod simulation;
 pub mod smt;
 pub mod state_graph;
+pub mod task_product;
 pub mod zone;
 pub mod zone_certificate;

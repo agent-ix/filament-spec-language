@@ -43,9 +43,9 @@ use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::check::CaptureSite;
 
 use super::{
-    at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule,
-    Checker, CheckerFault, ComponentReason, Components, FairnessMember, Halt, ProductMark,
-    SilentMove, Step, Successor, ZoneCertificateVerdict,
+    at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule, Checker,
+    CheckerFault, ComponentReason, Components, FairnessMember, Halt, ProductMark, SilentMove, Step,
+    Successor, ZoneCertificateVerdict,
 };
 use crate::certificate::zone::Zone;
 use crate::proof_result::IncompleteCause;
@@ -823,8 +823,8 @@ impl<O> Checker<'_, '_, O> {
             .filter(|&node| self.states[node].is_some() && !self.admission(node))
             .map(|node| vertices[node])
             .collect();
-        let analyses = analyze(&graph, &within, &constraints, self.cancel).map_err(|error| {
-            match error {
+        let analyses =
+            analyze(&graph, &within, &constraints, self.cancel).map_err(|error| match error {
                 fsl_eval::fairness::FairnessError::Cancelled => match self.cancel.cause() {
                     Some(source) => Halt::Verdict(ZoneCertificateVerdict::Stopped(
                         IncompleteCause::Cancelled { source },
@@ -832,8 +832,7 @@ impl<O> Checker<'_, '_, O> {
                     None => fault(CheckerFault::CancellationWithoutCause),
                 },
                 _ => fault(CheckerFault::Graph),
-            }
-        })?;
+            })?;
         let expected = if Analysis::first_fair_in(&analyses).is_some() {
             Some(crate::certificate::zone_certificate::NonZeno::Assumed)
         } else {

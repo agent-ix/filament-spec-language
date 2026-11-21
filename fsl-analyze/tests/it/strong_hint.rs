@@ -200,6 +200,7 @@ fn a_stutter_loop_a_bounded_prefix_and_a_deadlock_carry_no_hint() {
     };
     assert!(counterexample
         .lasso
+        .as_ref()
         .is_some_and(|lasso| lasso.terminal_stutter));
     assert!(hints_of(&stutter, counterexample, is_zero).is_empty());
 
@@ -239,7 +240,10 @@ fn the_weak_each_mutex_refutation_names_acq_one_at_loop_position_zero() {
         panic!("expected a violation, got {outcome:?}");
     };
     assert_eq!(fixture.values(counterexample, "c"), [0, 2, 0]);
-    assert_eq!(counterexample.lasso.map(|lasso| lasso.entry), Some(0));
+    assert_eq!(
+        counterexample.lasso.as_ref().map(|lasso| lasso.entry),
+        Some(0)
+    );
     let hints = hints_of(&fixture, counterexample, is_one);
     let record = crate::strong_fairness::settle_en1(&fixture, &outcome, is_one);
     assert_eq!(record.value, TerminalValue::Refuted);
@@ -269,6 +273,7 @@ fn the_weak_each_mutex_refutation_names_acq_one_at_loop_position_zero() {
     stemmed.lasso = Some(fsl_replay::Lasso {
         entry: 2,
         terminal_stutter: false,
+        terminal_stutter_delay: None,
     });
     let hints = hints_of(&fixture, &stemmed, is_one);
     assert_eq!(hints.len(), 1, "{hints:?}");

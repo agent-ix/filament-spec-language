@@ -135,8 +135,9 @@ evidence that the runtime provider implements the search semantics.
   `OnceAgain` refuses at `/loop/0/transition`. `OnceLocked` proves on the
   closed certificate with the miss node `locked`, and its time-lock item
   refutes.
-- Step 10: `incomplete`, `limit-reached{limit: work-limit}`, with
-  `task_search` nodes that include the miss state, no `counterexamples`
+- Step 10: `incomplete`, `limit-reached{limit: max_task_product_work}`, with
+  `task_search` nodes that include the miss state and a frontier row of
+  reason `work-limit`, no `counterexamples`
   entry, never `refuted`.
 - Step 11: refused `malformed_wire` at `/loop` before any exploration; the
   admitted-endpoint arm is not run.

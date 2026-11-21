@@ -24,11 +24,11 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use crate::composite::{CompositeIdentity, EqualityOutcome};
 use crate::execute::ReplayRefusal;
 use crate::identity::QualifiedName;
-use fsl_package::ObligationIdentity;
 use crate::proof_result::{IncompleteCause, InconclusiveCause, TerminalValue};
 use crate::request::ReplayRequestWire;
 use crate::result::{same_element, value_bytes};
 use crate::witness::ReplaySource;
+use fsl_package::ObligationIdentity;
 
 /// The outcome of one scalar evaluation, FSL's exact one or the generated
 /// code's: a value, a result outside the declared result range, or an

@@ -44,7 +44,7 @@ fn zero() -> Rational {
 
 /// The total delay of the loop of `counterexample`, from its entry.
 fn loop_delay(counterexample: &TemporalCounterexample) -> Rational {
-    let entry = counterexample.lasso.expect("a lasso").entry;
+    let entry = counterexample.lasso.as_ref().expect("a lasso").entry;
     delays(counterexample)[entry..]
         .iter()
         .fold(zero(), |sum, delay| sum.add(delay))
@@ -80,7 +80,7 @@ fn a_response_claim_holds_and_a_zeno_loop_is_not_reported() {
     // claim is violated by that loop.
     let resetting = rpc_echo();
     let counterexample = reproduced_lasso(&resetting, decide(&resetting));
-    let entry = counterexample.lasso.expect("a lasso").entry;
+    let entry = counterexample.lasso.as_ref().expect("a lasso").entry;
     assert!(names(&counterexample, entry)
         .iter()
         .all(|name| name == "echo"));
@@ -170,7 +170,7 @@ fn fairness_is_read_over_time_on_the_split_graph() {
 
     let free = serve(">= 1 ms", "");
     let counterexample = reproduced_lasso(&free, decide(&free));
-    let lasso = counterexample.lasso.expect("a lasso");
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert!(!lasso.terminal_stutter);
     assert_eq!(names(&counterexample, 0), ["idle", "idle"]);
     assert_eq!(lasso.entry, 1);
@@ -224,7 +224,7 @@ fn a_liveness_refutation_is_a_timed_lasso() {
          { always eventually holds(c.phase = 2) }\n",
     );
     let counterexample = reproduced_lasso(&world, decide(&world));
-    let lasso = counterexample.lasso.expect("a lasso");
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert!(!lasso.terminal_stutter);
     assert!(loop_delay(&counterexample) > zero());
 }
@@ -270,7 +270,7 @@ fn ticking(body: &str) -> World {
 fn a_tick_source_diverges_by_its_ticks() {
     let idle = ticking("eventually holds(c.phase = 1)");
     let counterexample = reproduced_lasso(&idle, decide(&idle));
-    let entry = counterexample.lasso.expect("a lasso").entry;
+    let entry = counterexample.lasso.as_ref().expect("a lasso").entry;
     assert!(names(&counterexample, entry)
         .iter()
         .all(|name| name == "tick"));
@@ -411,10 +411,16 @@ fn enabledness_reads_the_target_time_invariants() {
     for fairness in ["fair weak M::Call::serve;", "fair strong M::Call::serve;"] {
         let idle = late_serve(false, fairness);
         let counterexample = reproduced_lasso(&idle, decide(&idle));
-        assert!(counterexample.lasso.expect("a lasso").terminal_stutter);
+        assert!(
+            counterexample
+                .lasso
+                .as_ref()
+                .expect("a lasso")
+                .terminal_stutter
+        );
         let looping = late_serve(true, fairness);
         let counterexample = reproduced_lasso(&looping, decide(&looping));
-        let entry = counterexample.lasso.expect("a lasso").entry;
+        let entry = counterexample.lasso.as_ref().expect("a lasso").entry;
         assert!(
             names(&counterexample, entry)
                 .iter()

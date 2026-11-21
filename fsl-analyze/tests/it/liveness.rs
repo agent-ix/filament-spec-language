@@ -247,7 +247,9 @@ fn violated(outcome: &ModelCheckOutcome) -> &TemporalCounterexample {
 fn lasso_of(counterexample: &TemporalCounterexample) -> Lasso {
     counterexample
         .lasso
+        .as_ref()
         .expect("a liveness refutation is a lasso")
+        .clone()
 }
 
 /// Whether the transition is an application of the `Counter` operation
@@ -351,7 +353,8 @@ fn a_behaviour_that_ends_is_the_lasso_whose_loop_is_the_terminal_stutter_step() 
         counterexample.lasso,
         Some(Lasso {
             entry: 3,
-            terminal_stutter: true
+            terminal_stutter: true,
+            terminal_stutter_delay: None,
         })
     );
     // The stem's three `inc` steps and the stutter step of the loop.
@@ -535,7 +538,8 @@ fn a_weak_constraint_forces_the_loop_through_the_operation() {
         lasso_of(counterexample),
         Lasso {
             entry: 0,
-            terminal_stutter: false
+            terminal_stutter: false,
+            terminal_stutter_delay: None,
         }
     );
     assert!(applies(&counterexample.prefix[0], "setTo"));
@@ -554,7 +558,8 @@ fn a_weak_constraint_forces_the_loop_through_the_operation() {
             lasso_of(counterexample),
             Lasso {
                 entry: 0,
-                terminal_stutter: false
+                terminal_stutter: false,
+                terminal_stutter_delay: None,
             }
         );
         assert!(applies(&counterexample.prefix[0], "inc"));
@@ -686,7 +691,8 @@ fn limits_and_cancellation_stop_a_liveness_run_naming_what_stopped_it() {
         lasso_of(violated(&with(Some(4), defaults, UNLIMITED, &live))),
         Lasso {
             entry: 3,
-            terminal_stutter: true
+            terminal_stutter: true,
+            terminal_stutter_delay: None,
         }
     );
     let stopped = |outcome: ModelCheckOutcome| match outcome {
@@ -958,6 +964,7 @@ fn a_bounded_always_reads_past_closure_as_false_only_under_event_position_false_
     let outcome = recurs.decide(is_zero).expect("checked");
     assert!(violated(&outcome)
         .lasso
+        .as_ref()
         .is_some_and(|lasso| lasso.terminal_stutter));
 }
 

@@ -1025,6 +1025,7 @@ fn unfair_trace(
     let lasso = Lasso {
         entry,
         terminal_stutter: stutters != 0,
+        terminal_stutter_delay: None,
     };
     Ok(Some(
         unfair_constraint(system, &states, lasso, fairness)?.is_some(),
