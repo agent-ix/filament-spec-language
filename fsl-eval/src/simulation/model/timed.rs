@@ -2049,6 +2049,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                         resets: Vec::new(),
                         carries: Vec::new(),
                         guards: Vec::new(),
+                        task_releases: Vec::new(),
                     });
                 }
             }
