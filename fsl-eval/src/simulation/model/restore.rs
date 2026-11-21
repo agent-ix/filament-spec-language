@@ -85,6 +85,8 @@ struct Restore<'s, 'm, 'b> {
     identity: IdentityLimits,
     budget: &'b mut dyn ModelRestoreBudget,
     cancel: &'b filament_exact::Cancel,
+    source_bytes: usize,
+    value_nodes: usize,
 }
 impl Restore<'_, '_, '_> {
     fn tick(&mut self, units: usize) -> Result<(), ModelRestoreError> {
@@ -249,6 +251,10 @@ impl Restore<'_, '_, '_> {
         self.push(&mut tasks, Task::Visit(node, expected.clone(), false))?;
         let mut values: Vec<FieldValue> = Vec::new();
         while let Some(task) = tasks.pop() {
+            self.value_nodes = self
+                .value_nodes
+                .checked_add(1)
+                .ok_or(ModelKeyError::SizeOverflow)?;
             self.tick(1)?;
             self.retain(size_of::<Task<'_>>().saturating_add(size_of::<FieldValue>()))?;
             match task {
@@ -623,6 +629,49 @@ impl Restore<'_, '_, '_> {
     }
     fn state(&mut self, root: NodeRef<'_>) -> Result<ModelState, ModelRestoreError> {
         let system = self.system;
+        let mut field_index = BTreeMap::new();
+        for (owner, fields) in &system.fields {
+            self.tick(fields.len())?;
+            self.retain(
+                fields
+                    .len()
+                    .checked_mul(4 * size_of::<(&DeclarationKey, &str, &super::StateField)>())
+                    .ok_or(ModelKeyError::SizeOverflow)?,
+            )?;
+            for field in fields {
+                self.tick(
+                    field
+                        .name
+                        .len()
+                        .saturating_add(owner.package.len())
+                        .saturating_add(owner.node.len())
+                        .saturating_mul(
+                            field_index.len().checked_ilog2().unwrap_or(0) as usize + 1,
+                        ),
+                )?;
+                field_index.insert((owner, field.name.as_str()), field);
+            }
+        }
+        let mut universe_index = BTreeSet::new();
+        for (population, keys) in &system.universes {
+            self.tick(keys.len())?;
+            self.retain(
+                keys.len()
+                    .checked_mul(4 * size_of::<(&DeclarationKey, &str)>())
+                    .ok_or(ModelKeyError::SizeOverflow)?,
+            )?;
+            for key in keys {
+                self.tick(
+                    key.len()
+                        .saturating_add(population.package.len())
+                        .saturating_add(population.node.len())
+                        .saturating_mul(
+                            universe_index.len().checked_ilog2().unwrap_or(0) as usize + 1,
+                        ),
+                )?;
+                universe_index.insert((population, key.as_str()));
+            }
+        }
         tagged(root, "simulation-state")?;
         for name in [
             "control",
@@ -666,12 +715,13 @@ impl Restore<'_, '_, '_> {
                 continue;
             }
             let population = self.declaration(member(key, "value")?)?;
-            if !system
+            self.tick(system.populations.len())?;
+            let declared = system
                 .populations
                 .iter()
-                .any(|declared| declared.key == population)
-                || populations.contains_key(&population)
-            {
+                .find(|declared| declared.key == population)
+                .ok_or_else(bad)?;
+            if populations.contains_key(&population) {
                 return Err(bad());
             }
             let mut objects = BTreeMap::new();
@@ -689,11 +739,7 @@ impl Restore<'_, '_, '_> {
                 if reference != expected_reference || system.model.is_abstract(&object_type) {
                     return Err(bad());
                 }
-                let declared = system
-                    .populations
-                    .iter()
-                    .find(|declared| declared.key == population)
-                    .ok_or_else(bad)?;
+                self.tick(declared.member_types.len())?;
                 if !declared.member_types.iter().any(|member| {
                     system.model.type_identity(member).is_some_and(|expected| {
                         system
@@ -703,10 +749,19 @@ impl Restore<'_, '_, '_> {
                 }) {
                     return Err(bad());
                 }
-                if system
-                    .universes
-                    .get(&population)
-                    .is_some_and(|keys| !keys.iter().any(|key| key == reference.object().as_str()))
+                self.tick(
+                    reference
+                        .object()
+                        .as_str()
+                        .len()
+                        .saturating_add(population.package.len())
+                        .saturating_add(population.node.len())
+                        .saturating_mul(
+                            universe_index.len().checked_ilog2().unwrap_or(0) as usize + 1,
+                        ),
+                )?;
+                if system.universes.contains_key(&population)
+                    && !universe_index.contains(&(&population, reference.object().as_str()))
                 {
                     return Err(bad());
                 }
@@ -716,17 +771,27 @@ impl Restore<'_, '_, '_> {
                 if rows.len() != fields.len() {
                     return Err(bad());
                 }
+                self.retain(
+                    rows.len()
+                        .checked_mul(4 * size_of::<&str>())
+                        .ok_or(ModelKeyError::SizeOverflow)?,
+                )?;
                 let mut values = BTreeMap::new();
                 let mut names = BTreeSet::new();
                 for row in rows {
                     let name = text(member(row, "name")?)?;
+                    self.tick(
+                        name.len()
+                            .saturating_add(object_type.package.len())
+                            .saturating_add(object_type.node.len())
+                            .saturating_mul(
+                                field_index.len().checked_ilog2().unwrap_or(0) as usize + 1,
+                            ),
+                    )?;
                     if !names.insert(name) {
                         return Err(bad());
                     }
-                    let declared = fields
-                        .iter()
-                        .find(|field| field.name == name)
-                        .ok_or_else(bad)?;
+                    let declared = field_index.get(&(&object_type, name)).ok_or_else(bad)?;
                     let raw = member(row, "value")?;
                     if matches!(raw.node(), Node::Null) && declared.optional {
                         continue;
@@ -774,10 +839,65 @@ impl Restore<'_, '_, '_> {
             populations,
             extents,
         };
-        system
+        // Architecture-authorized atomic interval: all work/storage is admitted
+        // before the existing owner clones slots and validates closure/extents.
+        // Input bytes cover nested payload/name sizes; declaration units include
+        // records not represented in the key. The cross-product also bounds the
+        // owner's name/type/reference searches and map comparison traversals.
+        // The existing owner remains authoritative. Pre-admit its atomic clone,
+        // checked-slot, reference-closure and extent-validation interval; cancellation
+        // is polled on both sides, never replaced by a fabricated observation.
+        let (declarations, declaration_bytes) = system
             .model
-            .observation(&state, super::state_document())
-            .map_err(|_| bad())?;
+            .observation_work_size(|units| self.tick(units))?;
+        let units = self
+            .source_bytes
+            .checked_add(declaration_bytes)
+            .ok_or(ModelKeyError::SizeOverflow)?;
+        self.tick(state.populations.len().saturating_add(state.extents.len()))?;
+        let objects = state
+            .populations
+            .values()
+            .try_fold(0usize, |n, rows| n.checked_add(rows.len()))
+            .ok_or(ModelKeyError::SizeOverflow)?;
+        let extent_rows = state
+            .extents
+            .iter()
+            .try_fold(0usize, |n, extent| {
+                n.checked_add(extent.instances.len())
+                    .and_then(|n| n.checked_add(1))
+            })
+            .ok_or(ModelKeyError::SizeOverflow)?;
+        let rows = self
+            .value_nodes
+            .checked_add(objects)
+            .and_then(|n| n.checked_add(extent_rows))
+            .and_then(|n| n.checked_add(field_index.len()))
+            .and_then(|n| n.checked_add(universe_index.len()))
+            .and_then(|n| n.checked_add(declarations))
+            .and_then(|n| n.checked_add(1))
+            .ok_or(ModelKeyError::SizeOverflow)?;
+        let work = units
+            .checked_mul(
+                self.value_nodes
+                    .checked_add(rows.ilog2() as usize)
+                    .and_then(|n| n.checked_add(1))
+                    .ok_or(ModelKeyError::SizeOverflow)?,
+            )
+            .and_then(|n| {
+                rows.checked_mul(rows)
+                    .and_then(|pairs| n.checked_add(pairs))
+            })
+            .ok_or(ModelKeyError::SizeOverflow)?;
+        self.tick(work)?;
+        self.retain(
+            units
+                .checked_mul(size_of::<Value>().max(size_of::<FieldValue>()))
+                .ok_or(ModelKeyError::SizeOverflow)?,
+        )?;
+        let observation = system.model.observation(&state, super::state_document());
+        self.tick(0)?;
+        observation.map_err(|_| bad())?;
         Ok(state)
     }
 }
@@ -811,6 +931,8 @@ impl ModelSystem<'_> {
             identity,
             budget,
             cancel,
+            source_bytes: bytes.len(),
+            value_nodes: 0,
         };
         let state = restore.state(document.root())?;
         let state = ModelSimState {

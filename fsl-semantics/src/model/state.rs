@@ -522,6 +522,52 @@ impl StateModel {
         positions
     }
 
+    /// Declaration row count and identity-byte size for pre-admitting atomic observation validation.
+    /// The callback admits each traversal step and may stop or cancel it. Saturation
+    /// reports the largest size, so the caller must refuse an unrepresentable cost.
+    ///
+    /// # Errors
+    /// Returns the callback's actual admission failure without validation or allocation.
+    pub fn observation_work_size<E>(
+        &self,
+        mut admit: impl FnMut(usize) -> Result<(), E>,
+    ) -> Result<(usize, usize), E> {
+        let size = |key: &DeclarationKey| {
+            key.package
+                .len()
+                .saturating_add(key.node.len())
+                .saturating_add(1)
+        };
+        let mut rows = self.views.len();
+        let mut units = 0usize;
+        for view in &self.views {
+            admit(1)?;
+            let records = &view.view.domain_package().records;
+            admit(records.len())?;
+            rows = rows.saturating_add(records.len());
+            for record in records {
+                match record {
+                    DomainPackageRecord::Relationship(row) => {
+                        units = units
+                            .saturating_add(size(&row.key))
+                            .saturating_add(size(&row.source.type_identity))
+                            .saturating_add(size(&row.target.type_identity));
+                    }
+                    DomainPackageRecord::Population(row) => {
+                        units = units.saturating_add(size(&row.key));
+                        for member in &row.member_types {
+                            admit(1)?;
+                            rows = rows.saturating_add(1);
+                            units = units.saturating_add(size(member));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok((rows, units))
+    }
+
     /// The [`Observation`] of `state`, named `identity`: the object
     /// environment of every object with every field value, and every listed
     /// population complete.

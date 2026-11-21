@@ -1384,3 +1384,98 @@ fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
         "{stopped:?}"
     );
 }
+
+#[trace("TC-3152", "FR-1043-AC-9")]
+#[test]
+fn restored_large_declared_field_index_retains_the_nonzero_caller_work_stop() {
+    use super::super::{ModelKeyBudget, ModelKeyError, ModelRestoreBudget, ModelRestoreError};
+    use filament_exact::{Cancel, IntegerDecimalBudget, Reservation, ReservationDenied};
+    struct Budget {
+        meter: filament_exact::Meter,
+        denied: Option<filament_exact::Incomplete>,
+        charges: Vec<u64>,
+    }
+    impl Reservation for Budget {
+        fn reserve(&mut self, _: usize) -> Result<(), ReservationDenied> {
+            Ok(())
+        }
+    }
+    impl IntegerDecimalBudget for Budget {
+        fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
+            self.charges.push(units);
+            self.meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                        .work(Integer::from(units)),
+                )
+                .map_err(|denied| {
+                    self.denied = Some(denied);
+                    ReservationDenied
+                })
+        }
+    }
+    impl ModelKeyBudget for Budget {
+        fn integer(&mut self, _: &Integer) -> Result<(), ReservationDenied> {
+            Ok(())
+        }
+    }
+    impl ModelRestoreBudget for Budget {
+        fn meter(&mut self) -> &mut filament_exact::Meter {
+            &mut self.meter
+        }
+    }
+    let mut model = world::link();
+    for name in [
+        "field00", "field01", "field02", "field03", "field04", "field05", "field06", "field07",
+        "field08", "field09", "field10", "field11", "field12", "field13", "field14", "field15",
+        "field16", "field17", "field18", "field19", "field20", "field21", "field22", "field23",
+        "field24", "field25", "field26", "field27", "field28", "field29", "field30", "field31",
+        "field32", "field33", "field34", "field35", "field36", "field37", "field38", "field39",
+        "field40", "field41", "field42", "field43", "field44", "field45", "field46", "field47",
+        "field48", "field49", "field50", "field51", "field52", "field53", "field54", "field55",
+        "field56", "field57", "field58", "field59", "field60", "field61", "field62", "field63",
+    ] {
+        model.fields.push((name, world::BOOLEAN.to_owned()));
+        model
+            .initial
+            .as_object_mut()
+            .unwrap()
+            .insert(name.to_owned(), serde_json::json!({"boolean": false}));
+    }
+    let world = World::new(&model);
+    let system = world.system();
+    let bytes = system.state_key(&initial(&system)).unwrap().0;
+    let field_count = system.fields.values().map(Vec::len).sum::<usize>();
+    assert_eq!(field_count, 66);
+    let mut limits = system.meter_limits();
+    limits.work_units = u64::try_from(bytes.len() + field_count / 2).unwrap();
+    let mut budget = Budget {
+        meter: filament_exact::Meter::new(limits),
+        denied: None,
+        charges: Vec::new(),
+    };
+    let stopped = system.restore_state_key_with_budget(
+        &bytes,
+        fsl_foundation::IdentityLimits::default(),
+        &mut budget,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(stopped, Err(ModelRestoreError::Key(ModelKeyError::Denied))),
+        "{stopped:?}"
+    );
+    let denied = budget
+        .denied
+        .expect("actual caller meter retains the typed incomplete");
+    assert_eq!(denied.limit_kind, filament_exact::LimitKind::WorkUnits);
+    assert_eq!(denied.consumed, u64::try_from(bytes.len()).unwrap());
+    assert_eq!(denied.next_charge, Integer::from(field_count));
+    assert_eq!(
+        budget.charges,
+        [
+            u64::try_from(bytes.len()).unwrap(),
+            u64::try_from(field_count).unwrap()
+        ],
+        "canonical input admission succeeds before the declaration index is charged"
+    );
+}
