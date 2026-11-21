@@ -2,8 +2,10 @@
 //! FR-230/FR-995: original declaration provenance from the admitted bare
 //! graph. No source-side package or new witness participates in this view.
 
-use filament_contract_model::CheckedNodeOwner;
-use filament_exact::{Identifier, NodeKey};
+use std::collections::{BTreeMap, BTreeSet};
+
+use filament_contract_model::{CheckedNodeOwner, SelectedExactIdentity};
+use filament_exact::{EffectiveId, Identifier, NodeKey};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::SourceOwner;
 use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceTemplate};
@@ -18,6 +20,9 @@ use crate::{BarePackage, BareSelectionFailure, CheckedClockPlace, ClockPathStep}
 #[derive(Clone, Debug)]
 pub struct ClockDeclarations {
     source: SourceDeclarations,
+    owners: BTreeMap<DeclarationScope, EffectiveId>,
+    model_roots: BTreeSet<NodeKey>,
+    nodes: BTreeMap<crate::CheckedNodeId, NodeKey>,
 }
 
 impl ClockDeclarations {
@@ -58,16 +63,41 @@ impl ClockDeclarations {
         models: &[crate::CheckedTimedModel],
     ) -> Result<ClockDeclarationTable, ClockDeclarationTableError> {
         let mut entries = Vec::new();
+        let mut run_places = Vec::new();
         for clock in models.iter().flat_map(|model| &model.clock_places) {
             if clock.path.iter().any(
                 |step| matches!(step, ClockPathStep::Slot {collection, ..} if collection == "map"),
             ) {
                 continue;
             }
-            entries.push((self.clock_template(clock)?, self.clock_origin(clock)?));
+            let template = self.clock_template(clock)?;
+            let model = self.nodes.get(&clock.model);
+            let owner = model
+                .and_then(|node| self.source.declaration_scope_for_node(node))
+                .and_then(|scope| self.owners.get(scope))
+                .or_else(|| {
+                    model
+                        .filter(|node| self.model_roots.contains(*node))
+                        .and_then(|_| self.owners.get(&template.scope))
+                });
+            if let Some(owner) = owner {
+                let node = self
+                    .nodes
+                    .get(&clock.metadata.node_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        ClockDeclarationResolutionError::from(projection_fault(
+                            "admitted-clock-has-run-key",
+                        ))
+                    })?;
+                run_places.push((node, owner.clone(), template.clone()));
+            }
+            entries.push((template, self.clock_origin(clock)?));
         }
-        Ok(ClockDeclarationTable::from_entries(entries)?
-            .with_source_declarations(self.source.clone()))
+        ClockDeclarationTable::from_entries(entries)?
+            .with_source_declarations(self.source.clone())
+            .with_run_places(run_places)
+            .map_err(|fault| ClockDeclarationResolutionError::from(fault).into())
     }
 }
 
@@ -149,14 +179,25 @@ impl BarePackage<'_> {
     /// An internal fault if admitted owner or declaration metadata no longer
     /// agrees with the package's checked structural node correspondence.
     pub fn clock_declarations(&self) -> Result<ClockDeclarations, BareSelectionFailure> {
+        let graph = crate::checked_v2::wire_graph(self.package())
+            .map_err(|_| fault("admitted-clock-graph-has-structural-keys"))?;
+        let mut nodes = BTreeMap::new();
+        for node in &self.package().resolved_graph().nodes {
+            let key = graph
+                .key(&node.node_id)
+                .map_err(|_| fault("admitted-clock-node-has-structural-key"))?;
+            nodes.insert(node.node_id.clone(), key);
+        }
         let mut source = Vec::new();
         let mut models = Vec::new();
+        let mut model_roots = BTreeSet::new();
         for node in &self.package().resolved_graph().nodes {
             let Some(owner) = &node.owner else {
                 continue;
             };
-            let key = self
-                .node_key(&node.node_id)
+            let key = nodes
+                .get(&node.node_id)
+                .cloned()
                 .ok_or_else(|| fault("clock-declaration-has-admitted-node-key"))?;
             match owner {
                 CheckedNodeOwner::Source {
@@ -190,7 +231,9 @@ impl BarePackage<'_> {
                         },
                     ));
                 }
-                CheckedNodeOwner::ModelRoot { .. } => {}
+                CheckedNodeOwner::ModelRoot { .. } => {
+                    model_roots.insert(key);
+                }
             }
         }
         let mut source = SourceDeclarations::from_facts(source)
@@ -214,14 +257,35 @@ impl BarePackage<'_> {
             Err(_) => Vec::new(),
         };
         for (node, handle) in aliases {
-            let key = self
-                .node_key(node)
+            let key = nodes
+                .get(node)
+                .cloned()
                 .ok_or_else(|| fault("source-type-row-has-admitted-node"))?;
             source
                 .retain_node_alias(&key, handle)
                 .map_err(|_| fault("source-type-handle-joins-its-original-declaration"))?;
         }
-        Ok(ClockDeclarations { source })
+        let mut owners = BTreeMap::new();
+        if let Some(identities) = self.identities() {
+            for row in identities.declaration_rows() {
+                let SelectedExactIdentity::Object(owner) = &row.exact_identity else {
+                    continue;
+                };
+                let node = nodes
+                    .get(&row.structural_node)
+                    .cloned()
+                    .ok_or_else(|| fault("admitted-object-row-has-run-key"))?;
+                if let Some(scope) = source.declaration_scope_for_node(&node) {
+                    owners.insert(scope.clone(), owner.clone());
+                }
+            }
+        }
+        Ok(ClockDeclarations {
+            source,
+            owners,
+            model_roots,
+            nodes,
+        })
     }
 }
 
