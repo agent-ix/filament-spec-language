@@ -83,11 +83,7 @@ pub(super) fn run(
             code.as_str(),
             None,
             "export evidence settlement is not implemented: original generated-package binding and target-result verification are unavailable",
-        )
-        .with_details(Some(serde_json::Map::from_iter([(
-            "capability".to_owned(),
-            Value::String("export_evidence".to_owned()),
-        )])))]);
+        )]);
     let value = serde_json::to_value(&document).map_err(RunCause::Output)?;
     Ok(RunResult {
         exit_code: code.category().exit_code(),
