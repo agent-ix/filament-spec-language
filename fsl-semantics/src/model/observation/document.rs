@@ -21,8 +21,8 @@ use super::{
     SelectedObject, SnapshotValue,
 };
 use crate::model::object_environment::{
-    ObjectEnvironment, ReferenceOccurrence, ReferenceOriginLocus, ReferenceOrigins,
-    UnavailableReferenceOrigin,
+    ObjectEnvironment, ReferenceOriginBuilder, ReferenceOriginLocus, ReferenceOriginPrefix,
+    ReferenceOrigins,
 };
 use crate::model::operation::OperationDeclaration;
 use filament_checked::key::DeclarationKey;
@@ -1189,8 +1189,7 @@ pub(super) struct References<'a> {
     /// Validated data references to declared clock places, never objects.
     clock_references: Vec<(String, ObjectReference)>,
     population_nodes: BTreeMap<String, filament_exact::NodeKey>,
-    origins: Vec<ReferenceOccurrence>,
-    unavailable_origins: Vec<UnavailableReferenceOrigin>,
+    origins: ReferenceOriginBuilder,
     pub(super) parameter_origins: BTreeMap<String, ReferenceOrigins>,
     pub(super) result_origins: ReferenceOrigins,
     /// The declaration key of each selected record value type by its IR
@@ -1254,8 +1253,7 @@ impl<'a> References<'a> {
             unresolved: Vec::new(),
             clock_references: Vec::new(),
             population_nodes,
-            origins: Vec::new(),
-            unavailable_origins: Vec::new(),
+            origins: ReferenceOriginBuilder::default(),
             parameter_origins: BTreeMap::new(),
             result_origins: ReferenceOrigins::default(),
             record_keys: None,
@@ -1264,35 +1262,19 @@ impl<'a> References<'a> {
     }
 
     fn take_origins(&mut self) -> ReferenceOrigins {
-        ReferenceOrigins::from_parts(
-            std::mem::take(&mut self.origins),
-            std::mem::take(&mut self.unavailable_origins),
-        )
+        std::mem::take(&mut self.origins).finish()
     }
 
     fn retain_origin(
         &mut self,
         reference: &SelectedObject,
-        path: &[PathStep],
-        boundary: Option<(usize, CollectionKind)>,
+        prefix: ReferenceOriginPrefix,
+        boundary: Option<(ReferenceOriginPrefix, CollectionKind)>,
     ) {
-        if let Some((depth, collection)) = boundary {
-            let subtree = &path[..depth];
-            if !self
-                .unavailable_origins
-                .iter()
-                .any(|prior| prior.path == subtree && prior.collection == collection)
-            {
-                self.unavailable_origins.push(UnavailableReferenceOrigin {
-                    path: subtree.to_vec(),
-                    collection,
-                });
-            }
+        if let Some((subtree, collection)) = boundary {
+            self.origins.unavailable(subtree, collection);
         } else if let Some(population) = self.population_nodes.get(&reference.population) {
-            self.origins.push(ReferenceOccurrence {
-                path: path.to_vec(),
-                population: population.clone(),
-            });
+            self.origins.reference(prefix, population.clone());
         }
     }
 
@@ -2103,7 +2085,7 @@ enum Admit<'w, 'v> {
         presence: filament_exact::Presence,
         field: bool,
         canonical: bool,
-        origin_boundary: Option<(usize, CollectionKind)>,
+        origin_boundary: Option<(ReferenceOriginPrefix, CollectionKind)>,
     },
     /// Descend one step of the value path.
     Enter(PathStep),
@@ -2158,6 +2140,8 @@ fn admit_value<'a: 'w, 'w>(
     }];
     let mut done: Vec<FieldValue> = Vec::new();
     let mut path: Vec<PathStep> = Vec::new();
+    let mut prefix = references.origins.root();
+    let mut prefixes = Vec::new();
     // The breach count when each entered step was entered.
     let mut marks: Vec<usize> = Vec::new();
     while let Some(next) = work.pop() {
@@ -2166,10 +2150,15 @@ fn admit_value<'a: 'w, 'w>(
         };
         match next {
             Admit::Enter(step) => {
+                prefixes.push(prefix);
+                prefix = references.origins.enter(prefix, step.clone());
                 path.push(step);
                 marks.push(witness.as_deref().map_or(0, Vec::len));
             }
             Admit::Leave => {
+                prefix = prefixes
+                    .pop()
+                    .ok_or_else(|| refuse_at("wrong-value-kind", &path))?;
                 let (Some(step), Some(first)) = (path.pop(), marks.pop()) else {
                     return Err(refuse_at("wrong-value-kind", &path));
                 };
@@ -2331,7 +2320,7 @@ fn admit_value<'a: 'w, 'w>(
                                         collection.kind(),
                                         CollectionKind::Set | CollectionKind::Bag
                                     )
-                                    .then_some((path.len(), collection.kind()))
+                                    .then_some((prefix, collection.kind()))
                                 }),
                             });
                             work.push(Admit::Enter(PathStep::Index(index)));
@@ -2413,7 +2402,7 @@ fn admit_value<'a: 'w, 'w>(
                                     record.at(full)
                                 })?;
                         if let Some(reference) = raw_reference {
-                            references.retain_origin(reference, &path, origin_boundary);
+                            references.retain_origin(reference, prefix, origin_boundary);
                         }
                         if canonical {
                             if let Value::Decimal(decimal) = &value {
@@ -2467,8 +2456,7 @@ pub fn admit_record_sample(
         unresolved: Vec::new(),
         clock_references: Vec::new(),
         population_nodes: BTreeMap::new(),
-        origins: Vec::new(),
-        unavailable_origins: Vec::new(),
+        origins: ReferenceOriginBuilder::default(),
         parameter_origins: BTreeMap::new(),
         result_origins: ReferenceOrigins::default(),
         record_keys: Some(BTreeMap::from([(RECORD_SAMPLE.to_owned(), record.clone())])),
@@ -3366,6 +3354,7 @@ pub(super) fn admit_population_values<'t>(
     let populations = &snapshot.populations[..];
     let mut objects: Vec<(ObjectReference, Vec<(&str, FieldValue)>)> = Vec::new();
     let mut holders: Vec<String> = Vec::new();
+    let mut object_holders = BTreeMap::<ObjectReference, String>::new();
     let mut field_origins = Vec::new();
     let mut listed = super::relationships::Listed::new();
     let mut completeness = BTreeMap::new();
@@ -3664,6 +3653,26 @@ pub(super) fn admit_population_values<'t>(
             // own `invalid-value` (SR-750 FND-004 round 2): propagated
             // directly, never re-mapped to a `Fault`.
             let reference = object_reference(views, effective_type, &object.key)?;
+            if let Some(first_population) = object_holders.get(&reference) {
+                if first_population != &entry.population {
+                    // The shared closure keys objects by their native K2
+                    // reference. It cannot retain these two explicitly
+                    // attributed occurrences as distinct storage entries.
+                    return Err(refuse(
+                        admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                            .with("reason", "population-qualified-object-identity")
+                            .with("population", entry.population.clone())
+                            .with("other_population", first_population.clone())
+                            .with("object", object.key.clone())
+                            .at(vec![
+                                PathStep::Field("populations".to_owned()),
+                                PathStep::Index(population_index),
+                            ]),
+                    ));
+                }
+            } else {
+                object_holders.insert(reference.clone(), entry.population.clone());
+            }
             if !listed.contains_key(&entry.population) {
                 listed.insert(entry.population.clone(), BTreeMap::new());
             }
@@ -5198,8 +5207,7 @@ mod tests {
                     unresolved: Vec::new(),
                     clock_references: Vec::new(),
                     population_nodes: BTreeMap::new(),
-                    origins: Vec::new(),
-                    unavailable_origins: Vec::new(),
+                    origins: ReferenceOriginBuilder::default(),
                     parameter_origins: BTreeMap::new(),
                     result_origins: ReferenceOrigins::default(),
                     record_keys: None,

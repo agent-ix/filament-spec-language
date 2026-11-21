@@ -436,6 +436,26 @@ origins and producing no partial place table or admitted observation.
 > route-neutral identity criteria. They remain unmet until implementation
 > and acceptance proof; the STEP1 boundary above remains in force.
 
+> Current STEP2 implementation boundary: the shared object closure cannot
+> retain two explicitly listed populations of the same declared type with
+> the same local object key as distinct occurrences. Admission refuses this
+> overlap at the second population binding as
+> `unknown_required_feature`/`unsupported-feature`, naming
+> `population-qualified-object-identity`, both populations and the key.
+> One population and populations with distinct keys remain supported. This
+> partial boundary leaves the same-key population identity criteria unmet;
+> map-keyed clock identities also remain unsupported.
+>
+> Reference-origin metadata is a flat parent-linked typed-prefix arena
+> populated by the existing admission walk, with at most one entry per
+> visited path step and one population fact per reference occurrence.
+> Ancestors are shared across sibling references, so retained metadata is
+> linear in admitted input bytes rather than reference-count times depth.
+> Stable-child selection uses the flat typed edge index with logarithmic
+> lookup and no separate evaluation charge; reconstructing a diagnostic
+> path walks only that selected path's actual depth. Typed supplied paths
+> are consumed once into the same backing, and frames share it immutably.
+
 A set, bag or ordered-set value is the native spelling of FSpec FR-181's
 `set`, `bag` and `ordered-set` forms, with FSpec FR-144's "Supplied
 collection values" admission:
