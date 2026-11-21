@@ -46,6 +46,22 @@ pub enum ReferenceFailure {
 /// A typed boundary refusal with an RFC 6901 locus; resource causes are retained.
 #[derive(Debug, thiserror::Error)]
 pub enum ReferenceCodecError {
+    /// An existing carrier adapter refused its non-reference metadata.
+    #[error("carrier output refused at {pointer}: {cause}")]
+    Carrier {
+        /// Original carrier failure.
+        cause: crate::CounterexampleWireError,
+        /// Carrier member being written.
+        pointer: String,
+    },
+    /// The exact integer owner refused charged decimal output.
+    #[error("integer output refused at {pointer}: {cause}")]
+    Decimal {
+        /// Original exact integer refusal.
+        cause: filament_exact::IntegerDecimalBudgetError,
+        /// Scalar being written.
+        pointer: String,
+    },
     /// A complete native identity copy stopped under the actual caller budget.
     #[error("reference identity copy stopped at {pointer}: {cause:?}")]
     IdentityCopy {
@@ -111,15 +127,191 @@ pub struct ReferenceScope<'s, 'c, 'm, 'r> {
 }
 
 impl ReferenceScope<'_, '_, '_, '_> {
-    pub(crate) fn at_pointer<T>(
+    pub(crate) fn put(
+        &mut self,
+        object: &mut Value,
+        name: &str,
+        value: Value,
+    ) -> Result<(), ReferenceCodecError> {
+        let map = object
+            .as_object_mut()
+            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))?;
+        self.scope.put(map, name, value)
+    }
+
+    pub(crate) fn display(
+        &mut self,
+        value: &impl std::fmt::Display,
+    ) -> Result<Value, ReferenceCodecError> {
+        self.display_text(value).map(Value::String)
+    }
+
+    pub(crate) fn display_text(
+        &mut self,
+        value: &impl std::fmt::Display,
+    ) -> Result<String, ReferenceCodecError> {
+        struct Text<'a, 'b> {
+            scope: &'a mut Scope<'b>,
+            text: String,
+            failure: Option<ReferenceCodecError>,
+        }
+        impl std::fmt::Write for Text<'_, '_> {
+            fn write_str(&mut self, text: &str) -> std::fmt::Result {
+                let result = self
+                    .scope
+                    .work(text.len())
+                    .and_then(|()| self.scope.reserve(text.len()))
+                    .and_then(|()| {
+                        self.text
+                            .try_reserve_exact(text.len())
+                            .map_err(|_| self.scope.allocation(text.len()))
+                    });
+                match result {
+                    Ok(()) => {
+                        self.text.push_str(text);
+                        Ok(())
+                    }
+                    Err(error) => {
+                        self.failure = Some(error);
+                        Err(std::fmt::Error)
+                    }
+                }
+            }
+        }
+        let mut writer = Text {
+            scope: &mut self.scope,
+            text: String::new(),
+            failure: None,
+        };
+        let result = std::fmt::write(&mut writer, format_args!("{value}"));
+        if let Some(error) = writer.failure {
+            return Err(error);
+        }
+        if result.is_err() {
+            return Err(writer.scope.fail(ReferenceFailure::MalformedWire));
+        }
+        Ok(writer.text)
+    }
+
+    pub(crate) fn opaque_key(
+        &mut self,
+        key: &fsl_eval::simulation::StateKey,
+    ) -> Result<Value, ReferenceCodecError> {
+        // Retain the existing authoritative base64url state adapter. Admit
+        // its temporary string plus serde's owned string before either exists.
+        let encoded = key
+            .as_bytes()
+            .len()
+            .checked_add(2)
+            .and_then(|n| n.checked_div(3))
+            .and_then(|n| n.checked_mul(4))
+            .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
+        self.scope.work(key.as_bytes().len())?;
+        self.scope.work(encoded)?;
+        let storage = encoded
+            .checked_mul(2)
+            .and_then(|n| n.checked_add(size_of::<(String, Value)>() * 4))
+            .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
+        self.scope.reserve(storage)?;
+        let mut wire =
+            crate::state_key_wire(key).map_err(|cause| ReferenceCodecError::Carrier {
+                cause,
+                pointer: std::mem::take(&mut self.scope.path),
+            })?;
+        wire.as_object_mut()
+            .and_then(|map| map.remove("key"))
+            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))
+    }
+
+    pub(crate) fn text(&mut self, value: &str) -> Result<Value, ReferenceCodecError> {
+        self.scope.text(value).map(Value::String)
+    }
+
+    pub(crate) fn record<const N: usize>(
+        &mut self,
+        fields: [(&str, Value); N],
+    ) -> Result<Value, ReferenceCodecError> {
+        self.scope.work(N)?;
+        let mut map = Map::new();
+        for (key, value) in fields {
+            self.scope.put(&mut map, key, value)?;
+        }
+        Ok(Value::Object(map))
+    }
+
+    pub(crate) fn array(&mut self, len: usize) -> Result<Vec<Value>, ReferenceCodecError> {
+        self.scope.work(len)?;
+        self.scope.array(len)
+    }
+
+    pub(crate) fn integer(
+        &mut self,
+        value: &filament_exact::Integer,
+    ) -> Result<Value, ReferenceCodecError> {
+        let admission = Admission::new(&mut *self.scope.budget, self.scope.cancel);
+        let result =
+            value.try_to_decimal_string_with_budget(usize::MAX, &mut DecimalAdmission(&admission));
+        let failure = admission.failure.borrow_mut().take();
+        drop(admission);
+        if let Some(failure) = failure {
+            return Err(self.scope.stopped(failure));
+        }
+        result
+            .map(Value::String)
+            .map_err(|cause| ReferenceCodecError::Decimal {
+                cause,
+                pointer: std::mem::take(&mut self.scope.path),
+            })
+    }
+
+    pub(crate) fn rational(
+        &mut self,
+        value: &filament_exact::Rational,
+    ) -> Result<Value, ReferenceCodecError> {
+        let denominator = self.at_pointer("/denominator", |s| s.integer(value.denominator()))?;
+        let numerator = self.at_pointer("/numerator", |s| s.integer(value.numerator()))?;
+        self.record([("denominator", denominator), ("numerator", numerator)])
+    }
+
+    pub(crate) fn node(
+        &mut self,
+        value: &filament_exact::NodeKey,
+    ) -> Result<Value, ReferenceCodecError> {
+        let admission = Admission::new(&mut *self.scope.budget, self.scope.cancel);
+        let result = admission.node_json(value);
+        admission
+            .finish(result)
+            .map_err(|error| self.scope.stopped(error))
+    }
+
+    /// Convert a reference through this carrier's retained runtime and budget.
+    ///
+    /// # Errors
+    /// Retains identity, resource, cancellation and pointer failures.
+    pub fn encode_reference(
+        &mut self,
+        value: &ObjectReference,
+    ) -> Result<Value, ReferenceCodecError> {
+        self.codec.encode_reference_in(value, &mut self.scope)
+    }
+
+    pub(crate) fn at_pointer<T, E: From<ReferenceCodecError>>(
         &mut self,
         pointer: &str,
-        action: impl FnOnce(&mut Self) -> Result<T, ReferenceCodecError>,
-    ) -> Result<T, ReferenceCodecError> {
-        let path = self.scope.text(pointer)?;
-        let before = std::mem::replace(&mut self.scope.path, path);
+        action: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E> {
+        // Carrier pointers are relative to their enclosing carrier. Preserve
+        // the outer task_product/edge prefix through nested restoration.
+        let before = self.scope.path.len();
+        self.scope.work(pointer.len())?;
+        self.scope.reserve(pointer.len())?;
+        self.scope
+            .path
+            .try_reserve_exact(pointer.len())
+            .map_err(|_| self.scope.allocation(pointer.len()))?;
+        self.scope.path.push_str(pointer);
         let result = action(self);
-        self.scope.path = before;
+        self.scope.path.truncate(before);
         result
     }
 
@@ -1210,7 +1402,15 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             path: String::new(),
             max_depth,
         };
-        let admission = Admission::new(&mut *scope.budget, cancel);
+        self.encode_reference_in(reference, &mut scope)
+    }
+
+    fn encode_reference_in(
+        &self,
+        reference: &ObjectReference,
+        scope: &mut Scope<'_>,
+    ) -> Result<Value, ReferenceCodecError> {
+        let admission = Admission::new(&mut *scope.budget, scope.cancel);
         let native = admission.encoded(quire_canonical::Limits::new(u64::MAX), |writer| {
             fsl_eval::simulation::model::encode_reference(reference, writer)
         });
@@ -1219,8 +1419,8 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             .map_err(|error| scope.stopped(error))?;
         let text = std::str::from_utf8(&native)
             .map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
-        let value = parse_text(text, &mut scope)?;
-        self.reference(&value, false, &mut scope)
+        let value = parse_text(text, scope)?;
+        self.reference(&value, false, scope)
     }
 
     /// Restore a backend reference using the catalog's actual native model.
@@ -1568,6 +1768,29 @@ struct Admission<'a> {
     budget: RefCell<&'a mut dyn IntegerDecimalBudget>,
     cancel: &'a Cancel,
     failure: RefCell<Option<ModelKeyError>>,
+}
+
+struct DecimalAdmission<'a, 'b>(&'a Admission<'b>);
+
+impl filament_exact::Reservation for DecimalAdmission<'_, '_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), filament_exact::ReservationDenied> {
+        self.0.reserve(bytes).map_err(|error| {
+            *self.0.failure.borrow_mut() = Some(error);
+            filament_exact::ReservationDenied
+        })
+    }
+}
+
+impl IntegerDecimalBudget for DecimalAdmission<'_, '_> {
+    fn work(&mut self, units: u64) -> Result<(), filament_exact::ReservationDenied> {
+        let result = usize::try_from(units)
+            .map_err(|_| ModelKeyError::SizeOverflow)
+            .and_then(|units| self.0.work(units));
+        result.map_err(|error| {
+            *self.0.failure.borrow_mut() = Some(error);
+            filament_exact::ReservationDenied
+        })
+    }
 }
 
 impl<'a> Admission<'a> {
@@ -2110,6 +2333,47 @@ mod tests {
             json!("FF");
         assert!(
             matches!(crate::ZoneCertificate::from_wire_with_references(&malformed_certificate, (), None, &mut carrier), Err(crate::ZoneCertificateReferenceError::Reference(ReferenceCodecError::Refused { reason: ReferenceFailure::InvalidIdentity, pointer })) if pointer == "/edges/1/transition/release/receiver/identity")
+        );
+        let graph = crate::model_check::state_graph::GraphEvidence::Trap {
+            stem: crate::model_check::state_graph::ModelPath {
+                initial: 0,
+                steps: vec![crate::model_check::counterexample::ModelStep {
+                    transition: certificate.edges[0].transition.clone().unwrap(),
+                    post_state: key.clone(),
+                    delay: Some(filament_exact::Rational::from_integer(
+                        filament_exact::Integer::from(2_i64),
+                    )),
+                }],
+            },
+            closure: crate::model_check::state_graph::TrapClosure::StateGraph,
+            over: None,
+        };
+        let graph_wire = carrier
+            .graph_evidence_wire(
+                &graph,
+                crate::StateGraphPropertyForm::Possible,
+                Some("x"),
+                Some(&result),
+                &[],
+                None,
+            )
+            .unwrap();
+        assert_eq!(graph_wire["instance"]["key"], wire);
+        assert_eq!(
+            graph_wire["stem"]["steps"][0]["transition"]["receiver"],
+            wire
+        );
+        assert_eq!(
+            graph_wire["stem"]["steps"][0]["transition"]["arguments"][0],
+            wire
+        );
+        assert_eq!(
+            graph_wire["stem"]["steps"][0]["post_state"],
+            crate::state_key_wire(&key).unwrap()["key"]
+        );
+        assert_eq!(
+            graph_wire["stem"]["steps"][0]["delay"],
+            json!({"numerator":"2","denominator":"1"})
         );
         let foreign: SelectedModels = models.clone();
         assert!(matches!(

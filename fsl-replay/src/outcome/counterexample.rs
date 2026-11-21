@@ -2016,6 +2016,242 @@ fn graph_step(
     Ok(written)
 }
 
+impl crate::ReferenceScope<'_, '_, '_, '_> {
+    fn graph_step_canonical(
+        &mut self,
+        step: &ModelStep,
+    ) -> Result<Json, crate::ReferenceCodecError> {
+        let tag = self.text("step")?;
+        let transition = self.at_pointer("/transition", |scope| {
+            scope.encode_transition(&step.transition)
+        })?;
+        let post = self.at_pointer("/post_state", |scope| scope.opaque_key(&step.post_state))?;
+        let mut out = self.record([
+            ("type", tag),
+            ("transition", transition),
+            ("post_state", post),
+        ])?;
+        if let Some(delay) = &step.delay {
+            let delay = self.at_pointer("/delay", |scope| scope.rational(delay))?;
+            self.put(&mut out, "delay", delay)?;
+        }
+        Ok(out)
+    }
+
+    fn graph_steps_canonical(
+        &mut self,
+        steps: &[ModelStep],
+    ) -> Result<Json, crate::ReferenceCodecError> {
+        let mut out = self.array(steps.len())?;
+        for (index, step) in steps.iter().enumerate() {
+            let index = self.display_text(&index)?;
+            let pointer = index.as_str();
+            out.push(self.at_pointer("/", |scope| {
+                scope.at_pointer(pointer, |scope| scope.graph_step_canonical(step))
+            })?);
+        }
+        Ok(Json::Array(out))
+    }
+
+    fn graph_path_canonical(
+        &mut self,
+        path: &crate::model_check::state_graph::ModelPath,
+    ) -> Result<Json, crate::ReferenceCodecError> {
+        let tag = self.text("model-path")?;
+        let initial = self.display(&path.initial)?;
+        let steps = self.at_pointer("/steps", |scope| scope.graph_steps_canonical(&path.steps))?;
+        self.record([("type", tag), ("initial", initial), ("steps", steps)])
+    }
+
+    fn graph_source_canonical(
+        &mut self,
+        source: &crate::model_check::state_graph::WitnessSource,
+    ) -> Result<Json, crate::ReferenceCodecError> {
+        use crate::model_check::state_graph::WitnessSource;
+        match source {
+            WitnessSource::Explored => {
+                let tag = self.text("explored")?;
+                self.record([("type", tag)])
+            }
+            WitnessSource::Unrolled { depth } => {
+                let tag = self.text("unrolled")?;
+                let depth = self.display(depth)?;
+                self.record([("type", tag), ("depth", depth)])
+            }
+            WitnessSource::Sampled(provenance) => {
+                let tag = self.text("sampled")?;
+                let seed = self.display(&provenance.seed)?;
+                let trace = self.display(&provenance.trace)?;
+                self.record([("type", tag), ("seed", seed), ("trace_index", trace)])
+            }
+        }
+    }
+
+    fn graph_witness_canonical(
+        &mut self,
+        path: &crate::model_check::state_graph::ModelPath,
+        loop_entry: Option<u32>,
+        source: &crate::model_check::state_graph::WitnessSource,
+    ) -> Result<Json, crate::ReferenceCodecError> {
+        let path = self.at_pointer("/path", |scope| scope.graph_path_canonical(path))?;
+        let source = self.at_pointer("/source", |scope| scope.graph_source_canonical(source))?;
+        let mut out = self.record([("path", path), ("source", source)])?;
+        if let Some(entry) = loop_entry {
+            let entry = self.display(&entry)?;
+            self.put(&mut out, "loop_entry", entry)?;
+        }
+        Ok(out)
+    }
+
+    /// Write graph evidence using the original runtime-bound reference codec.
+    /// The evidence's original population selection remains owned by the caller;
+    /// this conversion does not reconstruct it or authenticate the witness.
+    ///
+    /// # Errors
+    /// Retains typed reference, metadata, resource and cancellation failures.
+    pub fn graph_evidence_wire(
+        &mut self,
+        evidence: &crate::model_check::state_graph::GraphEvidence,
+        form: crate::model_check::state_graph::StateGraphPropertyForm,
+        parameter: Option<&str>,
+        over: Option<&ObjectReference>,
+        sampled: &[Option<crate::model_check::state_graph::GraphWitness>],
+        claim: Option<&OccurrenceKey>,
+    ) -> Result<Json, crate::ReferenceCodecError> {
+        use crate::model_check::state_graph::{GraphEvidence, StateGraphPropertyForm, WitnessPath};
+        let key = match over {
+            Some(over) => self.at_pointer("/instance/key", |scope| scope.encode_reference(over))?,
+            None => Json::Null,
+        };
+        let parameter = match parameter {
+            Some(parameter) => self.text(parameter)?,
+            None => Json::Null,
+        };
+        let instance_tag = self.text("instance")?;
+        let instance = self.record([
+            ("type", instance_tag),
+            ("parameter", parameter),
+            ("key", key),
+        ])?;
+        let tag = self.text("graph-evidence")?;
+        let mut out = self.record([("type", tag), ("instance", instance)])?;
+        let arm = match evidence {
+            GraphEvidence::Witness { paths, .. } => {
+                let mut written = self.array(paths.len())?;
+                for (index, (path, source)) in paths.iter().enumerate() {
+                    let index = self.display_text(&index)?;
+                    let pointer = index.as_str();
+                    let (path, entry) = match path {
+                        WitnessPath::Path(path) => (path, None),
+                        WitnessPath::Lasso(lasso) => (&lasso.path, Some(lasso.loop_entry)),
+                    };
+                    written.push(self.at_pointer("/paths/", |scope| {
+                        scope.at_pointer(pointer, |scope| {
+                            scope.graph_witness_canonical(path, entry, source)
+                        })
+                    })?);
+                }
+                self.put(&mut out, "paths", Json::Array(written))?;
+                if !sampled.is_empty() {
+                    let mut written = self.array(sampled.len())?;
+                    for (index, found) in sampled.iter().enumerate() {
+                        let index = self.display_text(&index)?;
+                        let pointer = index.as_str();
+                        written.push(match found {
+                            Some(found) => self.at_pointer("/sampled/", |scope| {
+                                scope.at_pointer(pointer, |scope| {
+                                    scope.graph_witness_canonical(&found.path, None, &found.source)
+                                })
+                            })?,
+                            None => Json::Null,
+                        });
+                    }
+                    self.put(&mut out, "sampled", Json::Array(written))?;
+                }
+                "witness"
+            }
+            GraphEvidence::Trap { stem, .. } => {
+                let stem = self.at_pointer("/stem", |scope| scope.graph_path_canonical(stem))?;
+                self.put(&mut out, "stem", stem)?;
+                "trap"
+            }
+            GraphEvidence::PathPair {
+                stem,
+                first,
+                second,
+                ..
+            } => {
+                let stem = self.at_pointer("/stem", |scope| scope.graph_path_canonical(stem))?;
+                self.put(&mut out, "stem", stem)?;
+                let first =
+                    self.at_pointer("/first", |scope| scope.graph_steps_canonical(first))?;
+                self.put(&mut out, "first", first)?;
+                let second =
+                    self.at_pointer("/second", |scope| scope.graph_steps_canonical(second))?;
+                self.put(&mut out, "second", second)?;
+                "path-pair"
+            }
+            GraphEvidence::Undefined {
+                stem, undefined, ..
+            } => {
+                let path = self.at_pointer("/stem", |scope| scope.graph_path_canonical(stem))?;
+                self.put(&mut out, "stem", path)?;
+                let claim = claim.ok_or(crate::ReferenceCodecError::Carrier {
+                    cause: CounterexampleWireError::Unspelled("undefined locus"),
+                    pointer: String::new(),
+                })?;
+                let node = self.at_pointer("/undefined/where/locus/node", |scope| {
+                    scope.node(claim.node())
+                })?;
+                let role = self.display(&claim.origin().role())?;
+                let occurrence = self.record([
+                    ("role", role),
+                    ("ordinal", Json::from(claim.origin().ordinal())),
+                ])?;
+                let locus = self.record([("node", node), ("occurrence", occurrence)])?;
+                let key = self.at_pointer("/undefined/where/state_key", |scope| {
+                    scope.opaque_key(&undefined.state_key)
+                })?;
+                let mut at = self.record([
+                    ("position", Json::from(stem.steps.len())),
+                    ("state_key", key),
+                    ("locus", locus),
+                ])?;
+                if let Some(role) = undefined.predicate {
+                    let role = match (role, form) {
+                        (
+                            fsl_semantics::check::PredicateRole::Target,
+                            StateGraphPropertyForm::UniquePath,
+                        ) => "Y",
+                        (fsl_semantics::check::PredicateRole::Target, _) => "P",
+                        (
+                            fsl_semantics::check::PredicateRole::From,
+                            StateGraphPropertyForm::AlwaysPossible,
+                        ) => "Q",
+                        (fsl_semantics::check::PredicateRole::From, _) => "X",
+                    };
+                    let role = self.text(role)?;
+                    self.put(&mut at, "predicate", role)?;
+                }
+                if let Some(guard) = &undefined.transition {
+                    let guard = self.at_pointer("/undefined/where/transition", |scope| {
+                        scope.encode_transition(guard)
+                    })?;
+                    self.put(&mut at, "transition", guard)?;
+                }
+                let tag = self.text("undefined-evaluation")?;
+                let cause = self.text(undefined_reason(&undefined.cause))?;
+                let undefined = self.record([("type", tag), ("where", at), ("cause", cause)])?;
+                self.put(&mut out, "undefined", undefined)?;
+                "undefined"
+            }
+        };
+        let arm = self.text(arm)?;
+        self.put(&mut out, "arm", arm)?;
+        Ok(out)
+    }
+}
+
 fn graph_steps(
     steps: &[crate::model_check::counterexample::ModelStep],
 ) -> Result<Vec<Json>, CounterexampleWireError> {
