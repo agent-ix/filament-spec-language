@@ -2555,7 +2555,7 @@ fn forever_internals() -> serde_json::Value {
 /// enabled but never taken), the weak `other` requirement is refuted with
 /// `HiddenUnfair{other}`, and replay rebuilds the protocol candidate graph
 /// from the counterexample and reproduces it.
-#[trace("TC-2536", "FR-899-AC-10")]
+#[trace("TC-2536", "FR-899")]
 #[test]
 fn a_protocol_enabled_class_the_concrete_loop_never_takes_is_hidden_unfair_and_replays() {
     use crate::refinement_aux::{Unit, UNLIMITED as AUX_UNLIMITED};
@@ -2612,7 +2612,7 @@ fn a_protocol_enabled_class_the_concrete_loop_never_takes_is_hidden_unfair_and_r
 /// FR-899-AC-10 (TC-2536): the same protocol over a concrete subject whose
 /// `tick` and `tock` alternate, so every concrete run takes both `flip` and
 /// `other` forever, satisfies both weak requirements.
-#[trace("TC-2536", "FR-899-AC-10")]
+#[trace("TC-2536", "FR-899")]
 #[test]
 fn a_protocol_whose_classes_every_concrete_run_takes_satisfies_their_fairness() {
     use crate::refinement_aux::Unit;

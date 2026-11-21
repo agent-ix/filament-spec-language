@@ -60,3 +60,16 @@ Fix round needed. The extraction for Taken::Abstract is behaviour-preserving. Th
 | FND-008 | still-open | Protocol HiddenUnfair is expressible: unbounded `repeat ... while { true }` inside `parallel` branches is checked (CheckedRepeat.max is Option; analyze_cli.rs:645). No disagreeing-guard or disagreeing-invariant refusal test, and the checker's Disagree rejection is untested |
 | FND-009 | deferred | PR body records per-candidate clock valuations as remaining work on QSL-2243 and the ticket stays open; QSL-2243 must not be closed on this merge |
 | FND-010 | fixed | - |
+| FND-008 | fixed | - |
+| FND-011 | fixed | - |
+| FND-012 | fixed | - |
+| FND-013 | fixed | - |
+| FND-014 | fixed | - |
+| FND-015 | fixed | - |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-016 | low | A 1486-line backup copy of the test file is committed; it is not compiled and must be deleted | fsl-analyze/tests/it/timed_refinement.rs.bak |
+| FND-017 | low | The two new protocol tests carry FR-899-AC-10, which names FR-147's CasTwice fixture; they evidence the FR-899 "Abstract protocol subjects" rule, not that AC | fsl-analyze/tests/it/refinement_protocol.rs:2558,2595 |
