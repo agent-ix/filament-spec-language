@@ -935,6 +935,12 @@ impl AdmittedModels {
         &self.models
     }
 
+    /// Borrow the original model-admission owner, including its genuine rows.
+    /// A call's reference catalog must not rebuild authority from entry slices.
+    pub fn selected_models(&self) -> &SelectedModels {
+        &self.models
+    }
+
     /// The supplied domain package documents, by package identity.
     pub(crate) fn packages(&self) -> &fsl_semantics::model::intake::PackageInput {
         &self.packages
