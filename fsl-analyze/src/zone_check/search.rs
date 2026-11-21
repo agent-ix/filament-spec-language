@@ -1016,6 +1016,8 @@ pub(super) enum Searched {
 
 /// What a run judges its nodes by.
 pub(super) enum Judged<'r> {
+    /// Source closure with the ordinary time-divergence admission check.
+    SourceClosure,
     /// A graph-only run; the caller evaluates its state-graph predicates.
     StateGraph,
     /// An authored clause.
@@ -1179,6 +1181,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         match &self.judged {
             Judged::Claim(claim) | Judged::Liveness(claim) => Some(claim),
             Judged::StateGraph
+            | Judged::SourceClosure
             | Judged::DeadlockFreedom
             | Judged::TimeLockFreedom
             | Judged::Refinement => None,
@@ -1347,7 +1350,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         Ok(found)
     }
 
-    fn search(&mut self) -> Result<Searched, Halt> {
+    pub(super) fn search(&mut self) -> Result<Searched, Halt> {
         let initial = self.timed.initial();
         if initial.is_empty() {
             return Err(self.undecided(ZoneUndecided::NoInitialState));
@@ -1942,7 +1945,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     fn badness(&mut self, node: usize) -> Result<Option<Result<Badness, ()>>, Halt> {
         let claim = match &self.judged {
             Judged::Claim(claim) => claim,
-            Judged::StateGraph => return Ok(None),
+            Judged::StateGraph | Judged::SourceClosure => return Ok(None),
             Judged::DeadlockFreedom => return self.deadlock(node),
             Judged::TimeLockFreedom | Judged::Liveness(_) | Judged::Refinement => return Ok(None),
         };

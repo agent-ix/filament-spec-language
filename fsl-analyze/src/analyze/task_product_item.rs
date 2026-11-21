@@ -539,8 +539,30 @@ fn prove<'a>(
         ..defaults
     };
     let automaton = fsl_eval::simulation::model::TaskAutomaton::new(product);
-    let graph =
-        match crate::zone_check::explore_task_symbolic(&automaton, limits.max_check_work, cancel) {
+    let source = match crate::zone_check::no_release_task_product_certificate(
+        product,
+        claim.clone(),
+        crate::zone_check::ZoneCheckLimits::default(),
+        cancel,
+    ) {
+        Ok(certificate) => certificate,
+        Err(crate::zone_check::ZoneCheckRefusal::Stopped(cause)) => {
+            return TaskProof {
+                verdict: crate::zone_check::stop_cause(cause, cancel)
+                    .map_or(ProofVerdict::Fault, ProofVerdict::Stopped),
+                certificate: None,
+            }
+        }
+        Err(_) => return fault(),
+    };
+    let built = if let Some(certificate) = source {
+        certificate
+    } else {
+        let graph = match crate::zone_check::explore_task_symbolic(
+            &automaton,
+            limits.max_check_work,
+            cancel,
+        ) {
             Ok(graph) => graph,
             Err(SymbolicStop::Uncertified | SymbolicStop::Missed) => {
                 return TaskProof {
@@ -567,20 +589,22 @@ fn prove<'a>(
             }
             Err(SymbolicStop::Refused(_) | SymbolicStop::Fault(_)) => return fault(),
         };
-    let built = match crate::zone_check::task_product_certificate(&automaton, &graph, claim.clone())
-    {
-        Ok(built) => built,
-        Err(
-            TaskCertificateRefusal::Missed
-            | TaskCertificateRefusal::NoDivergence
-            | TaskCertificateRefusal::NoMember,
-        ) => {
-            return TaskProof {
-                verdict: ProofVerdict::Uncertified,
-                certificate: None,
-            }
-        }
-        Err(TaskCertificateRefusal::Shape) => return fault(),
+        let built =
+            match crate::zone_check::task_product_certificate(&automaton, &graph, claim.clone()) {
+                Ok(built) => built,
+                Err(
+                    TaskCertificateRefusal::Missed
+                    | TaskCertificateRefusal::NoDivergence
+                    | TaskCertificateRefusal::NoMember,
+                ) => {
+                    return TaskProof {
+                        verdict: ProofVerdict::Uncertified,
+                        certificate: None,
+                    }
+                }
+                Err(TaskCertificateRefusal::Shape) => return fault(),
+            };
+        built
     };
     let Ok(identity) = fsl_replay::certificate_identity_wire(claim, model) else {
         return fault();

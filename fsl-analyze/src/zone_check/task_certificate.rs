@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::Integer;
-use fsl_eval::simulation::model::{ClockRole, TaskAutomaton};
+use fsl_eval::simulation::model::{ClockRole, TaskAutomaton, TaskProductSystem};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
     CertEdge, CertNode, DivergenceWitness, DivergentTarget, TaskClockCeiling,
@@ -22,6 +22,79 @@ use num_bigint::BigInt;
 
 use super::dbm::Bound;
 use super::task_symbolic::{SymbolicGraph, SymbolicIdentity};
+
+/// Builds a no-reachable-release certificate from the engine's closed source
+/// graph and its own time-divergence admission witness. A declared release is
+/// allowed only when none of its source steps is reachable. `None` means a
+/// release is reachable or the source admits no time-divergent behaviour.
+///
+/// # Errors
+///
+/// Returns the source engine's typed limit, cancellation or expansion refusal.
+pub fn no_release_task_product_certificate(
+    product: &TaskProductSystem<'_, '_>,
+    obligation: OccurrenceKey,
+    limits: super::ZoneCheckLimits,
+    cancel: &filament_exact::Cancel,
+) -> Result<Option<ZoneCertificate<OccurrenceKey>>, super::ZoneCheckRefusal> {
+    use super::search::{Halt, Judged, Run, Searched};
+    let mut run = Run::new(
+        product.source(),
+        Judged::SourceClosure,
+        None,
+        &[],
+        limits,
+        cancel,
+    );
+    let searched = match run.search() {
+        Ok(searched) => searched,
+        Err(Halt::Outcome(searched)) => *searched,
+        Err(Halt::Refusal(refusal)) => return Err(refusal),
+    };
+    let proof = match searched {
+        Searched::Holds { proof, .. } => proof,
+        Searched::Stopped { cause, .. } => return Err(super::ZoneCheckRefusal::Stopped(cause)),
+        Searched::Undecided { .. } => return Ok(None),
+        Searched::Graph { .. } | Searched::HoldsReduced { .. } | Searched::Violated { .. } => {
+            return Err(super::ZoneCheckRefusal::Fault("source-closure-outcome"));
+        }
+    };
+    for edge in run.edges.clone() {
+        if let Some((step, _)) = edge.step {
+            let steps = match run.steps_of(edge.from) {
+                Ok(steps) => steps,
+                Err(Halt::Refusal(refusal)) => return Err(refusal),
+                Err(Halt::Outcome(searched)) => {
+                    return match *searched {
+                        Searched::Stopped { cause, .. } => {
+                            Err(super::ZoneCheckRefusal::Stopped(cause))
+                        }
+                        _ => Err(super::ZoneCheckRefusal::Fault("source-closure-steps")),
+                    }
+                }
+            };
+            let step = steps
+                .get(step)
+                .ok_or(super::ZoneCheckRefusal::Fault("source-closure-step"))?;
+            if product
+                .plan()
+                .releases
+                .iter()
+                .any(|release| release.operation == step.operation())
+            {
+                return Ok(None);
+            }
+        }
+    }
+    let rows = TaskQueueBound::from_checked_task_set(product.plan().task_set)
+        .ok_or(super::ZoneCheckRefusal::Fault("source-closure-queues"))?;
+    let mut certificate = proof.proving(obligation);
+    certificate.task_product = TaskProductCertificate::closed_no_release_product(rows);
+    if certificate.task_product.is_none() {
+        return Err(super::ZoneCheckRefusal::Fault("source-closure-member"));
+    }
+    Ok(Some(certificate))
+}
 
 /// Why no certificate was built from a closed quotient.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

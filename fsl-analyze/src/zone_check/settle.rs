@@ -295,6 +295,14 @@ fn undecided_cause(cause: &ZoneUndecided) -> InconclusiveCause {
 
 /// The V-7 record of an EN-6 run that `cause` stopped.
 fn stopped(cause: ZoneStop, cancel: &Cancel) -> ZoneCheckRecord {
+    match stop_cause(cause, cancel) {
+        Some(cause) => ZoneCheckRecord::incomplete(cause),
+        None => ZoneCheckRecord::failed(),
+    }
+}
+
+/// Preserve the source engine's limit and cancellation identity at adapters.
+pub(crate) fn stop_cause(cause: ZoneStop, cancel: &Cancel) -> Option<IncompleteCause> {
     match cause {
         ZoneStop::LimitReached(limit) => {
             let (limit, value) = match limit {
@@ -310,11 +318,11 @@ fn stopped(cause: ZoneStop, cancel: &Cancel) -> ZoneCheckRecord {
                 ZoneCheckLimit::MaxZoneBytes(value) => (ModelCheckLimit::ZoneMaxZoneBytes, value),
                 ZoneCheckLimit::MaxClocks(value) => (ModelCheckLimit::MaxClocks, value),
             };
-            ZoneCheckRecord::incomplete(IncompleteCause::LimitReached { limit, value })
+            Some(IncompleteCause::LimitReached { limit, value })
         }
         ZoneStop::Cancelled => match cancel.cause() {
-            Some(source) => ZoneCheckRecord::incomplete(IncompleteCause::Cancelled { source }),
-            None => ZoneCheckRecord::failed(),
+            Some(source) => Some(IncompleteCause::Cancelled { source }),
+            None => None,
         },
     }
 }
