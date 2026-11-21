@@ -497,6 +497,30 @@ pub(crate) fn analyze_bound<'a>(
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let shared = read.as_ref().map(crate::provider::Shared::of);
+    let own = read.as_ref().and_then(|read| {
+        fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
+            read.emission().package().bytes(),
+        )
+        .ok()
+    });
+    let mut component_graphs = BTreeMap::new();
+    for (index, component) in components {
+        match crate::provider::read_package(component, binding.packages, limits.emit) {
+            Ok(read) => {
+                if let Ok(graph) = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
+                    read.emission().package().bytes(),
+                ) {
+                    component_graphs.insert(*index, graph);
+                }
+            }
+            Err(crate::provider::NotAdmitted::Refused(refusal)) => {
+                return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
+                    refusal,
+                )));
+            }
+            Err(crate::provider::NotAdmitted::Other) => {}
+        }
+    }
     let component_runs: BTreeMap<RequestIndex, super::RunInput<'_>> = components
         .iter()
         .map(|(index, package)| (*index, super::RunInput::source(package)))
@@ -541,6 +565,10 @@ pub(crate) fn analyze_bound<'a>(
         details,
         protocol_conformance,
         closed_form,
+        graphs: super::DocumentGraphs {
+            own,
+            components: component_graphs,
+        },
     }))
 }
 

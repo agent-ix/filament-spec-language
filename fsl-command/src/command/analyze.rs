@@ -357,7 +357,9 @@ fn run_package(
         PackageRunError::Document(AnalyzeDocumentError::Refused(refusal)) => {
             RunCause::AnalyzeRefused(Box::new(refusal))
         }
-        PackageRunError::Document(AnalyzeDocumentError::Fault) => RunCause::AnalyzeFault,
+        PackageRunError::Document(
+            AnalyzeDocumentError::Fault | AnalyzeDocumentError::Identity(_),
+        ) => RunCause::AnalyzeFault,
     })?;
     Ok(RunResult {
         exit_code: settled.exit_code,
@@ -698,7 +700,7 @@ pub(super) fn settle_items<'u>(
     })
     .map_err(|error| match error {
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
-        AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+        AnalyzeDocumentError::Fault | AnalyzeDocumentError::Identity(_) => RunCause::AnalyzeFault,
     })
 }
 

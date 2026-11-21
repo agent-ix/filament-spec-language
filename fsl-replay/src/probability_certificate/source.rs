@@ -222,16 +222,19 @@ fn check_recompiled(
     limits: ProbabilitySourceLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilitySourceError> {
+    // A certificate an analyze result carries holds its node ids as index
+    // segments of the emitted package (FSpec FR-322); it resolves against the
+    // graph of the package the request names, or, for a source request, of the
+    // package the byte provision recompiles to.
+    let held = HeldCertificate::read(request.certificate);
+    let mut resolved = None;
+    if let (Some(held), Some(emitted)) = (&held, emitted) {
+        resolved = Some(held.resolve(emitted)?);
+    }
+    let certificate = resolved.as_deref().unwrap_or(request.certificate);
     // Refuse a foreign claim before compiler/model work as well as enumeration.
-    let identity =
-        match super::document::certificate_identity(request.certificate, limits.document, cancel) {
-            Ok(identity) => identity,
-            Err(error) => {
-                return super::document::document_admission_error(error).map_err(Into::into)
-            }
-        };
-    if &identity != request.item {
-        return Err(ProbabilityDocumentError::IdentityMismatch.into());
+    if held.is_none() || resolved.is_some() {
+        refuse_foreign_claim(certificate, request.item, limits, cancel)?;
     }
     if request.initial.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported.into());
@@ -324,6 +327,19 @@ fn check_recompiled(
             return Err(ProbabilitySourceError::PackageMismatch);
         }
     }
+    if let (Some(held), None, None) = (&held, emitted, &resolved) {
+        let recompiled = spine::package(&checked, limits.spine.package, cancel)
+            .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
+            .into_value();
+        resolved = Some(held.resolve(recompiled.package().bytes())?);
+        refuse_foreign_claim(
+            resolved.as_deref().unwrap_or_default(),
+            request.item,
+            limits,
+            cancel,
+        )?;
+    }
+    let certificate = resolved.as_deref().unwrap_or(request.certificate);
     let claims = checked.package().graph().probabilistic_model().claims();
     super::bind_claim(claims, request.item, cancel).map_err(ProbabilityDocumentError::from)?;
     let snapshots = request.provision.snapshots();
@@ -346,9 +362,60 @@ fn check_recompiled(
         &system,
         claims,
         request.item,
-        request.certificate,
+        certificate,
         limits.document,
         cancel,
     )
     .map_err(Into::into)
+}
+
+/// Refuse a certificate that names a claim other than the requested one.
+fn refuse_foreign_claim(
+    certificate: &[u8],
+    item: &ObligationIdentity,
+    limits: ProbabilitySourceLimits,
+    cancel: &Cancel,
+) -> Result<(), ProbabilitySourceError> {
+    let identity = match super::document::certificate_identity(certificate, limits.document, cancel)
+    {
+        Ok(identity) => identity,
+        Err(error) => {
+            return super::document::document_admission_error(error)
+                .map(|_| ())
+                .map_err(Into::into)
+        }
+    };
+    if &identity != item {
+        return Err(ProbabilityDocumentError::IdentityMismatch.into());
+    }
+    Ok(())
+}
+
+/// A certificate document whose identity names its node by index segments of
+/// an emitted package (FSpec FR-322 "Operand index segments"), the form an
+/// analyze result writes.
+struct HeldCertificate(serde_json::Value);
+
+impl HeldCertificate {
+    /// The document, when its identity path holds an index segment.
+    fn read(bytes: &[u8]) -> Option<Self> {
+        let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+        let held = value["identity"]["node_id"]["path"]
+            .as_array()?
+            .iter()
+            .any(|segment| segment.get("node").is_some());
+        held.then_some(Self(value))
+    }
+
+    /// The document with every node id resolved against `package`'s graph,
+    /// written as canonical structural bytes.
+    fn resolve(&self, package: &[u8]) -> Result<Vec<u8>, ProbabilityDocumentError> {
+        let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(package)
+            .map_err(|_| ProbabilityDocumentError::Malformed)?;
+        let structural = graph
+            .structural_value(&self.0)
+            .map_err(|_| ProbabilityDocumentError::Malformed)?;
+        fsl_foundation::canonical_json::encode(&structural)
+            .map_err(|_| ProbabilityDocumentError::Malformed)
+    }
 }

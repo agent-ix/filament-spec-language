@@ -412,6 +412,12 @@ fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
     assert_eq!(label(&items[0]), "proved", "{document}");
     assert_proof_not_accepted(&items[1]);
     assert_eq!(items[3]["claim_name"], "Capped", "{document}");
+    // FR-621-AC-17: a premise item over a dependency names it in `package`
+    // and holds its node ids against that dependency's graph; the composition
+    // items over the request's own package carry no such member.
+    assert!(items[2]["package"].is_string(), "{document}");
+    assert!(items[3]["package"].is_string(), "{document}");
+    assert!(items[0].get("package").is_none(), "{document}");
     assert_eq!(label(&items[3]), "proved", "{document}");
     assert_eq!(items[4]["claim_name"], "Capped", "{document}");
     assert_eq!(label(&items[4]), "unsupported", "{document}");
@@ -777,6 +783,7 @@ fn a_cycle_without_a_lattice_refuses_the_item() {
 /// derive them, and a guarantee under another assumption set is another
 /// item with an equal request.
 #[trace("FR-1044-AC-8")]
+#[trace("TC-3154", "FR-621-AC-17")]
 #[test]
 fn a_shared_premise_is_written_once() {
     let ws = Workspace::new("compose-ac8");
