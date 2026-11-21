@@ -145,7 +145,15 @@ fn run_package_resolving(
     };
     // FR-533 "Types the bytes cannot project": the bytes carry no declared
     // enumeration index, so the forms read no enumeration by name.
-    let forms = Forms::new(world.types(), &[]);
+    let universe_of = |declared: &filament_exact::EffectiveId| {
+        objects.population_universe_for_type(declared).cloned()
+    };
+    let object_world = call.snapshot.as_ref().map(|_| super::run_value::World {
+        objects,
+        universe_of: &universe_of,
+    });
+    let forms =
+        Forms::new(world.types(), &[]).in_world(package.package().name(), object_world.as_ref());
     let supplied = admit_wire_arguments(&forms, &parameters, call)?;
     let arguments = bind_arguments(&parameters, &supplied)?;
     let mut meter = Meter::new(call.accounting).with_cancel(cancel.clone());
