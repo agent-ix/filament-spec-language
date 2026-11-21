@@ -987,6 +987,32 @@ impl<W: Exact> Zone<W> {
         Ok(regions)
     }
 
+    /// [`Zone::region_normalize`] under a work budget: `charge` is called
+    /// once per elementary step, and `Ok(None)` means it answered `false`
+    /// first, so the regions are not all known.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Zone::region_normalize`].
+    pub fn region_normalize_charged(
+        &self,
+        ceilings: &[W],
+        diagonals: &[DiagonalPredicate<W>],
+        charge: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<Vec<Self>>, ZoneError> {
+        let mut regions = Vec::new();
+        let flow = self.walk_regions(ceilings, diagonals, charge, &mut |region| {
+            regions.push(region.clone());
+            Ok(true)
+        })?;
+        if matches!(flow, Flow::Exhausted) {
+            return Ok(None);
+        }
+        regions.sort();
+        regions.dedup();
+        Ok(Some(regions))
+    }
+
     /// Whether this canonical zone, closed under the refined-region
     /// relation, is included in canonical `target`: every refined region
     /// this zone meets lies wholly in `target` (FR-418's coverage of a
