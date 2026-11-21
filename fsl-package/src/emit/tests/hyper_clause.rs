@@ -1611,11 +1611,8 @@ fn a_read_must_stay_in_the_component_its_slot_root_names() {
                     .collect();
                 panic!("Linked package form: {error:?}; operation metadata: {metadata:?}");
             });
-        assert!(
-            bare.project_hyper_holds(root.occurrence(), form.atoms[0].0)
-                .is_ok(),
-            "the let-bound receiver retains its initializer's component"
-        );
+        bare.project_hyper_holds(root.occurrence(), form.atoms[0].0)
+            .unwrap_or_else(|error| panic!("the Linked alias projects: {error:?}"));
     });
 
     let crossing =
