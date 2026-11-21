@@ -126,11 +126,13 @@ fn a_value_synthesis_is_one_synthesis_request_node() {
         assert_eq!(target(name)["node_tag"], "bounded_domain", "{node}");
         assert_eq!(target(name)["semantic_form"], "integer_range", "{node}");
     }
-    assert_eq!(target("candidate")["node_tag"], "parameter", "{node}");
+    // The candidate is the `value`/`parameter` node of the declaration's own
+    // name; a binder is referenced by its id and is not a graph node.
     assert!(
-        target("candidate")["node_id"]["path"]
+        binding(node, "candidate")["value"]["target"]["path"]
             .as_array()
-            .is_some_and(|path| path.contains(&json!("Pick"))),
+            .is_some_and(|path| path.contains(&json!("parameter"))
+                && path.contains(&json!("Pick"))),
         "the candidate parameter is named for the declaration: {node}"
     );
     assert_eq!(
@@ -170,7 +172,7 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     let unit = format!(
         "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-         satisfies {{ Reach.versionNumber >= 1 }};\n"
+         satisfies {{ Reach = Reach }};\n"
     );
     let bytes = package_bytes(&unit, &packages);
     let wire: Value = serde_json::from_slice(&bytes).expect("a JSON package");
@@ -186,19 +188,22 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     assert_eq!(target("grammar")["node_tag"], "model", "{node}");
     assert_eq!(target("grammar")["semantic_form"], "object_type", "{node}");
     assert_eq!(target("domain")["semantic_form"], "integer_range", "{node}");
-    let candidate = target("candidate");
-    assert_eq!(candidate["node_tag"], "parameter", "{candidate}");
+    // The binder is referenced by id, not a graph node: it is a
+    // `value`/`parameter` named for the declaration, typed by the object type.
+    let candidate = &binding(node, "candidate")["value"]["target"];
+    let path = candidate["path"].as_array().expect("a path");
     assert!(
-        candidate["node_id"]["path"]
-            .as_array()
-            .is_some_and(|path| path.contains(&json!("Reach"))),
-        "the candidate parameter is named for the declaration: {candidate}"
+        path.contains(&json!("parameter")) && path.contains(&json!("Reach")),
+        "the candidate is the declaration's own parameter: {candidate}"
     );
+    let grammar = &binding(node, "grammar")["value"]["target"]["path"];
     assert!(
-        candidate
-            .to_string()
-            .contains(&binding(node, "grammar")["value"]["target"].to_string()),
-        "the candidate is typed by the object type: {candidate}"
+        grammar
+            .as_array()
+            .expect("a path")
+            .iter()
+            .all(|step| path.contains(step)),
+        "the candidate is typed by the object type: {candidate} vs {grammar}"
     );
     assert!(
         !binding(node, "satisfies")["value"].is_null(),
