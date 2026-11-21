@@ -6796,7 +6796,14 @@ impl PackageDeclarations {
                         },
                     ));
                 }
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    // A cancelled handle denies every later charge, so the
+                    // rest of the declarations add only more charges.
+                    if cancel.tripped().is_some() {
+                        break;
+                    }
+                }
             }
         }
         // FR-094: selected model type references root their named units even
@@ -6815,6 +6822,9 @@ impl PackageDeclarations {
         for enum_binding in scope.enums() {
             if let Err(refusal) = lowering.enum_nodes(enum_binding) {
                 refusals.push(refusal);
+                if cancel.tripped().is_some() {
+                    break;
+                }
             }
         }
         // FR-094 "Dimension equivalence": one node per admitted equivalence,
