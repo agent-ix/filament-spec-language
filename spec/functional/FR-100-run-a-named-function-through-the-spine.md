@@ -409,7 +409,7 @@ carries. FR-286 preserves an incomplete `reasons` array unchanged. Its members a
   - `{"kind": "incomplete", "reasons": [R, ...]}`, where each `R` is a
     typed incomplete reason with `code` and, when it has a payload, `fields`.
     The `fields` object maps field names to text. `missing-valuation` has
-    `record`, the exact lowercase-hex record identity; `missing-membership`
+    `record`, the exact record identity text; `missing-membership`
     and `missing-closure` have no fields; `missing-relationship` and
     `incomplete-relationship-extent` have `required`, the UTF-8 canonical JSON
     text of the complete required slot, serialized by the canonical JSON
@@ -764,7 +764,7 @@ apply to it.
 | FR-100-AC-21 | A completed function run's `spine-run-result/1` document carries no `axes` member. | Test (TC-1582) |
 | FR-100-AC-22 | A request whose `package` selects a checked package and which carries no `program` is admitted and runs its `call` from the package, the edition read from the package's `lock`; a request carrying neither `program` nor `package` refuses `invalid-request` at stage `request` naming `program`, exit 20, and one carrying `package` and `integer_division` refuses `invalid-request` naming `integer_division` before the package file is opened. | Test (TC-3019) |
 | FR-100-AC-23 | A package request admits the optional top-level `sources` array under FR-1039's caller source contract. The same member beside `program`, both as `[]` and as a non-empty valid array naming an unavailable file, refuses `invalid-request` at stage `request`, exit 20, naming `/request/sources`, before any file is opened. A source request without the member retains its existing compilation sources and outcomes. | Test |
-| FR-100-AC-24 | A correlation incomplete result writes `outcome` `{"kind":"incomplete","reasons":[...]}` with each typed reason's exact code and fields; a missing required relationship field is the canonical slot JSON text, a missing valuation field is lowercase-hex identity text, and a resource-limit incomplete keeps the existing `limit` form without `reasons`. | Test (`tests/it/native_run_relationships.rs::resolver_incomplete_reasons_preserve_typed_payloads`) |
+| FR-100-AC-24 | A correlation incomplete result writes `outcome` `{"kind":"incomplete","reasons":[...]}` with each typed reason's exact code and fields; a missing required relationship field is the canonical slot JSON text, a missing valuation field is the exact record identity text, and a resource-limit incomplete keeps the existing `limit` form without `reasons`. | Test (`tests/it/native_run_relationships.rs::resolver_incomplete_reasons_preserve_typed_payloads`) |
 
 The typed-call acceptance criteria supplement all existing scalar oracles;
 FR-100-AC-13 is the QSL-656 accounting-object criterion.
