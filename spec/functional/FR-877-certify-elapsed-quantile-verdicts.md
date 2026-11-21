@@ -48,10 +48,13 @@ every scheduler delivers within 2 ms with probability at least `9/10`:
 ## Behavior
 
 - The measure SHALL activate at the first observation where `A` holds,
-  complete at the first later observation where `B` holds, and be censored
-  when the elapsed clock passes `W` first; the elapsed clock SHALL be reset
-  at activation, advance with every delay while active, freeze at completion
+  complete at the first observation at or after activation where `B`
+  holds, with `M = 0` when `B` holds at the activating observation (FR-196,
+  FSpec FR-407), and be censored when the elapsed clock passes `W` first;
+  the elapsed clock SHALL be reset at activation, advance with every delay while active, freeze at completion
   or censoring, and be capped at `W + 1`.
+- A censored measure SHALL exceed every finite threshold, so its terminal
+  reward SHALL be `−q` for both `[M <= c]` and `[M < c]`.
 - `<= c` SHALL be decided as `min E[[activated] · ([M <= c] − q)] >= 0`,
   certified by an `exact` or `lower` document of that minimum. `>= c` SHALL
   be decided as `max E[[activated] · ([M < c] − q)] < 0`, certified by an
