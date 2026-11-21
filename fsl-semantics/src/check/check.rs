@@ -3917,6 +3917,35 @@ impl<'a> Typer<'a> {
         Err(refuse(location, CheckCause::MissingName(name.to_owned())))
     }
 
+    /// Whether an unconverted integer operand lowers at the builtin `Integer`
+    /// node: an integer division, or a control node whose every yielded leaf
+    /// does (FR-495-AC-21, AC-23).
+    fn lowers_at_integer(&self, operand: &TypedOperand) -> bool {
+        if operand.conversion_target.is_some()
+            || !matches!(operand.node.value_type, ValueType::Int(_) | ValueType::Integer)
+        {
+            return false;
+        }
+        let mut leaves = 0_usize;
+        let mut pending = vec![&operand.node];
+        while let Some(node) = pending.pop() {
+            match &node.kind {
+                NodeKind::IntegerDivision { .. } => leaves += 1,
+                NodeKind::If {
+                    then, otherwise, ..
+                } => {
+                    let branches = [self.body.get(*then), self.body.get(*otherwise)];
+                    if branches.iter().any(Option::is_none) {
+                        return false;
+                    }
+                    pending.extend(branches.into_iter().flatten());
+                }
+                _ => return false,
+            }
+        }
+        leaves > 0
+    }
+
     /// `left = right` or `left != right` over its two typed operands. The
     /// pair is first checked with the operands as written, so a conversion
     /// is admitted or refused as such; the stored equality then compares the
@@ -4008,6 +4037,19 @@ impl<'a> Typer<'a> {
                     location,
                 )
             });
+        }
+        // FR-495-AC-24: two integer operands that both lower at the builtin
+        // `Integer` node (an integer division, or a control node over one) are
+        // compared as that node, never as their checked intervals, so
+        // `n mod 3 = n mod 2` checks. An operand converted or of another type
+        // keeps the equality matrix.
+        let (mut left, mut right) = (left, right);
+        if self.lowers_at_integer(&left) && self.lowers_at_integer(&right) {
+            for operand in [&mut left, &mut right] {
+                let integer = EqualityOperand::typed(ValueType::Integer);
+                operand.checked = integer.clone();
+                operand.stored = integer;
+            }
         }
         let check = |left: &EqualityOperand, right: &EqualityOperand| {
             self.scope

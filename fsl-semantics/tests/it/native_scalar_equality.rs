@@ -546,3 +546,37 @@ fn a_declared_bytes_record_makes_the_native_name_ambiguous() {
         ("ambiguous_declaration", "ambiguous-name")
     );
 }
+
+/// FR-495-AC-24: an equality between two integer division applications of
+/// different proved ranges checks, both operands being the builtin `Integer`
+/// the applications lower at.
+#[trace("FR-495-AC-24", "TC-2873")]
+#[test]
+fn integer_division_equality_ignores_the_checked_interval_of_either_operand() {
+    for body in [
+        "n mod 3 = n mod 2",
+        "n mod 3 != n mod 2",
+        "n div 2 = n mod 3",
+        "(if c then n mod 3 else n mod 2) = n mod 2",
+    ] {
+        let declarations = format!(
+            "profile d = \"filament.value.integer-division.euclidean/v1\";\n\
+             function f using v(n: Int[0, 100], c: Boolean): Boolean pure {{ {body} }}"
+        );
+        if let Err(refusals) = check(&declarations) {
+            panic!("{body} checks, got {refusals:?}");
+        }
+    }
+}
+
+/// FR-495-AC-24: the division operand is an integer, so an equality of it
+/// with an enum still refuses `ill_typed`/`type-mismatch`.
+#[trace("FR-495-AC-24", "TC-2873")]
+#[test]
+fn integer_division_equality_against_an_enum_still_refuses() {
+    let declarations = "enum Color { Red, Green }\n\
+        function f using v(n: Int[0, 100], k: Color): Boolean pure { n mod 3 = k }";
+    let refusals = check(declarations).expect_err("an integer is not an enum");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].cause.cause(), Some("type-mismatch"));
+}

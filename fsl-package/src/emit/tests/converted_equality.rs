@@ -1744,9 +1744,12 @@ fn integer_division_operands_retain_integer_source_witnesses() {
     for (body, positions) in [
         ("(if c then n mod 3 else n mod 2) = 0", vec![0]),
         ("n mod 3 = n mod 3", vec![0, 1]),
+        ("n mod 3 = n mod 2", vec![0, 1]),
+        ("n div 2 = n mod 3", vec![0, 1]),
     ] {
         let emission = emitted(&format!(
-            "function f using v(n: Int[0, 100], c: Boolean): Boolean pure {{ {body} }}"
+            "profile d = \"filament.value.integer-division.euclidean/v1\";\n\
+             function f using v(n: Int[0, 100], c: Boolean): Boolean pure {{ {body} }}"
         ));
         let sources: Vec<_> = emission
             .equality_fact_witness_rows()
