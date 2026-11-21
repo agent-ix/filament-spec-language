@@ -26,7 +26,8 @@ the engines read. Scope: FR-940-AC-16 and FR-940-AC-20.
    `BarePackage` of the handoff directory; rebuild each with
    `CheckedHyperClause::of_package_form`.
 3. Compare each rebuilt clause with S3's checked clause, renumbering S3's
-   atoms by FR-532's atom index.
+   atoms by FR-532's atom index and canonicalizing only S3's formula `Holds`
+   spans to the selected `claim_names` row's `declaration_region` span.
 4. Repeat step 3 with a test-only view that files the existential conjunct
    under `μ_U`.
 5. Compile the unit with `Called`, `Selected`, `Indexed`, `LetBound`,
@@ -37,15 +38,19 @@ the engines read. Scope: FR-940-AC-16 and FR-940-AC-20.
 
 ## Expected Results
 
-- Step 2: the two forms of each clause are equal.
+- Step 2: the two forms of each clause are equal, and every
+  `PackageHyperHolds.span` and rebuilt formula `Holds` span equals the
+  selected `claim_names` row's `declaration_region` span.
 - Step 3: `Equal`'s copy group is the class `[a, b]` with the generator
   `{first: 0, second: 1, atoms: [0]}`, and a clause whose body is
   `always holds(c.value @ a <= 3)` alone has an empty copy group.
 - Step 3: name, span, profile, aliases, read object parameters, quantifier
   prefix with fairness sets, atom slots, conjunct count per part,
   `align skip`, form, copy-group classes, occurrence, formula arena, atom
-  indices and copy generators are equal; `condition` of every rebuilt atom
-  is `None`.
+  indices and copy generators are equal after step 3's atom renumbering and
+  diagnostic-span canonicalization; every semantic node kind, operator,
+  level and operand structure remains compared; `condition` of every
+  rebuilt atom is `None`.
 - Step 4: the comparison reports the conjunct partition as different.
 - Step 5: `Called`, `Selected` and `Indexed` have the class `[a, b]` on both
   sides and settle `proved`, basis `reduced`, `certified`, with equal
