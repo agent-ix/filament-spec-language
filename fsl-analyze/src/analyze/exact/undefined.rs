@@ -150,23 +150,8 @@ fn materialize_inner(
         .map_err(|_| ProbabilityWitnessError::Refused)?;
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|binding| &binding.reference);
-    let measured = matches!(
-        &claim.form,
-        ProbForm::Quantile { .. }
-            | ProbForm::MeanOfFraction { .. }
-            | ProbForm::Probability {
-                event: Event::Compare { .. },
-                ..
-            }
-    );
-    let document_limits = ProbabilityDocumentLimits {
-        bytes: limits.document.bytes,
-        storage_bytes: limits.document.storage_bytes,
-        states: limits.model.limits.max_states,
-        edges: limits.model.limits.max_transitions,
-        scalar_bits: limits.max_rational_bits,
-        accounting: system.meter_limits(),
-    };
+    let measured = claim.bounded_measure();
+    let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let mut measure_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
     let mut measure_storage = 0;

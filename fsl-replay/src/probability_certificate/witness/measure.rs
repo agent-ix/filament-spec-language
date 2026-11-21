@@ -7,14 +7,7 @@ use filament_exact::OrderingOperator as Order;
 use fsl_eval::probabilistic::{Accumulator, MeasureError, MonitorState};
 
 fn limits_of(system: &ModelSystem<'_>, limits: &ExactProbLimits) -> ProbabilityDocumentLimits {
-    ProbabilityDocumentLimits {
-        bytes: limits.document.bytes,
-        storage_bytes: limits.document.storage_bytes,
-        states: limits.model.limits.max_states,
-        edges: limits.model.limits.max_transitions,
-        scalar_bits: limits.max_rational_bits,
-        accounting: system.meter_limits(),
-    }
+    ProbabilityDocumentLimits::for_exact(limits, system.meter_limits())
 }
 fn measure_error(error: MeasureError) -> ProbabilityWitnessError {
     bounded::document_error(ProbabilityDocumentError::from(error))

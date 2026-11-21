@@ -223,6 +223,21 @@ pub struct ProbabilityDocumentLimits {
     pub accounting: filament_exact::ScalarLimits,
 }
 
+impl ProbabilityDocumentLimits {
+    /// Project the existing exact-probability ceilings into the document checker
+    /// while retaining the caller's actual scalar accounting scope.
+    pub fn for_exact(limits: &ExactProbLimits, accounting: filament_exact::ScalarLimits) -> Self {
+        Self {
+            bytes: limits.document.bytes,
+            storage_bytes: limits.document.storage_bytes,
+            states: limits.model.limits.max_states,
+            edges: limits.model.limits.max_transitions,
+            scalar_bits: limits.max_rational_bits,
+            accounting,
+        }
+    }
+}
+
 /// A document never becomes accepted evidence when one of these occurs.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProbabilityDocumentError {

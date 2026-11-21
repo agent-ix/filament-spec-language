@@ -295,14 +295,7 @@ fn run_timed(
         } => bound,
         _ => return not_yet(),
     };
-    let document_limits = ProbabilityDocumentLimits {
-        bytes: limits.document.bytes,
-        storage_bytes: limits.document.storage_bytes,
-        states: limits.model.limits.max_states,
-        edges: limits.model.limits.max_transitions,
-        scalar_bits: limits.max_rational_bits,
-        accounting: meter,
-    };
+    let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
     let admitted = ModelSystem::new_with_cancel(simulation.clone(), cancel);
     if let Some(cause) = cancel.tripped() {
         return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
@@ -634,14 +627,7 @@ fn run_timed_mean(
         expansion: simulation.expansion,
         meter: &meter,
     };
-    let document_limits = ProbabilityDocumentLimits {
-        bytes: limits.document.bytes,
-        storage_bytes: limits.document.storage_bytes,
-        states: limits.model.limits.max_states,
-        edges: limits.model.limits.max_transitions,
-        scalar_bits: limits.max_rational_bits,
-        accounting: meter,
-    };
+    let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
     let system = match ModelSystem::new_with_cancel(simulation.clone(), cancel) {
         Ok(system) => system,
         Err(failure) => return build_refusal(ProductRefusal::Admission(failure), subject),
@@ -837,15 +823,7 @@ fn run(
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
-    if matches!(
-        &request.claim.form,
-        ProbForm::Quantile { .. }
-            | ProbForm::MeanOfFraction { .. }
-            | ProbForm::Probability {
-                event: Event::Compare { .. },
-                ..
-            }
-    ) {
+    if request.claim.bounded_measure() {
         return measure::run(request, cancel, tamper, tamper_witness);
     }
     if matches!(&request.claim.form, ProbForm::MeanTime { .. }) {
@@ -914,14 +892,7 @@ fn run(
     if !claim.fairness.is_empty() && !bounded_fair {
         return not_yet();
     }
-    let document_limits = ProbabilityDocumentLimits {
-        bytes: limits.document.bytes,
-        storage_bytes: limits.document.storage_bytes,
-        states: limits.model.limits.max_states,
-        edges: limits.model.limits.max_transitions,
-        scalar_bits: limits.max_rational_bits,
-        accounting: meter,
-    };
+    let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
     let reward_system = if expected_reward {
         let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
             return not_yet();
@@ -2022,15 +1993,7 @@ fn replay_produced_witness(
     mut producer_storage: u64,
 ) -> EngineReport {
     use crate::exact_probabilistic::ProductAction;
-    let measure = matches!(
-        &claim.form,
-        ProbForm::Quantile { .. }
-            | ProbForm::MeanOfFraction { .. }
-            | ProbForm::Probability {
-                event: Event::Compare { .. },
-                ..
-            }
-    );
+    let measure = claim.bounded_measure();
     let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
         return not_yet();
     };

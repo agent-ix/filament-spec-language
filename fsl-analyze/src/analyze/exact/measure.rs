@@ -43,14 +43,7 @@ pub(super) fn run(
         Err(error) => return document_failure(error.into(), subject),
     };
     let reference = binding.as_ref().map(|binding| &binding.reference);
-    let document_limits = ProbabilityDocumentLimits {
-        bytes: limits.document.bytes,
-        storage_bytes: limits.document.storage_bytes,
-        states: limits.model.limits.max_states,
-        edges: limits.model.limits.max_transitions,
-        scalar_bits: limits.max_rational_bits,
-        accounting: scalar,
-    };
+    let document_limits = ProbabilityDocumentLimits::for_exact(&limits, scalar);
     let mut meter = filament_exact::Meter::new(scalar).with_cancel(cancel.clone());
     let mut storage = 0;
     let kind = match &claim.form {
@@ -377,14 +370,7 @@ fn refute(
     use crate::exact_probabilistic::{
         produce_quantile_witness, produce_witness, WitnessError, WitnessScope, WitnessWork,
     };
-    let document_limits = ProbabilityDocumentLimits {
-        bytes: limits.document.bytes,
-        storage_bytes: limits.document.storage_bytes,
-        states: limits.model.limits.max_states,
-        edges: limits.model.limits.max_transitions,
-        scalar_bits: limits.max_rational_bits,
-        accounting: system.meter_limits(),
-    };
+    let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let kind = if matches!(claim.form, ProbForm::Quantile { .. }) {
         MeasurePayoffKind::Satisfied
     } else {
@@ -566,14 +552,7 @@ fn refute_mean(
     let Some(package) = system.source_package() else {
         return not_yet();
     };
-    let document_limits = ProbabilityDocumentLimits {
-        bytes: limits.document.bytes,
-        storage_bytes: limits.document.storage_bytes,
-        states: limits.model.limits.max_states,
-        edges: limits.model.limits.max_transitions,
-        scalar_bits: limits.max_rational_bits,
-        accounting: system.meter_limits(),
-    };
+    let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let document = match measure_probability_certificate_document(
         system,
         package.graph().probabilistic_model().claims(),

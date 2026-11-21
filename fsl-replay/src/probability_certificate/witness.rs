@@ -277,15 +277,7 @@ fn replay_probabilistic_witness_impl(
     if witness.subsystem.is_some() {
         return measure::replay_subsystem(system, claim, witness, limits, cancel);
     }
-    if matches!(
-        &claim.form,
-        ProbForm::Quantile { .. }
-            | ProbForm::MeanOfFraction { .. }
-            | ProbForm::Probability {
-                event: fsl_semantics::check::Event::Compare { .. },
-                ..
-            }
-    ) {
+    if claim.bounded_measure() {
         return measure::replay(system, claim, witness, limits, cancel);
     }
     if matches!(claim.form, ProbForm::Probability { .. }) {
