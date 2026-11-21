@@ -94,11 +94,15 @@ pub(super) fn run_bytes(
         return Ok(None);
     };
     let mut request: wire::Request = super::request(bytes)?;
+    // A `synthesis` beside this member is refused by the synthesis run's own
+    // mutual-exclusion check (FR-1037), which names every excluded member.
+    if request.synthesis.is_some() {
+        return Ok(None);
+    }
     if request.call.is_some()
         || request.clause.is_some()
         || request.items.is_some()
         || request.tl_lowering.is_some()
-        || request.synthesis.is_some()
     {
         return Err(RunCause::ClauseRequest {
             member: "verification_plan".to_owned(),
