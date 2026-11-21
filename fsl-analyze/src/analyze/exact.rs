@@ -340,6 +340,15 @@ fn run_timed(
     };
     let (values, policy) = match decide_bounded_event(&product, bound, &limits) {
         Ok(FhResult::Exact { values, policy }) => (values, policy),
+        Err(FhError::PolicyIterationLimit) => {
+            return settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                    value: limits.max_policy_iterations,
+                },
+                subject,
+            );
+        }
         Ok(FhResult::Bounds { .. } | FhResult::PrecisionBudget { .. }) | Err(FhError::Cycle) => {
             return not_yet();
         }
@@ -1053,6 +1062,15 @@ fn run(
                     &ExactProbBuildIssue::PrecisionBudget {
                         lower: lower.rational(),
                         upper: upper.rational(),
+                    },
+                    subject,
+                );
+            }
+            Err(FhError::PolicyIterationLimit) => {
+                return settled(
+                    &ExactProbBuildIssue::Limit {
+                        limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                        value: limits.max_policy_iterations,
                     },
                     subject,
                 );
