@@ -1,0 +1,164 @@
+---
+id: SR-20261121003343002
+title: "gap-analysis — package main-red repairs"
+type: SpecReview
+analysis: gap-analysis
+scope: "agent-ix/filament-spec-language; QSL-2271; frozen PR3343; fsl-package/src/introduced_binders.rs; spec/functional/FR-531; tests/it/{bare_package,temporal_package_route,temporal_package_route_formula}.rs"
+review_set: subset
+---
+
+## Summary
+
+Ticket: QSL-2271; draft PR #3343. Frozen head `92ef76b5db56573f8319f7d8faa3727e9e7ec6ae`, base `660a550b40b068df5337155009e009299654f3b1`. Exactly five changed files were examined. No Cargo, build, runtime test, pin, checkout, source edit or branch mutation was performed. Delivery remains after the current QSL-2726 slice; this is review readiness, not test acceptance or ticket completion.
+
+Tools: quoin 0.36.8; quire 0.52.0 (engine 0.62.2); spec-artifacts-process v0.36.0. The installed authoring contract was fetched through `quoin write . --types SpecReview`. No applicable frontmatter `type: AssuranceProfile` exists in the local specification tree. The assigned bounded review selects code/Rust, scoped gap analysis, specification base and EARS. Other specification lenses are not separately applicable: no artifact IDs, relationship edges, schemas, wire grammar, evidence method, dependency boundary or domain-object definition changes. Existing requested capability inventory repair is not new repository file-tracking ceremony.
+
+## Verdict
+
+PASS — no findings in the explicitly assigned source/specification review scope. Runtime verification and delivery hold remain in force.
+
+## Coverage
+
+Plan completion: not assessed
+
+Reconciliation: current `quire matrix --scope <repo> --format json`, exit 0, supported static fallback; no run evidence read. The preferred `quoin matrix --repo <repo> --json` exited 1 with `CORE_REFUSED: request exceeds the accepted size`; exact reproduction is retained in tool-reproduction.json and matrix.stderr. No older binary or cached matrix was used.
+
+The whole matrix contains 633 document groups: 4868 tagged, 1141 untagged, 105 method-without-symbol, 13 retired and 81 tagged-by-ignored-test criteria. These counts are disclosed, not a repository-wide assurance claim. The explicit bounded dispatch adjudicates the changed behavior only: FR-390-AC-68, FR-531-AC-9 and FR-531-AC-24 are all tagged; their complete engine records are retained in matrix-excerpt.json. The strengthened three IEEE unit symbols bind to FR-390-AC-68, the public API inventory test binds to AC-9, and the repaired writer test binds to AC-24.
+
+`quire coverage --scope <repo> --json` exits 0. Its whole-repository extraction census is 13650 Rust candidates, 13080 tagged and 12559 bound, with 22761 diagnostics and 5818 untracked-symbol records. Relevant external FSpec trace tags are not local criterion declarations; their actual FR-322-AC-460/461 text was independently read. Existing explanatory-comment marker advisories do not erase the actual attribute-bound scoped tests. No new trace attribute or criterion was added. No global coverage completeness, evidence-store PASS or runtime PASS is claimed.
+
+Reverse audit of the changed surface maps the shared scope walker to FR-390 rule 3/AC-68 and FR-940's bare-clause binder invariant, native-join sequencing to FR-531-AC-24, inventory repair to AC-9, declaration-refusal expectations to FSpec FR-322-AC-460/461, and the nonreserved record clock to the existing temporal clock rule. The only added helper is test-only retained-dependency enumeration called by the real writer boundary test. No new unspecified production behavior, source/test stub, ignored test or vacuous assertion was found in this bounded change. No new runtime claim is being substituted for the held eight-test verification.
+
+## Findings
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-001 | low | No findings (placeholder) | - |
+
+## Examined scope
+
+Synthetic capability-row part suffixes locate verbatim fragments; they are not new requirement IDs. Longer existing criteria are split into verbatim excerpts.
+
+```yaml
+{
+  "clean": true,
+  "scope": [
+    {
+      "id": "FR-390-AC-68",
+      "path": "spec/functional/FR-390-evaluate-a-protocol-node-expression-from-a-checked-package.md",
+      "role": "examined",
+      "excerpt": "Over recipe **R**'s `Full` recovery predicate (`sum(receipt in recovered.receipts: receipt) = target and not activated`), the slot lists the sources `target`, `activated` and `recovered` and not `receipt`, on the bare route; the same holds with the `sum` replaced by a `let` binder bound to it, with two nested collection queries of distinct names, with each of `forall`, `exists`, `filter` and `map`, and with a binder the body never reads (alone and nested), none of those binders being a source. The genuine `case Shape::Circle(sum<M::Total>(receipt in recoveredFull.receipts: receipt)) "
+    },
+    {
+      "id": "FR-390-AC-68",
+      "path": "spec/functional/FR-390-evaluate-a-protocol-node-expression-from-a-checked-package.md",
+      "role": "examined",
+      "excerpt": "{ Empty: targetFull; Circle(r): r; }` form in `Full`'s recovery predicate is admitted by the strict reader, its arm binder `r` is not a source on either route, and source and bare routes return equal Boolean outcomes and ordered charge logs for matching, mismatching, empty and activated supplies. A supply that adds a key for the introduced binder refuses `invalid_runtime_input`/`unknown-member` before any charge, and the predicate evaluates to the value its text states over a supply of the three sources. A query binder named as a readable source is refused by the checker as `Ambiguou"
+    },
+    {
+      "id": "FR-390-AC-68",
+      "path": "spec/functional/FR-390-evaluate-a-protocol-node-expression-from-a-checked-package.md",
+      "role": "examined",
+      "excerpt": "sName`."
+    },
+    {
+      "id": "FR-531-AC-9",
+      "path": "spec/functional/FR-531-evaluate-from-a-checked-package-read-from-its-bytes-alone.md",
+      "role": "examined",
+      "excerpt": "For each public method of `EvidencePackage` and each method of the `CheckedPackageEvaluation` trait, enumerated by a test that reads those two items' declarations in the crate source with `syn` and compares the names to the first column of the inventory table, the table has exactly one row: available from the bare package, or listed as not carried with a reason; a method added to either type without a row fails the test."
+    },
+    {
+      "id": "FR-531-AC-24",
+      "path": "spec/functional/FR-531-evaluate-from-a-checked-package-read-from-its-bytes-alone.md",
+      "role": "examined",
+      "excerpt": "`V2ReadLimits` has a required `storage` member and no `Default`; a read's evaluation view over limits whose `storage` is exactly the measured join storage succeeds and over one unit less returns `ViewFailure::Exhausted` with `ExhaustedStorage`, whose refusal names `i2.native_join_storage`; `EvidencePackage::from_read` and `from_emission` over a budget one unit short of the source join return `PackageMismatch::Exhausted`; the handoff writer over `native_join` one unit short returns `Error::NativeJoinExhausted` and writes no directory."
+    },
+    {
+      "id": "FR-531-capability-row-part-1",
+      "path": "spec/functional/FR-531-evaluate-from-a-checked-package-read-from-its-bytes-alone.md",
+      "role": "examined",
+      "excerpt": "| `evaluate_holds`, `evaluate_model_holds`, `evaluate_holds_traced`, `evaluate_guard`, `evaluate_model_guard`, `evaluate_hyper_holds`, `evaluate_step_predicate`, `evaluate_clause`, `evaluate_clause_set`, `evaluate_value_invariants`, `check_separation`, `evaluate_frame`, `evaluate_collection_write`, `evaluate_state_predicate`, `evaluate_state_predicate_at_absent_key` | required in a package form for analysis of a selected package (FR-940 \"Package forms of the source-checked evaluators\"): each source form takes a source-checked clause, node or state clause, which analysis from source k"
+    },
+    {
+      "id": "FR-531-capability-row-part-2",
+      "path": "spec/functional/FR-531-evaluate-from-a-checked-package-read-from-its-bytes-alone.md",
+      "role": "examined",
+      "excerpt": "eeps reading from its `CheckedGraph`; the two model variants additionally take the reference bindings for FR-107 model-read accounting; the evidence route takes the `holds` valuations as request facts (FR-516) |"
+    },
+    {
+      "id": "FSpec-FR-322-AC-460",
+      "path": "filament-specification:spec/objects/interfaces/FR-322-checked-package-artifact.md",
+      "role": "examined",
+      "excerpt": "The package of a unit declaring the temporal clause `Bounded` and the invariant state clause `NotAboveThree` carries, on the `Bounded` `temporal_clause_names` row and the `NotAboveThree` `claim_names` row, a `declaration_region` whose bytes are the whole declaration from its first keyword to its closing `}` and which contains the occurrence's name-token `source_map` region; the same unit, with `Bounded` declared last, with whitespace added right before `Bounded`'s closing `}` changes no `node_id` or node."
+    },
+    {
+      "id": "FSpec-FR-322-AC-461",
+      "path": "filament-specification:spec/objects/interfaces/FR-322-checked-package-artifact.md",
+      "role": "examined",
+      "excerpt": "AC-460's package with the `Bounded` row's `declaration_region` removed refuses `malformed_wire` at the row (`/temporal_clause_names/0`), as the closed schema refuses any missing member; with it shrunk to one byte that does not contain the name token, or naming another source, refuses `invalid_package`/`invalid-value` at `/temporal_clause_names/0/declaration_region`; the same edits on the `NotAboveThree` row refuse at `/claim_names/{i}/declaration_region`."
+    },
+    {
+      "id": "Walk::term::Opening::Let-part-1",
+      "path": "fsl-package/src/introduced_binders.rs",
+      "role": "examined",
+      "excerpt": "                    arguments,\n                    ..\n                }) => match opening(operation.identity(), arguments) {\n                    Opening::Let {\n                        name,\n                        binder,\n                        value,\n                        body,\n                    } => {\n                        if let Some(binder) = binder {\n                            // The binder link declares a parameter; it does\n                            // not read that parameter in the outer scope.\n                            covered.insert(binder.clone());\n             "
+    },
+    {
+      "id": "Walk::term::Opening::Let-part-2",
+      "path": "fsl-package/src/introduced_binders.rs",
+      "role": "examined",
+      "excerpt": "           }\n                        let inner = self.scoped(&shadow, name);\n                        reading.push((Reading::Term(body), inner));\n                        reading.push((Reading::Term(value), shadow));\n                    }\n                    Opening::Query { source, name, body } => {\n                        let inner = self.scoped(&shadow, name);\n                        reading.push((Reading::Term(body), inner));\n"
+    },
+    {
+      "id": "Built::dependency_artifacts-part-1",
+      "path": "tests/it/temporal_package_route.rs",
+      "role": "examined",
+      "excerpt": "    /// The retained recursive dependency artifacts in selected-identity order.\n    pub(super) fn dependency_artifacts(\n        &self,\n    ) -> Vec<(&str, &Emission, &filament_contract_model::CheckedPackageV2)> {\n        let mut held = BTreeMap::new();\n        let mut pending = vec![self.unit.package()];\n        while let Some(package) = pending.pop() {\n            for (identity, dependency) in package.dependencies() {\n                if held.insert(identity, dependency.as_ref()).is_none() {\n                    pending.push(dependency.as_ref());\n                }\n            }\n      "
+    },
+    {
+      "id": "Built::dependency_artifacts-part-2",
+      "path": "tests/it/temporal_package_route.rs",
+      "role": "examined",
+      "excerpt": "  }\n        held.into_iter()\n            .map(|(identity, dependency)| {\n                (\n                    identity.as_str(),\n                    dependency.remembered_emission().expect(\"retained emission\"),\n                    self.unit\n                        .admitted_libraries()\n                        .package(identity)\n                        .expect(\"retained library admission\"),\n                )\n            })\n            .collect()\n    }\n\n    /// This unit's in-process package with the emission of `other`.\n"
+    },
+    {
+      "id": "writer-budget-denial-part-1",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "        let mut oracle = limits.budget();\n        let _ = materialize_dependencies(&mut oracle);\n        let IdentityFileRefusal::Rows(expected) = built\n            .emission\n            .identity_rows(read.admitted(), &mut oracle)\n            .expect_err(\"one-short root-identity allowance refuses its final copy\")\n        else {\n            panic!(\"the root-identity denial retains its compact row cause\");\n        };\n        assert_eq!(expected.denied(), oracle.first_unpaid());\n        assert_eq!(expected.locus(), oracle.first_unpaid_locus());\n        let mut asked = request(\"event_po"
+    },
+    {
+      "id": "writer-budget-denial-part-2",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "sition\", Corpus::None);\n        asked.emit.package_name = package_name.clone();\n        asked.native_join = limits;\n        let target = scratch.path().join(format!(\"{code:?}\"));\n        match write(&asked, &target) {\n            Err(error @ Error::NativeJoinExhausted(_)) => {\n                assert_eq!(error.code(), ErrorCode::NativeJoinExhausted);\n                let Error::NativeJoinExhausted(denial) = error else {\n                    unreachable!()\n                };\n                let fsl_package::NativeJoinFailure::Rows(native) = &denial.native else {\n                    panic"
+    },
+    {
+      "id": "writer-budget-denial-part-3",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "!(\n                        \"the final producer copy retains its compact cause: {:?}\",\n                        denial.native\n                    )\n                };\n                assert_eq!(*native, expected, \"resource, amount, locus and full bound\");\n                assert_eq!(\n                    native.code(),\n"
+    },
+    {
+      "id": "declaration-region-refusal-part-1",
+      "path": "tests/it/temporal_package_route.rs",
+      "role": "examined",
+      "excerpt": "            let row = &mut wire[\"temporal_clause_names\"][0];\n            row.as_object_mut().unwrap().remove(\"declaration_region\");\n        });\n        let Err(refused) = removed.try_read(&removed.emission) else {\n            panic!(\"a row without declaration_region is refused\");\n        };\n        let refusal = native_refusal(refused);\n        assert_eq!(\n            refusal.code,\n            filament_contract_model::CheckedPackageRefusalCode::MalformedWire\n        );\n        assert_eq!(\n            refusal\n                .loci\n                .first()\n                .and_then(|lo"
+    },
+    {
+      "id": "declaration-region-refusal-part-2",
+      "path": "tests/it/temporal_package_route.rs",
+      "role": "examined",
+      "excerpt": "cation| location.path.as_ref())\n                .map(|path| path.as_str()),\n            Some(\"/temporal_clause_names/0\")\n"
+    },
+    {
+      "id": "record-aggregate-fixture-part-1",
+      "path": "tests/it/temporal_package_route_formula.rs",
+      "role": "examined",
+      "excerpt": "fn a_clause_with_an_aggregate_atom_is_read_from_its_samples() {\n    let clauses = \"record Sample { level: Int[0, 9]; }\\n\\\n        temporal Fed using t over (e: Sample) clock \\\"samples\\\" \\\n        on origin { always[0,2] (count over past[0,1] min_count 1 >= 1) }\\n\\\n        temporal Starved using t over (e: Sample) clock \\\"samples\\\" \\\n        on origin { always[0,2] (count over past[0,1] min_count 5 >= 1) }\";\n    let built = event_clauses(clauses, &[(\"Fed\", \"fed\"), (\"Starved\", \"starved\")]);\n    let read = built.read(&built.emission);\n    let package = EvidencePackage::from_emission(\n"
+    }
+  ],
+  "findings": [],
+  "bindings": []
+}
+```
