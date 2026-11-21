@@ -968,6 +968,80 @@ fn read_bytes(emitted: &Emitted, bytes: &[u8]) -> Result<V2Read, StageFailure<V2
         .map(Staged::into_value)
 }
 
+/// A selected object declaration remains valid reference data, but cannot
+/// replace the selected model root in a terminal's target role.
+#[trace("FR-411-AC-1", "FR-286-AC-2")]
+#[test]
+fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
+    let mut emitted = Fixture::Terminal
+        .emit()
+        .pop()
+        .expect("one terminal fixture");
+    assert!(
+        read(&emitted).is_ok(),
+        "the model-root terminal is admitted"
+    );
+    let mut wire = wire(&emitted.emission);
+    let object = nodes(&wire)
+        .iter()
+        .find(|node| node["node_tag"] == "model" && node["semantic_form"] == "object_type")
+        .expect("the selected object's declaration")["node_id"]
+        .clone();
+    let position = nodes(&wire)
+        .iter()
+        .position(|node| node["node_tag"] == "temporal" && node["semantic_form"] == "terminal")
+        .expect("the terminal node");
+    let terminal = &mut wire["semantic_graph"]["nodes"][position];
+    assert_eq!(terminal["body"]["members"][0]["name"], "model");
+    let model = terminal["body"]["members"][0]["value"]["target"].clone();
+    terminal["body"]["members"][0]["value"]["target"] = object.clone();
+    let dependencies = terminal["dependencies"]
+        .as_array_mut()
+        .expect("dependencies");
+    dependencies.retain(|dependency| *dependency != model);
+    if !dependencies.contains(&object) {
+        dependencies.push(object);
+    }
+    let bytes = jcs(&wire);
+    let bare =
+        read_bytes(&emitted, &bytes).expect_err("object_type is not a terminal model target");
+    let V2ReadRefusal::Envelope { refusal: bare, .. } =
+        bare.into_refused().expect("native refusal")
+    else {
+        panic!("the native reader must own the target refusal");
+    };
+    assert_eq!(
+        bare.code,
+        filament_contract_model::CheckedPackageRefusalCode::InvalidModelBinding
+    );
+    assert_eq!(
+        bare.cause,
+        Some(filament_contract_model::CheckedPackageRefusalCause::MalformedDeclaration)
+    );
+    let pointer = format!("/semantic_graph/nodes/{position}/body/members/0/value/target");
+    assert!(bare.loci.iter().any(|locus| locus
+        .path
+        .as_ref()
+        .is_some_and(|path| path.as_str() == pointer)));
+    let name = emitted.emission.package.name().to_owned();
+    emitted.emission.package = EmittedPackage::new(&name, |_| Ok::<_, ()>(bytes)).expect("package");
+    let source = crate::read_evaluation_emission(
+        &emitted.package,
+        &emitted.emission,
+        library(),
+        &BTreeMap::new(),
+        V2ReadLimits::fixture(),
+        crate::EmitLimits::fixture(),
+        crate::SourceWitnessSupplier::new(&emitted.emission),
+    )
+    .expect_err("source-backed admission uses the same reader");
+    let source =
+        crate::PackageAdmissionRefusal::of_import_view(&source, None).expect("native refusal");
+    assert_eq!(source.code, Code::InvalidPackage);
+    assert_eq!(source.cause.as_deref(), Some("malformed-declaration"));
+    assert_eq!(source.pointer.as_deref(), Some(pointer.as_str()));
+}
+
 /// One emitted package of a fixture and what FSL's I2 read made of it.
 struct Outcome {
     emitted: Emitted,

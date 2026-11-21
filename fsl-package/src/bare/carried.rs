@@ -13,6 +13,116 @@ use crate::equality_file::{OriginalNodeKey, OriginalValueType};
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct SourceTupleJson {
+    structural_node: CheckedNodeId,
+    source_authority: String,
+    source_identity: String,
+    qualified_declaration: Vec<String>,
+    type_handle: OriginalNodeKey,
+    positions: Vec<TuplePositionJson>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct TuplePositionJson {
+    ordinal: u64,
+    type_node: Option<CheckedNodeId>,
+    value_type: Option<OriginalValueType>,
+    member_type: Option<String>,
+    collections: Vec<ClockCollectionLayerJson>,
+}
+
+impl SourceTupleJson {
+    pub(super) fn of(
+        row: &filament_contract_model::SelectedSourceTupleRow,
+    ) -> Result<Self, IdentityFileRefusal> {
+        let malformed = || IdentityFileRefusal::Malformed {
+            member: IdentityMember::SourceTuples,
+        };
+        Ok(Self {
+            structural_node: row.structural_node.clone(),
+            source_authority: row.source_authority.to_string(),
+            source_identity: row.source_identity.to_string(),
+            qualified_declaration: row
+                .qualified_declaration
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            type_handle: OriginalNodeKey::of(&row.type_handle).map_err(|_| malformed())?,
+            positions: row
+                .positions
+                .iter()
+                .map(|position| {
+                    Ok(TuplePositionJson {
+                        ordinal: position.ordinal,
+                        type_node: position.type_node.clone(),
+                        value_type: position
+                            .value_type
+                            .as_ref()
+                            .map(OriginalValueType::of)
+                            .transpose()
+                            .map_err(|_| malformed())?,
+                        member_type: position.member_type.as_deref().map(str::to_owned),
+                        collections: position
+                            .collections
+                            .iter()
+                            .map(ClockCollectionLayerJson::of)
+                            .collect(),
+                    })
+                })
+                .collect::<Result<_, IdentityFileRefusal>>()?,
+        })
+    }
+
+    pub(super) fn row(
+        self,
+    ) -> Result<filament_contract_model::SelectedSourceTupleRow, IdentityFileRefusal> {
+        let malformed = || IdentityFileRefusal::Malformed {
+            member: IdentityMember::SourceTuples,
+        };
+        Ok(filament_contract_model::SelectedSourceTupleRow {
+            structural_node: self.structural_node,
+            source_authority: self.source_authority.into(),
+            source_identity: self.source_identity.into(),
+            qualified_declaration: self
+                .qualified_declaration
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            type_handle: self.type_handle.key().map_err(|_| malformed())?,
+            positions: self
+                .positions
+                .into_iter()
+                .map(|position| {
+                    if position.type_node.is_some() != position.value_type.is_some()
+                        || position.type_node.is_some() == position.member_type.is_some()
+                        || (position.type_node.is_some() && !position.collections.is_empty())
+                    {
+                        return Err(malformed());
+                    }
+                    Ok(filament_contract_model::SelectedTuplePositionRow {
+                        ordinal: position.ordinal,
+                        type_node: position.type_node,
+                        value_type: position
+                            .value_type
+                            .map(|value| value.value())
+                            .transpose()
+                            .map_err(|_| malformed())?,
+                        member_type: position.member_type.map(Into::into),
+                        collections: position
+                            .collections
+                            .into_iter()
+                            .map(ClockCollectionLayerJson::layer)
+                            .collect(),
+                    })
+                })
+                .collect::<Result<_, IdentityFileRefusal>>()?,
+        })
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct SourceUnionJson {
     structural_node: CheckedNodeId,
     source_authority: String,

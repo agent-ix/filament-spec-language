@@ -28,11 +28,11 @@ use crate::checked_v2::wire_graph;
 mod carried;
 mod observation;
 use crate::equality_file::OriginalValueType;
-use carried::{SourceRecordJson, SourceUnionJson};
+use carried::{SourceRecordJson, SourceTupleJson, SourceUnionJson};
 use filament_exact::Presence;
 
 /// The format of `identities.json` (FR-531 "The identity file").
-pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/4";
+pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/5";
 
 /// A checked package as a bytes-only consumer holds it (FR-531).
 ///
@@ -553,6 +553,7 @@ pub struct ReadIdentityRows {
     declarations: Vec<SelectedExactDeclarationRow>,
     fields: Vec<SelectedExactFieldRow>,
     source_records: Vec<SelectedSourceRecordRow>,
+    source_tuples: Vec<filament_contract_model::SelectedSourceTupleRow>,
     source_unions: Vec<SelectedSourceUnionRow>,
     source_objects: Vec<SelectedSourceObjectRow>,
     source_object_member_facts: Vec<Vec<crate::emit::SourceObjectMemberFacts>>,
@@ -615,6 +616,9 @@ pub enum IdentityMember {
     /// The required final-emission source-record rows.
     #[error("`source_records`")]
     SourceRecords,
+    /// The required final-emission source-tuple rows.
+    #[error("`source_tuples`")]
+    SourceTuples,
     /// The required final-emission source-union rows.
     #[error("`source_unions`")]
     SourceUnions,
@@ -647,6 +651,7 @@ struct File {
     declarations: Vec<DeclarationJson>,
     fields: Vec<FieldJson>,
     source_records: Vec<SourceRecordJson>,
+    source_tuples: Vec<SourceTupleJson>,
     source_unions: Vec<SourceUnionJson>,
     source_objects: Vec<SourceObjectJson>,
     source_operations: Vec<SourceOperationJson>,
@@ -1061,6 +1066,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
         let mut declarations: Option<Vec<DeclarationJson>> = None;
         let mut fields: Option<Vec<FieldJson>> = None;
         let mut source_records: Option<Vec<SourceRecordJson>> = None;
+        let mut source_tuples: Option<Vec<SourceTupleJson>> = None;
         let mut source_unions: Option<Vec<SourceUnionJson>> = None;
         let mut source_objects: Option<Vec<SourceObjectJson>> = None;
         let mut source_operations: Option<Vec<SourceOperationJson>> = None;
@@ -1102,6 +1108,14 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                         self.problem.set(Some(IdentityMember::SourceRecords));
                     })?);
                 }
+                "source_tuples" => {
+                    if source_tuples.is_some() {
+                        return Err(self.fail(IdentityMember::Repeated("source_tuples")));
+                    }
+                    source_tuples = Some(map.next_value().inspect_err(|_: &A::Error| {
+                        self.problem.set(Some(IdentityMember::SourceTuples));
+                    })?);
+                }
                 "source_unions" => {
                     if source_unions.is_some() {
                         return Err(self.fail(IdentityMember::Repeated("source_unions")));
@@ -1129,6 +1143,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                 other => return Err(self.fail(IdentityMember::Unknown(other.to_owned()))),
             }
         }
+        let source_tuples = source_tuples.ok_or_else(|| self.fail(IdentityMember::SourceTuples))?;
         match (
             format,
             declarations,
@@ -1151,6 +1166,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                 declarations,
                 fields,
                 source_records,
+                source_tuples,
                 source_unions,
                 source_objects,
                 source_operations,
@@ -1283,6 +1299,7 @@ impl ReadIdentityRows {
             budget,
         )?
         .with_source_record_rows(package, self.source_records.iter().cloned(), budget)?
+        .with_source_tuple_rows(package, self.source_tuples.iter().cloned(), budget)?
         .with_source_union_rows(package, self.source_unions.iter().cloned(), budget)
     }
 
@@ -1304,6 +1321,11 @@ impl ReadIdentityRows {
     /// Original source-record producer rows, with final graph references.
     pub fn source_records(&self) -> &[SelectedSourceRecordRow] {
         &self.source_records
+    }
+
+    /// Original source-tuple rows, in declaration and positional order.
+    pub fn source_tuples(&self) -> &[filament_contract_model::SelectedSourceTupleRow] {
+        &self.source_tuples
     }
 
     /// Original source-union producer rows, in declaration and payload order.
@@ -1337,7 +1359,7 @@ impl ReadIdentityRows {
             self.source_objects.iter().cloned(),
             filament_contract_model::SelectedSourceClockRows {
                 records: &self.source_records,
-                tuples: &[],
+                tuples: &self.source_tuples,
                 unions: &self.source_unions,
             },
         )
@@ -1509,6 +1531,11 @@ impl ReadIdentityRows {
             declarations,
             fields,
             source_records,
+            source_tuples: file
+                .source_tuples
+                .into_iter()
+                .map(SourceTupleJson::row)
+                .collect::<Result<_, _>>()?,
             source_unions: file
                 .source_unions
                 .into_iter()
@@ -1578,12 +1605,21 @@ impl ReadIdentityRows {
             declarations,
             fields,
             source_records,
+            source_tuples: Vec::new(),
             source_unions,
             source_objects,
             source_object_member_facts,
             source_object_operations,
             source_operations,
         }
+    }
+
+    pub(crate) fn with_source_tuples(
+        mut self,
+        tuples: Vec<filament_contract_model::SelectedSourceTupleRow>,
+    ) -> Self {
+        self.source_tuples = tuples;
+        self
     }
 
     /// The identity file of these rows (FR-531 "The identity file"): one JSON
@@ -1704,6 +1740,11 @@ impl ReadIdentityRows {
                 .source_records
                 .iter()
                 .map(SourceRecordJson::of)
+                .collect::<Result<_, _>>()?,
+            source_tuples: self
+                .source_tuples
+                .iter()
+                .map(SourceTupleJson::of)
                 .collect::<Result<_, _>>()?,
             source_unions: self
                 .source_unions
