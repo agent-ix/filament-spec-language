@@ -306,7 +306,7 @@ fn routed(
         premises: None,
         ..selection.clone()
     }
-    .unrouted_routing_options(false);
+    .unrouted_routing_options(false, false);
     claim_item(
         ctx,
         index,

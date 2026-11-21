@@ -519,9 +519,7 @@ impl Engine {
 /// [`Engine::hybrid`] was given a descriptor that is no hybrid provider's
 /// (FR-750): `invalid_capability`/`invalid-dynamics`.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error(
-    "invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction"
-)]
+#[error("invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction")]
 pub struct NotHybrid {
     /// The backend whose descriptor was refused.
     pub backend: BackendId,
@@ -779,6 +777,12 @@ impl ItemDetail {
             request_index: record.request_index,
             exploration: model
                 .and_then(|model| model.exploration)
+                .or_else(|| {
+                    record
+                        .hyper_check
+                        .as_ref()
+                        .and_then(|hyper| hyper.exploration)
+                })
                 .or_else(|| protocol.and_then(|protocol| protocol.exploration))
                 .or_else(|| record.state_graph.as_ref().map(|graph| graph.exploration)),
             checker: model
@@ -797,6 +801,12 @@ impl ItemDetail {
                             )
                         })
                         .map(|_| fsl_replay::CertificateChecker::Zone)
+                })
+                .or_else(|| {
+                    record.hyper_check.as_ref().and_then(|hyper| {
+                        (!hyper.certificates.is_empty())
+                            .then_some(fsl_replay::CertificateChecker::ProductClosure)
+                    })
                 })
                 .or_else(|| record.state_graph.as_ref().and_then(|graph| graph.checker))
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
@@ -3049,9 +3059,7 @@ fn settle(
             None,
         ),
         EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
-            terminal(
-                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail),
-            ),
+            terminal(TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail)),
             None,
         ),
         EngineReport::Refused(Refusal::UnsupportedConstruct(mut detail)) => {
