@@ -196,7 +196,7 @@ fn native_not_markov_preserves_actual_zero_two_and_four_post_payloads() {
             .body
             .push_str("\npre Fixed using v on M::Node::tick { left and not right }\n");
         let world = World::new(&model);
-        let system = world.system();
+        let system = ModelSystem::new(world.subject().simulation).expect("the source model admits");
         let [initial] = <[_; 1]>::try_from(system.initial()).expect("one initial state");
         let workload = world
             .package

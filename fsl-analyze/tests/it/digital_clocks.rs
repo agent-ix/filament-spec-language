@@ -390,7 +390,7 @@ fn not_markov_evidence_uses_the_actual_filtered_digital_posts() {
             let filament_exact::Value::Integer(phase) = phase else {
                 panic!("an integer phase: {phase:?}");
             };
-            phase < &Integer::from(2)
+            phase < &Integer::from(2_u64)
         })
         .map(|(_, post)| {
             system
