@@ -628,9 +628,17 @@ fn a_source_plan_candidate_emits_its_record_types_and_source_regions() {
         panic!("the parameter is typed by exactly one emitted plan record: {plan_types:?}");
     };
     assert_eq!(plan_type["semantic_form"], "record", "{plan_type}");
-    assert_eq!(records.iter().filter(|row|
-        serde_json::to_value(&row.structural_node).expect("a node id serializes") == plan_type["node_id"]
-    ).count(), 1, "the exact plan record has one producer identity row");
+    assert_eq!(
+        records
+            .iter()
+            .filter(
+                |row| serde_json::to_value(&row.structural_node).expect("a node id serializes")
+                    == plan_type["node_id"]
+            )
+            .count(),
+        1,
+        "the exact plan record has one producer identity row"
+    );
     assert_eq!(
         binding_names(plan_type),
         ["length", "final", "initial", "steps"]
