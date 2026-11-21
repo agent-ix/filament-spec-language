@@ -624,3 +624,45 @@ fn source_policy_key_budget_preserves_work_capacity_and_cancel_causes() {
         );
     }
 }
+
+/// Trace: FR-1011, FR-1012.
+#[test]
+#[trace("FR-1011", "FR-1012")]
+fn source_policy_comparisons_admit_actual_prefix_bytes_and_original_cancellation() {
+    use filament_exact::{Cancel, CancelCause, ChargePoint, LimitKind, Meter};
+    use fsl_eval::automaton::{PolicyStateError, StepPolicy};
+    use fsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
+    use std::cmp::Ordering;
+    let left = [b"same-prefix-a".to_vec(), b"unvisited".to_vec()];
+    let right = [b"same-prefix-b".to_vec(), b"unvisited-other".to_vec()];
+    let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+    assert_eq!(
+        StepPolicy::compare_states(&left, &right, &mut meter).unwrap(),
+        Ordering::Less
+    );
+    // One vector visit and precisely thirteen compared bytes. The later
+    // vectors and the length tie-breakers are not read after the difference.
+    assert_eq!(meter.consumed(LimitKind::WorkUnits), 14);
+    assert_eq!(meter.consumed(LimitKind::ResultUnits), 0);
+    let mut limits = SCALAR_LIMITS_UNLIMITED;
+    limits.work_units = 13;
+    let mut denied = Meter::new(limits);
+    let Err(PolicyStateError::Accounting(cause)) =
+        StepPolicy::compare_states(&left, &right, &mut denied)
+    else {
+        panic!("the differing byte requires its own admitted unit");
+    };
+    assert_eq!(cause.charge_point, ChargePoint::ModelCandidate);
+    assert_eq!(cause.limit_kind, LimitKind::WorkUnits);
+    assert_eq!(cause.limit, 13);
+    assert_eq!(denied.consumed(LimitKind::WorkUnits), 13);
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let cancel = Cancel::new();
+        cancel.cancel(cause);
+        let mut meter = Meter::new(limits).with_cancel(cancel);
+        assert!(
+            matches!(StepPolicy::compare_states(&left, &right, &mut meter), Err(PolicyStateError::Cancelled(actual)) if actual == cause)
+        );
+        assert_eq!(meter.consumed(LimitKind::WorkUnits), 0);
+    }
+}

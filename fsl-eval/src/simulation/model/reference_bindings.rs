@@ -43,14 +43,31 @@ pub(crate) enum ReferenceBinding {
 
 /// One immutable subject's reference-literal decisions.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ReferenceBindings(BTreeMap<ReferenceLiteralKey, ReferenceBinding>);
+pub struct ReferenceBindings {
+    base: std::sync::Arc<BTreeMap<ReferenceLiteralKey, ReferenceBinding>>,
+    additional: Vec<(ReferenceLiteralKey, ReferenceBinding)>,
+}
 
 impl ReferenceBindings {
+    fn of_map(base: BTreeMap<ReferenceLiteralKey, ReferenceBinding>) -> Self {
+        Self {
+            base: std::sync::Arc::new(base),
+            additional: Vec::new(),
+        }
+    }
+
+    fn merged(&self) -> BTreeMap<ReferenceLiteralKey, ReferenceBinding> {
+        let mut merged = (*self.base).clone();
+        merged.extend(self.additional.iter().cloned());
+        merged
+    }
+
     pub(crate) fn created_for_footprints(
         &self,
     ) -> BTreeMap<(EffectiveId, Vec<u8>), Vec<filament_checked::key::DeclarationKey>> {
-        self.0
+        self.base
             .iter()
+            .chain(self.additional.iter().map(|(key, binding)| (key, binding)))
             .filter_map(|(literal, binding)| match binding {
                 ReferenceBinding::CreatedObject { populations, .. } => Some((
                     (literal.object_type.clone(), literal.identity.clone()),
@@ -66,10 +83,17 @@ impl ReferenceBindings {
         object_type: &EffectiveId,
         identity: &[u8],
     ) -> Option<&ReferenceBinding> {
-        self.0.get(&ReferenceLiteralKey {
-            object_type: object_type.clone(),
-            identity: identity.to_vec(),
-        })
+        self.additional
+            .iter()
+            .rev()
+            .find(|(key, _)| key.object_type == *object_type && key.identity == identity)
+            .map(|(_, binding)| binding)
+            .or_else(|| {
+                self.base.get(&ReferenceLiteralKey {
+                    object_type: object_type.clone(),
+                    identity: identity.to_vec(),
+                })
+            })
     }
 
     /// Extend the model's decisions with the admitted literals of one package clause.
@@ -89,7 +113,7 @@ impl ReferenceBindings {
                 identity,
             })
             .collect();
-        let mut extended = self.0.clone();
+        let mut extended = self.merged();
         extended.extend(resolve_literals(
             literals,
             &BTreeSet::new(),
@@ -99,7 +123,7 @@ impl ReferenceBindings {
             universes,
             initial,
         )?);
-        Ok(Self(extended))
+        Ok(Self::of_map(extended))
     }
 
     /// Resolve every checked reference literal against the validated subject
@@ -246,7 +270,7 @@ impl ReferenceBindings {
         // remaining cases.
         literals.retain(|literal| model.type_key(literal.object_type.clone()).is_some());
         barred.retain(|literal| literals.contains(literal));
-        Ok(Self(resolve_literals(
+        Ok(Self::of_map(resolve_literals(
             literals,
             &barred,
             model,
@@ -318,7 +342,7 @@ impl ReferenceBindings {
         // literal and does not participate in cross-component agreement.
         literals.retain(|literal| model.type_key(literal.object_type.clone()).is_some());
         barred.retain(|literal| literals.contains(literal));
-        let mut extended = self.0.clone();
+        let mut extended = self.merged();
         extended.extend(resolve_literals(
             literals,
             &barred,
@@ -328,7 +352,118 @@ impl ReferenceBindings {
             universes,
             initial,
         )?);
-        Ok(Self(extended))
+        Ok(Self::of_map(extended))
+    }
+
+    /// Read the clause's literal occurrences without retaining identity copies.
+    pub(super) fn contains_temporal_literals_with_budget(
+        &self,
+        graph: &CheckedGraph,
+        clause: &TemporalClauseNode,
+        budget: &crate::policy_budget::Budget<'_>,
+    ) -> Result<bool, crate::automaton::PolicyStateError> {
+        let mut complete = true;
+        temporal_roots(clause, &mut || budget.work(1), &mut |root| {
+            budget.work(1)?;
+            for (object_type, identity) in literal_refs(graph, root, budget)? {
+                let mut found = false;
+                for (key, _) in self
+                    .base
+                    .iter()
+                    .chain(self.additional.iter().map(|(key, binding)| (key, binding)))
+                {
+                    budget.work(1)?;
+                    if budget.equal_effectives(&key.object_type, object_type)?
+                        && budget.compare_bytes(&key.identity, identity)?
+                            == std::cmp::Ordering::Equal
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                complete &= found;
+            }
+            Ok(())
+        })?;
+        Ok(complete)
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the resolver reads one immutable subject"
+    )]
+    pub(super) fn with_temporal_clause_with_budget(
+        &self,
+        graph: &CheckedGraph,
+        clause: &TemporalClauseNode,
+        model: &StateModel,
+        types: &TypeEnvironment,
+        populations: &[StatePopulation],
+        universes: &BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
+        initial: &[ModelSimState],
+        budget: &crate::policy_budget::Budget<'_>,
+    ) -> Result<Self, super::letters::LettersPreparationError> {
+        // ModelSystem stores a base admission; per-clause overlays never replace it.
+        debug_assert!(self.additional.is_empty());
+        let mut literals: Vec<ReferenceLiteralKey> = Vec::new();
+        temporal_roots(clause, &mut || budget.work(1), &mut |root| {
+            for (object_type, identity) in literal_refs(graph, root, budget)? {
+                let mut bytes = Vec::new();
+                budget.copy(&mut bytes, identity)?;
+                let literal = ReferenceLiteralKey {
+                    object_type: budget.effective(object_type)?,
+                    identity: bytes,
+                };
+                let mut position = 0;
+                let mut duplicate = false;
+                while let Some(existing) = literals.get(position) {
+                    budget.work(1)?;
+                    let mut order =
+                        budget.compare_effectives(&existing.object_type, &literal.object_type)?;
+                    if order == std::cmp::Ordering::Equal {
+                        order = budget.compare_bytes(&existing.identity, &literal.identity)?;
+                    }
+                    match order {
+                        std::cmp::Ordering::Less => position += 1,
+                        std::cmp::Ordering::Equal => {
+                            duplicate = true;
+                            break;
+                        }
+                        std::cmp::Ordering::Greater => break,
+                    }
+                }
+                if !duplicate {
+                    budget.growth(&mut literals, 1)?;
+                    budget.work(literals.len() - position)?;
+                    literals.insert(position, literal);
+                }
+            }
+            Ok::<(), crate::automaton::PolicyStateError>(())
+        })?;
+        let mut additional = Vec::new();
+        for literal in literals {
+            budget.work(1)?;
+            // This is the existing resolver, not a second conformance or
+            // reference-admission algorithm. Its owner query/construction
+            // boundaries still require their caller-budgeted followthrough.
+            let binding = resolve_literal(
+                &literal,
+                &BTreeSet::new(),
+                model,
+                types,
+                populations,
+                universes,
+                initial,
+                Some(budget),
+            )?;
+            budget.growth(&mut additional, 1)?;
+            additional.push((literal, binding));
+        }
+        budget.work(1)?;
+        Ok(Self {
+            base: self.base.clone(),
+            additional,
+        })
     }
 
     /// Add the literals from a separately checked temporal clause. Analyze
@@ -349,37 +484,19 @@ impl ReferenceBindings {
         initial: &[ModelSimState],
     ) -> Result<Self, fsl_semantics::model::observation::AdmissionFailure> {
         let mut literals = BTreeSet::new();
-        for (index, formula_node) in clause.clause().formula().nodes().iter().enumerate() {
-            let atom = FormulaNodeId::from_arena_index(index);
-            if matches!(formula_node, FormulaNode::Holds { .. }) {
-                if let Some((condition, _)) = clause.condition(atom) {
-                    collect_literals(graph, condition, &mut literals);
-                }
-            }
-            if matches!(formula_node, FormulaNode::Aggregate { .. }) {
-                if let Some(aggregate) = clause.aggregate_conditions(atom) {
-                    if let Some((value, _)) = aggregate.value {
-                        collect_literals(graph, value, &mut literals);
-                    }
-                    if let Some((filter, _)) = aggregate.filter {
-                        collect_literals(graph, filter, &mut literals);
-                    }
-                    if let Some((predicate, _)) = aggregate.predicate {
-                        collect_literals(graph, predicate, &mut literals);
-                    }
-                    collect_literals(graph, aggregate.threshold.0, &mut literals);
-                }
-            }
+        let result = temporal_roots(
+            clause,
+            &mut || Ok::<(), std::convert::Infallible>(()),
+            &mut |root| {
+                collect_literals(graph, root, &mut literals);
+                Ok::<(), std::convert::Infallible>(())
+            },
+        );
+        match result {
+            Ok(()) => {}
+            Err(never) => match never {},
         }
-        if let Some((guard, _)) = clause.guard() {
-            collect_literals(graph, guard, &mut literals);
-        }
-        for index in 0..clause.clause().captures().len() {
-            if let Some((capture, _)) = clause.capture(index) {
-                collect_literals(graph, capture, &mut literals);
-            }
-        }
-        let mut extended = self.0.clone();
+        let mut extended = self.merged();
         extended.extend(resolve_literals(
             literals,
             &BTreeSet::new(),
@@ -389,8 +506,98 @@ impl ReferenceBindings {
             universes,
             initial,
         )?);
-        Ok(Self(extended))
+        Ok(Self::of_map(extended))
     }
+}
+
+fn temporal_roots<'a, E>(
+    clause: &'a TemporalClauseNode,
+    work: &mut impl FnMut() -> Result<(), E>,
+    root: &mut impl FnMut(CheckedNode<'a>) -> Result<(), E>,
+) -> Result<(), E> {
+    for (index, formula_node) in clause.clause().formula().nodes().iter().enumerate() {
+        work()?;
+        let atom = FormulaNodeId::from_arena_index(index);
+        if matches!(formula_node, FormulaNode::Holds { .. }) {
+            if let Some((condition, _)) = clause.condition(atom) {
+                root(condition)?;
+            }
+        }
+        if matches!(formula_node, FormulaNode::Aggregate { .. }) {
+            if let Some(aggregate) = clause.aggregate_conditions(atom) {
+                if let Some((value, _)) = aggregate.value {
+                    root(value)?;
+                }
+                if let Some((filter, _)) = aggregate.filter {
+                    root(filter)?;
+                }
+                if let Some((predicate, _)) = aggregate.predicate {
+                    root(predicate)?;
+                }
+                root(aggregate.threshold.0)?;
+            }
+        }
+    }
+    work()?;
+    if let Some((guard, _)) = clause.guard() {
+        root(guard)?;
+    }
+    for index in 0..clause.clause().captures().len() {
+        work()?;
+        if let Some((capture, _)) = clause.capture(index) {
+            root(capture)?;
+        }
+    }
+    Ok(())
+}
+
+fn literal_refs<'a>(
+    graph: &'a CheckedGraph,
+    root: CheckedNode<'a>,
+    budget: &crate::policy_budget::Budget<'_>,
+) -> Result<Vec<(&'a EffectiveId, &'a [u8])>, crate::automaton::PolicyStateError> {
+    let mut visited = Vec::new();
+    let mut pending = Vec::new();
+    budget.growth(&mut pending, 1)?;
+    pending.push(root);
+    let mut literals = Vec::new();
+    while let Some(node) = pending.pop() {
+        budget.work(1)?;
+        node.try_for_each_child(&mut |child| {
+            budget.work(1)?;
+            budget.growth(&mut pending, 1)?;
+            pending.push(child);
+            Ok::<(), crate::automaton::PolicyStateError>(())
+        })?;
+        if let NodeKind::Call { function, .. } = node.kind() {
+            let mut seen = false;
+            for previous in &visited {
+                budget.work(1)?;
+                if previous == function {
+                    seen = true;
+                    break;
+                }
+            }
+            if !seen {
+                budget.growth(&mut visited, 1)?;
+                visited.push(*function);
+                budget.work(1)?;
+                if let Some(function) = graph.function_state(*function) {
+                    budget.growth(&mut pending, 1)?;
+                    pending.push(function.body);
+                }
+            }
+        }
+        if let NodeKind::ReferenceLiteral {
+            object_type,
+            identity,
+        } = node.kind()
+        {
+            budget.growth(&mut literals, 1)?;
+            literals.push((object_type, identity.as_slice()));
+        }
+    }
+    Ok(literals)
 }
 
 fn resolve_literals(
@@ -407,103 +614,294 @@ fn resolve_literals(
 > {
     let mut bindings = BTreeMap::new();
     for literal in literals {
-        let text = std::str::from_utf8(&literal.identity)
-            .map_err(|_| super::fault("reference-literal-identity-is-utf8"))?;
-        model
-            .type_key(literal.object_type.clone())
-            .ok_or_else(|| super::fault("reference-literal-type-is-selected"))?;
-        let overlapping: Vec<&StatePopulation> = populations
-            .iter()
-            .filter(|population| overlaps(model, types, population, &literal.object_type))
-            .collect();
-        let available: Vec<&StatePopulation> = overlapping
-            .iter()
-            .copied()
-            .filter(|population| {
-                universes
-                    .get(&population.key)
-                    .is_some_and(|keys| keys.iter().any(|key| key == text))
-            })
-            .collect();
-        if available.is_empty() {
-            return Err(super::refused(
+        let binding = resolve_literal(
+            &literal,
+            barred,
+            model,
+            types,
+            populations,
+            universes,
+            initial,
+            None,
+        )
+        .map_err(|error| match error {
+            super::letters::LettersPreparationError::Admission(
+                super::letters::LettersRefusal::ReferenceBindingsAdmission(error),
+            ) => error,
+            _ => unreachable!("unmetered reference resolution only reports reference admission"),
+        })?;
+        bindings.insert(literal, binding);
+    }
+    Ok(bindings)
+}
+
+struct Preparation<'b, 'm>(Option<&'b crate::policy_budget::Budget<'m>>);
+impl Preparation<'_, '_> {
+    fn work_units(&self, units: u64) -> Result<(), crate::automaton::PolicyStateError> {
+        self.work(usize::try_from(units).map_err(|_| crate::automaton::PolicyStateError::Invalid)?)
+    }
+    fn work(&self, units: usize) -> Result<(), crate::automaton::PolicyStateError> {
+        self.0.map_or(Ok(()), |budget| budget.work(units))
+    }
+    fn push<T>(
+        &self,
+        values: &mut Vec<T>,
+        value: T,
+    ) -> Result<(), crate::automaton::PolicyStateError> {
+        if let Some(budget) = self.0 {
+            budget.growth(values, 1)?;
+        }
+        values.push(value);
+        Ok(())
+    }
+    fn text_equal(
+        &self,
+        left: &str,
+        right: &str,
+    ) -> Result<bool, crate::automaton::PolicyStateError> {
+        self.0.map_or_else(
+            || Ok(left == right),
+            |budget| {
+                Ok(budget.compare_bytes(left.as_bytes(), right.as_bytes())?
+                    == std::cmp::Ordering::Equal)
+            },
+        )
+    }
+    fn declaration_equal(
+        &self,
+        left: &filament_checked::key::DeclarationKey,
+        right: &filament_checked::key::DeclarationKey,
+    ) -> Result<bool, crate::automaton::PolicyStateError> {
+        self.0.map_or_else(
+            || Ok(left == right),
+            |budget| Ok(budget.compare_declarations(left, right)? == std::cmp::Ordering::Equal),
+        )
+    }
+    fn effective(
+        &self,
+        value: &EffectiveId,
+    ) -> Result<EffectiveId, crate::automaton::PolicyStateError> {
+        self.0
+            .map_or_else(|| Ok(value.clone()), |budget| budget.effective(value))
+    }
+    fn text(&self, value: &str) -> Result<String, crate::automaton::PolicyStateError> {
+        self.0
+            .map_or_else(|| Ok(value.to_owned()), |budget| budget.text(value))
+    }
+    fn declaration(
+        &self,
+        value: &filament_checked::key::DeclarationKey,
+    ) -> Result<filament_checked::key::DeclarationKey, crate::automaton::PolicyStateError> {
+        self.work(1)?;
+        Ok(filament_checked::key::DeclarationKey {
+            package: self.text(&value.package)?,
+            node: self.text(&value.node)?,
+        })
+    }
+    fn conforms(
+        &self,
+        types: &TypeEnvironment,
+        sub: &EffectiveId,
+        sup: &EffectiveId,
+    ) -> Result<bool, crate::automaton::PolicyStateError> {
+        // Internal query visits await the owner's borrowed work hook.
+        Ok(types.conforms(self.effective(sub)?, self.effective(sup)?))
+    }
+    fn overlaps(
+        &self,
+        model: &StateModel,
+        types: &TypeEnvironment,
+        population: &StatePopulation,
+        parameter: &EffectiveId,
+    ) -> Result<bool, crate::automaton::PolicyStateError> {
+        for member in &population.member_types {
+            self.work(1)?;
+            if let Some(member) =
+                model.type_identity_with_work(member, &mut |units| self.work_units(units))?
+            {
+                if self.conforms(types, member, parameter)?
+                    || self.conforms(types, parameter, member)?
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the resolver reads one immutable subject"
+)]
+fn resolve_literal(
+    literal: &ReferenceLiteralKey,
+    barred: &BTreeSet<ReferenceLiteralKey>,
+    model: &StateModel,
+    types: &TypeEnvironment,
+    populations: &[StatePopulation],
+    universes: &BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
+    initial: &[ModelSimState],
+    budget: Option<&crate::policy_budget::Budget<'_>>,
+) -> Result<ReferenceBinding, super::letters::LettersPreparationError> {
+    let prep = Preparation(budget);
+    prep.work(literal.identity.len())?;
+    let text = std::str::from_utf8(&literal.identity).map_err(|_| {
+        super::letters::LettersRefusal::ReferenceBindingsAdmission(super::fault(
+            "reference-literal-identity-is-utf8",
+        ))
+    })?;
+    model
+        .declaration_key_with_work(&literal.object_type, &mut |units| prep.work_units(units))?
+        .ok_or_else(|| {
+            super::letters::LettersRefusal::ReferenceBindingsAdmission(super::fault(
+                "reference-literal-type-is-selected",
+            ))
+        })?;
+    let mut overlapping = Vec::new();
+    for population in populations {
+        prep.work(1)?;
+        if prep.overlaps(model, types, population, &literal.object_type)? {
+            prep.push(&mut overlapping, population)?;
+        }
+    }
+    let mut available = Vec::new();
+    for population in &overlapping {
+        prep.work(1)?;
+        let mut contains = false;
+        for (key, keys) in universes {
+            prep.work(1)?;
+            if prep.declaration_equal(key, &population.key)? {
+                for key in keys {
+                    prep.work(1)?;
+                    if prep.text_equal(key, text)? {
+                        contains = true;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+        if contains {
+            prep.push(&mut available, *population)?;
+        }
+    }
+    if available.is_empty() {
+        return Err(
+            super::letters::LettersRefusal::ReferenceBindingsAdmission(super::refused(
                 Code::MissingDeclaration,
                 "missing-name",
                 &[
                     ("type", literal.object_type.original().node().to_owned()),
                     ("key", identity_hex(&literal.identity)),
                 ],
-            ));
-        }
+            ))
+            .into(),
+        );
+    }
 
-        let mut fixed = None;
-        let mut initial_nonconforming = false;
-        'states: for state in initial {
-            for population in &overlapping {
-                let Some(object) = state
-                    .state()
-                    .populations
-                    .get(&population.key)
-                    .and_then(|objects| objects.get(text))
-                else {
-                    continue;
-                };
-                let Some(actual_type) = model.type_identity(&object.type_identity) else {
-                    return Err(super::fault("reference-literal-member-type-is-selected"));
-                };
-                if types.conforms(actual_type, literal.object_type.clone()) {
-                    fixed = Some(
-                        model
-                            .object_reference(&object.type_identity, text)
-                            .map_err(|_| super::fault("reference-literal-fixed-reference"))?,
-                    );
-                    break 'states;
-                } else {
-                    initial_nonconforming = true;
+    let mut fixed = None;
+    let mut initial_nonconforming = false;
+    'states: for state in initial {
+        prep.work(1)?;
+        for population in &overlapping {
+            prep.work(1)?;
+            let mut object = None;
+            for (key, objects) in &state.state().populations {
+                prep.work(1)?;
+                if prep.declaration_equal(key, &population.key)? {
+                    for (key, candidate) in objects {
+                        prep.work(1)?;
+                        if prep.text_equal(key, text)? {
+                            object = Some(candidate);
+                            break;
+                        }
+                    }
+                    break;
                 }
             }
+            let Some(object) = object else {
+                continue;
+            };
+            let Some(actual_type) = model
+                .type_identity_with_work(&object.type_identity, &mut |units| {
+                    prep.work_units(units)
+                })?
+            else {
+                return Err(super::letters::LettersRefusal::ReferenceBindingsAdmission(
+                    super::fault("reference-literal-member-type-is-selected"),
+                )
+                .into());
+            };
+            if prep.conforms(types, actual_type, &literal.object_type)? {
+                // The owner's reference construction still needs its actual
+                // reservation/copy hooks for a separately checked fixed literal.
+                fixed = Some(
+                    model
+                        .object_reference(&object.type_identity, text)
+                        .map_err(|_| {
+                            super::letters::LettersRefusal::ReferenceBindingsAdmission(
+                                super::fault("reference-literal-fixed-reference"),
+                            )
+                        })?,
+                );
+                break 'states;
+            } else {
+                initial_nonconforming = true;
+            }
         }
+    }
 
-        let binding = if let Some(reference) = fixed {
-            ReferenceBinding::Fixed(reference)
-        } else {
-            if initial_nonconforming {
-                return Err(super::refused(
+    let binding = if let Some(reference) = fixed {
+        ReferenceBinding::Fixed(reference)
+    } else {
+        if initial_nonconforming {
+            return Err(super::letters::LettersRefusal::ReferenceBindingsAdmission(
+                super::refused(
                     Code::MissingDeclaration,
                     "missing-name",
                     &[
                         ("type", literal.object_type.original().node().to_owned()),
                         ("key", identity_hex(&literal.identity)),
                     ],
-                ));
-            }
-            if barred.contains(&literal) {
-                // W36's barred-slot refusal is occurrence-specific: a
-                // fixed key remains a constant and is admitted above.
-                return Err(super::refused(
+                ),
+            )
+            .into());
+        }
+        prep.work(1)?;
+        if barred.contains(literal) {
+            // W36's barred-slot refusal is occurrence-specific: a
+            // fixed key remains a constant and is admitted above.
+            return Err(super::letters::LettersRefusal::ReferenceBindingsAdmission(
+                super::refused(
                     Code::IllTyped,
                     "operator-ineligible",
                     &[
                         ("type", literal.object_type.original().node().to_owned()),
                         ("key", identity_hex(&literal.identity)),
                     ],
-                ));
-            }
-            // StateModel::populations is declaration-key ordered, so the
-            // first overlapping universe gives a stable absent-key locus.
-            ReferenceBinding::CreatedObject {
-                object_type: literal.object_type.clone(),
-                identity: text.to_owned(),
-                population: available[0].key.clone(),
-                populations: overlapping
-                    .iter()
-                    .map(|population| population.key.clone())
-                    .collect(),
-            }
-        };
-        bindings.insert(literal, binding);
-    }
-    Ok(bindings)
+                ),
+            )
+            .into());
+        }
+        // StateModel::populations is declaration-key ordered, so the
+        // first overlapping universe gives a stable absent-key locus.
+        ReferenceBinding::CreatedObject {
+            object_type: prep.effective(&literal.object_type)?,
+            identity: prep.text(text)?,
+            population: prep.declaration(&available[0].key)?,
+            populations: {
+                let mut keys = Vec::new();
+                for population in &overlapping {
+                    prep.work(1)?;
+                    let key = prep.declaration(&population.key)?;
+                    prep.push(&mut keys, key)?;
+                }
+                keys
+            },
+        }
+    };
+    Ok(binding)
 }
 
 pub(super) fn collect_literals(
@@ -533,20 +931,6 @@ pub(super) fn collect_literals(
             });
         }
     }
-}
-
-fn overlaps(
-    model: &StateModel,
-    types: &TypeEnvironment,
-    population: &StatePopulation,
-    object_type: &EffectiveId,
-) -> bool {
-    population.member_types.iter().any(|member| {
-        model.type_identity(member).is_some_and(|member| {
-            types.conforms(member.clone(), object_type.clone())
-                || types.conforms(object_type.clone(), member)
-        })
-    })
 }
 
 fn identity_hex(bytes: &[u8]) -> String {

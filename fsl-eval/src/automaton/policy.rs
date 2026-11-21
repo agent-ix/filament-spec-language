@@ -445,6 +445,39 @@ impl StepPolicy {
             PolicyState::Bounded(BoundedState::Open { .. }) => final_holds,
         })
     }
+    /// Compare ordered monitor vectors, admitting each actual structural or
+    /// byte comparison through the original representation ledger.
+    ///
+    /// # Errors
+    /// The original accounting or cancellation stop before a denied comparison.
+    pub fn compare_states(
+        left: &[Vec<u8>],
+        right: &[Vec<u8>],
+        meter: &mut Meter,
+    ) -> Result<std::cmp::Ordering, PolicyStateError> {
+        let budget = Budget {
+            meter: RefCell::new(meter),
+            stopped: RefCell::new(None),
+        };
+        for (left, right) in left.iter().zip(right) {
+            budget.work(1)?;
+            for (left, right) in left.iter().zip(right) {
+                budget.work(1)?;
+                let order = left.cmp(right);
+                if order != std::cmp::Ordering::Equal {
+                    return Ok(order);
+                }
+            }
+            budget.work(1)?;
+            let order = left.len().cmp(&right.len());
+            if order != std::cmp::Ordering::Equal {
+                return Ok(order);
+            }
+        }
+        budget.work(1)?;
+        Ok(left.len().cmp(&right.len()))
+    }
+
     /// Copy retained policy vectors on the original representation ledger.
     ///
     /// # Errors
@@ -479,13 +512,20 @@ impl StepPolicy {
         states: &[PolicyState],
         meter: &mut Meter,
     ) -> Result<Vec<u8>, PolicyStateError> {
-        if contexts.len() != states.len() || states.iter().any(|state| !self.owns(*state)) {
-            return Err(PolicyStateError::Invalid);
-        }
         let budget = Budget {
             meter: RefCell::new(meter),
             stopped: RefCell::new(None),
         };
+        budget.work(1)?;
+        if contexts.len() != states.len() {
+            return Err(PolicyStateError::Invalid);
+        }
+        for state in states {
+            budget.work(1)?;
+            if !self.owns(*state) {
+                return Err(PolicyStateError::Invalid);
+            }
+        }
         let mut output = Vec::new();
         budget.copy(
             &mut output,
@@ -541,6 +581,9 @@ impl StepPolicy {
             let document = document.map_err(|error| match error {
                 quire_canonical::ReadError::Limit(limit) => {
                     PolicyStateError::IdentityLimit { value: limit.bound }
+                }
+                quire_canonical::ReadError::Allocation { requested } => {
+                    PolicyStateError::Encoding(Error::Allocation { requested })
                 }
                 _ => PolicyStateError::Invalid,
             })?;

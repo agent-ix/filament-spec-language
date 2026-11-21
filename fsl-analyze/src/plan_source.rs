@@ -670,8 +670,11 @@ impl<'a> SourcePlan<'a> {
             let bytes = needed
                 .checked_mul(std::mem::size_of::<T>())
                 .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
-            self.system
-                .evaluation_meter()
+            let mut meter = self.system.evaluation_meter();
+            if let Some(cause) = meter.cancel().and_then(filament_exact::Cancel::cause) {
+                return Err(RuleStop::Cancelled(cause));
+            }
+            meter
                 .charge(
                     Charge::new(ChargePoint::ModelCandidate)
                         .work(Integer::zero())
@@ -680,8 +683,16 @@ impl<'a> SourcePlan<'a> {
                         })?),
                 )
                 .map_err(|incomplete| {
-                    self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit)
+                    match meter.cancel().and_then(filament_exact::Cancel::cause) {
+                        Some(cause) => RuleStop::Cancelled(cause),
+                        None => {
+                            self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit)
+                        }
+                    }
                 })?;
+            if let Some(cause) = meter.cancel().and_then(filament_exact::Cancel::cause) {
+                return Err(RuleStop::Cancelled(cause));
+            }
             values
                 .try_reserve_exact(needed - values.len())
                 .map_err(|_| RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
@@ -734,9 +745,15 @@ impl<'a> SourcePlan<'a> {
         } else {
             Vec::new()
         };
-        let letters = match self.system.clause_letters(node) {
+        let letters = match self
+            .system
+            .clause_letters_with_meter(node, &mut self.system.evaluation_meter())
+        {
             Ok(letters) => letters,
-            Err(error) => {
+            Err(fsl_eval::simulation::model::LettersPreparationError::Policy(error)) => {
+                return Err(self.policy_stop(error))
+            }
+            Err(fsl_eval::simulation::model::LettersPreparationError::Admission(error)) => {
                 self.fault.get_or_insert_with(|| error.to_string());
                 return Ok(MonitorStep::Reject);
             }
@@ -1143,6 +1160,26 @@ impl PlanRules for SourcePlan<'_> {
         }
         StepPolicy::copy_states(monitors, &mut self.system.evaluation_meter())
             .map_err(|error| self.policy_stop(error))
+    }
+
+    fn compare_policy_states(
+        &mut self,
+        left: &[Vec<u8>],
+        right: &[Vec<u8>],
+    ) -> Result<std::cmp::Ordering, RuleStop> {
+        if !self.positive_policies || self.policies.is_empty() {
+            return Ok(left.cmp(right));
+        }
+        StepPolicy::compare_states(left, right, &mut self.system.evaluation_meter())
+            .map_err(|error| self.policy_stop(error))
+    }
+
+    fn push_policy_index(&mut self, bucket: &mut Vec<usize>, node: usize) -> Result<(), RuleStop> {
+        if self.positive_policies && !self.policies.is_empty() {
+            self.policy_capacity(bucket, 1)?;
+        }
+        bucket.push(node);
+        Ok(())
     }
 
     fn policy_count(&self) -> usize {

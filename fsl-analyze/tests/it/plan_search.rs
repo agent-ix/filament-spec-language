@@ -3034,9 +3034,23 @@ object Counter {
 population counters: Counter;
 "#;
 
+// Native planning consumes these unit-level clauses. The identical embedded
+// model clauses remain annotations until the imported-operation execution path
+// is connected to native contract selection.
+const POLICY_DIAMOND_CONTRACTS: &str = r#"
+pre RightStart using v on M::Counter::right { self.number = 0 }
+post RightNext using v on M::Counter::right { self.number = 1 }
+pre LeftStart using v on M::Counter::left { self.number = 0 }
+post LeftNext using v on M::Counter::left { self.number = 2 }
+pre CombineBranch using v on M::Counter::combine { self.number = 1 or self.number = 2 }
+post CombineNext using v on M::Counter::combine { self.number = 3 }
+pre SettleJoined using v on M::Counter::settle { self.number = 3 }
+post SettleNext using v on M::Counter::settle { self.number = 4 }
+"#;
+
 fn positive_policy_world(formula: &str) -> World {
     native_plan_world_with_clauses(POLICY_DIAMOND_MODEL,
-        "type Lengths = Int[0,3]; synthesis Reach using t grammar M::Counter domain Lengths satisfies { forall(c in Reach.final.counters: c.number = 4) };\n",
+        &format!("{POLICY_DIAMOND_CONTRACTS}\ntype Lengths = Int[0,3]; synthesis Reach using t grammar M::Counter domain Lengths satisfies {{ forall(c in Reach.final.counters: c.number = 4) }};\n"),
         &[model_world::Clause { activation: "on origin", formula }],
         &[("c", json!({"number":{"integer":"0"}}))])
 }

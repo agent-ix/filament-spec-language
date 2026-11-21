@@ -440,6 +440,27 @@ pub trait PlanRules {
         Ok(monitors.to_vec())
     }
 
+    /// Compare monitor vectors through the rule's representation ledger.
+    ///
+    /// # Errors
+    /// The original accounting or cancellation stop before inspected bytes.
+    fn compare_policy_states(
+        &mut self,
+        left: &[Vec<u8>],
+        right: &[Vec<u8>],
+    ) -> Result<std::cmp::Ordering, RuleStop> {
+        Ok(left.cmp(right))
+    }
+
+    /// Retain a node index in a model-key bucket.
+    ///
+    /// # Errors
+    /// The original representation storage or cancellation stop.
+    fn push_policy_index(&mut self, bucket: &mut Vec<usize>, node: usize) -> Result<(), RuleStop> {
+        bucket.push(node);
+        Ok(())
+    }
+
     /// Policy `policy`'s monitor after reading the initial state.
     ///
     /// # Errors
@@ -817,6 +838,27 @@ impl NodeKey {
     }
 }
 
+/// The model part of a product key. Monitor bytes are compared explicitly
+/// within this key's bucket so comparison can return the caller's refusal.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ModelNodeKey {
+    state: Vec<u8>,
+    depth: u64,
+    accumulated: Option<Rational>,
+    prefix: Option<usize>,
+}
+
+impl NodeKey {
+    fn model_key(&self) -> ModelNodeKey {
+        ModelNodeKey {
+            state: self.state.clone(),
+            depth: self.depth,
+            accumulated: self.accumulated.clone(),
+            prefix: self.prefix,
+        }
+    }
+}
+
 /// One admitted search node.
 #[derive(Clone, Debug)]
 pub(crate) struct Node<K> {
@@ -847,7 +889,7 @@ pub(crate) struct Search<'s, 'a, R: PlanRules> {
     pub(crate) kind: ObjectiveKind,
     pub(crate) dominance: bool,
     pub(crate) nodes: Vec<Node<R::StepKey>>,
-    pub(crate) index: BTreeMap<NodeKey, usize>,
+    pub(crate) index: BTreeMap<ModelNodeKey, Vec<usize>>,
     pub(crate) explored: PlanExplored,
     pub(crate) negative_step: Option<usize>,
     /// The first state pruned for an undetermined invariant: its canonical
@@ -1059,10 +1101,8 @@ impl<R: PlanRules> Search<'_, '_, R> {
             accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum).then(zero),
             prefix: (!self.rules.merges_prefixes()).then_some(0),
         };
-        self.index.insert(
-            key.with_monitors(self.rules.copy_policy_states(&key.monitors)?),
-            0,
-        );
+        self.rules
+            .push_policy_index(self.index.entry(key.model_key()).or_default(), 0)?;
         self.nodes.push(Node {
             key,
             state: start,
@@ -1335,7 +1375,21 @@ impl<R: PlanRules> Search<'_, '_, R> {
                 .then(|| accumulated.value.clone()),
             prefix: (!self.rules.merges_prefixes()).then_some(self.nodes.len()),
         };
-        if let Some(&existing) = self.index.get(&key) {
+        let model_key = key.model_key();
+        let mut existing = None;
+        if let Some(bucket) = self.index.get(&model_key) {
+            for &candidate in bucket {
+                if self
+                    .rules
+                    .compare_policy_states(&self.nodes[candidate].key.monitors, &key.monitors)?
+                    == std::cmp::Ordering::Equal
+                {
+                    existing = Some(candidate);
+                    break;
+                }
+            }
+        }
+        if let Some(existing) = existing {
             // Frontier comparison with the admitted node.
             self.charge(PlanLimit::MaxWork)?;
             self.nodes[parent]
@@ -1360,10 +1414,8 @@ impl<R: PlanRules> Search<'_, '_, R> {
         }
         self.charge(PlanLimit::MaxStates)?;
         let index = self.nodes.len();
-        self.index.insert(
-            key.with_monitors(self.rules.copy_policy_states(&key.monitors)?),
-            index,
-        );
+        self.rules
+            .push_policy_index(self.index.entry(model_key).or_default(), index)?;
         self.nodes.push(Node {
             key,
             state,

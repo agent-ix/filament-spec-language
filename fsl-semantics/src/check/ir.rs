@@ -754,6 +754,17 @@ impl<'a> CheckedNode<'a> {
             .collect()
     }
 
+    /// Visit direct operands in evaluation order without allocating a list.
+    ///
+    /// # Errors
+    /// The visitor's first refusal, before any later operand is visited.
+    pub fn try_for_each_child<E>(
+        self,
+        child: &mut impl FnMut(CheckedNode<'a>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        try_for_each_node_child(self.kind(), &mut |id| child(self.at(id)))
+    }
+
     /// Every node of the tree under this one in pre-order, without host
     /// recursion.
     pub(crate) fn descendants(self) -> Vec<CheckedNode<'a>> {
@@ -1175,16 +1186,31 @@ pub(crate) fn scalar_conversion_target<'t>(
 }
 
 pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
+    let mut children = Vec::new();
+    let result = try_for_each_node_child(kind, &mut |child| {
+        children.push(child);
+        Ok::<(), std::convert::Infallible>(())
+    });
+    match result {
+        Ok(()) => children,
+        Err(never) => match never {},
+    }
+}
+
+fn try_for_each_node_child<E>(
+    kind: &NodeKind<NodeId>,
+    child: &mut impl FnMut(NodeId) -> Result<(), E>,
+) -> Result<(), E> {
     match kind {
         NodeKind::Literal(_)
         | NodeKind::ReferenceLiteral { .. }
         | NodeKind::Local(_)
         | NodeKind::ProtocolReference { .. }
         | NodeKind::PopulationObjects { .. }
-        | NodeKind::NamedPopulation { .. } => Vec::new(),
+        | NodeKind::NamedPopulation { .. } => Ok(()),
         NodeKind::Seq {
             low, high, body, ..
-        } => vec![*low, *high, *body],
+        } => [*low, *high, *body].into_iter().try_for_each(child),
         NodeKind::Coerce(operand, _)
         | NodeKind::Negate(operand)
         | NodeKind::QuantityNegate(operand)
@@ -1218,20 +1244,21 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
         | NodeKind::Flatten(operand)
         | NodeKind::Size(operand)
         | NodeKind::DropFirst(operand)
-        | NodeKind::Pre(operand) => vec![*operand],
+        | NodeKind::Pre(operand) => [*operand].into_iter().try_for_each(child),
         NodeKind::PlaceReference {
             reference, slots, ..
         } => {
-            let mut children = vec![*reference];
-            children.extend(slots.iter().copied());
-            children
+            child(*reference)?;
+            slots.iter().copied().try_for_each(child)
         }
-        NodeKind::Let { value, body, .. } => vec![*value, *body],
+        NodeKind::Let { value, body, .. } => [*value, *body].into_iter().try_for_each(child),
         NodeKind::If {
             condition,
             then,
             otherwise,
-        } => vec![*condition, *then, *otherwise],
+        } => [*condition, *then, *otherwise]
+            .into_iter()
+            .try_for_each(child),
         NodeKind::Arithmetic(_, left, right)
         | NodeKind::IntegerDivision { left, right, .. }
         | NodeKind::Divide { left, right, .. }
@@ -1270,54 +1297,56 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
             source: left,
             target: right,
             ..
-        } => vec![*left, *right],
-        NodeKind::TupleProject { operand, .. } => vec![*operand],
-        NodeKind::IeeeSquareRoot(_, operand) => vec![*operand],
+        } => [*left, *right].into_iter().try_for_each(child),
+        NodeKind::TupleProject { operand, .. } => [*operand].into_iter().try_for_each(child),
+        NodeKind::IeeeSquareRoot(_, operand) => [*operand].into_iter().try_for_each(child),
         NodeKind::IeeeFloat32Fma(_, first, second, third)
-        | NodeKind::IeeeFloat64Fma(_, first, second, third) => vec![*first, *second, *third],
+        | NodeKind::IeeeFloat64Fma(_, first, second, third) => {
+            [*first, *second, *third].into_iter().try_for_each(child)
+        }
         NodeKind::Call { arguments, .. }
         | NodeKind::ImportedCall { arguments, .. }
         | NodeKind::Tuple { arguments, .. }
-        | NodeKind::UnionValue { arguments, .. } => arguments.clone(),
+        | NodeKind::UnionValue { arguments, .. } => arguments.iter().copied().try_for_each(child),
         NodeKind::Record { slots, .. } => slots
             .iter()
             .filter_map(|slot| match slot {
                 RecordSlot::<NodeId>::Present(node) => Some(*node),
                 RecordSlot::<NodeId>::Absent | RecordSlot::<NodeId>::Null => None,
             })
-            .collect(),
-        NodeKind::Collection { elements, .. } => elements.clone(),
-        NodeKind::Query { source, body, .. } => vec![*source, *body],
+            .try_for_each(child),
+        NodeKind::Collection { elements, .. } => elements.iter().copied().try_for_each(child),
+        NodeKind::Query { source, body, .. } => [*source, *body].into_iter().try_for_each(child),
         NodeKind::Fold {
             source,
             step,
             identity,
             ..
         } => {
-            let mut children = vec![*source];
-            children.extend(*identity);
-            children.push(*step);
-            children
+            child(*source)?;
+            if let Some(identity) = identity {
+                child(*identity)?;
+            }
+            child(*step)
         }
-        NodeKind::AllInstances { population } => vec![*population],
+        NodeKind::AllInstances { population } => [*population].into_iter().try_for_each(child),
         NodeKind::Case {
             scrutinee, arms, ..
         } => std::iter::once(*scrutinee)
             .chain(arms.iter().map(|arm| arm.body))
-            .collect(),
+            .try_for_each(child),
         NodeKind::Lookup {
             population,
             reference,
             ..
-        } => vec![*population, *reference],
+        } => [*population, *reference].into_iter().try_for_each(child),
         NodeKind::Dispatch {
             receiver,
             arguments,
             ..
         } => {
-            let mut children = vec![*receiver];
-            children.extend(arguments);
-            children
+            child(*receiver)?;
+            arguments.iter().copied().try_for_each(child)
         }
         // Not the S3 seam (`Machine::apply`'s own doc, `fsl-eval`): this
         // is `NodeKind`'s own module, so its match gets an unconditional
@@ -1415,6 +1444,17 @@ mod tests {
         };
 
         assert_eq!(node_children(&kind), [NodeId(8), NodeId(3), NodeId(2)]);
+        let mut visited = Vec::new();
+        let result = try_for_each_node_child(&kind, &mut |child| {
+            visited.push(child);
+            if child == NodeId(3) {
+                Err(filament_exact::CancelCause::Deadline)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result, Err(filament_exact::CancelCause::Deadline));
+        assert_eq!(visited, [NodeId(8), NodeId(3)]);
     }
 
     /// FR-258 behaviour 2: a 100,000-deep checked body clones, compares

@@ -129,7 +129,7 @@ pub(crate) use reference_bindings::ReferenceBinding;
 pub use reference_bindings::ReferenceBindings;
 mod hyper_letters;
 pub use hyper_letters::CheckedHyperLetters;
-pub use letters::{ClauseLetters, DecisiveObservation, LettersRefusal};
+pub use letters::{ClauseLetters, DecisiveObservation, LettersPreparationError, LettersRefusal};
 pub use probabilistic::{
     same_rewards, same_values, Action, Draw, NotMarkov, ScheduledIdentity, TransitionId,
     UndecidedSuccessor, Unsteppable, WeightedStep,
@@ -2471,7 +2471,7 @@ impl<'a> ModelSystem<'a> {
         let mut admitting = Vec::new();
         for population in &self.populations {
             budget.work(1)?;
-            if self.overlaps(population, parameter.clone()) {
+            if self.overlaps_with_budget(population, parameter, &budget)? {
                 let identity = declaration_bytes(&population.key, &budget)?;
                 budget.growth(&mut admitting, 1)?;
                 admitting.push((identity, &population.key));
@@ -2480,7 +2480,7 @@ impl<'a> ModelSystem<'a> {
         let mut unbounded = Vec::new();
         for (_, population) in &admitting {
             budget.work(1)?;
-            if !self.universes.contains_key(*population) {
+            if self.universe_with_budget(population, &budget)?.is_none() {
                 let node = fsl_semantics::model::key::population_node_key(population)
                     .map_err(|_| PolicyStateError::Invalid)?;
                 budget.growth(&mut unbounded, 1)?;
@@ -2517,27 +2517,72 @@ impl<'a> ModelSystem<'a> {
                 at -= 1;
             }
         }
-        let copy = |text: &str| -> Result<String, PolicyStateError> {
-            let mut bytes = Vec::new();
-            budget.copy(&mut bytes, text.as_bytes())?;
-            budget.work(bytes.len())?;
-            String::from_utf8(bytes).map_err(|_| PolicyStateError::Invalid)
-        };
         let mut instances = Vec::new();
         for (_, population) in admitting {
             budget.work(1)?;
-            for key in self.universes.get(population).into_iter().flatten() {
+            for key in self
+                .universe_with_budget(population, &budget)?
+                .into_iter()
+                .flatten()
+            {
                 budget.work(1)?;
                 let population = DeclarationKey {
-                    package: copy(&population.package)?,
-                    node: copy(&population.node)?,
+                    package: budget.text(&population.package)?,
+                    node: budget.text(&population.node)?,
                 };
-                let key = copy(key)?;
+                let key = budget.text(key)?;
                 budget.growth(&mut instances, 1)?;
                 instances.push(ModelInstance { population, key });
             }
         }
         Ok(instances)
+    }
+
+    fn universe_with_budget(
+        &self,
+        population: &DeclarationKey,
+        budget: &crate::policy_budget::Budget<'_>,
+    ) -> Result<Option<&Vec<String>>, crate::automaton::PolicyStateError> {
+        for (candidate, keys) in &self.universes {
+            budget.work(1)?;
+            if budget.compare_declarations(candidate, population)? == std::cmp::Ordering::Equal {
+                return Ok(Some(keys));
+            }
+        }
+        Ok(None)
+    }
+
+    fn overlaps_with_budget(
+        &self,
+        population: &fsl_semantics::model::state::StatePopulation,
+        parameter: &EffectiveId,
+        budget: &crate::policy_budget::Budget<'_>,
+    ) -> Result<bool, crate::automaton::PolicyStateError> {
+        for member in &population.member_types {
+            budget.work(1)?;
+            let Some(member) = self.model.type_identity_with_work(member, &mut |units| {
+                budget.work(
+                    usize::try_from(units)
+                        .map_err(|_| crate::automaton::PolicyStateError::Invalid)?,
+                )
+            })?
+            else {
+                continue;
+            };
+            // The admitted conformance API owns both arguments. Their real
+            // copies use its identity reservation hook; its internal query
+            // work still needs the owner's borrowed metered seam.
+            if self
+                .types
+                .conforms(budget.effective(member)?, budget.effective(parameter)?)
+                || self
+                    .types
+                    .conforms(budget.effective(parameter)?, budget.effective(member)?)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether `population` overlaps the object type `parameter` (FR-125

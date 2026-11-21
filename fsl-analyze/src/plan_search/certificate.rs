@@ -365,7 +365,10 @@ pub(crate) fn check<R: PlanRules>(
     };
     let start_key = system.state_key(&start).map(|(key, _)| key).ok();
     if start_key.as_ref() != Some(&first.key.state)
-        || monitors != first.monitors
+        || rules
+            .compare_policy_states(&monitors, &first.monitors)
+            .map_err(super::stop_cause)?
+            != std::cmp::Ordering::Equal
         || first.key.depth != 0
         || first.parent.is_some()
     {
@@ -570,7 +573,10 @@ pub(crate) fn check<R: PlanRules>(
             // which the re-derived step must reproduce.
             let accumulated = entry.key.accumulated.as_ref().and(accumulated);
             let names_node = successor.key.state == state_key
-                && successor.key.monitors == next_monitors
+                && rules
+                    .compare_policy_states(&successor.key.monitors, &next_monitors)
+                    .map_err(super::stop_cause)?
+                    == std::cmp::Ordering::Equal
                 && successor.key.depth == entry.key.depth + 1
                 && successor.key.accumulated == accumulated
                 && (certificate.merges

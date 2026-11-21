@@ -668,6 +668,28 @@ impl StateModel {
             .find_map(|view| view.view.type_identities().get(key).cloned())
     }
 
+    /// Borrow an admitted type identity, charging each model-index visit and
+    /// declaration text comparison before it occurs.
+    ///
+    /// # Errors
+    /// The caller's original work or cancellation refusal.
+    pub fn type_identity_with_work<E>(
+        &self,
+        key: &DeclarationKey,
+        work: &mut impl FnMut(u64) -> Result<(), E>,
+    ) -> Result<Option<&EffectiveId>, E> {
+        for view in &self.views {
+            work(1)?;
+            for (candidate, effective) in view.view.type_identities() {
+                work(1)?;
+                if crate::model::key::declaration_equal_with_work(candidate, key, work)? {
+                    return Ok(Some(effective));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// The declaration key of the type whose effective identity is
     /// `identity`.
     pub fn type_key(&self, identity: EffectiveId) -> Option<&DeclarationKey> {

@@ -1,0 +1,193 @@
+---
+id: SR-967175026302197768900474181941935084686
+title: QSL-1978 positive policy gap-analysis
+type: SpecReview
+analysis: gap-analysis
+scope: agent-ix/filament-spec-language; PR3408 QSL-1978; owned diff b68f04c445396b1e66fa71063337d001f3717dcd..df2e5e322f2bf44fe0a401d1ae69bafd95cfac13
+review_set: subset
+---
+
+## Summary
+
+Frozen candidate: `df2e5e322f2bf44fe0a401d1ae69bafd95cfac13`. Base: `b68f04c445396b1e66fa71063337d001f3717dcd`. Ticket: QSL-1978; public PR filament-spec-language#3408. Native Codex reviewer; exact native model ID unavailable. No Jev result is claimed.
+
+No Cargo, runtime test, full gate, baseline, workspace matrix or repository-wide scan was run. Current-head fifteen-case runtime qualification and final all-target custody are pending with the dispatching parent; historical receipts are not current-head passes. The parent reports relay Redis os11 prevented dispatch, with no enqueue receipt. Focused test compilation reported by parent is compilation evidence only. The reviewed branch was never edited or committed by this reviewer.
+
+No applicable AssuranceProfile was found under spec. Direct, bounded review applies. Selected lenses are base, EARS, failure-domain and scope-boundary. Integrity, dependency and object review are not selected because no structural sections, relationships or domain objects changed; evidence analysis is not selected because no Verification method changed; risk-complexity is not selected because this adds no external technology/contract dependency. Criterion-strength is not run: no Jev client/result is available, and no new AC is authored. Optional whole-repository semantic gap review is not claimed; scoped code/test intent is part of code-review. Whole-matrix extraction previously failed by size and the dispatch forbids repeating it; this limitation cannot establish an engine-backed traceability PASS. Plan completion: not assessed.
+
+## Verdict
+
+CONDITIONAL — bounded method only; limitations below apply.
+
+## Findings
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-001 | low | No findings (placeholder) | - |
+
+## Coverage
+
+This is the dispatch-authorized scoped gap inspection, not a full repository gap audit. Engine reconciliation was not rerun because the accepted whole-matrix size failure and explicit dispatch constraint prohibit it. No engine coverage percentages, source-test bind counts or repository-wide PASS are claimed. The full-repository portions of the skill remain incomplete.
+
+Reverse ownership for the scoped new surface: supports_positive_policy/StepPolicy selection and policy start/advance/closure are owned by FR-1012 staged behavior and FSpec FR-803; canonical bytes/context/framing use existing shared safety/bounded identity; Budget, instances_with_meter and retained copies are owned by FR-1011 policy accounting; the request classifier is FR-1010/FR-1012. Scope inspection found no new unspecified user-visible setting, charge variant or numerical family and no hollow source/test bodies. Thirteen meaningful API/behavior groups examined; zero newly unowned groups, source stubs or test stubs found in that scope. No coverage tool was run, so no line-coverage assertion is made.
+
+The ten added tests have real oracles: three eval tests compare canonical translations, batch lasso truth and exact/one-short encode budgets; six analyzer tests check the native diamond, safety infeasibility, corrupted certificates, scalar/cancellation behavior, order/vacuity and unsupported future forms; one host test checks repeated successful result documents. The native fixture repair now supplies real Clause[] and leaves semantic/native/cardinality assertions intact. FR-1011-AC-2 is explicitly tagged by the new accounting test. Existing zero-length policy tests and canonical no-policy count control were read as retained controls. Bare FR tags are recorded only as authored scope; they are not evidence that every child AC is fulfilled. In particular no added case proves FR-1012-AC-1 general unbounded eventual support, and no full QSL-1978 completion claim is justified. Engine binding verification and current-head runtime remain pending. Code resource defects are reported once in the separate code-review artifact, not duplicated here.
+
+## Review data
+
+```yaml
+clean: true
+scope:
+- id: FR-1011-policy-accounting
+  path: spec/functional/FR-1011-meter-the-plan-search-under-named-settings.md
+  role: examined
+  excerpt: 'For canonical source-policy state construction and admission, `ModelCandidate`
+
+    (`model.candidate`) SHALL charge actual structural-node and byte visits to
+
+    `accounting.work_units` and full new buffer-capacity bytes, before every
+
+    growth, to `accounting.result_units`; writer/reader scratch, output copies and
+
+    retained monitor vectors share the original evaluation ledger and cancellation
+
+    handle through search and the existing independent replay/checker sessions,
+
+    without changing model-only `plan_search.max_state_key_bytes` or the existing
+
+    automaton identity-byte bound.'
+- id: FR-1012-staged-boundary
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  role: examined
+  excerpt: 'The first positive-length source-policy increment covers capture-free,
+
+    origin-activated infinite-trace `always holds(A)`, `eventually[0,k] holds(A)`
+
+    and `always[0,k] holds(A)` through their canonical shared monitor states and
+
+    terminal-stutter closure. Other checked positive-length shapes retain an
+
+    explicit unsupported result until implemented. Captures, general liveness
+
+    and FR-1012-AC-1 remain required subsequent increments; this staged boundary
+
+    does not change their acceptance obligations.'
+- id: FR-1011-AC-1
+  path: spec/functional/FR-1011-meter-the-plan-search-under-named-settings.md
+  role: context_only
+  excerpt: 'A plan request whose `limits` (FSpec FR-805) is `{"max_work": 1}` stops the plan search `incomplete`
+    naming `plan_search.max_work`, exit `22`; `{"max_states": 1}` names `plan_search.max_states`.'
+- id: FR-1011-AC-2
+  path: spec/functional/FR-1011-meter-the-plan-search-under-named-settings.md
+  role: examined
+  excerpt: A low `accounting.work_units` names `accounting.work_units`, not a `plan_search` setting.
+- id: FR-1011-AC-3
+  path: spec/functional/FR-1011-meter-the-plan-search-under-named-settings.md
+  role: context_only
+  excerpt: 'A plan request whose `limits` is `{"max_steps": 1}` refuses `invalid_runtime_input`/`unknown-member`
+    at `/request/synthesis/limits/max_steps`, and `{"max_work": 0}` refuses `invalid-value` at `/request/synthesis/limits/max_work`,
+    each exit 20 with no search; a request with no `limits` reports every `plan_search.*` limit at its
+    published default in the outcome''s `limits`.'
+- id: FR-1012-AC-1
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  role: examined
+  excerpt: The spine plan under the policy `eventually holds(c.versionNumber = 3)` is evaluated, not refused,
+    and every reported plan visits version 3.
+- id: FR-1012-AC-2
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  role: examined
+  excerpt: Two runs of one plan request give byte-identical outcome documents.
+- id: FR-1012-AC-3
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  role: context_only
+  excerpt: 'A decimal per-step cost objective is written exactly in FSpec FR-181''s typed `decimal` form
+    (`{"type": "decimal", "coefficient": "30", "scale": "2"}` for `0.30`) and certified with a `potential`
+    certificate.'
+- id: FR-1012-AC-4
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  role: context_only
+  excerpt: 'Over FSpec''s published `timed-tick` fixture the plan''s `elapsed` is `{"type": "rational",
+    "numerator": "30", "denominator": "1", "unit": "min"}` with every `delay` of numerator 0 (FSpec FR-808-AC-1);
+    over `timed-go` with guard `x >= 2` the result is `optimal` with one step of delay `{"type": "rational",
+    "numerator": "2", "denominator": "1", "unit": "s"}` and an accepted `closure` certificate (FR-808-AC-2),
+    and with guard `x > 2` `feasible` with `bound` `{side: lower, value: 2/1, attained: false}` and delay
+    `{"type": "rational", "numerator": "5", "denominator": "2", "unit": "s"}`, byte-identica'
+- id: FR-1012-AC-5
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  role: context_only
+  excerpt: Over FSpec's published `probabilistic-try` fixture the goal `Reach.final.done` gives `optimal`
+    `retry` (FSpec FR-809-AC-1), and `maximize Reach.probability` over lengths 1 to 2 using only `try`
+    gives `optimal` `try, try` with `objective.value` the Rational `3/4` (FR-809-AC-2).
+- id: FR-1012-AC-6
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  role: context_only
+  excerpt: 'Over FSpec''s published `counter` fixture, `limits` `{"max_states": 2}` gives `incomplete`
+    with `explored.states` 2 and `explored.work` 6 and plan `null`, and `{"max_work": 1}` gives `explored.states`
+    1 and `explored.work` 1 (FSpec FR-801-AC-8), each byte-identical across two runs.'
+- id: FR-1012-AC-7
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  role: context_only
+  excerpt: Over a model whose invariant is undetermined at every state from some value up, a goal reachable
+    only through such a state gives `incomplete` with cause `invariant-undetermined` naming the invariant,
+    plan `null` and no certificate, never `infeasible`; a goal reached before the first such state gives
+    `incomplete` carrying that plan, never `optimal`; and a plan substituted through such a state is not
+    reported.
+- id: fsl-analyze/src/plan_search.rs
+  path: fsl-analyze/src/plan_search.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-analyze/src/plan_search/certificate.rs
+  path: fsl-analyze/src/plan_search/certificate.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-analyze/src/plan_source.rs
+  path: fsl-analyze/src/plan_source.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-analyze/tests/it/plan_search.rs
+  path: fsl-analyze/tests/it/plan_search.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-command/src/command/plan_synthesis.rs
+  path: fsl-command/src/command/plan_synthesis.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-eval/src/automaton/bounded.rs
+  path: fsl-eval/src/automaton/bounded.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-eval/src/automaton/key.rs
+  path: fsl-eval/src/automaton/key.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-eval/src/automaton/mod.rs
+  path: fsl-eval/src/automaton/mod.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-eval/src/automaton/policy.rs
+  path: fsl-eval/src/automaton/policy.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-eval/src/lib.rs
+  path: fsl-eval/src/lib.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-eval/src/policy_budget.rs
+  path: fsl-eval/src/policy_budget.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-eval/src/simulation/model.rs
+  path: fsl-eval/src/simulation/model.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: fsl-eval/tests/it/automaton_key_bounded.rs
+  path: fsl-eval/tests/it/automaton_key_bounded.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+- id: tests/it/plan_export_surface.rs
+  path: tests/it/plan_export_surface.rs
+  role: examined
+  excerpt: '// SPDX-License-Identifier: AGPL-3.0-or-later'
+findings: []
+bindings: []
+```

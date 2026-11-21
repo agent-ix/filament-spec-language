@@ -64,6 +64,103 @@ impl Budget<'_> {
         output.extend_from_slice(bytes);
         Ok(())
     }
+    pub(crate) fn compare_bytes(
+        &self,
+        left: &[u8],
+        right: &[u8],
+    ) -> Result<std::cmp::Ordering, PolicyStateError> {
+        for (left, right) in left.iter().zip(right) {
+            self.work(1)?;
+            let order = left.cmp(right);
+            if order != std::cmp::Ordering::Equal {
+                return Ok(order);
+            }
+        }
+        self.work(1)?;
+        Ok(left.len().cmp(&right.len()))
+    }
+    pub(crate) fn compare_declarations(
+        &self,
+        left: &filament_checked::key::DeclarationKey,
+        right: &filament_checked::key::DeclarationKey,
+    ) -> Result<std::cmp::Ordering, PolicyStateError> {
+        self.work(1)?;
+        let order = self.compare_bytes(left.package.as_bytes(), right.package.as_bytes())?;
+        if order != std::cmp::Ordering::Equal {
+            return Ok(order);
+        }
+        self.compare_bytes(left.node.as_bytes(), right.node.as_bytes())
+    }
+    pub(crate) fn text(&self, text: &str) -> Result<String, PolicyStateError> {
+        let mut bytes = Vec::new();
+        self.copy(&mut bytes, text.as_bytes())?;
+        self.work(bytes.len())?;
+        String::from_utf8(bytes).map_err(|_| PolicyStateError::Invalid)
+    }
+    pub(crate) fn compare_effectives(
+        &self,
+        left: &filament_exact::EffectiveId,
+        right: &filament_exact::EffectiveId,
+    ) -> Result<std::cmp::Ordering, PolicyStateError> {
+        self.work(1)?;
+        let order = left.owner_chain().len().cmp(&right.owner_chain().len());
+        if order != std::cmp::Ordering::Equal {
+            return Ok(order);
+        }
+        for (left, right) in left.owner_chain().iter().zip(right.owner_chain()) {
+            self.work(1)?;
+            let order =
+                self.compare_bytes(left.package().as_bytes(), right.package().as_bytes())?;
+            if order != std::cmp::Ordering::Equal {
+                return Ok(order);
+            }
+            let order = self.compare_bytes(left.node().as_bytes(), right.node().as_bytes())?;
+            if order != std::cmp::Ordering::Equal {
+                return Ok(order);
+            }
+        }
+        Ok(std::cmp::Ordering::Equal)
+    }
+    pub(crate) fn equal_effectives(
+        &self,
+        left: &filament_exact::EffectiveId,
+        right: &filament_exact::EffectiveId,
+    ) -> Result<bool, PolicyStateError> {
+        self.work(1)?;
+        if left.owner_chain().len() != right.owner_chain().len() {
+            return Ok(false);
+        }
+        for (left, right) in left.owner_chain().iter().zip(right.owner_chain()) {
+            self.work(1)?;
+            if self.compare_bytes(left.package().as_bytes(), right.package().as_bytes())?
+                != std::cmp::Ordering::Equal
+                || self.compare_bytes(left.node().as_bytes(), right.node().as_bytes())?
+                    != std::cmp::Ordering::Equal
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+    pub(crate) fn effective(
+        &self,
+        effective: &filament_exact::EffectiveId,
+    ) -> Result<filament_exact::EffectiveId, PolicyStateError> {
+        for original in effective.owner_chain() {
+            self.work(1)?;
+            self.work(original.package().len())?;
+            self.work(original.node().len())?;
+        }
+        effective
+            .try_clone_with(&mut |bytes| self.reserve(bytes))
+            .map_err(|error| match error {
+                filament_exact::IdentityCopyError::Policy(error) => error,
+                filament_exact::IdentityCopyError::Allocation { requested }
+                | filament_exact::IdentityCopyError::Capacity { requested } => {
+                    PolicyStateError::Encoding(Error::Allocation { requested })
+                }
+            })
+    }
     pub(crate) fn bridge(&self, error: PolicyStateError) -> Error {
         if self.stopped.borrow().is_none() {
             *self.stopped.borrow_mut() = Some(error);
