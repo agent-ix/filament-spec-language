@@ -9,7 +9,7 @@ use fsl_eval::execution::{
 };
 use fsl_package::ReferenceCatalog;
 use fsl_semantics::model::accounting::{ChargePoint, LimitKind};
-use fsl_semantics::model::intake::{package_input, PackageInput};
+use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{admit_current_snapshot, DocumentRef, ObservationLimits};
 use serde_json::json;
@@ -111,11 +111,15 @@ fn canonical_run_conversion_and_execution_share_one_limit() {
     let wire = codec
         .encode_reference(reference, &mut wire_budget, &cancel, 64)
         .unwrap();
-    let mut conversion = ConversionWork::default();
-    codec
-        .restore_reference(&wire, &mut conversion, &cancel, 64)
+    let scope = fixture.compiled.package.graph().scope();
+    let forms = super::Forms::new(scope.types(), scope.enums());
+    let callable = fixture.compiled.package.graph().callable("keep").unwrap();
+    let declared = &callable.parameters[0].1;
+    let value = Value::Reference(reference.clone());
+    let mut membership_only = SuppliedRun::new(SuppliedLimits::default(), cancel.clone()).unwrap();
+    forms
+        .admit_supplied(&mut membership_only, 0, declared, &value)
         .unwrap();
-    let limits = SuppliedLimits::default().with_conversion_work_units(conversion.0);
     let request = ExecuteRequest {
         selection: ExecuteSelection::Function {
             name: fsl_eval::value::QualifiedName::unqualified("keep").unwrap(),
@@ -129,6 +133,21 @@ fn canonical_run_conversion_and_execution_share_one_limit() {
         prepare: PrepareLimits::default(),
         session: filament_eval::SessionLimits::default(),
     };
+    let mut execution_only = SuppliedRun::new(SuppliedLimits::default(), cancel.clone()).unwrap();
+    execute(
+        &fixture.compiled.package,
+        &request,
+        &SuppliedBackends::default(),
+        &execution,
+        &mut execution_only,
+        &cancel,
+    )
+    .expect("genuine interpreter execution");
+    let admitted = membership_only.admission_spent();
+    let executed = execution_only.admission_spent();
+    assert!(admitted > 0 && executed > 0);
+    let ceiling = admitted.max(executed);
+    let limits = SuppliedLimits::default().with_admission_work_units(ceiling);
     let mut execution_only = SuppliedRun::new(limits, cancel.clone()).unwrap();
     execute(
         &fixture.compiled.package,
@@ -138,7 +157,7 @@ fn canonical_run_conversion_and_execution_share_one_limit() {
         &mut execution_only,
         &cancel,
     )
-    .expect("execution alone fits the same conversion limit");
+    .expect("execution alone fits the same admission ceiling");
     let mut combined = SuppliedRun::new(limits, cancel.clone()).unwrap();
     let mut admission = super::SuppliedReferenceAdmission::new(&mut combined, 0, 0);
     assert_eq!(
@@ -147,8 +166,14 @@ fn canonical_run_conversion_and_execution_share_one_limit() {
             .unwrap(),
         *reference
     );
-    assert!(admission.stopped.is_none(), "conversion alone fits exactly");
+    assert!(
+        admission.stopped.is_none(),
+        "reference conversion is admitted"
+    );
     drop(admission);
+    forms
+        .admit_supplied(&mut combined, 0, declared, &value)
+        .expect("canonical boundary membership alone fits the same ceiling");
     let failure = execute(
         &fixture.compiled.package,
         &request,
@@ -157,13 +182,12 @@ fn canonical_run_conversion_and_execution_share_one_limit() {
         &mut combined,
         &cancel,
     )
-    .expect_err("combined conversion and execution exceed the unchanged limit");
+    .expect_err("boundary admission and execution exceed the unchanged cumulative ceiling");
     let filament_eval::CallFailure::Supplied(stop) = failure else {
         panic!("typed supplied stop: {failure:?}")
     };
-    assert_eq!(stop.context.phase, SuppliedPhase::Conversion);
-    assert_eq!(stop.context.parameter, Some(0));
-    assert_eq!(stop.context.consumed, conversion.0);
+    assert_eq!(stop.context.phase, SuppliedPhase::Admission);
+    assert_eq!(stop.context.consumed, ceiling);
 }
 
 /// Trace: FR-650-AC-21

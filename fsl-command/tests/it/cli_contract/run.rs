@@ -19,6 +19,13 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
 
 const STAMPED: &str = "filament.temporal.timestamped-event.finite-window/v1";
 
+#[path = "../../../../examples/config-version/spine_unit.rs"]
+#[allow(
+    dead_code,
+    reason = "the command regression uses the genuine domain package"
+)]
+mod config_domain;
+
 fn request(file: &str, function: &str, arguments: &[(&str, Value)]) -> Value {
     let arguments: Vec<Value> = arguments
         .iter()
@@ -195,6 +202,82 @@ fn canonical_run_values_items_keep_selection_order_and_individual_results() {
     }
 }
 
+/// Population materialization keeps document order internally, while native
+/// population arguments retain their declared form and references can be reused.
+#[test]
+#[trace("FR-650-AC-15", "FR-651-AC-2")]
+fn canonical_run_population_materialization_and_reference_roundtrip() {
+    let case = Case::new();
+    case.write("domain.json", config_domain::DOMAIN_PACKAGE.as_bytes());
+    let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction Keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\nfunction Find using v(p: Population<Config::ConfigVersion>[4], r: Config::ConfigVersion): Config::ConfigVersion pure {{ lookup<Config::ConfigVersion>(p, r) absent refused }}\n", config_domain::PACKAGE_IDENTITY);
+    case.write("world.native", source.as_bytes());
+    let population = "ix://example/config-version/config_history";
+    let objects: Vec<Value> = [("root", "1"), ("child", "2")]
+        .into_iter()
+        .map(|(key, number)| {
+            json!({
+                "key":key,"type":"ix://example/config-version/ConfigVersion",
+                "fields":{"versionNumber":{"integer":number},"parent":{"absent":{}}}
+            })
+        })
+        .collect();
+    case.json("current.json", &json!({
+        "format":"filament.state.snapshot/v1", "identity":{"authority":"test","identity":"current"},
+        "observation":"current","anchor":{"kind":"handler","name":"read"},
+        "model":{"identity":config_domain::PACKAGE_IDENTITY},
+        "populations":[{"population":population,"complete":true,"objects":objects}]
+    }));
+    let mut job = request("world.native", "Keep", &[]);
+    job["request"]["models"] = json!([{"format":"semantic-ir/2.0.0", "source":{
+        "file":"domain.json","authority":"test","identity":"domain",
+        "document":"Domain","formal_revision":1
+    }}]);
+    let body = job["request"].as_object_mut().unwrap();
+    body.remove("call");
+    body.insert(
+        "items".into(),
+        json!({"observations":{"current":"current.json"},
+            "selections":[{"call":{"function":"Keep","snapshot":"current",
+                "arguments":[{"parameter":"x","value":{"each":{"population":population}}}]}}]
+        }),
+    );
+    let expanded = plain(&case.json("each.json", &job));
+    assert_eq!(expanded.exit, 0, "{}", expanded.document);
+    assert_eq!(
+        expanded.document["selections"],
+        json!([{"index":0,"expanded":2}])
+    );
+    let items = expanded.document["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    for (item, key) in items.iter().zip(["root", "child"]) {
+        assert_eq!(item["object"], json!({"population":population,"key":key}));
+        assert_eq!(item["result"]["outcome"]["value"]["type"], "reference");
+    }
+    let root = items[0]["result"]["outcome"]["value"].clone();
+    let child = items[1]["result"]["outcome"]["value"].clone();
+    assert_eq!(root["identity"], "726f6f74");
+    assert_eq!(child["identity"], "6368696c64");
+    let body = job["request"].as_object_mut().unwrap();
+    body.remove("items");
+    body.insert(
+        "call".into(),
+        json!({"function":"Keep","snapshot":"current.json",
+        "arguments":[{"parameter":"x","value":root}]}),
+    );
+    let roundtrip = plain(&case.json("reference.json", &job));
+    assert_eq!(roundtrip.exit, 0, "{}", roundtrip.document);
+    assert_eq!(roundtrip.document["result"]["value"], root);
+    job["request"]["call"] = json!({"function":"Find","snapshot":"current.json",
+        "arguments":[{"parameter":"p","value":{"population":population}},
+            {"parameter":"r","value":root}]});
+    let members = plain(&case.json("population.json", &job));
+    assert_eq!(members.exit, 0, "{}", members.document);
+    assert_eq!(members.document["result"]["value"], root);
+    job["request"]["call"] = json!({"function":"Keep","snapshot":"current.json",
+        "arguments":[{"parameter":"x","value":{"reference":{"population":population,"key":"root"}}}]});
+    assert_eq!(plain(&case.json("legacy-reference.json", &job)).exit, 20);
+}
+
 /// Run the owner-maintained corpus in place; the source checkout is never
 /// copied into this repository and its refusal snapshots are not the oracle.
 #[test]
@@ -236,7 +319,16 @@ fn canonical_run_acceptance_values_from_authoritative_examples() {
         ("option-engine-interpreter", integer("5")),
         ("option-request-bytes-large", integer("5")),
     ] {
-        let outcome = plain(&directory.join("requests").join(format!("{case}.json")));
+        let path = directory.join("requests").join(format!("{case}.json"));
+        let limits = if case == "option-request-bytes-large" {
+            RunLimits {
+                request_bytes: 100_000,
+                ..RunLimits::default()
+            }
+        } else {
+            RunLimits::default()
+        };
+        let outcome = run(&path, limits, &RequestOverrides::default());
         let document = outcome.expect("execute", "success", 0);
         assert_eq!(document["result"]["value"], expected, "{case}: {document}");
     }
@@ -259,7 +351,7 @@ fn canonical_run_acceptance_plans_retain_dispositions_and_severity() {
         ("plan-null-members-as-absent", "passed", 0),
     ] {
         let outcome = plain(&directory.join("requests").join(format!("{case}.json")));
-        let document = &outcome.document;
+        let document = &outcome.document["verification_plan"];
         assert_eq!(outcome.exit, exit, "{case}: {document}");
         assert_eq!(document["status"], status, "{case}: {document}");
         let dispositions = document["dispositions"]

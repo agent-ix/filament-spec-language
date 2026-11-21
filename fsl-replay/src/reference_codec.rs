@@ -2019,7 +2019,6 @@ mod tests {
     #[test]
     fn call_reference_adapter_uses_checked_admission_and_environment() {
         use super::{reference_fixture, ReferenceCodec};
-        use filament_contract_model::NativeJoinBudget;
         use filament_semantic_value::model_transition::ModelTransition;
         use fsl_eval::execution::{PrepareLimits, SuppliedBackends};
         use fsl_package::ReferenceCatalog;

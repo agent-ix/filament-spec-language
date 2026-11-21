@@ -347,6 +347,9 @@ impl CallOutcome {
 /// naming no supplied source).
 #[derive(Debug, thiserror::Error)]
 pub enum RunRefusal {
+    /// The original reference catalog admission or resource refusal.
+    #[error(transparent)]
+    ReferenceCatalog(Box<fsl_package::ReferenceCatalogError>),
     /// An original shared reference admission, resource or cancellation result.
     #[error(transparent)]
     Reference(Box<crate::reference_codec::ReferenceCodecError>),
@@ -486,6 +489,11 @@ pub enum RunRefusal {
 }
 
 impl RunRefusal {
+    pub(crate) fn catalog_cause(
+        error: &fsl_package::ReferenceCatalogError,
+    ) -> Option<&'static str> {
+        super::run_value::catalog_error_cause(error)
+    }
     pub(crate) fn reference_cause(
         error: &crate::reference_codec::ReferenceCodecError,
     ) -> Option<&'static str> {
@@ -502,7 +510,7 @@ impl RunRefusal {
             return None;
         }
         Some(match self {
-            Self::Reference(_) => "call",
+            Self::Reference(_) | Self::ReferenceCatalog(_) => "call",
             Self::Compile(refusal) => refusal.stage().as_str(),
             Self::MissingDeclaration { .. }
             | Self::UnsupportedResult { .. }
@@ -530,6 +538,7 @@ impl RunRefusal {
     /// the call, or a supplied-value phase.
     pub fn cancel_cause(&self) -> Option<CancelCause> {
         match self {
+            Self::ReferenceCatalog(_) => None,
             Self::Reference(error) => super::run_value::reference_cancel_cause(error),
             Self::Cancelled(cause) => Some(*cause),
             Self::Supplied(stop) => match stop.cause {
@@ -566,6 +575,7 @@ impl RunRefusal {
     /// `runtime_invariant`.
     pub fn code(&self) -> Code {
         match self {
+            Self::ReferenceCatalog(error) => super::run_value::catalog_error_code(error),
             Self::Reference(error) => super::run_value::reference_error_code(error),
             Self::Compile(refusal) => refusal.code(),
             Self::MissingDeclaration { .. } => Code::MissingDeclaration,
@@ -611,6 +621,7 @@ impl RunRefusal {
             _ => None,
         };
         match self {
+            Self::ReferenceCatalog(_) => None,
             Self::Reference(error) => {
                 object(json!({"path": super::run_value::reference_error_pointer(error)}))
             }
@@ -1077,15 +1088,12 @@ pub(crate) fn run_compiled(
     } else {
         None
     };
-    if let Some(refusal) = reference_joins.take_normalization_refusal() {
+    if let Some(refusal) = super::run_value::take_normalization_refusal(&mut reference_joins) {
         return Err(refusal);
     }
-    let reference_catalog = catalog_result.transpose().map_err(|_| {
-        Box::new(RunRefusal::Fault(InternalFault::new(
-            "call",
-            "checked-reference-catalog",
-        )))
-    })?;
+    let reference_catalog = catalog_result
+        .transpose()
+        .map_err(super::run_value::catalog_refusal)?;
     let references = reference_catalog
         .as_ref()
         .map(|catalog| {
@@ -1150,7 +1158,7 @@ pub(crate) fn run_compiled(
     .with_variants(package.graph().scope().variant_types())
     .with_canonical_writer(&encode_value)
     .in_world(own_package, world.as_ref());
-    let supplied = admit_wire_arguments(&forms, selected.parameters, call)?;
+    let supplied = admit_wire_arguments(&forms, selected.parameters, call, &supplied_run)?;
     let arguments = bind_arguments(selected.parameters, &supplied)?;
     admit_model_arguments(
         models.models(),
@@ -1429,6 +1437,7 @@ pub(crate) fn admit_wire_arguments(
     forms: &Forms<'_>,
     parameters: &[(String, ValueType)],
     call: &Call,
+    run: &std::sync::Mutex<filament_semantic_value::supplied_stop::SuppliedRun>,
 ) -> Result<Vec<CallArgument>, Box<RunRefusal>> {
     if call.wire_arguments.is_empty() {
         return Ok(call.arguments.clone());
@@ -1502,6 +1511,16 @@ pub(crate) fn admit_wire_arguments(
                 ReadStop::Refusal(refusal) => return refusal,
             })
         })?;
+        if call.canonical_values {
+            forms
+                .admit_supplied(
+                    &mut run.lock().expect("supplied admission does not unwind"),
+                    position,
+                    value_type,
+                    &value,
+                )
+                .map_err(|failure| convert_call_failure(failure.into()))?;
+        }
         supplied.push(CallArgument {
             parameter: name.clone(),
             value,

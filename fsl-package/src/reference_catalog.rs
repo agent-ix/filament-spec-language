@@ -182,14 +182,15 @@ impl CatalogBudget for CoreCatalogBudget<'_> {
     ) -> Result<(), ReferenceCatalogError> {
         let refused = || ReferenceCatalogError::Denied(NativeJoinDeniedCharge { kind, amount });
         match kind {
-            NativeJoinChargeKind::Work => {
-                self.0.work(u64::try_from(amount).map_err(|_| refused())?)
-            }
+            NativeJoinChargeKind::Work => self
+                .0
+                .work(u64::try_from(amount).map_err(|_| refused())?)
+                .map_err(|_| refused()),
             NativeJoinChargeKind::Storage => self
                 .0
-                .reserve(usize::try_from(amount).map_err(|_| refused())?),
+                .reserve(usize::try_from(amount).map_err(|_| ReferenceCatalogError::Allocation)?)
+                .map_err(|_| ReferenceCatalogError::Allocation),
         }
-        .map_err(|_| refused())
     }
 }
 

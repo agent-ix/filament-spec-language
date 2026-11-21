@@ -3557,6 +3557,9 @@ impl Disposition {
                     return Ok(result);
                 }
                 let cause = match refusal.as_ref() {
+                    super::RunRefusal::ReferenceCatalog(error) => {
+                        super::run_value::catalog_error_cause(error)
+                    }
                     super::RunRefusal::Reference(error) => {
                         super::run_value::reference_error_cause(error)
                     }
@@ -3583,6 +3586,14 @@ impl Disposition {
                 };
                 let mut record = RefusalWire::new(refusal.code().as_str(), cause);
                 match refusal.as_ref() {
+                    super::RunRefusal::ReferenceCatalog(error) => {
+                        if let fsl_package::ReferenceCatalogError::Denied(denial) = error.as_ref() {
+                            record = record.fields(BTreeMap::from([
+                                ("kind", format!("{:?}", denial.kind)),
+                                ("amount", denial.amount.to_string()),
+                            ]));
+                        }
+                    }
                     super::RunRefusal::Reference(error) => {
                         let fields = match error.as_ref() {
                             crate::reference_codec::ReferenceCodecError::Normalization {

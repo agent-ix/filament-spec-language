@@ -206,6 +206,7 @@ impl Forms<'_> {
                     "magnitude": {"kind": "rational", "numerator": object["numerator"], "denominator": object["denominator"]}}))
             }
             ValueType::Reference(_) => self.canonical_reference(
+                form,
                 object,
                 declared,
                 path,
@@ -234,6 +235,7 @@ impl Forms<'_> {
 
     fn canonical_reference(
         &self,
+        form: &Json,
         object: &Map<String, Json>,
         _declared: &ValueType,
         path: &mut Path,
@@ -248,12 +250,7 @@ impl Forms<'_> {
         let restore = world
             .restore_reference
             .ok_or(ReadStop::Fault("canonical-call-has-reference-adapter"))?;
-        let reference = restore(
-            &Json::Object(object.clone()),
-            position.argument,
-            position.next,
-        )
-        .map_err(|mut error| {
+        let reference = restore(form, position.argument, position.next).map_err(|mut error| {
             if let ReadStop::Refusal(ref mut refusal) = error {
                 if let super::super::RunRefusal::Reference(ref mut reference) = **refusal {
                     let pointer = match reference.as_mut() {

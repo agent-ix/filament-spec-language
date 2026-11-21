@@ -7,6 +7,63 @@ use fsl_foundation::diagnostic::Code;
 
 use crate::reference_codec::{ReferenceCodecError, ReferenceFailure};
 
+pub(crate) fn catalog_refusal(
+    cause: fsl_package::ReferenceCatalogError,
+) -> Box<super::super::RunRefusal> {
+    Box::new(match cause {
+        fsl_package::ReferenceCatalogError::Normalization(cause) => {
+            super::super::RunRefusal::ObjectEnvironment(Box::new(
+                fsl_semantics::model::observation::normalization_limit_record(&cause),
+            ))
+        }
+        cause => super::super::RunRefusal::ReferenceCatalog(Box::new(cause)),
+    })
+}
+
+pub(crate) fn catalog_error_code(cause: &fsl_package::ReferenceCatalogError) -> Code {
+    use fsl_package::ReferenceCatalogError;
+    match cause {
+        ReferenceCatalogError::Normalization(_) | ReferenceCatalogError::Allocation => {
+            Code::ResourceExhausted
+        }
+        ReferenceCatalogError::Denied(_) => Code::StageLimitExceeded,
+        ReferenceCatalogError::Projection(error) => match error.code {
+            filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedWork
+            | filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage => {
+                Code::StageLimitExceeded
+            }
+            filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType => {
+                Code::UnknownRequiredFeature
+            }
+            _ => Code::InvalidPackage,
+        },
+        ReferenceCatalogError::UnknownDeclaration
+        | ReferenceCatalogError::ConflictingMapping
+        | ReferenceCatalogError::ForeignModel => Code::ForeignReference,
+    }
+}
+
+pub(crate) fn catalog_error_cause(
+    cause: &fsl_package::ReferenceCatalogError,
+) -> Option<&'static str> {
+    match cause {
+        fsl_package::ReferenceCatalogError::Normalization(cause) => Some(
+            fsl_semantics::model::observation::normalization_limit_record(cause)
+                .catalog
+                .cause(),
+        ),
+        fsl_package::ReferenceCatalogError::Denied(denied) => Some(match denied.kind {
+            filament_contract_model::NativeJoinChargeKind::Work => "exhausted_work",
+            filament_contract_model::NativeJoinChargeKind::Storage => "exhausted_storage",
+        }),
+        fsl_package::ReferenceCatalogError::Projection(error) => Some(error.code.as_str()),
+        fsl_package::ReferenceCatalogError::Allocation => None,
+        fsl_package::ReferenceCatalogError::UnknownDeclaration
+        | fsl_package::ReferenceCatalogError::ConflictingMapping
+        | fsl_package::ReferenceCatalogError::ForeignModel => Some("foreign-model-selection"),
+    }
+}
+
 pub(crate) fn reference_refusal(cause: ReferenceCodecError) -> Box<super::super::RunRefusal> {
     Box::new(match cause {
         ReferenceCodecError::Normalization { cause, .. } => {
@@ -38,7 +95,7 @@ pub(crate) fn write_run_value(
         budget,
         cancel,
     );
-    if let Some(refusal) = budget.take_normalization_refusal() {
+    if let Some(refusal) = take_normalization_refusal(budget) {
         return Err(super::WriteStop::Refusal(refusal));
     }
     let written = written.map_err(|source| {
@@ -55,7 +112,7 @@ pub(crate) fn write_run_value(
             crate::reference_codec::admit_native_value_bytes(&written, budget, cancel, usize::MAX)
         }
     };
-    if let Some(refusal) = budget.take_normalization_refusal() {
+    if let Some(refusal) = take_normalization_refusal(budget) {
         return Err(super::WriteStop::Refusal(refusal));
     }
     result.map_err(|cause| super::WriteStop::Refusal(reference_refusal(cause)))
@@ -66,7 +123,7 @@ pub(crate) struct SuppliedReferenceAdmission<'a> {
     argument: usize,
     node: u64,
     pub(crate) stopped: Option<Box<filament_semantic_value::supplied_stop::SuppliedStop>>,
-    physical: ReferenceAdmission,
+    physical: PhysicalReferenceBudget,
 }
 
 impl<'a> SuppliedReferenceAdmission<'a> {
@@ -80,7 +137,7 @@ impl<'a> SuppliedReferenceAdmission<'a> {
             argument,
             node,
             stopped: None,
-            physical: ReferenceAdmission::default(),
+            physical: PhysicalReferenceBudget::default(),
         }
     }
 }
@@ -109,148 +166,16 @@ impl IntegerDecimalBudget for SuppliedReferenceAdmission<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
-enum ResultOwner<'a> {
-    Physical,
-    Source(&'a fsl_semantics::model::intake::SelectedModels),
-    Snapshot(&'a fsl_package::ReferenceCatalog<'a>),
-}
+use crate::reference_budget::{NormalizationReferenceBudget, PhysicalReferenceBudget};
 
-/// Borrow the genuine normalization owner for catalog and result conversion.
-/// Physical reservations are tracked separately and introduce no policy cap.
-pub struct NormalizationReferenceBudget<'a> {
-    owner: ResultOwner<'a>,
-    point: fsl_semantics::model::accounting::ChargePoint,
-    selected: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
-    previous: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
-    pub(crate) stopped: Option<fsl_semantics::model::accounting::NormalizationIncomplete>,
-    physical: ReferenceAdmission,
-}
-
-impl<'a> NormalizationReferenceBudget<'a> {
-    pub(crate) fn physical() -> Self {
-        Self {
-            owner: ResultOwner::Physical,
-            point: fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
-            selected: None,
-            previous: None,
-            stopped: None,
-            physical: ReferenceAdmission::default(),
-        }
-    }
-    /// Charge the original source-unit model-admission meter at `point`.
-    pub fn source(
-        owner: &'a fsl_semantics::model::intake::SelectedModels,
-        point: fsl_semantics::model::accounting::ChargePoint,
-    ) -> Self {
-        Self {
-            owner: ResultOwner::Source(owner),
-            point,
-            selected: None,
-            previous: None,
-            stopped: None,
-            physical: ReferenceAdmission::default(),
-        }
-    }
-    /// Select each snapshot reference's real declaration owner before writing.
-    pub fn snapshot(owner: &'a fsl_package::ReferenceCatalog<'a>) -> Self {
-        Self {
-            owner: ResultOwner::Snapshot(owner),
-            point: fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
-            selected: None,
-            previous: None,
-            stopped: None,
-            physical: ReferenceAdmission::default(),
-        }
-    }
-    pub(crate) fn take_normalization_refusal(&mut self) -> Option<Box<super::super::RunRefusal>> {
-        self.stopped.take().map(|cause| {
-            Box::new(super::super::RunRefusal::ObjectEnvironment(Box::new(
-                fsl_semantics::model::observation::normalization_limit_record(&cause),
-            )))
-        })
-    }
-    /// Take the original typed denial after an erased core-budget refusal.
-    /// The owner retains all previously charged counters.
-    pub fn take_normalization_failure(
-        &mut self,
-    ) -> Option<fsl_semantics::model::accounting::NormalizationIncomplete> {
-        self.stopped.take()
-    }
-}
-impl Reservation for NormalizationReferenceBudget<'_> {
-    fn reserve(&mut self, bytes: usize) -> Result<(), ReservationDenied> {
-        self.physical.reserve(bytes)
-    }
-}
-impl IntegerDecimalBudget for NormalizationReferenceBudget<'_> {
-    fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
-        let result = match self.owner {
-            ResultOwner::Physical => return self.physical.work(units),
-            ResultOwner::Source(owner) => owner.charge_reference_work(self.point, units),
-            ResultOwner::Snapshot(_) => match self.selected {
-                Some(owner) => owner.charge_reference_work(self.point, units),
-                None => return self.physical.work(units),
-            },
-        };
-        result.map_err(|cause| {
-            self.stopped = Some(cause);
-            ReservationDenied
-        })
-    }
-}
-impl fsl_eval::simulation::model::ModelKeyBudget for NormalizationReferenceBudget<'_> {
-    fn integer(&mut self, _: &filament_exact::Integer) -> Result<(), ReservationDenied> {
-        self.work(1)
-    }
-}
-impl fsl_eval::simulation::model::RunValueBudget for NormalizationReferenceBudget<'_> {
-    fn begin_reference(
-        &mut self,
-        reference: &filament_exact::ObjectReference,
-    ) -> Result<(), ModelKeyError> {
-        self.previous = self.selected;
-        if matches!(self.owner, ResultOwner::Physical) {
-            return Err(ModelKeyError::Unsupported(
-                "reference has no admitted normalization owner",
-            ));
-        }
-        if let ResultOwner::Snapshot(catalog) = self.owner {
-            self.selected = catalog
-                .normalization_owner_for(reference)
-                .map_err(|cause| {
-                    self.stopped = Some(cause);
-                    ModelKeyError::Denied
-                })?;
-            if self.selected.is_none() {
-                return Err(ModelKeyError::Unsupported("unowned reference declaration"));
-            }
-        }
-        Ok(())
-    }
-    fn end_reference(&mut self) {
-        self.selected = self.previous.take();
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct ReferenceAdmission {
-    work: u64,
-    storage: usize,
-}
-
-impl Reservation for ReferenceAdmission {
-    fn reserve(&mut self, bytes: usize) -> Result<(), ReservationDenied> {
-        self.storage = self.storage.checked_add(bytes).ok_or(ReservationDenied)?;
-        Ok(())
-    }
-}
-
-impl IntegerDecimalBudget for ReferenceAdmission {
-    fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
-        self.work = self.work.checked_add(units).ok_or(ReservationDenied)?;
-        Ok(())
-    }
+pub(crate) fn take_normalization_refusal(
+    budget: &mut NormalizationReferenceBudget<'_>,
+) -> Option<Box<super::super::RunRefusal>> {
+    budget.take_normalization_failure().map(|cause| {
+        Box::new(super::super::RunRefusal::ObjectEnvironment(Box::new(
+            fsl_semantics::model::observation::normalization_limit_record(&cause),
+        )))
+    })
 }
 
 pub(crate) fn reference_error_code(error: &ReferenceCodecError) -> Code {

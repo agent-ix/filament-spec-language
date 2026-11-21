@@ -238,7 +238,6 @@ pub use package_call::{
     PackageSourceAttributionFailure,
 };
 pub use run_value::ArgumentDefect;
-pub use run_value::NormalizationReferenceBudget;
 
 pub(crate) mod clause;
 pub use clause::{

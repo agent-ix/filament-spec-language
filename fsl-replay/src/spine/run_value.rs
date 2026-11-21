@@ -26,10 +26,11 @@ use serde_json::{json, Map, Value as Json};
 mod accounting_tests;
 mod canonical;
 mod references;
-pub use references::NormalizationReferenceBudget;
+pub(crate) use crate::NormalizationReferenceBudget;
 pub(crate) use references::{
-    reference_cancel_cause, reference_error_cause, reference_error_code, reference_error_pointer,
-    reference_refusal, write_run_value, SuppliedReferenceAdmission,
+    catalog_error_cause, catalog_error_code, catalog_refusal, reference_cancel_cause,
+    reference_error_cause, reference_error_code, reference_error_pointer, reference_refusal,
+    take_normalization_refusal, write_run_value, SuppliedReferenceAdmission,
 };
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
@@ -93,6 +94,27 @@ pub(crate) struct World<'a> {
 }
 
 impl<'a> Forms<'a> {
+    /// Canonical boundary membership borrows the invocation's original A.
+    /// Population membership remains the owned FSL binding check because the
+    /// kernel intentionally has no generic Population admission.
+    pub(crate) fn admit_supplied(
+        &self,
+        run: &mut filament_semantic_value::supplied_stop::SuppliedRun,
+        position: usize,
+        declared: &ValueType,
+        value: &Value,
+    ) -> Result<(), filament_semantic_value::supplied_stop::SuppliedFailure> {
+        if matches!(declared, ValueType::Population(_)) {
+            return Ok(());
+        }
+        run.admit(
+            filament_semantic_value::supplied_stop::SuppliedPhase::Admission,
+            position,
+            self.types,
+            declared,
+            value,
+        )
+    }
     pub(crate) fn new(types: &'a TypeEnvironment, enums: &'a [EnumBinding]) -> Self {
         Self {
             types,

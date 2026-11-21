@@ -204,17 +204,7 @@ fn run_package_resolving(
     let catalog = match (call.canonical_values, views, joins) {
         (true, Some(models), Some(joins)) => Some(
             fsl_package::ReferenceCatalog::from_admitted_call(package.package(), models, joins)
-                .map_err(|cause| match cause {
-                    fsl_package::ReferenceCatalogError::Normalization(cause) => {
-                        Box::new(RunRefusal::ObjectEnvironment(Box::new(
-                            fsl_semantics::model::observation::normalization_limit_record(&cause),
-                        )))
-                    }
-                    _ => Box::new(RunRefusal::Fault(InternalFault::new(
-                        "call",
-                        "admitted-reference-catalog",
-                    ))),
-                })?,
+                .map_err(super::run_value::catalog_refusal)?,
         ),
         _ => None,
     };
@@ -287,7 +277,7 @@ fn run_package_resolving(
     let forms = Forms::new(world.types(), &[])
         .with_canonical_writer(&encode)
         .in_world(package.package().name(), object_world.as_ref());
-    let supplied = admit_wire_arguments(&forms, &parameters, call)?;
+    let supplied = admit_wire_arguments(&forms, &parameters, call, &supplied_run)?;
     let arguments = bind_arguments(&parameters, &supplied)?;
     let mut meter = Meter::new(call.accounting).with_cancel(cancel.clone());
     // One run for the whole invocation: both helper budgets and the caller's
