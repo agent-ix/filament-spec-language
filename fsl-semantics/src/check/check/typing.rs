@@ -755,8 +755,6 @@ struct PopulationFrame<'e> {
     source: Node,
     /// The slot the binder reads.
     slot: Slot,
-    /// The source name of the population binder.
-    binder: String,
     /// The body of `sum` and `only`.
     body: Option<ExprRef<'e>>,
     /// The typed condition, once typed.
@@ -4458,7 +4456,6 @@ impl<'a> Typer<'a> {
             form,
             source,
             slot,
-            binder: binder.to_owned(),
             body,
             typed_condition: None,
             awaiting,
@@ -4689,7 +4686,7 @@ impl<'a> Typer<'a> {
                     high: Box::new(typed),
                     slot,
                     maximum,
-                    binder_type,
+                    binder_type: Box::new(binder_type),
                 };
                 frames.push(Frame::Seq(frame));
                 Ok(Step::Descend(Goal::Infer(body, None, body_location)))
@@ -4724,7 +4721,7 @@ impl<'a> Typer<'a> {
                         value_type,
                         &location,
                     )
-                    .with_binder_annotation(Some(binder_type)),
+                    .with_binder_annotation(Some(*binder_type)),
                 ))
             }
         }
