@@ -705,7 +705,7 @@ enum Argument {
     /// constant time quantity, or why it is none.
     Value {
         term: DataLiteral,
-        constant: Result<Rational, TemporalCause>,
+        constant: Box<Result<Rational, TemporalCause>>,
         /// Its value, when it is an integer or Boolean constant.
         known: Option<Known>,
     },
@@ -1127,7 +1127,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                     } else {
                         Argument::Value {
                             term: DataLiteral::Site(argument),
-                            constant: self.located.constant(argument, self.clocks),
+                            constant: Box::new(self.located.constant(argument, self.clocks)),
                             known: self.site_known(argument, budget)?,
                         }
                     }
@@ -1307,7 +1307,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                         };
                         Argument::Value {
                             term,
-                            constant,
+                            constant: Box::new(constant),
                             known,
                         }
                     }
@@ -1703,7 +1703,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                 .parameter(self.declarations, id)
                 .and_then(|parameter| frame.environment.get(parameter.name))
             {
-                Some(Argument::Value { constant, .. }) => constant.clone().map_err(timed),
+                Some(Argument::Value { constant, .. }) => constant.as_ref().clone().map_err(timed),
                 _ => Err(timed(TemporalCause::ClockBoundNotConstant {
                     span: body.span(id),
                 })),
@@ -1872,9 +1872,9 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
                         binder.name.clone(),
                         Argument::Value {
                             term: self.literal(frame, &value)?,
-                            constant: Err(TemporalCause::ClockBoundNotConstant {
+                            constant: Box::new(Err(TemporalCause::ClockBoundNotConstant {
                                 span: body.span(arm.body),
-                            }),
+                            })),
                             known: Some(value),
                         },
                     );

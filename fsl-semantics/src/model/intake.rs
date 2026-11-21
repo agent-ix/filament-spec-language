@@ -4160,6 +4160,10 @@ pub(super) fn read_object_type(
 ///
 /// `type_meanings` maps each type identity of the document to the meaning
 /// its `kind` resolves to.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "record intake shares the document's identity context and distinct output collections"
+)]
 pub(super) fn read_record_value_type(
     package: &str,
     type_value: &Value,

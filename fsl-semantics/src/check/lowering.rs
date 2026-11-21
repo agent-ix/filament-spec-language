@@ -5315,7 +5315,7 @@ impl<'a> Lowering<'a> {
                 return self.next_operand(
                     Box::new(OperandsFrame {
                         node,
-                        operands: Operands::FirstThenEach(&reference, &slots),
+                        operands: Operands::FirstThenEach(reference, slots),
                         next: 0,
                         terms: vec![LeafTerm::reference_node(place.clone().into())],
                         keyed: Keyed::Application(
