@@ -3991,10 +3991,19 @@ mod package_admission_tests {
                 let bytes = crate::spine::write_clause_run_result(&report)
                     .expect("the admission report writes");
                 let wire: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
-                assert_eq!(wire["refusal"]["code"], record.catalog.code());
-                assert_eq!(wire["refusal"]["cause"], record.catalog.cause());
-                assert_eq!(wire["refusal"]["fields"], serde_json::json!(record.fields));
-                assert!(wire["refusal"].get("locus").is_none());
+                assert_eq!(
+                    wire["disposition"]["refusal"]["code"],
+                    record.catalog.code()
+                );
+                assert_eq!(
+                    wire["disposition"]["refusal"]["cause"],
+                    record.catalog.cause()
+                );
+                assert_eq!(
+                    wire["disposition"]["refusal"]["fields"],
+                    serde_json::json!(record.fields)
+                );
+                assert!(wire["disposition"]["refusal"].get("locus").is_none());
                 crate::spine::read_native_run_result(&bytes).expect("the result reads");
             }
         }
