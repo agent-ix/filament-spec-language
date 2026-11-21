@@ -1331,28 +1331,29 @@ fn a_protocol_capture_read_needs_no_listing() {
         ));
     }
 
-    // The activation binder is no eligible fact of a role.
+    // The activation binder is no eligible fact of a role: both guards of
+    // `ByClerk` that read it refuse.
     let found = located(&refunds(capture, guard, "opened.ready"));
-    let [(refusal, at)] = &found[..] else {
-        panic!("one refusal, got {found:?}");
-    };
-    assert_eq!(at, "opened.ready");
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
-        panic!("a protocol anchor refusal, got {refusal:?}");
-    };
-    assert_eq!(
-        (cause.code(), cause.tag()),
-        (Code::WrongSnapshot, "wrong-observation")
-    );
-    assert!(matches!(
-        cause.as_ref(),
-        ProtocolAnchorCause::WrongObservation { node, owner, binder, field, reason, .. }
-            if node == "ByClerk"
-                && owner == "Clerk"
-                && binder == "opened"
-                && field.as_deref() == Some("ready")
-                && *reason == ObservationReason::IneligibleKind
-    ));
+    assert_eq!(found.len(), 2, "{found:?}");
+    for (refusal, at) in &found {
+        assert_eq!(at, "opened.ready");
+        let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+            panic!("a protocol anchor refusal, got {refusal:?}");
+        };
+        assert_eq!(
+            (cause.code(), cause.tag()),
+            (Code::WrongSnapshot, "wrong-observation")
+        );
+        assert!(matches!(
+            cause.as_ref(),
+            ProtocolAnchorCause::WrongObservation { node, owner, binder, field, reason, .. }
+                if node == "ByClerk"
+                    && owner == "Clerk"
+                    && binder == "opened"
+                    && field.as_deref() == Some("ready")
+                    && *reason == ObservationReason::IneligibleKind
+        ));
+    }
 
     // A capture read before it is written is a forward read, never a
     // snapshot refusal.

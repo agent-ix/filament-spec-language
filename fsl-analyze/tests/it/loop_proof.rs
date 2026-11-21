@@ -24,8 +24,10 @@ fn a_loop_proof_contributes_invariant_and_termination_item_kinds() {
 }
 
 /// A unit whose protocol `P` holds `repeat Retry` with no maximum, the loop
-/// proof `invariant { invariant } variant { variant }` and guard `guard`,
-/// its body one `operation` attempt on the cell `k`.
+/// proof `invariant { invariant } variant { variant }` and guard `guard`.
+/// Its body steps the cell `k` with `operation` and then observes the cell's
+/// counter as `got.left`, so the decision slots read a body binder, as
+/// FR-730's use case does.
 fn loop_unit(invariant: &str, variant: &str, guard: &str, operation: &str) -> String {
     let contracts = match operation {
         "dec" => "DecPre, DecPost",
@@ -33,13 +35,19 @@ fn loop_unit(invariant: &str, variant: &str, guard: &str, operation: &str) -> St
     };
     let run = format!(
         "sequence Main {{ repeat Retry by w visible () invariant {{ {invariant} }} \
-         variant {{ {variant} }} while {{ {guard} }} sequence Body {{ {} }} }}",
+         variant {{ {variant} }} while {{ {guard} }} \
+         sequence Body {{ {} event Seen by w as (got: Left) {{ got.left = k.v }}; }} }}",
         crate::fill::attempt("T", operation, contracts, "t", "true")
     );
+    format!("record Left {{ left: Int[0, 3]; }}\n{}", loop_pieces(&run))
+}
+
+/// The contracts and the protocol `P` over `run`.
+fn loop_pieces(run: &str) -> String {
     crate::fill::contracts("self.v = 0")
         + "pre DecPre using v on M::Cell::dec { self.v >= 1 }\n\
            post DecPost using v on M::Cell::dec { pre(self.v) - self.v = 1 }\n"
-        + &crate::fill::protocol("P", "", &run, "d")
+        + &crate::fill::protocol("P", "", run, "d")
 }
 
 /// The derived items `loop-invariant` and `loop-termination` of `P` in
@@ -109,15 +117,15 @@ fn analyze_loop(
 }
 
 /// FR-730-AC-1: a repeat with no maximum, the loop proof
-/// `invariant { k.v >= 0 } variant { k.v }` and a body that decreases `k.v`
-/// by one from `2` settles both loop items `proved` over a complete
+/// `invariant { got.left >= 0 } variant { got.left }` and a body that
+/// decreases `got.left` by one from `2` settles both loop items `proved` over a complete
 /// exploration.
 #[trace("TC-2022", "FR-730-AC-1")]
 #[test]
 fn a_decreasing_variant_proves_both_loop_items() {
     use crate::analyze_cli_support::label;
 
-    let body = loop_unit("k.v >= 0", "k.v", "k.v > 0", "dec");
+    let body = loop_unit("got.left >= 0", "got.left", "got.left > 0", "dec");
     assert_eq!(loop_items(&body), ["loop-invariant", "loop-termination"]);
     for item in analyze_loop("loop-proved", &body, 2, serde_json::json!({})) {
         assert_eq!(label(&item), "proved", "{item}");
@@ -126,10 +134,10 @@ fn a_decreasing_variant_proves_both_loop_items() {
     }
 }
 
-/// FR-730-AC-2: a body that leaves `k.v` unchanged refutes
+/// FR-730-AC-2: a body that leaves `got.left` unchanged refutes
 /// `loop-termination` with a counterexample that replays and still proves
-/// `loop-invariant`; the invariant `k.v > 0` over the decreasing body
-/// refutes `loop-invariant` at the decision where `k.v` is `0`, after two
+/// `loop-invariant`; the invariant `got.left > 0` over the decreasing body
+/// refutes `loop-invariant` at the decision where `got.left` is `0`, after two
 /// body steps.
 #[trace("TC-2022", "FR-730-AC-2")]
 #[test]
@@ -137,10 +145,10 @@ fn an_unchanged_variant_and_a_false_invariant_refute_with_replayed_counterexampl
     use crate::analyze_cli_support::label;
 
     for (invariant, operation, refuted, other) in [
-        ("k.v >= 0", "touch", 1, Some("proved")),
-        ("k.v > 0", "dec", 0, None),
+        ("got.left >= 0", "touch", 1, Some("proved")),
+        ("got.left > 0", "dec", 0, None),
     ] {
-        let body = loop_unit(invariant, "k.v", "k.v > 0", operation);
+        let body = loop_unit(invariant, "got.left", "got.left > 0", operation);
         assert_eq!(loop_items(&body), ["loop-invariant", "loop-termination"]);
         let items = analyze_loop(
             &format!("loop-refuted-{refuted}"),
@@ -166,7 +174,7 @@ fn an_unchanged_variant_and_a_false_invariant_refute_with_replayed_counterexampl
 fn a_state_limit_leaves_both_loop_items_incomplete_naming_it() {
     use crate::analyze_cli_support::label;
 
-    let body = loop_unit("k.v >= 0", "k.v", "k.v > 0", "dec");
+    let body = loop_unit("got.left >= 0", "got.left", "got.left > 0", "dec");
     assert_eq!(loop_items(&body), ["loop-invariant", "loop-termination"]);
     let items = analyze_loop(
         "loop-limited",
@@ -187,20 +195,18 @@ fn two_proofs_and_a_bounded_repeat() -> String {
     let attempt = |node: &str| crate::fill::attempt(node, "dec", "DecPre, DecPost", "t", "true");
     let run = format!(
         "sequence Main {{ \
-         repeat First by w visible () invariant {{ true }} variant {{ k.v }} while {{ false }} \
+         repeat First by w visible () invariant {{ true }} variant {{ 1 }} while {{ false }} \
            sequence FirstBody {{ {} }} \
-         repeat Second by w visible () invariant {{ true }} variant {{ k.v }} while {{ false }} \
+         repeat Second by w visible () invariant {{ true }} variant {{ 1 }} while {{ false }} \
            sequence SecondBody {{ {} }} \
          repeat Bounded by w visible () max 1 while {{ false }} \
-           sequence BoundedBody {{ {} }} }}",
+           sequence BoundedBody {{ {} }} \
+           exhausted check Out using v {{ true }}; }}",
         attempt("FirstStep"),
         attempt("SecondStep"),
         attempt("BoundedStep"),
     );
-    crate::fill::contracts("self.v = 0")
-        + "pre DecPre using v on M::Cell::dec { self.v >= 1 }\n\
-           post DecPost using v on M::Cell::dec { pre(self.v) - self.v = 1 }\n"
-        + &crate::fill::protocol("P", "", &run, "d")
+    loop_pieces(&run)
 }
 
 /// FR-730-AC-4: two proof-carrying repeats contribute two items each, the

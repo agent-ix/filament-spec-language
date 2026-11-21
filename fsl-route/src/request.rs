@@ -1914,14 +1914,15 @@ mod tests {
         );
     }
 
-    /// FSpec FR-368-AC-21, and the producer half of AC-13 (the five
-    /// spellings FSL writes; refusing another spelling is the reader's): a
-    /// temporal item over a model subject has one of exactly five kinds, `formula`, `deadlock-freedom`,
-    /// `time-lock-freedom`, `race-freedom` and `refinement`; `transfer` is
-    /// none of them.
+    /// FSpec FR-368-AC-21, and the producer half of AC-13 (the spellings FSL
+    /// writes; refusing another spelling is the reader's): a temporal item
+    /// over a model subject has one of the kinds `formula`,
+    /// `deadlock-freedom`, `time-lock-freedom`, `race-freedom` and
+    /// `refinement`, or one of the two protocol loop-proof kinds of FR-730,
+    /// `loop-invariant` and `loop-termination`; `transfer` is none of them.
     #[trace("FSpec-TC-431", "FSpec-FR-368-AC-21")]
     #[test]
-    fn a_model_items_kind_is_one_of_five_spellings() {
+    fn a_model_items_kind_is_one_of_the_written_spellings() {
         let spelled: Vec<_> = ItemKind::ALL.into_iter().map(ItemKind::to_wire).collect();
         assert_eq!(
             spelled,
@@ -1930,7 +1931,9 @@ mod tests {
                 "deadlock-freedom",
                 "time-lock-freedom",
                 "race-freedom",
-                "refinement"
+                "refinement",
+                "loop-invariant",
+                "loop-termination"
             ]
         );
         assert!(!spelled.contains(&"transfer"));
