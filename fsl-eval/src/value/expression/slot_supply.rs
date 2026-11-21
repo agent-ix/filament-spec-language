@@ -405,10 +405,15 @@ fn admit_slot_supply_with(
                         else {
                             continue;
                         };
-                        if protocol_slot::foreign_to_observation(&reference, observation)
+                        // Clock DATA authenticates its outer universe against
+                        // the decoded owner's actual P after completeness.
+                        // Ordinary object references retain their preflight.
+                        if !fsl_semantics::model::clock_reference::is_clock_type(
+                            reference.object_type(),
+                        ) && (protocol_slot::foreign_to_observation(&reference, observation)
                             || !observation
                                 .environment()
-                                .has_population_universe(reference.universe())
+                                .has_population_universe(reference.universe()))
                         {
                             let required = match source.value_type {
                                 filament_exact::ValueType::Reference(expected) => observation

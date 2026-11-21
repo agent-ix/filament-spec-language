@@ -1008,6 +1008,8 @@ fn clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare() {
             let expected = AdmissionRecord {
                 catalog: CatalogCode::new("invalid_runtime_input", "invalid-value"),
                 fields: BTreeMap::from([
+                    ("document", identity().identity),
+                    ("target", changed.clone()),
                     ("population", node(CLOCKS, "calls")),
                     ("object", "c1".to_owned()),
                     ("field", field.to_owned()),
@@ -1128,5 +1130,126 @@ fn clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare() {
             }
         );
         assert_eq!(record.locus, CallAdmissionLocus::Binder(binder.clone()));
+    }
+}
+
+/// Both routes enter the same atomic declaration table before admission.
+/// Colliding entry keys reject both distinct real origins; repeated views of
+/// each same original declaration retain one entry and admit real data.
+#[trace("FR-106-AC-77", "TC-464")]
+#[test]
+fn declared_table_collision_refuses_both_origins_and_aliases_admit_on_both_routes() {
+    use fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable;
+    use fsl_semantics::model::observation::ModelSelections;
+    let checked = fixture(false);
+    let package = CheckedPackage::link(checked.graph);
+    let snapshots = snapshot(&expected_place("c1", "x"), &expected_place("c2", "x"), true);
+    let Value::Reference(actual) = capture(&package, &checked.packages, &snapshots, 0, "c1") else {
+        panic!("actual seeded producer");
+    };
+    let read = fsl_package::read_evaluation_package(
+        &package,
+        fsl_semantics::library::LibraryName::new(package.graph().package_name()).expect("name"),
+        &checked.packages,
+        V2ReadLimits::fixture(),
+        EmitLimits::fixture(),
+    )
+    .expect("actual read");
+    let rows = read
+        .emission()
+        .identity_rows(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("rows");
+    let equality = read
+        .emission()
+        .equality_witness(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("equality");
+    let bare = BarePackage::new(read.admitted())
+        .with_supply(
+            BareSupply {
+                identities: &rows,
+                equality: Some(&equality),
+            },
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("Bare");
+    let bare_table = bare
+        .clock_declaration_table()
+        .expect("actual admitted declarations");
+    let bare_world = bare.world().expect("actual admitted world");
+    for (table, types) in [
+        (
+            package.graph().clock_declaration_table(),
+            package.graph().scope().types(),
+        ),
+        (&bare_table, bare_world.types()),
+    ] {
+        let entries = table.entries().collect::<Vec<_>>();
+        let (template, first) = entries[0];
+        let (_, second) = entries
+            .iter()
+            .copied()
+            .find(|(_, origin)| *origin != first)
+            .expect("two distinct actual original declarations");
+        // Exercise the declared-table entry boundary under its collision
+        // precondition, using genuine origins from this route. This is not
+        // a claim that the fixture's valid source normalizes inconsistently.
+        let collision = ClockDeclarationTable::from_entries([
+            (template.clone(), first.clone()),
+            (template.clone(), second.clone()),
+        ])
+        .expect_err("a conflicting table is not returned to admission");
+        assert_eq!(&collision.first, first);
+        assert_eq!(&collision.second, second);
+        let cause =
+            fsl_semantics::check::CheckCause::DuplicateClockDeclaration(Box::new(collision));
+        assert_eq!(
+            cause.code(),
+            fsl_foundation::diagnostic::Code::ConflictingDeclaration
+        );
+        assert_eq!(cause.cause(), Some("duplicate-declaration"));
+        let aliases = ClockDeclarationTable::from_entries(
+            table
+                .entries()
+                .chain(table.entries())
+                .map(|(template, origin)| (template.clone(), origin.clone())),
+        )
+        .expect("two aliases of each original retain one table view")
+        .with_source_declarations(table.source_declarations().clone())
+        .with_run_places(table.run_places().map(|(node, place)| {
+            (
+                node.clone(),
+                place.owner.clone(),
+                place.template.as_ref().clone(),
+            )
+        }))
+        .expect("actual run declarations retain their checked identity");
+        assert_eq!(
+            aliases.entries().collect::<Vec<_>>(),
+            table.entries().collect::<Vec<_>>()
+        );
+        let selections = [fsl_semantics::model::domain_package::DomainPackageRef {
+            identity: CLOCKS.to_owned(),
+        }];
+        let model = StateModel::new(
+            ModelSelections::new(&selections, &[]).with_clock_declaration_table(&aliases),
+            types,
+            &checked.packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("alias table enters the actual Model");
+        let (state, _) = model
+            .admit_initial(&snapshots, &identity(), ObservationLimits::default())
+            .expect("otherwise valid snapshot admits with the single alias view");
+        let stored = &state.populations[&key(CLOCKS, "calls")]["c1"].fields[&key(CLOCKS, "Call/r")];
+        assert_value(stored, &Value::Reference(actual.clone()));
+        model
+            .observation(&state, identity())
+            .expect("no partial or counterfeit observation");
     }
 }

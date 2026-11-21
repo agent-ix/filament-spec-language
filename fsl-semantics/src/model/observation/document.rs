@@ -1177,6 +1177,8 @@ fn object_field_kind_matches(
 /// a reference resolves whatever the walk order of its target.
 pub(super) struct References<'a> {
     canonical_limits: quire_canonical::Limits,
+    /// Diagnostic provenance for Clock values read from this snapshot.
+    document: Option<String>,
     views: &'a [ModelView],
     /// The checked package's type environment, whose closed supertypes
     /// graph decides whether an admitted object conforms to a reference's
@@ -1253,6 +1255,7 @@ impl<'a> References<'a> {
         }
         Ok(Self {
             canonical_limits,
+            document: None,
             views,
             types,
             admitted,
@@ -1392,7 +1395,14 @@ impl<'a> References<'a> {
         declared: filament_exact::EffectiveId,
     ) -> Result<ObjectReference, AdmissionRecord> {
         if crate::model::clock_reference::is_clock_type(&declared) {
-            return self.resolve_clock(reference);
+            return self
+                .resolve_clock(reference)
+                .map_err(|record| match &self.document {
+                    Some(document) => record
+                        .with("document", document.clone())
+                        .with("target", reference.key.clone()),
+                    None => record,
+                });
         }
         let wire = (reference.population.as_str(), reference.key.as_str());
         if let Some(target) = self.admitted.get(&wire) {
@@ -2550,6 +2560,7 @@ pub fn admit_record_sample(
     let raw = SnapshotValue::record(RECORD_SAMPLE, fields);
     let mut references = References {
         canonical_limits: quire_canonical::Limits::new(u64::MAX),
+        document: None,
         views: &[],
         types,
         admitted: BTreeMap::new(),
@@ -3461,6 +3472,7 @@ pub(super) fn admit_population_values<'t>(
     let mut completeness = BTreeMap::new();
     let mut keys_by_population: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut references = References::over(views, types, populations, snapshot.canonical_limits)?;
+    references.document = Some(document.identity.clone());
     let mut out_of_range: Vec<OutOfRange> = Vec::new();
     // FSpec FR-154 "Unit bounds": a supplied value that violates a bound
     // refuses; a post-state one is the successor's, which records it.
@@ -5366,6 +5378,7 @@ mod tests {
             admit_form(
                 &mut References {
                     canonical_limits: quire_canonical::Limits::new(u64::MAX),
+                    document: None,
                     views: &[],
                     types: &TypeEnvironment::default(),
                     admitted: BTreeMap::new(),

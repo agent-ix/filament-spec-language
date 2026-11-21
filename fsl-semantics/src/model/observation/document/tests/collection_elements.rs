@@ -145,6 +145,7 @@ fn admitted_source(source: &str, slot: ValueType) -> Result<Value, AdmissionReco
         canonical_limits: quire_canonical::Limits::new(
             u64::try_from(source.len()).expect("test input fits u64"),
         ),
+        document: None,
         views: &[],
         types: &types,
         admitted: BTreeMap::new(),

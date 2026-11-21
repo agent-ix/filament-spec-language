@@ -317,14 +317,23 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
 
         let source_table = graph.clock_declaration_table().clone();
         let emission = emit_checked(&CheckedPackage::link(graph)).expect("source emits");
-        let (admitted, timed_models) = match super::read_back(&emission) {
-            Read::Verified {
-                admitted,
-                timed_models,
-                ..
-            } => (admitted, timed_models),
-            refusal => panic!("actual emitted package admits: {refusal:?}"),
-        };
+        let mut evidence = super::read_evidence(&emission);
+        for document in packages.values() {
+            evidence
+                .insert_domain_package_document(package_identity(document), document.clone())
+                .expect("the actual selected Model document is supplied once");
+        }
+        let admitted = read_checked_package_v2(
+            emission.package.bytes(),
+            library(),
+            V2ReadLimits::fixture(),
+            &evidence,
+        )
+        .unwrap_or_else(|refusal| panic!("actual emitted package admits: {refusal:?}"))
+        .into_value()
+        .admitted;
+        let timed_models = CheckedTimedModel::from_admitted(&admitted)
+            .expect("actual admitted timed declarations");
         let declarations = crate::BarePackage::new(&admitted)
             .clock_declarations()
             .expect("admitted declaration provenance");

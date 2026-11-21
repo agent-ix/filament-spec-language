@@ -15,6 +15,34 @@ pub fn is_clock_type(target: &filament_exact::EffectiveId) -> bool {
     target == &crate::check::clock_reference_target()
 }
 
+/// The FSL runtime type of an admitted Clock-reference DATA scalar.
+/// This is the same canonical native target used by source checking.
+pub fn reference_type() -> filament_exact::ValueType {
+    crate::check::clock_reference_type()
+}
+
+/// Whether S names an actual object declaration the real owner conforms to.
+/// This uses type provenance independently of the remaining Clock paths, so
+/// removing the last Clock does not turn a same-scope stale path into a
+/// disagreement with the authenticated model scope.
+pub fn is_declared_owner_scope(
+    scope: &identity::DeclarationScope,
+    owner: &ObjectReference,
+    declarations: &normalization::ClockDeclarationTable,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+) -> bool {
+    types.object_types().any(|declaration| {
+        let target = declaration.key();
+        let original = target.original();
+        let key = filament_checked::key::DeclarationKey {
+            package: original.package().to_owned(),
+            node: original.node().to_owned(),
+        };
+        declarations.source_declarations().catalog_scope(&key) == Some(scope)
+            && types.conforms(owner.object_type().clone(), target)
+    })
+}
+
 /// Checked declaration context retained for the trusted same-run Rust-state
 /// seam. This is not admission authority for externally supplied references.
 #[derive(Clone, Debug, Default)]
