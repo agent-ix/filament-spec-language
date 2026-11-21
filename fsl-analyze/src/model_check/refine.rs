@@ -3300,6 +3300,7 @@ impl Run<'_, '_> {
                 lasso: Some(Lasso {
                     entry,
                     terminal_stutter: stutters > 0,
+                    terminal_stutter_delay: None,
                 }),
                 refinement: Some(RefinementFailure::HiddenUnfair { constraint }),
                 blocked: Vec::new(),

@@ -526,6 +526,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
             profile: hyper.profile(),
             clock: hyper.domain_clock(),
             model: None,
+            trace_aliases: None,
             source,
             span: hyper.span(),
         });
