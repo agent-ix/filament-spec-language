@@ -36,7 +36,7 @@ fn check(world: &World) -> RefinementOutcome {
         world.refinement(),
         world.concrete_request(UNLIMITED),
         world.package(),
-        world.abstract_initial(),
+        vec![world.abstract_initial()],
     )
 }
 
@@ -45,7 +45,7 @@ fn check_aux(world: &AuxWorld<'_>) -> RefinementOutcome {
         world.refinement(),
         world.concrete_request(AUX_UNLIMITED),
         world.package(),
-        world.abstract_initial(),
+        world.abstract_initials(),
     )
 }
 
@@ -63,7 +63,7 @@ fn run(
     refinement: &CheckedRefinement,
     concrete: ModelSimulationRequest<'_>,
     package: &CheckedPackage,
-    abstract_initial: DocumentRef,
+    abstract_initials: Vec<DocumentRef>,
 ) -> RefinementOutcome {
     check_refinement(
         RefinementCheckRequest {
@@ -73,7 +73,7 @@ fn run(
                 proof_bounds: Vec::new(),
             },
             abstract_package: package,
-            abstract_initial: vec![abstract_initial].into(),
+            abstract_initial: abstract_initials.into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -351,7 +351,7 @@ fn replayed(
         world.refinement(),
         &world.concrete_request(AUX_UNLIMITED),
         world.package(),
-        vec![world.abstract_initial()],
+        world.abstract_initials(),
     )
     .expect("the subjects open");
     replay_refinement_trace(world.refinement(), &systems, payload).expect("the trace replays")
@@ -473,44 +473,44 @@ fn cx2_requires_one_candidate_run_to_satisfy_all_fairness_constraints() {
     // Without `fire2` the one constraint left is satisfiable by a candidate.
     let without_fire2 = hidden_tick_refinement("ensure fair weak Spec::M::fire1;\n");
     holds(&check_aux(&unit.world(&without_fire2)));
+
+    // `fire2` alone holds only because the second initial candidate `B`
+    // exists: `A` takes `fire2` never and changes `v` when it does. With `B`
+    // dropped it would be refuted, so this fails if the extra initial is lost.
+    let without_fire1 = hidden_tick_refinement("ensure fair weak Spec::M::fire2;\n");
+    holds(&check_aux(&unit.world(&without_fire1)));
 }
 
-/// FR-899-AC-8 / TC-2536 CX-3: a candidate that never enables fire supplies
-/// a fair run even when another candidate enables it continuously.
+/// FR-899-AC-8 / TC-2536 CX-3: `fire` is enabled only at `A` (`h = 0`), where
+/// it changes `v`, and `B` (`h = 1`) never enables it. Over the unchanged `v`
+/// of the `tick` loop the `A` run cannot take `fire` and is unfair, while the
+/// `B` run never enables it and is fair, so the check holds because of `B`.
 #[trace("TC-2536", "FR-899-AC-8")]
 #[test]
 fn cx3_holds_when_one_candidate_never_enables_fire() {
     let contracts = "pre FireEnabled using v on Spec::M::fire { self.h = 0 }\n\
-        post FireStep using v on Spec::M::fire { self.h = 0 and self.v = pre(self.v) }\n";
+        post FireStep using v on Spec::M::fire { self.h = 0 and self.v = 1 }\n";
+    let refinement = hidden_tick_refinement("ensure fair weak Spec::M::fire;\n");
+
+    // Control: with `A` alone the loop is hidden-unfair, and replay agrees.
+    let single = Unit::hidden_fairness_model(2, 0, &["fire"], contracts);
+    let single_world = single.world(&refinement);
+    let refuted = lasso(check_aux(&single_world));
+    assert!(matches!(
+        refuted.refinement,
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
+    assert_reproduced(&single_world, &refuted);
+
+    // With `B` added the check holds, and the same hand-built `HiddenUnfair`
+    // counterexample no longer reproduces under full FR-145 replay.
     let unit = Unit::hidden_fairness_model(2, 0, &["fire"], contracts)
         .with_hidden_initials(&[1]);
-    let refinement = hidden_tick_refinement("ensure fair weak Spec::M::fire;\n");
     let world = unit.world(&refinement);
     holds(&check_aux(&world));
-
-    // A hand-built counterexample naming `HiddenUnfair{fire}` for the tick
-    // loop does not reproduce: the candidate that never enables `fire` is a
-    // fair run. The payload is the tick loop of AC-6's fixture, renamed to
-    // this world's `fire` constraint.
-    let loop_contracts = "pre AdvanceEnabled using v on Spec::M::advance { self.h = 0 }\n\
-        post AdvanceStep using v on Spec::M::advance { self.h = 1 and self.v = pre(self.v) }\n\
-        post FireStep using v on Spec::M::fire {\n\
-          (pre(self.h) = 1 and self.h = 2 and self.v = pre(self.v)) or\n\
-          (pre(self.h) != 1 and self.h = pre(self.h) and self.v = 1)\n\
-        }\n";
-    let loop_unit = Unit::hidden_fairness_model(2, 0, &["advance", "fire"], loop_contracts);
-    let loop_refinement = hidden_tick_refinement("ensure fair weak Spec::M::fire;\n");
-    let mut built = lasso(check_aux(&loop_unit.world(&loop_refinement)));
-    let fire = world
-        .refinement()
-        .abstract_operation_fairness()
-        .find(|constraint| constraint.operation().name() == "fire")
-        .cloned()
-        .expect("the fire constraint");
-    built.refinement = Some(RefinementFailure::HiddenUnfair { constraint: fire });
     assert!(
         !matches!(
-            replayed(&world, &built),
+            replayed(&world, &refuted),
             RefinementTraceSettlement::Reproduced { .. }
         ),
         "a loop with a fair candidate run is not hidden-unfair"

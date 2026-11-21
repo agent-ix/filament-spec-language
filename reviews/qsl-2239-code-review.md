@@ -63,3 +63,13 @@ Round 1, at head `ed3f278e4e3ece4f49f6520019d5cc3f14c18d68`. Each fix was checke
 | FND-008 | fixed | 300f688441: the all-forall open-population refutation shortcut is removed, so an open population settles `Inconclusive` as FR-898 Result and AC-4 state. The eval test now expects `Inconclusive` |
 | FND-009 | fixed | 78481093e3: `TimedLivenessHalf::Unsupported`, `UnavailabilityCause::HiddenFieldLiveness` and `StrongAbstractFairness`, their settle/outcome arms and the stale docs are removed, and a grep at this head finds none. The analogous `RefinementCause::TimedAbstract` is FND-012 |
 | FND-010 | fixed | da13e1566c: the `unreachable!()` arm returns `TemporalCause::AmbiguousTimedDeclaration{span}`, and a grep finds no `unreachable!()` left in timed_model.rs |
+
+## Dispositions (round 2)
+
+Round 2, at frozen head `db0f80895f16a0cc6c0926b99321180ee1c571fb`. The fixes are 307050eff1, 37824e252a, e257f8f4c7, the main integration 4deb0ee47b (main ab98ea12d8) and 2cf9515da4. db0f80895f differs from 2cf9515da4 by one test expression in fsl-package/src/emit/tests/hyper_clause.rs. Static review; no cargo run by the reviewer. This round adds no new code-review finding.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-003 | fixed | 307050eff1: on the timed path, an `Ok(false)` loop is now named by `first_unfair_constraint`. It tests `FairScope::Only(i)` for every constraint in source order, falls back to the least `FairScope::Through(j)`, and raises a fault if neither applies. `lasso()` names `abstract_operation_fairness().nth(named)`. `candidate_loop_has_fair_run` numbers every candidate-enabled and taken transition before the scope filter and indexes constraints by their position in `abstract_operation_fairness()`, as `class.constraint()` does, so the scoped constraint sets share one identity numbering. The rule is the one `replay_lasso` applies, so the timed engine and replay agree. No timed three-constraint fixture exercises it (gap-analysis FND-009) |
+| FND-011 | deferred | 307050eff1/37824e252a: both dense timed hidden-field cases that hold now assert `Undecided{Zone(LassoNotConcretized)}`, are traced to `FR-899` only, and state in their docs that FR-899-AC-9 is not met. Both passed on Draco at 37824e252a. The cut is sound, never a false `holds`. The exact per-component check, which is the remaining FR-899-AC-9 holds case, stays open on QSL-2243 (comment ee20b33f). AC-9 is not met |
+| FND-012 | fixed | 307050eff1: `RefinementCause::TimedAbstract` and its `code`, `cause` and fsl-replay spine arms are removed; a grep at this head finds none |

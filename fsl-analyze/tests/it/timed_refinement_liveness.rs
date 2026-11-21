@@ -16,7 +16,7 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
-use crate::timed_refinement::{analyzed, refinement, replay, safety_request};
+use crate::timed_refinement::{analyzed, refinement, replay, replay_attempt, safety_request};
 use crate::timed_world::{DENSE, Refining, document, refining, renamed_package};
 
 /// FR-430-AC-5's `Req`: `send` with the precondition `not self.sent` (here
@@ -246,8 +246,30 @@ fn world_of(
 /// polling loop cannot take `send`, and the caller chooses the admitted
 /// hidden initial valuations and fairness strength.
 fn hidden_timed_world(values: &[bool], strength: &str, invariant: bool) -> Refining {
+    hidden_timed_world_with(
+        values,
+        &format!("ensure fair {strength} A::Call::send;"),
+        invariant,
+        false,
+    )
+}
+
+/// The hidden-field timed world with the fairness rows `ensures`. With
+/// `extra`, the abstract model also has `idle`, enabled only where `h` holds,
+/// and `nudge`, enabled everywhere the call is not in flight; neither is
+/// ever taken by the concrete polling loop.
+fn hidden_timed_world_with(values: &[bool], ensures: &str, invariant: bool, extra: bool) -> Refining {
+    let abstract_operations: &[(&str, &[&str])] = if extra {
+        &[
+            ("send", &["inflight"]),
+            ("idle", &["inflight"]),
+            ("nudge", &["inflight"]),
+        ]
+    } else {
+        &[("send", &["inflight"])]
+    };
     let mut abstract_document: serde_json::Value =
-        serde_json::from_slice(&document(&[], &[("send", &["inflight"])]))
+        serde_json::from_slice(&document(&[], abstract_operations))
             .expect("abstract package JSON");
     abstract_document["types"][1]["fields"]
         .as_array_mut()
@@ -259,9 +281,18 @@ fn hidden_timed_world(values: &[bool], strength: &str, invariant: bool) -> Refin
     let abstract_document =
         renamed_package(&abstract_document.to_string().into_bytes(), "test/req");
     let concrete = document(&["x"], &[("send", &["inflight"]), ("poll", &["x"])]);
+    let extra_contracts = if extra {
+        "pre AIdleable using v on A::Call::idle { self.h }\n\
+         post AIdled using v on A::Call::idle { self.inflight = pre(self.inflight) }\n\
+         pre ANudgeable using v on A::Call::nudge { not self.inflight }\n\
+         post ANudged using v on A::Call::nudge { self.inflight = pre(self.inflight) }\n"
+    } else {
+        ""
+    };
     let contracts = format!(
         "pre ASendable using v on A::Call::send {{ not self.inflight and not self.h }}\n\
          post ASend using v on A::Call::send {{ self.inflight }}\n\
+         {extra_contracts}\
          pre MSend using v on M::Call::send {{ not self.inflight }}\n\
          post MSent using v on M::Call::send {{ self.inflight }}\n\
          pre MPoll using v on M::Call::poll {{ not self.inflight }}\n\
@@ -275,7 +306,7 @@ fn hidden_timed_world(values: &[bool], strength: &str, invariant: bool) -> Refin
         &format!(
             "step M::Call::send -> A::Call::send(self);\n\
              step M::Call::poll -> stutter;\n\
-             ensure fair {strength} A::Call::send;"
+             {ensures}"
         ),
     );
     refining(
@@ -669,6 +700,101 @@ fn timed_hidden_strong_send_with_invariant_is_not_decided_to_hold() {
         "{:?}",
         outcome.liveness
     );
+}
+
+/// The hidden-unfair constraint's operation name in `counterexample`.
+fn hidden_unfair_name(counterexample: &TemporalCounterexample) -> String {
+    match counterexample.refinement.as_ref() {
+        Some(RefinementFailure::HiddenUnfair { constraint }) => {
+            constraint.operation().name().to_owned()
+        }
+        other => panic!("a hidden-unfair failure: {other:?}"),
+    }
+}
+
+/// FR-899 naming over a timed subject: `send` holds alone at `h = true`
+/// (where it is disabled), `idle` holds alone at `h = false` (where it is
+/// disabled), no candidate satisfies both, and `nudge` is enabled and never
+/// taken at every candidate. The first constraint every candidate cycle
+/// violates is `nudge`, so it is named, and replay reproduces that name and
+/// refuses the least-prefix name `idle`.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn timed_hidden_naming_takes_the_first_constraint_every_candidate_cycle_violates() {
+    let world = hidden_timed_world_with(
+        &[false, true],
+        "ensure fair weak A::Call::send;\nensure fair weak A::Call::idle;\n\
+         ensure fair weak A::Call::nudge;",
+        false,
+        true,
+    );
+    let counterexample = violation(check(&world));
+    assert_eq!(hidden_unfair_name(&counterexample), "nudge");
+    assert!(matches!(
+        replay(&world, &counterexample),
+        RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::HiddenUnfair { .. },
+            ..
+        }
+    ));
+    let idle = world_constraint(&world, "idle");
+    let mut renamed = counterexample.clone();
+    renamed.refinement = Some(RefinementFailure::HiddenUnfair { constraint: idle });
+    assert!(
+        !matches!(
+            replay_attempt(&world, &renamed),
+            Ok(RefinementTraceSettlement::Reproduced { .. })
+        ),
+        "replay does not reproduce the joint-prefix name"
+    );
+}
+
+/// FR-899 naming over a timed subject, fallback half: with only `send` and
+/// `idle`, each is satisfiable alone but not jointly, so the least prefix with
+/// no fair candidate run names `idle`; replay agrees and refuses `send`.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn timed_hidden_naming_falls_back_to_the_least_unsatisfiable_prefix() {
+    let world = hidden_timed_world_with(
+        &[false, true],
+        "ensure fair weak A::Call::send;\nensure fair weak A::Call::idle;",
+        false,
+        true,
+    );
+    let counterexample = violation(check(&world));
+    assert_eq!(hidden_unfair_name(&counterexample), "idle");
+    assert!(matches!(
+        replay(&world, &counterexample),
+        RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::HiddenUnfair { .. },
+            ..
+        }
+    ));
+    let send = world_constraint(&world, "send");
+    let mut renamed = counterexample.clone();
+    renamed.refinement = Some(RefinementFailure::HiddenUnfair { constraint: send });
+    assert!(
+        !matches!(
+            replay_attempt(&world, &renamed),
+            Ok(RefinementTraceSettlement::Reproduced { .. })
+        ),
+        "send is satisfiable alone, so it is not the one named"
+    );
+}
+
+/// The abstract fairness constraint of `world` over operation `name`.
+fn world_constraint(
+    world: &Refining,
+    name: &str,
+) -> filament_semantic_value::fairness::FairnessConstraint {
+    let [refinement] = world.package.graph().refinements() else {
+        panic!("one refinement");
+    };
+    refinement
+        .abstract_operation_fairness()
+        .find(|constraint| constraint.operation().name() == name)
+        .cloned()
+        .unwrap_or_else(|| panic!("the {name} constraint"))
 }
 
 /// FR-900-AC-6: the timed abstract `send` guard holds at every instant of a

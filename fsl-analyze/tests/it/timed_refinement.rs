@@ -607,7 +607,7 @@ pub(crate) fn replay_attempt(
         refinement,
         &world.concrete_request(),
         &world.package,
-        vec![world.abstract_initial.clone()],
+        world.abstract_initials.clone(),
     )
     .expect("the subjects open");
     replay_timed_refinement_trace(refinement, &systems, payload, &Limits::default())

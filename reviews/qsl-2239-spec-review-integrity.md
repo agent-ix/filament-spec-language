@@ -26,3 +26,11 @@ Ticket: QSL-2239 (PR record). This pass covers only consistency and testability 
 ## Verdict
 
 The amendment is sound and follows the ruling. One medium cross-spec contradiction remains in FR-362.
+
+## Dispositions
+
+Round 2 (this artifact's first disposition), at frozen head `db0f80895f16a0cc6c0926b99321180ee1c571fb`.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | 307050eff1: FR-362 item 8 drops the alias case from the `NotEmitted` list and states, citing the ruling, that a clause whose alias binds no object parameter is emitted (FR-631-AC-4 ruling, as FR-488 states). `quire validate` passes on FR-362 |

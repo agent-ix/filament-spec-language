@@ -50,3 +50,21 @@ Round 1, at head `ed3f278e4e3ece4f49f6520019d5cc3f14c18d68`.
 | FND-004 | fixed | 1db8e00b27: `a_weakly_enabled_everywhere_label_does_not_subsume_a_fair_label` is now tagged `TC-2536` only, with no FR-899-AC-6 claim |
 | FND-005 | fixed | 300f688441: the conflicting-identity test asserts `item["record"]["diagnostic"]["detail"]["trace"] == "a"` |
 | FND-006 | fixed | ed3f278e4e: FR-488-AC-18 now says the alias case is not refused and emits (FR-631-AC-4 ruling). `the_first_refusal_in_precedence_order_is_reported`, whose `n of N` alias binds no object parameter, asserts that the fairness constraint is the first refusal. Under the old item 2 the alias refusal would have come first, so the test now binds the amended AC |
+
+## New findings (disposition pass 2)
+
+Head `db0f80895f16a0cc6c0926b99321180ee1c571fb`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | medium | In fsl-analyze/tests/it/refinement_liveness.rs, `check_aux` and `replayed` pass only `world.abstract_initial()` (`h = 0`), so `with_hidden_initials(&[1])` never reaches the check or replay. e257f8f4c7 fixed this same defect in refinement_replay.rs only. `cx2_requires_one_candidate_run_to_satisfy_all_fairness_constraints` (FR-899-AC-7) therefore runs with candidate `A` alone. There `fire2` changes `v`, so it is violated by every cycle, and the test names `fire2` by the primary rule. It never builds AC-7's case, where each constraint is satisfiable alone but not jointly and the least-prefix fallback names `fire2`. That case has no two-candidate test anywhere: refinement_replay's two-initial test names `fire3` by the primary rule | fsl-analyze/tests/it/refinement_liveness.rs:34-50, 345-358, 427-468; tests/support/refinement_aux.rs:350-361, 832-842 |
+| FND-009 | low | The timed hidden-field naming fix (code-review FND-003, `first_unfair_constraint`) has no timed fixture with two or more constraints, so its primary rule and prefix fallback, and their agreement with replay, run only on the untimed path | fsl-analyze/src/zone_check/refine/live.rs:894-921; fsl-analyze/tests/it/timed_refinement_liveness.rs |
+
+## Dispositions (round 2)
+
+Round 2, at frozen head `db0f80895f16a0cc6c0926b99321180ee1c571fb`.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-002 | still-open | 307050eff1/2cf9515da4 settle the AC-6 part. cx1 compares the stem and loop to the typed `operation_identity_text(M/tick)` (two stem entries, one loop entry), and the edited `h = 2 -> 1` variant holds while the earlier counterexample does not reproduce; this passed on Draco at 2cf9515da4. The AC-8 part is not settled. `cx3_holds_when_one_candidate_never_enables_fire` adds `.with_hidden_initials(&[1])`, but `check_aux` and `replayed` drop it (FND-008), so only candidate `A` (`h = 0`) is checked. Its `FireStep` keeps `v` (`self.h = 0 and self.v = pre(self.v)`), while AC-8 states that `fire` changes `v` at `A`. `A`'s own run therefore takes `fire` every step and is fair: the check holds, and the hand-built `HiddenUnfair{fire}` payload fails to reproduce, whether or not candidate `B` exists. The test cannot fail for the reason AC-8 gives ("because the B run never enables fire"). Needed: pass `world.abstract_initials()` through `check_aux` and `replayed`, and make `fire` change `v` at `A`, as AC-8 states |
+| FND-007 | fixed | 307050eff1: the unquantified `c`, the non-Boolean body and the infinite-trace profile now each assert a hyper cause, its code, its tag (`missing-name`, `type-mismatch`, `type-mismatch`) and its exact span (`c`, `a.res`, `inf`). The feature-enabled `hyper_clauses::` run passed 42 on Draco at 37824e252a and again at 2cf9515da4 |
