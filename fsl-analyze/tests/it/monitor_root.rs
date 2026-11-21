@@ -175,7 +175,7 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
                 filament_contract_model::CheckedPackageRefusalCode::InvalidValue
             );
             let expected_path =
-                format!("/checked_term_data/body_locations/{row_index}/application");
+                format!("/checked_term_data/body_locations/{row_index}/location/origin/function");
             assert_eq!(
                 refusal
                     .loci
