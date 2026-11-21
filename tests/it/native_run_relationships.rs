@@ -45,32 +45,6 @@ fn request_failure(output: &crate::command_harness::Output) -> Value {
     })
 }
 
-fn assert_run_relationship_refusal(
-    output: &crate::command_harness::Output,
-    code: &str,
-    cause: Option<&str>,
-    path: Option<&str>,
-) -> Value {
-    let document: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
-            "relationship refusal is a native-run result: {error}; stderr={}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-    });
-    assert_eq!(output.status.code(), Some(20), "{document}");
-    assert_eq!(document["outcome"]["kind"], "refused", "{document}");
-    assert_eq!(document["outcome"]["code"], code, "{document}");
-    if let Some(cause) = cause {
-        assert_eq!(document["outcome"]["cause"], cause, "{document}");
-    } else {
-        assert!(document["outcome"].get("cause").is_none(), "{document}");
-    }
-    if let Some(path) = path {
-        assert_eq!(document["outcome"]["fields"]["path"], path, "{document}");
-    }
-    document
-}
-
 fn request(call: Value) -> Value {
     json!({
         "format": "native-run/1",
@@ -1086,10 +1060,9 @@ fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_re
     );
 
     let ordinary = run_selected("shipments", "o1", vec![unknown], None);
-    assert_run_relationship_refusal(
-        &ordinary,
-        "invalid_runtime_input",
-        Some("wrong-role-mapping"),
-        None,
-    );
+    let failure = request_failure(&ordinary);
+    assert_eq!(ordinary.status.code(), Some(20), "{failure}");
+    assert_eq!(failure["code"], "invalid_runtime_input", "{failure}");
+    assert_eq!(failure["cause"], "wrong-role-mapping", "{failure}");
+    assert_eq!(failure["stage"], "call", "{failure}");
 }
