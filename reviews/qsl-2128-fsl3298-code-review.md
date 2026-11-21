@@ -35,3 +35,7 @@ No applicable AssuranceProfile exists in the reviewed spec tree; direct review a
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | No findings (placeholder) | - |
+
+## Disposition pass 1
+
+**PASS; mergeable** at 67d96f5187c33f6c75b6e7d44c1ed54b3501ef22. Rechecked the two bounded fixes. FR-163 is now a references edge, eliminating the newly reciprocal prerequisite; AC-17 now uses ModelCheckLimits max_states 1 and setting model_check.max_states, matching FR-163 Limits/Stop, FR-126 and FR-255's published setting. Accepted, rejected and unchecked settlement partitions are unchanged. No new findings. Scoped FR-182 validation and grammar check pass. No Cargo or branch edits.

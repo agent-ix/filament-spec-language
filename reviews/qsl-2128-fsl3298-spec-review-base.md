@@ -35,3 +35,19 @@ No applicable AssuranceProfile exists in the reviewed spec tree; direct review a
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | high | AC-17 requires an HP-1 core check stopped by max_certificate_edges, but FR-163 takes ModelCheckLimits and charges recomputed states/successors; its AC-4 stops with max_states. max_certificate_edges is the zone/SMT CertificateCheckLimits setting, not a hyper ProductClosureCheck request limit. Use an existing hyper checker limit, such as max_states 1, and its configured setting. | spec/functional/FR-182-settle-a-hyper-verdict.md:373 |
+
+## Disposition pass 1
+
+**PASS; mergeable** at 67d96f5187c33f6c75b6e7d44c1ed54b3501ef22. Rechecked the two bounded fixes. FR-163 is now a references edge, eliminating the newly reciprocal prerequisite; AC-17 now uses ModelCheckLimits max_states 1 and setting model_check.max_states, matching FR-163 Limits/Stop, FR-126 and FR-255's published setting. Accepted, rejected and unchecked settlement partitions are unchanged. No new findings. Scoped FR-182 validation and grammar check pass. No Cargo or branch edits.
+
+## Dispositions
+
+Round 1.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-17 names the existing hyper ModelCheckLimits stop and its defined model_check.max_states setting. |
+
+Fixed excerpt:
+
+> with the core check stopped by `ModelCheckLimits` `max_states` 1 it settles V-7 `Incomplete(LimitReached{limit: max_states, value: 1, setting: model_check.max_states})` rather than `CertificateUnchecked` (FR-163 "Limits" and "Stop", FR-126).

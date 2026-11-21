@@ -35,3 +35,20 @@ No applicable AssuranceProfile exists in the reviewed spec tree; direct review a
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | high | The added FR-182 depends_on FR-163 edge creates a direct prerequisite cycle with FR-163's existing depends_on FR-182 edge. Neither requirement can be scheduled first by the declared dependency graph. Keep the checker citation as references rather than introducing the reverse prerequisite. | spec/functional/FR-182-settle-a-hyper-verdict.md:30-31 |
+
+## Disposition pass 1
+
+**PASS; mergeable** at 67d96f5187c33f6c75b6e7d44c1ed54b3501ef22. Rechecked the two bounded fixes. FR-163 is now a references edge, eliminating the newly reciprocal prerequisite; AC-17 now uses ModelCheckLimits max_states 1 and setting model_check.max_states, matching FR-163 Limits/Stop, FR-126 and FR-255's published setting. Accepted, rejected and unchecked settlement partitions are unchanged. No new findings. Scoped FR-182 validation and grammar check pass. No Cargo or branch edits.
+
+## Dispositions
+
+Round 1.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The new FR-163 edge is references, preserving the checker citation without a reverse prerequisite. |
+
+Fixed excerpt:
+
+>   - target: ix://agent-ix/filament-spec-language/FR-163
+>     type: references
