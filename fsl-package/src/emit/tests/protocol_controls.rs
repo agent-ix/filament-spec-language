@@ -680,7 +680,7 @@ fn correlation_document() -> Vec<u8> {
                         "startLine": 1, "startColumn": 1,
                     }},
                     "sourceEnd": {"type": "ix://example/config-version/ConfigVersion",
-                        "multiplicity": multiplicity},
+                        "role": name, "multiplicity": multiplicity},
                     "targetEnd": {"type": "ix://example/config-version/ConfigVersion",
                         "multiplicity": multiplicity},
                 })
