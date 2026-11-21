@@ -80,3 +80,11 @@ What was verified by reading the source:
 | ID      | Severity | Summary | Refs |
 | ------- | -------- | ------- | ---- |
 | FND-001 | low      | No test fails if `bounded_rational_literal_type`'s structural guards are loosened: all four tests take the accepting path only, so deleting the form, tag, `error.at == semantic_type` or scalar check (accepting any `UnsupportedExactType` whose `type_id` has readable range bounds) leaves every test green, and the PR's "malformed literals are still refused as MissingLiteralProjection" claim has no evidence. | fsl-package/src/reader_protocol_projection.rs:4350-4373 |
+
+## Dispositions
+
+Round 1, at head `d4f92088ca14fd09ff626c7b8a761b62dd01ae95`. The Rust change since `e1900638` is only the `#[trace]` strings and doc comments of the four tests.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | accepted-no-change | The root accepted this as a bounded technical decision, and the reviewer confirmed the author's invariants in the source. On the honest route (emit, strict admission, view), `index.projections[R]` is computed by IR `project_exact_type_inner` from the same admitted graph. That function sets `at = R.semantic_type` and `form` from that node's own tag and form, so `scalar_type/rational` at `error.at` already implies that S is the Rational scalar and that `error.at == R.semantic_type`. A non-`rational_range` R whose semantic type is the Rational scalar is still refused, because `rational_range_type` finds no four bounds and returns `None`. So each guard is defense-in-depth with no honest input that tells it apart. A negative test would need a forged `ExactTypeProjectionError`, a forged IR node, or a new test API, and the brief prohibits all three. The reviewer found no reachable admitted, mutated graph that breaks this reasoning. The PR body no longer claims a malformed-literal test. |

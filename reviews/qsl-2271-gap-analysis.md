@@ -52,3 +52,12 @@ intent-to-test reading below came out of the same pass.
 - Remediation options, for the owning lanes: drop `FR-390-AC-28` from the four tags and keep
   `TC-1070`; or have the spec lane add a Rational reader-parity AC to FR-390 and retag to it.
 - Plan completion: not assessed
+
+## Dispositions
+
+Round 1, at head `d4f92088ca14fd09ff626c7b8a761b62dd01ae95`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | All four tests now carry `#[trace("TC-1070", "FR-390-AC-75")]`, and `FR-390-AC-28` is gone from them. `quire trace --id FR-390-AC-28` now gives `resolved: false` with 0 claims, which is the honest baseline. `quire trace --id FR-390-AC-75` gives exactly the 4 claims, at acceptance.rs:5320, 5334, 5348 and 5362. The test bodies are unchanged since `e1900638`. |
+| FND-002 | fixed | FR-390-AC-75 is added. It is a narrow verification criterion for FR-390's existing parity statement: R1 to R4 on the `Refunds.activation.guard` slot of fixture E only, with no extension of AC-28. TC-1070 gains the section "Rational literal and division reader vectors" (rows R1 to R4, which match the four test sources, source first), and its scope line now includes AC-75. FR-390 owns reader projection and parity, while FR-533 is the bare route, so FR-390 is the right owner. The spec text is reviewed in SR-2026112116405040524102. |
