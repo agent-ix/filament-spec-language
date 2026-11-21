@@ -267,6 +267,15 @@ pub fn check_free_delay_refinement<S>(
     check_refinement_with_time_source(request, cancel, true)
 }
 
+fn timed_subject_refusal(refusal: TimedSubjectRefusal) -> TimedRefinementRefusal {
+    match refusal {
+        // Keep the existing requires-bound/resource refusal envelope when
+        // the profile-aware constructor performs the preflight.
+        TimedSubjectRefusal::NotSimulated(cause) => not_simulated(cause).into(),
+        other => TimedRefinementRefusal::Timed(other),
+    }
+}
+
 fn check_refinement_with_time_source<S>(
     request: TimedRefinementRequest<'_, S>,
     cancel: &Cancel,
@@ -284,14 +293,14 @@ fn check_refinement_with_time_source<S>(
         request.abstract_initial.clone(),
     )
     .map_err(TimedRefinementRefusal::Subject)?;
-    check_model_bounds(&concrete, BOUND_POSITIONS).map_err(not_simulated)?;
-    check_model_bounds(&abstract_system, BOUND_POSITIONS).map_err(not_simulated)?;
+    // Timed constructors classify data domains with their actual clock
+    // profile bound. An untimed abstract subject keeps the generic preflight.
     let timed = if free_delay {
         TimedSystem::free_delay(&concrete, fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS)
     } else {
         TimedSystem::new(&concrete, refinement.concrete_model())
     }
-    .map_err(TimedRefinementRefusal::Timed)?;
+    .map_err(timed_subject_refusal)?;
     if timed.carries_clocks() {
         return Err(ZoneCheckRefusal::CarriedClocks.into());
     }
@@ -302,9 +311,10 @@ fn check_refinement_with_time_source<S>(
     {
         Some(
             TimedSystem::new(&abstract_system, refinement.abstract_model())
-                .map_err(TimedRefinementRefusal::Timed)?,
+                .map_err(timed_subject_refusal)?,
         )
     } else {
+        check_model_bounds(&abstract_system, BOUND_POSITIONS).map_err(not_simulated)?;
         None
     };
     if auxiliary_timed.is_some()

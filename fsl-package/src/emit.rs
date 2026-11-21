@@ -2158,16 +2158,24 @@ fn checked_term(ids: &StructuralIds, term: &BodyTerm) -> Result<CheckedTerm, Emi
                 .map(|value| member_term(ids, value))
                 .collect::<Result<_, _>>()?,
         }),
-        BodyTerm::Application(application) => Ok(CheckedTerm::Application {
-            operator: application_operator(application.operator),
-            operation: operation_term(ids, &application.operation)?,
-            result_type: admitted_id(ids, &application.result_type)?,
-            arguments: application
+        BodyTerm::Application(application) => {
+            let mut arguments = application
                 .arguments
                 .iter()
                 .map(|value| member_term(ids, value))
-                .collect::<Result<_, _>>()?,
-        }),
+                .collect::<Result<Vec<_>, _>>()?;
+            if application.operator == Operator::ProtocolControl {
+                if let Some(Member::ProfileOperator { operator }) = application.operation.member() {
+                    reference_sets::order_protocol_sets(operator.as_str(), &mut arguments)?;
+                }
+            }
+            Ok(CheckedTerm::Application {
+                operator: application_operator(application.operator),
+                operation: operation_term(ids, &application.operation)?,
+                result_type: admitted_id(ids, &application.result_type)?,
+                arguments,
+            })
+        }
         BodyTerm::Frame(frame) => frame_term(ids, frame),
         BodyTerm::Abstraction(abstraction) => abstraction_term(ids, abstraction),
         BodyTerm::Extension(extension) => extension_term(ids, extension),
@@ -4426,6 +4434,7 @@ fn checked_dispatch_tables(
 fn checked_term_data(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    equality_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     selected_model_members: &[(
         NodeKey,
         NodeKey,
@@ -4439,7 +4448,7 @@ fn checked_term_data(
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
         graph,
-        emitted_node_ids,
+        equality_node_ids,
         selected_model_members,
         equality_rows,
     )?
@@ -6005,7 +6014,9 @@ fn rekey_timed_model_nodes(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
     term_data: &mut Option<filament_contract_model::CheckedTermDataV2>,
-) -> Result<(), EmitRefusal> {
+) -> Result<Vec<(NodeKey, NodeKey)>, EmitRefusal> {
+    let mut substitutions = Vec::new();
+    let mut keys = ids.key_reader();
     let timed_count = nodes
         .iter()
         .filter(|node| {
@@ -6025,7 +6036,7 @@ fn rekey_timed_model_nodes(
             }
         }
         if changes.is_empty() {
-            return Ok(());
+            return Ok(substitutions);
         }
         // FR-322 "Operand index segments": a node whose own path holds a
         // rekeyed node as an operand is rekeyed with it, so every operand
@@ -6043,6 +6054,12 @@ fn rekey_timed_model_nodes(
             }
         }
         for (old, new) in changes {
+            substitutions.push((
+                keys.key(&old)
+                    .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                keys.key(&new)
+                    .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+            ));
             for node in nodes.iter_mut() {
                 node.replace_node_id(&old, &new);
             }
@@ -6059,6 +6076,24 @@ fn rekey_timed_model_nodes(
     Err(EmitRefusal::TimedModelWriterInvariant(
         "timed-node identity propagation did not converge",
     ))
+}
+
+/// Resolve original producer keys only through the timed substitutions the
+/// writer actually applied. The shared index keeps its one key per final node
+/// so consumers that reverse it never choose between identity aliases.
+fn producer_node_ids_after_timed_rekey(
+    emitted: &HashMap<NodeKey, CheckedNodeId>,
+    substitutions: &[(NodeKey, NodeKey)],
+) -> Result<HashMap<NodeKey, CheckedNodeId>, EmitRefusal> {
+    let mut producer_ids = emitted.clone();
+    for (old, new) in substitutions.iter().rev() {
+        let final_id = producer_ids
+            .get(new)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        producer_ids.insert(old.clone(), final_id);
+    }
+    Ok(producer_ids)
 }
 
 /// `id` with each direct operand equal to `old` replaced by `new`, or `None`
@@ -7032,6 +7067,7 @@ fn emit_package_inner(
     }
     let mut emitted_refinements = Vec::new();
     let mut step_rows = Vec::new();
+    let mut timed_substitutions = Vec::new();
     for refinement in graph.refinements() {
         if !refinement.v2_emittable() {
             return Err(EmitRefusal::RefinementNotEmitted);
@@ -7316,14 +7352,24 @@ fn emit_package_inner(
                 nodes.push(node);
             }
         }
-        rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut None)?;
+        timed_substitutions.extend(rekey_timed_model_nodes(
+            ids,
+            &mut nodes,
+            &mut source_map,
+            &mut None,
+        )?);
         // FSpec FR-322 "Aggregate order": the lists are written in declared
         // order, which reads the nodes' regions and structure alone, and
         // the nodes whose lists moved are rekeyed.
         if timed_order::order_timed_aggregates(&mut nodes, &source_map)
             .map_err(EmitRefusal::TimedOrder)?
         {
-            rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut None)?;
+            timed_substitutions.extend(rekey_timed_model_nodes(
+                ids,
+                &mut nodes,
+                &mut source_map,
+                &mut None,
+            )?);
         }
         #[cfg(test)]
         TIMED_GRAPH.with(|held| *held.borrow_mut() = Some((nodes.clone(), source_map.clone())));
@@ -7434,6 +7480,8 @@ fn emit_package_inner(
         &mut schedulability_claim_rows,
         &foreign,
     )?;
+    let producer_node_ids =
+        producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
     let WrittenTemporalRows {
         bindings: temporal_bindings,
         names: temporal_clause_names,
@@ -7442,26 +7490,35 @@ fn emit_package_inner(
     } = temporal_binding_rows(
         graph,
         &emitted_node_ids,
+        &producer_node_ids,
         &nodes,
         &source_map,
         temporal_selections,
     )?;
-    let claim_names = claim_name_rows(graph, ids, &emitted_node_ids, &nodes, &source_map)?;
+    let claim_names = claim_name_rows(
+        graph,
+        ids,
+        &emitted_node_ids,
+        &producer_node_ids,
+        &nodes,
+        &source_map,
+    )?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
-        &emitted_node_ids,
+        &producer_node_ids,
         &source_map,
         &omitted_keys,
     )?;
     let equality_fact_witness_rows = equality_fact_witness_rows(
         graph,
-        &emitted_node_ids,
+        &producer_node_ids,
         &nodes,
         &equality_producer_identity_rows,
     )?;
     let checked_term_data = checked_term_data(
         graph,
         &emitted_node_ids,
+        &producer_node_ids,
         &selected_model_enum_member_rows,
         &equality_producer_identity_rows,
         &nodes,
@@ -8844,6 +8901,7 @@ fn claim_name_rows(
     graph: &CheckedGraph,
     ids: &StructuralIds,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    producer_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
 ) -> Result<Vec<filament_contract_model::ClaimNameRow>, EmitRefusal> {
@@ -8918,8 +8976,23 @@ fn claim_name_rows(
                    name: &str,
                    span: fsl_foundation::Span|
      -> Result<(), EmitRefusal> {
+        let declaration_region = declaration_region(source_map, &declaration, &occurrence, span)?;
+        // FSpec FR-322 "Hyper clause source unit": a `hyperproperty` row names
+        // the locked source unit that declares the clause; no other row does.
+        let source_unit = nodes
+            .iter()
+            .find(|node| node.node_id == declaration)
+            .filter(|node| {
+                CheckedNodeTag::from_wire(&node.node_tag)
+                    .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))
+                    == Some(CheckedNodeKind::Claim(
+                        filament_contract_model::ClaimForm::Hyperproperty,
+                    ))
+            })
+            .map(|_| declaration_region.source.clone());
         rows.push(filament_contract_model::ClaimNameRow {
-            declaration_region: declaration_region(source_map, &declaration, &occurrence, span)?,
+            declaration_region,
+            source_unit,
             declaration,
             occurrence,
             name: name.into(),
@@ -8929,7 +9002,7 @@ fn claim_name_rows(
     };
     let mut named: Vec<(CheckedNodeId, CheckedOccurrence)> = Vec::with_capacity(sites.len());
     for synthesis in graph.synthesis_claims() {
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(synthesis.node())
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -8941,7 +9014,7 @@ fn claim_name_rows(
         row(declaration, occurrence, synthesis.name(), synthesis.span())?;
     }
     for (occurrence, name, span) in &sites {
-        let Some(declaration) = emitted_node_ids.get(occurrence.node()).cloned() else {
+        let Some(declaration) = producer_node_ids.get(occurrence.node()).cloned() else {
             continue;
         };
         let occurrence = CheckedOccurrence {
@@ -9045,6 +9118,7 @@ struct WrittenTemporalRows {
 fn temporal_binding_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    producer_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
     selections: &[TemporalClockSelection],
@@ -9083,7 +9157,7 @@ fn temporal_binding_rows(
         let clause = temporal.clause();
         let profile = clause.profile();
         let declaration_key = temporal.identity();
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(&declaration_key)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9166,7 +9240,7 @@ fn temporal_binding_rows(
             }
         }
         let declaration_key = temporal.identity();
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(&declaration_key)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9212,7 +9286,7 @@ fn temporal_binding_rows(
         // `hyperproperty` node at its `claim` occurrence, one per quantifier
         // in quantifier order, never on the body wrapper. Each trace selects
         // its own clock configuration (FR-640).
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(occurrence.node())
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9289,7 +9363,7 @@ fn temporal_binding_rows(
         let clock = &selection.clock;
         let clock_name = hyper.domain_clock();
         validate_temporal_clock(&source, span, clock_name, clock)?;
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(&identity)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9350,7 +9424,7 @@ fn temporal_binding_rows(
                 .nodes
                 .get(&awaited.node)
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
-            let declaration = emitted_node_ids
+            let declaration = producer_node_ids
                 .get(node_key)
                 .cloned()
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9481,7 +9555,7 @@ fn temporal_binding_rows(
     // A hybrid claim is a temporal clause node too (FR-447), and its
     // declared name belongs to its claim occurrence like any clause's.
     for site in graph.hybrid_claim_sites() {
-        let declaration = emitted_node_ids
+        let declaration = producer_node_ids
             .get(&site.identity)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -9978,6 +10052,7 @@ mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
 pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};
+mod reference_sets;
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;
 

@@ -155,7 +155,14 @@ fn an_unbounded_root_requires_a_bound() {
     else {
         panic!("expected RequiresBound, got {:?}", refused());
     };
-    assert!(!roots.domains.is_empty(), "{roots:?}");
+    assert!(
+        !roots
+            .domains
+            .as_ref()
+            .expect("generic unbounded domains")
+            .is_empty(),
+        "{roots:?}"
+    );
     assert_eq!(refused(), refused());
 }
 

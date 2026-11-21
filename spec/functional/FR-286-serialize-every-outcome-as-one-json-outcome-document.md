@@ -410,6 +410,9 @@ envelope reads, and the driver can show them.
 - An `execute` diagnostic from a request-stage refusal of an argument
   `value` (FR-650 "Arguments") SHALL carry `{"path":
   "/call/arguments/<index>/value"}`, the pointer the envelope names.
+- An `unimplemented_capability` diagnostic with cause `unimplemented-meaning`
+  SHALL carry `{"capability": C}`, where C is the capability name required
+  by FSpec FR-272, matching the export refusal when one is present.
 - Every other diagnostic, a source, profile or compile-stage diagnostic
   included, SHALL carry `details` `null`: its `locus`, `cause` and payload
   members already locate it.
@@ -432,6 +435,7 @@ meaning and one JSON kind, and no other member is written:
 | `supplied` | object | the supplied universe, spelled the same way |
 | `stage` | string | the fault's stage identifier |
 | `invariant` | string | the fault's invariant identifier |
+| `capability` | string | the valid meaning the selected producer does not implement, for FSpec FR-272's `unimplemented-meaning` cause |
 
 Each FR-100 row fixes which members its object holds; the members are
 written in RFC 8785 order with the document. A `details` object is never

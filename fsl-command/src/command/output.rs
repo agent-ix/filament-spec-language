@@ -36,6 +36,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// A lifecycle capability refusal with no semantic result or export package.
+    pub(super) fn capability_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// The FR-1038 plan run result: FSpec FR-824's outcome as the
     /// `verification_plan` member.
     pub(super) fn plan_document(document: Value) -> Self {

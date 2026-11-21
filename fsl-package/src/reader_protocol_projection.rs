@@ -3752,6 +3752,15 @@ pub(crate) fn node_value_type(
         let declaration = scalar_at.ok_or(TypeError::Unsupported)?;
         return rational_range_type(index.node(declaration).ok_or(TypeError::Unsupported)?);
     }
+    if error.code == Code::UnsupportedExactType
+        && error.form.as_deref() == Some("bounded_domain/decimal_range")
+    {
+        let declaration = scalar_at.ok_or(TypeError::Unsupported)?;
+        return Ok(crate::checked_v2::decimal_range_type(
+            index.admitted,
+            declaration,
+        )?);
+    }
     if unresolved && error.form.as_deref() == Some("bounded_domain/float_rounding") {
         // Only the requested node's own float type is typed here; a float
         // nested in an option, collection, tuple, record or map is refused
@@ -4263,6 +4272,20 @@ fn literal_value(
                 ValueType::Rational(_) => Value::Rational(magnitude),
                 _ => return None,
             }
+        }
+        Literal::Decimal { coefficient, scale } => {
+            let scale = u32::try_from(scale).ok()?;
+            let decimal =
+                filament_exact::Decimal::new(coefficient.to_string().parse().ok()?, scale);
+            let ValueType::Decimal(ref domain) =
+                crate::checked_v2::decimal_range_type(index.admitted, type_id).ok()?
+            else {
+                return None;
+            };
+            if !domain.contains(&decimal) {
+                return None;
+            }
+            Value::Decimal(decimal)
         }
         Literal::Float32Bits(bits) => Value::Float(filament_exact::IeeeValue::binary32(bits)),
         Literal::Float64Bits(bits) => Value::Float(filament_exact::IeeeValue::binary64(bits)),
