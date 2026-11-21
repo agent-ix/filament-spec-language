@@ -357,11 +357,38 @@ fn duration_case() -> (Documents, Compiled) {
         &unit_text(
             TIMESTAMPED,
             "example/config-version",
-            &format!("({first}) and ({second})"),
+            &format!("holds(e.w = 1) and (({first}) and ({second}))"),
         ),
         ClockConfiguration::TimestampedEvent {
             timestamp_unit: "ix://example/config-version/unit/ms".into(),
         },
+    );
+    let node = compiled
+        .unit
+        .package()
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == "Window")
+        .expect("the duration declaration is checked");
+    let (earlier, span) = node
+        .clause()
+        .formula()
+        .nodes()
+        .iter()
+        .enumerate()
+        .find_map(|(index, node)| match node {
+            fsl_semantics::check::FormulaNode::Holds { span } => Some((index, span)),
+            _ => None,
+        })
+        .expect("the unrelated, true holds leaf survives checking");
+    assert_eq!(compiled.sources[0].slice(*span), Some("holds(e.w = 1)"));
+    assert!(
+        node.clause()
+            .aggregates()
+            .keys()
+            .all(|atom| *atom > earlier),
+        "the actual aggregate ids follow the unrelated true leaf"
     );
     (documents, compiled)
 }
@@ -441,6 +468,10 @@ fn canonical_aggregate_names_never_replace_missing_or_invalid_caller_sources() {
 fn timestamped_duration_aggregate_retains_its_actual_shortage_and_locus() {
     let (documents, compiled) = duration_case();
     let (atoms, _, declaration) = aggregate_candidates(&compiled, 2);
+    assert!(
+        atoms.iter().all(|atom| *atom != 0),
+        "a hardcoded atom-zero result must not satisfy this control"
+    );
     let trace = TraceInput::Timestamped {
         observations: vec![spine::TimestampedObservation {
             document: spine::sample_position(
