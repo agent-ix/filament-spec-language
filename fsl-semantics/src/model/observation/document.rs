@@ -1444,7 +1444,7 @@ impl<'a> References<'a> {
             .cloned()
             .or_else(|| {
                 (!view.is_source())
-                    .then(|| declarations.scope(&population.key).ok())
+                    .then(|| declarations.catalog_scope(&population.key).cloned())
                     .flatten()
             })
             .ok_or_else(|| {
@@ -1464,6 +1464,17 @@ impl<'a> References<'a> {
             .admitted
             .get(&(reference.population.as_str(), identity.owner.as_str()))
             .ok_or_else(dangling)?;
+        // Authenticate context independently of whether a clock path survives.
+        if identity.population != scope
+            || !crate::model::clock_reference::is_declared_owner_scope(
+                &identity.template.scope,
+                owner,
+                table,
+                self.types,
+            )
+        {
+            return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value"));
+        }
         if !crate::model::clock_reference::is_declared_identity(
             &identity, &scope, owner, table, self.types,
         ) {
