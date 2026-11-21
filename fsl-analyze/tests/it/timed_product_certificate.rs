@@ -902,6 +902,7 @@ fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
     };
     let weighted = model("1");
     let record = settle(&weighted, "Weighted");
+    assert_eq!(proved_value(&record), ratio(21, 40));
     let doc = document(&record);
     assert!(accepted(&weighted, "Weighted", &doc));
     assert!(matches!(
