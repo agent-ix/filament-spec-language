@@ -66,12 +66,26 @@ fn parallel_request(ws: &Workspace, run: &str) -> std::path::PathBuf {
     let mut documents = crate::fill::Documents::new();
     documents.start("s0", &[("c", 0)]);
     let snapshots: Vec<Vec<u8>> = documents.snapshots.values().cloned().collect();
+    // Both roles and every attempted operation use the Cell/Level closure.
+    // Idle remains because the shared model declares its empty population.
+    let mut model: Value =
+        serde_json::from_slice(&crate::fill::document()).expect("the Fill model is JSON");
+    model["types"]
+        .as_array_mut()
+        .expect("model types")
+        .retain(|node| {
+            matches!(
+                node["identity"].as_str(),
+                Some("ix://test/fill/Level" | "ix://test/fill/Cell" | "ix://test/fill/Idle")
+            )
+        });
+    let model = serde_json::to_vec(&model).expect("the parallel model serializes");
     crate::analyze_cli_support::request_over(
         ws,
         &unit,
-        &crate::fill::document(),
+        &model,
         &snapshots,
-        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+        json!({"items": [{"claim": "Flow", "kind": "temporal-satisfaction",
         "temporal": {"item_kind": "deadlock-freedom", "subject": {"protocol": {
             "protocol": "Flow",
             "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
