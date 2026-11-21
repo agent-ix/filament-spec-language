@@ -303,6 +303,20 @@ pub enum ProbabilityDocumentError {
     Build(Box<crate::ExactProbBuildIssue>),
 }
 
+impl From<fsl_eval::probabilistic::MeasureError> for ProbabilityDocumentError {
+    fn from(error: fsl_eval::probabilistic::MeasureError) -> Self {
+        match error {
+            fsl_eval::probabilistic::MeasureError::Undefined(cause) => {
+                Self::Build(Box::new(crate::ExactProbBuildIssue::Predicate(
+                    fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(*cause),
+                )))
+            }
+            fsl_eval::probabilistic::MeasureError::Accounting(error) => Self::Accounting(error),
+            fsl_eval::probabilistic::MeasureError::Broken(_) => Self::Malformed,
+        }
+    }
+}
+
 impl From<ExactProbabilityGraphError> for ProbabilityDocumentError {
     fn from(error: ExactProbabilityGraphError) -> Self {
         match error {

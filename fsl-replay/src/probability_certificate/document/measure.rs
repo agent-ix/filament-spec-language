@@ -114,18 +114,6 @@ pub(in crate::probability_certificate) fn ordered(
     }
 }
 
-fn scalar_error(error: MeasureError) -> ProbabilityDocumentError {
-    match error {
-        MeasureError::Undefined(cause) => {
-            ProbabilityDocumentError::Build(Box::new(crate::ExactProbBuildIssue::Predicate(
-                fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(*cause),
-            )))
-        }
-        MeasureError::Accounting(error) => ProbabilityDocumentError::Accounting(error),
-        MeasureError::Broken(_) => ProbabilityDocumentError::Malformed,
-    }
-}
-
 fn plan<'a>(
     system: &ModelSystem<'_>,
     claim: &'a CheckedProbabilisticClaim,
@@ -496,7 +484,10 @@ fn enumerate(
             .collect()
     };
     let truths = read(initial)?;
-    let (control, accumulator) = plan.control.start(&truths, meter).map_err(scalar_error)?;
+    let (control, accumulator) = plan
+        .control
+        .start(&truths, meter)
+        .map_err(ProbabilityDocumentError::from)?;
     let control = control.ok_or(ProbabilityDocumentError::Malformed)?;
     let accumulator = accumulator.ok_or(ProbabilityDocumentError::Malformed)?;
     let key_of = |state: &ModelSimState,
@@ -572,7 +563,7 @@ fn enumerate(
         let terminal = plan
             .payoff
             .terminal(control, &accumulator, meter)
-            .map_err(scalar_error)?;
+            .map_err(ProbabilityDocumentError::from)?;
         let rank = if control.is_decided() {
             0
         } else {
@@ -815,7 +806,7 @@ fn enumerate(
                             &rewards,
                             meter,
                         )
-                        .map_err(scalar_error)?;
+                        .map_err(ProbabilityDocumentError::from)?;
                     let next = next.ok_or(ProbabilityDocumentError::Malformed)?;
                     let sums = sums.ok_or(ProbabilityDocumentError::Malformed)?;
                     let target = key_of(&post, next, &sums, meter, storage)?;
@@ -2128,7 +2119,7 @@ impl MeasurePayoffKind {
             return selected
                 .control
                 .initial_control(meter)
-                .map_err(scalar_error);
+                .map_err(ProbabilityDocumentError::from);
         }
         let binding = claim_binding(system, claim)?;
         let reference = binding.as_ref().map(|binding| &binding.reference);
@@ -2160,7 +2151,10 @@ impl MeasurePayoffKind {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        selected.control.start(&truths, meter).map_err(scalar_error)
+        selected
+            .control
+            .start(&truths, meter)
+            .map_err(ProbabilityDocumentError::from)
     }
 }
 

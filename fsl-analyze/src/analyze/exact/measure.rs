@@ -148,7 +148,7 @@ pub(super) fn run(
                 .ok_or(ProbabilityDocumentError::Malformed)?;
             payoff
                 .terminal(control, sums, &mut meter)
-                .map_err(scalar_failure)
+                .map_err(ProbabilityDocumentError::from)
         })
         .collect::<Result<Vec<_>, _>>()
     {
@@ -280,7 +280,7 @@ pub(super) fn run(
                                 .ok_or(ProbabilityDocumentError::Malformed)?,
                             &mut meter,
                         )
-                        .map_err(scalar_failure)
+                        .map_err(ProbabilityDocumentError::from)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let denominator = match decide_measure_exact(
@@ -366,20 +366,6 @@ pub(super) fn run(
     };
     checked_report(checked, certificate, binding, extremum, subject)
 }
-fn scalar_failure(error: fsl_eval::probabilistic::MeasureError) -> ProbabilityDocumentError {
-    match error {
-        fsl_eval::probabilistic::MeasureError::Undefined(cause) => {
-            ProbabilityDocumentError::Build(Box::new(ExactProbBuildIssue::Predicate(
-                fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(*cause),
-            )))
-        }
-        fsl_eval::probabilistic::MeasureError::Accounting(error) => {
-            ProbabilityDocumentError::Accounting(error)
-        }
-        fsl_eval::probabilistic::MeasureError::Broken(_) => ProbabilityDocumentError::Malformed,
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn refute(
     system: &ModelSystem<'_>,
@@ -436,7 +422,7 @@ fn refute(
                         .ok_or(ProbabilityDocumentError::Malformed)?,
                     &mut meter,
                 )
-                .map_err(scalar_failure)
+                .map_err(ProbabilityDocumentError::from)
         })
         .collect::<Result<Vec<_>, _>>()
     {

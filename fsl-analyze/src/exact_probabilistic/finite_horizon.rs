@@ -702,6 +702,14 @@ impl Arithmetic<'_> {
         }
         Ok(())
     }
+    fn storage_used(&self) -> Option<u64> {
+        self.storage.as_ref().map(|(used, _)| **used)
+    }
+    fn release_to(&mut self, checkpoint: Option<u64>) {
+        if let (Some((used, _)), Some(checkpoint)) = (self.storage.as_mut(), checkpoint) {
+            **used = checkpoint;
+        }
+    }
     fn retain(&mut self, value: &Rational) -> Result<(), FhError> {
         self.reserve(
             usize::try_from(
@@ -718,6 +726,19 @@ impl Arithmetic<'_> {
         &mut self,
         operation: filament_exact::RationalArithmetic<'_>,
     ) -> Result<Rational, FhError> {
+        // Operands and the result coexist during this operation. Their scratch
+        // storage is released on return; only exact_pass retains stored values.
+        let checkpoint = self.storage_used();
+        match &operation {
+            filament_exact::RationalArithmetic::Add(a, b)
+            | filament_exact::RationalArithmetic::Multiply(a, b)
+            | filament_exact::RationalArithmetic::Subtract(a, b)
+            | filament_exact::RationalArithmetic::Divide(a, b) => {
+                self.retain(a)?;
+                self.retain(b)?;
+            }
+            filament_exact::RationalArithmetic::Negate(a) => self.retain(a)?,
+        }
         let value = if let Some(meter) = self.meter.as_mut() {
             match filament_exact::evaluate_rational_arithmetic(operation, None, meter) {
                 filament_exact::Outcome::Completed(value) => value,
@@ -740,6 +761,7 @@ impl Arithmetic<'_> {
             }
         };
         self.retain(&value)?;
+        self.release_to(checkpoint);
         Ok(value)
     }
     fn prefer(
@@ -929,7 +951,13 @@ fn exact_pass(
         }
         let mut selected: Option<(usize, Rational)> = None;
         for (choice_index, edges) in choices.iter().enumerate() {
+            let checkpoint = operations.storage_used();
+            if let Some((_, current)) = &selected {
+                operations.retain(current)?;
+            }
             let value = weighted_value(edges, &values, operations)?;
+            // Both candidate values remain live through selection.
+            operations.retain(&value)?;
             let replace = match selected.as_ref() {
                 None => true,
                 Some((_, current)) => operations.prefer(objective, &value, current)?,
@@ -937,6 +965,7 @@ fn exact_pass(
             if replace {
                 selected = Some((choice_index, value));
             }
+            operations.release_to(checkpoint);
         }
         let (choice_index, value) = selected.ok_or(FhError::MissingAction)?;
         if !rational_fits(&value, max_rational_bits) {
@@ -949,6 +978,7 @@ fn exact_pass(
             });
             return Ok(None);
         }
+        operations.retain(&value)?;
         values[index] = value;
         policy[index] = Some(choice_index);
     }
@@ -1042,6 +1072,7 @@ fn topological_order(
     product: &ProbProduct,
     operations: &mut Arithmetic<'_>,
 ) -> Result<Vec<ProbStateId>, FhError> {
+    let checkpoint = operations.storage_used();
     operations.reserve(
         product
             .states
@@ -1089,6 +1120,14 @@ fn topological_order(
             return Err(FhError::InvalidState);
         }
     }
+    drop(indegree);
+    drop(ready);
+    operations.release_to(checkpoint);
+    operations.reserve(
+        order
+            .capacity()
+            .saturating_mul(std::mem::size_of::<ProbStateId>()),
+    )?;
     Ok(order)
 }
 
@@ -1109,6 +1148,7 @@ fn action_groups(
     }
     let mut groups: Vec<(ProductAction, Vec<&ProbEdge>)> = Vec::new();
     for edge in edges {
+        operations.visit()?;
         if edge.probability < rational_zero() {
             return Err(FhError::InvalidProbability);
         }
@@ -1155,26 +1195,16 @@ fn weighted_value(
     values: &[Rational],
     operations: &mut Arithmetic<'_>,
 ) -> Result<Rational, FhError> {
-    let mut mass = rational_zero();
+    validate_probability_mass(edges, operations)?;
     let mut sum = rational_zero();
     for edge in edges {
         operations.visit()?;
-        if edge.probability < rational_zero() {
-            return Err(FhError::InvalidProbability);
-        }
-        mass = operations.arithmetic(filament_exact::RationalArithmetic::Add(
-            &mass,
-            &edge.probability,
-        ))?;
         let value = values.get(edge.to.index()).ok_or(FhError::InvalidState)?;
         let term = operations.arithmetic(filament_exact::RationalArithmetic::Multiply(
             &edge.probability,
             value,
         ))?;
         sum = operations.arithmetic(filament_exact::RationalArithmetic::Add(&sum, &term))?;
-    }
-    if mass != rational_one() {
-        return Err(FhError::InvalidProbability);
     }
     Ok(sum)
 }
@@ -1185,7 +1215,7 @@ fn weighted_interval(
     upper: &[Dyadic],
     bits: u32,
 ) -> Result<(Dyadic, Dyadic), FhError> {
-    validate_probability_mass(edges)?;
+    validate_probability_mass(edges, &mut Arithmetic::plain())?;
     let scale = Rational::from_integer(Integer::one().shifted_left(u64::from(bits)));
     let (lower_sum, upper_sum) = edges.iter().try_fold(
         (rational_zero(), rational_zero()),
@@ -1206,13 +1236,19 @@ fn weighted_interval(
     ))
 }
 
-fn validate_probability_mass(edges: &[&ProbEdge]) -> Result<(), FhError> {
+fn validate_probability_mass(
+    edges: &[&ProbEdge],
+    operations: &mut Arithmetic<'_>,
+) -> Result<(), FhError> {
     let mut total = rational_zero();
     for edge in edges {
         if edge.probability < rational_zero() {
             return Err(FhError::InvalidProbability);
         }
-        total = total.add(&edge.probability);
+        total = operations.arithmetic(filament_exact::RationalArithmetic::Add(
+            &total,
+            &edge.probability,
+        ))?;
     }
     if total != rational_one() {
         return Err(FhError::InvalidProbability);
