@@ -44,6 +44,12 @@ pub enum CompositionViewRefusal {
     /// The selected occurrence lacks its exact admitted source attribution.
     #[error(transparent)]
     Source(#[from] OccurrenceSourceRefusal),
+    /// A requested structural identity violates the existing key policy.
+    #[error(transparent)]
+    StructuralKey(#[from] fsl_semantics::check::wire_id::WireIdError),
+    /// A prepaid key container could not reserve its storage.
+    #[error("composition structural-key allocation failed")]
+    Allocation,
     /// The invocation's existing native work or logical storage was exhausted.
     #[error(transparent)]
     Native(#[from] NativeRowError),
@@ -506,9 +512,28 @@ fn composition_view_with_work<'p>(
         let structural = package
             .structural_key(&node.node_id)
             .ok_or(CompositionViewRefusal::NotComposition)?;
-        work.node(structural)?;
-        let key = fsl_semantics::check::wire_id::node_key(structural)
-            .map_err(|_| CompositionViewRefusal::NotComposition)?;
+        let budget = work
+            .budget
+            .as_deref_mut()
+            .ok_or(CompositionViewRefusal::NotComposition)?;
+        let locus = work.locus.ok_or(CompositionViewRefusal::NotComposition)?;
+        let key = match fsl_semantics::check::wire_id::StructuralKeys::default()
+            .try_key(structural, budget, locus)
+        {
+            Ok(key) => key,
+            Err(fsl_semantics::check::wire_id::StructuralKeyMaterializationError::Wire(
+                refusal,
+            )) => return Err(refusal.into()),
+            Err(fsl_semantics::check::wire_id::StructuralKeyMaterializationError::Budget {
+                denied,
+                ..
+            }) => {
+                return Err(NativeRowError::exhausted(denied, budget).into());
+            }
+            Err(fsl_semantics::check::wire_id::StructuralKeyMaterializationError::Allocation(
+                _,
+            )) => return Err(CompositionViewRefusal::Allocation),
+        };
         occurrence_source::composition_occurrence_source(
             package,
             &node.node_id,
