@@ -2637,6 +2637,7 @@ impl<S: SubjectSystem> Run<'_, S> {
         counterexample.lasso = Some(Lasso {
             entry: entry_position,
             terminal_stutter: false,
+            terminal_stutter_delay: None,
         });
         Ok(counterexample)
     }
@@ -3257,6 +3258,7 @@ impl<S: SubjectSystem> Run<'_, S> {
         let lasso = stutter.then_some(Lasso {
             entry: prefix.len(),
             terminal_stutter: true,
+            terminal_stutter_delay: None,
         });
         Ok(TemporalCounterexample {
             initial_state,

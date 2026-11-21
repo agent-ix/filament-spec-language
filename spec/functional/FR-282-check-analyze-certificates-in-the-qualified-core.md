@@ -23,14 +23,14 @@ relationships:
 `analyze` enters the qualified core only through its certificate checkers
 (ADR-029 CB-2). The checkers are:
 
-| Checker | Certifies | Defined by |
-| --- | --- | --- |
-| Zone certificate checker | dense-time reachability and Büchi emptiness | ADR-026 CF-1 to CF-5 |
-| EN-5 certificate checker | exact probability bounds | ADR-028 CE-1 to CE-5 |
-| EN-1 closure checker | safety: the reached product states are closed and none is bad | ADR-018 PC-3 |
-| SCC and ranking checker | liveness and fairness: every cycle lies in one component whose witness holds | ADR-018 PC-4 |
-| Simulation-relation checker | refinement: the mapping is a simulation of the abstract model | ADR-020 |
-| Product-closure checker | hyperproperties and state-graph claims | ADR-023 HX-7 |
+| Checker | Certifies | Defined by | Checker spelling (`certificate.checker`, FR-621) |
+| --- | --- | --- | --- |
+| Zone certificate checker | dense-time reachability and Büchi emptiness | ADR-026 CF-1 to CF-5 | `zone-certificate` |
+| EN-5 certificate checker | exact probability bounds | ADR-028 CE-1 to CE-5 | `probability-certificate` |
+| EN-1 closure checker | safety: the reached product states are closed and none is bad | ADR-018 PC-3 | `en-1-closure` |
+| SCC and ranking checker | liveness and fairness: every cycle lies in one component whose witness holds | ADR-018 PC-4 | `scc-ranking` |
+| Simulation-relation checker | refinement: the mapping is a simulation of the abstract model | ADR-020 | none yet |
+| Product-closure checker | hyperproperties and state-graph claims | ADR-023 HX-7 | none yet |
 
 A trap refutation (ADR-022 GV-2) carries no certificate and is settled by
 no checker in this table. Its closure check is FR-170's trap replay, also a

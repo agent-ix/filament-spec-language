@@ -11,11 +11,12 @@ use super::{
     read_plugin_inconclusive_cause, unknown_member, wrong_kind,
 };
 use crate::hybrid_replay::{
-    ExactInterval, ExactReal, ExpressionSite, HybridCounterexample, HybridCounterexampleKind,
-    HybridTrace, TraceBefore, TraceJump, TraceState, UndefinedCause, UndefinedInstant, admit,
+    admit, ExactInterval, ExactReal, ExpressionSite, HybridCounterexample,
+    HybridCounterexampleKind, HybridTrace, TraceBefore, TraceJump, TraceState, UndefinedCause,
+    UndefinedInstant,
 };
-use crate::proof_result::InconclusiveCause;
 use crate::proof_result::plugin::PluginResultRefusal;
+use crate::proof_result::InconclusiveCause;
 use filament_exact::Rational;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{

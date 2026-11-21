@@ -92,9 +92,9 @@ use std::fmt;
 use filament_exact::{Cancel, Integer, Meter, Rational, ValueType};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    AutomatonError, ClockedEdge, Read, Stamp, WindowClaim, WindowRefusal, position_automaton,
+    position_automaton, AutomatonError, ClockedEdge, Read, Stamp, WindowClaim, WindowRefusal,
 };
-use fsl_eval::fairness::{EdgeLabel, FairnessError, Graph, Identity, components};
+use fsl_eval::fairness::{components, EdgeLabel, FairnessError, Graph, Identity};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
     GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
@@ -111,15 +111,15 @@ use fsl_semantics::check::{
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef};
 
 use super::closure::CertificateRejection;
-use super::simulation::{CertifiedPosition, EvaluationOutcome, position_matches};
+use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome};
 use super::zone::{LuBounds, Zone, ZoneError};
 use super::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::node_occurrence;
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::IncompleteCause;
 use crate::refinement::{
-    ConcreteStep, RefinementPosition, StepVerdict, SubjectRefusal, Taken, check_initial,
-    check_step, open_systems,
+    check_initial, check_step, open_systems, ConcreteStep, RefinementPosition, StepVerdict,
+    SubjectRefusal, Taken,
 };
 
 /// FR-244's certificate of a zone search's proof of the item `obligation`
@@ -164,6 +164,9 @@ pub struct ZoneCertificate<O> {
     /// FR-244's refinement part, for the safety half of a timed
     /// refinement (FSpec FR-430); `None` otherwise.
     pub refinement: Option<RefinementPart>,
+    /// FSpec FR-418's independently checked source-plus-task product
+    /// closure, present only for a task-derived timed subject.
+    pub task_product: Option<super::task_product::TaskProductCertificate>,
 }
 
 /// FR-712's state-graph certificate extension.
@@ -469,6 +472,9 @@ pub struct CertEdge {
     /// The step's transition identity; `None` for an idle-tail stutter
     /// position of a TT-2 claim's automaton (FR-242).
     pub transition: Option<ModelTransition>,
+    /// The finite task-transition template for an FR-418 task-product edge.
+    /// It is absent on source-only timed certificates.
+    pub task_transition: Option<super::task_product::TaskTransitionTemplate>,
     /// The convex part of the step's guard taken; `None` for a stutter.
     pub part: Option<usize>,
     /// Under a dense source, the piece of a TT-2 claim's horizon axis the
@@ -848,6 +854,12 @@ pub fn check_zone_certificate<O: Clone + Eq>(
     limits: CertificateCheckLimits,
     cancel: &Cancel,
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<O>> {
+    if certificate.task_product.is_some() {
+        // No task-derived item has been routed through this reader yet.
+        // Preserve the FR-418 member locus instead of accepting unverified
+        // product evidence on an ordinary source-only certificate.
+        return Ok(malformed_verdict(CertificateMember::TaskProduct));
+    }
     let mismatch = || ZoneCertificateRefusal::ObligationMismatch {
         certificate: Box::new(certificate.obligation.clone()),
         item: Box::new(item.clone()),
@@ -1465,10 +1477,16 @@ impl<O> Checker<'_, '_, O> {
         let edges = certificate.edges.len();
         let dense = self.timed.tick_period().is_none();
         let edge_ok = |edge: &CertEdge| {
-            let shaped = match (&edge.transition, edge.part, edge.silent) {
-                (Some(_), Some(_), None) => true,
-                (None, None, None) => windowed || live.is_some(),
-                (None, None, Some(_)) => live.is_some(),
+            let shaped = match (
+                &edge.transition,
+                &edge.task_transition,
+                edge.part,
+                edge.silent,
+            ) {
+                (Some(_), None, Some(_), None) => true,
+                (None, Some(_), Some(_), None) => certificate.task_product.is_some(),
+                (None, None, None, None) => windowed || live.is_some(),
+                (None, None, None, Some(_)) => live.is_some(),
                 _ => false,
             };
             edge.from < nodes
@@ -2696,7 +2714,11 @@ impl<O> Checker<'_, '_, O> {
                 self.advancing_cycle(at, cycle)? && self.repeats(cycle, &zone)?
             }
         };
-        if holds { Ok(()) } else { fails(at) }
+        if holds {
+            Ok(())
+        } else {
+            fails(at)
+        }
     }
 
     /// The exact zone of an initial state the initial node `node` holds.
@@ -3303,6 +3325,18 @@ fn certificate_bytes<O>(certificate: &ZoneCertificate<O>) -> u64 {
             .saturating_add(refined)
             .saturating_add(taken.saturating_mul(8));
     }
+    if let Some(product) = &certificate.task_product {
+        let rows = u64::try_from(product.queue_bounds.len()).unwrap_or(u64::MAX);
+        let clocks = u64::try_from(product.clock_ceilings.len()).unwrap_or(u64::MAX);
+        let constraints = u64::try_from(product.diagonal_constraints.len()).unwrap_or(u64::MAX);
+        let subtractions = u64::try_from(product.subtractions.len()).unwrap_or(u64::MAX);
+        parts = parts
+            .saturating_add(96)
+            .saturating_add(rows.saturating_mul(128))
+            .saturating_add(clocks.saturating_mul(32))
+            .saturating_add(constraints.saturating_mul(64))
+            .saturating_add(subtractions.saturating_mul(96));
+    }
     bytes
         .saturating_add(edges.saturating_mul(48))
         .saturating_add(parts)
@@ -3407,6 +3441,7 @@ mod state_graph_sequence_tests {
         let edge = |to| CertEdge {
             from: 0,
             transition: Some(transition.clone()),
+            task_transition: None,
             part: Some(to - 1),
             horizon: None,
             to,
@@ -3443,6 +3478,7 @@ mod state_graph_sequence_tests {
             CertEdge {
                 from: 0,
                 transition: Some(zero.clone()),
+                task_transition: None,
                 part: None,
                 horizon: None,
                 to: 0,
@@ -3451,6 +3487,7 @@ mod state_graph_sequence_tests {
             CertEdge {
                 from: 0,
                 transition: Some(one.clone()),
+                task_transition: None,
                 part: None,
                 horizon: None,
                 to: 0,
@@ -3459,6 +3496,7 @@ mod state_graph_sequence_tests {
             CertEdge {
                 from: 0,
                 transition: Some(one.clone()),
+                task_transition: None,
                 part: None,
                 horizon: None,
                 to: 1,
@@ -3470,6 +3508,7 @@ mod state_graph_sequence_tests {
                 edges.push(CertEdge {
                     from: state,
                     transition: Some(symbol.clone()),
+                    task_transition: None,
                     part: None,
                     horizon: None,
                     to: state + 1,
@@ -3481,14 +3520,7 @@ mod state_graph_sequence_tests {
         let mut target = vec![false; depth + 1];
         target[depth] = true;
         let limit = 256;
-        let result = transition_sequence_count::<()>(
-            0,
-            &target,
-            &edges,
-            &active,
-            limit,
-            || Ok(()),
-        );
+        let result = transition_sequence_count::<()>(0, &target, &edges, &active, limit, || Ok(()));
 
         assert!(matches!(
             result,

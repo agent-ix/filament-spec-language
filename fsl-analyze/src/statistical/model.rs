@@ -50,7 +50,7 @@ use fsl_replay::{
 use fsl_semantics::check::{
     Bound as CheckedBound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim,
     CheckedTemporalFormula, Event, FractionMeasure, ProbForm, ProbScheduler, TemporalProfile,
-    Workload,
+    Weighting, Workload,
 };
 
 use super::claim::{reduce_quantile, Bound, Comparison, MeasureEvent, QuantileComparison};
@@ -133,6 +133,17 @@ pub fn check_statistical(
     let (statistical, reading) = reduce(claim)?;
     let scalar_limits = subject.simulation.meter;
     let form = statistical.form();
+    if matches!(
+        &reading,
+        Reading::Fraction { fraction, .. }
+            if matches!(fraction.weight.as_ref(), Some(Weighting::Delay))
+    ) || matches!(
+        &reading,
+        Reading::LongRun { weight, .. }
+            if matches!(weight, Some(Weighting::Delay))
+    ) {
+        return Err(StatisticalRefusal::DelayWeighting);
+    }
     if !form.admits(method) {
         return Err(StatisticalRefusal::NotStatistical { method, form });
     }
@@ -216,9 +227,10 @@ fn open<'s, 'a, 'c>(
         let index = u32::try_from(index).map_err(|_| StatisticalRefusal::TooManyTests {
             count: initial.len().saturating_mul(bindings.len()),
         })?;
-        tests.extend(bindings.iter().map(|(binding, _)| TestSubject {
+        tests.extend(bindings.iter().map(|(binding, reference)| TestSubject {
             initial: index,
             binding: binding.clone(),
+            reference: reference.clone(),
         }));
     }
     let generator =
@@ -401,7 +413,7 @@ enum Reading<'c> {
     /// A long-run fraction's predicate and weight (FR-190).
     LongRun {
         predicate: &'c CheckedPredicate,
-        weight: Option<&'c Identifier>,
+        weight: Option<&'c Weighting>,
     },
 }
 
@@ -1343,10 +1355,11 @@ impl<'c> Shared<'_, '_, 'c> {
             let weight = match &fraction.weight {
                 None => Rational::from_integer(Integer::one()),
                 // The step that leaves the position weighs it.
-                Some(name) => {
+                Some(Weighting::Reward(name)) => {
                     self.advance(cursor)?;
                     magnitude(cursor.steps.last().ok_or_else(broken)?, name)?
                 }
+                Some(Weighting::Delay) => return Err(Ended::Halt(broken())),
             };
             if holds {
                 held = held.add(&weight);
@@ -1465,7 +1478,8 @@ impl ModelWalk<'_, '_, '_> {
         let (position, step) = shared.generator.step(&walk.position, at)?;
         let weight = match weight {
             None => Rational::from_integer(Integer::one()),
-            Some(name) => magnitude(&step, name)?,
+            Some(Weighting::Reward(name)) => magnitude(&step, name)?,
+            Some(Weighting::Delay) => return Err(Ended::Halt(broken())),
         };
         let returned = position.key().as_bytes() == walk.initial.as_slice();
         self.walk = Some(Walking {
@@ -1597,6 +1611,7 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
         let subject = TestSubject {
             initial: test.initial,
             binding: test.binding.clone(),
+            reference: test.reference.clone(),
         };
         let long_run = matches!(self.shared.borrow().reading, Reading::LongRun { .. });
         if long_run {
@@ -1645,6 +1660,7 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
         let subject = TestSubject {
             initial: test.initial,
             binding: test.binding.clone(),
+            reference: test.reference.clone(),
         };
         let Drawn { sample, steps } = self
             .shared

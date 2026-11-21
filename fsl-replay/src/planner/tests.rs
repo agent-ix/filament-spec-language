@@ -1398,6 +1398,96 @@ fn with(mut entry: Value, members: Value) -> Value {
     entry
 }
 
+#[trace("FSpec-FR-419-AC-6")]
+#[test]
+fn incomplete_schedulability_entries_read_and_bind_task_search_frontiers() {
+    let identity = json!({
+        "node_id": fsl_foundation::node_wire::node_key_to_json(&node("Task"))
+            .expect("node identity writes"),
+        "model": "app@1",
+        "ordinal": 0
+    });
+    let search = json!({
+        "type": "task-search-frontier",
+        "identity": identity,
+        "nodes": [{
+            "state": {"key": "0000000000000000000000000000000000000000000000000000000000000000"},
+            "depth": 0,
+            "zone": [[{"bound": "0", "strict": false}]],
+            "expanded": false
+        }],
+        "edges": [],
+        "frontier": [{"node": 0, "reason": "work-limit", "open": ["successors"]}],
+        "limit": {"type": "limit-reached", "limit": "max_work", "value": 1, "setting": "max_work"}
+    });
+    let entry = with(
+        base("incomplete"),
+        json!({
+            "kind": "schedulability",
+            "cause": {"type": "limit-reached", "limit": "max_work", "value": 1, "setting": "max_work"},
+            "task_search": search
+        }),
+    );
+    let read = read_result_entry(&entry, 0, EntryOrigin::FirstParty).expect("task search reads");
+    let evidence = read.task_search.expect("task search is retained");
+    assert_eq!(evidence.nodes.len(), 1);
+    assert_eq!(evidence.frontier[0].reason, "work-limit");
+    assert_eq!(evidence.limit.expect("limit evidence").value, 1);
+
+    let mut mismatched = entry.clone();
+    mismatched["task_search"]["limit"]["value"] = json!(2);
+    assert_eq!(
+        entry_defect(&mismatched, EntryOrigin::FirstParty).0,
+        "/task_search"
+    );
+
+    let mut unreachable = entry;
+    unreachable["task_search"]["nodes"][0]["expanded"] = json!(true);
+    assert_eq!(
+        entry_defect(&unreachable, EntryOrigin::FirstParty).0,
+        "/task_search/frontier/node"
+    );
+}
+
+#[trace("FSpec-FR-419-AC-6")]
+#[test]
+fn unresolved_task_search_requires_the_unresolved_dynamics_cause() {
+    let identity = json!({
+        "node_id": fsl_foundation::node_wire::node_key_to_json(&node("Task"))
+            .expect("node identity writes"),
+        "model": "app@1",
+        "ordinal": 0
+    });
+    let entry = with(
+        base("incomplete"),
+        json!({
+            "kind": "schedulability",
+            "cause": {"type": "bounded-search-incomplete", "reason": "unresolved-dynamics"},
+            "task_search": {
+                "type": "task-search-frontier",
+                "identity": identity,
+                "nodes": [{"state": {"key": "0000000000000000000000000000000000000000000000000000000000000000"}, "depth": 0, "zone": [[{"bound": "0", "strict": false}]], "expanded": false}],
+                "edges": [],
+                "frontier": [{"node": 0, "reason": "unresolved-choice", "open": ["demand"]}]
+            }
+        }),
+    );
+    let read =
+        read_result_entry(&entry, 0, EntryOrigin::FirstParty).expect("unresolved frontier reads");
+    assert!(read
+        .task_search
+        .expect("task search is retained")
+        .limit
+        .is_none());
+
+    let mut timed_out = entry;
+    timed_out["cause"] = json!({"type": "timed-out"});
+    assert_eq!(
+        entry_defect(&timed_out, EntryOrigin::FirstParty).0,
+        "/task_search"
+    );
+}
+
 #[trace("TC-1329", "FR-529-AC-13")]
 #[test]
 fn a_result_entry_is_refused_at_its_first_defect_in_the_reading_order() {
@@ -1711,4 +1801,62 @@ fn every_result_value_reads_into_its_terminal_value() {
         ),
         TerminalValue::Unsupported(_)
     ));
+}
+
+#[trace("FSpec-FR-419-AC-6")]
+#[test]
+fn task_search_state_keys_are_unpadded_base64url() {
+    let identity = json!({
+        "node_id": fsl_foundation::node_wire::node_key_to_json(&node("Task"))
+            .expect("node identity writes"),
+        "model": "app@1",
+        "ordinal": 0
+    });
+    let entry_with = |key: &str| {
+        with(
+            base("incomplete"),
+            json!({
+                "kind": "schedulability",
+                "cause": {"type": "bounded-search-incomplete", "reason": "unresolved-dynamics"},
+                "task_search": {
+                    "type": "task-search-frontier",
+                    "identity": identity,
+                    "nodes": [{"state": {"key": key}, "depth": 0, "zone": [[{"bound": "0", "strict": false}]], "expanded": false}],
+                    "edges": [],
+                    "frontier": [{"node": 0, "reason": "unresolved-choice", "open": ["demand"]}]
+                }
+            }),
+        )
+    };
+    let read = read_result_entry(&entry_with("_-8"), 0, EntryOrigin::FirstParty)
+        .expect("an unpadded base64url key reads");
+    assert!(matches!(
+        read.record.value(),
+        crate::TerminalValue::Incomplete(crate::IncompleteCause::UnresolvedDynamics)
+    ));
+    for refused in ["AQ==", "AQ+/", "a", "AR"] {
+        assert_eq!(
+            entry_defect(&entry_with(refused), EntryOrigin::FirstParty).0,
+            "/task_search/nodes/0/state/key",
+            "{refused}"
+        );
+    }
+}
+
+#[trace("FSpec-FR-419-AC-6")]
+#[test]
+fn a_certificate_unchecked_cause_reads_without_task_search_evidence() {
+    let entry = with(
+        base("incomplete"),
+        json!({
+            "kind": "schedulability",
+            "cause": {"type": "bounded-search-incomplete", "reason": "certificate-unchecked"}
+        }),
+    );
+    let read = read_result_entry(&entry, 0, EntryOrigin::FirstParty).expect("the cause reads");
+    assert!(matches!(
+        read.record.value(),
+        TerminalValue::Incomplete(crate::IncompleteCause::CertificateUnchecked)
+    ));
+    assert!(read.task_search.is_none());
 }

@@ -729,10 +729,29 @@ fn writes(change: &FrameChange, field: &str) -> bool {
 
 /// The refusal an admitted document gives where `field` holds `value`.
 fn refused_field(replay: &Replay, field: &str, value: Value) -> Refusal {
-    refusal_of(replay.admit(
-        &with(base_fields(), field, value),
-        ObservationLimits::default(),
-    ))
+    at_field(
+        refusal_of(replay.admit(
+            &with(base_fields(), field, value),
+            ObservationLimits::default(),
+        )),
+        field,
+    )
+}
+
+/// A snapshot field refusal with its document path reduced to the typed steps
+/// below the field: the path is checked to start at
+/// `populations/<i>/objects/<j>/fields/<field>` and, when it names a member,
+/// to end at it.
+fn at_field(mut refusal: Refusal, field: &str) -> Refusal {
+    refusal.path = below_field(&refusal.path, field).to_vec();
+    if let Some(member) = refusal.member.clone() {
+        assert_eq!(
+            refusal.path.pop(),
+            Some(PathStep::Field(member)),
+            "the path ends at the member"
+        );
+    }
+    refusal
 }
 
 // ---------------------------------------------------------------------------
@@ -1202,7 +1221,7 @@ fn a_witness_post_snapshot_still_refuses_a_noncanonical_payload() {
     ] {
         let post = with(base_fields(), field, value);
         assert_eq!(
-            refusal_of(replay.invoke_with_post("touch", &post, witness)),
+            at_field(refusal_of(replay.invoke_with_post("touch", &post, witness)), field),
             expect("invalid-value", field, &[], Some(member), kernel),
             "{field}"
         );
@@ -1585,7 +1604,10 @@ fn a_witness_post_snapshot_still_refuses_a_wrong_string() {
     ] {
         let post = with(base_fields(), "label", value);
         assert_eq!(
-            refusal_of(replay.invoke_with_post("rename", &post, witness)),
+            at_field(
+                refusal_of(replay.invoke_with_post("rename", &post, witness)),
+                "label"
+            ),
             expect("wrong-value-kind", "label", &[], member, None)
         );
     }
@@ -2007,7 +2029,10 @@ fn a_witness_post_snapshot_still_refuses_a_wrong_text() {
     ] {
         let post = with(replay.base.clone(), "title", value.clone());
         assert_eq!(
-            refusal_of(replay.invoke_with_post("retitle", &post, witness)),
+            at_field(
+                refusal_of(replay.invoke_with_post("retitle", &post, witness)),
+                "title"
+            ),
             expect(cause, "title", &[], member, None),
             "{value}"
         );
@@ -2259,6 +2284,23 @@ fn reference_key(value: &Datum) -> String {
     held.object().as_str().to_owned()
 }
 
+/// The steps of a snapshot field refusal's document path below the field
+/// `field` itself, after checking that the path starts at
+/// `populations/<i>/objects/<j>/fields/<field>`.
+fn below_field<'p>(path: &'p [PathStep], field: &str) -> &'p [PathStep] {
+    match path {
+        [PathStep::Field(populations), PathStep::Index(_), PathStep::Field(objects), PathStep::Index(_), PathStep::Field(fields), PathStep::Field(name), rest @ ..]
+            if populations == "populations"
+                && objects == "objects"
+                && fields == "fields"
+                && name == field =>
+        {
+            rest
+        }
+        _ => panic!("{path:?} is not a path below the snapshot field {field}"),
+    }
+}
+
 /// The admission record of a refused outcome.
 fn record_of<T: Debug>(
     outcome: Result<T, AdmissionFailure>,
@@ -2470,7 +2512,22 @@ fn defective_collections_refuse_in_a_field_and_in_a_parameter() {
             "{place} {}",
             defect.value
         );
-        assert_eq!(record.path, defect.path, "{place} {}", defect.value);
+        if place == "field" {
+            // The document path of the field, the typed steps, then the
+            // named member.
+            let mut expected = defect.path.clone();
+            if let Some(member) = record.fields.get("member") {
+                expected.push(PathStep::Field(member.clone()));
+            }
+            assert_eq!(
+                below_field(&record.path, defect.name),
+                expected,
+                "{place} {}",
+                defect.value
+            );
+        } else {
+            assert_eq!(record.path, defect.path, "{place} {}", defect.value);
+        }
         assert_eq!(
             record.fields.get("field").map(String::as_str),
             Some(defect.name),
@@ -2513,11 +2570,18 @@ fn defective_collections_refuse_in_a_field_and_in_a_parameter() {
         ObservationLimits::default(),
     ));
     assert_eq!(
-        (stamps.catalog.code(), stamps.catalog.cause(), stamps.path),
+        (
+            stamps.catalog.code(),
+            stamps.catalog.cause(),
+            below_field(&stamps.path, "stamps").to_vec()
+        ),
         (
             Code::InvalidRuntimeInput.as_str(),
             "invalid-value",
-            vec![PathStep::Index(0)]
+            vec![
+                PathStep::Index(0),
+                PathStep::Field("nanoseconds".to_owned())
+            ]
         )
     );
 }
@@ -2702,6 +2766,240 @@ fn a_quantity_admits_a_rational_or_a_decimal_magnitude_as_one_value() {
     ));
 }
 
+/// Native collection equality uses the admitted quantity magnitude.
+#[trace("TC-1171", "FR-106-AC-59")]
+#[trace("FSpec-FR-144-AC-17", "FSpec-FR-144-AC-18")]
+#[test]
+fn native_collection_quantity_spellings_share_a_member() {
+    for (ordered, unique, tag) in [
+        (false, true, "set"),
+        (false, false, "bag"),
+        (true, true, "ordered-set"),
+    ] {
+        let mut document = fixture::quantity_document();
+        let fields = document["types"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|item| item["displayName"] == "Item")
+            .unwrap()["fields"]
+            .as_array_mut()
+            .unwrap();
+        let reach = fields
+            .iter_mut()
+            .find(|field| field["name"] == "reach")
+            .unwrap();
+        reach["multiplicity"] = json!({"lower":0,"upper":3,"ordered":ordered,"unique":unique});
+        let base = with(quantity_fields(), "reach", json!({tag:[]}));
+        let replay = replay_with(document,base.clone(),"dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;");
+        let supplied = with(
+            base,
+            "reach",
+            json!({tag:[ms(ratio("3","6")),ms(half_as_decimal())]}),
+        );
+        let result = replay.admit(&supplied, ObservationLimits::default());
+        if unique {
+            let record = record_of(result);
+            assert_eq!(record.catalog.cause(), "duplicate-member");
+            assert_eq!(below_field(&record.path, "reach"), [PathStep::Index(1)]);
+        } else {
+            let closure = result.unwrap();
+            let elements = elements_of(&replay.value(&closure, "reach"));
+            assert_eq!(
+                elements.iter().map(magnitude_of).collect::<Vec<_>>(),
+                ["1/2", "1/2"]
+            );
+        }
+    }
+}
+
+/// TC-1171 step 10: the native tag carries the portable kind and elements.
+#[trace("TC-1171", "FR-106-AC-66", "FR-106-AC-68", "FR-106-AC-69")]
+#[trace("FSpec-FR-144-AC-16")]
+#[test]
+fn native_collection_document_members_follow_the_declared_kind() {
+    let replay = collection_replay();
+    for (field, value, cause, member) in [
+        ("ids", json!({}), "missing-member", Some("set")),
+        (
+            "ids",
+            json!({"type":"set","elements":[]}),
+            "missing-member",
+            Some("set"),
+        ),
+        (
+            "ids",
+            json!({"bag":[],"sequence":[]}),
+            "missing-member",
+            Some("set"),
+        ),
+        (
+            "ids",
+            json!({"set":[],"extra":1}),
+            "unknown-member",
+            Some("extra"),
+        ),
+        (
+            "counts",
+            json!({"bag":[],"set":[]}),
+            "unknown-member",
+            Some("set"),
+        ),
+        (
+            "order",
+            json!({"ordered-set":1}),
+            "wrong-value-kind",
+            Some("ordered-set"),
+        ),
+        ("ids", json!([]), "wrong-value-kind", None),
+        ("ids", json!({"bag":[]}), "wrong-value-kind", None),
+    ] {
+        let mut parameters = retag_parameters();
+        parameters[field] = value.clone();
+        for (record, snapshot) in [
+            (
+                record_of(replay.admit(
+                    &with(collection_fields(), field, value.clone()),
+                    ObservationLimits::default(),
+                )),
+                true,
+            ),
+            (
+                record_of(replay.invoke(
+                    "retag",
+                    Selected::Postcondition,
+                    parameters,
+                    json!({"set":[]}),
+                    ObservationLimits::default(),
+                )),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                record.catalog.code(),
+                Code::InvalidRuntimeInput.as_str(),
+                "{value}"
+            );
+            assert_eq!(record.catalog.cause(), cause, "{value}");
+            assert_eq!(
+                record.fields.get("field").map(String::as_str),
+                Some(field),
+                "{value}"
+            );
+            assert_eq!(
+                record.fields.get("member").map(String::as_str),
+                member,
+                "{value}"
+            );
+            if snapshot {
+                // A snapshot field's document path ends at the named member.
+                let named: Vec<PathStep> = member
+                    .map(|member| PathStep::Field(member.to_owned()))
+                    .into_iter()
+                    .collect();
+                assert_eq!(below_field(&record.path, field), named, "{value}");
+            } else {
+                assert!(record.path.is_empty(), "{value}: {:?}", record.path);
+            }
+        }
+    }
+    // A non-object element is still an entry for the bound check. Its
+    // kind cannot hide the collection's excessive occurrence count.
+    let oversized = record_of(replay.admit(
+        &with(
+            collection_fields(),
+            "counts",
+            json!({"bag":[false,false,false,false,false]}),
+        ),
+        ObservationLimits::default(),
+    ));
+    assert_eq!(
+        oversized.catalog.code(),
+        Code::CardinalityOutOfBound.as_str()
+    );
+    assert_eq!(oversized.catalog.cause(), "above-maximum");
+    let invalid = record_of(replay.admit(
+        &with(
+            collection_fields(),
+            "counts",
+            json!({"bag":[integer("1"),false]}),
+        ),
+        ObservationLimits::default(),
+    ));
+    assert_eq!(invalid.catalog.cause(), "wrong-value-kind");
+    assert_eq!(below_field(&invalid.path, "counts"), [PathStep::Index(1)]);
+}
+
+/// A native Duration is the quantity over the compiling unit's seconds.
+#[trace("TC-1231", "FR-106-AC-61")]
+#[test]
+fn native_collection_duration_uses_the_declared_second() {
+    let mut document = fixture::quantity_document();
+    let fields = document["types"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|item| item["displayName"] == "Item")
+        .unwrap()["fields"]
+        .as_array_mut()
+        .unwrap();
+    let reach = fields
+        .iter_mut()
+        .find(|field| field["name"] == "reach")
+        .unwrap();
+    reach["typeRef"] = json!("ix://filament/native/Duration");
+    let span = json!({"kind":"quantity","unit":"s","magnitude":ratio("3","2")});
+    let base = with(quantity_fields(), "reach", span.clone());
+    let replay = replay_with(
+        document.clone(),
+        base.clone(),
+        "dimension Time; unit s : Time = rational(1, 1);",
+    );
+    let closure = replay.admit(&base, ObservationLimits::default()).unwrap();
+    assert_eq!(magnitude_of(&replay.value(&closure, "reach")), "3/2");
+    for (ordered, unique, tag) in [
+        (false, true, "set"),
+        (false, false, "bag"),
+        (true, true, "ordered-set"),
+    ] {
+        let mut collection_document = document.clone();
+        let fields = collection_document["types"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|item| item["displayName"] == "Item")
+            .unwrap()["fields"]
+            .as_array_mut()
+            .unwrap();
+        fields
+            .iter_mut()
+            .find(|field| field["name"] == "reach")
+            .unwrap()["multiplicity"] =
+            json!({"lower":0,"upper":3,"ordered":ordered,"unique":unique});
+        let base = with(quantity_fields(), "reach", json!({tag:[]}));
+        let replay = replay_with(
+            collection_document,
+            base.clone(),
+            "dimension Time; unit s : Time = rational(1, 1);",
+        );
+        let single = with(base.clone(), "reach", json!({tag:[span]}));
+        let closure = replay.admit(&single, ObservationLimits::default()).unwrap();
+        let members = elements_of(&replay.value(&closure, "reach"));
+        assert_eq!(members.len(), 1);
+        assert_eq!(magnitude_of(&members[0]), "3/2");
+        let repeated = with(base, "reach", json!({tag:[span,span]}));
+        let result = replay.admit(&repeated, ObservationLimits::default());
+        if unique {
+            let record = record_of(result);
+            assert_eq!(record.catalog.cause(), "duplicate-member");
+            assert_eq!(below_field(&record.path, "reach"), [PathStep::Index(1)]);
+        } else {
+            let closure = result.unwrap();
+            assert_eq!(elements_of(&replay.value(&closure, "reach")).len(), 2);
+        }
+    }
+}
+
 /// Part of FR-106-AC-59 (TC-1171): a post `reach` that is the other spelling
 /// of the pre magnitude is no change and holds without a grant, while a post
 /// magnitude of `2`/`3` violates the frame with `unauthorized-change` naming
@@ -2809,8 +3107,11 @@ fn a_defective_magnitude_refuses_at_the_path_magnitude() {
             "{magnitude}"
         );
         assert_eq!(
-            record.path,
-            [PathStep::Field("magnitude".to_owned())],
+            below_field(&record.path, "reach"),
+            [
+                PathStep::Field("magnitude".to_owned()),
+                PathStep::Field(member.to_owned())
+            ],
             "{magnitude}"
         );
     }
@@ -3107,6 +3408,113 @@ fn a_unit_bearing_rational_member_admits_its_quantity_or_refuses_the_pair() {
             record.fields.get("member").map(String::as_str),
             (slot == "metered").then_some("magnitude"),
             "{slot}"
+        );
+    }
+}
+
+/// FR-106 payload order step 4: an object with a `kind` member is a payload
+/// object, so a collection tag beside `kind` is an unknown member of the
+/// payload, never a collection envelope.
+#[trace("TC-1036", "FR-106-AC-29")]
+#[test]
+fn a_collection_tag_beside_kind_is_an_unknown_payload_member() {
+    let replay = replay();
+    for tag in ["set", "bag", "sequence", "ordered-set"] {
+        assert_eq!(
+            refused_field(
+                &replay,
+                "label",
+                json!({"kind": "string", "text": "a", tag: []})
+            ),
+            expect("unknown-member", "label", &[], Some(tag), None),
+            "{tag}"
+        );
+    }
+}
+
+/// FR-106-AC-68: in a collection slot, a payload-shaped object holding the
+/// declared tag refuses `unknown-member` naming the first other member in
+/// document order, not `missing-member` naming the tag.
+#[trace("TC-1171", "FR-106-AC-68")]
+#[test]
+fn a_payload_object_holding_the_declared_tag_is_an_unknown_member_in_a_collection_slot() {
+    let replay = collection_replay();
+    for (field, tag, value, extra) in [
+        (
+            "ids",
+            "set",
+            json!({"kind": "string", "text": "a", "set": []}),
+            "kind",
+        ),
+        (
+            "ids",
+            "set",
+            json!({"a": 1, "kind": "string", "set": []}),
+            "a",
+        ),
+        (
+            "counts",
+            "bag",
+            json!({"bag": [], "kind": "string", "counts": 1}),
+            "counts",
+        ),
+        (
+            "order",
+            "ordered-set",
+            json!({"ordered-set": [], "kind": "string"}),
+            "kind",
+        ),
+    ] {
+        let record = record_of(replay.admit(
+            &with(collection_fields(), field, value.clone()),
+            ObservationLimits::default(),
+        ));
+        assert_eq!(record.catalog.cause(), "unknown-member", "{tag}: {value}");
+        assert_eq!(
+            record.fields.get("member").map(String::as_str),
+            Some(extra),
+            "{tag}: {value}"
+        );
+    }
+}
+
+/// FR-106-AC-15, AC-21: the typed nested steps of a refusal are the same
+/// under a snapshot field, below the field's own document path, and under a
+/// parameter, below the parameter's root.
+#[trace("FR-106-AC-15", "FR-106-AC-21", "TC-1171")]
+#[test]
+fn typed_nested_steps_are_identical_under_a_field_and_a_parameter() {
+    let replay = collection_replay();
+    for (name, value) in [
+        ("ids", json!({"set": [integer("1")]})),
+        ("order", json!({"ordered-set": integers(&["1", "1"])})),
+        ("counts", json!({"bag": [integer("1"), integer("x")]})),
+    ] {
+        let field = record_of(replay.admit(
+            &with(collection_fields(), name, value.clone()),
+            ObservationLimits::default(),
+        ));
+        let mut parameters = retag_parameters();
+        parameters[name] = value.clone();
+        let parameter = record_of(replay.invoke(
+            "retag",
+            Selected::Postcondition,
+            parameters,
+            json!({"set": []}),
+            ObservationLimits::default(),
+        ));
+        assert!(!parameter.path.is_empty(), "{name}");
+        assert_eq!(
+            below_field(&field.path, name),
+            parameter.path,
+            "{name}: {value}"
+        );
+        assert!(
+            field.path.iter().all(|step| !matches!(
+                step,
+                PathStep::Field(tag) if matches!(tag.as_str(), "set" | "bag" | "sequence" | "ordered-set" | "present" | "record")
+            )),
+            "{name}: the steps are typed, not document-spelled"
         );
     }
 }

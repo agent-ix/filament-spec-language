@@ -695,14 +695,18 @@ fn build(profile: &str, aliases: &[&str], declarations: &str) -> Built {
                 hyper.profile()
                     == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
             })
-            .map(|hyper| {
-                crate::emit::TemporalClockSelection::new(
-                    graph.source().clone(),
-                    hyper.span(),
-                    filament_contract_model::ClockConfiguration::EventPosition {
-                        sequence_authority: "test-hyper-events".into(),
-                    },
-                )
+            .flat_map(|hyper| {
+                hyper.quantifiers().iter().map(|quantifier| {
+                    let mut selection = crate::emit::TemporalClockSelection::new(
+                        graph.source().clone(),
+                        hyper.span(),
+                        filament_contract_model::ClockConfiguration::EventPosition {
+                            sequence_authority: "test-hyper-events".into(),
+                        },
+                    );
+                    selection.trace = Some(quantifier.variable.as_str().into());
+                    selection
+                })
             }),
     );
     let clauses = graph.hyper_clauses().to_vec();
@@ -720,6 +724,79 @@ fn build(profile: &str, aliases: &[&str], declarations: &str) -> Built {
         wire,
         documents,
     }
+}
+
+/// FSpec FR-322-AC-453 / FR-640-AC-12: a hyperproperty's event-position
+/// rows are keyed by its node, occurrence and quantifier alias, and the I2
+/// reader rejects a row whose trace does not name that hyperproperty's group.
+#[trace("TC-483", "FSpec-FR-322-AC-453", "FR-640-AC-12")]
+#[test]
+fn hyper_clock_rows_are_trace_keyed_and_reader_rejects_an_unknown_trace() {
+    let declaration = "hyper Saves using t over behaviours \
+         (d: V::ConfigVersion, e: N::ConfigVersion) \
+         forall trace s of V forall trace n of N \
+         { always[0,3] holds(d.versionNumber @ s = e.versionNumber @ n) }";
+    let built = build(EVENT, &["V", "N"], declaration);
+    let rows = built.wire["temporal_bindings"]
+        .as_array()
+        .expect("temporal binding rows");
+    let hyper_id = &hyper_node(&built.wire)["node_id"];
+    assert_eq!(rows.len(), 2, "one row per quantified trace: {rows:?}");
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["trace"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["s", "n"]
+    );
+    assert!(rows.iter().all(|row| &row["declaration"] == hyper_id));
+    assert!(rows.iter().all(|row| row["clock_name"] == "model-steps"));
+    assert_eq!(rows[0]["clock"]["sequence_authority"], "test-hyper-events");
+    let package = admitted(&built);
+    assert_eq!(
+        package.temporal_bindings().expect("admitted rows"),
+        rows.iter()
+            .map(|row| serde_json::from_value(row.clone()).expect("binding row"))
+            .collect::<Vec<filament_contract_model::TemporalBinding>>()
+    );
+
+    let mut invalid_wire = built.wire.clone();
+    invalid_wire["temporal_bindings"][0]["trace"] = "unknown".into();
+    let invalid_bytes = crate::emit::tests::wire_bytes(&invalid_wire).expect("wire bytes");
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in invalid_wire["lock"]["required_features"]
+        .as_array()
+        .unwrap()
+    {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    for document in &built.documents {
+        evidence
+            .insert_domain_package_document(package_identity(document), document.clone())
+            .expect("a fresh evidence key");
+    }
+    let refusal = crate::checked_v2::read_checked_package_v2(
+        &invalid_bytes,
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    );
+    let Err(fsl_foundation::diagnostic::StageFailure::Refused(refusal)) = refusal else {
+        panic!("the I2 reader refuses the unknown trace");
+    };
+    let crate::checked_v2::V2ReadRefusal::Envelope { refusal, .. } = &refusal else {
+        panic!("IR's reader refuses the unknown trace: {refusal:?}");
+    };
+    assert_eq!(
+        refusal.code,
+        filament_contract_model::CheckedPackageRefusalCode::InvalidPackage
+    );
+    assert_eq!(
+        refusal.loci[0]
+            .path
+            .as_ref()
+            .map(|pointer| pointer.as_str()),
+        Some("/temporal_bindings/0/trace")
+    );
 }
 
 /// The refusals of the world, with the unit text.
@@ -1033,26 +1110,35 @@ fn a_substituted_hyper_clause_definition_identity_refuses_at_the_definition_fiel
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}\n{text}"));
     assert_eq!(graph.hyper_clauses().len(), 1);
     let span = graph.hyper_clauses()[0].span();
-    let selected = TemporalClockSelection::new(
-        graph.source().clone(),
-        span,
-        filament_contract_model::ClockConfiguration::EventPosition {
-            sequence_authority: "test-hyper-events".into(),
-        },
-    );
+    // FR-640: one selection per quantified trace.
+    let selected: Vec<TemporalClockSelection> = graph.hyper_clauses()[0]
+        .quantifiers()
+        .iter()
+        .map(|quantifier| {
+            let mut selection = TemporalClockSelection::new(
+                graph.source().clone(),
+                span,
+                filament_contract_model::ClockConfiguration::EventPosition {
+                    sequence_authority: "test-hyper-events".into(),
+                },
+            );
+            selection.trace = Some(quantifier.variable.as_str().into());
+            selection
+        })
+        .collect();
     let package = CheckedPackage::link(graph);
     crate::emit::emit_checked_with_temporal_selections(
         &package,
-        std::slice::from_ref(&selected),
+        &selected,
         crate::EmitLimits::fixture(),
     )
     .expect("the selection that names the clause's own law emits");
 
     let mut substituted = selected;
-    substituted.definition.identity = "filament.temporal.fixed-sample.false-extension/v1".into();
+    substituted[0].definition.identity = "filament.temporal.fixed-sample.false-extension/v1".into();
     let refusal = crate::emit::emit_checked_with_temporal_selections(
         &package,
-        std::slice::from_ref(&substituted),
+        &substituted,
         crate::EmitLimits::fixture(),
     )
     .expect_err("a substituted definition identity cannot produce a package");

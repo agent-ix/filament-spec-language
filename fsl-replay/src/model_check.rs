@@ -13,10 +13,10 @@
 //! `fsl-analyze`'s; nothing here names it.
 
 pub mod counterexample;
+pub mod digital_state_graph;
 pub mod existential_outcome;
 mod graph_hyper;
 pub mod graph_replay;
-pub mod digital_state_graph;
 pub mod graph_settle;
 pub mod hyper_counterexample;
 pub mod hyper_outcome;

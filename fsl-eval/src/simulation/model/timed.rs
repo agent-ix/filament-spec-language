@@ -148,6 +148,137 @@ impl ClockValuation {
     }
 }
 
+/// How a task in a lowered timed subject releases jobs (FR-246, FR-249).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskArrivalKind {
+    /// One job every `interarrival` time units.
+    Periodic,
+    /// At least `interarrival` time units between jobs.
+    Sporadic,
+}
+
+/// The checked timing and demand bounds of one task carried by a timed
+/// subject (FR-249, FSpec FR-418 `queue_bounds`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskTimingRow {
+    taskset: String,
+    task: String,
+    arrival: TaskArrivalKind,
+    interarrival: Rational,
+    relative_deadline: Rational,
+    max_jitter: Rational,
+    work_lower: Rational,
+    work_upper: Rational,
+    max_jobs: u64,
+}
+
+impl TaskTimingRow {
+    /// A checked task row in the task set's exact time unit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        taskset: String,
+        task: String,
+        arrival: TaskArrivalKind,
+        interarrival: Rational,
+        relative_deadline: Rational,
+        max_jitter: Rational,
+        work_lower: Rational,
+        work_upper: Rational,
+        max_jobs: u64,
+    ) -> Self {
+        Self {
+            taskset,
+            task,
+            arrival,
+            interarrival,
+            relative_deadline,
+            max_jitter,
+            work_lower,
+            work_upper,
+            max_jobs,
+        }
+    }
+
+    /// The declaring task set.
+    pub fn taskset(&self) -> &str {
+        &self.taskset
+    }
+
+    /// The task name.
+    pub fn task(&self) -> &str {
+        &self.task
+    }
+
+    /// The task's arrival kind.
+    pub fn arrival(&self) -> TaskArrivalKind {
+        self.arrival
+    }
+
+    /// The period or minimum inter-arrival time.
+    pub fn interarrival(&self) -> &Rational {
+        &self.interarrival
+    }
+
+    /// The relative deadline.
+    pub fn relative_deadline(&self) -> &Rational {
+        &self.relative_deadline
+    }
+
+    /// The release jitter bound.
+    pub fn max_jitter(&self) -> &Rational {
+        &self.max_jitter
+    }
+
+    /// The minimum execution demand.
+    pub fn work_lower(&self) -> &Rational {
+        &self.work_lower
+    }
+
+    /// The maximum execution demand in the current task mode.
+    pub fn work_upper(&self) -> &Rational {
+        &self.work_upper
+    }
+
+    /// The FR-419 live-job bound `ceil(D / T) + 1`.
+    pub fn max_jobs(&self) -> u64 {
+        self.max_jobs
+    }
+}
+
+/// A checked release binding in a lowered task automaton (FR-249).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskReleaseBinding {
+    taskset: String,
+    task: String,
+    operation: DeclarationKey,
+}
+
+impl TaskReleaseBinding {
+    /// A checked source operation that activates `taskset.task`.
+    pub fn new(taskset: String, task: String, operation: DeclarationKey) -> Self {
+        Self {
+            taskset,
+            task,
+            operation,
+        }
+    }
+
+    /// The declaring task set.
+    pub fn taskset(&self) -> &str {
+        &self.taskset
+    }
+
+    /// The activated task.
+    pub fn task(&self) -> &str {
+        &self.task
+    }
+
+    /// The checked source-operation declaration identity.
+    pub fn operation(&self) -> &DeclarationKey {
+        &self.operation
+    }
+}
+
 /// A timed state (FR-231 `TimedState`): a model state and a clock
 /// valuation.
 #[derive(Clone, Debug)]
@@ -224,6 +355,8 @@ pub struct GuardedStep {
     resets: Vec<(usize, Rational)>,
     carries: Vec<(usize, usize)>,
     guards: Vec<String>,
+    /// Checked task bindings activated by this source operation.
+    task_releases: Vec<TaskReleaseBinding>,
 }
 
 impl GuardedStep {
@@ -259,6 +392,12 @@ impl GuardedStep {
     /// the step, in model order: what a guard refusal names (FR-237).
     pub fn guards(&self) -> &[String] {
         &self.guards
+    }
+
+    /// The checked task releases bound to this source transition, in
+    /// declaration order.
+    pub fn task_releases(&self) -> &[TaskReleaseBinding] {
+        &self.task_releases
     }
 
     /// The resets, each a place and its new value, in source order.
@@ -456,6 +595,11 @@ pub struct TimedSystem<'s, 'a> {
     /// Each clock field with each object of its owner's universe, to count
     /// a state's live clocks by.
     holders: Vec<ClockPlace>,
+    /// The checked task timing rows when this model is lowered as a task
+    /// automaton; empty for an ordinary timed subject.
+    task_timing_rows: Vec<TaskTimingRow>,
+    /// The checked source operations that release task jobs.
+    task_releases: Vec<TaskReleaseBinding>,
 }
 
 impl<'s, 'a> TimedSystem<'s, 'a> {
@@ -654,7 +798,36 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             tick,
             max_clocks,
             holders,
+            task_timing_rows: Vec::new(),
+            task_releases: Vec::new(),
         })
+    }
+
+    /// Attach the checked task rows to this timed subject for FR-249 task
+    /// product lowering. Ordinary timed subjects carry no task rows.
+    #[must_use]
+    pub fn with_task_timing_rows(mut self, rows: Vec<TaskTimingRow>) -> Self {
+        self.task_timing_rows = rows;
+        self
+    }
+
+    /// The task timing rows carried by this subject, in checked task-set
+    /// source order.
+    pub fn task_timing_rows(&self) -> &[TaskTimingRow] {
+        &self.task_timing_rows
+    }
+
+    /// Attach the checked release bindings to this task-product subject.
+    #[must_use]
+    pub fn with_task_releases(mut self, releases: Vec<TaskReleaseBinding>) -> Self {
+        self.task_releases = releases;
+        self
+    }
+
+    /// The checked source operations that release tasks, in declaration
+    /// order.
+    pub fn task_releases(&self) -> &[TaskReleaseBinding] {
+        &self.task_releases
     }
 
     /// The bound on the live clocks of a state.
@@ -1547,6 +1720,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                     let transition = &self
                         .instance_transition(transition, instance)
                         .ok_or_else(|| stop(BROKEN))?;
+                    let task_releases = self.task_releases_for(transition.operation())?;
                     let mut parts = vec![Vec::new()];
                     let mut guards = Vec::new();
                     for guard in self.model.guards() {
@@ -1729,6 +1903,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                         resets,
                         carries,
                         guards,
+                        task_releases,
                     });
                 }
             }
@@ -1748,6 +1923,19 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         keyed.sort_by(|left, right| left.0.cmp(&right.0));
         let steps = keyed.into_iter().map(|(_, step)| step).collect();
         Ok(steps)
+    }
+
+    fn task_releases_for(&self, operation: &str) -> Result<Vec<TaskReleaseBinding>, TimedStop> {
+        let mut releases = Vec::new();
+        for release in &self.task_releases {
+            let identity =
+                declaration_text(&release.operation, quire_canonical::Limits::new(u64::MAX))
+                    .map_err(|_| TimedStop::Expansion(stop(BROKEN)))?;
+            if identity == operation {
+                releases.push(release.clone());
+            }
+        }
+        Ok(releases)
     }
 
     /// Each binding of `vector`'s operation's `Clock` parameters to places

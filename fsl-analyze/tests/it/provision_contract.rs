@@ -93,6 +93,7 @@ fn exact(world: &prob_world::World, limits: ExactProbLimits) -> NegotiatedItem {
                 seed: None,
                 sampler: None,
                 max_witnesses: None,
+                workers: None,
                 symmetry: Vec::new(),
                 timed_sampling: None,
             })),

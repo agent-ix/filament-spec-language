@@ -107,6 +107,8 @@ impl ZoneCheckRecord {
             IncompleteCause::TimedOut
             | IncompleteCause::Cancelled { .. }
             | IncompleteCause::ResourceExhausted
+            | IncompleteCause::UnresolvedDynamics
+            | IncompleteCause::CertificateUnchecked
             | IncompleteCause::PrecisionBudget { .. } => None,
         };
         Self {

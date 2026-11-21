@@ -287,6 +287,7 @@ pub struct BackendDescriptor {
     solver_bounds: Option<SolverBounds>,
     max_cases: Option<std::num::NonZeroU64>,
     timed: bool,
+    task_product: bool,
     options: BTreeSet<String>,
     option_defaults: BTreeMap<String, String>,
     option_values: BTreeMap<String, BTreeSet<String>>,
@@ -416,6 +417,7 @@ pub fn descriptor_from_manifest<'a>(
         reductions,
         state_graph_forms: BTreeSet::new(),
         timed: false,
+        task_product: false,
         options: BTreeSet::new(),
         option_defaults: BTreeMap::new(),
         option_values: BTreeMap::new(),
@@ -678,6 +680,7 @@ impl BackendDescriptor {
             solver_bounds: None,
             max_cases: None,
             timed: false,
+            task_product: false,
             options: BTreeSet::new(),
             option_defaults: BTreeMap::new(),
             option_values: BTreeMap::new(),
@@ -711,6 +714,19 @@ impl BackendDescriptor {
     /// Whether the engine decides timed items (FSL FR-243).
     pub fn decides_timed(&self) -> bool {
         self.timed
+    }
+
+    /// Mark a registration that can decide release-backed task-set claims
+    /// by constructing and checking a task-product timed subject.
+    #[must_use]
+    pub fn with_task_product(mut self) -> Self {
+        self.task_product = true;
+        self
+    }
+
+    /// Whether the registration can read a task-product requirement.
+    pub fn decides_task_product(&self) -> bool {
+        self.task_product
     }
 
     /// Admit typed temporal dynamics and their published solver bounds.
@@ -1837,6 +1853,20 @@ impl Registry {
         }
     }
 
+    /// FSL FR-075: a schedulability registration marked as task-product
+    /// capable matches only an item whose checked task set has a release
+    /// binding. Other schedulability registrations remain candidates for
+    /// either kind of item.
+    pub fn restrict_to_task_product(
+        &self,
+        outcome: CandidateOutcome,
+        task_product: bool,
+    ) -> CandidateOutcome {
+        self.keep_candidates(outcome, |descriptor| {
+            !descriptor.decides_task_product() || task_product
+        })
+    }
+
     /// FSpec FR-390: `outcome`, a candidate set computed for a state-graph
     /// item, restricted to the backends whose manifest lists the claim's
     /// `form` in `state_graph_forms`. An unknown named backend is returned
@@ -2112,6 +2142,47 @@ mod tests {
         let backend = descriptor("A", [(Capability::ValueValidity, Mode::Bounded)]);
         assert!(backend.advertises_kind(Capability::ValueValidity));
         assert!(!backend.advertises_kind(Capability::OperationContract));
+    }
+
+    /// FR-075-AC-23: only a registration that advertises task-product support
+    /// is excluded from an ordinary schedulability claim.
+    #[test]
+    fn task_product_requirement_selects_the_timed_schedulability_engine() {
+        let mut registry = Registry::new();
+        registry
+            .register(
+                descriptor("en-6", [(Capability::Schedulability, Mode::Unbounded)])
+                    .with_task_product(),
+            )
+            .expect("EN-6 descriptor registers");
+        registry
+            .register(descriptor(
+                "en-7",
+                [(Capability::Schedulability, Mode::Unbounded)],
+            ))
+            .expect("EN-7 descriptor registers");
+        let ids = |outcome| match outcome {
+            CandidateOutcome::Candidates(set) => set
+                .candidates()
+                .iter()
+                .map(|candidate| candidate.id().as_str().to_owned())
+                .collect::<Vec<_>>(),
+            CandidateOutcome::UnknownBackend(id) => vec![id.as_str().to_owned()],
+        };
+        let all = registry.candidates(Capability::Schedulability, None);
+        assert_eq!(
+            ids(registry.restrict_to_task_product(all.clone(), false)),
+            ["en-7"]
+        );
+        assert_eq!(
+            ids(registry.restrict_to_task_product(all, true)),
+            ["en-6", "en-7"]
+        );
+        assert!(ids(registry.restrict_to_task_product(
+            registry.candidates(Capability::Schedulability, Some(&BackendId::new("en-6")),),
+            false,
+        ))
+        .is_empty());
     }
 
     /// FR-075-AC-7 (filament-specification TC-282 DB-01, FR-290-AC-9):

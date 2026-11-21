@@ -12,8 +12,8 @@
 use filament_exact::{IntegerInterval, NodeKey, Origin};
 use fsl_foundation::bound::ProofBound;
 
-use fsl_package::ObligationIdentity;
 use crate::scalar::OperandIdentity;
+use fsl_package::ObligationIdentity;
 
 /// Why an identity could not be minted. The claim refuses; no identity is
 /// ever produced from an error.

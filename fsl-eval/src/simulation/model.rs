@@ -58,6 +58,7 @@ mod refine;
 mod state_predicate;
 mod symbolic;
 mod symmetry;
+mod task_product;
 mod terminal;
 mod timed;
 mod walk;
@@ -130,13 +131,21 @@ pub use refine::{RowReading, StateObservation};
 pub use state_predicate::PredicateReading;
 pub(crate) use symbolic::{ParameterValues, ResultValues, SymbolicOperation, SymbolicSubject};
 pub use terminal::{TerminalClass, TerminalModel};
+pub use task_product::{
+    AllowancePhase, CriticalityMode, TaskProductClock, TaskProductClockKind,
+    TaskProductDerivedStep, TaskProductJob, TaskProductModeSwitch, TaskProductMoveRefusal,
+    TaskProductPlan, TaskProductPlanRefusal, TaskProductRelease,
+    TaskProductReplayRefusal, TaskProductSourceStep, TaskProductState, TaskProductStateKeyRefusal,
+    TaskProductSystem, TaskProductTask, TaskProductTrace, TaskProductTraceStep,
+    TaskProductTransition, TaskTransitionAction, TaskTransitionIdentity,
+};
 pub use timed::{
-    BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS,
-    DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint, ScheduledWindow, TimeLock,
-    TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop,
-    TimedSample, TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice,
-    TimedSite, TimedState, TimedStop, TimedSubjectRefusal, TimedSystem, TimedTerminalClass,
-    replay_timed_sample, sample_timed, sample_timed_race,
+    replay_timed_sample, sample_timed, sample_timed_race, BehaviourLetters, BehaviourReading,
+    ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS, DelayInterval, GuardedStep, MoveRefusal,
+    PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding, TaskTimingRow, TimeLock,
+    TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample,
+    TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite,
+    TimedState, TimedStop, TimedSubjectRefusal, TimedSystem, TimedTerminalClass,
 };
 pub(crate) use walk::{Applied, Budget};
 

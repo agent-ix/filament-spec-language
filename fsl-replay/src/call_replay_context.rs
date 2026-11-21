@@ -350,8 +350,8 @@ mod tests {
             .graph()
             .callable(function)
             .expect("declared");
-        let parameters = callable_parameter_keys(checked.package(), &callable)
-            .expect("a function node");
+        let parameters =
+            callable_parameter_keys(checked.package(), &callable).expect("a function node");
         (
             OccurrenceKey::new(
                 callable.identity.clone(),
@@ -369,8 +369,7 @@ mod tests {
         use filament_semantic_value::checking::CheckMode;
 
         let limits = CallerLimits::default().spine;
-        let packages = fsl_semantics::model::intake::package_input([])
-            .expect("no model packages");
+        let packages = fsl_semantics::model::intake::package_input([]).expect("no model packages");
         let dependencies = DependencyInput::default();
         let function_modes = BTreeMap::new();
         let composed = spine::compose_in_mode(

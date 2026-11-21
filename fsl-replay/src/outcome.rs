@@ -27,7 +27,15 @@ mod counterexample;
 pub mod hint;
 pub use counterexample::{
     CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
-    probabilistic_wire, protocol_temporal_wire, temporal_wire,
+    sampled_witness_wire, probabilistic_wire, protocol_temporal_wire, task_temporal_wire, temporal_wire,
+    task_temporal_wire_with_queue_growth,
+    task_source_transition_wire, task_transition_wire,
+    replay_model_trace_document, state_key_wire, task_product_transition_wire, ReadCounterexample,
+    TraceAlphabet,
+    read_temporal_counterexample, TemporalCounterexampleReadRefusal,
+    replay_task_product_trace, TaskProductTraceReplayRefusal,
+    read_task_temporal_counterexample,
+    read_task_temporal_document, TaskProductCounterexampleDocument,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -86,8 +94,7 @@ impl From<&FormatRefusal> for FormatOutcomeRefusal {
 /// The document's `format` member.
 pub const OUTCOME_FORMAT: &str = "filament-outcome/1";
 /// FR-286's published draft 2020-12 schema for `filament-outcome/1`.
-pub const OUTCOME_SCHEMA_1: &str =
-    include_str!("../schemas/filament-outcome-1.schema.json");
+pub const OUTCOME_SCHEMA_1: &str = include_str!("../schemas/filament-outcome-1.schema.json");
 
 /// The library operation that produced the document (ADR-029 LC-1).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -414,6 +421,9 @@ pub struct ItemDiagnostic {
 pub struct ItemCause {
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<&'static str>,
+    /// A `bounded-search-incomplete` cause's reason.
+    #[serde(rename = "reason", skip_serializing_if = "Option::is_none")]
+    search_reason: Option<&'static str>,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
     at: Option<ItemWhere>,
     /// A `timed-form-shape` cause's claim: its checked-package
@@ -569,6 +579,110 @@ struct TimedTransitionWire {
     arguments: Vec<serde_json::Value>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(super) struct TaskSourceTransitionWire {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    operation: String,
+    receiver: Option<serde_json::Value>,
+    arguments: Vec<serde_json::Value>,
+}
+
+impl From<&filament_semantic_value::model_transition::ModelTransition>
+    for TaskSourceTransitionWire
+{
+    fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
+        let operation: serde_json::Value = serde_json::from_str(identity.operation())
+            .expect("canonical source operation identity");
+        let operation = operation
+            .as_str()
+            .or_else(|| operation.get("name").and_then(serde_json::Value::as_str))
+            // Checked model transitions carry the canonical node identity,
+            // not the authored operation spelling. FR-364's source arm
+            // keeps that stable identity as its operation string.
+            .or_else(|| operation.get("node").and_then(serde_json::Value::as_str))
+            .map(str::to_owned)
+            // ModelTransition validates canonical JSON, not a particular
+            // operation-identity object shape. Preserve any other valid
+            // canonical identity instead of panicking on it.
+            .unwrap_or_else(|| identity.operation().to_owned());
+        let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
+        Self {
+            kind: "transition",
+            operation,
+            receiver: identity.receiver().map(value),
+            arguments: identity
+                .arguments()
+                .iter()
+                .map(|text| value(text))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct TaskTransitionWire {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    action: &'static str,
+    taskset: String,
+    task: String,
+    job: u64,
+    slot: u64,
+    generation: u64,
+    release: TaskSourceTransitionWire,
+    source_transition: Option<TaskSourceTransitionWire>,
+    demand: serde_json::Value,
+    jitter: serde_json::Value,
+    deadline: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    budget_delta: Option<serde_json::Value>,
+}
+
+fn task_rational(value: &filament_exact::Rational) -> serde_json::Value {
+    serde_json::json!({
+        "numerator": value.numerator().to_string(),
+        "denominator": value.denominator().to_string(),
+    })
+}
+
+impl From<&crate::TaskTransitionIdentity> for TaskTransitionWire {
+    fn from(identity: &crate::TaskTransitionIdentity) -> Self {
+        use crate::TaskTransitionAction as Action;
+        let action = match identity.action {
+            Action::Activate => "activate",
+            Action::Release => "release",
+            Action::Dispatch => "dispatch",
+            Action::Preempt => "preempt",
+            Action::Resume => "resume",
+            Action::Complete => "complete",
+            Action::BudgetChange => "budget-change",
+            Action::DeadlineMiss => "deadline-miss",
+        };
+        Self {
+            kind: "task-transition",
+            action,
+            taskset: identity.task_set.clone(),
+            task: identity.task.clone(),
+            job: identity.job,
+            slot: identity.slot,
+            generation: identity.generation,
+            release: TaskSourceTransitionWire::from(&identity.release),
+            source_transition: identity
+                .source_transition
+                .as_ref()
+                .map(TaskSourceTransitionWire::from),
+            demand: task_rational(&identity.demand),
+            jitter: task_rational(&identity.jitter),
+            deadline: task_rational(&identity.deadline),
+            priority: identity.priority,
+            budget_delta: identity.budget_delta.as_ref().map(task_rational),
+        }
+    }
+}
+
 impl From<&fsl_eval::simulation::StateKey> for TimedStateWire {
     fn from(key: &fsl_eval::simulation::StateKey) -> Self {
         use base64::Engine;
@@ -684,6 +798,7 @@ impl ItemCause {
     fn kind(kind: &'static str) -> Self {
         Self {
             kind: Some(kind),
+            search_reason: None,
             at: None,
             locus: None,
             code: None,
@@ -942,6 +1057,9 @@ pub struct OutcomeItem {
     /// `undecided`.
     #[serde(skip_serializing_if = "Option::is_none")]
     measured: Option<&'static str>,
+    /// The FR-410 StatisticalVerdict of a completed measured result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verdict: Option<serde_json::Value>,
     /// The state-graph settlement method, when this item came from FR-391.
     #[serde(skip_serializing_if = "Option::is_none")]
     method: Option<&'static str>,
@@ -1265,6 +1383,12 @@ impl OutcomeItem {
                         item.lower = Some((**lower).clone());
                         item.upper = Some((**upper).clone());
                     }
+                    IncompleteCause::UnresolvedDynamics => {
+                        item.search_reason = Some("unresolved-dynamics");
+                    }
+                    IncompleteCause::CertificateUnchecked => {
+                        item.search_reason = Some("certificate-unchecked");
+                    }
                     IncompleteCause::TimedOut | IncompleteCause::ResourceExhausted => {}
                 }
                 Some(item)
@@ -1334,6 +1458,23 @@ impl OutcomeItem {
         // disposition carries its diagnostic, and no `result` and no `cause`.
         let invalid_request = matches!(value, TerminalValue::Declined { .. })
             && record.disposition_detail().is_some();
+        // A verdict with a member no spelling exists for is an internal
+        // failure of the item, never a document with the member missing.
+        let (verdict, result, cause, category) = match value {
+            TerminalValue::Measured(measured_verdict) => {
+                match statistical_verdict_wire(measured_verdict) {
+                    Ok(wire) => (Some(wire), result, cause, value.category()),
+                    Err(_) => (
+                        None,
+                        ItemLabel::Failed,
+                        Some(ItemCause::kind("internal-fault")),
+                        TerminalValue::Failed.category(),
+                    ),
+                }
+            }
+            _ => (None, result, cause, value.category()),
+        };
+        let measured = measured.filter(|_| verdict.is_some());
         Self {
             request_index: record.request_index().get(),
             result: (!invalid_request).then_some(result),
@@ -1353,6 +1494,7 @@ impl OutcomeItem {
             basis,
             certification,
             measured,
+            verdict,
             method: None,
             max_depth: None,
             seed: None,
@@ -1370,7 +1512,7 @@ impl OutcomeItem {
             clause: None,
             axes: None,
             protocol_conformance: None,
-            category: value.category(),
+            category,
         }
     }
 
@@ -1472,6 +1614,7 @@ impl OutcomeItem {
             basis: None,
             certification: None,
             measured: None,
+            verdict: None,
             method: None,
             max_depth: None,
             seed: None,
@@ -1548,6 +1691,7 @@ impl OutcomeItem {
             basis: None,
             certification: None,
             measured: None,
+            verdict: None,
             method: None,
             max_depth: None,
             seed: None,
@@ -1581,6 +1725,237 @@ impl OutcomeItem {
     pub fn certification(&self) -> Option<Certification> {
         self.certification
     }
+}
+
+fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
+    serde_json::json!({
+        "numerator": value.numerator().to_string(),
+        "denominator": value.denominator().to_string(),
+    })
+}
+
+fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json::Value {
+    match method {
+        statistical::StatisticalMethod::Okamoto => serde_json::json!({"type": "okamoto"}),
+        statistical::StatisticalMethod::Sprt => serde_json::json!({"type": "sprt"}),
+        statistical::StatisticalMethod::ClopperPearson => {
+            serde_json::json!({"type": "clopper-pearson"})
+        }
+        statistical::StatisticalMethod::Regenerative { min_cycles } => {
+            serde_json::json!({"type": "regenerative", "min_cycles": min_cycles})
+        }
+    }
+}
+
+fn statistical_decision_wire(
+    decision: Decision,
+    undefined: Option<&statistical::SampledUndefined>,
+) -> Result<serde_json::Value, CounterexampleWireError> {
+    Ok(match decision {
+        Decision::Accepted => serde_json::json!({"type": "accepted"}),
+        Decision::Rejected => {
+            let mut rejected = serde_json::json!({"type": "rejected"});
+            if let Some(found) = undefined {
+                rejected["cause"] = counterexample::sampled_undefined_wire(found)?;
+            }
+            rejected
+        }
+        Decision::Undecided(cause) => serde_json::json!({
+            "type": "undecided",
+            "cause": {"type": match cause {
+                statistical::UndecidedCause::IndifferenceRegion => "indifference-region",
+                statistical::UndecidedCause::UndecidedSuccessor => "undecided-successor",
+            }}
+        }),
+    })
+}
+
+/// FSpec FR-410's `estimate`. The backend-provider `Estimate` schema has no
+/// spelling for an absent estimate or a censored quantile, so neither is
+/// written: `None` for no estimate, and no `quantile` member for a censored one.
+fn statistical_estimate_wire(
+    estimate: Option<&filament_exact::Rational>,
+    quantile: Option<&statistical::MeasureValue>,
+) -> Option<serde_json::Value> {
+    let mut value = serde_json::Map::new();
+    value.insert("value".to_owned(), rational_wire(estimate?));
+    if let Some(statistical::MeasureValue::Value(quantile)) = quantile {
+        value.insert(
+            "quantile".to_owned(),
+            serde_json::json!({"value": rational_wire(quantile)}),
+        );
+    }
+    Some(serde_json::Value::Object(value))
+}
+
+fn statistical_interval_wire(
+    interval: Option<&(filament_exact::Rational, filament_exact::Rational)>,
+) -> Option<serde_json::Value> {
+    interval.map(|(lower, upper)| {
+        serde_json::json!({
+            "lower": rational_wire(lower),
+            "upper": rational_wire(upper),
+        })
+    })
+}
+
+/// Why a sampled witness is not in a verdict's `witnesses` (FSpec FR-410).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WitnessOmission {
+    /// A step of the witness is the terminal stutter step, which has no FR-181
+    /// transition identity.
+    TerminalStutterStep,
+    /// The witness's measure is censored; `Quantity` has no spelling for it.
+    CensoredMeasure,
+    /// The schema requires each step's `scheduled` as a `TypedValue`, which
+    /// cannot hold the scheduled identity (operation, receiver, non-random
+    /// arguments), and the verdict records only the choice indexes.
+    ScheduledIdentityNotSpellable,
+}
+
+impl WitnessOmission {
+    /// The reason's spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TerminalStutterStep => "terminal-stutter-step",
+            Self::CensoredMeasure => "censored-measure",
+            Self::ScheduledIdentityNotSpellable => "scheduled-identity-not-spellable",
+        }
+    }
+}
+
+/// One witness a verdict leaves out, and why.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OmittedWitness {
+    /// The witness's test index.
+    pub test: u32,
+    /// The witness's trace index.
+    pub trace: u64,
+    /// Why it is not written.
+    pub reason: WitnessOmission,
+}
+
+/// Every witness of `verdict` that is not written to its `witnesses`, with the
+/// reason. A witness is written only when every member of it is schema-valid.
+pub fn omitted_witnesses(verdict: &StatisticalVerdict) -> Vec<OmittedWitness> {
+    verdict
+        .witnesses
+        .iter()
+        .map(|witness| OmittedWitness {
+            test: witness.test,
+            trace: witness.trace,
+            reason: counterexample::witness_omission(witness),
+        })
+        .collect()
+}
+
+/// The FSpec FR-410 `StatisticalVerdict` of `verdict`.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] when a member has no spelling.
+fn statistical_verdict_wire(
+    verdict: &StatisticalVerdict,
+) -> Result<serde_json::Value, CounterexampleWireError> {
+    let method = statistical_method_wire(verdict.basis.method);
+    let rejection = verdict
+        .tests
+        .iter()
+        .find_map(|test| test.undefined.as_ref());
+    let decision = statistical_decision_wire(verdict.decision, rejection)?;
+    let mut tests = Vec::with_capacity(verdict.tests.len());
+    for test in &verdict.tests {
+        let mut result = serde_json::Map::new();
+        result.insert("index".to_owned(), serde_json::json!(test.index));
+        result.insert(
+            "decision".to_owned(),
+            statistical_decision_wire(test.decision, test.undefined.as_ref())?,
+        );
+        // A test an undefined sample rejected, or whose first sample reached
+        // an undecided successor, has no estimate and the schema has no
+        // spelling for that; any other test without one never reaches
+        // a verdict (it settles `incomplete`).
+        match statistical_estimate_wire(test.estimate.as_ref(), test.quantile.as_ref()) {
+            Some(estimate) => {
+                result.insert("estimate".to_owned(), estimate);
+            }
+            None if test.undefined.is_some()
+                || test.decision == Decision::Undecided(statistical::UndecidedCause::UndecidedSuccessor) => {}
+            None => return Err(CounterexampleWireError::Unspelled("test estimate")),
+        }
+        if let Some(interval) = statistical_interval_wire(test.interval.as_ref()) {
+            result.insert("interval".to_owned(), interval);
+        }
+        result.insert("samples".to_owned(), serde_json::json!(test.samples));
+        result.insert("draws".to_owned(), serde_json::json!(test.draws));
+        tests.push(serde_json::Value::Object(result));
+    }
+    let mut provenance_tests = Vec::with_capacity(verdict.provenance.tests.len());
+    for test in &verdict.provenance.tests {
+        let last = test.traces.first.saturating_add(
+            test.traces
+                .count
+                .saturating_sub(1)
+                .saturating_mul(test.traces.step),
+        );
+        provenance_tests.push(serde_json::json!({
+            "index": test.index,
+            "initial_state": test.initial,
+            "binding": counterexample::binding_wire(test.reference.as_ref())?,
+            "instance": null,
+            "first_trace_index": test.traces.first.to_string(),
+            "last_trace_index": last.to_string(),
+        }));
+    }
+    let mut basis = serde_json::json!({
+        "method": method,
+        "confidence": {
+            "alpha": rational_wire(verdict.basis.confidence.alpha()),
+            "beta": rational_wire(verdict.basis.confidence.beta()),
+            "iota": rational_wire(verdict.basis.confidence.indifference()),
+        },
+        "samples": verdict.basis.samples,
+        "draws": verdict.basis.draws,
+        "tests": {
+            "m": verdict.basis.tests,
+            "alpha": rational_wire(&verdict.basis.alpha_per_test),
+            "beta": rational_wire(&verdict.basis.beta_per_test),
+        },
+        "coverage": match verdict.basis.coverage {
+            statistical::Coverage::FiniteSample => "finite-sample",
+            statistical::Coverage::Asymptotic => "asymptotic",
+        },
+    });
+    if let Some(grid) = verdict.basis.delay_grid_bits {
+        basis["grid"] = serde_json::json!(grid);
+    }
+    // The schema's `provenance` closes its members: `timed_horizon`,
+    // `delay_grid_bits` and `max_sample_steps` are not written.
+    let provenance = serde_json::json!({
+        "seed": verdict.provenance.seed.to_string(),
+        "sampler": "filament.simulation.sampler/v1",
+        "tests": provenance_tests,
+    });
+    // A witness is written only when every member of it is schema-valid;
+    // none is today (`omitted_witnesses` says why).
+    let mut value = serde_json::json!({
+        "decision": decision,
+        "basis": basis,
+        "provenance": provenance,
+        "tests": tests,
+        "witnesses": [],
+    });
+    match statistical_estimate_wire(verdict.estimate.as_ref(), verdict.quantile.as_ref()) {
+        Some(estimate) => value["estimate"] = estimate,
+        None if rejection.is_some()
+            || verdict.decision
+                == Decision::Undecided(statistical::UndecidedCause::UndecidedSuccessor) => {}
+        None => return Err(CounterexampleWireError::Unspelled("verdict estimate")),
+    }
+    if let Some(interval) = statistical_interval_wire(verdict.interval.as_ref()) {
+        value["interval"] = interval;
+    }
+    Ok(value)
 }
 
 /// The cause an item built from `report` carries: the table's `cause`
@@ -1883,20 +2258,29 @@ pub(crate) fn snapshot_admission_locus(
     path: Option<&str>,
 ) -> Option<OutcomeLocus> {
     use filament_semantic_value::admission::PathStep;
-    let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
-        match step {
-            PathStep::Field(member) => {
-                pointer.push('/');
-                pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+    // The snapshot refusal's `path` member is the RFC 6901 pointer to the
+    // failing member in the document's own spelling (FR-663); a refusal that
+    // names none is located by its typed steps.
+    let folded = || {
+        record.path.iter().fold(String::new(), |mut pointer, step| {
+            match step {
+                PathStep::Field(member) => {
+                    pointer.push('/');
+                    pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+                }
+                PathStep::Index(index) => {
+                    pointer.push('/');
+                    pointer.push_str(&index.to_string());
+                }
+                PathStep::OptionValue => {}
             }
-            PathStep::Index(index) => {
-                pointer.push('/');
-                pointer.push_str(&index.to_string());
-            }
-            PathStep::OptionValue => {}
-        }
-        pointer
-    });
+            pointer
+        })
+    };
+    let pointer = match record.fields.get("path") {
+        Some(path) if path.starts_with('/') => path.clone(),
+        _ => folded(),
+    };
     let identity = fsl_foundation::source::provenance::RawSourceRef::new(
         document.authority.clone(),
         document.identity.clone(),
@@ -3174,6 +3558,41 @@ mod tests {
         let generic =
             OutcomeDiagnostic::new(None, Code::InvalidRequest.as_str(), None, "invalid request");
         assert_eq!(generic.hint, None);
+
+    }
+
+    /// FR-181 source transitions retain their canonical operation node when
+    /// the checked identity carries a node/package pair instead of a name.
+    #[trace("FR-237-AC-10", "FSpec-FR-364-AC-23")]
+    #[test]
+    fn task_source_transition_wire_accepts_canonical_operation_nodes() {
+        let transition = filament_semantic_value::model_transition::ModelTransition::new(
+            r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#.to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("valid canonical model transition");
+
+        let wire = task_source_transition_wire(&transition).expect("canonical operation node");
+
+        assert_eq!(wire["operation"], "ix://test/timed/Call/send");
+    }
+
+    #[trace("FR-237-AC-10")]
+    #[test]
+    fn task_source_transition_wire_preserves_other_canonical_operation_identities() {
+        let transition = filament_semantic_value::model_transition::ModelTransition::new(
+            "[]".to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("canonical operation identity");
+
+        let wire = task_source_transition_wire(&transition).expect("canonical operation identity");
+
+        assert_eq!(wire["operation"], "[]");
     }
 
     /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
@@ -4921,5 +5340,59 @@ mod tests {
             document["diagnostics"][0]["code"],
             "unimplemented_capability"
         );
+    }
+
+    /// FR-663 (TC-1746): the pointer of a snapshot refusal is its
+    /// document-spelled `path` member, which resolves in the document.
+    #[trace("FR-663-AC-3")]
+    #[test]
+    fn a_snapshot_locus_pointer_resolves_in_the_document() {
+        use filament_semantic_value::admission::{AdmissionRecord, PathStep};
+        let document = json!({"populations": [{"objects": [{"fields": {
+            "reach": {"set": [{"n": 1}, {"n": 1}]},
+            "total": {"record": {"type": "T", "fields": {"a": 1}}},
+        }}]}]});
+        let reference = fsl_semantics::model::observation::DocumentRef {
+            authority: "test".to_owned(),
+            identity: "current".to_owned(),
+        };
+        let field = |name: &str| PathStep::Field(name.to_owned());
+        let prefix = || {
+            vec![
+                field("populations"),
+                PathStep::Index(0),
+                field("objects"),
+                PathStep::Index(0),
+                field("fields"),
+            ]
+        };
+        let pointer_of = |below: Vec<PathStep>, spelled: Option<&str>| {
+            let mut path = prefix();
+            path.extend(below);
+            let record = AdmissionRecord {
+                catalog: CatalogCode::new("invalid_runtime_input", "duplicate-member"),
+                fields: spelled
+                    .map(|spelled| BTreeMap::from([("path", spelled.to_owned())]))
+                    .unwrap_or_default(),
+                path,
+                kernel: None,
+            };
+            match snapshot_admission_locus(&record, &reference, None) {
+                Some(OutcomeLocus::Document { pointer, .. }) => pointer,
+                other => panic!("a document locus, not {other:?}"),
+            }
+        };
+        // The typed steps of a duplicate at element 1 of a set are `[1]`; the
+        // pointer is the document-spelled `path` member.
+        let duplicate = pointer_of(
+            vec![field("reach"), PathStep::Index(1)],
+            Some("/populations/0/objects/0/fields/reach/set/1"),
+        );
+        assert_eq!(duplicate, "/populations/0/objects/0/fields/reach/set/1");
+        assert_eq!(document.pointer(&duplicate), Some(&json!({"n": 1})));
+        // A refusal with no `path` member is located by its typed steps.
+        let typed = pointer_of(vec![field("total")], None);
+        assert_eq!(typed, "/populations/0/objects/0/fields/total");
+        assert!(document.pointer(&typed).is_some());
     }
 }

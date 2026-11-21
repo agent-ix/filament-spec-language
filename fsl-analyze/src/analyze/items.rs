@@ -1159,6 +1159,7 @@ pub(super) fn statistical_refusal(
         R::Symmetry(_) => symmetry(),
         R::RequiresBound(_) => Refusal::RequiresBound,
         R::NotStatistical { .. } => Refusal::NotStatistical,
+        R::DelayWeighting => Refusal::Unsupported(NOT_YET),
         // FR-192's map settles the rest, a refused predicate by FR-192-AC-7's
         // rows (its own code, or `incomplete`/`limit-reached`).
         settled => match settle_statistical_refusal(settled) {

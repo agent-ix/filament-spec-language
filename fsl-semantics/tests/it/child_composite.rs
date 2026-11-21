@@ -641,7 +641,18 @@ fn refusal_of(result: Result<(), AdmissionFailure>) -> Refusal {
 /// A refusal's cause, object, field and typed path.
 type Refusal = (String, String, String, Vec<PathStep>);
 
-fn refusal(cause: &str, field: &str, path: Vec<PathStep>) -> Refusal {
+/// A refusal at the snapshot field `field`: the path is the document path of
+/// the field (`populations/0/objects/0/fields/<field>`) followed by the typed
+/// steps `below` it (FR-106 nested path).
+fn refusal(cause: &str, field: &str, below: Vec<PathStep>) -> Refusal {
+    let mut path: Vec<PathStep> = ["populations", "0", "objects", "0", "fields", field]
+        .iter()
+        .map(|step| match step.parse::<usize>() {
+            Ok(index) => PathStep::Index(index),
+            Err(_) => field_step(step),
+        })
+        .collect();
+    path.extend(below);
     (cause.to_owned(), "o1".to_owned(), field.to_owned(), path)
 }
 

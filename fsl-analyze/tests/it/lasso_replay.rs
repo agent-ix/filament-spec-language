@@ -327,6 +327,7 @@ fn a_lasso_that_does_not_close_or_does_not_stutter_at_a_terminal_state_refuses()
     ends.lasso = Some(fsl_replay::Lasso {
         entry: 0,
         terminal_stutter: false,
+        terminal_stutter_delay: None,
     });
     let (cause, code, tag) = refusal(replay_with(&stutter_fixture, ends, is_zero));
     assert_eq!(cause, ModelTraceRefusal::LoopOpen { entry: 0, steps: 3 });
@@ -337,6 +338,7 @@ fn a_lasso_that_does_not_close_or_does_not_stutter_at_a_terminal_state_refuses()
     stutter.lasso = Some(fsl_replay::Lasso {
         entry: 0,
         terminal_stutter: true,
+        terminal_stutter_delay: None,
     });
     let (cause, code, _) = refusal(replay_with(&fixture, stutter, is_three));
     assert_eq!(cause, ModelTraceRefusal::StutterNotTerminal { position: 0 });
@@ -844,7 +846,8 @@ fn a_violation_on_the_stutter_step_carries_the_stutter_marker() {
         payload.lasso,
         Some(fsl_replay::Lasso {
             entry: 3,
-            terminal_stutter: true
+            terminal_stutter: true,
+            terminal_stutter_delay: None,
         })
     );
     assert_eq!(payload.len(), 4);

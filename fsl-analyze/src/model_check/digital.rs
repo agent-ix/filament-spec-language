@@ -1131,6 +1131,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 Lasso {
                     entry,
                     terminal_stutter: true,
+                    terminal_stutter_delay: None,
                 },
             ));
         }
@@ -1174,6 +1175,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             Lasso {
                 entry,
                 terminal_stutter: false,
+                terminal_stutter_delay: None,
             },
         ))
     }

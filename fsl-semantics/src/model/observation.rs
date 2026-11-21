@@ -719,6 +719,10 @@ pub struct SnapshotValue {
 /// index of its own node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RawNode {
+    /// A non-object supplied where the native value grammar requires an object.
+    NonObject,
+    /// An object envelope that cannot be read without its declared kind.
+    ObjectMembers(Vec<String>),
     Boolean(bool),
     Integer(String),
     /// A value object with a `kind` member, kept as read so admission judges
@@ -754,6 +758,13 @@ enum RawNode {
 /// handles.
 #[derive(Clone, Copy, Debug)]
 pub enum RawForm<'v> {
+    /// A non-object retained for typed wrong-value-kind refusal after the
+    /// enclosing collection's envelope and cardinality checks.
+    NonObject,
+    /// The member names of a defective object envelope, in document order.
+    /// Admission uses the declared collection kind to distinguish missing,
+    /// unknown and wrong-kind members before reading any element.
+    ObjectMembers(&'v [String]),
     /// `{"boolean": true|false}`.
     Boolean(bool),
     /// `{"integer": "<decimal>"}`.
@@ -836,8 +847,8 @@ impl<'v> RawVariant<'v> {
     }
 }
 
-/// The kind of a native payload value (FR-056's K2 canonical native
-/// payloads).
+/// The kind of an FR-106 native payload value, including FR-056's K2
+/// payloads and exact numeric forms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeKind {
     /// `"string"`.
@@ -856,9 +867,9 @@ pub enum NativeKind {
     /// `"quantity"`: admitted only into a `Quantity<u>` slot of its unit
     /// (FR-106 "A Quantity value").
     Quantity,
-    /// `"rational"`: read only as a Quantity's magnitude.
+    /// `"rational"`: a bounded Rational or a Quantity's magnitude.
     Rational,
-    /// `"decimal"`: read only as a Quantity's magnitude.
+    /// `"decimal"`: a Decimal or a Quantity's magnitude.
     Decimal,
     /// `float32`: an exact binary32 bit pattern.
     Float32,
@@ -884,6 +895,9 @@ pub enum RawNativeKind {
 struct NativeObject {
     kind: RawNativeKind,
     members: Vec<(String, Option<String>)>,
+    /// The position of the `kind` member among all the members, in document
+    /// order.
+    kind_at: usize,
     /// Each member that is itself a payload object (a Quantity's
     /// `magnitude`), by name; it is also in `members`, with no text.
     objects: Vec<(String, NativeObject)>,
@@ -894,6 +908,7 @@ struct NativeObject {
 pub struct RawNative<'v> {
     kind: RawNativeKind,
     members: &'v [(String, Option<String>)],
+    kind_at: usize,
     objects: &'v [(String, NativeObject)],
 }
 
@@ -912,6 +927,16 @@ impl<'v> RawNative<'v> {
             .map(|(name, text)| (name.as_str(), text.as_deref()))
     }
 
+    /// Every member name, `kind` included, in document order.
+    pub fn member_names(self) -> impl Iterator<Item = &'v str> {
+        let before = self.members.iter().take(self.kind_at);
+        let after = self.members.iter().skip(self.kind_at);
+        before
+            .map(|(name, _)| name.as_str())
+            .chain(std::iter::once("kind"))
+            .chain(after.map(|(name, _)| name.as_str()))
+    }
+
     /// The member `name` when it is itself a payload object.
     #[must_use]
     #[ix_trace_rs::string_edge]
@@ -928,6 +953,7 @@ impl NativeObject {
         RawNative {
             kind: self.kind,
             members: &self.members,
+            kind_at: self.kind_at,
             objects: &self.objects,
         }
     }
@@ -1023,6 +1049,7 @@ impl SnapshotValue {
         Self::single(RawNode::Native(NativeObject {
             kind,
             members,
+            kind_at: 0,
             objects: Vec::new(),
         }))
     }
@@ -1033,6 +1060,7 @@ impl SnapshotValue {
     pub fn quantity(unit: String, magnitude: &filament_exact::Rational) -> Self {
         let rational = NativeObject {
             kind: RawNativeKind::Known(NativeKind::Rational),
+            kind_at: 0,
             members: vec![
                 (
                     "numerator".to_owned(),
@@ -1047,6 +1075,7 @@ impl SnapshotValue {
         };
         Self::single(RawNode::Native(NativeObject {
             kind: RawNativeKind::Known(NativeKind::Quantity),
+            kind_at: 0,
             members: vec![
                 ("unit".to_owned(), Some(unit)),
                 ("magnitude".to_owned(), None),
@@ -1158,6 +1187,8 @@ impl SnapshotValue {
 
     fn at(&self, index: usize) -> RawForm<'_> {
         match &self.nodes[index] {
+            RawNode::NonObject => RawForm::NonObject,
+            RawNode::ObjectMembers(names) => RawForm::ObjectMembers(names),
             RawNode::Boolean(value) => RawForm::Boolean(*value),
             RawNode::Integer(spelling) => RawForm::Integer(spelling),
             RawNode::Native(native) => RawForm::Native(native.as_raw()),
@@ -1232,8 +1263,9 @@ fn text_member(native: RawNative<'_>) -> Option<&str> {
 impl SnapshotValue {
     /// Whether the two values are equal, a value of a declared Text type
     /// comparing by its retained sequence (FR-106-AC-40, FR-141): `declared`
-    /// is this value's slot type, `None` where it is not known. Every other
-    /// form compares as read. `field_type` gives the declared type of a
+    /// is this value's slot type, `None` where it is not known.
+    /// Decimal and Rational forms compare by value, quantities by unit and
+    /// magnitude, and Float forms by their exact bits. `field_type` gives the declared type of a
     /// record's field by the record's type identity and the field's name, so
     /// a Text inside a record compares by its retained sequence too.
     pub(super) fn equals_by<'t>(
@@ -1318,6 +1350,13 @@ fn structure_identity<'t>(
                 done.push(intern(interner, bytes));
             }
             Task::Read(declared, form) => match form {
+                // A defective envelope is never an admitted value, and
+                // cannot establish frame equality.
+                RawForm::NonObject | RawForm::ObjectMembers(_) => {
+                    let mut bytes = vec![b'!'];
+                    bytes.extend_from_slice(&interner.len().to_le_bytes());
+                    done.push(intern(interner, bytes));
+                }
                 RawForm::Boolean(held) => done.push(intern(interner, vec![b'b', u8::from(held)])),
                 RawForm::Integer(spelling) => {
                     let mut bytes = vec![b'i'];
@@ -1353,6 +1392,20 @@ fn structure_identity<'t>(
                                     bytes.extend_from_slice(&value.bits().to_be_bytes());
                                 }
                                 None => {
+                                    bytes[0] = b'!';
+                                    bytes.extend_from_slice(&interner.len().to_le_bytes());
+                                }
+                            }
+                        }
+                        (_, RawNativeKind::Known(NativeKind::Decimal)) => {
+                            match document::decimal_representation(native) {
+                                Ok(value) => {
+                                    let value = value.normalized();
+                                    bytes[0] = b'D';
+                                    text(&mut bytes, &value.coefficient().to_string());
+                                    text(&mut bytes, &value.scale().to_string());
+                                }
+                                Err(_) => {
                                     bytes[0] = b'!';
                                     bytes.extend_from_slice(&interner.len().to_le_bytes());
                                 }
@@ -1515,7 +1568,9 @@ impl RawNode {
                     .map(|(name, index)| (name, index + offset))
                     .collect(),
             },
-            other @ (Self::Boolean(_)
+            other @ (Self::NonObject
+            | Self::ObjectMembers(_)
+            | Self::Boolean(_)
             | Self::Integer(_)
             | Self::Native(_)
             | Self::Absent

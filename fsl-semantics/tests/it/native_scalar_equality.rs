@@ -109,11 +109,26 @@ fn refused_at_equality_conversion(declarations: &str) {
         Ok(_) => panic!("{declarations}: the equality conversion must be refused"),
     };
     assert_eq!(refusals.len(), 1, "{declarations}: {refusals:?}");
-    assert_eq!(
-        refusals[0].cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch),
-        "{declarations}"
+    // The checker keeps the operand types of the refused equality (QSL-2176);
+    // the refusal is still `ill_typed` with the cause `type-mismatch`.
+    assert!(
+        matches!(
+            &refusals[0].cause,
+            CheckCause::OperandTypeMismatch {
+                operator: fsl_forms::BinaryOperator::Equal,
+                left_type,
+                right_type,
+            } if matches!(**left_type, filament_exact::ValueType::Int(_))
+                && matches!(**right_type, filament_exact::ValueType::Float(_))
+        ),
+        "{declarations}: {:?}",
+        refusals[0].cause
     );
+    assert_eq!(
+        refusals[0].cause.code(),
+        fsl_foundation::diagnostic::Code::IllTyped
+    );
+    assert_eq!(refusals[0].cause.cause(), Some("type-mismatch"));
     assert!(
         matches!(&refusals[0].location.origin,
             Origin::Body { function, .. } if function == "bad"),
@@ -429,4 +444,105 @@ fn a_near_miss_of_a_native_name_stays_unresolved() {
             "{name}: {refusal:?}"
         );
     }
+}
+
+/// The four native equality functions of FR-091-AC-77, written as the unit
+/// gives them.
+const NATIVE_EQUALITY: &str = "function equal0 using v(a: UUID, b: UUID): Boolean pure { a = b }\n\
+     function equal1 using v(a: Timestamp, b: Timestamp): Boolean pure { a = b }\n\
+     function equal2 using v(a: Bytes, b: Bytes): Boolean pure { a = b }\n\
+     function equal3 using v(a: JsonObject, b: JsonObject): Boolean pure { a = b }";
+
+/// FR-091-AC-77: `Bytes` and `JsonObject` name the native types in parameter
+/// and alias positions with no domain package, so the four native equality
+/// functions assemble with no `UnresolvedTypeName` and check.
+#[trace("FR-091-AC-77", "TC-1028")]
+#[test]
+fn bytes_and_json_object_name_their_native_types() {
+    let declarations = assemble(&format!(
+        "type B = Bytes;\ntype J = JsonObject;\n{NATIVE_EQUALITY}\n\
+         function r using v(a: Bytes): Bytes pure {{ a }}"
+    ))
+    .expect("every native type name resolves");
+    assert_eq!(
+        declarations.aliases,
+        [
+            ("B".to_owned(), filament_exact::ValueType::Bytes),
+            ("J".to_owned(), filament_exact::ValueType::JsonObject),
+        ]
+    );
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect("the four native comparisons check");
+    let identities: Vec<&str> = applications(&nodes(&graph))
+        .iter()
+        .map(|term| term.operation.identity())
+        .collect();
+    for identity in [
+        "filament.op.uuid.eq",
+        "filament.op.timestamp.eq",
+        "filament.op.bytes.eq",
+        "filament.op.json_object.eq",
+    ] {
+        assert_eq!(
+            identities
+                .iter()
+                .filter(|found| **found == identity)
+                .count(),
+            1,
+            "{identity}: {identities:?}"
+        );
+    }
+}
+
+/// FR-091-AC-77 (FSpec FR-149): a `Bytes` against a `JsonObject` refuses
+/// `ill_typed`/`type-mismatch` at the comparison.
+#[trace("FR-091-AC-77", "TC-1028")]
+#[test]
+fn bytes_against_json_object_refuses_type_mismatch() {
+    refused_at_comparison(
+        "function g using v(a: Bytes, b: JsonObject): Boolean pure { a = b }",
+        "g",
+        IllTypedCause::TypeMismatch,
+    );
+}
+
+/// FR-091-AC-77: a unit declaring `record Bytes` and using `Bytes` as a type
+/// refuses `ambiguous_declaration`/`ambiguous-name`, naming the use, the
+/// record's span and the native candidate with no span.
+#[trace("FR-091-AC-77", "TC-1028")]
+#[test]
+fn a_declared_bytes_record_makes_the_native_name_ambiguous() {
+    let declarations = "record Bytes { x: Integer; }\n\
+                        function f using v(a: Bytes): Boolean pure { true }";
+    let (text, _, _) = parse(declarations);
+    let span_of = |nth: usize| {
+        let start = text.match_indices("Bytes").nth(nth).expect("present").0;
+        Span {
+            start,
+            end: start + "Bytes".len(),
+        }
+    };
+    let refusal = assemble(declarations).expect_err("the use is ambiguous");
+    let [error] = refusal.errors.as_slice() else {
+        panic!("one error: {refusal:?}");
+    };
+    assert_eq!(error.span, span_of(1));
+    assert_eq!(
+        error.cause,
+        AssemblyCause::AmbiguousTypeName {
+            name: "Bytes".to_owned(),
+            candidates: vec![span_of(0)],
+            native: true,
+        }
+    );
+    let catalog = error.cause.catalog_code();
+    assert_eq!(
+        (catalog.code(), catalog.cause()),
+        ("ambiguous_declaration", "ambiguous-name")
+    );
 }

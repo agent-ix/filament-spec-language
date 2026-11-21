@@ -823,7 +823,7 @@ fn an_uncounted_cycle_that_keeps_an_interval_open_refutes_it_under_adversarial_s
     let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {
         panic!("{:?}", outcome.stats());
     };
-    let lasso = counterexample.lasso.expect("a lasso");
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert!(!lasso.terminal_stutter);
     assert!(counterexample.fairness.is_empty());
     let (stem, cycle) = counterexample.prefix.split_at(lasso.entry);

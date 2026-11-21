@@ -22,13 +22,13 @@ use super::scalar_site::{applies, check_node_operands, in_body};
 use super::{function_target, lookup, recompile, request_limits, ReplayRefusal};
 use crate::bounds::ReplayLimits;
 use crate::identity::QualifiedName;
-use fsl_package::ObligationIdentity;
 use crate::request::{ReplayRequest, ReplayRequestWire};
 use crate::scalar::{
     compare, OperatorClaim, OperatorIdentity, OperatorParityReport, OperatorParityResult,
     ScalarOperator,
 };
 use crate::target::ReplayEntry;
+use fsl_package::ObligationIdentity;
 
 /// FR-357's `stale_dependency`/`content-mismatch`: a claim identity that is
 /// not the recompiled package's.

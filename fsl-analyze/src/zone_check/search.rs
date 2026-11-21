@@ -2394,6 +2394,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let lasso = (stutters > 0).then_some(Lasso {
             entry: concrete.prefix.len(),
             terminal_stutter: true,
+            terminal_stutter_delay: None,
         });
         Ok(TemporalCounterexample {
             initial_state: initial,

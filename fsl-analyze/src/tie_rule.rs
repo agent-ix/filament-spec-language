@@ -34,7 +34,13 @@ pub fn resolve_tie(
     model_subject: bool,
     candidates: CandidateOutcome,
 ) -> CandidateOutcome {
-    if named.is_some() || kind != Capability::OperationContract {
+    if named.is_some() {
+        return candidates;
+    }
+    if kind == Capability::Schedulability {
+        return narrow_task_product_default(candidates);
+    }
+    if kind != Capability::OperationContract {
         return candidates;
     }
     let invariant_over_model = model_subject
@@ -70,5 +76,71 @@ pub fn resolve_tie(
     match set.narrowed_to(&BackendId::new(selected)) {
         Some(narrowed) => CandidateOutcome::Candidates(narrowed),
         None => candidates,
+    }
+}
+
+/// FR-962: among exactly EN-6 and EN-7, an unnamed schedulability item
+/// selects EN-7. Additional matching registrations leave the tie untouched.
+fn narrow_task_product_default(candidates: CandidateOutcome) -> CandidateOutcome {
+    let CandidateOutcome::Candidates(set) = &candidates else {
+        return candidates;
+    };
+    let mut members: Vec<&str> = set
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.id().as_str())
+        .collect();
+    members.sort_unstable();
+    let mut tied = [
+        crate::zone_check::manifest::BACKEND_ID,
+        crate::schedulability::manifest::BACKEND_ID,
+    ];
+    tied.sort_unstable();
+    if members != tied {
+        return candidates;
+    }
+    match set.narrowed_to(&BackendId::new(crate::schedulability::manifest::BACKEND_ID)) {
+        Some(narrowed) => CandidateOutcome::Candidates(narrowed),
+        None => candidates,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin, Registry};
+
+    #[test]
+    fn task_product_default_narrows_only_the_two_engine_set() {
+        let mut registry = Registry::new();
+        for backend in [
+            crate::zone_check::manifest::BACKEND_ID,
+            crate::schedulability::manifest::BACKEND_ID,
+        ] {
+            registry
+                .register(
+                    BackendDescriptor::new(
+                        Candidate::new(BackendId::new(backend)),
+                        ProviderOrigin::Linked,
+                        [(Capability::Schedulability, Mode::Unbounded)],
+                        None,
+                        None,
+                    )
+                    .expect("descriptor registers"),
+                )
+                .expect("backend registers");
+        }
+        let narrowed =
+            narrow_task_product_default(registry.candidates(Capability::Schedulability, None));
+        let CandidateOutcome::Candidates(set) = narrowed else {
+            panic!("a candidate set");
+        };
+        assert_eq!(
+            set.candidates()
+                .iter()
+                .map(|candidate| candidate.id().as_str())
+                .collect::<Vec<_>>(),
+            [crate::schedulability::manifest::BACKEND_ID]
+        );
     }
 }

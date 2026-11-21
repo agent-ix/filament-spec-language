@@ -22,8 +22,9 @@ use fsl_semantics::check::Capability;
 /// EN-6's backend identity, the identity its terminal records name.
 pub const BACKEND_ID: &str = "en-6";
 
-/// The (kind, mode) pairs EN-6 advertises: exactly two (FR-239): `temporal-satisfaction` bounded and unbounded.
-pub const ADVERTISED: [(Option<&str>, Option<&str>); 2] = [
+/// EN-6 advertises bounded and unbounded temporal checking and bounded
+/// release-backed schedulability over task products.
+pub const ADVERTISED: [(Option<&str>, Option<&str>); 3] = [
     (
         Some(Capability::TemporalSatisfaction.to_wire()),
         Some(Mode::Bounded.to_wire()),
@@ -31,6 +32,10 @@ pub const ADVERTISED: [(Option<&str>, Option<&str>); 2] = [
     (
         Some(Capability::TemporalSatisfaction.to_wire()),
         Some(Mode::Unbounded.to_wire()),
+    ),
+    (
+        Some(Capability::Schedulability.to_wire()),
+        Some(Mode::Bounded.to_wire()),
     ),
 ];
 
@@ -87,6 +92,7 @@ pub fn descriptor(origin: ProviderOrigin) -> Result<BackendDescriptor, Registrat
         descriptor
             .with_timed()
             .with_state_graph_forms(STATE_GRAPH_FORMS)
+            .with_task_product()
             .with_option_values(METHOD, [METHOD_ZONES.to_owned()])
     })
 }

@@ -231,11 +231,15 @@ pub(crate) const DENSE: &str = "dimension Time;\nunit s : Time = rational(1, 1);
 pub(crate) struct World {
     pub(crate) package: CheckedPackage,
     packages: fsl_semantics::model::intake::PackageInput,
-    snapshots: fsl_semantics::model::observation::DocumentProvision,
+    pub(crate) snapshots: fsl_semantics::model::observation::DocumentProvision,
     initial: DocumentRef,
     keys: Vec<String>,
     /// The package identity the world's model and population are in.
     identity: String,
+    /// The bytes of the world's first domain document.
+    pub(crate) document: Vec<u8>,
+    /// The bytes of the world's unit.
+    pub(crate) unit: Vec<u8>,
 }
 
 /// `document` checked with `body` as its unit, under the model and the
@@ -523,6 +527,8 @@ fn world_built_in_with_protocol_selection_and_source(
         },
         keys: keys.iter().map(|key| (*key).to_owned()).collect(),
         identity: package.to_owned(),
+        document: documents[0].to_vec(),
+        unit: unit.into_bytes(),
     }
 }
 
