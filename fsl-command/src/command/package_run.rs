@@ -87,6 +87,26 @@ pub(super) struct AdmittedPackage {
 }
 
 impl PreparedPackageRun {
+    pub(super) fn bind_population_argument(
+        &mut self,
+        parameter: &str,
+        object: fsl_semantics::model::observation::SelectedObject,
+    ) -> Result<()> {
+        let Work::Call(call) = &mut self.work else {
+            return Err(invalid(
+                "call",
+                "a population argument belongs to a call selection",
+            ));
+        };
+        let argument = call
+            .wire_arguments
+            .iter_mut()
+            .find(|argument| argument.parameter == parameter)
+            .ok_or_else(|| invalid("parameter", "the expanded argument names its parameter"))?;
+        argument.selected_object = Some(object);
+        Ok(())
+    }
+
     pub(super) fn sources(&self) -> crate::Sources {
         crate::Sources::from_sources(self.models.iter().chain(&self.sources).cloned())
     }

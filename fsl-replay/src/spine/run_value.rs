@@ -25,7 +25,8 @@ use serde_json::{json, Map, Value as Json};
 mod canonical;
 mod references;
 pub(crate) use references::{
-    reference_cancel_cause, reference_error_code, reference_error_pointer, ReferenceAdmission,
+    reference_cancel_cause, reference_error_cause, reference_error_code, reference_error_pointer,
+    ReferenceAdmission,
 };
 
 /// One argument defect: the catalog code and cause FR-650's table names, and

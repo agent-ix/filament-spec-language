@@ -92,6 +92,9 @@ pub struct WireArgument {
     pub parameter: String,
     /// A JSON integer in the signed 64-bit range, or a JSON object.
     pub value: serde_json::Value,
+    /// A coordinator-owned population selection. Request decoding never
+    /// populates this field; it is admitted against the call's object world.
+    pub selected_object: Option<fsl_semantics::model::observation::SelectedObject>,
 }
 
 /// A call's snapshot document, as the command path admitted its bytes, and
@@ -483,6 +486,11 @@ pub enum RunRefusal {
 }
 
 impl RunRefusal {
+    pub(crate) fn reference_cause(
+        error: &crate::reference_codec::ReferenceCodecError,
+    ) -> Option<&'static str> {
+        super::run_value::reference_error_cause(error)
+    }
     /// The stage FR-100's refusal table names: the wrapped compile
     /// refusal's own stage, or `call` for every refusal this module raises
     /// itself, including [`Self::Fault`] (the internal-failure envelope's
@@ -1453,7 +1461,9 @@ pub(crate) fn admit_wire_arguments(
         if !forms.has_form(value_type) {
             return Err(Box::new(RunRefusal::UnsupportedParameter { position }));
         }
-        let read = if call.canonical_values {
+        let read = if let Some(selected) = &wire.selected_object {
+            forms.read(&serde_json::json!({"reference": {"population": selected.population, "key": selected.key}}), value_type)
+        } else if call.canonical_values {
             forms.read_canonical(&wire.value, value_type)
         } else {
             match &wire.value {

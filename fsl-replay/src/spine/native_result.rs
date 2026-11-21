@@ -3557,6 +3557,9 @@ impl Disposition {
                     return Ok(result);
                 }
                 let cause = match refusal.as_ref() {
+                    super::RunRefusal::Reference(error) => {
+                        super::run_value::reference_error_cause(error)
+                    }
                     super::RunRefusal::Compile(compile) => compile.cause(),
                     super::RunRefusal::Fault(_) => None,
                     super::RunRefusal::SourceNotSupplied { .. } => Some("missing-member"),
@@ -3580,6 +3583,38 @@ impl Disposition {
                 };
                 let mut record = RefusalWire::new(refusal.code().as_str(), cause);
                 match refusal.as_ref() {
+                    super::RunRefusal::Reference(error) => {
+                        let fields = match error.as_ref() {
+                            crate::reference_codec::ReferenceCodecError::Native {
+                                cause, ..
+                            } => match cause {
+                                fsl_semantics::model::observation::AdmissionFailure::Refused(
+                                    admission,
+                                )
+                                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(
+                                    admission,
+                                ) => admission.fields.clone(),
+                                fsl_semantics::model::observation::AdmissionFailure::Fault(_) => {
+                                    BTreeMap::new()
+                                }
+                            },
+                            crate::reference_codec::ReferenceCodecError::IdentityCopy {
+                                ..
+                            }
+                            | crate::reference_codec::ReferenceCodecError::Universe { .. }
+                            | crate::reference_codec::ReferenceCodecError::Transition { .. }
+                            | crate::reference_codec::ReferenceCodecError::Refused { .. }
+                            | crate::reference_codec::ReferenceCodecError::Key { .. } => {
+                                BTreeMap::new()
+                            }
+                        };
+                        let mut fields = fields;
+                        fields.insert(
+                            "path",
+                            super::run_value::reference_error_pointer(error).to_owned(),
+                        );
+                        record = record.fields(fields);
+                    }
                     super::RunRefusal::Compile(compile) => {
                         record.locus = compile.region().map(|region| {
                             crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone()))

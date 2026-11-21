@@ -83,6 +83,33 @@ pub(crate) fn reference_error_pointer(error: &ReferenceCodecError) -> &str {
     }
 }
 
+pub(crate) fn reference_error_cause(error: &ReferenceCodecError) -> Option<&'static str> {
+    use fsl_semantics::model::observation::AdmissionFailure;
+    match error {
+        ReferenceCodecError::Native { cause, .. } => match cause {
+            AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => {
+                Some(record.catalog.cause())
+            }
+            AdmissionFailure::Fault(_) => None,
+        },
+        ReferenceCodecError::Refused { reason, .. } => Some(match reason {
+            ReferenceFailure::MalformedWire | ReferenceFailure::UnknownDeclaration => {
+                "wrong-value-kind"
+            }
+            ReferenceFailure::ForeignCatalog => "foreign-model-selection",
+            ReferenceFailure::IncompatibleUniverse => "foreign-universe",
+            ReferenceFailure::InvalidIdentity => "invalid-value",
+            ReferenceFailure::MissingPopulation => "missing-member",
+            ReferenceFailure::WrongPopulation => "wrong-role-mapping",
+            ReferenceFailure::DepthLimit => "nesting-depth",
+        }),
+        ReferenceCodecError::IdentityCopy { .. }
+        | ReferenceCodecError::Universe { .. }
+        | ReferenceCodecError::Transition { .. }
+        | ReferenceCodecError::Key { .. } => None,
+    }
+}
+
 pub(crate) fn reference_cancel_cause(
     error: &ReferenceCodecError,
 ) -> Option<filament_exact::CancelCause> {

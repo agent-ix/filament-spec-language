@@ -4814,6 +4814,7 @@ fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::s
             Ok(fsl_replay::spine::WireArgument {
                 parameter: argument.parameter.clone(),
                 value: argument.value.clone(),
+                selected_object: None,
             })
         })
         .collect::<Result<Vec<_>>>()?;

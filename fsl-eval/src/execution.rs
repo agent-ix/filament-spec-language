@@ -217,8 +217,6 @@ pub enum PrepareFailure {
 pub struct CallLimits {
     /// The `filament.value.accounting/v1` limits.
     pub accounting: ScalarLimits,
-    /// FR-277: the supplied-value helper ceilings.
-    pub supplied: SuppliedLimits,
     /// The evaluator session's live-occurrence bound (NFR-130).
     pub session: SessionLimits,
 }
@@ -230,8 +228,8 @@ pub trait PreparedEntries {
     fn unsupported(&self) -> &[(EntrySelection, UnsupportedEntry)];
 
     /// Call the function `entry` with the contract of
-    /// [`CheckedPackageEvaluation::call_supplied`] under a supplied-value run
-    /// built from `limits.supplied` and `cancel`, metered by
+    /// [`CheckedPackageEvaluation::call_supplied`] under the caller's existing
+    /// supplied-value `run`, metered by
     /// `limits.accounting` and bounded by `limits.session`. An entry listed
     /// by [`Self::unsupported`] returns [`CallFailure::Unsupported`] with its
     /// [`UnsupportedEntry`].
@@ -241,6 +239,7 @@ pub trait PreparedEntries {
         arguments: &[Value],
         environment: &ObjectEnvironment,
         limits: &CallLimits,
+        run: &mut SuppliedRun,
         cancel: &Cancel,
     ) -> Result<Evaluation, CallFailure>;
 
@@ -448,23 +447,20 @@ impl PreparedEntries for InterpreterPrepared<'_> {
         arguments: &[Value],
         environment: &ObjectEnvironment,
         limits: &CallLimits,
+        run: &mut SuppliedRun,
         cancel: &Cancel,
     ) -> Result<Evaluation, CallFailure> {
         if let Some(cause) = cancel.cause() {
             return Err(CallFailure::Cancelled(cause));
         }
         let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
-        // One run for the whole invocation: both helper budgets and the
-        // caller's original handle, never a fresh one (FR-277).
-        let mut run =
-            SuppliedRun::new(limits.supplied, cancel.clone()).map_err(CallFailure::Supplied)?;
         let evaluation = crate::value::call_checked_package_with_session_limits(
             self.package,
             function,
             arguments.to_vec(),
             environment,
             &mut meter,
-            &mut run,
+            run,
             limits.session,
         );
         if let Some(cause) = cancel.tripped() {
@@ -558,6 +554,7 @@ pub fn execute(
     request: &ExecuteRequest,
     backends: &SuppliedBackends<'_>,
     limits: &ExecuteLimits,
+    run: &mut SuppliedRun,
     cancel: &Cancel,
 ) -> Result<Evaluation, CallFailure> {
     let entry = match &request.selection {
@@ -595,9 +592,9 @@ pub fn execute(
             environment,
             &CallLimits {
                 accounting: limits.accounting,
-                supplied: limits.supplied,
                 session: limits.session,
             },
+            run,
             cancel,
         ),
         ExecuteSelection::Clause { clause, input } => {

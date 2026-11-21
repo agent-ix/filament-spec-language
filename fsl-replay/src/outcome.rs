@@ -3395,7 +3395,7 @@ impl OutcomeDocument {
                 }
                 Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
                     vec![OutcomeDiagnostic::new(
-                        None,
+                        RunRefusal::reference_cause(error),
                         refusal.code().as_str(),
                         None,
                         error.to_string(),
