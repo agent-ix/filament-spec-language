@@ -184,6 +184,112 @@ fn probability_candidate_local_denial_precedes_shared_work_and_commits_only_admi
     assert_eq!(another.used(), 0);
 }
 
+#[trace("FR-120-AC-36", "FR-120-AC-29")]
+#[test]
+fn probability_candidate_work_counts_argument_candidate_and_only_real_result_pairs() {
+    use filament_exact::WorkScope;
+    let mut model = world::link();
+    model.body.clear();
+    model.operations = vec![world::Operation {
+        name: "noop",
+        parameters: Vec::new(),
+        modifies: Vec::new(),
+    }];
+    for result in [false, true] {
+        let world = if result {
+            World::with_queries(&model, &[("noop", world::BOOLEAN)])
+        } else {
+            World::new(&model)
+        };
+        let exercise = |mut system: super::ModelSystem<'_>| {
+            let scope = WorkScope::new(system.meter_limits());
+            system.probability_work = Some(scope.clone());
+            let start = initial(&system);
+            let actions = system.actions(&start).unwrap().unwrap();
+            assert_eq!(actions.len(), 1);
+            assert_eq!(actions[0].draws.len(), 1);
+            assert_eq!(actions[0].draws[0].successors.len(), 1);
+            assert_eq!(
+                scope.consumed_work(),
+                if result { 3 } else { 2 },
+                "argument + unchanged candidate + first evaluated result only"
+            );
+        };
+        exercise(world.system());
+        through_the_wire(&world, |input| {
+            exercise(world.admit_input(input, 1_000_000).unwrap())
+        });
+    }
+}
+
+#[trace("FR-120-AC-35")]
+#[test]
+fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance() {
+    use super::super::PredicateReading;
+    use filament_exact::{LimitKind, WorkScope};
+    use fsl_semantics::check::{ProbForm, ReachTarget};
+    let mut model = world::link();
+    model.body.push_str("reward cost on Msg::send_a = 1;\nprobabilistic Check using inf on M over (m: M::Msg) under every scheduler on origin { probability >= 0.5 [ eventually holds(m.delivered) ] }\n");
+    let world = World::with_profiles(&model, &[("inf", "filament.temporal.infinite-trace/v1")]);
+    let ProbForm::Reach {
+        target: ReachTarget::Eventually(predicate),
+        ..
+    } = &world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Check")
+        .unwrap()
+        .form
+    else {
+        panic!("eventually")
+    };
+    let exercise = |mut system: super::ModelSystem<'_>| {
+        let start = initial(&system);
+        let scope = WorkScope::new(system.meter_limits());
+        system.probability_work = Some(scope.clone());
+        let actions = system.actions(&start).unwrap().unwrap();
+        let expansion = scope.consumed_work();
+        let walk = super::super::walk::walk_of(&system, &start, None).unwrap();
+        let binding = walk.rows[0].reference.clone();
+        drop(walk);
+        assert_eq!(
+            system
+                .state_predicates(&start, &[(predicate, Some(&binding))])
+                .unwrap(),
+            vec![PredicateReading::False]
+        );
+        assert!(scope.consumed_work() > expansion);
+        let mut limits = system.meter_limits();
+        limits.work_units = expansion;
+        let stopped = WorkScope::new(limits);
+        system.probability_work = Some(stopped.clone());
+        system.actions(&start).unwrap().unwrap();
+        assert_eq!(stopped.consumed_work(), expansion);
+        assert_eq!(
+            system
+                .state_predicates(&start, &[(predicate, Some(&binding))])
+                .unwrap_err()
+                .limit,
+            Some(crate::simulation::ExpansionLimit::EvaluationMeter(
+                LimitKind::WorkUnits
+            ))
+        );
+        let reward = system.declared_rewards().next().unwrap();
+        assert!(
+            system
+                .reward_value_with_cancel(reward, vec![Value::Boolean(false)], None)
+                .is_err(),
+            "the reward cannot obtain a fresh allowance after candidates"
+        );
+        assert_eq!(stopped.consumed_work(), expansion);
+    };
+    exercise(world.system());
+    through_the_wire(&world, |input| {
+        exercise(world.admit_input(input, 1_000_000).unwrap())
+    });
+}
+
 #[trace("TC-636", "FR-201-AC-22", "FR-202-AC-22", "FR-282-AC-17")]
 #[test]
 fn caller_cancellation_enters_qualified_contract_and_state_predicate_meters() {

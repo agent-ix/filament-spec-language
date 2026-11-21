@@ -63,6 +63,102 @@ fn run(
     )
 }
 
+/// Two real initial-state tests execute serially with the same per-test
+/// confidence. The minimum allowance that completes either alone cannot be
+/// replenished when the second test starts.
+#[trace("FR-120-AC-35", "FR-191-AC-8")]
+#[test]
+fn serial_initial_tests_share_the_probability_work_allowance() {
+    let claims = "probabilistic One using ev on M over (n: M::Node) under Steady on origin with alpha 0.2, beta 0.2, indifference 0.4 { probability >= 0.5 [ always[0,0] holds(n.healthy) ] }\nprobabilistic Two using ev on M over (n: M::Node) under Steady on origin with alpha 0.4, beta 0.4, indifference 0.4 { probability >= 0.5 [ always[0,0] holds(n.healthy) ] }";
+    let world = World::new(&prob_world::health(
+        "self.healthy = pre(self.healthy)",
+        "true: 1, false: 1",
+        false,
+        claims,
+    ));
+    let run_with = |bound, two| {
+        let mut subject = world.subject();
+        subject.simulation.meter.work_units = bound;
+        if two {
+            subject
+                .simulation
+                .initial
+                .push(subject.simulation.initial[0].clone());
+        }
+        check_statistical(
+            StatisticalRequest {
+                subject,
+                claim: world.claim(if two { "Two" } else { "One" }),
+                method: StatisticalMethod::Okamoto,
+                seed: 7,
+                sampler: sampler(),
+                limits: StatisticalLimits {
+                    max_samples: 64,
+                    max_draws: 64,
+                    ..StatisticalLimits::default()
+                },
+                max_witnesses: 0,
+                symmetry: Vec::new(),
+                timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+            },
+            &Cancel::new(),
+        )
+    };
+    // Find an exact completion boundary through the real engine; no cost
+    // formula or duplicate evaluator is used as a test oracle.
+    let (mut low, mut high) = (0, 1_000_000);
+    assert!(matches!(
+        run_with(high, false),
+        Ok(StatisticalOutcome::Completed(_))
+    ));
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if matches!(
+            run_with(middle, false),
+            Ok(StatisticalOutcome::Completed(_))
+        ) {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    let Ok(StatisticalOutcome::Completed(one)) = run_with(low, false) else {
+        panic!("one test fits its boundary")
+    };
+    assert!(one.basis.samples > 0);
+    let two = run_with(low, true);
+    let Ok(StatisticalOutcome::Stopped {
+        stop,
+        partial,
+        provenance,
+    }) = two
+    else {
+        panic!("the later initial test must spend the same allowance: {two:?}")
+    };
+    assert!(
+        matches!(
+            stop,
+            StatisticalStop::Expansion(fsl_eval::simulation::ExpansionStop {
+                limit: Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+                    filament_exact::LimitKind::WorkUnits
+                )),
+                ..
+            })
+        ),
+        "{stop:?}"
+    );
+    assert_eq!(partial.tests, 2);
+    assert_eq!(partial.samples, one.basis.samples);
+    assert_eq!(provenance.tests.len(), 2);
+    assert_eq!(provenance.tests[0].initial, 0);
+    assert_eq!(provenance.tests[1].initial, 1);
+    assert_eq!(provenance.tests[0].traces.count, one.basis.draws);
+    assert_eq!(
+        provenance.tests[1].traces.count, 0,
+        "the first test spends the allowance before the second draws"
+    );
+}
+
 fn run_timed_method(
     world: &crate::timed_world::World,
     claim_name: &str,
