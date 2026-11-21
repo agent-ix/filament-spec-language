@@ -173,6 +173,9 @@ pub struct TimedRefinementOutcome<S> {
 pub enum TimedLivenessHalf {
     /// The second phase ran on the symbolic product.
     Checked(TimedLivenessOutcome),
+    /// The liveness half is not decided for this subject: a timed abstract
+    /// side with a hidden abstract field (the safety half is decided).
+    Refused(ZoneCheckRefusal),
 }
 
 /// The second phase's outcome over a timed concrete subject: only
@@ -317,21 +320,18 @@ fn check_refinement_with_time_source<S>(
         check_model_bounds(&abstract_system, BOUND_POSITIONS).map_err(not_simulated)?;
         None
     };
-    // The liveness half over a timed abstract side reads class enabledness
-    // from the untimed abstract state, with no abstract clock guard and no
-    // split of the cells by the guards of the `F_A` classes (FR-899 "Timed
-    // subjects"). That is exact only without a hidden abstract field, whose
-    // candidates each carry their own clock behaviour; with one, the half is
-    // refused rather than answered from enabledness it did not read.
-    if auxiliary_timed.is_some()
-        && refinement.abstract_operation_fairness().next().is_some()
+    // The liveness half reads class enabledness from the untimed abstract
+    // state: `abstract_enabled` in `refine/live.rs` applies no abstract clock
+    // guard and does not split the cells by the guards of the `F_A` classes
+    // (FR-899 "Timed subjects"), for any timed abstract side. With a hidden
+    // abstract field, whose candidates each carry their own clock behaviour,
+    // the half is refused rather than answered from enabledness it did not
+    // read; the safety half is still decided and reported.
+    let liveness_refused = auxiliary_timed.is_some()
         && refinement
             .objects()
             .iter()
-            .any(|object| !object.hidden.is_empty())
-    {
-        return Err(ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness.into());
-    }
+            .any(|object| !object.hidden.is_empty());
     let mut run = Run::new(
         &timed,
         Judged::Refinement,
@@ -401,10 +401,16 @@ fn check_refinement_with_time_source<S>(
     let liveness = if refinement.abstract_operation_fairness().next().is_some()
         && matches!(safety, TimedSafetyOutcome::Holds { .. })
     {
-        Some(TimedLivenessHalf::Checked(liveness(
-            &mut product,
-            &mut run,
-        )?))
+        if liveness_refused {
+            Some(TimedLivenessHalf::Refused(
+                ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness,
+            ))
+        } else {
+            Some(TimedLivenessHalf::Checked(liveness(
+                &mut product,
+                &mut run,
+            )?))
+        }
     } else {
         None
     };

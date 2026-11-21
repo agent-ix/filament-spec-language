@@ -1885,7 +1885,11 @@ impl<O> Checker<'_, '_, O> {
                 state.state(),
             );
             if let StepVerdict::Passes { post, .. } = &verdict {
-                self.auxiliary_invariants(post, &mut zone)?;
+                self.auxiliary_invariants(
+                    post,
+                    &mut zone,
+                    CertificateLocus::ModelState(state_key.clone()),
+                )?;
             }
             if zone.is_empty() {
                 continue;
@@ -1931,7 +1935,12 @@ impl<O> Checker<'_, '_, O> {
 
     /// Intersect a product zone with the invariants of the mapped abstract
     /// states, whose clock places follow the concrete places.
-    fn auxiliary_invariants(&self, position: &RefinementPosition, zone: &mut Zone) -> Step<(), O> {
+    fn auxiliary_invariants(
+        &self,
+        position: &RefinementPosition,
+        zone: &mut Zone,
+        at: CertificateLocus,
+    ) -> Step<(), O> {
         let Some(timed) = self.auxiliary_timed else {
             return Ok(());
         };
@@ -1949,7 +1958,7 @@ impl<O> Checker<'_, '_, O> {
             match &agreed {
                 None => agreed = Some(invariants),
                 Some(first) if *first == invariants => {}
-                Some(_) => return reject(CertificateRule::PostDiffers, at_node(0)),
+                Some(_) => return reject(CertificateRule::PostDiffers, at),
             }
         }
         if let Some(invariants) = agreed {
@@ -1972,6 +1981,7 @@ impl<O> Checker<'_, '_, O> {
     /// and apply its clock updates before the target's common delay.
     fn auxiliary_step(
         &self,
+        node: usize,
         q: usize,
         concrete_step: &GuardedStep,
         zone: &mut Zone,
@@ -2030,17 +2040,17 @@ impl<O> Checker<'_, '_, O> {
                     .or_else(undecided)?
                 {
                     RowClockStep::Stutter => {
-                        self.auxiliary_invariants(&post, zone)?;
+                        self.auxiliary_invariants(&post, zone, at_node(node))?;
                         return Ok(());
                     }
                     RowClockStep::Agreed(step) => matched = Some(*step),
                     RowClockStep::Disagree => {
-                        return reject(CertificateRule::PostDiffers, at_node(0));
+                        return reject(CertificateRule::PostDiffers, at_node(node));
                     }
                 }
             }
             Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {
-                self.auxiliary_invariants(&post, zone)?;
+                self.auxiliary_invariants(&post, zone, at_node(node))?;
                 return Ok(());
             }
         }
@@ -2083,7 +2093,7 @@ impl<O> Checker<'_, '_, O> {
         } else {
             zone.constrain(0, 0, &Integer::zero(), true)?;
         }
-        self.auxiliary_invariants(&post, zone)
+        self.auxiliary_invariants(&post, zone, at_node(node))
     }
 
     /// A refinement form's judgement of edge `index` out of `node`, by
@@ -2283,7 +2293,7 @@ impl<O> Checker<'_, '_, O> {
                 Some(mark) if self.live.is_some() => {
                     self.live_successors(node, &state, q, mark, &listed.zone)?
                 }
-                _ => self.successors_of(&state, q, &listed.zone)?,
+                _ => self.successors_of(node, &state, q, &listed.zone)?,
             };
             for index in self.leaving[node].clone() {
                 let edge = &certificate.edges[index];
@@ -2329,6 +2339,7 @@ impl<O> Checker<'_, '_, O> {
     /// positions, as FR-239's search reads them.
     fn successors_of(
         &self,
+        node: usize,
         state: &ModelSimState,
         q: usize,
         zone: &Zone,
@@ -2370,7 +2381,7 @@ impl<O> Checker<'_, '_, O> {
                     if next.is_empty() {
                         continue;
                     }
-                    self.auxiliary_step(q, &step, &mut next)?;
+                    self.auxiliary_step(node, q, &step, &mut next)?;
                     if next.is_empty() {
                         continue;
                     }

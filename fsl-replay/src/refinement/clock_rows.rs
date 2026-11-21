@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-899 "Timed subjects": the abstract clock behaviour of one concrete edge
 //! over a timed abstract subject whose hidden candidates each took their own
-//! step. The product, replay and the zone-certificate checker read it here so
-//! they judge one rule: the edge's rows must agree on one guarded step.
+//! step. Replay and the zone-certificate checker read it here; the product
+//! applies the same rule with its own code in fsl-analyze. The edge's rows
+//! must agree on one guarded step.
 
 use fsl_eval::simulation::model::{GuardedStep, ModelSystem, TimedSystem};
 use fsl_semantics::model::state::ModelState;

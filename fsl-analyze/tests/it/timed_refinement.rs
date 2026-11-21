@@ -5,10 +5,10 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
-    check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedRefinementRefusal,
-    TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
-    ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal,
-    ZoneCheckRequest, ZoneStop, ZoneUndecided,
+    check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedLivenessHalf,
+    TimedRefinementRefusal, TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided,
+    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome,
+    ZoneCheckRefusal, ZoneCheckRequest, ZoneStop, ZoneUndecided,
 };
 use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_eval::simulation::Limits;
@@ -410,7 +410,7 @@ fn a_timed_abstract_side_with_a_hidden_field_applies_the_abstract_clock_guard() 
 /// candidate rows mix a step that is guarded with a stutter that is not. The
 /// product keeps one abstract clock valuation, so it refuses rather than
 /// follow either row.
-#[trace("TC-2538", "FR-900-AC-2")]
+#[trace("TC-2538", "FR-899")]
 #[test]
 fn a_hidden_candidate_that_stutters_while_another_steps_is_refused() {
     let concrete = document(&["x"], &[("send", &["inflight"])]);
@@ -445,25 +445,22 @@ fn a_hidden_candidate_that_stutters_while_another_steps_is_refused() {
     );
 }
 
-/// FND-006: a timed abstract side with a hidden field and an abstract
-/// fairness obligation has no liveness half yet; it is refused with its own
-/// typed refusal rather than answered from untimed enabledness.
-#[trace("TC-2536", "FR-899-AC-9")]
-#[test]
-fn the_liveness_half_of_a_timed_abstract_hidden_field_is_refused() {
+/// The refinement of a timed `A` with a hidden `late` by `M`, requiring weak
+/// fairness of the abstract `send`; `guard` is `M`'s `send` guard.
+fn timed_hidden_fair(guard: &str) -> Refining {
     let concrete = document(&["x"], &[("send", &["inflight"])]);
     let abstract_model = renamed_package(
         &document(&["y"], &[("send", &["inflight"])]),
         "test/abstract",
     );
-    let world = refining(
+    refining(
         &abstract_model,
         &concrete,
         &format!(
             "{DENSE}time A dense unit ms;\n\
              post ASend using v on A::Call::send {{ self.inflight }}\n\
              pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
-             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ {guard} }}\n\
              post MSent using v on M::Call::send {{ self.inflight }}\n{}",
             refinement("self.inflight")
                 .replace(" late = self.late;", "")
@@ -473,14 +470,97 @@ fn the_liveness_half_of_a_timed_abstract_hidden_field_is_refused() {
                 )
         ),
     )
-    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+}
+
+/// A timed abstract side with a hidden field and an abstract fairness
+/// obligation has no liveness half yet: the holding safety half is decided
+/// and the liveness half is reported refused with its own typed refusal,
+/// rather than answered from untimed enabledness.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn the_liveness_half_of_a_timed_abstract_hidden_field_is_refused() {
+    let world = timed_hidden_fair("self.x >= 1 ms");
+    let outcome = check_timed_refinement(safety_request(&world), &Cancel::new())
+        .expect("the safety half is decided");
+    assert!(
+        matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }),
+        "{:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Refused(
+                ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
+}
+
+/// The same refinement whose concrete send is too early for the abstract
+/// guard: the violated safety half is still reported, with no liveness half.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn a_violated_safety_half_is_reported_despite_the_refused_liveness_half() {
+    let world = timed_hidden_fair("self.x >= 0 ms");
+    let outcome = check_timed_refinement(safety_request(&world), &Cancel::new())
+        .expect("the safety half is decided");
+    let TimedSafetyOutcome::Violated { counterexample, .. } = outcome.safety else {
+        panic!("the abstract clock guard refutes: {:?}", outcome.safety);
+    };
+    assert!(matches!(
+        counterexample.refinement.as_ref(),
+        Some(RefinementFailure::AbstractClockGuard { .. })
+    ));
+    assert!(outcome.liveness.is_none(), "{:?}", outcome.liveness);
+}
+
+/// FR-899 "Timed subjects": `h` is hidden and free at the initial state (two initial
+/// candidates, `h` false and true), and
+/// the abstract time invariant `when self.h { y <= 0 }` reads differently
+/// for them. The product keeps one abstract clock valuation, so it refuses
+/// instead of intersecting the invariants.
+#[trace("TC-2538", "FR-899")]
+#[test]
+fn hidden_candidates_that_disagree_on_the_abstract_time_invariant_are_refused() {
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let mut abstract_document: serde_json::Value =
+        serde_json::from_slice(&document(&["y"], &[("send", &["inflight"])]))
+            .expect("abstract package JSON");
+    abstract_document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("abstract object fields")
+        .push(crate::timed_world::wire_field(
+            "h",
+            "ix://filament/native/Boolean",
+        ));
+    let abstract_document =
+        renamed_package(&abstract_document.to_string().into_bytes(), "test/abstract");
+    let world = refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             time invariant Trap when {{ self.h }} {{ self.y <= 0 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true]);
     let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
         .err()
-        .expect("the liveness half is refused");
+        .expect("candidates that disagree on the invariant are refused");
     assert!(
         matches!(
             refused,
-            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness)
+            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
         ),
         "{refused:?}"
     );

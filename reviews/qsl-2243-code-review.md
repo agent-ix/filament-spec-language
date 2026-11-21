@@ -35,3 +35,28 @@ Out of scope (pre-existing, not a finding): the zone-certificate checker's auxil
 ## Verdict
 
 Fix round needed. The extraction for Taken::Abstract is behaviour-preserving. The guard, carry and reset agreement check in matched_auxiliary_step is sound as far as it goes, and refusing a mix of stutter and step is conservative. The first changed test is strengthened: it now asserts AbstractClockGuard and Reproduced. FND-001 to FND-006 are soundness defects on paths this PR opens.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-011 | medium | The HiddenFieldTimedAbstractLiveness refusal returns before the safety run, so a timed-abstract hidden-field refinement with non-empty F_A loses its decidable safety half (a Violated or Holds safety verdict is never reported) | fsl-analyze/src/zone_check/refine.rs:320-334 |
+| FND-012 | low | The new comment says untimed enabledness "is exact only without a hidden abstract field"; it is not exact without one either (no abstract clock guard, no F_A-guard split), which is a pre-existing gap the comment now hides | fsl-analyze/src/zone_check/refine.rs:320-325 |
+| FND-013 | medium | New refusal tests are tagged to ACs they do not evidence: the liveness refusal test carries FR-899-AC-9, whose text says "None of the four settles unsupported", and the mixed-stutter refusal test carries FR-900-AC-2 (a guard refutation) | fsl-analyze/tests/it/timed_refinement.rs:272,310 |
+| FND-014 | low | The FR-245 checker rejects disagreeing rows and invariants at at_node(0) instead of the node or edge being judged | fsl-replay/src/certificate/zone_certificate.rs:1952,2038 |
+| FND-015 | low | clock_rows.rs module doc says the product reads the rule there; the producer (fsl-analyze matched_auxiliary_step, uniform_invariants) has its own copy, which is what keeps checker independence, so the doc is wrong | fsl-replay/src/refinement/clock_rows.rs:1-5 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | fixed | - |
+| FND-007 | fixed | - |
+| FND-008 | still-open | Protocol HiddenUnfair is expressible: unbounded `repeat ... while { true }` inside `parallel` branches is checked (CheckedRepeat.max is Option; analyze_cli.rs:645). No disagreeing-guard or disagreeing-invariant refusal test, and the checker's Disagree rejection is untested |
+| FND-009 | deferred | PR body records per-candidate clock valuations as remaining work on QSL-2243 and the ticket stays open; QSL-2243 must not be closed on this merge |
+| FND-010 | fixed | - |

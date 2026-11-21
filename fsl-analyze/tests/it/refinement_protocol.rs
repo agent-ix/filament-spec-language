@@ -2465,3 +2465,183 @@ fn an_absent_abstract_subject_starts_a_protocol_abstract_side_at_the_mapped_stat
         outcome.safety
     );
 }
+
+/// Abstract `Spec::M` operations `flip` and `other`, neither changing the
+/// visible `v` or the hidden `h`; the concrete `tick` and `tock` are always
+/// enabled and change nothing.
+const STARVING_CONTRACTS: &str = "pre SpecFlip using v on Spec::M::flip { true }\n\
+     pre SpecOther using v on Spec::M::other { true }\n\
+     post FlipStep using v on Spec::M::flip { self.v = pre(self.v) and self.h = pre(self.h) }\n\
+     post OtherStep using v on Spec::M::other { self.v = pre(self.v) and self.h = pre(self.h) }\n";
+
+/// Abstract `flip` is enabled at `v = 0` and `other` at `v = 1`, as the
+/// concrete `tick` and `tock` are, so every concrete run takes both forever.
+const ALTERNATING_CONTRACTS: &str = "pre SpecFlip using v on Spec::M::flip { self.v = 0 }\n\
+     post FlipStep using v on Spec::M::flip { self.v = 1 and self.h = pre(self.h) }\n\
+     pre SpecOther using v on Spec::M::other { self.v = 1 }\n\
+     post OtherStep using v on Spec::M::other { self.v = 0 and self.h = pre(self.h) }\n\
+     pre ImplTick using v on Impl::M::tick { self.v = 0 }\n\
+     post ImplTicked using v on Impl::M::tick { self.v = 1 }\n\
+     pre ImplTock using v on Impl::M::tock { self.v = 1 }\n\
+     post ImplTocked using v on Impl::M::tock { self.v = 0 }\n";
+
+/// A protocol of two unbounded `repeat` branches, one attempting `flip` and
+/// one attempting `other`, refined by a concrete `tick` mapped to `flip` and
+/// a concrete `tock` mapped to `other`.
+fn forever_refinement(ensure: &str) -> String {
+    format!(
+        "protocol Forever using p over (m: Spec::M) on origin {{\n\
+         role w on Spec::M; scheduling adversarial;\n\
+         run parallel Both {{ \
+         branch a sequence A {{ repeat LA by w visible () while {{ true }} \
+         attempt Flip by w on Spec::M::flip contracts [SpecFlip] as (f: Spec::M) {{ true }}; }} \
+         branch b sequence B {{ repeat LB by w visible () while {{ true }} \
+         attempt Other by w on Spec::M::other contracts [SpecOther] as (o: Spec::M) {{ true }}; }} }} \
+         join all [a, b];\n\
+         finish Done as (d: Boolean) {{ true }};\n\
+         }}\n\
+         refinement TickForever using inf abstract Spec::Forever concrete Impl {{\n\
+         population Spec::ms from Impl::ms;\n\
+         object Spec::M from Impl::M {{ v = self.v; }}\n\
+         step Impl::M::tick -> Spec::M::flip(self);\n\
+         step Impl::M::tock -> Spec::M::other(self);\n\
+         {ensure}}}"
+    )
+}
+
+/// The protocol check of `world`, whose abstract protocol runs over the one
+/// object `m`.
+fn check_forever(
+    unit: &crate::refinement_aux::Unit,
+    world: &crate::refinement_aux::World<'_>,
+) -> fsl_replay::RefinementOutcome {
+    check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(crate::refinement_aux::UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(forever_binding(unit)),
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted")
+}
+
+fn forever_binding(
+    unit: &crate::refinement_aux::Unit,
+) -> fsl_analyze::model_check::AbstractProtocolBinding {
+    fsl_analyze::model_check::AbstractProtocolBinding {
+        over: fsl_eval::model_subject::ModelInstance {
+            population: unit.abstract_key("ms"),
+            key: "m".to_owned(),
+        },
+        capacities: Vec::new(),
+    }
+}
+
+fn forever_internals() -> serde_json::Value {
+    serde_json::json!([{"refinement":"TickForever","internal":[
+        "fork Spec::Forever::Both","join Spec::Forever::Both","Spec::Forever::Done"]}])
+}
+
+/// FR-899-AC-10 (TC-2536): over an unbounded protocol whose `other` attempt
+/// stays enabled while a concrete run takes only `tick` (and `tock` is always
+/// enabled but never taken), the weak `other` requirement is refuted with
+/// `HiddenUnfair{other}`, and replay rebuilds the protocol candidate graph
+/// from the counterexample and reproduces it.
+#[trace("TC-2536", "FR-899-AC-10")]
+#[test]
+fn a_protocol_enabled_class_the_concrete_loop_never_takes_is_hidden_unfair_and_replays() {
+    use crate::refinement_aux::{Unit, UNLIMITED as AUX_UNLIMITED};
+
+    let unit = Unit::hidden_fairness_model_over(
+        1,
+        0,
+        &["flip", "other"],
+        (&["tick", "tock"], &[]),
+        STARVING_CONTRACTS,
+    );
+    let unfair = unit.world_with_internals(
+        &forever_refinement("ensure fair weak Spec::M::other;\n"),
+        forever_internals(),
+    );
+    let outcome = check_forever(&unit, &unfair);
+    assert!(
+        matches!(outcome.safety, SafetyOutcome::HoldsUncertified { .. }),
+        "safety outcome: {:?}",
+        outcome.safety
+    );
+    let Some(fsl_replay::LivenessHalf::Checked(fsl_replay::ModelCheckOutcome::Violated {
+        counterexample,
+        ..
+    })) = outcome.liveness
+    else {
+        panic!(
+            "a protocol hidden-unfair refutation: {:?}",
+            outcome.liveness
+        );
+    };
+    let Some(fsl_replay::RefinementFailure::HiddenUnfair { constraint }) =
+        counterexample.refinement.as_ref()
+    else {
+        panic!("HiddenUnfair: {:?}", counterexample.refinement);
+    };
+    assert_eq!(constraint.operation().name(), "other");
+    let systems = open_protocol_systems(
+        unfair.refinement(),
+        &unfair.concrete_request(AUX_UNLIMITED),
+        unfair.package(),
+        vec![unfair.abstract_initial()],
+        forever_binding(&unit).over,
+        &[],
+    )
+    .expect("replay opens the same abstract protocol system");
+    assert!(matches!(
+        replay_refinement_trace(unfair.refinement(), &systems, &counterexample)
+            .expect("counterexample replay runs"),
+        RefinementTraceSettlement::Reproduced { .. }
+    ));
+}
+
+/// FR-899-AC-10 (TC-2536): the same protocol over a concrete subject whose
+/// `tick` and `tock` alternate, so every concrete run takes both `flip` and
+/// `other` forever, satisfies both weak requirements.
+#[trace("TC-2536", "FR-899-AC-10")]
+#[test]
+fn a_protocol_whose_classes_every_concrete_run_takes_satisfies_their_fairness() {
+    use crate::refinement_aux::Unit;
+
+    let unit = Unit::hidden_fairness_model_over(
+        1,
+        0,
+        &["flip", "other"],
+        (&["tick", "tock"], &["v"]),
+        ALTERNATING_CONTRACTS,
+    );
+    let fair = unit.world_with_internals(
+        &forever_refinement("ensure fair weak Spec::M::flip;\nensure fair weak Spec::M::other;\n"),
+        forever_internals(),
+    );
+    let outcome = check_forever(&unit, &fair);
+    assert!(
+        matches!(outcome.safety, SafetyOutcome::HoldsUncertified { .. }),
+        "safety outcome: {:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(fsl_replay::LivenessHalf::Checked(
+                fsl_replay::ModelCheckOutcome::HoldsReduced { .. }
+            ))
+        ),
+        "every concrete run takes both classes: {:?}",
+        outcome.liveness
+    );
+}

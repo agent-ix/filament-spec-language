@@ -39,8 +39,9 @@ use crate::model_check::{
 use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
 use crate::zone_check::{
     certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
-    settle_timed_refinement, settle_zone_check, TimedRefinementRefusal, TimedRefinementRequest,
-    ZoneCheckItem, ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest, ZoneItem,
+    settle_timed_refinement, settle_zone_check, TimedLivenessHalf, TimedRefinementOutcome,
+    TimedRefinementRefusal, TimedRefinementRequest, TimedSafetyOutcome, ZoneCheckItem,
+    ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest, ZoneItem,
 };
 
 /// The FR-396/FR-399 negotiation seam for a routed hyper item. HP-4 calls
@@ -1004,6 +1005,10 @@ pub fn timed_refinement_item<'a, S: Clone + Eq + 'a>(
             } = item;
             let obligation = request.obligation.clone();
             match check_timed_refinement(request, cancel) {
+                Ok(TimedRefinementOutcome {
+                    safety: TimedSafetyOutcome::Holds { .. },
+                    liveness: Some(TimedLivenessHalf::Refused(refusal)),
+                }) => EngineReport::Refused(zone_refusal(&refusal)),
                 Ok(outcome) => EngineReport::Zone(
                     Box::new(settle_timed_refinement(
                         &outcome,
