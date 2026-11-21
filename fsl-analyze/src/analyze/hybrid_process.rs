@@ -5,9 +5,9 @@
 //! against), hands its bytes to the engine's exchange, reads the FR-331
 //! outcome stage the exchange returns and turns the item's one result entry
 //! into a [`HybridAnswer`], which the in-process path then settles by the
-//! same rules. The exchange carries bytes only: starting the process, FR-462
-//! framing, limits, the deadline and cancellation are the driver's plugin
-//! host (FR-635).
+//! same rules. The exchange carries bytes or typed host stops: starting the
+//! process, FR-462 framing, limits, the deadline and cancellation are the
+//! driver's plugin host (FR-635).
 
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::fairness::FairnessKind;
@@ -25,7 +25,7 @@ use fsl_semantics::check::{Capability, CheckedGraph, CheckedHybridClaim};
 use serde_json::{json, Map, Value};
 
 use super::hybrid_item::HybridReport;
-use super::{BackendTool, EngineReport, Refusal};
+use super::{BackendTool, EngineReport, HybridExchangeError, Refusal};
 
 /// The checked package feature FSL's reader supports for the request's
 /// package (FSpec FR-322).
@@ -86,10 +86,23 @@ pub(super) fn answer(
     cancel: &filament_exact::Cancel,
 ) -> Result<HybridAnswer, EngineReport> {
     let request = compose(call)?;
-    let body = call
-        .exchange
-        .exchange(request.bytes(), cancel)
-        .map_err(tool_failed)?;
+    let exchanged = call.exchange.exchange(request.bytes(), cancel);
+    // This item is still open at the exchange boundary. Cancellation wins
+    // over both a provider deadline and bytes received after cancellation.
+    if let Some(source) = cancel.cause() {
+        return Err(EngineReport::Refused(Refusal::Incomplete(
+            fsl_replay::IncompleteCause::Cancelled { source },
+        )));
+    }
+    let body = exchanged.map_err(|error| match error {
+        HybridExchangeError::ToolFailure(failure) => tool_failed(failure),
+        HybridExchangeError::TimedOut => {
+            EngineReport::Refused(Refusal::Incomplete(fsl_replay::IncompleteCause::TimedOut))
+        }
+        HybridExchangeError::Cancelled { source } => EngineReport::Refused(Refusal::Incomplete(
+            fsl_replay::IncompleteCause::Cancelled { source },
+        )),
+    })?;
     let outcome: Value =
         serde_json::from_slice(&body).map_err(|_| tool_failed(ToolFailure::MalformedFrame))?;
     let (entry, counterexamples) = item_entry(&outcome, call.backend)?;
