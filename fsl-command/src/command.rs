@@ -3343,6 +3343,25 @@ fn handoff_clock_selections(
                     .map(|hyper| hyper.name().to_owned())
             });
         let Some(name) = name else {
+            let awaited = graph
+                .protocols()
+                .iter()
+                .flat_map(|protocol| {
+                    protocol
+                        .awaits
+                        .iter()
+                        .map(move |awaited| (protocol, awaited))
+                })
+                .find(|(_, awaited)| awaited.span == selection.declaration_span);
+            if let Some((protocol, awaited)) = awaited {
+                let found = crate::emit_checked_v2::ClockSelection {
+                    clause: format!("await {}::{}", protocol.name, awaited.name),
+                    clock: selection.clock.clone(),
+                };
+                if !named.contains(&found) {
+                    named.push(found);
+                }
+            }
             continue;
         };
         let found = crate::emit_checked_v2::ClockSelection {

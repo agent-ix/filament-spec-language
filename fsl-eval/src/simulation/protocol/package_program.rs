@@ -136,6 +136,8 @@ pub struct PackageProtocolProgram<'a> {
     pub(super) channels: Vec<PackageChannel>,
     /// Repeat continuations and bounds read from admitted control members.
     pub(super) loops: BTreeMap<ProtocolNodeId, super::program::Loop<'a>>,
+    /// Await continuations derived from the admitted causal relation.
+    pub(super) awaits: BTreeMap<ProtocolNodeId, super::program::Await>,
     /// The admitted protocol name.
     pub name: String,
     /// The `run` root control.
@@ -587,6 +589,61 @@ impl<'a> PackageProtocolProgram<'a> {
                 },
             );
         }
+        let mut awaits = BTreeMap::new();
+        if form
+            .controls
+            .iter()
+            .any(|control| control.operation == ControlOperation::Await)
+        {
+            let relation = protocol_view::causal_relation(admitted, form.protocol.clause())
+                .map_err(|_| {
+                    PackageProgramRefusal::MissingIdentity(form.protocol.clause().clone())
+                })?;
+            let edge_to = |kind: protocol_view::EdgeKind,
+                           from: &fsl_package::CheckedNodeId,
+                           port: protocol_view::Port| {
+                relation
+                    .edges()
+                    .iter()
+                    .find(|edge| {
+                        edge.kind == kind
+                            && &edge.from.node == from
+                            && edge.from.port == port
+                            && edge.to.port == protocol_view::Port::Enter
+                    })
+                    .and_then(|edge| id_by_node.get(&edge.to.node).map(|id| (&edge.to.node, *id)))
+                    .ok_or(PackageProgramRefusal::UnknownControl)
+            };
+            for control in form
+                .controls
+                .iter()
+                .filter(|control| control.operation == ControlOperation::Await)
+            {
+                let (event_node, event) = edge_to(
+                    protocol_view::EdgeKind::AwaitSuccess,
+                    &control.node.node_id,
+                    protocol_view::Port::Enter,
+                )?;
+                let (_, then) = edge_to(
+                    protocol_view::EdgeKind::AwaitSuccess,
+                    event_node,
+                    protocol_view::Port::Exit,
+                )?;
+                let (_, timeout) = edge_to(
+                    protocol_view::EdgeKind::AwaitTimeout,
+                    &control.node.node_id,
+                    protocol_view::Port::Enter,
+                )?;
+                awaits.insert(
+                    control.id,
+                    super::program::Await {
+                        event,
+                        then,
+                        timeout,
+                    },
+                );
+            }
+        }
         let path_parent = |control: &fsl_package::protocol_view::ProtocolControlView<'_>| {
             form.controls
                 .iter()
@@ -780,6 +837,23 @@ impl<'a> PackageProtocolProgram<'a> {
                         Vec::new(),
                     )
                 }
+                ControlBody::Other(ControlOperation::Await) => {
+                    let awaited = awaits
+                        .get(&control.id)
+                        .ok_or(PackageProgramRefusal::UnknownControl)?;
+                    (
+                        vec![awaited.event, awaited.then, awaited.timeout],
+                        Vec::new(),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Vec::new(),
+                    )
+                }
                 _ => return Err(PackageProgramRefusal::Unsupported(control.operation)),
             };
             let constraint = if control.operation == ControlOperation::Repeat
@@ -941,6 +1015,7 @@ impl<'a> PackageProtocolProgram<'a> {
             captures,
             channels,
             loops,
+            awaits,
             name: form.name.clone(),
             root,
             over,

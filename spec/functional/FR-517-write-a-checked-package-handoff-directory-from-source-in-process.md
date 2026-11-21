@@ -25,6 +25,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-531
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-508
+    type: references
 ---
 # FR-517: Write a checked-package handoff directory from source, in process
 
@@ -67,18 +69,19 @@ behind the Cargo feature `checked-handoff` and adding no dependency:
 - `package_name`, `execution_points` and `temporal_selections` as
   `emit_checked_v2` and `fsl_package::emit_checked_with_temporal_selections`
   take them (`temporal_selections` is a new optional member of the request and
-  also selects a `compensate` template by its template name);
+  also selects a `compensate` template by its template name and an `await`
+  by the selector defined in "Await clock selections");
 - `corpus`: `None` or `Standard` (FR-518).
 - `native_join`: the finite work and logical-storage ceilings of the identity file's native joins (FR-531 "The native join budget"); its work and storage are `i2.work_units` and `i2.native_join_storage`. The writer has no default for it; one budget of it serves the write, and a denied charge returns `Error::NativeJoinExhausted` with Contract IR's refusal and writes no directory.
 
 The `emit_checked_v2` command line carries `temporal_selections` as
 `--clock-selections <json-file>`: a JSON object from the exact authored name of
-a `temporal` clause or `compensate` template to its clock configuration in the
+a `temporal` clause, `compensate` template, or `await` selector to its clock configuration in the
 `TemporalBinding` `clock` wire form, for example `{"Due": {"kind":
 "event_position", "sequence_authority": "events-authority"}}`. Each member is
 one `ClockSelection`, in file order. An empty object, a repeated name or a
 value that is not a well-formed clock configuration is a refusal naming the
-file; a name that matches no clause or template is the request's
+file; a name that matches no clause, template or `await` selector is the request's
 `UnknownClause` refusal. Without the option the request holds no selection.
 
 ## Outputs
@@ -158,10 +161,77 @@ quantifiers name more than one model is refused
 a single-model hyper clause takes the selection for every trace.
 
 
+### Await clock selections
+
+For each checked `await`, the named clock-selection key SHALL be exactly
+`await <Protocol>::<AwaitName>`, with the owning protocol's checked name and
+`CheckedAwait.name` substituted without normalization. The writer SHALL join
+the selection to that protocol's checked `await` node and whole-declaration
+span. If a supplied key identifies more than one checked declaration, the
+request SHALL be refused as ambiguous, naming that key and writing no
+directory; the writer SHALL NOT select the first match. A repeated supplied
+key retains `DuplicateClause`, and a key with no match retains `UnknownClause`.
+This adds no profile use site: the Await admission rules of
+[FR-508](./FR-508-admit-a-profile-only-at-the-use-sites-of-its-kind.md) remain in
+force, including the refusal of InfiniteTrace at Await.
+
+The writer SHALL add an `awaits` member to `selection.json` immediately after
+`compensations` and before `hypers` when the unit declares an `await`.
+`awaits` SHALL be omitted when the unit declares none, leaving those units'
+sidecar bytes unchanged. The format remains
+`filament.checked-handoff.selection/1`. Its rows SHALL follow the checked
+Await declarations in source order, across their owning protocols. Each row
+SHALL contain exactly these members, in order:
+
+| Member | Content |
+| --- | --- |
+| `node` | the `CheckedNodeId` of this Await's own native control declaration, joined from its checked protocol node key by the existing node-id encoding rule |
+| `name` | the exact `await <Protocol>::<AwaitName>` selection key defined above |
+| `occurrence` | the unsigned ordinal of this Await's `Declaration` occurrence on that node, as held by the checked unit; not the row index or an inferred zero |
+| `binding` | the expected `{clock_name, clock}` in the existing binding encoding, or `null` when the existing profile and request require no configured binding |
+
+The writer SHALL derive these rows from the checked unit and the actual
+clock selections supplied for its acquisition. It SHALL NOT recover expected
+binding values by reading the emitted package. A configured binding SHALL
+retain the authored clock name and every supplied clock-configuration value.
+The writer SHALL NOT infer a sequence authority, substitute `protocol-events`,
+or supply a clock configuration that the request did not carry. An absent
+selection required by the selected profile SHALL retain the existing missing
+clock refusal and write no directory; it SHALL NOT become an unconfigured
+Await row.
+
+`Selection::read` SHALL refuse an Await row with a missing, repeated or unknown
+member, a malformed node or occurrence, or a duplicate `(node, occurrence)`
+pair. `Selection::check` SHALL match each expected binding to exactly the
+package row with that declaration node and `Declaration` occurrence, with
+`source_unit` and `trace` both absent. It SHALL NOT accept the first row for
+the node or a binding at another occurrence. A missing or unexpected binding,
+wrong occurrence, extra binding for that Await, or non-declaration locus
+SHALL refuse on `clause.binding`, with `clause = Some(name)` for the affected
+Await. Clock-name, clock-kind and configuration differences SHALL use the
+existing `clock.*` axes and the same Await name. An absent or non-Await node
+SHALL refuse on `clause.node` with that name.
+
+The expected global `temporal_bindings` count SHALL include every configured
+Await row as well as all temporal-clause, compensation and hyper-trace rows.
+The comparison SHALL continue counting every actual package binding; adding
+Await rows SHALL NOT suppress an extra row or reduce any existing count.
+
+`Selection::inputs` SHALL reconstruct each Await's exact named clock
+selection from these rows for source recompilation. The command's handoff
+acquisition and the source replay that re-emits a package SHALL carry the
+actual selections used by the checked acquisition, including Await
+selections, to their existing emission entry. These paths SHALL NOT replace
+those selections with empty selections or model-derived defaults. Equal
+checked inputs and selections SHALL produce equal sidecar and package bytes
+on write and recompile.
+
+
 `checked_handoff::Selection::read(bytes)` parses the sidecar and
 `Selection::check(&self, &CheckedPackageV2) -> Result<(), SelectionRefusal>`
 compares an admitted package with it, counting every `temporal_bindings` row,
-those of clauses and those of compensation templates; `SelectionRefusal` carries one
+those of clauses, compensation templates, hyper traces and Await declarations;
+`SelectionRefusal` carries one
 `SelectionAxis` (FR-518). Both are FSL-owned so a consumer parses and compares
 with no copy of the format.
 
@@ -528,6 +598,11 @@ the three directories. The packages hold:
 | FR-517-AC-26 | `write` over a unit declaring the hyper clause `Ordered` under the event-position false-extension profile, with the quantifiers `forall trace a of M` and `forall trace b of M`, emits a package whose `temporal_bindings` hold exactly two rows for it. Both rows are keyed on its `hyperproperty` node at its `claim` occurrence, one with `trace` `a` and one with `trace` `b`, in quantifier order. No row is keyed on its body wrapper. The strict reader admits the package, the sidecar's expected binding count includes the two rows, and `Selection::check` passes. A package with one row keyed on the wrapper with no `trace` is refused by the strict reader at that row's `declaration`, so the emission check can fail. | Test (TC-3128) |
 | FR-517-AC-27 | A root importing `test/z`, which imports `test/a`, writes the manifest vector of "The dependency artifact closure" and exactly one artifact/witness triple in each indexed directory. Each triple is admitted with that package's own direct dependencies and witnesses, and the root is admitted with the retained closure. Reordering the caller's library provisions does not change any written byte. A unit with no imports writes the required manifest with an empty list and no dependency directory. | Test |
 | FR-517-AC-28 | For a diamond whose root imports `test/left` and `test/right`, both importing `test/shared`, the manifest contains three unique rows ordered `test/left`, `test/right`, `test/shared`, with directories `dependencies/0`, `dependencies/1`, `dependencies/2`; the shared package and its witnesses occur once. Two writes give equal trees. A conflicting `test/shared` selection is refused under the existing dependency conflict rule and leaves no output directory, never a tree containing one arbitrarily chosen shared artifact. | Test |
+| FR-517-AC-29 | A checked unit containing an Await `Wait` in protocol `Flow`, with an event-position clock selection whose sequence authority is `caller-events`, writes an `awaits` row naming `await Flow::Wait`, its own native node, its actual Declaration occurrence and the exact authored clock name and supplied configuration. The strict reader admits the package, `Selection::check` passes, and `compile` reconstructs the same selection and package bytes. The authority is never replaced with `protocol-events`. | Test |
+| FR-517-AC-30 | A unit with two Await declarations writes their rows in source order and counts both configured bindings alongside temporal-clause, compensation and hyper-trace bindings. Equal writes give byte-identical sidecars. A unit with no Await omits `awaits` and retains its prior sidecar bytes. | Test |
+| FR-517-AC-31 | For an admitted package with an Await binding, changing its clock name, kind or a configuration value to another reader-admitted value makes `Selection::check` refuse on the corresponding existing `clock.*` axis with `clause = Some` of the Await selector. A missing binding, a binding at another reader-admitted declaration occurrence, or an extra binding is refused on `clause.binding`; a missing or non-Await node is refused on `clause.node`. No mutation is accepted by matching another occurrence's row. | Test |
+| FR-517-AC-32 | `Selection::read` refuses an Await row with a missing, repeated or unknown member, a malformed occurrence, or a repeated `(node, occurrence)` pair. A supplied Await selection key that matches two declarations is refused as ambiguous and writes no directory; an unknown key and a repeated supplied key retain `UnknownClause` and `DuplicateClause`, respectively. A missing clock configuration required by the Await profile retains its existing refusal and writes no directory. | Test |
+| FR-517-AC-33 | An analyze request whose checked acquisition receives a caller-supplied Await clock selection preserves that exact selection in its source replay and handoff emission. Source recompilation and the package path use the same clock configuration and produce the same replay outcome; neither path silently substitutes empty selections or model-derived clocks for the supplied Await selection. | Test |
 
 ## Dependencies
 

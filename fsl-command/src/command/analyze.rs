@@ -597,12 +597,13 @@ fn run_input(
         fsl_replay::spine::SpineLimits::default(),
         integer_division,
         None,
-        |_intake, checked, _, _, packages, libraries, _, _, _, _| {
+        |_intake, checked, selections, _, packages, libraries, _, _, _, _| {
             let units = std::iter::once(&source).chain(libraries);
             let settled = settle_items(
                 checked.package(),
                 &packages,
                 units,
+                selections,
                 &routed,
                 &Settle {
                     negotiate,
@@ -654,10 +655,11 @@ pub(super) fn settle_items<'u>(
     package: &fsl_package::CheckedPackage,
     packages: &fsl_semantics::model::intake::PackageInput,
     units: impl IntoIterator<Item = &'u FormalSource>,
+    selections: &[fsl_package::TemporalClockSelection],
     routed: &RoutedItems,
     settle: &Settle<'_>,
 ) -> Result<SettledRun> {
-    let mut provision = SourceProvision::default();
+    let mut provision = SourceProvision::default().with_temporal_selections(selections.to_vec());
     let mut labels = Vec::new();
     for read in units {
         labels.push(read.source().reference().clone());
