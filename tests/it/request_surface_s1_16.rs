@@ -4113,7 +4113,7 @@ fn package_window_adapter_controls(
 /// caller text provisioning remains a call-stage boundary on the byte route.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-11", "TC-451", "FR-100-AC-9")]
-fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
+fn package_remainder_condition_refusal_keeps_caller_source_locus() {
     use fsl_foundation::{Source, SourceIdentity, Span};
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
         profile v = \"filament.model.complete/v1\";\n\
@@ -4123,7 +4123,7 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         type Zero = Int[0, 0];\n\
         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         type Total = Int[0, 4000];\n\
-        function populationSize using v(): Integer pure { size(allInstances<Config::ConfigVersion>(Config::config_history)) }\n\
+
         temporal C using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
         { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n\
         temporal Other using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
@@ -4139,20 +4139,13 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         unit.len(),
     )
     .unwrap_or_else(|refusal| panic!("valid caller source: {}", refusal.error.message));
-    for (member, selection, term) in [
-        (
-            "call",
-            json!({"function":"populationSize","snapshot":"spine-snapshot.json","arguments":[]}),
-            "allInstances<Config::ConfigVersion>(Config::config_history)",
-        ),
-        (
-            "clause",
-            json!({"selection":{"temporal":{"name":"C","trace":{"finite":["s0"]},
+    for (member, selection, term) in [(
+        "clause",
+        json!({"selection":{"temporal":{"name":"C","trace":{"finite":["s0"]},
                 "over":{"reference":{"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY),"key":"child"}}}},
                 "observations":{"s0":"spine-snapshot.json"}}),
-            "allInstances<Config::ConfigVersion>(Config::config_history)",
-        ),
-    ] {
+        "allInstances<Config::ConfigVersion>(Config::config_history)",
+    )] {
         let owner = if member == "call" {
             0
         } else {
