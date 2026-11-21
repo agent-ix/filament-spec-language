@@ -48,9 +48,11 @@ pub fn normalize(
                         carrier: carrier.clone(),
                     }
                 } else {
-                    let declaring = scope_of(&row.declaring_type)?
+                    let rendered = normalize_text(&row.declaring_type);
+                    let declaring = scope_of(without_optional(&rendered))?
                         .ok_or_else(|| fault("clock-field-has-original-declaring-scope"))?;
-                    let member = normalize_member(&row.declaring_type, &row.member_identity)?;
+                    let member =
+                        normalize_member(without_optional(&rendered), &row.member_identity)?;
                     if !member.starts_with("ix://") {
                         return Err(fault("clock-field-has-original-member-uri"));
                     }
@@ -81,6 +83,19 @@ pub fn normalize(
         }
     }
     Ok(PlaceTemplate { scope, path })
+}
+
+/// A member below an optional record is still declared by that record;
+/// the separate selecting carrier and option entry retain its presence.
+#[ix_trace_rs::string_edge]
+fn without_optional(mut rendered: &str) -> &str {
+    while let Some(payload) = rendered
+        .strip_prefix("Option<")
+        .and_then(|value| value.strip_suffix('>'))
+    {
+        rendered = payload;
+    }
+    rendered
 }
 
 /// Read the wrapper spelling which FR-322 resolution rows retain. The
