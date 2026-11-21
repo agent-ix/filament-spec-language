@@ -153,6 +153,11 @@ pub fn analyze_document(
             .map(|spelling| (spelling.to_string(), CompletionKind::GrammarToken)),
     );
     completion_set.extend(
+        fsl_cst::grammar::contextual_spellings()
+            .into_iter()
+            .map(|spelling| (spelling.to_string(), CompletionKind::GrammarToken)),
+    );
+    completion_set.extend(
         parsed
             .selections()
             .profiles
