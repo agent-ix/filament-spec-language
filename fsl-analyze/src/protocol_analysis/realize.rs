@@ -503,15 +503,14 @@ fn admit<'a>(
         .model
         .simulation
         .input
-        .evaluator
-        .protocol(&request.subject.protocol)
+        .protocol_definition(&request.subject.protocol)
         .ok_or_else(|| {
             RealizabilityRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
                 protocol: request.subject.protocol.clone(),
             })
         })?;
-    let capacities = Capacities::admit(protocol, &request.subject.capacities)
-        .map_err(|refusal| RealizabilityRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
+    let capacities = Capacities::admit_definition(&protocol, &request.subject.capacities)
+        .map_err(RealizabilityRefusal::Protocol)?;
     premises.state_capacities(|name| capacities.value(name));
     let open_range = premises.channels.iter().any(|channel| {
         matches!(
