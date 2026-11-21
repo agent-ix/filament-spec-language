@@ -344,6 +344,7 @@ fn claim_item(
             required,
             max_cases: None,
             max_task_product_work: None,
+            max_check_work: None,
             trace: None,
             traces: None,
             recording: None,
