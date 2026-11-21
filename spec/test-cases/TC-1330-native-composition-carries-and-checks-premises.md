@@ -64,7 +64,8 @@ the tests `#[trace("TC-1330", "<AC id>")]` and `#[trace("FSpec-TC-983")]` or
    record; the third discharges nothing.
 7. Each refused `invalid_runtime_input`/`invalid-value`.
 8. `refuted`, `decisive-counterexample`, `mismatch` naming the peer, the clause,
-   the slot and `absent`/`weaker`, with the complete slot list; the slot 4
+   the slot and `absent`/`weaker`, with the complete slot list when the work
+   limit suffices and `incomplete` naming `max_work` when it does not; the slot 4
    `absent` for the mixed case and the lower slot for two `absent`; each
    not-weaker case `inconclusive`, `premise-unproved`, never `refuted`.
 

@@ -385,18 +385,17 @@ fn mismatch(premise: usize, reason: MismatchReason) -> InterfaceMismatch {
     }
 }
 
-/// A declaration holding a mismatch settles `refuted`, whatever the request
-/// supplies: no cause, certification or conclusion, the complete slot list,
-/// and the mismatch member.
+/// A declaration holding a mismatch settles `refuted` whatever the request
+/// supplies, when the work limit suffices: no cause, certification or
+/// conclusion, the complete slot list, and the mismatch member.
 #[trace("TC-1330", "FR-530-AC-9")]
 #[test]
-fn a_declaration_with_a_mismatch_settles_refuted_with_every_slot() {
+fn a_mismatch_settles_refuted_with_every_slot_when_the_work_limit_suffices() {
     let mut declaration = declaration();
     declaration.mismatch = Some(mismatch(LIVENESS, MismatchReason::Weaker));
-    // Every premise is supplied and proved, and the budget is tight: the
-    // declaration alone decides.
+    // Every premise is supplied and proved: the declaration alone decides.
     let mut tight = request(&declaration, &positive_pool());
-    tight["limits"] = json!({"max_work": 1});
+    tight["limits"] = json!({"max_work": 1000});
     let result = settled(&declaration, &tight);
     assert_eq!(result.value, PlannerValue::Refuted);
     assert!(result.cause.is_none() && result.certification.is_none());
@@ -414,6 +413,26 @@ fn a_declaration_with_a_mismatch_settles_refuted_with_every_slot() {
             .expect("wire")["type"],
         "interface-mismatch"
     );
+}
+
+/// FSpec FR-492 "Interface mismatch" relaxes none of the limits: the same
+/// declaration under a work limit below its slot count settles `incomplete`
+/// naming `max_work`, with the slots read so far, no mismatch and no
+/// refutation.
+#[trace("TC-1330", "FR-530-AC-9")]
+#[test]
+fn a_declaration_with_a_mismatch_honours_an_exhausted_work_limit() {
+    let mut declaration = declaration();
+    declaration.mismatch = Some(mismatch(LIVENESS, MismatchReason::Weaker));
+    let mut tight = request(&declaration, &positive_pool());
+    tight["limits"] = json!({"max_work": 1});
+    let result = settled(&declaration, &tight);
+    assert_eq!(result.value, PlannerValue::Incomplete);
+    assert!(result.mismatch.is_none());
+    assert!(result.slots.len() < declaration.slots.len());
+    let wire = result.to_wire().expect("wire");
+    assert_eq!(wire["cause"]["limit"], "max_work");
+    assert!(wire.get("mismatch").is_none());
 }
 
 // ---- FR-530-AC-6; FSpec TC-983 case 5; FR-489-AC-6, 8, 9, 11 ---------------

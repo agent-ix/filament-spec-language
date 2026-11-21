@@ -198,12 +198,10 @@ pub(super) fn settle_composition(
         request,
         supplies,
     };
-    // A declared interface mismatch decides from the declaration alone, so the
-    // complete slot list is written whatever the budget.
-    let max_work = match declaration.mismatch {
-        Some(_) => u64::MAX,
-        None => request.max_work.unwrap_or(budget.max_work),
-    };
+    // FSpec FR-492 "Interface mismatch" relaxes none of the limits: a declared
+    // mismatch settles `refuted` with every slot only when the work limit
+    // suffices, and `incomplete` with the slots read so far otherwise.
+    let max_work = request.max_work.unwrap_or(budget.max_work);
     let mut meter = Meter {
         spent: 0,
         max: max_work,

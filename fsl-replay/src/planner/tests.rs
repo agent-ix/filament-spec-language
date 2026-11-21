@@ -968,12 +968,18 @@ fn provider_answer_unconfirmed_is_refused_in_every_provider_entry() {
             FslOnlyCause::ProviderAnswerUnconfirmed
         ))
     );
-    // The producer writes it, with its premise.
+    // The producer writes it, with its premise, in the outcome document's
+    // own spelling (`kind`, FSpec FR-621); a provider's entry spells the
+    // member `type` (FSpec FR-331), which the readers above refuse.
+    let record = TerminalRecord::from_value(
+        RequestIndex::new(0),
+        TerminalValue::Inconclusive(unconfirmed),
+    );
+    let item = serde_json::to_value(crate::outcome::OutcomeItem::from_terminal(&record))
+        .expect("the item serializes");
     assert_eq!(
-        PlannerCause::Inconclusive(unconfirmed)
-            .to_wire()
-            .expect("wire"),
-        ("cause", cause)
+        item["cause"],
+        json!({"kind": "provider-answer-unconfirmed", "premise": 1})
     );
 }
 

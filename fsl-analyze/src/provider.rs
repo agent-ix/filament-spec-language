@@ -1373,7 +1373,7 @@ pub(crate) fn settle_record(
             )
         }
         ProviderReport::Mismatch(found) => (
-            TerminalRecord::refuted_by_interface_mismatch(index, backend, &found),
+            TerminalRecord::refuted_by_interface_mismatch(index, backend),
             Some(ProviderCounterexample::Mismatch(Box::new(found))),
         ),
     }

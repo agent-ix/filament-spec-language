@@ -331,11 +331,13 @@ two indices, over one shared set of premise items.
   `interface`, `premise` and `reason`. The recomputation is the one
   FR-530-AC-9 states for the planner entry, so a `weaker` witness at slot 3 is
   not accepted when an `absent` mismatch exists at slot 4.
-- **Malformed witness.** A provider's `interface-mismatch` with a member
-  missing, an extra member, or a `reason` other than `absent` or `weaker` is
-  refused by FSpec FR-331's own readers (FSpec FR-331-AC-66): the plugin stage by
-  its schema, and a linked provider by the reader's `invalid_result` at the
-  member. FSL SHALL NOT settle such a witness by its own cause.
+- **Malformed witness.** A linked provider's `interface-mismatch` is the closed
+  type `InterfaceMismatch`, so a member missing, an extra member or a `reason`
+  other than `absent` or `weaker` cannot be constructed there, and FSL has no
+  reader refusal for it. A plugin provider's malformed `interface-mismatch` is
+  the producer's FSpec FR-331 schema obligation (FSpec FR-331-AC-66), refused by
+  the existing plugin-result readers. FSL SHALL NOT settle such a witness by its
+  own cause.
 - **Assignment counterexample.** When a provider settles a composition item
   `refuted` with an assignment counterexample, FSL SHALL keep the existing
   non-replayable handling of FR-290 "Replay context": `inconclusive`
@@ -345,8 +347,8 @@ two indices, over one shared set of premise items.
   `component`, `interface`, `premise` or `reason`, or answers a declaration that
   holds no mismatch, FSL SHALL refuse the entry as a reader refusal
   `invalid_result`/`invalid-value` at `/counterexample` (FSpec FR-331-AC-63), and
-  SHALL NOT settle the item `refuted`. This refusal is distinct from the closed
-  shape failures of the malformed-witness bullet and from the assignment path.
+  SHALL NOT settle the item `refuted`. This refusal is distinct from the
+  malformed-witness bullet and from the assignment path.
 
 ### Current system behavior
 
@@ -417,7 +419,7 @@ verdict the criterion names.
 | FR-1044-AC-11 | With the provider fixture registered, `Sys`, `SysAG` and `SysAGRely` each reach it as one `composition` item of family `protocol` through `Engine::external` with the derived `premises` and `assumptions` (`[[], []]`, `[[], []]` and `[[], [0]]`), no premise result and no component proof; the existing provider options, limits and negotiation are unchanged. Two composition items equal except in a valid `assumptions` are different requests (FSpec FR-331-AC-64). A public source item carrying `assumptions` is refused as in AC-4(f). | Test |
 | FR-1044-AC-12 | With the provider fixture answering `proved` for `SysAG`, when `Bounded` and `Capped` are held and `proved` the composition is `proved`, certified as the provider's origin gives (`trusted` plugin, `uncertified` linked); with AC-9's refuted `Capped` it settles `inconclusive`, cause `provider-answer-unconfirmed` with `premise` 1, no certification, and not `replay-refused` or `premise-unproved`. In AC-8's request (`Sys` twice and `SysAGRely`), the fixture answering `proved` for each composition leaves the two `Sys` compositions `proved`, and settles `SysAGRely` `inconclusive` `provider-answer-unconfirmed` with `premise` 1: its `Capped` item (index 5) has a `request` member equal to item 4's `proved` one, but a different typed context, and is `unsupported`. At the guard seam, an answer over a request that holds no component item, and over a held item with the same clause node and other identity members or another assumption array, settles `provider-answer-unconfirmed` naming the first entry; a `proved` answer for a composition with no `component-guarantee` entry stands. | Test |
 | FR-1044-AC-13 | A linked provider and a plugin provider fixture each answering `inconclusive` with cause `provider-answer-unconfirmed` for a composition item, and for an item of another kind, are refused `invalid_result`/`unknown-cause` at `/cause/type`, as is a cause `premise-unproved` or `transfer-not-preserving`; the settled item is the refusal and never the supplied cause. | Test |
-| FR-1044-AC-14 | With the provider fixture answering `refuted` with an `interface-mismatch` witness for `SysAbsent` that names component `PA`, `PA::Bounded`'s clause node as `interface`, `premise` the `premises` index of the `rely` entry (1) and `reason` `absent`, the composition settles `refuted`, basis `decisive-counterexample`, with the witness as its `counterexample` entry, no `replay` member, no certification, no conclusion, category `violation` and exit 10, and its premise items keep their own records in slot order. A witness with a member missing, an extra member or a `reason` other than `absent` or `weaker` is refused by the FSpec FR-331 reader (plugin schema, or linked `invalid_result` at the member), and a `refuted` composition answer carrying an assignment counterexample settles `inconclusive` `replay-refused` `unknown_required_feature`. At the recomputation seam, with a `weaker` mismatch at slot 3 and an `absent` one at slot 4, the slot-4 witness is accepted, and a well-formed slot-3 `weaker` witness is refused `invalid_result`/`invalid-value` at `/counterexample`; the complete slot list stays in slot order. A well-formed witness changed in `component`, `interface`, `premise` or `reason`, and one answered for `Sys` (no mismatch in its declaration), are each refused the same way. With the provider fixture answering `proved` for `Sys` over AC-9's refuted `Capped` (a declared interface that is present and not weaker, whose premise did not prove), the composition is `provider-answer-unconfirmed` and never `refuted`; with no provider registered `SysAbsent` is `unsupported` naming `composition`. | Test |
+| FR-1044-AC-14 | With the provider fixture answering `refuted` with an `interface-mismatch` witness for `SysAbsent` that names component `PA`, `PA::Bounded`'s clause node as `interface`, `premise` the `premises` index of the `rely` entry (1) and `reason` `absent`, the composition settles `refuted`, basis `decisive-counterexample`, with the witness as its `counterexample` entry, no `replay` member, no certification, no conclusion, category `violation` and exit 10, and its premise items keep their own records in slot order. A linked witness is the closed `InterfaceMismatch` type, so a malformed one is unconstructible and has no FSL reader refusal; a plugin witness with a member missing, an extra member or a `reason` other than `absent` or `weaker` is the producer's FSpec FR-331 schema obligation, refused by the existing plugin-result readers. A `refuted` composition answer carrying an assignment counterexample settles `inconclusive` `replay-refused` `unknown_required_feature`. At the recomputation seam, with a `weaker` mismatch at slot 3 and an `absent` one at slot 4, the slot-4 witness is accepted, and a well-formed slot-3 `weaker` witness is refused `invalid_result`/`invalid-value` at `/counterexample`; the complete slot list stays in slot order. A well-formed witness changed in `component`, `interface`, `premise` or `reason`, and one answered for `Sys` (no mismatch in its declaration), are each refused the same way. With the provider fixture answering `proved` for `Sys` over AC-9's refuted `Capped` (a declared interface that is present and not weaker, whose premise did not prove), the composition is `provider-answer-unconfirmed` and never `refuted`; with no provider registered `SysAbsent` is `unsupported` naming `composition`. | Test |
 
 ## Dependencies
 

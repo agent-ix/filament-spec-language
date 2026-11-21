@@ -328,6 +328,10 @@ pub struct ComponentGuaranteeKey {
     /// The peer guarantees `G` may assume: the `H` of each `rely` and
     /// `depends` member `G` carries, sorted by node.
     pub assumptions: Vec<NodeKey>,
+    /// The peer clauses behind `assumptions`, by full identity (component and
+    /// clause), sorted: two components built from one package name one clause
+    /// node yet are distinct peers (FSpec FR-491 "Assumption binding").
+    pub peers: Vec<ClauseRef>,
 }
 
 /// The slot key of an item-backed composition slot.
@@ -488,13 +492,14 @@ impl CheckedComposition {
             .collect();
         fairness.sort();
         let assumes = self.rule == CompositionRule::AssumeGuarantee;
-        let assumptions: BTreeSet<NodeKey> = self
+        let peers: BTreeSet<ClauseRef> = self
             .relies
             .iter()
             .chain(&self.liveness_dependencies)
             .filter(|premise| assumes && premise.guarantee == *reference)
-            .map(|premise| premise.on.node.clone())
+            .map(|premise| premise.on.clone())
             .collect();
+        let assumptions: BTreeSet<NodeKey> = peers.iter().map(|peer| peer.node.clone()).collect();
         Some(ComponentGuaranteeKey {
             key: SlotKey {
                 node: reference.node.clone(),
@@ -511,6 +516,7 @@ impl CheckedComposition {
                 extent: ExtentClass::Unbounded,
             },
             assumptions: assumptions.into_iter().collect(),
+            peers: peers.into_iter().collect(),
         })
     }
 
@@ -638,15 +644,10 @@ impl CheckedComposition {
     /// FR-491 "Assumption binding"). A peer guarantee no declared `guarantee`
     /// names contributes no index.
     fn assumption_indices(&self, slots: &[CompositionSlot]) -> Vec<Vec<usize>> {
-        let guarantees: Vec<(usize, &NodeKey)> = slots
+        let guarantees: Vec<(usize, &ClauseRef)> = slots
             .iter()
             .filter(|slot| slot.role == SlotRole::ComponentGuarantee)
-            .filter_map(|slot| {
-                let Some(CompositionSlotKey::ComponentGuarantee(key)) = &slot.key else {
-                    return None;
-                };
-                Some((slot.index, &key.key.claim))
-            })
+            .filter_map(|slot| Some((slot.index, slot.guarantee.as_ref()?)))
             .collect();
         slots
             .iter()
@@ -657,12 +658,12 @@ impl CheckedComposition {
             })
             .map(|key| {
                 let mut indices: Vec<usize> = key
-                    .assumptions
+                    .peers
                     .iter()
                     .filter_map(|peer| {
                         guarantees
                             .iter()
-                            .find_map(|(index, node)| (*node == peer).then_some(*index))
+                            .find_map(|(index, reference)| (*reference == peer).then_some(*index))
                     })
                     .collect();
                 indices.sort_unstable();

@@ -530,7 +530,7 @@ fn a_mutual_dependency_is_a_cycle_that_derives_no_slot() {
 /// FR-491-AC-5 (TC-985 case 5): under `interface` the declaration derives
 /// one FR-331 `composition` request item whose `premises` member holds the
 /// slots, and no planner-local item.
-#[trace("FR-530-AC-1", "FSpec-TC-985", "FSpec-FR-491-AC-5")]
+#[trace("FR-530-AC-1", "FR-530-AC-10", "FSpec-TC-985", "FSpec-FR-491-AC-5")]
 #[test]
 fn a_non_assume_guarantee_rule_derives_a_request_item() {
     let world = World::new();
@@ -554,6 +554,35 @@ fn a_non_assume_guarantee_rule_derives_a_request_item() {
         sole(&local).item().assumptions,
         vec![vec![], vec![0, 2], vec![]]
     );
+}
+
+/// FSpec FR-491 "Assumption binding": a peer is bound by its component and
+/// clause, not by the clause's node alone. Two components built from one
+/// package name one clause node, yet they are two peers: a guarantee relying
+/// on both binds two indices, and a guarantee relying on its sibling binds the
+/// sibling, never itself.
+#[trace("FR-530-AC-10", "FSpec-FR-491-AC-1")]
+#[test]
+fn components_of_one_package_are_distinct_assumed_peers() {
+    let world = World::new();
+    let compose = |members: &str| {
+        let declaration = format!(
+            "compose Sys rule assume-guarantee {{ component PA from P using M; \
+             component PB from P using M; component Consumer from Q using M; {members}}}"
+        );
+        let package = world
+            .compile(&declaration)
+            .unwrap_or_else(|failure| panic!("{declaration}: the unit compiles: {failure:?}"));
+        sole(&package).item()
+    };
+    let item = compose(
+        "guarantee PA::Counted; guarantee PB::Counted; guarantee Consumer::Done; \
+         rely Consumer::Done on PA::Counted; rely Consumer::Done on PB::Counted; ",
+    );
+    assert_eq!(item.assumptions, vec![vec![], vec![], vec![0, 1]]);
+    let item =
+        compose("guarantee PA::Counted; guarantee PB::Counted; rely PA::Counted on PB::Counted; ");
+    assert_eq!(item.assumptions, vec![vec![1], vec![]]);
 }
 
 /// FR-491-AC-6 (TC-985 case 6): the v2 byte emitter writes a composition

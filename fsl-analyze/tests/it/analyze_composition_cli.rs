@@ -37,8 +37,25 @@ const RELY: &str = "rely PB::Capped on PA::Bounded;";
 const COMPONENTS: &str = "component PA from A using M; component PB from B using M; \
      guarantee PA::Bounded; guarantee PB::Capped; ";
 
+/// `Fenced` and `Pings`, the extra clauses of `test/part-a`: a safety clause
+/// conditional on fairness the compositions never supply, and a liveness
+/// clause no composition declares a guarantee for.
+const PART_A_EXTRA: &str = "temporal Fenced using t0 over (c: M::Counter) clock \"model-steps\" \
+     on origin { fair weak each M::Counter::inc; always holds(c.value <= 3) }\n\
+     temporal Pings using t0 over (c: M::Counter) clock \"model-steps\" \
+     on origin { always eventually holds(c.value = 3) }\n";
+
+/// `Done`, the extra liveness clause of `test/part-b`.
+const PART_B_EXTRA: &str = "temporal Done using t0 over (c: M::Counter) clock \"model-steps\" \
+     on origin { fair weak each M::Counter::inc; eventually holds(c.value = 3) }\n";
+
 fn library(formula: &str, name: &str) -> String {
-    crate::counter::unit_text(&clause_text(name, "", formula))
+    let extra = if name == "Bounded" {
+        PART_A_EXTRA
+    } else {
+        PART_B_EXTRA
+    };
+    crate::counter::unit_text(&format!("{}{extra}", clause_text(name, "", formula)))
 }
 
 fn program(body: &str) -> String {
@@ -64,7 +81,7 @@ const MUTUAL: &str = "rely PB::Capped on PA::Bounded; rely PA::Bounded on PB::Ca
 /// The declarations of `test/system`.
 fn system() -> String {
     format!(
-        "{}{}{}{}{}{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
         clause_text("Local", "", BOUNDED),
         compose("Sys", "interface", ""),
         compose("SysPR", "protocol-refinement", ""),
@@ -80,6 +97,15 @@ fn system() -> String {
         // absent.
         "compose SysAbsent rule assume-guarantee { component PA from A using M; \
          component PB from B using M; guarantee PB::Capped; rely PB::Capped on PA::Bounded; }\n",
+        // `Fenced` (slot 3) needs fairness nothing supplies, so it is `weaker`;
+        // `Pings` (slot 4) is no declared guarantee, so it is `absent`, and
+        // the reason-major order names it though it is the higher slot.
+        "compose SysMixed rule assume-guarantee { component PA from A using M; \
+         component PB from B using M; guarantee PB::Done; guarantee PA::Bounded; \
+         guarantee PA::Fenced; rely PB::Done on PA::Fenced; depends PB::Done on PA::Pings; }\n",
+        // The peer interfaces of `SysMixed`, as premises whose keys name them.
+        "compose SysPeers rule interface { component PA from A using M; \
+         component PB from B using M; guarantee PA::Fenced; guarantee PA::Pings; }\n",
         // No component guarantee: a composition with no premise to name.
         "compose SysNone rule interface { component PA from A using M; \
          component PB from B using M; }\n",
@@ -277,10 +303,19 @@ impl fsl_analyze::provider::ExternalProvider for Recording {
 /// option `profile`, which an item sends only to a backend it names
 /// (FR-967).
 fn composition_provider(seen: &Seen, answer: Answer) -> fsl_analyze::analyze::Engine {
+    composition_provider_of(seen, answer, fsl_route::ProviderOrigin::Process)
+}
+
+/// [`composition_provider`] registered with `origin`.
+fn composition_provider_of(
+    seen: &Seen,
+    answer: Answer,
+    origin: fsl_route::ProviderOrigin,
+) -> fsl_analyze::analyze::Engine {
     use fsl_semantics::check::Capability;
     let descriptor = fsl_route::descriptor_from_manifest(
         fsl_route::Candidate::new(fsl_foundation::BackendId::new(PROVIDER)),
-        fsl_route::ProviderOrigin::Process,
+        origin,
         vec![(
             Some(Capability::Composition.to_wire()),
             Some(fsl_route::Mode::Unbounded.to_wire()),
@@ -787,7 +822,7 @@ fn a_realizability_item_keeps_its_premises() {
 
 /// FR-1044-AC-5: `interface` derives no assumption set, so its `rely` slot
 /// writes no item and both guarantees run as the clauses they are.
-#[trace("FR-1044-AC-5")]
+#[trace("FR-1044-AC-5", "FR-530-AC-10")]
 #[test]
 fn an_interface_composition_derives_no_assumption_set() {
     let ws = Workspace::new("compose-ac5-interface");
@@ -872,6 +907,7 @@ fn assert_cycle_answer(item: &Value, name: &str) {
     assert_eq!(label(item), "unsupported", "{item}");
     assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
     assert!(item["record"]["backend"].is_null(), "{item}");
+    assert_eq!(item["record"]["basis"]["type"], "unavailable", "{item}");
     assert_eq!(
         item["record"]["diagnostic"]["code"], "unsupported_projection",
         "{item}"
@@ -905,7 +941,29 @@ fn a_cycle_settles_unsupported_under_every_rule_before_any_premise() {
         assert_cycle_answer(&items[0], name);
         assert_eq!(label(&items[1]), "proved", "{document}");
         assert_eq!(run.exit, 21, "{document}");
+        // Alone, the cycle answer is the only item settled, at `S4`.
+        let alone = analyze(&request(&ws, &system(), json!([composition(name)])));
+        assert_eq!(alone.document()["last_stage"], "S4", "{name}");
     }
+}
+
+/// FR-1044-AC-6: a `rely` of a component on itself is not this answer; it
+/// refuses the unit `invalid_model_binding`/`malformed-declaration`, exit 20.
+#[trace("FR-1044-AC-6")]
+#[test]
+fn a_self_rely_refuses_the_unit_as_a_malformed_declaration() {
+    let ws = Workspace::new("compose-ac6-self");
+    let body = format!(
+        "{}{}",
+        clause_text("Local", "", BOUNDED),
+        compose("SysSelf", "interface", "rely PA::Bounded on PA::Bounded;")
+    );
+    let run = analyze(&request(&ws, &body, json!([composition("SysSelf")])));
+    let document = run.document();
+    assert_eq!(run.exit, 20, "{document}");
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "invalid_model_binding", "{document}");
+    assert_eq!(diagnostic["cause"], "malformed-declaration", "{document}");
 }
 
 /// FR-1044-AC-6: a registered provider that answers `proved` receives no
@@ -1112,6 +1170,24 @@ fn an_assume_guarantee_proof_stands_only_over_proved_components() {
         "{document}"
     );
     assert_eq!(run.exit, 0, "{document}");
+    // A linked provider's proof stands `uncertified`, never `trusted`.
+    let ws = Workspace::new("compose-ac12-linked");
+    let path = request_for(&ws, &system(), BOUNDED, Some(json!([provided("SysAG")])));
+    let seen = Seen::default();
+    let run = analyze_with_providers(
+        &path,
+        vec![composition_provider_of(
+            &seen,
+            fixed(ProviderVerdict::Proved),
+            fsl_route::ProviderOrigin::Linked,
+        )],
+    );
+    let document = run.document();
+    assert_eq!(label(&document["items"][0]), "proved", "{document}");
+    assert_eq!(
+        document["items"][0]["record"]["certification"], "uncertified",
+        "{document}"
+    );
     let (run, _) = through_provider(
         "compose-ac12-refuted",
         "always holds(c.value <= 2)",
@@ -1218,9 +1294,78 @@ fn a_declared_interface_mismatch_the_provider_names_refutes_the_composition() {
     assert_eq!(counterexample["premise"], 1, "{document}");
     assert_eq!(counterexample["reason"], "absent", "{document}");
     assert_eq!(item["category"], "violation", "{document}");
-    // Its premise items keep their own records.
-    assert_eq!(label(&document["items"][2]), "proved", "{document}");
+    // `SysAbsent`'s one premise, `Capped` under the absent `Bounded`, is
+    // checked under a peer guarantee and settles `unsupported`; `Sys`'s own
+    // premises keep their records.
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(items.len(), 5, "{document}");
+    assert_eq!(label(&items[1]), "proved", "{document}");
+    assert_eq!(label(&items[2]), "unsupported", "{document}");
+    assert_eq!(label(&items[3]), "proved", "{document}");
+    assert_eq!(label(&items[4]), "proved", "{document}");
     assert_eq!(run.exit, 10, "{document}");
+}
+
+/// FR-1044-AC-14, the recomputation seam: `SysMixed` has `weaker` at slot 3
+/// and `absent` at slot 4, and FSpec FR-492's reason-major order names the
+/// `absent` one. A provider's `weaker` witness at slot 3 is refused, and its
+/// `absent` witness at slot 4 refutes the composition.
+#[trace("FR-1044-AC-14")]
+#[test]
+fn the_provider_witness_is_admitted_in_reason_major_order() {
+    // The peer interfaces `SysPeers` names in its premises: `Fenced`, then
+    // `Pings`.
+    let witness = |premise: usize, reason: MismatchReason| {
+        Answer(Box::new(move |request| {
+            let ProviderTarget::Composition(target) = &request.targets()[1] else {
+                panic!("a composition target");
+            };
+            let wire = &target.premises()[premise - 3]["key"]["claim"]["node"];
+            let interface =
+                fsl_foundation::node_wire::node_key_from_json(wire).expect("a node key");
+            vec![
+                ProviderVerdict::Mismatch(InterfaceMismatch {
+                    component: "PA".to_owned(),
+                    interface,
+                    premise,
+                    reason,
+                }),
+                ProviderVerdict::Proved,
+            ]
+        }))
+    };
+    let items = || json!([provided("SysMixed"), provided("SysPeers")]);
+    let (run, _) = through_answer(
+        "compose-ac14-weaker",
+        BOUNDED,
+        items(),
+        witness(3, MismatchReason::Weaker),
+    );
+    let document = run.document();
+    let item = &document["items"][0];
+    assert_eq!(label(item), "failed", "{document}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_result",
+        "{document}"
+    );
+    assert_eq!(cause(item), "invalid-value", "{document}");
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["pointer"], "/counterexample",
+        "{document}"
+    );
+    let (run, _) = through_answer(
+        "compose-ac14-absent",
+        BOUNDED,
+        items(),
+        witness(4, MismatchReason::Absent),
+    );
+    let document = run.document();
+    let item = &document["items"][0];
+    assert_eq!(label(item), "refuted", "{document}");
+    let counterexample = &item["counterexample"]["counterexample"];
+    assert_eq!(counterexample["premise"], 4, "{document}");
+    assert_eq!(counterexample["reason"], "absent", "{document}");
+    assert_eq!(counterexample["component"], "PA", "{document}");
 }
 
 /// FR-1044-AC-14: a well-formed witness that differs from the recomputation
@@ -1435,7 +1580,7 @@ fn a_package_item_naming_a_local_clause_beside_a_composition_settles() {
 /// FR-1044-AC-10, second half, once the package route reads a composition:
 /// the same items, records and exit code as the source request.
 #[test]
-#[ignore = "QSL-2739: the package route has no composition form (package-consumer API)"]
+#[ignore = "FR-1044-AC-10 stays OPEN with terra:QSL:package-consumer-api: the package route has no composition form"]
 fn the_package_route_settles_the_same_items() {
     let ws = Workspace::new("compose-ac10-package-equal");
     let body = format!(

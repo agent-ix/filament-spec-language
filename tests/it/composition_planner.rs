@@ -142,8 +142,10 @@ fn compile(declaration: &str, dependencies: &[&Dependency]) -> Result<CheckedPac
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
+         profile q = \"filament.value.complete/v1\";\n\
          import \"test/producer\" as P;\n\
-         import \"test/consumer\" as Q;\n{declaration}\n"
+         import \"test/consumer\" as Q;\n\
+         function marker using q(): Boolean pure {{ true }}\n{declaration}\n"
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:composition"),

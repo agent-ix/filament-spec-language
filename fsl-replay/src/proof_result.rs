@@ -1840,13 +1840,10 @@ impl TerminalRecord {
 
     /// FSpec FR-331, FR-492 "Interface mismatch": a `refuted` record for a
     /// composition whose declared interface is absent or weaker than a
-    /// premise needs. The mismatch is recomputed from the checked
-    /// declaration, so it has no replay, no certification and no conclusion.
-    pub fn refuted_by_interface_mismatch(
-        request_index: RequestIndex,
-        backend: BackendId,
-        _mismatch: &crate::planner::InterfaceMismatch,
-    ) -> Self {
+    /// premise needs. The caller admits the witness only when it equals the
+    /// mismatch recomputed from the checked declaration, so the record has no
+    /// replay, no certification and no conclusion.
+    pub fn refuted_by_interface_mismatch(request_index: RequestIndex, backend: BackendId) -> Self {
         Self::with_backend(request_index, backend, TerminalValue::Refuted)
     }
 
