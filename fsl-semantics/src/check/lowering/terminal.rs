@@ -65,7 +65,25 @@ impl Lowering<'_> {
         let boolean = self.type_node(&ValueType::Boolean, &claim_at)?;
         self.record(boolean.clone(), OccurrenceRole::Type, claim_at.clone());
         let object = self.terminal_object(input.model, input.package, &claim_at)?;
-        let model = self.object_node(object.clone(), &claim_at)?;
+        let selection = self
+            .models
+            .iter()
+            .find(|model| {
+                model.alias() == Some(input.model) && model.selection().identity == input.package
+            })
+            .map(|model| model.selection())
+            .ok_or_else(|| {
+                super::fault(
+                    &claim_at,
+                    crate::check::refusal::KeyFault::UnkeyableRequirements,
+                )
+            })?;
+        let model = super::model_root_key(selection).map_err(|_| {
+            super::fault(
+                &claim_at,
+                crate::check::refusal::KeyFault::UnkeyableRequirements,
+            )
+        })?;
 
         let (mode, parameters, condition) = match input.declaration {
             TerminalDeclaration::When(predicate) => {
