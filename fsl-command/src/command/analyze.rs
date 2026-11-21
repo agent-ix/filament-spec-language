@@ -253,9 +253,10 @@ fn run_package(
         })?;
     let RunMembers {
         documents,
-        subject,
+        mut subject,
         limits,
     } = *members;
+    subject.memory = memory;
     let binding = subject.binding(&supplied, &documents);
     let run = PackageRun {
         package: &package,
