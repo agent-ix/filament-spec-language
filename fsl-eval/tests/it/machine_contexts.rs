@@ -1672,3 +1672,102 @@ fn a_context_set_field_follows_the_collection_rules_of_an_object_field() {
     );
     assert_eq!(record.path, vec![PathStep::Index(0)]);
 }
+
+/// FR-663, FR-106-AC-15, FR-106-AC-21 (TC-1045): a context-field refusal
+/// carries `fields["path"]`, the RFC 6901 pointer to the failing member in the
+/// supplied snapshot, and it resolves there.
+#[trace("TC-1045", "FR-106-AC-44", "FR-663-AC-1")]
+#[test]
+fn a_context_field_refusal_carries_a_pointer_that_resolves_in_the_snapshot() {
+    let orders = Orders::new(false);
+    let edits: [(fn(&mut Json), &str); 3] = [
+        // A wrong kind resolves to the field value itself.
+        (
+            |document| document["contexts"][0]["fields"]["placed"] = json!({"integer": "1"}),
+            "wrong-value-kind",
+        ),
+        // An unknown field resolves to the member that is there.
+        (
+            |document| document["contexts"][0]["fields"]["extra"] = json!(1),
+            "unknown-member",
+        ),
+        // A missing field is absent, so its pointer stops at the `fields`
+        // object that lacks it.
+        (
+            |document| {
+                document["contexts"][0]["fields"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("cancelled");
+            },
+            "missing-member",
+        ),
+    ];
+    for (edit, cause) in edits {
+        let mut pre = orders.snapshot("p1", "pre", vec![lifecycle(false, false)]);
+        edit(&mut pre);
+        let mut docs = Docs::default();
+        let pre_ref = docs.snapshot(&pre);
+        let post = docs.snapshot(&orders.snapshot("q1", "post", vec![lifecycle(true, false)]));
+        let i1 = docs.invocation(&orders.invocation(
+            "i1",
+            "OrderLifecycle",
+            "place",
+            Json::Null,
+            &pre_ref,
+            &post,
+            flags_parameter(),
+        ));
+        let record = refused(orders.context(&docs, "Consistent", &i1, ContextSide::Pre));
+        assert_eq!(record.catalog.cause(), cause);
+        let pointer = record.fields.get("path").expect("a rendered path");
+        assert!(
+            pre.pointer(pointer).is_some(),
+            "{cause}: {pointer} resolves in the supplied snapshot"
+        );
+        assert!(pointer.starts_with("/contexts/0/fields"), "{pointer}");
+    }
+}
+
+/// FR-106-AC-15, FR-106-AC-21 (TC-1045): a parameter refusal carries
+/// `fields["path"]` under the invocation's `parameters` root, with the same
+/// nested document-spelled steps a snapshot field has, and it resolves in the
+/// supplied invocation.
+#[trace("TC-1045", "FR-106-AC-15", "FR-106-AC-21")]
+#[test]
+fn a_parameter_refusal_carries_a_pointer_that_resolves_in_the_invocation() {
+    let orders = Orders::new(false);
+    let nested = json!({"flags": {"record": {"type": id("Flags"),
+        "fields": {"placed": {"integer": "1"}}}}});
+    let wrong_kind = json!({"flags": {"integer": "1"}});
+    for (parameters, expected) in [
+        (nested, "/parameters/flags/record/fields/placed"),
+        (wrong_kind, "/parameters/flags"),
+    ] {
+        let mut docs = Docs::default();
+        let pre = docs.snapshot(&orders.snapshot("p1", "pre", vec![lifecycle(false, false)]));
+        let post = docs.snapshot(&orders.snapshot("q1", "post", vec![lifecycle(true, false)]));
+        let invocation = orders.invocation(
+            "i1",
+            "OrderLifecycle",
+            "place",
+            Json::Null,
+            &pre,
+            &post,
+            parameters,
+        );
+        let i1 = docs.invocation(&invocation);
+        let record = refused(orders.admit(
+            &docs,
+            "FlagsPlaced",
+            ClauseSelectionInput::Invocation { invocation: i1 },
+        ));
+        assert_eq!(record.catalog.cause(), "wrong-value-kind");
+        let pointer = record.fields.get("path").expect("a rendered path");
+        assert_eq!(pointer, expected);
+        assert!(
+            invocation.pointer(pointer).is_some(),
+            "{pointer} resolves in the supplied invocation"
+        );
+    }
+}

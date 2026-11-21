@@ -4049,13 +4049,16 @@ mod tests {
                 record(2, TerminalValue::Refuted),
             ],
         );
+        // FR-286 "Canonical encoding and key order": RFC 8785, members sorted
+        // by UTF-16 code units at every depth, independent of the order the
+        // document serializes them in and of `serde_json`'s `preserve_order`.
         let expected = concat!(
-            r#"{"format":"filament-outcome/1","operation":"analyze","last_stage":"S6c","#,
-            r#""category":"unsupported","items":["#,
-            r#"{"request_index":0,"result":"unsupported","cause":{"kind":"solver-absent"},"category":"unsupported"},"#,
-            r#"{"request_index":1,"result":"proved","cause":null,"basis":{"type":"bounded-proof","checks":3},"certification":"certified","category":"success"},"#,
-            r#"{"request_index":2,"result":"refuted","cause":null,"category":"violation"}"#,
-            r#"],"diagnostics":[],"artifacts":[],"result":null}"#
+            r#"{"artifacts":[],"category":"unsupported","diagnostics":[],"#,
+            r#""format":"filament-outcome/1","items":["#,
+            r#"{"category":"unsupported","cause":{"kind":"solver-absent"},"request_index":0,"result":"unsupported"},"#,
+            r#"{"basis":{"checks":3,"type":"bounded-proof"},"category":"success","cause":null,"certification":"certified","request_index":1,"result":"proved"},"#,
+            r#"{"category":"violation","cause":null,"request_index":2,"result":"refuted"}"#,
+            r#"],"last_stage":"S6c","operation":"analyze","result":null}"#
         );
         assert_eq!(text_of(&document), expected);
         assert_eq!(document.to_bytes().unwrap(), document.to_bytes().unwrap());

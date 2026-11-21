@@ -47,11 +47,14 @@ default = []
 checked-handoff = []
 # `population_fixtures`, the writer of the `Population<T>[N]` Contract IR v2
 # packages the admission corpus emits (QSL-771). It embeds the spine-model
-# fixtures under `tests/fixtures/`, so the default build leaves it out. It adds
-# no dependency.
-population-fixtures = []
+# fixtures under `tests/fixtures/`, so the default build leaves it out. It
+# enables the optional `fsl-eval` dependency.
+population-fixtures = ["dep:fsl-eval"]
 
 [dependencies]
+# `population_fixtures` checks its spine model through the evaluator's S6a reward
+# evaluator; only the `population-fixtures` feature pulls it in.
+fsl-eval = { path = "fsl-eval", optional = true }
 # ADR-013 O-05: only `model` calls the kernel `EffectiveId` constructor,
 # enforced by the ADR-011 T-12 arch-lint `api-surface` check (`tools/arch-lint`),
 # not by this dependency edge itself -- every crate that depends on

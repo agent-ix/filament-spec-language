@@ -3784,10 +3784,10 @@ impl CheckCause {
             | Self::IntegerOutsideI128(_)
             | Self::MalformedUuidLiteral { .. }
             | Self::TextLiteralOutsideBounds { .. }
+            | Self::UnknownField { .. }
             | Self::ReferenceLiteralTypeMismatch { .. } => Code::IllTyped,
             Self::WrongSnapshot(_) | Self::UnanchoredResult { .. } => Code::WrongSnapshot,
             Self::MissingName(_)
-            | Self::UnknownField { .. }
             | Self::MissingQualifiedName(_)
             | Self::UnresolvedUnitName { .. }
             | Self::MissingSegment { .. }
@@ -3878,10 +3878,10 @@ impl CheckCause {
             Self::IntegerOutsideI128(_)
             | Self::MalformedUuidLiteral { .. }
             | Self::TextLiteralOutsideBounds { .. }
+            | Self::UnknownField { .. }
             | Self::ReferenceLiteralTypeMismatch { .. } => Some("type-mismatch"),
             Self::UnanchoredResult { .. } => Some("wrong-anchor"),
             Self::MissingName(_)
-            | Self::UnknownField { .. }
             | Self::MissingQualifiedName(_)
             | Self::UnresolvedUnitName { .. }
             | Self::MissingSegment { .. }

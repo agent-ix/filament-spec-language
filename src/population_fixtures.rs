@@ -455,6 +455,7 @@ fn retarget(
             schedulability_claims: base.schedulability_claim_rows(),
             operation_effects: base.operation_effect_rows(),
             operation_bodies: base.operation_body_rows(),
+            claim_names: base.claim_names(),
         },
         base.capability_report(),
         base.diagnostics(),
