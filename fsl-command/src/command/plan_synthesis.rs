@@ -194,9 +194,9 @@ pub(super) fn run(
             universes: binding.universes.clone(),
             observation: ObservationLimits::default(),
             // Source search, replay and certificate re-derivation use the
-            // gated native cursor. The legacy model bound is not a planner
-            // work counter and has no alias to plan_search.max_work.
-            expansion: ExpansionLimits::default(),
+            // accounted native cursor exclusively. A legacy eager expansion
+            // is denied rather than borrowing a planner work counter.
+            expansion: ExpansionLimits { max_candidates: 0 },
             meter: limits,
             emit: fsl_package::EmitLimits::new(intake.remaining),
         },
