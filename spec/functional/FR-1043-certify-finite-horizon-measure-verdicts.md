@@ -147,6 +147,29 @@ Mean refutation evidence SHALL follow the distinct role below.
   completed fraction (true count over position count, or true weight over
   total weight). A censored amount exceeds every finite threshold; an
   above-bound amount exceeds `threshold`.
+- On a fraction's final departing step from position `h`, the evaluator
+  SHALL first tentatively add that resolved step's weight to the total and,
+  when the predicate held at the departing position, to the true sum, then
+  evaluate their quotient before reading any predicate at position `h + 1`
+  outside the window. If the total is 0, the evaluator SHALL report the
+  quotient's existing `division-by-zero` undefined cause at the fraction
+  expression, identified internally by the typed `FractionValue` read.
+  The undefined location SHALL name position `h + 1` and the actual
+  resolved post-state, while retaining the pre-step undecided fraction
+  control and accumulator without committing the tentative contribution.
+  It SHALL NOT fabricate a predicate read, a terminal decided control or
+  an internal broken-invariant failure for that undefined quotient.
+- Native undefined replay SHALL re-execute the actual step and its reward,
+  repeat the same tentative contribution and quotient operation before
+  any outside-window predicate, and compare the cause and complete
+  pre-read location under
+  [FR-202](FR-202-replay-a-probabilistic-witness.md)'s checked-subject
+  undefined entry and general pre-read ordering. Agreement SHALL produce
+  its opaque reproduced evidence; disagreement SHALL settle
+  `inconclusive`, `ReplayParity`, without a token. The evidence SHALL reuse
+  FSpec FR-413's existing generic undefined location and cause, with no new
+  wire locus or evidence kind. Caller limits and cancellation SHALL retain
+  their existing incomplete outcomes.
 - At every undecided state the checker SHALL check Bellman equality: the
   workload's average, or over every scheduler the minimum (for `AtLeast`,
   the `<= c` quantile) or the maximum (for `AtMost`, the `>= c` quantile)
@@ -252,6 +275,7 @@ Mean refutation evidence SHALL follow the distinct role below.
 | FR-1043-AC-8 | With AC-1's `try` split into `fast` (`1/2`) and `slow` (`1/4`), `mean of fraction holds(delivered) over [0, 2]` has minimum `11/48` and maximum `5/12`. Under every scheduler, `>= 1/2` is refuted by an accepted exact minimum or FR-1042 `upper` on the minimum with initial bound `1/4` and policy `slow`; `<= 1/3` is refuted by an accepted exact maximum or `lower` on the maximum with initial bound `2/5` and policy `fast`. Both reuse subsystem evidence and are independently accepted by FR-202's checked-subject mean-certificate replay entry. | Test |
 | FR-1043-AC-9 | AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12`, a valid workload `upper` bound `1/2` at `>= 1/2`, and a valid `lower` bound `2/5` at `<= 2/5` each reject `ThresholdMissed` at the initial key and settle `inconclusive`, `CertificateRejected`. In AC-8, a valid `lower` minimum document with initial bound `1/5` at `>= 1/2` and a valid `upper` maximum document with bound `1/2` at `<= 1/3` each reject `Malformed` at `kind` with the same settlement. Identity/base mismatch retains its typed refusal; an invalid value rejects `InequalityFails` with `CertificateRejected`; a disagreeing witness policy settles `inconclusive`, `ReplayParity`. A raw engine verdict or unchecked certificate cannot settle `refuted`. An accepted partial `lower` maximum bound `2/5 > 1/3`, with unnamed successors counted as 0, refutes without an upper counterpart; cancellation or a live checking limit remains incomplete. | Test |
 | FR-1043-AC-10 | FR-203-AC-10's no-activation quantile under a resolved workload and under every scheduler, with and without an admitted fairness set, settles certified `Exhaustive` with an independently accepted conditional `vacuous` certificate, no `ExactValue`, shifted-value proof or numeric entry. Offering an all-zero `exact` `shifted` document under every scheduler, or a workload `ratio` with denominator 0, for that no-activation claim rejects `InequalityFails` at the initial complete product key and settles `inconclusive`, `CertificateRejected{rule, at}`, without numeric acceptance or `ExactValue`. A variant with reachable activation is not routed to vacuity; a forged `vacuous` certificate rejects `InequalityFails` under FR-201. The nonvacuous quantiles of AC-1 to AC-3 retain their numeric proof rules. | Test |
+| FR-1043-AC-11 | `Coin` initially has bound object `c` with `c.v = 0`; its only operation `drop(b)` draws `b` uniformly from `{0,1}`, deleting `c` when `b = 0`, and declares reward `R = 0` for both supported draws. Under its resolved workload, `mean of fraction holds(c.v = 0) over [0,0] weighted by R >= 1/2` reaches undefined `division-by-zero` on the actual `drop(0)` step of probability `1/2`: the final tentative weighted sums are `(0,0)`, and the `FractionValue` location is position 1 with the actual post-state lacking `c`, pre-step undecided control `remaining = 1` and pre-step sums `(0,0)`. Native replay reproduces the same undefined result and settles `refuted` without reading outside-window `c.v`. Forging position 0, a decided control, a different accumulator, or the outside-window `absent-key` predicate cause yields `ReplayParity` without reproduced evidence. | Test |
 
 ## Dependencies
 
