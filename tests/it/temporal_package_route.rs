@@ -1327,7 +1327,8 @@ pub(super) fn same_named_clauses() -> Built {
 fn twins_pair_their_rows_by_key_over_the_bytes_only_route() {
     let built = twins();
     let read = built.read(&built.emission);
-    let bare = fsl_package::BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
+    let bare =
+        fsl_package::BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     let back = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1464,7 +1465,8 @@ fn each_clause_pairs_with_its_own_clock_row_over_the_bytes_only_route() {
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the emission");
-    let bare = fsl_package::BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
+    let bare =
+        fsl_package::BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     let back = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
