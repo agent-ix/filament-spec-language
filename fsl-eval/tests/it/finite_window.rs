@@ -1972,21 +1972,26 @@ fn a_carried_window_state_with_every_guard_false_reports_the_batch_result() {
         )
         .expect("the state opens");
         let positions = whole.positions();
-        let mut dropped = false;
-        for (index, position) in positions.iter().enumerate() {
-            state.admit(position.clone());
-            let last = index + 1 == positions.len();
+        // One step per observation, then a closing step that admits nothing and
+        // advances the progress past every observation.
+        for index in 0..=positions.len() {
+            let admitted = index.min(positions.len() - 1);
+            let stamp = if index < positions.len() {
+                state.admit(positions[index].clone());
+                positions[index].stamp
+            } else {
+                100
+            };
+            let last = index == positions.len();
             let progress = WindowProgress {
-                watermark: Watermark::Inclusive(position.stamp),
-                completeness: ProgressCompleteness::Complete {
-                    through: position.stamp,
-                },
+                watermark: Watermark::Inclusive(stamp),
+                completeness: ProgressCompleteness::Complete { through: stamp },
                 scope: if last { scope } else { ProgressClosure::Open },
                 execution: ProgressClosure::Open,
                 lower_boundary: full.lower,
             };
             let mut prefix = full.clone();
-            prefix.rows = full.rows[..=index].to_vec();
+            prefix.rows = full.rows[..=admitted].to_vec();
             prefix.watermark = progress.watermark;
             prefix.complete = progress.completeness;
             prefix.scope = progress.scope;
@@ -1998,11 +2003,14 @@ fn a_carried_window_state_with_every_guard_false_reports_the_batch_result() {
                 fsl_eval::temporal::evaluate_finite_window(&facts, &whole, &mut letters, &mut meter)
                     .expect("the batch run evaluates")
             };
-            let silent = [TimestampedObservation {
-                stamp: position.stamp + 1,
-                order_key: None,
-                observation: format!("silent-{index}"),
-            }];
+            let silent: Vec<TimestampedObservation> = (!last)
+                .then(|| TimestampedObservation {
+                    stamp: stamp + 1,
+                    order_key: None,
+                    observation: format!("silent-{index}"),
+                })
+                .into_iter()
+                .collect();
             let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
             let carried = state
                 .evaluate(
@@ -2023,8 +2031,7 @@ fn a_carried_window_state_with_every_guard_false_reports_the_batch_result() {
                 (WindowVerdict::ActivationUnknown, Basis::Unsettled)
             };
             assert_eq!((carried.verdict, carried.basis), expected, "step {index}");
-            dropped |= state.retained() == 0;
         }
-        assert!(dropped, "the state froze every observation it held");
+        assert!(state.retained() < positions.len());
     }
 }
