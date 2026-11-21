@@ -30,7 +30,8 @@ fn slots(clause: &CheckedHyperClause, components: &[&ObjectEnvironment]) -> Vec<
 
 /// A different value in each component exposes a swapped or default component
 /// assignment. Compare every admitted charge, including its ordering.
-#[trace("TC-2958", "FR-940-AC-6", "FR-487-AC-3")]
+/// Covers only AC-17's atom value/charge portion, not analysis or certificates.
+#[trace("TC-2958", "FR-940-AC-17", "FR-487-AC-3")]
 #[test]
 fn package_hyper_atom_has_source_values_and_complete_charge_logs() {
     let (ws, handoff, mut budget) = handoff_of("package-hyper-atom", ASYMMETRIC);
@@ -138,7 +139,8 @@ fn package_hyper_atom_has_source_values_and_complete_charge_logs() {
 
 /// An absent slot retains the model evaluator's absent-object outcome and
 /// exact charge sequence independently in either component.
-#[trace("TC-2958", "FR-940-AC-6", "FR-125")]
+/// Covers only AC-17's atom outcome/charge portion, not request parity.
+#[trace("TC-2958", "FR-940-AC-17", "FR-125")]
 #[test]
 fn package_hyper_atom_preserves_absent_object_outcomes_and_charges() {
     let (_ws, handoff, mut budget) = handoff_of("package-hyper-absent", ASYMMETRIC);
@@ -263,4 +265,163 @@ fn package_hyper_atom_refuses_wrong_binding_shapes_without_charges() {
     assert!(matches!(bare.project_hyper_holds(claim, usize::MAX),
         Err(fsl_package::BareClauseRefusal::Selection(fsl_package::BareSelectionFailure::Slot(
             fsl_package::SlotSelectionFailure::MalformedNode(node)))) if node == *claim.node()));
+}
+
+/// The emitted Linked alias reaches its present reference in the selected
+/// component. Nested aliases and shadowed initializer scopes retain ownership.
+/// This covers the atom portion of AC-17, not its analysis/certificate path.
+#[trace("FR-940-AC-17", "FR-488-AC-16", "FR-487-AC-9")]
+#[test]
+fn package_hyper_local_aliases_preserve_component_values_and_complete_charges() {
+    let document = include_bytes!("../../../../examples/config-version/model.semantic-ir.json");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the ConfigVersion model admits");
+    for alias in [
+        "let r = v.parent in present(r) and deref(value(r)).versionNumber = 1",
+        "let r = v.parent in let s = r in present(s) and deref(value(s)).versionNumber = 1",
+        "let r = (let r = v.parent in r) in present(r) and deref(value(r)).versionNumber = 1",
+    ] {
+        for (trace, selected) in [("a", 0), ("b", 1)] {
+            let source = format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                profile v = \"filament.value.complete/v1\";\n\
+                profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+                model M = \"example/config-version\";\n\
+                hyper Linked using inf over behaviours (v: M::ConfigVersion) \
+                forall trace a of M forall trace b of M {{ always holds(({alias}) @ {trace}) }}"
+            );
+            let package = crate::counter::package_from_text(document, &source);
+            let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
+                .expect("the Linked clause emits");
+            assert!(emission.omitted.is_empty());
+            let limits = fsl_package::V2ReadLimits::fixture();
+            let admitted =
+                fsl_package::admit_checked_package(emission.package().bytes(), &packages, limits)
+                    .expect("the strict reader admits the Linked bytes");
+            let mut budget = limits.native_join_budget();
+            let identities = emission
+                .identity_rows(&admitted, &mut budget)
+                .expect("identity rows");
+            let equality = emission
+                .equality_witness(&admitted, &mut budget)
+                .expect("equality rows");
+            let bare = BarePackage::new(&admitted)
+                .with_supply(
+                    BareSupply {
+                        identities: &identities,
+                        equality: Some(&equality),
+                    },
+                    &mut budget,
+                )
+                .expect("the supply joins");
+            let clause = &package.graph().hyper_clauses()[0];
+            let form = bare
+                .hyper_clause_form(clause.assembled_occurrence().expect("claim occurrence"))
+                .expect("Linked package form");
+            let rebuilt = CheckedHyperClause::of_package_form(
+                form,
+                bare.world().expect("world").types(),
+                1_000_000,
+            )
+            .expect("the package clause");
+            assert!(rebuilt.condition(atom(&rebuilt)).is_none());
+            let observed = |parent: bool, version: i64| {
+                let selected = DocumentRef {
+                    authority: "test".to_owned(),
+                    identity: "linked-state".to_owned(),
+                };
+                let population = "ix://example/config-version/config_history";
+                let parent = if parent {
+                    serde_json::json!({"present": {"reference": {"population": population, "key": "tail"}}})
+                } else {
+                    serde_json::json!({"absent": {}})
+                };
+                let snapshot = serde_json::json!({
+                    "format": "filament.state.snapshot/v1", "identity": {"authority": "test", "identity": "linked-state"},
+                    "observation": "current", "model": {"identity": "example/config-version"},
+                    "anchor": {"kind": "initialization", "name": "start"},
+                    "populations": [{"population": population, "complete": true, "objects": [
+                        {"key": "head", "type": "ix://example/config-version/ConfigVersion",
+                            "fields": {"versionNumber": {"integer": "3"}, "parent": parent}},
+                        {"key": "tail", "type": "ix://example/config-version/ConfigVersion",
+                            "fields": {"versionNumber": {"integer": version.to_string()}, "parent": {"absent": {}}}},
+                    ]}],
+                });
+                let provisions = BTreeMap::from([(
+                    selected.clone(),
+                    serde_json::to_vec(&snapshot).expect("snapshot bytes"),
+                )]);
+                admit_trace_snapshot(
+                    package.graph().model_selections(),
+                    package.graph().scope().types(),
+                    &packages,
+                    ModelNormalizationLimits::default(),
+                    &provisions,
+                    &selected,
+                    ObservationLimits::default(),
+                    &[],
+                )
+                .expect("the closed Linked snapshot admits")
+                .0
+            };
+            let one = observed(true, 1);
+            let two = observed(true, 2);
+            let absent = observed(false, 1);
+            for (components, expected) in [
+                ([&one, &two], selected == 0),
+                ([&two, &one], selected == 1),
+                ([&absent, &one], selected == 1),
+                ([&one, &absent], selected == 0),
+            ] {
+                let bindings = |clause: &CheckedHyperClause| {
+                    clause
+                        .atom_slots()
+                        .iter()
+                        .map(|slot| {
+                            let head = components[slot.trace]
+                                .references()
+                                .iter()
+                                .find(|reference| reference.object().as_str() == "head")
+                                .expect("head reference");
+                            HyperSlot::Bound(Value::Reference(head.clone()))
+                        })
+                        .collect()
+                };
+                let mut source_meter = Meter::new(UNLIMITED);
+                let mut bare_meter = Meter::new(UNLIMITED);
+                let source_result = package
+                    .evaluate_hyper_holds(
+                        clause,
+                        atom(clause),
+                        bindings(clause),
+                        &components,
+                        &mut source_meter,
+                    )
+                    .expect("source Linked atom");
+                let bare_result = bare
+                    .evaluate_hyper_holds(
+                        &rebuilt,
+                        atom(&rebuilt),
+                        bindings(&rebuilt),
+                        &components,
+                        &mut bare_meter,
+                    )
+                    .expect("package Linked atom");
+                assert_eq!(
+                    boolean(&source_result),
+                    expected,
+                    "source @{trace}: {alias}"
+                );
+                assert_eq!(boolean(&bare_result), expected, "package @{trace}: {alias}");
+                assert!(!source_meter.admitted_charges().is_empty());
+                assert!(!source_meter.charge_log_truncated());
+                assert!(!bare_meter.charge_log_truncated());
+                assert_eq!(
+                    source_meter.admitted_charges(),
+                    bare_meter.admitted_charges(),
+                    "@{trace}: {alias}"
+                );
+            }
+        }
+    }
 }

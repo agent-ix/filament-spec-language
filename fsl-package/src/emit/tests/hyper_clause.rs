@@ -1589,7 +1589,19 @@ fn a_read_must_stay_in_the_component_its_slot_root_names() {
     };
     let emits =
         linked("(let r = c.parent in present(r) and deref(value(r)).versionNumber = 1) @ a");
-    admitted(&build(INFINITE, &["V"], &emits));
+    let built = build(INFINITE, &["V"], &emits);
+    let admitted = admitted(&built);
+    let root = hyper_roots(&admitted).expect("Linked hyper root").remove(0);
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("Linked package form");
+        assert!(
+            bare.project_hyper_holds(root.occurrence(), form.atoms[0].0)
+                .is_ok(),
+            "the let-bound receiver retains its initializer's component"
+        );
+    });
 
     let crossing =
         linked("(let r = (c.parent @ a) in present(r) and deref(value(r)).versionNumber = 1) @ b");
@@ -1598,6 +1610,35 @@ fn a_read_must_stay_in_the_component_its_slot_root_names() {
         not_emitted_text(&text, &refusals),
         "deref(value(r)).versionNumber"
     );
+}
+
+/// A symmetric initializer still lies inside an opaque let. Normalizing its
+/// arithmetic through the let would incorrectly grant a copy swap.
+#[trace("FR-940-AC-16", "FR-174")]
+#[test]
+fn a_package_hyper_let_with_symmetric_slot_reads_stays_opaque() {
+    let declaration = "hyper Opaque using t over behaviours (c: V::ConfigVersion) \
+        forall trace a of V forall trace b of V \
+        { always holds(let n = c.versionNumber @ a + c.versionNumber @ b in n <= 3) }";
+    let built = build(INFINITE, &["V"], declaration);
+    let admitted = admitted(&built);
+    let root = hyper_roots(&admitted).expect("hyper root").remove(0);
+    assert!(built.clauses[0].copy_group().classes.is_empty());
+    assert!(built.clauses[0].copy_group().generators.is_empty());
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("opaque let form");
+        assert!(form.copy_group.classes.is_empty());
+        assert!(form.copy_group.generators.is_empty());
+        let rebuilt = fsl_semantics::check::CheckedHyperClause::of_package_form(
+            form,
+            &built.types,
+            1_000_000,
+        )
+        .expect("opaque let clause");
+        assert_eq!(rebuilt.copy_group(), built.clauses[0].copy_group());
+    });
 }
 
 /// FR-488-AC-18: a clause with two refusals reports the first in the order

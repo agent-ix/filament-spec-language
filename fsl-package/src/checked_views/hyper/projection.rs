@@ -166,31 +166,155 @@ impl Ownership {
     }
 }
 
+enum OwnershipStep<'a> {
+    Visit(usize),
+    Finish(usize),
+    Bind {
+        slots: &'a [usize],
+        initializer: Option<usize>,
+        body: usize,
+    },
+    Restore(usize, Option<Ownership>),
+}
+
 fn components(
     projection: &ReaderProtocolProjection,
     slots: &[fsl_semantics::check::AtomSlot],
 ) -> Option<BTreeMap<ExpressionLocation, usize>> {
     let mut owners: BTreeMap<usize, Ownership> = BTreeMap::new();
+    let mut bindings = BTreeMap::new();
     let mut reads = BTreeMap::new();
-    let mut pending = vec![(projection.root(), false)];
-    while let Some((index, exit)) = pending.pop() {
-        if owners.contains_key(&index) {
-            continue;
-        }
+    let mut pending = vec![OwnershipStep::Visit(projection.root())];
+    while let Some(step) = pending.pop() {
+        let index = match step {
+            OwnershipStep::Bind {
+                slots,
+                initializer,
+                body,
+            } => {
+                let ownership = match initializer {
+                    Some(initializer) => *owners.get(&initializer)?,
+                    None => Ownership::None,
+                };
+                for slot in slots {
+                    let previous = bindings.insert(*slot, ownership);
+                    pending.push(OwnershipStep::Restore(*slot, previous));
+                }
+                pending.push(OwnershipStep::Visit(body));
+                continue;
+            }
+            OwnershipStep::Restore(slot, previous) => {
+                match previous {
+                    Some(previous) => {
+                        bindings.insert(slot, previous);
+                    }
+                    None => {
+                        bindings.remove(&slot);
+                    }
+                }
+                continue;
+            }
+            OwnershipStep::Visit(index) => {
+                if owners.contains_key(&index) {
+                    continue;
+                }
+                pending.push(OwnershipStep::Finish(index));
+                match projection.kind(index)? {
+                    NodeKind::Let {
+                        slot, value, body, ..
+                    }
+                    | NodeKind::Query {
+                        slot,
+                        source: value,
+                        body,
+                        ..
+                    } => {
+                        pending.push(OwnershipStep::Bind {
+                            slots: std::slice::from_ref(slot),
+                            initializer: Some(*value),
+                            body: *body,
+                        });
+                        pending.push(OwnershipStep::Visit(*value));
+                    }
+                    NodeKind::Case {
+                        scrutinee, arms, ..
+                    } => {
+                        for arm in arms.iter().rev() {
+                            pending.push(OwnershipStep::Bind {
+                                slots: &arm.binders,
+                                initializer: Some(*scrutinee),
+                                body: arm.body,
+                            });
+                        }
+                        pending.push(OwnershipStep::Visit(*scrutinee));
+                    }
+                    NodeKind::Seq {
+                        slot,
+                        low,
+                        high,
+                        body,
+                        ..
+                    } => {
+                        pending.push(OwnershipStep::Bind {
+                            slots: std::slice::from_ref(slot),
+                            initializer: None,
+                            body: *body,
+                        });
+                        pending.push(OwnershipStep::Visit(*high));
+                        pending.push(OwnershipStep::Visit(*low));
+                    }
+                    _ => pending.extend(
+                        projection
+                            .children(index)?
+                            .iter()
+                            .rev()
+                            .map(|child| OwnershipStep::Visit(*child)),
+                    ),
+                }
+                continue;
+            }
+            OwnershipStep::Finish(index) => index,
+        };
         let kind = projection.kind(index)?;
-        let children = projection.children(index)?;
-        if !exit {
-            pending.push((index, true));
-            pending.extend(children.iter().rev().map(|child| (*child, false)));
-            continue;
-        }
-        let mut ownership = Ownership::None;
-        for child in children {
-            ownership = ownership.join(*owners.get(child)?);
-        }
-        if let NodeKind::Local(level) = kind {
-            ownership = ownership.join(Ownership::Trace(slots.get(*level)?.trace));
-        }
+        let ownership = match kind {
+            NodeKind::Local(level) => match slots.get(*level) {
+                Some(slot) => Ownership::Trace(slot.trace),
+                None => *bindings.get(level)?,
+            },
+            NodeKind::Let { body, .. } | NodeKind::Seq { body, .. } => *owners.get(body)?,
+            NodeKind::If {
+                then, otherwise, ..
+            } => owners.get(then)?.join(*owners.get(otherwise)?),
+            NodeKind::Case { arms, .. } => {
+                let mut ownership = Ownership::None;
+                for arm in arms {
+                    ownership = ownership.join(*owners.get(&arm.body)?);
+                }
+                ownership
+            }
+            NodeKind::Query {
+                visit,
+                source,
+                body,
+                ..
+            } => match visit {
+                filament_checked::node::Visit::Filter => *owners.get(source)?,
+                filament_checked::node::Visit::Map | filament_checked::node::Visit::Only => {
+                    *owners.get(body)?
+                }
+                filament_checked::node::Visit::Forall
+                | filament_checked::node::Visit::Exists
+                | filament_checked::node::Visit::Count
+                | filament_checked::node::Visit::Sum => Ownership::None,
+            },
+            _ => {
+                let mut ownership = Ownership::None;
+                for child in projection.children(index)? {
+                    ownership = ownership.join(*owners.get(child)?);
+                }
+                ownership
+            }
+        };
         if model_read(kind) {
             let Ownership::Trace(component) = ownership else {
                 return None;
