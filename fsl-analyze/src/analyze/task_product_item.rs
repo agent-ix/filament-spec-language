@@ -79,6 +79,7 @@ pub(super) fn item<'a>(
     analysis: &'a super::RunInput<'a>,
     binding: &'a super::SubjectBinding<'a>,
     limits: super::AnalyzeLimits,
+    normalization_owner: Option<&'a fsl_semantics::model::intake::SelectedModels>,
     max_work: Option<std::num::NonZeroU64>,
     max_check_work: Option<std::num::NonZeroU64>,
     claim: &'a OccurrenceKey,
@@ -153,15 +154,19 @@ pub(super) fn item<'a>(
                     verdict: ProofVerdict::Uncertified,
                     certificate: None,
                 },
-                crate::zone_check::TaskProductSearchOutcome::Stopped { .. } => prove(
+                crate::zone_check::TaskProductSearchOutcome::Stopped { .. } => match prove(
                     &product,
                     certificate_simulation,
                     &model,
                     checked_claim,
                     &claim,
                     max_check_work,
+                    normalization_owner,
                     cancel,
-                ),
+                ) {
+                    Ok(proof) => proof,
+                    Err(refusal) => return EngineReport::Refused(refusal),
+                },
             };
             if matches!(
                 proof.verdict,
@@ -190,12 +195,12 @@ pub(super) fn item<'a>(
                 }
                 crate::zone_check::TaskProductSearchOutcome::Stopped { .. } => None,
             };
-            let task_search = match &outcome {
+            let search = match &outcome {
                 crate::zone_check::TaskProductSearchOutcome::Stopped {
                     cause: crate::zone_check::TaskProductSearchStop::WorkLimit(work),
                     frontier,
                     ..
-                } if !frontier.is_empty() => task_search_evidence(&product, frontier, Some(*work)),
+                } if !frontier.is_empty() => Some((frontier.as_slice(), Some(*work))),
                 // Unresolved dynamics carries no claimed limit (FSpec FR-331).
                 crate::zone_check::TaskProductSearchOutcome::Stopped {
                     cause:
@@ -203,8 +208,20 @@ pub(super) fn item<'a>(
                         | crate::zone_check::TaskProductSearchStop::QueueOverflow,
                     frontier,
                     ..
-                } if !frontier.is_empty() => task_search_evidence(&product, frontier, None),
+                } if !frontier.is_empty() => Some((frontier.as_slice(), None)),
                 _ => None,
+            };
+            let task_search = match search {
+                Some((frontier, limit)) => match super::reference_output::with_source(
+                    product.source().system(),
+                    normalization_owner,
+                    cancel,
+                    |references| task_search_evidence(&product, frontier, limit, references),
+                ) {
+                    Ok(evidence) => evidence,
+                    Err(refusal) => return EngineReport::Refused(refusal),
+                },
+                None => None,
             };
             let counterexample = reproduced
                 .as_ref()
@@ -370,127 +387,146 @@ fn task_search_evidence(
     product: &fsl_eval::simulation::model::TaskProductSystem<'_, '_>,
     frontier: &[crate::zone_check::TaskProductSearchFrontier],
     limit: Option<u64>,
-) -> Option<serde_json::Value> {
+    references: &mut fsl_replay::ReferenceScope<'_, '_, '_, '_>,
+) -> Result<Option<serde_json::Value>, fsl_replay::ReferenceCodecError> {
     use crate::zone_check::TaskProductSearchStop as Stop;
     use serde_json::json;
 
-    struct Node {
-        key: fsl_eval::simulation::StateKey,
-        clocks: Vec<filament_exact::Rational>,
-        depth: u64,
-        expanded: bool,
-    }
-    let mut nodes: Vec<Node> = Vec::new();
-    #[allow(
-        clippy::mutable_key_type,
-        reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate"
-    )]
-    let mut lookup = std::collections::BTreeMap::new();
-    let mut add = |state: &fsl_eval::simulation::model::TaskProductState,
-                   depth: u64,
-                   expanded: bool|
-     -> Option<usize> {
-        let key =
-            fsl_eval::simulation::StateKey::from_canonical_bytes(product.state_key(state).ok()?);
-        let clocks = clock_values(product, state);
-        // A node is a state at one path length, either expanded or an open
-        // leaf, so an edge always runs from depth d to depth d + 1 and an
-        // open leaf is never also an expanded node.
-        let at = *lookup
-            .entry((key.as_bytes().to_vec(), clocks.clone(), depth, expanded))
-            .or_insert(nodes.len());
-        if at == nodes.len() {
-            nodes.push(Node {
-                key,
-                clocks,
-                depth,
-                expanded,
+    let mut reference_failure = None;
+    let evidence = (|| {
+        struct Node {
+            key: fsl_eval::simulation::StateKey,
+            clocks: Vec<filament_exact::Rational>,
+            depth: u64,
+            expanded: bool,
+        }
+        let mut nodes: Vec<Node> = Vec::new();
+        #[allow(
+            clippy::mutable_key_type,
+            reason = "exact rationals cache integer representations; their numeric ordering and equality never mutate"
+        )]
+        let mut lookup = std::collections::BTreeMap::new();
+        let mut add = |state: &fsl_eval::simulation::model::TaskProductState,
+                       depth: u64,
+                       expanded: bool|
+         -> Option<usize> {
+            let key = fsl_eval::simulation::StateKey::from_canonical_bytes(
+                product.state_key(state).ok()?,
+            );
+            let clocks = clock_values(product, state);
+            // A node is a state at one path length, either expanded or an open
+            // leaf, so an edge always runs from depth d to depth d + 1 and an
+            // open leaf is never also an expanded node.
+            let at = *lookup
+                .entry((key.as_bytes().to_vec(), clocks.clone(), depth, expanded))
+                .or_insert(nodes.len());
+            if at == nodes.len() {
+                nodes.push(Node {
+                    key,
+                    clocks,
+                    depth,
+                    expanded,
+                });
+            }
+            Some(at)
+        };
+        let mut edges = Vec::new();
+        let mut open_nodes = std::collections::BTreeMap::new();
+        for open in frontier {
+            let states = product.replay_trace_states(&open.trace).ok()?;
+            let total = open.trace.steps.len();
+            let mut previous = add(states.first()?, 0, total != 0)?;
+            for (index, step) in open.trace.steps.iter().enumerate() {
+                let depth = u64::try_from(index + 1).ok()?;
+                // The path ends at the open node, which is not expanded.
+                let next = add(states.get(index + 1)?, depth, index + 1 < total)?;
+                let transition = match references.at_index("/edges", edges.len(), |references| {
+                    references.at_pointer("/transition", |references| {
+                        references.task_product_transition_wire(&step.transition)
+                    })
+                }) {
+                    Ok(transition) => transition,
+                    Err(error) => {
+                        reference_failure = Some(error);
+                        return None;
+                    }
+                };
+                let edge = json!({"node": previous, "transition": transition, "target": next});
+                // Frontier paths share prefixes; each edge is written once.
+                if !edges.contains(&edge) {
+                    edges.push(edge);
+                }
+                previous = next;
+            }
+            let node = previous;
+            let (reason, mut dimensions) = match open.stop {
+                Stop::WorkLimit(_) => ("work-limit", vec!["successors"]),
+                Stop::UnresolvedChoice => ("unresolved-choice", vec!["demand"]),
+                Stop::QueueOverflow => ("unresolved-choice", vec!["queue"]),
+                Stop::RegionClosureRequired | Stop::Cancelled(_) => return None,
+            };
+            // A search that stopped after a delay leaves that delay open.
+            if !open.final_delay.is_zero() {
+                dimensions.push("delay");
+            }
+            open_nodes.entry(node).or_insert((reason, dimensions));
+        }
+        let constants: Vec<_> = nodes
+            .iter()
+            .flat_map(|node| node.clocks.iter().cloned())
+            .collect();
+        let scaled = crate::zone_check::scale_constants(&constants);
+        let mut cursor = 0;
+        let mut written = Vec::with_capacity(nodes.len());
+        for node in &nodes {
+            let width = node.clocks.len();
+            let values = scaled.constants().get(cursor..cursor + width)?;
+            cursor += width;
+            let bound = |row: usize, column: usize| {
+                let at = |index: usize| {
+                    index
+                        .checked_sub(1)
+                        .and_then(|clock| values.get(clock))
+                        .cloned()
+                        .unwrap_or_default()
+                };
+                json!({"bound": (at(row) - at(column)).to_string(), "strict": false})
+            };
+            let zone: Vec<Vec<serde_json::Value>> = (0..=width)
+                .map(|row| (0..=width).map(|column| bound(row, column)).collect())
+                .collect();
+            written.push(json!({
+                "state": fsl_replay::state_key_wire(&node.key).ok()?,
+                "depth": node.depth,
+                "zone": zone,
+                "expanded": node.expanded,
+            }));
+        }
+        let rows: Vec<_> = open_nodes
+            .into_iter()
+            .map(|(node, (reason, open))| json!({"node": node, "reason": reason, "open": open}))
+            .collect();
+        let mut evidence = json!({
+            "type": "task-search-frontier",
+            "nodes": written,
+            "edges": edges,
+            "frontier": rows,
+        });
+        if let Some(value) = limit {
+            let limit = fsl_replay::ModelCheckLimit::TaskProductWork;
+            evidence["limit"] = json!({
+                "type": "limit-reached",
+                "limit": limit.as_str(),
+                "value": value,
+                "setting": limit.setting(),
             });
         }
-        Some(at)
-    };
-    let mut edges = Vec::new();
-    let mut open_nodes = std::collections::BTreeMap::new();
-    for open in frontier {
-        let states = product.replay_trace_states(&open.trace).ok()?;
-        let total = open.trace.steps.len();
-        let mut previous = add(states.first()?, 0, total != 0)?;
-        for (index, step) in open.trace.steps.iter().enumerate() {
-            let depth = u64::try_from(index + 1).ok()?;
-            // The path ends at the open node, which is not expanded.
-            let next = add(states.get(index + 1)?, depth, index + 1 < total)?;
-            let transition = fsl_replay::task_product_transition_wire(&step.transition).ok()?;
-            let edge = json!({"node": previous, "transition": transition, "target": next});
-            // Frontier paths share prefixes; each edge is written once.
-            if !edges.contains(&edge) {
-                edges.push(edge);
-            }
-            previous = next;
-        }
-        let node = previous;
-        let (reason, mut dimensions) = match open.stop {
-            Stop::WorkLimit(_) => ("work-limit", vec!["successors"]),
-            Stop::UnresolvedChoice => ("unresolved-choice", vec!["demand"]),
-            Stop::QueueOverflow => ("unresolved-choice", vec!["queue"]),
-            Stop::RegionClosureRequired | Stop::Cancelled(_) => return None,
-        };
-        // A search that stopped after a delay leaves that delay open.
-        if !open.final_delay.is_zero() {
-            dimensions.push("delay");
-        }
-        open_nodes.entry(node).or_insert((reason, dimensions));
+        Some(evidence)
+    })();
+    match reference_failure {
+        Some(error) => Err(error),
+        None => Ok(evidence),
     }
-    let constants: Vec<_> = nodes
-        .iter()
-        .flat_map(|node| node.clocks.iter().cloned())
-        .collect();
-    let scaled = crate::zone_check::scale_constants(&constants);
-    let mut cursor = 0;
-    let mut written = Vec::with_capacity(nodes.len());
-    for node in &nodes {
-        let width = node.clocks.len();
-        let values = scaled.constants().get(cursor..cursor + width)?;
-        cursor += width;
-        let bound = |row: usize, column: usize| {
-            let at = |index: usize| {
-                index
-                    .checked_sub(1)
-                    .and_then(|clock| values.get(clock))
-                    .cloned()
-                    .unwrap_or_default()
-            };
-            json!({"bound": (at(row) - at(column)).to_string(), "strict": false})
-        };
-        let zone: Vec<Vec<serde_json::Value>> = (0..=width)
-            .map(|row| (0..=width).map(|column| bound(row, column)).collect())
-            .collect();
-        written.push(json!({
-            "state": fsl_replay::state_key_wire(&node.key).ok()?,
-            "depth": node.depth,
-            "zone": zone,
-            "expanded": node.expanded,
-        }));
-    }
-    let rows: Vec<_> = open_nodes
-        .into_iter()
-        .map(|(node, (reason, open))| json!({"node": node, "reason": reason, "open": open}))
-        .collect();
-    let mut evidence = json!({
-        "type": "task-search-frontier",
-        "nodes": written,
-        "edges": edges,
-        "frontier": rows,
-    });
-    if let Some(value) = limit {
-        let limit = fsl_replay::ModelCheckLimit::TaskProductWork;
-        evidence["limit"] = json!({
-            "type": "limit-reached",
-            "limit": limit.as_str(),
-            "value": value,
-            "setting": limit.setting(),
-        });
-    }
-    Some(evidence)
 }
 
 /// The exact clock valuation of a task-product state: the source clock
@@ -529,12 +565,15 @@ fn prove<'a>(
     checked_claim: &fsl_semantics::check::CheckedScheduleClaim,
     claim: &OccurrenceKey,
     max_check_work: Option<std::num::NonZeroU64>,
+    normalization_owner: Option<&fsl_semantics::model::intake::SelectedModels>,
     cancel: &filament_exact::Cancel,
-) -> TaskProof {
+) -> Result<TaskProof, Refusal> {
     use crate::zone_check::{SymbolicStop, TaskCertificateRefusal};
-    let fault = || TaskProof {
-        verdict: ProofVerdict::Fault,
-        certificate: None,
+    let fault = || {
+        Ok(TaskProof {
+            verdict: ProofVerdict::Fault,
+            certificate: None,
+        })
     };
     let defaults = fsl_replay::CertificateCheckLimits::default();
     let limits = fsl_replay::CertificateCheckLimits {
@@ -550,11 +589,11 @@ fn prove<'a>(
     ) {
         Ok(certificate) => certificate,
         Err(crate::zone_check::ZoneCheckRefusal::Stopped(cause)) => {
-            return TaskProof {
+            return Ok(TaskProof {
                 verdict: crate::zone_check::stop_cause(cause, cancel)
                     .map_or(ProofVerdict::Fault, ProofVerdict::Stopped),
                 certificate: None,
-            }
+            })
         }
         Err(_) => return fault(),
     };
@@ -568,27 +607,27 @@ fn prove<'a>(
         ) {
             Ok(graph) => graph,
             Err(SymbolicStop::Uncertified | SymbolicStop::Missed) => {
-                return TaskProof {
+                return Ok(TaskProof {
                     verdict: ProofVerdict::Uncertified,
                     certificate: None,
-                }
+                })
             }
             Err(SymbolicStop::WorkLimit(value)) => {
-                return TaskProof {
+                return Ok(TaskProof {
                     verdict: ProofVerdict::Stopped(fsl_replay::IncompleteCause::LimitReached {
                         limit: fsl_replay::ModelCheckLimit::ZoneMaxCheckWork,
                         value,
                     }),
                     certificate: None,
-                }
+                })
             }
             Err(SymbolicStop::Cancelled(source)) => {
-                return TaskProof {
+                return Ok(TaskProof {
                     verdict: ProofVerdict::Stopped(fsl_replay::IncompleteCause::Cancelled {
                         source,
                     }),
                     certificate: None,
-                }
+                })
             }
             Err(SymbolicStop::Refused(_) | SymbolicStop::Fault(_)) => return fault(),
         };
@@ -599,10 +638,10 @@ fn prove<'a>(
                 | TaskCertificateRefusal::NoDivergence
                 | TaskCertificateRefusal::NoMember,
             ) => {
-                return TaskProof {
+                return Ok(TaskProof {
                     verdict: ProofVerdict::Uncertified,
                     certificate: None,
-                }
+                })
             }
             Err(TaskCertificateRefusal::Shape) => return fault(),
         }
@@ -610,18 +649,23 @@ fn prove<'a>(
     let Ok(identity) = fsl_replay::certificate_identity_wire(claim, model) else {
         return fault();
     };
-    let transported = if built.task_product.as_ref().is_some_and(|member| {
-        member.time_progress.method == fsl_replay::TaskClosureMethod::ClosedNoReleaseProduct
-    }) {
-        crate::zone_check::read_back_unchanged_with_source(
-            &built,
-            identity,
-            claim,
-            product.source(),
-        )
-    } else {
-        crate::zone_check::read_back_unchanged(&built, identity, claim)
-    };
+    let source = built
+        .task_product
+        .as_ref()
+        .is_some_and(|member| {
+            member.time_progress.method == fsl_replay::TaskClosureMethod::ClosedNoReleaseProduct
+        })
+        .then_some(product.source());
+    let transported = super::reference_output::with_source(
+        product.source().system(),
+        normalization_owner,
+        cancel,
+        |references| {
+            Ok(crate::zone_check::read_back_unchanged_with_references(
+                &built, identity, claim, source, references,
+            ))
+        },
+    )?;
     let Some((wire, read)) = transported else {
         return fault();
     };
@@ -640,11 +684,11 @@ fn prove<'a>(
         limits,
         cancel,
     );
-    TaskProof {
+    Ok(TaskProof {
         verdict: match verdict {
             Ok(verdict) => ProofVerdict::Checked(verdict),
             Err(_) => ProofVerdict::Fault,
         },
         certificate: Some(wire),
-    }
+    })
 }

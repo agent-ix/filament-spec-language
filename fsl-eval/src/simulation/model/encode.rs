@@ -510,6 +510,12 @@ pub(crate) struct SharedEnc {
     bytes: Option<Vec<u8>>,
 }
 
+impl SharedEnc {
+    pub(crate) fn borrowed_value(&self) -> &Enc {
+        &self.value
+    }
+}
+
 impl Enc {
     /// `value` as an [`Enc::Shared`], its bytes written once now.
     pub(crate) fn shared(value: Enc) -> Self {
@@ -1178,20 +1184,6 @@ pub fn typed_value_json(
     variants: &[VariantTypeDeclaration],
 ) -> Option<serde_json::Value> {
     canonical_json(&typed_value_enc(value, types, variants))
-}
-
-/// A run value's canonical form, using the admitted source enum bindings
-/// alongside the checked composite declarations.
-pub fn run_value_json(
-    value: &Value,
-    types: &TypeEnvironment,
-    enums: &[EnumBinding],
-    variants: &[VariantTypeDeclaration],
-) -> Option<serde_json::Value> {
-    canonical_json(&value_enc(
-        value,
-        Typing::with_variants(types, variants).with_enums(enums),
-    ))
 }
 
 /// Write a borrowed run value through the shared typed projection, admitting

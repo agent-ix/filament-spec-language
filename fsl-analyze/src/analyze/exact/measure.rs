@@ -13,6 +13,7 @@ pub(super) fn run(
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
 ) -> EngineReport {
     let claim = request.claim;
     let simulation = request.subject.simulation.clone();
@@ -82,6 +83,7 @@ pub(super) fn run(
                 cancel,
                 subject,
                 tamper_witness,
+                owner,
             )
         }
         Err(error) => return build_refusal(error, subject),
@@ -325,6 +327,7 @@ pub(super) fn run(
                 cancel,
                 subject,
                 tamper_witness,
+                owner,
             );
         }
         return refute(
@@ -340,6 +343,7 @@ pub(super) fn run(
             tamper_witness,
             meter,
             storage,
+            owner,
         );
     }
     let extremum = match optimization {
@@ -365,6 +369,7 @@ fn refute(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
     mut meter: filament_exact::Meter,
     mut storage: u64,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
         produce_quantile_witness, produce_witness, WitnessError, WitnessScope, WitnessWork,
@@ -506,7 +511,7 @@ fn refute(
     match produced {
         Ok(Some(produced)) => replay_produced_witness(
             system, claim, product, produced, initial, binding, None, limits, cancel, subject,
-            tamper, meter, storage,
+            tamper, meter, storage, owner,
         ),
         Ok(None) => not_yet(),
         Err(WitnessError::Limit { limit, value }) => {
@@ -556,6 +561,7 @@ fn refute_mean(
     cancel: &Cancel,
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
 ) -> EngineReport {
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
@@ -673,16 +679,20 @@ fn refute_mean(
                     identity.clone(),
                 ));
             }
-            let scope = package.graph().scope();
-            let wire = fsl_replay::probabilistic_wire(
-                token.evidence(),
-                bound,
-                scope.types(),
-                scope.variant_types(),
-                &|state| system.state_key(state).ok().map(|(_, key)| key),
-                &spelled,
-            );
-            EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
+            let Some(owner) = owner else {
+                return not_yet();
+            };
+            match super::super::reference_output::with_source(
+                system,
+                Some(owner),
+                cancel,
+                |scope| scope.probabilistic_wire(token.evidence(), bound, system, owner, &spelled),
+            ) {
+                Ok(wire) => {
+                    EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(Ok(wire)))))
+                }
+                Err(refusal) => EngineReport::Refused(refusal),
+            }
         }
         Ok(ProbabilityWitnessReplay::Parity) => {
             EngineReport::Exact(Box::new(ExactReport::ReplayParity))

@@ -200,7 +200,23 @@ pub fn exact_probabilistic_item<'a>(
         Some(DeclarationFamily::Probabilistic),
         Mode::Unbounded,
         en5::BACKEND_ID,
-        move |cancel| run(request, cancel, None, None),
+        move |cancel| run(request, cancel, None, None, None),
+    )
+}
+
+/// Source request output borrowing the admission retained by that request.
+pub(super) fn exact_probabilistic_item_with_owner<'a>(
+    index: RequestIndex,
+    request: ProductRequest<'a>,
+    owner: Option<&'a fsl_semantics::model::intake::SelectedModels>,
+) -> AnalyzeItem<'a> {
+    AnalyzeItem::new(
+        index,
+        Capability::ProbabilisticSatisfaction,
+        Some(DeclarationFamily::Probabilistic),
+        Mode::Unbounded,
+        en5::BACKEND_ID,
+        move |cancel| run(request, cancel, None, None, owner),
     )
 }
 
@@ -219,7 +235,7 @@ pub fn exact_probabilistic_item_tampered<'a>(
         Some(DeclarationFamily::Probabilistic),
         Mode::Unbounded,
         en5::BACKEND_ID,
-        move |cancel| run(request, cancel, Some(&tamper), None),
+        move |cancel| run(request, cancel, Some(&tamper), None, None),
     )
 }
 
@@ -274,6 +290,7 @@ fn run_timed(
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
 ) -> EngineReport {
     let claim = request.claim;
     let simulation = request.subject.simulation.clone();
@@ -387,6 +404,7 @@ fn run_timed(
             cancel,
             subject,
             tamper_witness,
+            owner,
         );
     }
     let mut certificate = match certificate_of(
@@ -829,6 +847,7 @@ fn run(
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
 ) -> EngineReport {
     if matches!(
         &request.claim.form,
@@ -840,7 +859,7 @@ fn run(
         return elapsed::run(request, cancel, tamper);
     }
     if request.claim.bounded_measure() {
-        return measure::run(request, cancel, tamper, tamper_witness);
+        return measure::run(request, cancel, tamper, tamper_witness, owner);
     }
     if matches!(&request.claim.form, ProbForm::MeanTime { .. }) {
         return run_timed_mean(request, cancel, tamper);
@@ -855,7 +874,7 @@ fn run(
             ..
         }
     ) {
-        return run_timed(request, cancel, tamper, tamper_witness);
+        return run_timed(request, cancel, tamper, tamper_witness, owner);
     }
     if matches!(request.claim.form, ProbForm::LongRunFraction { .. }) {
         return long_run::run(request, cancel, tamper);
@@ -1012,6 +1031,7 @@ fn run(
                 cancel,
                 subject,
                 tamper_witness,
+                owner,
             )
         }
     };
@@ -1187,6 +1207,7 @@ fn run(
             cancel,
             subject,
             tamper_witness,
+            owner,
         );
     }
     let certificate = match (bounded_formula, monitor) {
@@ -1749,6 +1770,7 @@ fn replay_refutation(
     cancel: &Cancel,
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
         produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
@@ -2012,6 +2034,7 @@ fn replay_refutation(
         tamper,
         producer_meter,
         producer_storage,
+        owner,
     )
 }
 
@@ -2030,6 +2053,7 @@ fn replay_produced_witness(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
     mut producer_meter: filament_exact::Meter,
     mut producer_storage: u64,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
 ) -> EngineReport {
     use crate::exact_probabilistic::ProductAction;
     let measure = claim.bounded_measure();
@@ -2352,6 +2376,8 @@ fn replay_produced_witness(
         &spelled_scheduler,
         limits,
         subject,
+        owner,
+        cancel,
     )
 }
 
@@ -2368,35 +2394,36 @@ fn finish_replay(
     )],
     limits: &crate::exact_probabilistic::ExactProbLimits,
     subject: SubjectLimits<'_>,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
+    cancel: &Cancel,
 ) -> EngineReport {
-    let Some(package) = system.source_package() else {
-        return not_yet();
-    };
     match replayed {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
-            let scope = package.graph().scope();
             let quantile_bound;
-            let wire = fsl_replay::probabilistic_wire(
-                witness,
-                match &claim.form {
-                    ProbForm::Reach { bound, .. }
-                    | ProbForm::Probability { bound, .. }
-                    | ProbForm::MeanOfFraction { bound, .. } => bound,
-                    ProbForm::Quantile { q, threshold, .. } => {
-                        quantile_bound = match threshold {
-                            Bound::AtMost(_) => Bound::AtLeast(q.clone()),
-                            Bound::AtLeast(_) => Bound::AtMost(q.clone()),
-                        };
-                        &quantile_bound
-                    }
-                    _ => return not_yet(),
-                },
-                scope.types(),
-                scope.variant_types(),
-                &|state| system.state_key(state).ok().map(|(_, key)| key),
-                spelled_scheduler,
-            );
-            EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
+            let bound = match &claim.form {
+                ProbForm::Reach { bound, .. }
+                | ProbForm::Probability { bound, .. }
+                | ProbForm::MeanOfFraction { bound, .. } => bound,
+                ProbForm::Quantile { q, threshold, .. } => {
+                    quantile_bound = match threshold {
+                        Bound::AtMost(_) => Bound::AtLeast(q.clone()),
+                        Bound::AtLeast(_) => Bound::AtMost(q.clone()),
+                    };
+                    &quantile_bound
+                }
+                _ => return not_yet(),
+            };
+            let Some(owner) = owner else {
+                return not_yet();
+            };
+            match super::reference_output::with_source(system, Some(owner), cancel, |scope| {
+                scope.probabilistic_wire(witness, bound, system, owner, spelled_scheduler)
+            }) {
+                Ok(wire) => {
+                    EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(Ok(wire)))))
+                }
+                Err(refusal) => EngineReport::Refused(refusal),
+            }
         }
         Ok(ProbabilityWitnessReplay::Parity) => {
             EngineReport::Exact(Box::new(ExactReport::ReplayParity))
@@ -2501,7 +2528,7 @@ pub fn exact_probabilistic_item_witness_tampered<'a>(
         Some(DeclarationFamily::Probabilistic),
         Mode::Unbounded,
         en5::BACKEND_ID,
-        move |cancel| run(request, cancel, None, Some(&tamper)),
+        move |cancel| run(request, cancel, None, Some(&tamper), None),
     )
 }
 
@@ -2604,6 +2631,7 @@ fn replay_timed_refutation(
     cancel: &Cancel,
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{produce_witness, ProductAction, WitnessScope};
     use fsl_eval::probabilistic::{DeadlinePhase, MonitorState};
@@ -2779,6 +2807,8 @@ fn replay_timed_refutation(
         &[],
         limits,
         subject,
+        owner,
+        cancel,
     )
 }
 

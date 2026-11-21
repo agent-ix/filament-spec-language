@@ -55,8 +55,8 @@ pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 pub(crate) mod probabilistic;
 mod reference_bindings;
-mod replay_over;
 mod restore;
+mod replay_over;
 pub use restore::{ModelRestoreBudget, ModelRestoreError};
 mod refine;
 mod state_predicate;
@@ -119,8 +119,8 @@ pub(crate) use contracts::{verdict, Verdict};
 use encode::declaration_text;
 pub use encode::{
     canonical_json, declaration_identity_text, encode_reference, reference_canonical_text,
-    run_declaration_name, run_value_bytes, run_value_json, typed_value_json, value_json, ModelKey,
-    RunValueBudget, SingleOwnerRunBudget,
+    run_declaration_name, run_value_bytes, typed_value_json, value_json, ModelKey, RunValueBudget,
+    SingleOwnerRunBudget,
 };
 pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{

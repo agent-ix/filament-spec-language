@@ -33,6 +33,7 @@ pub(super) fn hyper_item<'a>(
     analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
+    normalization_owner: Option<&'a fsl_semantics::model::intake::SelectedModels>,
     key: &OccurrenceKey,
     index: RequestIndex,
     form: &TemporalItem,
@@ -114,7 +115,15 @@ pub(super) fn hyper_item<'a>(
                         alone.snapshots = provision;
                     }
                     return single(
-                        package, clause, alone, system, &letters, &form, limits, cancel,
+                        package,
+                        clause,
+                        alone,
+                        system,
+                        &letters,
+                        &form,
+                        limits,
+                        normalization_owner,
+                        cancel,
                     );
                 }
                 let outcome = match check_hyper(
@@ -232,6 +241,7 @@ fn single(
     letters: &CheckedHyperLetters<'_, '_>,
     form: &TemporalItem,
     limits: AnalyzeLimits,
+    normalization_owner: Option<&fsl_semantics::model::intake::SelectedModels>,
     cancel: &Cancel,
 ) -> EngineReport {
     use fsl_replay::{GraphEvidence, StateGraphMethod, StateGraphPropertyForm, TerminalValue};
@@ -301,19 +311,26 @@ fn single(
                 (None, None) => None,
                 _ => return EngineReport::Refused(Refusal::Failed(BROKEN)),
             };
-            wire = match fsl_replay::graph_evidence_wire(
-                evidence,
-                StateGraphPropertyForm::Possible,
-                clause
-                    .parameters()
-                    .first()
-                    .map(|parameter| parameter.name.as_str()),
-                reference.as_ref(),
-                &[],
-                clause.assembled_occurrence(),
+            wire = match super::reference_output::with_source(
+                system,
+                normalization_owner,
+                cancel,
+                |references| {
+                    references.graph_evidence_wire(
+                        evidence,
+                        StateGraphPropertyForm::Possible,
+                        clause
+                            .parameters()
+                            .first()
+                            .map(|parameter| parameter.name.as_str()),
+                        reference.as_ref(),
+                        &[],
+                        clause.assembled_occurrence(),
+                    )
+                },
             ) {
                 Ok(wire) => Some(wire),
-                Err(_) => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+                Err(refusal) => return EngineReport::Refused(refusal),
             };
         }
         let refuted = matches!(settled.record.value, TerminalValue::Refuted);
