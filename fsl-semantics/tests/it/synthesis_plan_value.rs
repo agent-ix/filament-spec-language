@@ -4,6 +4,7 @@
 //! plan length that is not a non-negative integer range, and refuses a read
 //! of a member the plan value does not have.
 
+use filament_exact::ValueType;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_semantics::check::{CheckedSynthesis, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -35,6 +36,36 @@ fn check_model(
     objective: &str,
     goal: &str,
 ) -> Result<CheckedSynthesis, String> {
+    check_model_with_types(model_text, lengths, objective, goal, "")
+}
+
+fn check_step_sum(lengths: &str, objective: &str, goal: &str) -> Result<CheckedSynthesis, String> {
+    check_step_sum_with_types(lengths, objective, goal, "")
+}
+
+fn check_step_sum_with_types(
+    lengths: &str,
+    objective: &str,
+    goal: &str,
+    types: &str,
+) -> Result<CheckedSynthesis, String> {
+    let model = SHOP
+        .replace(
+            "object Order identity (id)",
+            "type OrderId = Int[0,999];\ntype OrderTotal = Int[0,100];\nobject Order identity (id)",
+        )
+        .replace("id: Int[0, 999]", "id: OrderId")
+        .replace("total: Int[0, 100]", "total: OrderTotal");
+    check_model_with_types(&model, lengths, objective, goal, types)
+}
+
+fn check_model_with_types(
+    model_text: &str,
+    lengths: &str,
+    objective: &str,
+    goal: &str,
+    types: &str,
+) -> Result<CheckedSynthesis, String> {
     let model = fsl_cst::diagnostic::read_source(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
         "shop.fsl",
@@ -49,6 +80,7 @@ fn check_model(
          profile v = \"filament.temporal.infinite-trace/v1\";\n\
          model M = \"example/shop\";\n\
          type Lengths = {lengths};\n\
+         {types}\n\
          synthesis Reach using v grammar M::Order domain Lengths {objective} \
          satisfies {{ {goal} }};\n"
     );
@@ -411,5 +443,88 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
                     && !(form.contains("requiredOption") && form.contains("optionalBool")))),
             "{refusals:?}"
         );
+    }
+}
+
+#[trace("FSpec-FR-802-AC-1", "FSpec-TC-1952")]
+#[test]
+fn a_step_sum_types_its_binder_as_the_step_record() {
+    let checked = check_step_sum(
+        "Int[0, 3]",
+        "minimize Reach.steps.sum(s => s.index + s.after.total)",
+        "Reach.length >= 1",
+    )
+    .expect("`s` is the plan step record with `index` and `after`");
+    let objective = checked.objective().expect("the objective is checked");
+    assert_eq!(objective.root().value_type(), &ValueType::Integer);
+    let refusals = check_step_sum(
+        "Int[0, 3]",
+        "minimize Reach.steps.sum(s => s.cost)",
+        "Reach.length >= 1",
+    )
+    .expect_err("the step record has no `cost`");
+    assert!(refusals.contains("cost"), "{refusals}");
+}
+
+#[trace("FSpec-FR-802-AC-1", "FSpec-FR-802-AC-7", "FSpec-TC-1952")]
+#[test]
+fn a_decimal_step_sum_retains_its_complete_declared_summand_type() {
+    for term in [
+        "let cost: Cost = if s.index < 2 then 0.10 else 0.05 in cost",
+        "convert<Cost>(0.10)",
+        "convert<Cost>(decimal(10,2))",
+        "convert<Cost>(0.10) + 0.05",
+        "let amount: Decimal[0,100;1,1;exact] = 0.1 in convert<Cost>(amount)",
+    ] {
+        let checked = check_step_sum_with_types(
+            "Int[0, 3]",
+            &format!("minimize Reach.steps.sum(s => {term})"),
+            "Reach.length >= 1",
+            "type Cost = Decimal[0,10000;2,2;exact];",
+        )
+        .expect("an FR-140 typed context supplies the complete decimal type");
+        let objective = checked.objective().expect("the objective is checked");
+        let ValueType::Decimal(total) = objective.root().value_type() else {
+            panic!(
+                "the total is a decimal: {:?}",
+                objective.root().value_type()
+            );
+        };
+        assert_eq!(total.lower().to_string(), "0");
+        assert_eq!(total.upper().to_string(), "10000");
+        assert_eq!((total.min_scale(), total.max_scale()), (2, 2));
+        assert_eq!(total.rounding(), filament_exact::RoundingMode::Exact);
+    }
+}
+
+#[trace("FSpec-FR-802-AC-8")]
+#[test]
+fn a_decimal_step_sum_without_a_typed_context_refuses_ambiguity() {
+    for term in [
+        "if s.index < 2 then 0.10 else 0.05",
+        "if s.index < 2 then decimal(10,2) else decimal(5,2)",
+        "let cost = 0.10 in cost",
+    ] {
+        let refusals = check_step_sum(
+            "Int[0, 3]",
+            &format!("minimize Reach.steps.sum(s => {term})"),
+            "true",
+        )
+        .expect_err("the objective and decimal spelling cannot supply a type");
+        assert!(refusals.contains("AmbiguousLiteral"), "{term}: {refusals}");
+    }
+}
+
+#[trace("FSpec-FR-802-AC-1", "FSpec-FR-194-AC-9", "FSpec-TC-1952")]
+#[test]
+fn a_step_sum_whose_term_is_not_numeric_is_ill_typed() {
+    for term in ["true", "s.operation", "s.after"] {
+        let refusals = check_step_sum(
+            "Int[0, 3]",
+            &format!("minimize Reach.steps.sum(s => {term})"),
+            "Reach.length >= 1",
+        )
+        .expect_err(term);
+        assert!(refusals.contains("TypeMismatch"), "{term}: {refusals}");
     }
 }

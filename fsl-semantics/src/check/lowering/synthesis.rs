@@ -73,7 +73,7 @@ impl<'a> Lowering<'a> {
             (None, None) => BindingValue::Group(GroupTerm::new(Vec::new())),
             (Some(objective), Some(body)) => {
                 let mut binders = Binders::new(
-                    &checked.slot_names,
+                    &checked.objective_slot_names,
                     &[Binder {
                         slot: 0,
                         parameter: candidate.clone().into(),

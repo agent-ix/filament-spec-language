@@ -721,6 +721,23 @@ fn summand_of_family(total: &ValueType, summand: &ValueType) -> bool {
     }
 }
 
+/// The type of the total of a plan objective's `Reach.steps.sum(s => e)`,
+/// given the complete summand type. Integer ranges total as `Integer`;
+/// decimal and rational domains remain the domains the summand declares.
+/// Resource limits belong to the evaluation meter, never invented domains.
+fn step_sum_total(summand: &ValueType) -> Option<ValueType> {
+    match summand {
+        ValueType::Integer | ValueType::Int(_) => Some(ValueType::Integer),
+        ValueType::BoundedQuantity(bounded) => Some(ValueType::Quantity(bounded.unit().clone())),
+        ValueType::Rational(_)
+        | ValueType::Decimal(_)
+        | ValueType::Float(_)
+        | ValueType::Quantity(_)
+        | ValueType::CarriedQuantity(_) => Some(summand.clone()),
+        _ => None,
+    }
+}
+
 /// A counting or summing query.
 #[derive(Clone, Copy)]
 enum Tally {
@@ -733,8 +750,10 @@ enum Tally {
 /// `count<N>(x in c: p)` or `sum<N>(x in c: e)`.
 struct TallyFrame<'e> {
     tally: Tally,
-    value_type: ValueType,
-    type_argument: String,
+    value_type: Option<ValueType>,
+    /// The written result type; `None` for a step sum, whose total follows
+    /// its summand.
+    type_argument: Option<String>,
     binder: &'e str,
     body: ExprRef<'e>,
     location: Location,
@@ -2162,7 +2181,22 @@ impl<'a> Typer<'a> {
             }
             ExprNode::Convert { target, operand } => {
                 let target = self.declared_target(target, &location)?;
-                let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
+                let operand = expression.at(*operand);
+                // A Decimal conversion target supplies a literal's complete
+                // expected policy (FR-140). Other source expressions retain
+                // their independently inferred type before conversion.
+                let decimal_literal = match operand.node() {
+                    ExprNode::DecimalValue { .. } => true,
+                    ExprNode::Negate(inner) => {
+                        matches!(operand.at(*inner).node(), ExprNode::DecimalValue { .. })
+                    }
+                    _ => false,
+                };
+                let operand_hint = match &target {
+                    ValueType::Decimal(_) if decimal_literal => Some(Cow::Owned(target.clone())),
+                    _ => None,
+                };
+                let goal = Goal::Infer(operand, operand_hint, location.child(0));
                 return Ok(Self::unary(Unary::Convert(target), goal, location, frames));
             }
             ExprNode::Query {
@@ -2243,7 +2277,7 @@ impl<'a> Typer<'a> {
             } => {
                 return self.tally(
                     Tally::Count,
-                    (result_type, binder),
+                    (Some(result_type.as_str()), binder),
                     (expression.at(*source), expression.at(*predicate)),
                     location,
                     frames,
@@ -2258,7 +2292,7 @@ impl<'a> Typer<'a> {
             } => {
                 return self.tally(
                     Tally::Sum,
-                    (result_type, binder),
+                    (result_type.as_deref(), binder),
                     (expression.at(*source), expression.at(*summand)),
                     location,
                     frames,
@@ -2961,14 +2995,19 @@ impl<'a> Typer<'a> {
     fn tally<'e, 'r>(
         &mut self,
         tally: Tally,
-        (result_type, binder): (&str, &'e str),
+        (result_type, binder): (Option<&str>, &'e str),
         (source, body): (ExprRef<'e>, ExprRef<'e>),
         location: Location,
         frames: &mut Vec<Frame<'e, 'r>>,
     ) -> Result<Step<'e, 'r>, CheckRefusal> {
-        let value_type = self.type_named(result_type, &location)?;
-        let admitted = match tally {
-            Tally::Count => is_integer(&value_type),
+        // A sum with no written result type is a plan objective's
+        // `Reach.steps.sum(s => e)`: its total is formed from the summand
+        // once the summand is typed ([`step_sum_total`]).
+        let value_type = result_type
+            .map(|name| self.type_named(name, &location))
+            .transpose()?;
+        let admitted = value_type.as_ref().is_none_or(|value_type| match tally {
+            Tally::Count => is_integer(value_type),
             // FR-145: a `sum` totals any numeric family a
             // `filament.op.collection.sum` identity exists for.
             Tally::Sum => matches!(
@@ -2981,12 +3020,12 @@ impl<'a> Typer<'a> {
                     | ValueType::Quantity(_)
                     | ValueType::CarriedQuantity(_)
             ),
-        };
+        });
         if !admitted {
             return Err(mismatch(&location));
         }
         if matches!(tally, Tally::Sum)
-            && matches!(value_type, ValueType::Float(_))
+            && matches!(value_type, Some(ValueType::Float(_)))
             && self.scope.ieee_profile.is_none()
         {
             return Err(refuse(&location, CheckCause::IeeeProfileNotAdmitted));
@@ -2996,7 +3035,7 @@ impl<'a> Typer<'a> {
         frames.push(Frame::Tally(Box::new(TallyFrame {
             tally,
             value_type,
-            type_argument: result_type.to_owned(),
+            type_argument: result_type.map(str::to_owned),
             binder,
             body,
             location,
@@ -4256,6 +4295,15 @@ impl<'a> Typer<'a> {
                     location,
                     ..
                 } = *frame;
+                let value_type = match value_type {
+                    Some(value_type) => value_type,
+                    None => {
+                        step_sum_total(&body.value_type).ok_or_else(|| mismatch(&body.location))?
+                    }
+                };
+                if matches!(value_type, ValueType::Float(_)) && self.scope.ieee_profile.is_none() {
+                    return Err(refuse(&location, CheckCause::IeeeProfileNotAdmitted));
+                }
                 if matches!(visit, Visit::Sum) && !summand_of_family(&value_type, &body.value_type)
                 {
                     return Err(mismatch(&body.location));
@@ -4272,7 +4320,11 @@ impl<'a> Typer<'a> {
                         value_type,
                         &location,
                     )
-                    .with_type_argument(self.type_argument_alias(&type_argument)),
+                    .with_type_argument(
+                        type_argument
+                            .as_deref()
+                            .and_then(|written| self.type_argument_alias(written)),
+                    ),
                 ))
             }
         }

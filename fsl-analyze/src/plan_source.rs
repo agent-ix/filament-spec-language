@@ -13,23 +13,24 @@
 
 use std::collections::BTreeMap;
 
-use filament_checked::node::{NodeKind, Visit};
+use filament_checked::node::{Arithmetic, NodeKind, Visit};
 use filament_exact::{
     from_admitted, from_admitted_slots, CollectionKind, CollectionType, EnumMember, FieldValue,
     Integer, Outcome, Rational, ScalarLimits, UnionValue, Value, ValueType,
 };
 use filament_semantic_value::declaration::CompositeShape;
 use filament_semantic_value::model_transition::ModelTransition;
+use filament_semantic_value::stop::Stop as ValueStop;
 use fsl_eval::simulation::model::{read_clause, ClauseReading};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckedBody, CheckedPlan, CheckedSynthesis, PlanOperation, TemporalClauseNode,
+    CheckedBody, CheckedNode, CheckedPlan, CheckedSynthesis, PlanOperation, TemporalClauseNode,
 };
 use fsl_semantics::model::state::StateObject;
 
 use crate::plan_search::{
-    Direction, MonitorStep, ObjectiveKind, PlanRules, PlanStep, PlanView, RuleStop,
+    Direction, MonitorStep, ObjectiveKind, PlanRules, PlanStep, PlanView, RuleStop, StepTotal,
 };
 
 /// A numeric objective family whose planning ordering and certificate
@@ -581,11 +582,30 @@ impl<'a> SourcePlan<'a> {
         }
     }
 
+    /// Literal and implicit objective values can return without a charge.
+    /// Observe the shared meter's cancellation without consuming its budget.
+    fn poll_cancellation(&self) -> Result<(), RuleStop> {
+        match self
+            .system
+            .evaluation_meter()
+            .cancel()
+            .and_then(filament_exact::Cancel::cause)
+        {
+            Some(cause) => Err(RuleStop::Cancelled(cause)),
+            None => Ok(()),
+        }
+    }
+
     fn evaluate(&mut self, body: &CheckedBody, plan: Value) -> Result<Evaluated, RuleStop> {
-        let evaluation = fsl_eval::value::evaluate_plan_body(
+        self.evaluate_node(body.root(), plan)
+    }
+
+    fn evaluate_node(&mut self, node: CheckedNode<'_>, plan: Value) -> Result<Evaluated, RuleStop> {
+        self.poll_cancellation()?;
+        let evaluation = fsl_eval::value::evaluate_plan_node(
             self.package,
             self.plan.scope(),
-            body,
+            node,
             vec![Some(plan)],
             &mut self.system.evaluation_meter(),
         );
@@ -690,6 +710,36 @@ impl<'a> SourcePlan<'a> {
         ))
     }
 
+    fn step_cost_value(
+        &mut self,
+        plan: &PlanView<'_>,
+        index: usize,
+    ) -> Result<Option<Value>, RuleStop> {
+        self.poll_cancellation()?;
+        let Some(body) = self.synthesis.objective() else {
+            return Ok(Some(Value::Integer(Integer::one())));
+        };
+        let (Some(states), Some(steps)) = (
+            plan.states.get(index..=index + 1),
+            plan.steps.get(index..=index),
+        ) else {
+            return Ok(None);
+        };
+        let one = PlanView { states, steps };
+        if !self.readable(self.objective_reads_final_attributes, &one) {
+            return Ok(None);
+        }
+        let Some(value) = self.plan_value(&one, index) else {
+            return Ok(None);
+        };
+        Ok(
+            match self.evaluate_node(step_sum_node(body.root()), value)? {
+                Evaluated::Value(value) => Some(value),
+                Evaluated::Undefined => None,
+            },
+        )
+    }
+
     /// The exact value of an objective evaluation.
     fn exact(value: &Value) -> Option<Rational> {
         match value {
@@ -745,7 +795,13 @@ fn reads_field(body: &CheckedBody, record: &filament_exact::NodeKey, field: &str
 /// Whether `body` is a sum over the plan's steps whose term reads only the
 /// step it is evaluated for (FSpec FR-802 "Classification").
 fn is_step_sum(body: &CheckedBody, plan: &filament_exact::NodeKey) -> bool {
-    let root = body.root();
+    let root = step_sum_node(body.root());
+    if !matches!(
+        root.value_type(),
+        ValueType::Integer | ValueType::Int(_) | ValueType::Rational(_) | ValueType::Decimal(_)
+    ) {
+        return false;
+    }
     if matches!(
         root.kind(),
         NodeKind::Field { field, .. } if field.name() == "length" && &field.declaration() == plan
@@ -782,6 +838,57 @@ fn is_step_sum(body: &CheckedBody, plan: &filament_exact::NodeKey) -> bool {
         pending.extend(node.children());
     }
     true
+}
+
+/// Split only a root sum plus constant. The explicit `sum<N>` expression
+/// grammar also reaches this classifier and admits nonconstant additions.
+fn step_sum_node(root: CheckedNode<'_>) -> CheckedNode<'_> {
+    let (left, right) = match root.kind() {
+        NodeKind::Arithmetic(Arithmetic::Add, left, right)
+        | NodeKind::Rational {
+            operator: filament_exact::ArithmeticOperator::Add,
+            left,
+            right,
+            ..
+        }
+        | NodeKind::Decimal {
+            operator: filament_exact::ArithmeticOperator::Add,
+            left,
+            right,
+            ..
+        } => (root.at(*left), root.at(*right)),
+        _ => return root,
+    };
+    if matches!(
+        left.kind(),
+        NodeKind::Query {
+            visit: Visit::Sum,
+            ..
+        }
+    ) && constant_offset(right)
+    {
+        left
+    } else {
+        root
+    }
+}
+
+fn constant_offset(mut node: CheckedNode<'_>) -> bool {
+    loop {
+        match node.kind() {
+            NodeKind::Literal(literal) => {
+                return matches!(
+                    &literal.0,
+                    Value::Integer(_) | Value::Rational(_) | Value::Decimal(_)
+                )
+            }
+            NodeKind::Negate(inner)
+            | NodeKind::RationalNegate(inner, _)
+            | NodeKind::DecimalNegate(inner, _)
+            | NodeKind::Coerce(inner, _) => node = node.at(*inner),
+            _ => return false,
+        }
+    }
 }
 
 impl PlanRules for SourcePlan<'_> {
@@ -895,29 +1002,156 @@ impl PlanRules for SourcePlan<'_> {
         plan: &PlanView<'_>,
         index: usize,
     ) -> Result<Option<Rational>, RuleStop> {
-        let Some(body) = self.synthesis.objective() else {
-            return Ok(Some(Rational::from_integer(Integer::one())));
-        };
-        let (Some(states), Some(steps)) = (
-            plan.states.get(index..=index + 1),
-            plan.steps.get(index..=index),
-        ) else {
+        Ok(self
+            .step_cost_value(plan, index)?
+            .as_ref()
+            .and_then(Self::exact))
+    }
+
+    fn step_cost_typed(
+        &mut self,
+        plan: &PlanView<'_>,
+        index: usize,
+    ) -> Result<Option<StepTotal>, RuleStop> {
+        Ok(self.step_cost_value(plan, index)?.and_then(|value| {
+            Self::exact(&value).map(|exact| StepTotal {
+                value: exact,
+                carried: Some(value),
+            })
+        }))
+    }
+
+    fn extend_step_sum(
+        &mut self,
+        plan: &PlanView<'_>,
+        total: &StepTotal,
+        cost: &StepTotal,
+    ) -> Result<Option<StepTotal>, RuleStop> {
+        use fsl_eval::value::collections::{self, Halt};
+        let Some(index) = plan.steps.len().checked_sub(1) else {
             return Ok(None);
         };
-        let one = PlanView { states, steps };
-        if !self.readable(self.objective_reads_final_attributes, &one) {
-            return Ok(None);
+        let Some(summand) = cost.carried.clone() else {
+            self.fault
+                .get_or_insert_with(|| "an exact step cost lost its admitted payload".to_owned());
+            return Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested));
+        };
+        if index > 0 && total.carried.is_none() {
+            self.fault
+                .get_or_insert_with(|| "a typed step total lost its admitted payload".to_owned());
+            return Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested));
         }
-        let Some(value) = self.plan_value(&one, index) else {
+        let value_type = self
+            .synthesis
+            .objective()
+            .map(|body| step_sum_node(body.root()).value_type().clone())
+            .unwrap_or(ValueType::Integer);
+        let added = collections::sum_exact(
+            &value_type,
+            total.carried.clone(),
+            summand,
+            &mut self.system.evaluation_meter(),
+        );
+        let retained = match added {
+            Some(Ok((value, _loss))) => {
+                collections::retain_accumulator(value, &mut self.system.evaluation_meter())
+                    .map_err(Halt::from)
+            }
+            Some(Err(stop)) => Err(stop),
+            None => Err(Halt::Fault("exact-step-total-has-an-exact-family")),
+        };
+        match retained {
+            Ok(value) => {
+                let Some(exact) = Self::exact(&value) else {
+                    self.fault.get_or_insert_with(|| {
+                        "a retained step total has no numeric value".to_owned()
+                    });
+                    return Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested));
+                };
+                Ok(Some(StepTotal {
+                    value: exact,
+                    carried: Some(value),
+                }))
+            }
+            Err(Halt::Stop(ValueStop::Incomplete(incomplete))) => {
+                Err(self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit))
+            }
+            Err(Halt::Stop(ValueStop::Undefined(_)) | Halt::SumSeedOutOfDomain) => Ok(None),
+            Err(Halt::Stop(ValueStop::Refused(_)) | Halt::Fault(_) | Halt::OnlyNotOne { .. }) => {
+                self.fault.get_or_insert_with(|| {
+                    "a checked objective addition refused its evaluation contract".to_owned()
+                });
+                Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested))
+            }
+        }
+    }
+
+    fn add_objective_values(
+        &mut self,
+        left: &Rational,
+        right: &Rational,
+    ) -> Result<Option<Rational>, RuleStop> {
+        match filament_exact::evaluate_rational_arithmetic(
+            filament_exact::RationalArithmetic::Add(left, right),
+            None,
+            &mut self.system.evaluation_meter(),
+        ) {
+            Outcome::Completed(value) => Ok(Some(value)),
+            Outcome::Incomplete(incomplete) => {
+                Err(self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit))
+            }
+            Outcome::Undefined(_) => Ok(None),
+            Outcome::Refused(_) => {
+                self.fault.get_or_insert_with(|| {
+                    "a checked objective addition refused evaluation".to_owned()
+                });
+                Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested))
+            }
+        }
+    }
+
+    fn objective_offset(&mut self, plan: &PlanView<'_>) -> Result<Option<Rational>, RuleStop> {
+        self.poll_cancellation()?;
+        let Some(body) = self.synthesis.objective() else {
+            return Ok(Some(Rational::from_integer(Integer::zero())));
+        };
+        let root = body.root();
+        if step_sum_node(root).id() == root.id() {
+            return Ok(Some(Rational::from_integer(Integer::zero())));
+        }
+        let right = match root.kind() {
+            NodeKind::Arithmetic(Arithmetic::Add, _, right)
+            | NodeKind::Rational {
+                operator: filament_exact::ArithmeticOperator::Add,
+                right,
+                ..
+            }
+            | NodeKind::Decimal {
+                operator: filament_exact::ArithmeticOperator::Add,
+                right,
+                ..
+            } => *right,
+            _ => return Ok(None),
+        };
+        let Some(value) = self.plan_value(plan, 0) else {
             return Ok(None);
         };
-        Ok(match self.evaluate(body, value)? {
+        Ok(match self.evaluate_node(root.at(right), value)? {
             Evaluated::Value(value) => Self::exact(&value),
             Evaluated::Undefined => None,
         })
     }
 
+    fn step_sum_objective(
+        &mut self,
+        plan: &PlanView<'_>,
+        _total: &Rational,
+    ) -> Result<Option<Rational>, RuleStop> {
+        self.objective(plan)
+    }
+
     fn objective(&mut self, plan: &PlanView<'_>) -> Result<Option<Rational>, RuleStop> {
+        self.poll_cancellation()?;
         let Some(body) = self.synthesis.objective() else {
             return Ok(Some(Rational::from_integer(Integer::from(
                 i64::try_from(plan.length()).unwrap_or(i64::MAX),

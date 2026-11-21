@@ -61,8 +61,10 @@ pub struct CheckedSynthesis {
     pub(crate) satisfies: CheckedBody,
     /// The checked objective when the declaration has one.
     pub(crate) objective: Option<CheckedBody>,
-    /// The candidate binder name shared by both checked expressions.
+    /// Names of the satisfies expression's slots, including its local binders.
     pub(crate) slot_names: Vec<String>,
+    /// Names of the independently typed objective's slots and local binders.
+    pub(crate) objective_slot_names: Vec<String>,
     /// The plan value of a plan synthesis (FSpec FR-800), whose grammar is a
     /// model object type.
     pub(crate) plan: Option<CheckedPlan>,
@@ -122,7 +124,7 @@ impl CheckedSynthesis {
             .is_some_and(|body| matches!(body.root().kind(), NodeKind::Local(_)))
     }
 
-    /// Candidate binder names in evaluation frame order.
+    /// The satisfies expression's binder names in evaluation frame order.
     pub fn slot_names(&self) -> &[String] {
         &self.slot_names
     }
@@ -276,8 +278,8 @@ pub(crate) fn check_forms(
             &satisfies_location,
         )
         .map_err(|refusal| vec![refusal])?;
-        let objective = if let Some(objective) = &form.objective {
-            let (body, _) = check_expression(
+        let (objective, objective_slot_names) = if let Some(objective) = &form.objective {
+            let (body, objective_slot_names) = check_expression(
                 scope,
                 signatures,
                 &objective.expression.expression,
@@ -292,9 +294,9 @@ pub(crate) fn check_forms(
                     IllTypedCause::TypeMismatch,
                 )]);
             }
-            Some(body)
+            (Some(body), objective_slot_names)
         } else {
-            None
+            (None, Vec::new())
         };
         checked.push(CheckedSynthesis {
             form: form.clone(),
@@ -303,6 +305,7 @@ pub(crate) fn check_forms(
             satisfies,
             objective,
             slot_names,
+            objective_slot_names,
             plan,
         });
     }
