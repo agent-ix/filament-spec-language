@@ -26,6 +26,14 @@ use fsl_semantics::check::{
 use super::{Capacities, ProtocolRefusal, Unsupported};
 use crate::simulation::model::ModelSystem;
 
+/// The source or package predicate that classifies a stopped live instance.
+pub(super) enum Terminal<'a> {
+    None,
+    Any,
+    SourceWhen(&'a CheckedBody),
+    PackageWhen(crate::value::ProtocolSlot),
+}
+
 /// One control of the `run` tree.
 pub(super) struct Control {
     pub(super) step: ControlStep,
@@ -310,7 +318,7 @@ pub(super) struct Program<'a> {
     /// Each binder slot's declared type.
     binder_types: Vec<ValueType>,
     /// The protocol's `terminal` member.
-    pub(super) terminal: Option<&'a CheckedTerminalMember>,
+    pub(super) terminal: Terminal<'a>,
     /// The `compensate` templates, in source order.
     pub(super) templates: Vec<Template<'a>>,
     /// Each `effect` node's attempt, from the `Effect` edges (ST-2).
@@ -928,7 +936,11 @@ impl<'a> Program<'a> {
                 .iter()
                 .map(|binder| binder.value_type.clone())
                 .collect(),
-            terminal: Some(&protocol.slots.terminal),
+            terminal: match &protocol.slots.terminal {
+                CheckedTerminalMember::None => Terminal::None,
+                CheckedTerminalMember::Any => Terminal::Any,
+                CheckedTerminalMember::When { predicate, .. } => Terminal::SourceWhen(predicate),
+            },
             templates,
             effects: protocol
                 .edges
@@ -1180,7 +1192,13 @@ impl<'a> Program<'a> {
             readers,
             binder_of,
             binder_types,
-            terminal: None,
+            terminal: match &package.terminal {
+                super::package_program::PackageTerminal::None => Terminal::None,
+                super::package_program::PackageTerminal::Any => Terminal::Any,
+                super::package_program::PackageTerminal::When(slot) => {
+                    Terminal::PackageWhen(slot.clone())
+                }
+            },
             templates: Vec::new(),
             effects: BTreeMap::new(),
             spans: BTreeMap::new(),

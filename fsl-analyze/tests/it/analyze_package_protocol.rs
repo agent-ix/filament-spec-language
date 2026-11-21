@@ -56,6 +56,107 @@ fn package_run(ws: &Workspace, request_path: &std::path::Path) -> Run {
     analyze(&package_request(ws, request_path).0)
 }
 
+fn terminal_request(ws: &Workspace, terminal: &str, blocked: bool) -> std::path::PathBuf {
+    let run = if blocked {
+        crate::fill::attempt("Blocked", "setTwo", "TwoPre, TwoPost", "result", "true")
+    } else {
+        "sequence Main {}".to_owned()
+    };
+    let body = format!(
+        "{}{}",
+        crate::fill::contracts("false"),
+        crate::fill::protocol("Flow", terminal, &run, "d")
+    );
+    let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
+    let mut documents = crate::fill::Documents::new();
+    documents.start("s0", &[("c", 0)]);
+    let snapshots: Vec<Vec<u8>> = documents.snapshots.values().cloned().collect();
+    crate::analyze_cli_support::request_over(
+        ws,
+        &unit,
+        &crate::fill::document(),
+        &snapshots,
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+        "temporal": {"item_kind": "deadlock-freedom", "subject": {"protocol": {
+            "protocol": "Flow",
+            "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
+            "roles": {"w": {"type": "model-binding", "selection": "test/fill"}}
+        }}}}]}),
+    )
+}
+
+/// Terminal declarations classify stopped live instances identically on both routes.
+#[trace("TC-2958", "FR-940-AC-6", "FR-850-AC-11", "FR-211-AC-2")]
+#[test]
+fn package_terminal_classifies_blocked_live_instances() {
+    for (name, terminal, expected) in [
+        ("absent", "", "refuted"),
+        ("any", "terminal any;", "proved"),
+        ("true", "terminal when { k.v = 0 };", "proved"),
+        ("false", "terminal when { k.v = 1 };", "refuted"),
+    ] {
+        let ws = Workspace::new(&format!("package-terminal-{name}"));
+        let path = terminal_request(&ws, terminal, true);
+        let source = analyze(&path);
+        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+        let package = package_run(&ws, &path);
+        assert_eq!(package.item(0), source.item(0), "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+        if expected == "refuted" {
+            assert!(
+                source.item(0)["counterexample"]["blocked"]
+                    .as_array()
+                    .is_some_and(|blocked| !blocked.is_empty()),
+                "{}",
+                source.document()
+            );
+            assert_eq!(package.item(0)["replay"]["reproduced"], true);
+        }
+    }
+}
+
+/// A finished instance is intended even when its terminal predicate is false.
+#[trace("TC-2958", "FR-940-AC-6", "FR-211-AC-2")]
+#[test]
+fn package_terminal_preserves_finished_instances() {
+    for (name, terminal) in [
+        ("any", "terminal any; scheduling adversarial;"),
+        ("false", "terminal when { k.v = 1 };"),
+    ] {
+        let ws = Workspace::new(&format!("package-terminal-finished-{name}"));
+        let path = terminal_request(&ws, terminal, false);
+        let source = analyze(&path);
+        assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+        let package = package_run(&ws, &path);
+        assert_eq!(package.item(0), source.item(0), "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+    }
+}
+
+/// Refusing replay retains the same typed cause for a terminal deadlock on both routes.
+#[trace("TC-2958", "FR-940-AC-22", "FR-211-AC-2")]
+#[test]
+fn package_terminal_preserves_replay_refusal_code_and_cause() {
+    let ws = Workspace::new("package-terminal-replay-bound");
+    let path = terminal_request(&ws, "terminal when { k.v = 1 };", true);
+    let (package_path, bytes) = package_request(&ws, &path);
+    let below = u64::try_from(bytes.len() / 2).expect("the package length");
+    let source = crate::analyze_cli_support::analyze_under_replay_bytes(&path, below);
+    assert_eq!(
+        label(&source.item(0)),
+        "inconclusive",
+        "{}",
+        source.document()
+    );
+    let cause = &source.item(0)["record"]["cause"];
+    assert_eq!(cause["kind"], "replay-refused");
+    assert_eq!(cause["code"], "stage_limit_exceeded");
+    assert_eq!(cause["cause"], "input-bytes-exceeded");
+    let package = crate::analyze_cli_support::analyze_under_replay_bytes(&package_path, below);
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.exit, source.exit);
+}
+
 /// FR-940-AC-6: the store-buffering litmus claim under TSO has equal records,
 /// counterexamples and package-byte replay on both analyze routes.
 #[trace("TC-2958", "FR-940-AC-6", "TC-3050", "FR-850-AC-11")]

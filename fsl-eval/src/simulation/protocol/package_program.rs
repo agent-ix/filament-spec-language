@@ -98,6 +98,8 @@ pub struct PackageAttemptContext {
 
 /// The package-native protocol program needed by selection and execution.
 pub struct PackageProtocolProgram<'a> {
+    /// The protocol's intended terminal states, read from its admitted obligation.
+    pub terminal: PackageTerminal,
     /// The admitted protocol name.
     pub name: String,
     /// The `run` root control.
@@ -126,6 +128,16 @@ pub struct PackageProtocolProgram<'a> {
     pub finish_binder_key: NodeKey,
     /// The admitted value type of the finish result binder.
     pub finish_binder_type: filament_exact::ValueType,
+}
+
+/// A protocol terminal declaration read directly from the admitted package.
+pub enum PackageTerminal {
+    /// No terminal declaration: a stopped live instance is deadlocked.
+    None,
+    /// Every stopped state is intended.
+    Any,
+    /// The admitted condition decides whether a stopped state is intended.
+    When(ProtocolSlot),
 }
 
 /// Why a package protocol could not become an executable program.
@@ -202,7 +214,7 @@ impl<'a> PackageProtocolProgram<'a> {
         form: ProtocolExecutionView<'a>,
         memory: ResolvedMemory,
     ) -> Result<Self, PackageProgramRefusal> {
-        let _package =
+        let admitted =
             input
                 .admitted_package()
                 .ok_or_else(|| PackageProgramRefusal::UnknownProtocol {
@@ -218,11 +230,44 @@ impl<'a> PackageProtocolProgram<'a> {
                 ControlOperation::Compensate,
             ));
         }
-        if form.protocol.terminal().is_some() {
-            return Err(PackageProgramRefusal::Unsupported(
-                ControlOperation::Terminal,
-            ));
-        }
+        let terminal = match form.protocol.terminal() {
+            None => PackageTerminal::None,
+            Some(id) => {
+                let mode = admitted
+                    .resolved_graph()
+                    .nodes
+                    .iter()
+                    .find(|node| &node.node_id == id)
+                    .and_then(|node| match &node.body {
+                        fsl_package::CheckedTerm::Application { arguments, .. } => {
+                            arguments.iter().find_map(|argument| match argument {
+                                fsl_package::CheckedTerm::Binding { name, value }
+                                    if &**name == "mode" =>
+                                {
+                                    match &**value {
+                                        fsl_package::CheckedTerm::Literal { value, .. } => {
+                                            value.as_str()
+                                        }
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            })
+                        }
+                        _ => None,
+                    });
+                match mode {
+                    Some("any") => PackageTerminal::Any,
+                    Some("when") => PackageTerminal::When(
+                        input
+                            .evaluator
+                            .package_protocol_slot(id, "condition", None)
+                            .ok_or_else(|| PackageProgramRefusal::MissingIdentity(id.clone()))?,
+                    ),
+                    _ => return Err(PackageProgramRefusal::MissingIdentity(id.clone())),
+                }
+            }
+        };
         let id_by_node: BTreeMap<_, _> = form
             .controls
             .iter()
@@ -470,6 +515,7 @@ impl<'a> PackageProtocolProgram<'a> {
             .package_protocol_parameter_type(&finish_binder)
             .ok_or_else(|| PackageProgramRefusal::MissingIdentity(finish_binder.clone()))?;
         Ok(Self {
+            terminal,
             name: form.name.clone(),
             root,
             over,
