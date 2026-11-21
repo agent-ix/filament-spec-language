@@ -111,9 +111,32 @@ fn workflow_roles_request(
 /// Explore both routes from the same external snapshot and universe. Only the
 /// source input uses the checked graph; the other input has admitted supply.
 fn workflow_role_graph(ws: &Workspace, path: &std::path::Path) -> Vec<crate::fill::Reached> {
+    package_protocol_graph(
+        ws,
+        path,
+        fsl_eval::simulation::protocol::Sc,
+        &["Planning"],
+        false,
+        false,
+        |_, _| {},
+    )
+}
+
+fn package_protocol_graph<M: crate::fill::Explored + Clone>(
+    ws: &Workspace,
+    path: &std::path::Path,
+    memory: M,
+    roles: &[&str],
+    source_absent: bool,
+    cycle_keys: bool,
+    inspect: impl FnOnce(
+        &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
+        &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
+    ),
+) -> Vec<crate::fill::Reached<M>> {
     use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
     use fsl_eval::simulation::model::{ModelSystem, PackageModelInput};
-    use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory, Sc};
+    use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory};
     use fsl_package::{AnalysisView, BarePackage, BareSupply, EmitLimits, V2ReadLimits};
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
 
@@ -128,10 +151,13 @@ fn workflow_role_graph(ws: &Workspace, path: &std::path::Path) -> Vec<crate::fil
         model: crate::fill::model_subject(compiled.checked(), &documents, vec![start], &["c", "d"]),
         protocol: "Flow".to_owned(),
         over: crate::fill::instance("c"),
-        roles: vec![RoleBinding {
-            role: "Planning".to_owned(),
-            model: crate::fill::PACKAGE.to_owned(),
-        }],
+        roles: roles
+            .iter()
+            .map(|role| RoleBinding {
+                role: (*role).to_owned(),
+                model: crate::fill::PACKAGE.to_owned(),
+            })
+            .collect(),
         capacities: Vec::new(),
         memory: crate::fill::source_memory(compiled.checked(), "Flow"),
     };
@@ -182,28 +208,33 @@ fn workflow_role_graph(ws: &Workspace, path: &std::path::Path) -> Vec<crate::fil
         )
         .expect("package memory"),
     };
-    let source_system = ProtocolSystem::new(
+    let mut source_system = ProtocolSystem::new(
         ModelSystem::new(source.model.simulation.clone()).expect("source model"),
         &source,
-        Sc,
+        memory.clone(),
     )
     .expect("source roles");
-    let package_system = ProtocolSystem::new_package(
+    if cycle_keys {
+        source_system = source_system.with_cycle_keys(std::collections::BTreeSet::new());
+    }
+    let workers = std::num::NonZeroUsize::new(1).expect("one worker");
+    let source = crate::fill::reachable_with_workers(&source_system, workers).0;
+    if source_absent {
+        std::fs::remove_file(ws.path("program.fsl"))
+            .expect("source removed before package execution");
+    }
+    let mut package_system = ProtocolSystem::new_package(
         ModelSystem::new(package.model.simulation.clone()).expect("package model"),
         &package,
-        Sc,
+        memory,
     )
     .expect("package roles");
-    let workers = std::num::NonZeroUsize::new(1).expect("one worker");
-    let source = source_system
-        .reachable(workers)
-        .expect("source graph")
-        .states;
-    let package = package_system
-        .reachable(workers)
-        .expect("package graph")
-        .states;
-    let canonical = |states: &[crate::fill::Reached]| {
+    if cycle_keys {
+        package_system = package_system.with_cycle_keys(std::collections::BTreeSet::new());
+    }
+    inspect(&source_system, &package_system);
+    let package = crate::fill::reachable_with_workers(&package_system, workers).0;
+    let canonical = |states: &[crate::fill::Reached<M>]| {
         let mut rows: Vec<_> = states
             .iter()
             .map(|state| {
@@ -1980,11 +2011,13 @@ fn package_channel_send_invalid_capacity_records_match_source() {
     }
 }
 
-/// Mixed parallel/send bodies retain a typed refusal until their message
-/// identities and weak constraint footprints have a package-native form.
-#[trace("TC-2958", "FR-940", "FR-894", "FR-205")]
+/// The original inside/after and SC/TSO combinations execute on both routes.
+#[trace("TC-2958", "FR-940", "FR-894", "FR-205", "FR-533")]
 #[test]
-fn package_channel_send_parallel_combinations_refuse_before_execution() {
+fn package_channel_send_parallel_combinations_match_both_routes() {
+    use fsl_package::{
+        AnalysisView, BarePackage, BareSupply, EmitLimits, ProtocolSlotDescriptor, V2ReadLimits,
+    };
     for memory in ["sc", "tso"] {
         for position in ["inside", "after"] {
             let ws = Workspace::new(&format!("package-channel-send-{memory}-{position}"));
@@ -2002,32 +2035,363 @@ fn package_channel_send_parallel_combinations_refuse_before_execution() {
             );
             let path =
                 channel_send_request(&ws, 1, "block", "exactly-once-premise", &run, "closing");
+            let item = channel_send_parity_using(&ws, &path, "proved", || {
+                let (package_path, _) = package_request(&ws, &path);
+                let compiled = fsl_command::checked_handoff::compile(
+                    &ws.path(crate::analyze_cli_support::HANDOFF),
+                )
+                .expect("the original mixed fixture compiles");
+                let emission = fsl_package::emit_checked(compiled.checked(), EmitLimits::fixture())
+                    .expect("genuine mixed emission");
+                let identities = emission
+                    .identity_rows(
+                        compiled.admitted(),
+                        &mut V2ReadLimits::fixture().native_join_budget(),
+                    )
+                    .expect("native identity rows");
+                let equality = emission
+                    .equality_witness(
+                        compiled.admitted(),
+                        &mut V2ReadLimits::fixture().native_join_budget(),
+                    )
+                    .expect("native equality rows");
+                let bare = BarePackage::new(compiled.admitted())
+                    .with_supply(
+                        BareSupply {
+                            identities: &identities,
+                            equality: Some(&equality),
+                        },
+                        &mut V2ReadLimits::fixture().native_join_budget(),
+                    )
+                    .expect("native mixed package");
+                let form = bare
+                    .protocol_execution_named("Flow")
+                    .expect("native protocol view")
+                    .expect("Flow");
+                let sends = form
+                    .controls
+                    .iter()
+                    .filter(|control| {
+                        control.operation == fsl_package::protocol_view::ControlOperation::Send
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(sends.len(), 1, "the original fixture has exactly one send");
+                let slot = bare
+                    .select_protocol_slot(&ProtocolSlotDescriptor::new(
+                        bare.node_key(&sends[0].node.node_id)
+                            .expect("the native send key"),
+                        "constraint".to_owned(),
+                        None,
+                    ))
+                    .expect("native constraint selection");
+                let origin = if position == "inside" {
+                    "protocol Flow run Main Both left Left Only body"
+                } else {
+                    "protocol Flow run Main Only body"
+                };
+                assert_eq!(
+                    slot.origin(),
+                    Some(origin),
+                    "the authored branch label remains in the site path"
+                );
+                bare.project_protocol_slot(&slot)
+                    .expect("the real constraint pairs with its complete origin rows");
+                package_path
+            });
+            assert!(item.get("exploration").is_some(), "{item}");
+        }
+    }
+}
+
+/// Equal payloads from nested branches retain their authored static paths
+/// in queues, transition identities and identity-label canonical graphs.
+#[trace("TC-2958", "FR-940-AC-6", "FR-894", "FR-205", "FSpec-FR-425")]
+#[test]
+fn package_parallel_send_preserves_message_identity() {
+    use fsl_eval::simulation::protocol::{Sc, StepKind};
+    use std::collections::BTreeSet;
+    let sends = format!(
+        "parallel Outer memory sc {{
+            branch left sequence Left {{
+                parallel Inner memory sc {{
+                    branch inner sequence In {{ {} }}
+                    branch empty sequence Empty {{ }}
+                }} join all [inner, empty];
+            }}
+            branch right sequence Right {{ {} }}
+        }} join all [left, right];",
+        channel_send("Nested", "nested_payload", "nested_payload.n = 0"),
+        channel_send("Other", "other_payload", "other_payload.n = 0"),
+    );
+    for cycle in [false, true] {
+        let ws = Workspace::new(&format!("package-parallel-send-identity-{cycle}"));
+        let path = channel_send_request(&ws, 2, "block", "exactly-once-premise", &sends, "closing");
+        let source = analyze(&path);
+        assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+        let graph = package_protocol_graph(
+            &ws,
+            &path,
+            Sc,
+            &["Planning", "Machining"],
+            true,
+            cycle,
+            |_, _| {},
+        );
+        let mut nodes = BTreeSet::new();
+        let mut payloads = BTreeSet::new();
+        for transition in graph
+            .iter()
+            .flat_map(|state| &state.steps)
+            .map(|(step, _)| step)
+        {
+            if transition.kind() != StepKind::Send {
+                continue;
+            }
+            let message = transition.message().expect("send occurrence");
+            assert_eq!(
+                Some(message.node()),
+                transition.node(),
+                "the message names its actual send path"
+            );
+            assert_eq!(message.ordinal(), 0);
+            assert!(!message.path().steps.is_empty());
+            nodes.insert(message.node().to_owned());
+            let payload = fsl_eval::simulation::protocol::send_record_json(
+                transition.send_record().expect("send record"),
+            )
+            .expect("record JSON");
+            payloads.insert(payload["payload"].to_string());
+        }
+        assert_eq!(nodes.len(), 2, "both equal-payload sends execute");
+        assert_eq!(
+            payloads.len(),
+            1,
+            "payload equality does not merge occurrences"
+        );
+        fn queued(value: &Value, nodes: &BTreeSet<String>) -> usize {
+            match value {
+                Value::Object(members) if value["type"] == "message-occurrence" => {
+                    let node = value["node"].as_str().expect("static declaration path");
+                    assert!(
+                        nodes.contains(node),
+                        "queue message uses authored path {node}"
+                    );
+                    1 + members
+                        .values()
+                        .map(|value| queued(value, nodes))
+                        .sum::<usize>()
+                }
+                Value::Object(members) => members.values().map(|value| queued(value, nodes)).sum(),
+                Value::Array(values) => values.iter().map(|value| queued(value, nodes)).sum(),
+                _ => 0,
+            }
+        }
+        assert!(
+            graph
+                .iter()
+                .map(|state| queued(
+                    &serde_json::from_slice(state.key.as_bytes()).expect("key JSON"),
+                    &nodes
+                ))
+                .sum::<usize>()
+                > 0
+        );
+        assert!(!ws.path("program.fsl").exists());
+        let package = analyze(&ws.path("analyze-package.json"));
+        assert_eq!(package.item(0), source.item(0), "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+    }
+}
+
+/// A compact package frame treats only the real over binder as receiver;
+/// an aliased capture instead reads every matching object, even at slot 0.
+#[trace("TC-2958", "FR-940-AC-6", "FR-220", "FR-155", "FSpec-FR-425")]
+#[test]
+fn package_parallel_send_preserves_weak_model_reads() {
+    use fsl_eval::simulation::protocol::{Ra, Tso};
+    for memory in ["tso", "ra"] {
+        for capture in [false, true] {
+            let ws = Workspace::new(&format!("package-parallel-send-reads-{memory}-{capture}"));
+            let binder = if capture { "j" } else { "k" };
+            let writer = crate::fill::attempt("Write", "set", "SetPost", "written", "true")
+                .replace("by w", "by Planning");
+            let run = format!(
+                "parallel Both memory {memory} {{
+                    branch writer sequence Writer {{ {writer} }}
+                    branch reader sequence Reader {{ {} }}
+                }} join all [writer, reader];",
+                channel_send(
+                    "Read",
+                    "observed_payload",
+                    &format!("observed_payload.n <= {binder}.v")
+                ),
+            );
+            let model = serde_json::from_slice(&crate::fill::document()).expect("Fill model");
+            let path = channel_request(
+                &ws,
+                model,
+                "ordering unordered delivery exactly-once-premise capacity 1 overflow block",
+                &run,
+                "closing",
+            );
+            let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("source unit");
+            let captures = if capture {
+                "capture j: Reference<M::Cell> = k;"
+            } else {
+                ""
+            };
+            ws.write(
+                "program.fsl",
+                unit.replace("role Planning", &format!("{captures} role Planning"))
+                    .replace(
+                        "protocol Flow",
+                        &format!("{} protocol Flow", crate::fill::contracts("true")),
+                    )
+                    .as_bytes(),
+            );
             let source = analyze(&path);
             assert!(
                 source.item(0).get("record").is_some(),
-                "{}",
-                source.document()
+                "Source weak fixture {memory}/{capture}: {}; emitted node 56: {}",
+                source.document(),
+                {
+                    // This diagnostic runs only when Source admission failed.
+                    // Keep its native identity, package namespace and files
+                    // exactly those of the actual analyze request.
+                    let request: Value =
+                        serde_json::from_slice(&std::fs::read(&path).expect("request bytes"))
+                            .expect("actual analyze request");
+                    let selected = &request["request"]["program"]["source"];
+                    let authority = selected["authority"].as_str().expect("Source authority");
+                    let identity = selected["identity"].as_str().expect("Source identity");
+                    let file = selected["file"].as_str().expect("Source path");
+                    assert_eq!(
+                        (authority, identity, file),
+                        ("test", "analyze-unit", "program.fsl")
+                    );
+                    let unit = std::fs::read(ws.path(file)).expect("actual Source bytes");
+                    let model_file = request["request"]["models"][0]["source"]["file"]
+                        .as_str()
+                        .expect("model path");
+                    let model = std::fs::read(ws.path(model_file)).expect("actual model bytes");
+                    let emitted = fsl_replay::compile_package(
+                        fsl_replay::CompileUnit {
+                            source: fsl_foundation::SourceIdentity::new(authority, identity),
+                            package_name: identity.to_owned(),
+                            path: file,
+                            bytes: &unit,
+                        },
+                        [model.as_slice()],
+                        &fsl_replay::spine::DependencyInput::default(),
+                        fsl_replay::StageLimits::default(),
+                        fsl_replay::ReplayLimits::default(),
+                    )
+                    .expect("authentic Source emission before strict admission");
+                    let package: Value =
+                        serde_json::from_slice(emitted.bytes()).expect("emitted JSON");
+                    package["semantic_graph"]["nodes"]
+                        .as_array()
+                        .expect("emitted nodes")
+                        .get(56)
+                        .expect("the refused node exists")
+                        .clone()
+                }
             );
             assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
-            let (package_path, _) = package_request(&ws, &path);
-            std::fs::remove_file(ws.path("program.fsl"))
-                .expect("remove source before package refusal");
-            let package = analyze(&package_path);
-            let item = package.item(0);
-            assert_eq!(package.exit, 21, "{}", package.document());
-            assert_eq!(item["category"], "unsupported", "{}", package.document());
-            assert_eq!(
-                item["record"]["diagnostic"]["code"], "unsupported_construct",
-                "{item}"
-            );
-            assert_eq!(
-                item["record"]["diagnostic"]["cause"], "not-yet-implemented",
-                "{item}"
-            );
-            assert!(item.get("exploration").is_none(), "{item}");
-            assert!(item.get("counterexample").is_none(), "{item}");
+            let expected = if capture { 2 } else { 1 };
+            fn inspect<M: fsl_eval::simulation::protocol::MemoryModel>(
+                source: &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
+                package: &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
+                expected: usize,
+            ) {
+                let path = "Main/Both/reader/Reader/Read";
+                let reads = source.weak_accesses().node_reads(path);
+                assert_eq!(
+                    reads.len(),
+                    expected,
+                    "Source reads retain over versus capture distinction: {reads:?}"
+                );
+                assert_eq!(package.weak_accesses().node_reads(path), reads);
+                assert_eq!(
+                    package.weak_accesses().shared(),
+                    source.weak_accesses().shared()
+                );
+            }
+            if memory == "tso" {
+                package_protocol_graph(
+                    &ws,
+                    &path,
+                    Tso::default(),
+                    &["Planning", "Machining"],
+                    true,
+                    false,
+                    |s, p| inspect(s, p, expected),
+                );
+            } else {
+                package_protocol_graph(
+                    &ws,
+                    &path,
+                    Ra::default(),
+                    &["Planning", "Machining"],
+                    true,
+                    false,
+                    |s, p| inspect(s, p, expected),
+                );
+            }
+            let package = analyze(&ws.path("analyze-package.json"));
+            assert_eq!(package.item(0), source.item(0), "{}", package.document());
+            assert_eq!(package.exit, source.exit);
         }
     }
+}
+
+/// A genuine mixed deadlock reproduces, and refusing its replay byte budget
+/// retains the same typed code/cause on both intake routes.
+#[trace("TC-2958", "FR-940-AC-22", "FR-206-AC-4", "FR-894")]
+#[test]
+fn package_parallel_send_preserves_replay_and_refusal() {
+    let run = format!(
+        "parallel Both memory sc {{
+            branch left sequence Left {{ {} }}
+            branch right sequence Right {{ {} }}
+        }} join all [left, right];",
+        channel_send("LeftSend", "left_payload", "left_payload.n = 0"),
+        channel_send("RightSend", "right_payload", "right_payload.n = 0"),
+    );
+    let ws = Workspace::new("package-parallel-send-replay");
+    let path = channel_send_request(&ws, 1, "block", "exactly-once-premise", &run, "closing");
+    let item = channel_send_parity(&ws, &path, "refuted");
+    assert_eq!(item["replay"]["reproduced"], true);
+    assert!(item["counterexample"]["prefix"]
+        .as_array()
+        .expect("real deadlock trace")
+        .iter()
+        .any(|step| step["transition"]["step"] == "send"));
+
+    let ws = Workspace::new("package-parallel-send-replay-refusal");
+    let path = channel_send_request(&ws, 1, "block", "exactly-once-premise", &run, "closing");
+    let (package_path, bytes) = package_request(&ws, &path);
+    let below = u64::try_from(bytes.len() / 2).expect("bounded package bytes");
+    let source = crate::analyze_cli_support::analyze_under_replay_bytes(&path, below);
+    assert_eq!(
+        label(&source.item(0)),
+        "inconclusive",
+        "{}",
+        source.document()
+    );
+    assert_eq!(source.item(0)["record"]["cause"]["kind"], "replay-refused");
+    assert_eq!(
+        source.item(0)["record"]["cause"]["code"],
+        "stage_limit_exceeded"
+    );
+    assert_eq!(
+        source.item(0)["record"]["cause"]["cause"],
+        "input-bytes-exceeded"
+    );
+    std::fs::remove_file(ws.path("program.fsl")).expect("source removed before package replay");
+    let package = crate::analyze_cli_support::analyze_under_replay_bytes(&package_path, below);
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.exit, source.exit);
 }
 
 fn channel_related_premise(ws: &Workspace, related: bool) {

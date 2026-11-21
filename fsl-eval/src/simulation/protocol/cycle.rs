@@ -3,8 +3,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fsl_semantics::check::ProtocolNodeId;
-
 use super::identity::{DeliveryIdentity, MessageOccurrence, ProtocolTransition, ThreadPath};
 use super::memory::MemoryModel;
 use super::{Entry, ProtocolRefusal, ProtocolState, ProtocolSystem};
@@ -13,7 +11,7 @@ use crate::simulation::{EncodingRefusal, StateKey, SubjectSystem};
 
 type MessageLabels = BTreeMap<MessageOccurrence, MessageOccurrence>;
 type DeliveryLabels = BTreeMap<(MessageOccurrence, u64), u64>;
-type NextOrdinals = BTreeMap<(ProtocolNodeId, ThreadPath), (u64, u64)>;
+type NextOrdinals = BTreeMap<(String, ThreadPath), (u64, u64)>;
 
 struct CanonicalProtocol<M: MemoryModel> {
     state: ProtocolState<M>,
@@ -29,7 +27,7 @@ impl<M: MemoryModel> CanonicalProtocol<M> {
             return canonical.clone();
         }
         self.next_ordinals
-            .get(&(message.node(), message.path().clone()))
+            .get(&(message.node().to_owned(), message.path().clone()))
             .filter(|(concrete, _)| message.ordinal() == *concrete)
             .map_or_else(
                 || message.clone(),
@@ -140,7 +138,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 .collect();
             let pending_groups: BTreeSet<_> = pending_messages
                 .iter()
-                .map(|message| (message.node(), message.path().clone()))
+                .map(|message| (message.node().to_owned(), message.path().clone()))
                 .collect();
 
             // One message's first queued copy determines its canonical ordinal
@@ -152,8 +150,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 let channel = &self.program.channels[key.channel];
                 for entry in queue {
                     if !message_reads.contains(&channel.name)
-                        && !pending_groups
-                            .contains(&(entry.message.node(), entry.message.path().clone()))
+                        && !pending_groups.contains(&(
+                            entry.message.node().to_owned(),
+                            entry.message.path().clone(),
+                        ))
                     {
                         let payload = encode(&value_enc(&entry.payload, self.model.typing()))?;
                         let info = queued
@@ -174,13 +174,11 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 }
             }
 
-            let mut messages_by_group = BTreeMap::<
-                (ProtocolNodeId, ThreadPath),
-                Vec<(MessageOccurrence, QueuedMessage)>,
-            >::new();
+            let mut messages_by_group =
+                BTreeMap::<(String, ThreadPath), Vec<(MessageOccurrence, QueuedMessage)>>::new();
             for (message, info) in queued {
                 messages_by_group
-                    .entry((message.node(), message.path().clone()))
+                    .entry((message.node().to_owned(), message.path().clone()))
                     .or_default()
                     .push((message, info));
             }
@@ -244,16 +242,30 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             let groups: BTreeSet<_> = instance
                 .message_ordinals
                 .keys()
-                .cloned()
+                .map(|(node, path)| {
+                    self.program
+                        .text(*node)
+                        .map(|text| (text.to_owned(), path.clone()))
+                        .map_err(|_| {
+                            EncodingRefusal::NoEncoding(
+                                "a message ordinal names no send node".to_owned(),
+                            )
+                        })
+                })
+                .collect::<Result<BTreeSet<_>, _>>()?
+                .into_iter()
                 .chain(messages_by_group.keys().cloned())
                 .collect();
             let concrete_ordinals = std::mem::take(&mut instance.message_ordinals);
-            for (node, path) in groups {
+            for (declaration, path) in groups {
+                let node = self.program.message_node(&declaration).ok_or_else(|| {
+                    EncodingRefusal::NoEncoding("a message ordinal names no send node".to_owned())
+                })?;
                 let concrete = concrete_ordinals
                     .get(&(node, path.clone()))
                     .copied()
                     .unwrap_or(0);
-                let group = (node, path.clone());
+                let group = (declaration, path.clone());
                 let channel = self
                     .program
                     .messages
@@ -266,7 +278,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     })?;
                 if message_reads.contains(&channel.name) || pending_groups.contains(&group) {
                     if concrete != 0 {
-                        instance.message_ordinals.insert(group, concrete);
+                        instance.message_ordinals.insert((node, path), concrete);
                     }
                     continue;
                 }
@@ -276,7 +288,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 })?;
                 next_ordinals.insert(group.clone(), (concrete, count));
                 if count > 0 {
-                    instance.message_ordinals.insert(group, count);
+                    instance.message_ordinals.insert((node, path), count);
                 }
             }
 
@@ -296,8 +308,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     *queue = ordered.into_iter().map(|(_, entry)| entry).collect();
                 }
                 for entry in queue.iter_mut() {
-                    let pending_group = pending_groups
-                        .contains(&(entry.message.node(), entry.message.path().clone()));
+                    let pending_group = pending_groups.contains(&(
+                        entry.message.node().to_owned(),
+                        entry.message.path().clone(),
+                    ));
                     if delivery_read || pending_group {
                         let origin = entry_origins
                             .remove(&(entry.message.clone(), entry.delivery))
@@ -354,8 +368,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             for (message, next) in old_next {
                 let channel = self
                     .program
-                    .messages
-                    .get(&message.node())
+                    .message_node(message.node())
+                    .and_then(|node| self.program.messages.get(&node))
                     .and_then(|send| self.program.channels.get(send.channel))
                     .ok_or_else(|| {
                         EncodingRefusal::NoEncoding(
@@ -363,7 +377,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         )
                     })?;
                 let pending_group =
-                    pending_groups.contains(&(message.node(), message.path().clone()));
+                    pending_groups.contains(&(message.node().to_owned(), message.path().clone()));
                 if delivery_reads.contains(&channel.name) || pending_group {
                     instance.next_deliveries.insert(message, next);
                 } else {
@@ -378,7 +392,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 }
             }
             for (message, count) in copies {
-                if pending_groups.contains(&(message.node(), message.path().clone())) {
+                if pending_groups.contains(&(message.node().to_owned(), message.path().clone())) {
                     continue;
                 }
                 if count > 0 {

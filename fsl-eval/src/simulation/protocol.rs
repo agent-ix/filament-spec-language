@@ -155,6 +155,16 @@ impl Unsupported {
 /// Why [`ProtocolSystem::new`] built no system (FR-205 "Subject").
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProtocolRefusal {
+    /// A package protocol constraint retains its original selection refusal.
+    #[error("package node footprint projection failed at {node}: {failure:?}")]
+    PackageNodeFootprint {
+        /// The admitted package containing the constraint.
+        package: String,
+        /// The control's static declaration path.
+        node: String,
+        /// The original selection or projection failure, including its locus.
+        failure: Box<fsl_package::BareSelectionFailure>,
+    },
     /// A package binder's exact type has its original projection refusal.
     #[error("package parameter type projection failed at {node:?}: {failure:?}")]
     PackageParameterType {
@@ -241,7 +251,8 @@ impl ProtocolRefusal {
     /// The refusal's catalog code.
     pub fn code(&self) -> Code {
         match self {
-            Self::PackageParameterType { failure, .. } => match &**failure {
+            Self::PackageParameterType { failure, .. }
+            | Self::PackageNodeFootprint { failure, .. } => match &**failure {
                 fsl_package::BareSelectionFailure::Slot(_) => Code::RuntimeInvariant,
                 _ => Code::UnknownRequiredFeature,
             },
@@ -264,7 +275,8 @@ impl ProtocolRefusal {
     /// The refusal's catalog cause.
     pub fn cause(&self) -> &'static str {
         match self {
-            Self::PackageParameterType { failure, .. } => match &**failure {
+            Self::PackageParameterType { failure, .. }
+            | Self::PackageNodeFootprint { failure, .. } => match &**failure {
                 fsl_package::BareSelectionFailure::Slot(_) => "established-invariant-broken",
                 _ => "unsupported-feature",
             },
@@ -1132,17 +1144,10 @@ pub fn classify_package_accesses(
         .governing_models()
         .map_err(ProtocolRefusal::Memory)?;
     let runtime = Program::new_package(model, program)?;
-    let orderings = program
-        .controls
-        .values()
-        .filter(|control| {
-            control.operation == fsl_package::protocol_view::ControlOperation::Attempt
-        })
-        .map(|control| (control.id, control.ordering))
-        .collect();
     access::classify_package(
         model,
         &runtime,
+        program,
         &governing,
         model.initial().first(),
         over,
@@ -1151,7 +1156,6 @@ pub fn classify_package_accesses(
         } else {
             access::ClassificationMode::Enabled
         },
-        &orderings,
     )
 }
 
@@ -1172,22 +1176,14 @@ pub fn package_load_buffering_shapes(
         return Ok(Vec::new());
     }
     let runtime = Program::new_package(model, program)?;
-    let orderings = program
-        .controls
-        .values()
-        .filter(|control| {
-            control.operation == fsl_package::protocol_view::ControlOperation::Attempt
-        })
-        .map(|control| (control.id, control.ordering))
-        .collect();
     let accesses = access::classify_package(
         model,
         &runtime,
+        program,
         &governing,
         model.initial().first(),
         over,
         access::ClassificationMode::Potential,
-        &orderings,
     )?;
     Ok(
         access::load_buffering_shapes(&runtime, &governing, &accesses)?
