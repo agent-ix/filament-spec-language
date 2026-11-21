@@ -2293,9 +2293,7 @@ fn region_key(
                 .filter(|fraction| *fraction > 0)
         })
         .collect::<BTreeSet<_>>();
-    if state.elapsed < deadline.saturating_add(subdivisions)
-        && state.phase != Phase::Inactive
-    {
+    if state.elapsed < deadline.saturating_add(subdivisions) && state.phase != Phase::Inactive {
         let fraction = state.elapsed % subdivisions;
         if fraction > 0 {
             fractions.insert(fraction);
@@ -3248,4 +3246,521 @@ fn certificate_scale(
     };
     base.checked_mul(subdivisions)
         .ok_or(ProbabilityDocumentError::Unsupported)
+}
+
+/// FR-923: replay a path-set refutation of a timed deadline claim.
+///
+/// The checker enumerates the digital or region product itself, exactly as it
+/// does to check a certificate, and reads the witness as paths of product-state
+/// keys from the initial state to a decided state. The witness's own action
+/// spellings and post-states are not trusted: a step is valid when the key it
+/// reaches is an outcome of one choice of the state it leaves, and one state
+/// never takes two different choices (a memoryless scheduler). The mass of the
+/// paths is then a lower bound of the probability the claim's bound forbids,
+/// under a scheduler that no state of the witness makes time-convergent.
+///
+/// # Errors
+/// [`ProbabilityWitnessError`] when the claim is not a timed deadline claim,
+/// the product cannot be enumerated within the limits, or the witness names a
+/// state, step or choice the checker's product does not have.
+pub(in crate::probability_certificate) fn replay_timed_witness(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    witness: &super::super::ProbabilisticCounterexample,
+    limits: &crate::ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<super::super::ProbabilityWitnessReplay, super::super::ProbabilityWitnessError> {
+    use super::super::{ProbabilityWitnessError as Error, ProbabilityWitnessReplay as Replay};
+    let unsupported = || Error::Graph(ExactProbabilityGraphError::UnsupportedClaimForm);
+    let from_document = |error: ProbabilityDocumentError| match error {
+        ProbabilityDocumentError::Limit { limit, bound, .. } => Error::Limit {
+            limit: limit.model_limit(),
+            value: bound,
+        },
+        ProbabilityDocumentError::Cancelled(cause) => {
+            Error::Graph(ExactProbabilityGraphError::Cancelled(cause))
+        }
+        ProbabilityDocumentError::Graph(error) => Error::Graph(error),
+        _ => unsupported(),
+    };
+    let Some((bound, predicate)) = deadline_event(claim) else {
+        return Err(unsupported());
+    };
+    if !claim.fairness.is_empty() {
+        return Err(unsupported());
+    }
+    let timed = TimedSystem::new(system, &claim.subject.alias).map_err(|_| unsupported())?;
+    let route = if region_route(&timed, claim) {
+        TimedProbabilityRoute::Region
+    } else {
+        TimedProbabilityRoute::Digital
+    };
+    let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
+    let binding = claim_binding(system, claim)
+        .map_err(|_| unsupported())?
+        .map(|binding| binding.reference);
+    let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
+    let mut meter =
+        filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let graph = match route {
+        TimedProbabilityRoute::Digital => enumerate_digital_deadline(
+            system,
+            &timed,
+            claim,
+            binding.as_ref(),
+            &Watch::Deadline(predicate),
+            time_bound(claim, scale).map_err(from_document)?,
+            scale,
+            document_limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+            &mut BTreeMap::new(),
+        ),
+        TimedProbabilityRoute::Region => enumerate_region_deadline(
+            system,
+            &timed,
+            claim,
+            binding.as_ref(),
+            &Watch::Deadline(predicate),
+            time_bound(claim, scale).map_err(from_document)?,
+            scale,
+            scale,
+            document_limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+            &mut BTreeMap::new(),
+            &mut BTreeSet::new(),
+        ),
+    }
+    .map_err(from_document)?;
+    // A workload resolves a choice by its weights, not by a scheduler: only a
+    // product that leaves it no choice is a single chain the paths can lower
+    // bound.
+    if matches!(
+        claim.scheduler,
+        fsl_semantics::check::ProbScheduler::Workload(_)
+    ) && graph.states.values().any(|state| state.choices.len() > 1)
+    {
+        return Err(unsupported());
+    }
+    if witness.initial_key != graph.initial {
+        return Err(Error::Refused);
+    }
+    let failing = matches!(bound, Bound::AtLeast(_));
+    let threshold = match &bound {
+        Bound::AtMost(threshold) => threshold.clone(),
+        Bound::AtLeast(threshold) => one().sub(threshold),
+    };
+    let sequences: Vec<Vec<ProbabilityProductKey>> = witness
+        .paths
+        .iter()
+        .map(|path| {
+            path.steps
+                .iter()
+                .map(|step| step.post_key.clone())
+                .collect()
+        })
+        .collect();
+    let Some((kept, mass)) = price_witness_paths(
+        &graph,
+        failing,
+        &threshold,
+        &sequences,
+        limits.max_rational_bits,
+        cancel,
+    )?
+    else {
+        return Ok(Replay::Parity);
+    };
+    let mut validated = witness.clone();
+    validated.paths = kept
+        .into_iter()
+        .map(|index| witness.paths[index].clone())
+        .collect();
+    Ok(Replay::Reproduced(Box::new(
+        super::super::ReproducedProbabilityWitness::reproduced(validated, mass),
+    )))
+}
+
+/// The paths of a witness that the checker graph validates, and their mass.
+///
+/// `sequences` holds each witness path as the keys it visits after the initial
+/// state. The witness selects the scheduler; the mass is the checker graph's
+/// own probability of the failing outcome under that memoryless choice (states
+/// no path visits take their first choice), so a step the graph does not have
+/// contributes nothing and a cycle under the choice is refused. The reported
+/// paths must reproduce themselves: those that are not outcomes of the chosen
+/// choice are dropped and the choices and mass re-derived from the rest until
+/// the set is stable. `None` (Parity) when a path is not a distinct walk to
+/// the forbidden decided state, or the final mass does not exceed `threshold`.
+fn price_witness_paths(
+    graph: &CheckerGraph,
+    failing: bool,
+    threshold: &Rational,
+    sequences: &[Vec<ProbabilityProductKey>],
+    max_rational_bits: u64,
+    cancel: &Cancel,
+) -> Result<Option<(Vec<usize>, Rational)>, super::super::ProbabilityWitnessError> {
+    use super::super::ProbabilityWitnessError as Error;
+    let cancelled = |error: ProbabilityDocumentError| match error {
+        ProbabilityDocumentError::Cancelled(cause) => {
+            Error::Graph(ExactProbabilityGraphError::Cancelled(cause))
+        }
+        _ => Error::Graph(ExactProbabilityGraphError::LimitReached),
+    };
+    let limit_bits = |value: &Rational| {
+        if value.max_part_bits() > max_rational_bits {
+            Err(Error::Limit {
+                limit: crate::ModelCheckLimit::ExactProbMaxRationalBits,
+                value: max_rational_bits,
+            })
+        } else {
+            Ok(())
+        }
+    };
+    let covers = |choice: &Vec<ProbabilityEdge>, target: &ProbabilityProductKey| {
+        choice
+            .iter()
+            .any(|edge| &edge.target == target && edge.probability > zero())
+    };
+    // The witness selects the scheduler; the mass is the checker graph's own
+    // probability of the failing outcome under that memoryless choice (states
+    // the witness never visits take their first choice). A step the checker
+    // does not itself have therefore contributes nothing, and a cycle under the
+    // choice is refused rather than approximated.
+    #[allow(clippy::too_many_arguments)]
+    fn mass_of<'a>(
+        graph: &'a CheckerGraph,
+        chosen: &BTreeMap<ProbabilityProductKey, usize>,
+        failing: bool,
+        key: &'a ProbabilityProductKey,
+        memo: &mut BTreeMap<&'a ProbabilityProductKey, Rational>,
+        on_path: &mut BTreeSet<&'a ProbabilityProductKey>,
+        cancel: &Cancel,
+        check_bits: &dyn Fn(&Rational) -> Result<(), super::super::ProbabilityWitnessError>,
+    ) -> Result<Rational, super::super::ProbabilityWitnessError> {
+        use super::super::ProbabilityWitnessError as Error;
+        if let Some(value) = memo.get(key) {
+            return Ok(value.clone());
+        }
+        poll(cancel).map_err(|_| Error::Graph(ExactProbabilityGraphError::LimitReached))?;
+        let state = graph.states.get(key).ok_or(Error::Refused)?;
+        let value = match state.terminal {
+            Some(verdict) => {
+                if verdict == !failing {
+                    one()
+                } else {
+                    zero()
+                }
+            }
+            None => {
+                if !on_path.insert(key) {
+                    return Err(Error::Refused);
+                }
+                let index = chosen.get(key).copied().unwrap_or(0);
+                let mut sum = zero();
+                if let Some(choice) = state.choices.get(index) {
+                    for edge in choice.iter().filter(|edge| edge.probability > zero()) {
+                        let child = mass_of(
+                            graph,
+                            chosen,
+                            failing,
+                            &edge.target,
+                            memo,
+                            on_path,
+                            cancel,
+                            check_bits,
+                        )?;
+                        sum = sum.add(&edge.probability.mul(&child));
+                        check_bits(&sum)?;
+                    }
+                }
+                on_path.remove(key);
+                sum
+            }
+        };
+        memo.insert(key, value.clone());
+        Ok(value)
+    }
+    // The choices and the mass a set of paths selects. `None` when a path is
+    // not a distinct walk to the forbidden decided state (a Parity case).
+    let solve = |paths: &[usize]| -> Result<
+        Option<(BTreeMap<ProbabilityProductKey, usize>, Rational)>,
+        Error,
+    > {
+        let mut used: BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>> =
+            BTreeMap::new();
+        let mut seen = BTreeSet::new();
+        for index in paths {
+            let path = &sequences[*index];
+            poll(cancel).map_err(cancelled)?;
+            let mut at = graph.initial.clone();
+            let mut sequence = Vec::with_capacity(path.len());
+            for step in path {
+                let state = graph.states.get(&at).ok_or(Error::Refused)?;
+                if state.terminal.is_some() {
+                    return Err(Error::Refused);
+                }
+                used.entry(at.clone())
+                    .or_default()
+                    .insert(step.clone());
+                sequence.push(step.clone());
+                at = step.clone();
+            }
+            let end = graph.states.get(&at).ok_or(Error::Refused)?;
+            if sequence.is_empty() || end.terminal != Some(!failing) {
+                return Ok(None);
+            }
+            if !seen.insert(sequence) {
+                return Ok(None);
+            }
+        }
+        // One choice per visited state: the one the paths cover most (the first
+        // on a tie).
+        let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
+        for (key, targets) in &used {
+            let state = graph.states.get(key).ok_or(Error::Refused)?;
+            let mut best: Option<(usize, usize)> = None;
+            for (position, choice) in state.choices.iter().enumerate() {
+                let covered = targets
+                    .iter()
+                    .filter(|target| covers(choice, target))
+                    .count();
+                if best.is_none_or(|(_, most)| covered > most) {
+                    best = Some((position, covered));
+                }
+            }
+            let (index, _) = best.ok_or(Error::Refused)?;
+            chosen.insert(key.clone(), index);
+        }
+        let mass = mass_of(
+            &graph,
+            &chosen,
+            failing,
+            &graph.initial,
+            &mut BTreeMap::new(),
+            &mut BTreeSet::new(),
+            cancel,
+            &limit_bits,
+        )?;
+        Ok(Some((chosen, mass)))
+    };
+    // The reported evidence must reproduce itself: keep only the paths every
+    // step of which is an outcome of the chosen choice, then re-derive the
+    // choices and the mass from those paths alone, until the set is stable. The
+    // reported mass is the last one derived and still exceeds the threshold.
+    let mut kept: Vec<usize> = (0..sequences.len()).collect();
+    let mass = loop {
+        let Some((chosen, mass)) = solve(&kept)? else {
+            return Ok(None);
+        };
+        if mass <= *threshold {
+            return Ok(None);
+        }
+        let before = kept.len();
+        kept.retain(|index| {
+            let mut at = &graph.initial;
+            sequences[*index].iter().all(|step| {
+                let covered = graph
+                    .states
+                    .get(at)
+                    .zip(chosen.get(at))
+                    .and_then(|(state, index)| state.choices.get(*index))
+                    .is_some_and(|choice| covers(choice, step));
+                at = step;
+                covered
+            })
+        });
+        if kept.is_empty() {
+            return Ok(None);
+        }
+        if kept.len() == before {
+            break mass;
+        }
+    };
+    Ok(Some((kept, mass)))
+}
+
+/// Whether `claim` is the timed deadline form this module enumerates.
+pub(in crate::probability_certificate) fn is_timed_deadline_claim(
+    claim: &CheckedProbabilisticClaim,
+) -> bool {
+    deadline_event(claim).is_some()
+}
+
+/// The clock valuation a digital timed product key names, in
+/// [`TimedSystem::places`] order: each place's canonical identity is looked
+/// up in the key, so the key's own (identity-sorted) clock order never
+/// decides which clock a value belongs to. `None` for a region key, a key
+/// that names a clock twice or not at all, or a value that is not a whole
+/// number of ticks.
+pub fn digital_key_clocks(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    key: &ProbabilityProductKey,
+) -> Option<fsl_eval::simulation::model::ClockValuation> {
+    let root: JsonValue = serde_json::from_slice(key.as_bytes()).ok()?;
+    let keyed = root.get(4)?.get(1)?;
+    if keyed.get(0)?.as_str()? != "digital" {
+        return None;
+    }
+    let number = |value: &JsonValue| -> Option<u64> {
+        value
+            .as_u64()
+            .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+    };
+    let scale = number(keyed.get(3)?)?;
+    let listed = keyed.get(4)?.as_array()?;
+    let timed = TimedSystem::new(system, &claim.subject.alias).ok()?;
+    if listed.len() != timed.places().len() {
+        return None;
+    }
+    let mut values = Vec::with_capacity(listed.len());
+    for place in timed.places() {
+        let field = timed.model().clock(place.clock())?;
+        let owner = field.owner();
+        let owner = owner.original();
+        let declaring = fsl_semantics::model::key::model_node_key(
+            owner.package(),
+            "model",
+            "object_type",
+            owner.node(),
+        )
+        .ok()?;
+        let declaring = fsl_foundation::node_wire::node_key_to_json(&declaring).ok()?;
+        let receiver =
+            fsl_eval::simulation::model::reference_canonical_text(place.object()).ok()?;
+        let receiver: JsonValue = serde_json::from_str(&receiver).ok()?;
+        let identity = json!([declaring, field.name(), receiver]);
+        let mut matching = listed
+            .iter()
+            .filter(|clock| clock.get(0) == Some(&identity));
+        let clock = matching.next()?;
+        if matching.next().is_some() {
+            return None;
+        }
+        let whole = number(clock.get(1)?)?;
+        values
+            .push(Rational::from_integer(whole.into()).div(&Rational::from_integer(scale.into()))?);
+    }
+    Some(fsl_eval::simulation::model::ClockValuation::new(values))
+}
+
+#[cfg(test)]
+mod witness_pricing_tests {
+    use super::*;
+
+    fn key(name: &str) -> ProbabilityProductKey {
+        ProbabilityProductKey::from_canonical_bytes(name.as_bytes().to_vec())
+    }
+
+    fn part(numerator: i64, denominator: i64) -> Rational {
+        Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("nonzero")
+    }
+
+    fn edge(target: &str, numerator: i64, denominator: i64) -> ProbabilityEdge {
+        ProbabilityEdge {
+            target: key(target),
+            probability: part(numerator, denominator),
+        }
+    }
+
+    fn graph(states: Vec<(&str, Option<bool>, Vec<Vec<ProbabilityEdge>>)>) -> CheckerGraph {
+        CheckerGraph {
+            initial: key("I"),
+            states: states
+                .into_iter()
+                .map(|(name, terminal, choices)| (key(name), CheckerState { terminal, choices }))
+                .collect(),
+        }
+    }
+
+    fn path(steps: &[&str]) -> Vec<ProbabilityProductKey> {
+        steps.iter().map(|step| key(step)).collect()
+    }
+
+    fn price(
+        graph: &CheckerGraph,
+        threshold: Rational,
+        sequences: &[Vec<ProbabilityProductKey>],
+    ) -> Option<(Vec<usize>, Rational)> {
+        price_witness_paths(graph, false, &threshold, sequences, 4096, &Cancel::new())
+            .expect("the graph prices")
+    }
+
+    /// The tie's two orderings: `A` fires the operation that retries at once, `B`
+    /// fires the one that loses half the time and retries later.
+    fn tie() -> CheckerGraph {
+        graph(vec![
+            (
+                "I",
+                None,
+                vec![
+                    vec![edge("ACC", 1, 1)],
+                    vec![edge("L", 1, 2), edge("REJ", 1, 2)],
+                ],
+            ),
+            ("L", None, vec![vec![edge("ACC2", 1, 1)]]),
+            ("ACC", Some(true), vec![]),
+            ("ACC2", Some(true), vec![]),
+            ("REJ", Some(false), vec![]),
+        ])
+    }
+
+    /// A witness whose path takes the NON-retrying ordering and still ends in
+    /// an accepted state selects that ordering, whose mass is below the bound,
+    /// so it does not refute; the honest path selects the other ordering.
+    #[test]
+    fn a_path_of_the_non_failing_ordering_that_ends_accepted_does_not_refute() {
+        let graph = tie();
+        assert_eq!(price(&graph, part(3, 5), &[path(&["L", "ACC2"])]), None);
+        assert_eq!(
+            price(&graph, part(3, 5), &[path(&["ACC"])]),
+            Some((vec![0], part(1, 1)))
+        );
+    }
+
+    /// A path whose first step is no outcome of the chosen choice is dropped
+    /// from the evidence, and the choices and the mass are re-derived from the
+    /// kept path alone: here dropping it changes the choice at `T`, the mass
+    /// falls to the bound and the witness no longer refutes.
+    #[test]
+    fn evidence_is_priced_from_the_validated_paths_alone() {
+        let graph = graph(vec![
+            (
+                "I",
+                None,
+                vec![
+                    vec![edge("T", 1, 1)],
+                    vec![edge("T", 1, 1)],
+                    vec![edge("X", 1, 1)],
+                ],
+            ),
+            ("X", None, vec![vec![edge("T", 1, 1)]]),
+            (
+                "T",
+                None,
+                vec![
+                    vec![edge("a", 1, 4), edge("REJ", 3, 4)],
+                    vec![edge("a", 1, 2), edge("b", 1, 2)],
+                ],
+            ),
+            ("a", Some(true), vec![]),
+            ("b", Some(true), vec![]),
+            ("REJ", Some(false), vec![]),
+        ]);
+        let kept = path(&["T", "a"]);
+        let dropped = path(&["X", "T", "b"]);
+        // The two together choose the second choice at `T` (mass 1), but the
+        // dropped path leaves, and the kept one alone ties back to the first.
+        assert_eq!(price(&graph, part(1, 2), &[kept.clone(), dropped]), None);
+        // Alone, the kept path prices the first choice at `T`.
+        assert_eq!(
+            price(&graph, part(1, 5), &[kept]),
+            Some((vec![0], part(1, 4)))
+        );
+    }
 }
