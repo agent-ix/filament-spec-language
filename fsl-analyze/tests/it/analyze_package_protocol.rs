@@ -475,7 +475,13 @@ fn package_await_runs_the_complete_matched_receive_body() {
 }
 
 /// A blocked timeout continuation retains its counterexample and replay refusals.
-#[trace("TC-2958", "FR-940-AC-6", "FR-940-AC-22", "FR-206-AC-5")]
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FR-940-AC-22",
+    "FR-206-AC-5",
+    "FR-517-AC-33"
+)]
 #[test]
 fn package_await_timeout_deadlock_preserves_replay_and_refusal() {
     let timeout = format!(
