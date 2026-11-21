@@ -310,7 +310,7 @@ fn with_bare<T>(
     let read = fsl_package::read_evaluation_emission(
         package,
         &emission,
-        LibraryName::new("fixture").expect("a package name"),
+        LibraryName::new(emission.package().name()).expect("the emitted package name"),
         &no_models,
         fsl_package::V2ReadLimits::fixture(),
         fsl_package::EmitLimits::fixture(),
@@ -644,10 +644,10 @@ fn package_equivalence_resolves_an_admitted_direct_dependency_dimension() {
         Vec::new(),
     ));
     let root = imported_package("importing-unit", "\
-        import \"time-library\" as clock;\n\
+        import \"time-library\" as time_lib;\n\
         dimension Beat; unit beat : Beat = rational(1, 1);\n\
-        dimension Beat ~ clock::Time by 1 beat = rational(1, 4) clock::s;\n\
-        function cross using v(): Quantity<clock::s> pure { convert<Quantity<clock::s>>(1 beat) }\n",
+        dimension Beat ~ time_lib::Time by 1 beat = rational(1, 4) time_lib::s;\n\
+        function cross using v(): Quantity<time_lib::s> pure { convert<Quantity<time_lib::s>>(1 beat) }\n",
         vec![fsl_package::Import { identity: LibraryName::new("time-library").expect("a name"), package: dependency }]);
     with_bare(&root, |bare| {
         let mut package_operands = 0;
