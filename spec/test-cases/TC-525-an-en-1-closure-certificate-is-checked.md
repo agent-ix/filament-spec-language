@@ -123,15 +123,22 @@ Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
     activation of the `on origin` variant over `Once`.
 17. FR-338-AC-30: over the Counter subject, check the unguarded `on each`
     TP-3 clause with the body `holds(c.value = 1) implies once[1,1]
-    holds(c.value = 0)`; offer its certificate for the bodies `holds(c.value =
-    2) implies once[1,1] holds(c.value = 0)` and `holds(c.value = 3) implies
-    once[1,1] holds(c.value = 2)`; remove one reached product state; replace
-    every activation by `"each"`; check the guarded variant `when (c.value >=
-    2)`.
-18. FR-338-AC-31: over the repaired `Fill` check the `eventually[0,2]` clause
-    and its `eventually[0,1]` variant, tamper the accepted certificate, and
-    run `Echo`'s `eventually[1,2]` clause with and without a resolved
-    fairness constraint, from source and from the S4 package.
+    holds(c.value = 0)`; for each of the bodies `holds(c.value = 2) implies
+    once[1,1] holds(c.value = 0)`, `holds(c.value = 3) implies once[1,1]
+    holds(c.value = 2)` and `holds(c.value <= 1) implies eventually[0,2]
+    holds(c.value = 3)` check the certificate keyed under its own context, and
+    offer the accepted certificate under its root; remove one reached product
+    state; replace every activation by `"each"`; check the guarded variant
+    `when (c.value >= 2)`; check the accepted clause with `max_states` one
+    below its closure and cancelled after its first charge; read the atom
+    undefined at model state 2.
+18. FR-338-AC-31: over the repaired `Fill` check the `not once[1,2]` clause, the
+    `eventually[0,2]` clause and its `eventually[0,1]` variant, replace a
+    post-`attempt` key by the pre-`attempt` key and every activation by
+    `"each"`; over `Echo` check the `on each` `eventually[1,2]` clause under
+    the default package and under the `scheduling adversarial` package with
+    the same certificate; each from source and from the S4 package, and with
+    `max_states` one below the closure.
 
 ## Expected Results
 
@@ -199,6 +206,5 @@ Tag the tests `#[trace("TC-525", "FR-338-AC-n")]`.
   `"removed"` with the message replaced by `null` and the post-removal states
   of the two lifetimes coincide; capture-free keys are byte-unchanged; the
   activation is `"each-activate"`.
-- Step 17: accepted and `proved`, `Certified`; `BadState` at model state 2 and at the terminal
-  stutter; `SuccessorMissing`; `ShapeMismatch`; the guarded variant accepted.
-- Step 18: accepted and `proved`, `Certified`; `BadState`; `SuccessorMissing`; `ShapeMismatch`; `WitnessFails` without fairness, accepted with it; source and package agree.
+- Step 17: accepted and `proved`, `Certified`; each violated body `BadState` at its stated model state; the foreign-root certificate `ShapeMismatch`, never `BadState`; `SuccessorMissing`; `ShapeMismatch`; the guarded variant accepted; `Stopped(LimitReached{MaxStates, ..})` and `Stopped(Cancelled{Requested})`, each settled `incomplete`; `UndefinedEvaluation` and `BadState` at model state 2.
+- Step 18: `Fill` accepted and `proved`, `Certified`, with the `distance-history` and `deadline` keys as stated, `SuccessorMissing`, `BadState`, `ShapeMismatch`; `Echo` accepted under the default package and `WitnessFails` at the normative locus under `scheduling adversarial`; source and package agree; `Stopped(LimitReached{MaxStates, ..})` settled `incomplete`.
