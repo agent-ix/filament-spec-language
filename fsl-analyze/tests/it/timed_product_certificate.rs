@@ -566,6 +566,20 @@ fn a_digital_key_valuation_does_not_depend_on_the_key_clock_order() {
         .values()
         .to_vec()
     };
+    let timed = fsl_eval::simulation::model::TimedSystem::new(&system, &claim.subject.alias)
+        .expect("a timed subject");
+    let places: Vec<String> = timed
+        .places()
+        .iter()
+        .map(|place| {
+            timed
+                .model()
+                .clock(place.clock())
+                .expect("a clock")
+                .name()
+                .to_string()
+        })
+        .collect();
     let mut distinct = false;
     for entry in doc["values"].as_array().expect("values") {
         let encoded = entry["state"].as_str().expect("encoded key");
@@ -591,11 +605,11 @@ fn a_digital_key_valuation_does_not_depend_on_the_key_clock_order() {
         reversed[4][1][4] = Value::Array(clocks.iter().rev().cloned().collect());
         let straight = valuation(&key);
         assert_eq!(straight, valuation(&reversed));
-        let mut held = [ratio(whole("x"), scale), ratio(whole("a"), scale)];
-        held.sort();
-        let mut found = straight.clone();
-        found.sort();
-        assert_eq!(found, held, "each value belongs to its own clock");
+        let held: Vec<_> = places
+            .iter()
+            .map(|name| ratio(whole(name), scale))
+            .collect();
+        assert_eq!(straight, held, "each place holds its own clock's ticks");
     }
     assert!(distinct, "some state must tell the two clocks apart");
 }
@@ -627,6 +641,7 @@ fn a_forged_decided_target_is_neither_counted_nor_reported() {
         .as_ref()
         .expect("the refutation carries its witness");
     let paths = honest_witness.evidence().paths.len();
+    assert!(paths >= 2, "the forgery needs a second honest path");
     let forged = settle_witness_tampered(&world, "Strict", |witness| {
         let last = witness.paths.len() - 1;
         let other = witness.paths[last]
@@ -645,7 +660,7 @@ fn a_forged_decided_target_is_neither_counted_nor_reported() {
         .as_ref()
         .expect("the genuine paths still refute");
     assert_eq!(reproduced.mass(), honest_witness.mass());
-    assert!(reproduced.evidence().paths.len() <= paths);
+    assert!(reproduced.evidence().paths.len() < paths);
 }
 
 /// FR-923-AC-3: a witness that takes the tie's NON-failing ordering does not
