@@ -178,7 +178,9 @@ fn admit_defined(
     let mut side_map: BTreeMap<Identity, Vec<String>> = BTreeMap::new();
     let mut anchors = Vec::new();
     let mut position_records = Vec::new();
-    for (canonical_index, observed) in trace.positions().iter().enumerate() {
+    // Silent samples (positions past `observed()`) are no observation: the owner
+    // admits only what was supplied.
+    for (canonical_index, observed) in trace.positions().iter().enumerate().take(trace.observed()) {
         let temporal_position = TemporalPosition::new(
             u64::try_from(canonical_index).map_err(|_| fault("positions-in-u64"))?,
         );
@@ -852,6 +854,8 @@ fn nanos_per_tick(
     use filament_exact::{Integer, Rational};
     let Some(scale) = scale else {
         return match binding.clock {
+            // FR-944: a clock with no time unit takes `s` = 1. A timed unit with no
+            // declared factor is never guessed: the call faults.
             ClockConfiguration::EventPosition { .. } => {
                 Ok(Rational::from_integer(Integer::from(1_i64)))
             }
