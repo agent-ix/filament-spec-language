@@ -285,13 +285,13 @@ pub fn compile_model_unit_with_causes(
                     )]);
                 }
                 references.extend(object.relationship_targets.iter().cloned());
-                supertype_references.extend(object.links.supertypes.iter().cloned());
-                inline_integers.extend(object.inline_integers);
-                types.extend(object.additional_types);
-                let mut links = object.links;
-                links.type_index = types.len();
-                object_links.push(links);
-                types.push(object.wire);
+                push_model_type(
+                    object,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                    &mut inline_integers,
+                );
                 has_object_type = true;
                 index = next;
             }
@@ -582,12 +582,13 @@ pub fn compile_model_unit_with_causes(
                         format!("declaration {} is declared more than once", machine.name),
                     )]);
                 }
-                supertype_references.extend(machine.links.supertypes.iter().cloned());
-                types.extend(machine.additional_types);
-                let mut links = machine.links;
-                links.type_index = types.len();
-                object_links.push(links);
-                types.push(machine.wire);
+                push_model_type(
+                    machine,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                    &mut inline_integers,
+                );
                 has_state_machine = true;
                 index = next;
             }
@@ -610,12 +611,13 @@ pub fn compile_model_unit_with_causes(
                         format!("declaration {} is declared more than once", process.name),
                     )]);
                 }
-                supertype_references.extend(process.links.supertypes.iter().cloned());
-                types.extend(process.additional_types);
-                let mut links = process.links;
-                links.type_index = types.len();
-                object_links.push(links);
-                types.push(process.wire);
+                push_model_type(
+                    process,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                    &mut inline_integers,
+                );
                 has_process = true;
                 index = next;
             }
