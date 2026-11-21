@@ -62,6 +62,7 @@ mod hyper_clause;
 mod identity_budget;
 mod inventory_ceilings;
 mod large_cycle;
+mod let_binder;
 mod mapping_support;
 mod native_row_budget;
 mod navigation;

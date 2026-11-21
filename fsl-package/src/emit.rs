@@ -1764,6 +1764,17 @@ impl BodyNames {
             }
             BodyTerm::Leaf(_) | BodyTerm::Aggregate(_) => {}
         }
+        // FSpec FR-322 "The binder link": a `let` depends on its binder node,
+        // read by its body or not.
+        if let BodyTerm::Application(application) = body {
+            for argument in &application.arguments {
+                if let MemberTerm::Binding(binding) = argument {
+                    if let Some(binder) = &binding.binder {
+                        names.dependencies.insert(admitted(binder)?);
+                    }
+                }
+            }
+        }
         for leaf in body.leaves() {
             match leaf {
                 LeafTerm::Literal { ty, .. } => {

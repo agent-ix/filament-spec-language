@@ -328,7 +328,7 @@ impl Lowering<'_> {
             return None;
         };
         aggregate.members.iter().find_map(|member| {
-            let MemberTerm::Binding(Binding { name, value }) = member else {
+            let MemberTerm::Binding(Binding { name, value, .. }) = member else {
                 return None;
             };
             if name != FUNCTION_BODY {
@@ -418,7 +418,7 @@ impl Lowering<'_> {
                     return None;
                 };
                 aggregate.members.iter().find_map(|member| {
-                    let MemberTerm::Binding(Binding { name, value }) = member else {
+                    let MemberTerm::Binding(Binding { name, value, .. }) = member else {
                         return None;
                     };
                     match value {
