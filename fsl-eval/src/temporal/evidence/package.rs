@@ -181,7 +181,12 @@ fn collect_time_unit_scales(
                 .time_unit_scale(unit)
                 .ok()
                 .cloned(),
-            (None, Some(bare)) => bare.time_unit_scale(unit),
+            // A declared unit the bare route cannot read is marked by a zero
+            // factor, which the owner refuses; an undeclared one is a count.
+            (None, Some(bare)) => bare.time_unit_scale(unit).or_else(|| {
+                bare.declares_unit(unit)
+                    .then(|| filament_exact::Rational::from_integer(0_i64.into()))
+            }),
             (None, None) => None,
         };
         if let Some(scale) = scale {

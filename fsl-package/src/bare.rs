@@ -188,6 +188,23 @@ impl<'p> BarePackage<'p> {
         self
     }
 
+    /// Whether the package holds a unit node declared under the name `unit`.
+    /// A unit the package declares but `time_unit_scale` cannot read here has a
+    /// real factor this route lacks, which a caller must not replace by a count.
+    #[must_use]
+    pub fn declares_unit(&self, unit: &str) -> bool {
+        self.package.resolved_graph().nodes.iter().any(|node| {
+            node.node_tag.as_ref() == "scalar_type"
+                && node.semantic_form.as_ref() == "unit"
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration
+                        .qualified_name
+                        .last()
+                        .is_some_and(|last| last.as_ref() == unit)
+                })
+        })
+    }
+
     /// The exact scale of the time unit `unit` to seconds, read from the
     /// package's own source-owned unit definitions, when it holds one: a
     /// declared unit of the `Time` dimension named `unit` with no offset.
