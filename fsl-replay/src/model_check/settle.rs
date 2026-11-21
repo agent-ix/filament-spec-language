@@ -421,7 +421,7 @@ fn load_buffering_warnings(
             &subject.capacities,
         ),
         ProtocolDefinition::Package(form) => {
-            let package = PackageProtocolProgram::with_memory(input, form, subject.memory.clone())
+            let package = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
                 .map_err(|_| None)?;
             let ValueType::Reference(object_type) = &package.over_type else {
                 return Err(None);

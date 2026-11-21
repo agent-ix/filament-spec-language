@@ -1410,7 +1410,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             .ok_or_else(|| ProtocolRefusal::UnknownProtocol {
                 protocol: subject.protocol.clone(),
             })?;
-        let package = PackageProtocolProgram::with_memory(input, form, subject.memory.clone())
+        let package = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
             .map_err(|refusal| match refusal {
                 PackageProgramRefusal::Memory(refusal) => ProtocolRefusal::Memory(refusal),
                 PackageProgramRefusal::Unsupported(operation) => {

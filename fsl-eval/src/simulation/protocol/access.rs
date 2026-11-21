@@ -595,13 +595,12 @@ pub(crate) fn classify(
 ) -> Result<WeakAccesses, ProtocolRefusal> {
     classify_with(
         model,
-        Some(protocol),
+        ClassificationSource::Checked(protocol),
         program,
         governing,
         initial,
         over,
         mode,
-        None,
     )
 }
 
@@ -618,26 +617,34 @@ pub(crate) fn classify_package(
 ) -> Result<WeakAccesses, ProtocolRefusal> {
     classify_with(
         model,
-        None,
+        ClassificationSource::Package(orderings),
         program,
         governing,
         initial,
         over,
         mode,
-        Some(orderings),
     )
+}
+
+/// The selected route's source of binders and attempt orderings.
+enum ClassificationSource<'a> {
+    Checked(&'a CheckedProtocol),
+    Package(&'a BTreeMap<ProtocolNodeId, Option<AccessOrdering>>),
 }
 
 fn classify_with(
     model: &ModelSystem<'_>,
-    protocol: Option<&CheckedProtocol>,
+    source: ClassificationSource<'_>,
     program: &Program<'_>,
     governing: &BTreeMap<ProtocolNodeId, MemoryModelName>,
     initial: Option<&ModelSimState>,
     over: &Value,
     mode: ClassificationMode,
-    package_orderings: Option<&BTreeMap<ProtocolNodeId, Option<AccessOrdering>>>,
 ) -> Result<WeakAccesses, ProtocolRefusal> {
+    let (protocol, package_orderings) = match source {
+        ClassificationSource::Checked(protocol) => (Some(protocol), None),
+        ClassificationSource::Package(orderings) => (None, Some(orderings)),
+    };
     let Some(initial) = initial else {
         return Ok(WeakAccesses::default());
     };

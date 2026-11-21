@@ -184,7 +184,7 @@ impl<'a> PackageProtocolProgram<'a> {
             });
         };
         let memory = ResolvedMemory::resolve_package(&form, selection)?;
-        Self::with_memory(input, form, memory)
+        Self::with_memory(input, *form, memory)
     }
 
     /// Build the package-native execution form from an already resolved

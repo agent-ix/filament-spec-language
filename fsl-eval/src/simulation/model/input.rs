@@ -182,7 +182,7 @@ pub enum ProtocolDefinition<'a> {
     /// The source route's checked semantic form.
     Source(&'a CheckedProtocol),
     /// The package route's typed protocol-node form.
-    Package(fsl_package::protocol_view::ProtocolExecutionView<'a>),
+    Package(Box<fsl_package::protocol_view::ProtocolExecutionView<'a>>),
 }
 
 impl<'a> ModelCheckInput<'a> {
@@ -300,7 +300,7 @@ impl<'a> ModelCheckInput<'a> {
             .or_else(|| {
                 self.evaluator
                     .package_protocol(name)
-                    .map(ProtocolDefinition::Package)
+                    .map(|form| ProtocolDefinition::Package(Box::new(form)))
             })
     }
 
