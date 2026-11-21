@@ -2012,9 +2012,12 @@ fn package_channel_send_invalid_capacity_records_match_source() {
 }
 
 /// The original inside/after and SC/TSO combinations execute on both routes.
-#[trace("TC-2958", "FR-940", "FR-894", "FR-205")]
+#[trace("TC-2958", "FR-940", "FR-894", "FR-205", "FR-533")]
 #[test]
 fn package_channel_send_parallel_combinations_match_both_routes() {
+    use fsl_package::{
+        AnalysisView, BarePackage, BareSupply, EmitLimits, ProtocolSlotDescriptor, V2ReadLimits,
+    };
     for memory in ["sc", "tso"] {
         for position in ["inside", "after"] {
             let ws = Workspace::new(&format!("package-channel-send-{memory}-{position}"));
@@ -2032,7 +2035,69 @@ fn package_channel_send_parallel_combinations_match_both_routes() {
             );
             let path =
                 channel_send_request(&ws, 1, "block", "exactly-once-premise", &run, "closing");
-            let item = channel_send_parity(&ws, &path, "proved");
+            let item = channel_send_parity_using(&ws, &path, "proved", || {
+                let (package_path, _) = package_request(&ws, &path);
+                let compiled = fsl_command::checked_handoff::compile(
+                    &ws.path(crate::analyze_cli_support::HANDOFF),
+                )
+                .expect("the original mixed fixture compiles");
+                let emission = fsl_package::emit_checked(compiled.checked(), EmitLimits::fixture())
+                    .expect("genuine mixed emission");
+                let identities = emission
+                    .identity_rows(
+                        compiled.admitted(),
+                        &mut V2ReadLimits::fixture().native_join_budget(),
+                    )
+                    .expect("native identity rows");
+                let equality = emission
+                    .equality_witness(
+                        compiled.admitted(),
+                        &mut V2ReadLimits::fixture().native_join_budget(),
+                    )
+                    .expect("native equality rows");
+                let bare = BarePackage::new(compiled.admitted())
+                    .with_supply(
+                        BareSupply {
+                            identities: &identities,
+                            equality: Some(&equality),
+                        },
+                        &mut V2ReadLimits::fixture().native_join_budget(),
+                    )
+                    .expect("native mixed package");
+                let form = bare
+                    .protocol_execution_named("Flow")
+                    .expect("native protocol view")
+                    .expect("Flow");
+                let sends = form
+                    .controls
+                    .iter()
+                    .filter(|control| {
+                        control.operation == fsl_package::protocol_view::ControlOperation::Send
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(sends.len(), 1, "the original fixture has exactly one send");
+                let slot = bare
+                    .select_protocol_slot(&ProtocolSlotDescriptor::new(
+                        bare.node_key(&sends[0].node.node_id)
+                            .expect("the native send key"),
+                        "constraint".to_owned(),
+                        None,
+                    ))
+                    .expect("native constraint selection");
+                let origin = if position == "inside" {
+                    "protocol Flow run Main Both left Left Only body"
+                } else {
+                    "protocol Flow run Main Only body"
+                };
+                assert_eq!(
+                    slot.origin(),
+                    Some(origin),
+                    "the authored branch label remains in the site path"
+                );
+                bare.project_protocol_slot(&slot)
+                    .expect("the real constraint pairs with its complete origin rows");
+                package_path
+            });
             assert!(item.get("exploration").is_some(), "{item}");
         }
     }
