@@ -461,7 +461,7 @@ pub use probability_certificate::{
     ExactProbabilityCertificate, ExactProbabilityCertificateCheck, ExactProbabilityGraphError,
     ExactProbabilityValue, LongRunProbabilityComponent, LongRunProbabilityDocument,
     ProbabilisticCounterexample, ProbabilityBoundSide, ProbabilityCertificateDocument,
-    ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
+    ProbabilityCertificateLocus, ProbabilityCertificatePart, ProbabilityCertificateRejection, ProbabilityCertificateRule,
     ProbabilityDocumentError, ProbabilityDocumentIoLimits, ProbabilityDocumentLimit,
     ProbabilityDocumentLimits, ProbabilityKeyAdmission, ProbabilityObjective,
     ProbabilityPackageRequest, ProbabilityProductKey, ProbabilityProofDocument,

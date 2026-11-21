@@ -1493,7 +1493,10 @@ pub(super) fn check(
             &mut storage,
         )?;
         let mut initial = Vec::new();
-        for part in [numerator, denominator] {
+        for (part, part_name) in [
+            (numerator, ProbabilityCertificatePart::Numerator),
+            (denominator, ProbabilityCertificatePart::Denominator),
+        ] {
             let part_plan = plan_for_part(
                 system,
                 claim,
@@ -1514,7 +1517,17 @@ pub(super) fn check(
             )?;
             let values = match checked_values(part, &graph_part, limits, cancel, &mut meter)? {
                 Ok(values) => values,
-                Err(rejection) => return Ok(rejection),
+                Err(mut rejection) => {
+                    if let ExactProbabilityCertificateCheck::Rejected(failure) = &mut rejection {
+                        if let ProbabilityCertificateLocus::ProductState(key) = &failure.at {
+                            failure.at = ProbabilityCertificateLocus::ProductPart {
+                                key: key.clone(),
+                                part: part_name,
+                            };
+                        }
+                    }
+                    return Ok(rejection);
+                }
             };
             initial.push(
                 values

@@ -1322,6 +1322,15 @@ fn checked_report(
                             at: CertificateLocus::ProbabilityProductState(at.clone()),
                         }))
                     }
+                    ProbabilityCertificateLocus::ProductPart { key, part } => {
+                        EngineReport::Exact(Box::new(ExactReport::Rejected {
+                            rule,
+                            at: CertificateLocus::ProbabilityProductPart {
+                                key: key.clone(),
+                                part: *part,
+                            },
+                        }))
+                    }
                     ProbabilityCertificateLocus::Member(name) => {
                         let Some(member) = fsl_replay::CertificateMember::ALL
                             .iter()

@@ -584,11 +584,42 @@ pub enum ProbabilityCertificateRule {
     RankBroken,
 }
 
+/// The checked component of a conditional probability certificate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProbabilityCertificatePart {
+    /// The satisfied-and-activated numerator.
+    Numerator,
+    /// The activation denominator.
+    Denominator,
+    /// The value after first activation.
+    Post,
+    /// The proper waiting-state reset process.
+    Reset,
+}
+impl ProbabilityCertificatePart {
+    /// Canonical published part spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Numerator => "numerator",
+            Self::Denominator => "denominator",
+            Self::Post => "post",
+            Self::Reset => "reset",
+        }
+    }
+}
+
 /// The locus of an exact-certificate rejection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProbabilityCertificateLocus {
     /// A full probabilistic product state key.
     ProductState(ProbabilityProductKey),
+    /// A full state key and its failing conditional-certificate component.
+    ProductPart {
+        /// Complete probabilistic product key.
+        key: ProbabilityProductKey,
+        /// The independently checked part.
+        part: ProbabilityCertificatePart,
+    },
     /// A malformed certificate member.
     Member(&'static str),
 }

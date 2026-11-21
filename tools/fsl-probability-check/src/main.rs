@@ -215,6 +215,13 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
                     serde_json::to_value(fsl_replay::CertificateLocus::ProbabilityProductState(key))
                         .map_err(|error| error.to_string())?
                 }
+                fsl_replay::ProbabilityCertificateLocus::ProductPart { key, part } => {
+                    serde_json::to_value(fsl_replay::CertificateLocus::ProbabilityProductPart {
+                        key,
+                        part,
+                    })
+                    .map_err(|error| error.to_string())?
+                }
                 fsl_replay::ProbabilityCertificateLocus::Member(member) => json!({"member":member}),
             };
             json!({"status":"rejected", "rule":rule, "at":at})
