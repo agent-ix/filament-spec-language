@@ -238,23 +238,25 @@ pub fn settle_hyper_check(
             let mut stopped = None;
             for proof in certificates {
                 match crate::check_product_closure(request, proof, limits, cancel)? {
-                    crate::TemporalCertificateCheck::Accepted => {}
-                    crate::TemporalCertificateCheck::Rejected(rejection) => {
+                    crate::ProductClosureCheck::Accepted => {}
+                    crate::ProductClosureCheck::Rejected(rejection) => {
                         stopped = Some(Row::inconclusive(InconclusiveCause::CertificateRejected {
                             rule: rejection.rule,
                             at: rejection.at,
                         }));
                         break;
                     }
-                    crate::TemporalCertificateCheck::Stopped(cause) => {
-                        stopped = Some(Row::stopped_run(cause, None));
+                    crate::ProductClosureCheck::Stopped { cause, tuple } => {
+                        count = tuple.map(|detail| detail.count);
+                        let reached = match &cause {
+                            IncompleteCause::LimitReached { limit, value } => Some(ReachedLimit {
+                                limit: *limit,
+                                value: *value,
+                            }),
+                            _ => None,
+                        };
+                        stopped = Some(Row::stopped_run(cause, reached));
                         break;
-                    }
-                    _ => {
-                        return Err(crate::ProductClosureRefusal::Recompute(
-                            "unexpected-check-result",
-                        )
-                        .into());
                     }
                 }
             }

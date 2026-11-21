@@ -168,6 +168,133 @@ fn run_health_long_run(name: &str, items: Value) -> Value {
     analyze(&request).document()
 }
 
+/// Both native engines retain the actual zero/two/four-post refusal, its
+/// complete interleaved argument vector and the first two real model keys.
+#[trace("TC-622", "FR-187-AC-3", "TC-2066", "FR-741-AC-1", "FR-741-AC-3")]
+#[test]
+fn native_not_markov_preserves_actual_zero_two_and_four_post_payloads() {
+    use fsl_eval::simulation::model::Unsteppable;
+    use fsl_eval::simulation::TransitionSystem;
+    use fsl_replay::outcome::{state_key_wire, task_source_transition_wire};
+
+    const CLAIM: &str =
+        "probabilistic Broken using ev on M over (n: M::Node) under Steady on origin \
+         with alpha 0.1, beta 0.1, indifference 0.1 \
+         { probability >= 0.5 [ always[0,1] holds(n.healthy) ] }";
+    for (post, count) in [
+        ("false", 0_u64),
+        ("self.healthy = not fault", 2),
+        ("true", 4),
+    ] {
+        let mut model = prob_world::health(post, "false: 1", true, CLAIM);
+        model.operations[0].parameters = vec![
+            ("left", "ix://filament/native/Boolean".to_owned()),
+            ("fault", "ix://filament/native/Boolean".to_owned()),
+            ("right", "ix://filament/native/Boolean".to_owned()),
+        ];
+        model
+            .body
+            .push_str("\npre Fixed using v on M::Node::tick { left and not right }\n");
+        let world = World::new(&model);
+        let system = ModelSystem::new(world.subject().simulation).expect("the source model admits");
+        let [initial] = <[_; 1]>::try_from(system.initial()).expect("one initial state");
+        let workload = world
+            .package
+            .graph()
+            .probabilistic_model()
+            .workload("Steady")
+            .unwrap();
+        let Err(Unsteppable::NotMarkov(actual)) = system
+            .weighted_steps(&initial, workload)
+            .expect("the source model expands")
+        else {
+            panic!("the source fixture has {count} post-states per draw");
+        };
+        assert_eq!(actual.post_states, count);
+        let expected_transition = task_source_transition_wire(&actual.drawn_transition).unwrap();
+        assert_eq!(
+            expected_transition["arguments"],
+            json!([
+                {"type": "boolean", "value": true},
+                {"type": "boolean", "value": false},
+                {"type": "boolean", "value": false},
+            ])
+        );
+        assert!(expected_transition["operation"]
+            .as_str()
+            .unwrap()
+            .contains("tick"));
+        assert_eq!(expected_transition["receiver"]["type"], "reference");
+        let expected_posts = actual
+            .post_state_examples
+            .iter()
+            .map(|key| state_key_wire(key).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(expected_posts.len(), usize::try_from(count.min(2)).unwrap());
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.model.complete/v1\";\n\
+             profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+             model M = \"{}\";\n{}\n",
+            model.package, model.body,
+        );
+        let snapshot = json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": "test", "identity": "start"},
+            "observation": "current",
+            "model": {"identity": model.package},
+            "anchor": {"kind": "initialization", "name": "start"},
+            "populations": [{"population": "ix://test/health/nodes", "complete": true,
+                "objects": [{"key": "n", "type": "ix://test/health/Node",
+                    "fields": model.initial.clone()}]}]
+        })
+        .to_string()
+        .into_bytes();
+        let document = model.document(false);
+        for evidence in ["statistical", "exact"] {
+            let ws = Workspace::new(&format!("not-markov-{evidence}-{count}"));
+            let probabilistic = if evidence == "statistical" {
+                json!({"evidence": evidence, "seed": "7"})
+            } else {
+                json!({"evidence": evidence})
+            };
+            let request = request_over(
+                &ws,
+                &source,
+                &document,
+                std::slice::from_ref(&snapshot),
+                json!({"items": [{"claim": "Broken", "probabilistic": probabilistic}]}),
+            );
+            let result = analyze(&request).document();
+            let item = &result["items"][0];
+            assert_eq!(label(item), "unsupported", "{result}");
+            let cause = &item["record"]["cause"];
+            assert_eq!(cause["kind"], "not-markov", "{item}");
+            assert_eq!(cause["state"], state_key_wire(&actual.state).unwrap());
+            assert_eq!(cause["transition"], expected_transition);
+            assert_eq!(cause["post_state_count"], count);
+            assert_eq!(cause["post_states"], json!(expected_posts));
+            assert_eq!(
+                cause
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<std::collections::BTreeSet<_>>(),
+                std::collections::BTreeSet::from([
+                    "kind",
+                    "post_state_count",
+                    "post_states",
+                    "state",
+                    "transition",
+                ])
+            );
+            assert!(item.get("verdict").is_none(), "{item}");
+            assert!(item["record"].get("basis").is_none(), "{item}");
+        }
+    }
+}
+
 /// FR-741-AC-1: each statistical method settles `measured` with a
 /// `verdict` naming its method and seed, and a rerun with four workers
 /// gives the same item. The tests that call it carry the trace.
@@ -940,9 +1067,7 @@ fn absent_probabilistic_members_take_their_published_defaults() {
     assert_eq!(request["max_witnesses"], 8, "{bounded}");
 }
 
-/// FR-254 / QSL-2551: a delay-weighted fraction is a valid form, so EN-4
-/// refuses it as not yet implemented (`unsupported`), never as a caller's
-/// method choice (`invalid-request` `not-statistical`).
+/// Long-run delay weighting remains outside the bounded-window sampler.
 #[test]
 fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
     let claim = "probabilistic Weighted using t on M over (m: M::Msg) under Even on origin \
@@ -961,6 +1086,37 @@ fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
         item["record"]["diagnostic"]["cause"], "not-statistical",
         "{item}"
     );
+}
+
+/// Both sends have delay at least 1 ms, so the entire half-ms window is
+/// spent at attempts = 0. Its held and total durations are both 1/2 ms.
+#[trace("FR-254-AC-3", "FSpec-FR-407-AC-19")]
+#[test]
+fn bounded_delay_fraction_from_source_clips_the_first_leaving_step() {
+    let claim = "probabilistic Weighted using t on M over (m: M::Msg) under Even on origin \
+         with alpha 0.4, beta 0.4, indifference 0.05 \
+         { mean of (fraction holds(m.attempts = 0) over [0, rational(1, 2) ms] weighted by delay) >= 0.5 }\n\
+         probabilistic WeightedEvent using t on M over (m: M::Msg) under Even on origin \
+         with alpha 0.4, beta 0.4, indifference 0.05 \
+         { probability >= 0.5 [ fraction holds(m.attempts = 0) over [0, rational(1, 2) ms] weighted by delay >= rational(1, 2) ] }";
+    let document = run_timed(
+        "bounded-delay-fraction",
+        claim,
+        json!([{"claim": "Weighted", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "okamoto"}, "seed": "7"}},
+            {"claim": "WeightedEvent", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "sprt"}, "seed": "7"}}]),
+    );
+    for index in 0..2 {
+        let item = &document["items"][index];
+        assert_eq!(label(item), "measured", "{document}");
+        assert_eq!(item["verdict"]["decision"]["type"], "accepted", "{item}");
+        assert_eq!(
+            item["verdict"]["estimate"]["value"],
+            json!({"numerator": "1", "denominator": "1"}),
+            "{item}"
+        );
+    }
 }
 
 /// FR-741 "Request": an item with no `probabilistic` member at all reaches a

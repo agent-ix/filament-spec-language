@@ -363,6 +363,258 @@ fn health_variants_are_not_markov() {
     assert_eq!(counts, [(false, 1), (true, 0)]);
 }
 
+/// Caller admission must succeed before retaining the owned refusal box.
+#[trace("TC-622", "FR-187-AC-3")]
+#[test]
+fn not_markov_box_admission_preserves_payload_and_caller_refusals() {
+    use super::super::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
+    use filament_exact::{
+        Cancel, CancelCause, IntegerDecimalBudget, Reservation, ReservationDenied,
+    };
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum Admission {
+        Storage(usize),
+        Work(u64),
+    }
+    #[derive(Default)]
+    struct Budget<'a> {
+        charges: Vec<Admission>,
+        deny: Option<usize>,
+        cancel_on: Option<(usize, &'a Cancel)>,
+    }
+    impl Budget<'_> {
+        fn charge(&mut self, charge: Admission) -> Result<(), ReservationDenied> {
+            let index = self.charges.len();
+            self.charges.push(charge);
+            if let Some((at, cancel)) = self.cancel_on {
+                if at == index {
+                    cancel.cancel(CancelCause::Deadline);
+                }
+            }
+            if self.deny == Some(index) {
+                Err(ReservationDenied)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    impl Reservation for Budget<'_> {
+        fn reserve(&mut self, bytes: usize) -> Result<(), ReservationDenied> {
+            self.charge(Admission::Storage(bytes))
+        }
+    }
+    impl IntegerDecimalBudget for Budget<'_> {
+        fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
+            self.charge(Admission::Work(units))
+        }
+    }
+    impl ModelKeyBudget for Budget<'_> {
+        fn integer(&mut self, _: &Integer) -> Result<(), ReservationDenied> {
+            Ok(())
+        }
+    }
+    for post in ["true", "self.up and not self.up"] {
+        let world = World::new(&world::gate("true", post, ""));
+        let system = world.system();
+        let start = initial(&system);
+        let expected = not_markov_of(
+            system
+                .weighted_steps(&start, world.workload("Unit"))
+                .unwrap(),
+            "the legacy port retains its complete refusal",
+        );
+        let mut admitted = Budget::default();
+        let result = system.weighted_steps_with_budget(
+            &start,
+            world.workload("Unit"),
+            fsl_foundation::IdentityLimits::default(),
+            &mut admitted,
+            &Cancel::new(),
+        );
+        assert_eq!(not_markov_of(result.unwrap(), "admitted refusal"), expected);
+        let boundary = admitted.charges.len() - 2;
+        assert_eq!(
+            &admitted.charges[boundary..],
+            &[
+                Admission::Work(1),
+                Admission::Storage(size_of::<NotMarkov>())
+            ]
+        );
+        for denied in [boundary, boundary + 1] {
+            let mut budget = Budget {
+                deny: Some(denied),
+                ..Budget::default()
+            };
+            let result = system.weighted_steps_with_budget(
+                &start,
+                world.workload("Unit"),
+                fsl_foundation::IdentityLimits::default(),
+                &mut budget,
+                &Cancel::new(),
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(ModelKeyExpansionError::Key(ModelKeyError::Denied))
+                ),
+                "{result:?}"
+            );
+            assert_eq!(budget.charges, admitted.charges[..=denied]);
+        }
+        let cancel = Cancel::new();
+        let mut budget = Budget {
+            cancel_on: Some((boundary + 1, &cancel)),
+            ..Budget::default()
+        };
+        let result = system.weighted_steps_with_budget(
+            &start,
+            world.workload("Unit"),
+            fsl_foundation::IdentityLimits::default(),
+            &mut budget,
+            &cancel,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(ModelKeyExpansionError::Key(ModelKeyError::Cancelled(
+                    CancelCause::Deadline
+                )))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(budget.charges, admitted.charges);
+    }
+}
+
+/// The full drawn identity preserves parameter order even when a random
+/// parameter lies between non-random parameters and no successor exists.
+#[trace("TC-622", "FR-187-AC-3")]
+#[test]
+fn not_markov_retains_the_full_identity_with_interleaved_random_arguments() {
+    for (post, spare, count) in [
+        ("true", false, 2),
+        ("true", true, 4),
+        ("self.up and not self.up", false, 0),
+    ] {
+        let mut model = world::gate("left and not right", post, "");
+        model.operations[0].parameters = vec![
+            ("left", world::BOOLEAN.to_owned()),
+            ("x", world::BOOLEAN.to_owned()),
+            ("right", world::BOOLEAN.to_owned()),
+        ];
+        if spare {
+            model.fields.push(("spare", world::BOOLEAN.to_owned()));
+            model.operations[0].modifies.push("spare");
+            model.initial["spare"] = serde_json::json!({"boolean": false});
+        }
+        let world = World::new(&model);
+        let system = world.system();
+        let start = initial(&system);
+        let not_markov = not_markov_of(
+            system
+                .weighted_steps(&start, world.workload("Unit"))
+                .expect("the state expands"),
+            "the draw has zero or multiple post-states",
+        );
+        assert_eq!(not_markov.post_states, count);
+        assert_eq!(
+            not_markov.state,
+            system.canonical_state_key(&start).unwrap()
+        );
+        assert_eq!(
+            not_markov.transition.operation,
+            operation_text(&system, "step")
+        );
+        assert!(super::same_values(
+            &not_markov.transition.arguments,
+            &[Value::Boolean(true), Value::Boolean(false)]
+        ));
+        assert!(super::same_values(
+            &not_markov.random,
+            &[Value::Boolean(false)]
+        ));
+        let drawn = &not_markov.drawn_transition;
+        assert_eq!(drawn.operation(), not_markov.transition.operation);
+        let receiver = super::super::reference_canonical_text(&not_markov.transition.receiver)
+            .expect("the receiver has canonical text");
+        assert_eq!(drawn.receiver(), Some(receiver.as_str()));
+        assert_eq!(
+            drawn.arguments(),
+            &[
+                r#"{"type":"boolean","value":true}"#,
+                r#"{"type":"boolean","value":false}"#,
+                r#"{"type":"boolean","value":false}"#,
+            ]
+        );
+        let [action] = <[_; 1]>::try_from(
+            system
+                .enabled_actions(&start)
+                .expect("expands")
+                .expect("decided"),
+        )
+        .expect("one enabled scheduled identity, including the zero-post case");
+        let draw = action
+            .draws
+            .first()
+            .expect("a draw even without successors");
+        assert_eq!(&draw.transition, drawn);
+        assert_eq!(draw.successors.len(), usize::try_from(count).unwrap());
+        let expected = draw
+            .successors
+            .iter()
+            .take(2)
+            .map(|(_, post)| {
+                system
+                    .canonical_state_key(post)
+                    .expect("an actual post-state")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(not_markov.post_state_examples, expected);
+        assert_eq!(
+            not_markov.post_state_examples.len(),
+            usize::try_from(count.min(2)).unwrap()
+        );
+        assert!(not_markov
+            .post_state_examples
+            .windows(2)
+            .all(|pair| pair[0] < pair[1]));
+        for (transition, _) in &draw.successors {
+            assert_eq!(transition, drawn);
+        }
+    }
+}
+
+/// The bounded evidence capture refuses a repeated state instead of
+/// exporting the same state twice as evidence of nondeterminism.
+#[trace("TC-622", "FR-187-AC-3")]
+#[test]
+fn not_markov_post_evidence_requires_distinct_owner_keys() {
+    let world = World::new(&world::loose_health());
+    let system = world.system();
+    let [mut action] = <[_; 1]>::try_from(
+        system
+            .actions(&initial(&system))
+            .expect("expands")
+            .expect("decided"),
+    )
+    .expect("one action");
+    let draw = action.draws.first_mut().expect("a draw");
+    assert_eq!(draw.successors.len(), 2);
+    let first = draw
+        .successors
+        .first()
+        .expect("an actual successor")
+        .clone();
+    draw.successors[1] = first;
+    assert_eq!(
+        system
+            .not_markov_post_keys(draw)
+            .expect_err("duplicate owner keys"),
+        super::super::walk::stop(super::super::BROKEN)
+    );
+}
+
 /// FR-187-AC-4 (TC-622 step 4): `refund = n - 3` over `n: Int[0, 5]`
 /// refuses admission `invalid_probabilistic_model`/`negative-reward`,
 /// naming the operation, the reward and `n = 0`.
@@ -478,7 +730,7 @@ fn service_checks_and_refuses_emission_naming_its_boolean_random_parameter() {
 /// The [`NotMarkov`] of a `weighted_steps` result that is not steppable.
 fn not_markov_of(result: Result<Vec<WeightedStep>, Unsteppable>, why: &str) -> NotMarkov {
     match result {
-        Err(Unsteppable::NotMarkov(not_markov)) => not_markov,
+        Err(Unsteppable::NotMarkov(not_markov)) => *not_markov,
         other => panic!("NotMarkov ({why}): {other:?}"),
     }
 }

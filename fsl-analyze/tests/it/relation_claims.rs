@@ -26,7 +26,8 @@ use ix_trace_rs::trace;
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{self, Vault};
 
-const DETERMINISTIC: &str = "relation Det using v over (x: V::Vault::step, y: V::Vault::step) \
+pub(crate) const DETERMINISTIC: &str =
+    "relation Det using v over (x: V::Vault::step, y: V::Vault::step) \
     { x.i = y.i and pre(x.self.h) = pre(y.self.h) implies x.self.l = y.self.l }";
 
 pub(crate) fn package_and_relation(
@@ -41,7 +42,7 @@ pub(crate) fn package_and_relation(
     package_and_relation_with_document(document, vault, text)
 }
 
-fn package_and_relation_with_document(
+pub(crate) fn package_and_relation_with_document(
     document: Vec<u8>,
     vault: Vault,
     text: &str,
@@ -99,7 +100,7 @@ pub(crate) fn subjects<'a>(
         .collect()
 }
 
-fn initial_world(
+pub(crate) fn initial_world(
     document: &[u8],
 ) -> (
     fsl_semantics::model::intake::PackageInput,
@@ -115,7 +116,7 @@ fn initial_world(
     (packages, snapshots, initial)
 }
 
-fn step_with_result_document() -> Vec<u8> {
+pub(crate) fn step_with_result_document() -> Vec<u8> {
     let mut document: serde_json::Value =
         serde_json::from_slice(&hyper_world::document(false, false)).expect("fixture JSON");
     document["types"][1]["operations"][0]["returns"] = serde_json::json!({
@@ -145,7 +146,7 @@ fn a_holding_relation_is_checked_over_reachable_transition_tuples() {
         &Cancel::new(),
     )
     .expect("the relation check is admitted");
-    let ModelRelationOutcome::Holds { stats } = outcome else {
+    let ModelRelationOutcome::Holds { stats, .. } = outcome else {
         panic!("the relation holds: {outcome:?}");
     };
     assert_eq!(stats.transitions, 8);

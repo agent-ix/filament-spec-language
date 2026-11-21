@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-176, FR-177, FR-178 Outputs (ADR-023 HV-1 to HV-8): what an EN-1 run over
-//! an HP-2, HP-3 or HP-6 item returns, which FR-182 settles.
+//! an HP-1, HP-2, HP-3 or HP-6 item returns, which FR-182 settles.
 //!
 //! It is FR-126's [`ModelCheckOutcome`](crate::ModelCheckOutcome) for a hyper
 //! item: `Violated` carries a [`HyperCounterexample`], and `Undecided` the two
@@ -71,7 +71,7 @@ pub enum BoundCovers {
     Moves,
 }
 
-/// One EN-1 run's outcome over an HP-2, HP-3 or HP-6 item.
+/// One EN-1 run's outcome over an HP-1, HP-2, HP-3 or HP-6 item.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HyperOutcome {
     /// Every reachable product state was examined and no fair accepting
@@ -104,9 +104,8 @@ pub enum HyperOutcome {
         stats: RunStats,
     },
     /// A step relation (FR-179) held on every tuple of the reachable transitions
-    /// the run read. The tuple enumeration is exhaustive, but no FR-163 `Det`
-    /// certificate stands behind it and no core checker accepts one, so FR-182
-    /// settles it `incomplete` with `certificate-unchecked`.
+    /// the run read. No FR-163 certificate was supplied for independent checking,
+    /// so FR-182 settles it `incomplete` with `certificate-unchecked`.
     HoldsUnchecked {
         /// The run's counts.
         stats: RunStats,

@@ -668,6 +668,21 @@ fn reward_ratio(
     Ok(value)
 }
 
+/// FR-877: a quantile transform value `E[[activated] * ([M <= c] - q)]` lies in
+/// `[-1, 1]`.
+fn signed_unit_ratio(
+    wire: WireRational,
+    bits: u64,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<Rational, ProbabilityDocumentError> {
+    let value = ratio_checked(wire, bits, meter, cancel, false)?;
+    if value < rational(-1) || value > rational(1) {
+        return Err(ProbabilityDocumentError::Malformed);
+    }
+    Ok(value)
+}
+
 fn ratio_checked(
     wire: WireRational,
     bits: u64,
@@ -788,7 +803,7 @@ fn read_document_profile(
     )?;
     let root = parsed.root();
     let objective = root.get("objective");
-    let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact")
+    let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
         || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
         || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload"))
@@ -878,7 +893,15 @@ fn read_document_profile(
     if !bounded_fair && canonical(&wire, limits.bytes)? != bytes {
         return Err(ProbabilityDocumentError::Noncanonical);
     }
-    if wire.kind != "exact"
+    // FR-877: an elapsed-quantile `>=` claim is certified by an `upper` document.
+    let upper_kind = wire.kind == "upper"
+        && wire.objective.optimization == "maximum"
+        && wire
+            .objective
+            .timed
+            .as_ref()
+            .is_some_and(|timed| timed.form == "elapsed-quantile");
+    if (wire.kind != "exact" && !upper_kind)
         || if cyclic_mdp {
             !matches!(
                 wire.objective.profile.as_str(),
@@ -924,6 +947,9 @@ fn read_document_profile(
     let extended_timed_value_profile = timed
         .as_ref()
         .is_some_and(|objective| objective.form == TimedProbabilityForm::ExpectedElapsed);
+    let signed_unit_profile = timed
+        .as_ref()
+        .is_some_and(|objective| objective.form == TimedProbabilityForm::ElapsedQuantile);
     let reward = match (wire.objective.reward, wire.objective.unit) {
         (Some((model, name)), Some(unit)) => Some(ProbabilityRewardObjective {
             model: fsl_foundation::node_wire::node_key_from_text(model.get())
@@ -978,13 +1004,17 @@ fn read_document_profile(
         poll(cancel)?;
         values.push(ExactProbabilityValue {
             state: decode_key(&row.state, limits)?,
-            value: reward_ratio(
-                row.value,
-                limits.scalar_bits,
-                reward_profile || extended_timed_value_profile,
-                meter,
-                cancel,
-            )?,
+            value: if signed_unit_profile {
+                signed_unit_ratio(row.value, limits.scalar_bits, meter, cancel)?
+            } else {
+                reward_ratio(
+                    row.value,
+                    limits.scalar_bits,
+                    reward_profile || extended_timed_value_profile,
+                    meter,
+                    cancel,
+                )?
+            },
         });
     }
     ordered(values.iter().map(|row| row.state.clone())).map_err(|error| {

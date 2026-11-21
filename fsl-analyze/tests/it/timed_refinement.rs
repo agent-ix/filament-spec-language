@@ -6,9 +6,9 @@
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
     check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedLivenessHalf,
-    TimedRefinementRefusal, TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided,
-    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome,
-    ZoneCheckRefusal, ZoneCheckRequest, ZoneStop, ZoneUndecided,
+    TimedLivenessOutcome, TimedRefinementRefusal, TimedRefinementRequest, TimedRefinementStop,
+    TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits,
+    ZoneCheckOutcome, ZoneCheckRefusal, ZoneCheckRequest, ZoneStop, ZoneUndecided,
 };
 use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_eval::simulation::Limits;
@@ -466,7 +466,7 @@ fn timed_hidden_fair(guard: &str) -> Refining {
                 .replace(" late = self.late;", "")
                 .replace(
                     "step M::Call::send -> A::Call::send(self);",
-                    "step M::Call::send -> A::Call::send(self);\nensure fair weak A::Call::send;"
+                    "step M::Call::send -> A::Call::send(self);\nassume fair weak M::Call::send;\nensure fair weak A::Call::send;"
                 )
         ),
     )
@@ -474,12 +474,12 @@ fn timed_hidden_fair(guard: &str) -> Refining {
 }
 
 /// A timed abstract side with a hidden field and an abstract fairness
-/// obligation has no liveness half yet: the holding safety half is decided
-/// and the liveness half is reported refused with its own typed refusal,
-/// rather than answered from untimed enabledness.
+/// obligation has a liveness half: it is read per candidate from the guarded
+/// steps (it replaces the typed refusal this test used to pin), and here no
+/// loop is refuted, since the concrete `send` takes the class.
 #[trace("TC-2536", "FR-899")]
 #[test]
-fn the_liveness_half_of_a_timed_abstract_hidden_field_is_refused() {
+fn the_liveness_half_of_a_timed_abstract_hidden_field_is_decided() {
     let world = timed_hidden_fair("self.x >= 1 ms");
     let outcome = check_timed_refinement(safety_request(&world), &Cancel::new())
         .expect("the safety half is decided");
@@ -488,11 +488,18 @@ fn the_liveness_half_of_a_timed_abstract_hidden_field_is_refused() {
         "{:?}",
         outcome.safety
     );
+    // The dense component holds several concrete-fair loops, so a fair
+    // candidate run on one loop does not answer for it: undecided, as in
+    // `timed_hidden_free_initial_valuation_with_a_multi_loop_component_is_undecided`.
+    // FR-899-AC-9's per-component check is QSL-2243 remaining item (iv).
     assert!(
         matches!(
             outcome.liveness,
-            Some(TimedLivenessHalf::Refused(
-                ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Undecided {
+                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
+                    ..
+                }
             ))
         ),
         "{:?}",
@@ -501,10 +508,10 @@ fn the_liveness_half_of_a_timed_abstract_hidden_field_is_refused() {
 }
 
 /// The same refinement whose concrete send is too early for the abstract
-/// guard: the violated safety half is still reported, with no liveness half.
+/// guard: the violated safety half is reported, with no liveness half.
 #[trace("TC-2536", "FR-899")]
 #[test]
-fn a_violated_safety_half_is_reported_despite_the_refused_liveness_half() {
+fn a_violated_safety_half_is_reported_with_no_liveness_half() {
     let world = timed_hidden_fair("self.x >= 0 ms");
     let outcome = check_timed_refinement(safety_request(&world), &Cancel::new())
         .expect("the safety half is decided");

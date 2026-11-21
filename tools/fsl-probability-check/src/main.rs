@@ -247,7 +247,7 @@ fn source_failure(error: ProbabilitySourceError) -> Result<Value, String> {
         ProbabilitySourceError::Document(Document::Build(issue))
             if matches!(
                 issue.as_ref(),
-                fsl_replay::ExactProbBuildIssue::NotMarkov
+                fsl_replay::ExactProbBuildIssue::NotMarkov(_)
                     | fsl_replay::ExactProbBuildIssue::Unsupported(_)
             ) =>
         {

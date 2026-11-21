@@ -131,6 +131,10 @@ pub enum CertificateRule {
 pub enum CertificateLocus {
     /// The complete canonical hyper product key, including its witness set.
     HyperProductState(StateKey),
+    /// An HP-1 state member, with no temporal automaton or witness set.
+    HyperState(StateKey),
+    /// The complete labelled transition tuple of an HP-1 body evaluation.
+    HyperTransitionTuple(product::HyperTransitionTuple),
     /// The complete probabilistic product identity at which a rule failed
     /// (FR-201), transported as base64url canonical octets.
     ProbabilityProductState(crate::ProbabilityProductKey),
@@ -220,6 +224,14 @@ impl Serialize for CertificateLocus {
             Self::HyperProductState(state) => product::product_key_wire(state)
                 .map_err(serde::ser::Error::custom)?
                 .serialize(serializer),
+            Self::HyperState(state) => {
+                use base64::Engine as _;
+                let mut object = serializer.serialize_struct("HyperState", 1)?;
+                let key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state.as_bytes());
+                object.serialize_field("states", &[key])?;
+                object.end()
+            }
+            Self::HyperTransitionTuple(tuple) => tuple.serialize(serializer),
             Self::ModelState(state) => {
                 use base64::Engine as _;
                 base64::engine::general_purpose::URL_SAFE_NO_PAD

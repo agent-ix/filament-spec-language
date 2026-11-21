@@ -673,7 +673,6 @@ fn quantiles() -> World {
 /// FR-877-AC-1: `<= 2 ms` is proved with the transform's minimum `2/5`.
 #[trace("TC-2494", "FR-877-AC-1")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
 fn elapsed_quantile_at_most_is_certified() {
     let world = quantiles();
@@ -685,17 +684,17 @@ fn elapsed_quantile_at_most_is_certified() {
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["form"], "elapsed-quantile");
     assert_eq!(doc["objective"]["timed"]["route"], "digital");
+    assert_eq!(proved_value(&record), ratio(2, 5));
+    assert_eq!(doc["kind"], "exact");
     assert!(accepted(&world, "AtMostTwo", &doc));
 }
 
-/// FR-877-AC-2: `<= 1 ms` is refuted; a tampered transform value rejects.
+/// FR-877-AC-2 (certificate half): AC-1's item with its initial value set to
+/// `1/2` is rejected `InequalityFails` by the checker's own enumeration.
 #[trace("TC-2494", "FR-877-AC-2")]
-#[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
-fn elapsed_quantile_at_most_refutes() {
+fn elapsed_quantile_altered_transform_value_is_rejected() {
     let world = quantiles();
-    assert!(is_refuted(&settle(&world, "AtMostOne")));
     let tampered = settle_tampered(&world, "AtMostTwo", |certificate| {
         for entry in &mut certificate.values {
             if entry.value == ratio(2, 5) {
@@ -709,10 +708,19 @@ fn elapsed_quantile_at_most_refutes() {
     );
 }
 
+/// FR-877-AC-2: `<= 1 ms` is refuted.
+#[trace("TC-2494", "FR-877-AC-2")]
+#[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
+#[ignore = "QSL-2156: refutation needs the timed witness replay"]
+#[test]
+fn elapsed_quantile_at_most_refutes() {
+    let world = quantiles();
+    assert!(is_refuted(&settle(&world, "AtMostOne")));
+}
+
 /// FR-877-AC-3: `>= 1 ms` is proved by a region `upper` document of `-1/2`.
 #[trace("TC-2494", "FR-877-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-5")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
 #[test]
 fn elapsed_quantile_at_least_is_certified_over_regions() {
     let world = quantiles();
@@ -724,13 +732,45 @@ fn elapsed_quantile_at_least_is_certified_over_regions() {
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["route"], "region");
     assert_eq!(doc["kind"], "upper");
+    assert_eq!(proved_value(&record), ratio(-1, 2));
     assert!(accepted(&world, "AtLeastOne", &doc));
+}
+
+/// FR-877-AC-3 (certificate half): an `upper` document whose values are
+/// lowered below the checker's own enumeration is rejected `InequalityFails`,
+/// and one raised to a non-negative initial value misses the strict threshold.
+#[trace("TC-2494", "FR-201")]
+#[test]
+fn elapsed_quantile_altered_upper_value_is_rejected() {
+    let world = quantiles();
+    let lowered = settle_tampered(&world, "AtLeastOne", |certificate| {
+        for entry in &mut certificate.values {
+            if entry.value == ratio(-1, 2) {
+                entry.value = ratio(-1, 1);
+            }
+        }
+    });
+    assert_eq!(
+        rejected_item_rule(&lowered),
+        CertificateRule::InequalityFails
+    );
+    let raised = settle_tampered(&world, "AtLeastOne", |certificate| {
+        for entry in &mut certificate.values {
+            if entry.value == ratio(-1, 2) {
+                entry.value = ratio(1, 2);
+            }
+        }
+    });
+    assert_eq!(
+        rejected_item_rule(&raised),
+        CertificateRule::ThresholdMissed
+    );
 }
 
 /// FR-877-AC-4: at a transform maximum of exactly 0 the tight search reaches
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
-#[ignore = "QSL-2156: elapsed-time quantile claims are not routed to the timed product yet (QSL-2158 source interface)"]
+#[ignore = "QSL-2156: a refutation needs the timed witness replay (draco/qsl-2156-cycles)"]
 #[test]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();

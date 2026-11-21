@@ -34,7 +34,7 @@ pub enum ExactProbBuildIssue {
         upper: Rational,
     },
     /// The workload does not define a Markov chain.
-    NotMarkov,
+    NotMarkov(Box<fsl_eval::simulation::model::NotMarkov>),
     /// A product successor's contract was undecided.
     UndecidedSuccessor,
     /// State expansion failed or reached a subject-owned limit.
@@ -115,8 +115,8 @@ pub fn settle_exact_prob_build_issue(
             }),
             diagnostic: None,
         },
-        ExactProbBuildIssue::NotMarkov => ExactProbBuildRecord {
-            value: TerminalValue::Unsupported(UnavailabilityCause::NotMarkov),
+        ExactProbBuildIssue::NotMarkov(cause) => ExactProbBuildRecord {
+            value: TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(cause.clone())),
             diagnostic: None,
         },
         ExactProbBuildIssue::UndecidedSuccessor => ExactProbBuildRecord {
@@ -177,6 +177,91 @@ mod tests {
     use fsl_eval::simulation::model::ExpansionLimits;
     use ix_trace_rs::trace;
 
+    fn not_markov() -> fsl_eval::simulation::model::NotMarkov {
+        let transition = fsl_eval::simulation::model::ScheduledIdentity {
+            operation: r#""tick""#.to_owned(),
+            receiver: filament_exact::ObjectReference::new(
+                crate::fixture_universe(1),
+                crate::fixture_effective(2),
+                filament_exact::ObjectId::new("n").expect("a key"),
+            ),
+            arguments: Vec::new(),
+        };
+        let drawn_transition = filament_semantic_value::model_transition::ModelTransition::new(
+            transition.operation.clone(),
+            Some(
+                fsl_eval::simulation::model::reference_canonical_text(&transition.receiver)
+                    .expect("a receiver"),
+            ),
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("a transition");
+        fsl_eval::simulation::model::NotMarkov {
+            state: fsl_eval::simulation::StateKey::from_canonical_bytes(b"\"healthy\"".to_vec()),
+            transition,
+            drawn_transition,
+            random: Vec::new(),
+            post_states: 0,
+            post_state_examples: Vec::new(),
+        }
+    }
+
+    /// Invalid count/evidence combinations cannot become a terminal cause,
+    /// whether built directly, settled by EN-5, or used by the planner writer.
+    #[trace("TC-622", "FR-187-AC-3", "TC-638", "FR-203-AC-7")]
+    #[test]
+    fn malformed_not_markov_evidence_fails_before_terminal_serialization() {
+        use crate::outcome::OutcomeItem;
+        use fsl_eval::simulation::StateKey;
+
+        let key = |bytes: &[u8]| StateKey::from_canonical_bytes(bytes.to_vec());
+        let a = key(b"1");
+        let b = key(b"2");
+        let c = key(b"3");
+        let cases = [
+            (1, Vec::new()),
+            (0, vec![a.clone(), b.clone()]),
+            (2, Vec::new()),
+            (2, vec![a.clone()]),
+            (2, vec![a.clone(), a.clone()]),
+            (2, vec![b.clone(), a.clone()]),
+            (4, vec![a, b, c]),
+        ];
+        let meter = crate::AccountingLimits::default().0;
+        for (count, examples) in cases {
+            let mut cause = not_markov();
+            cause.post_states = count;
+            cause.post_state_examples = examples;
+            let unsupported = UnavailabilityCause::NotMarkov(Box::new(cause.clone()));
+            let settled = settle_exact_prob_build_issue(
+                &ExactProbBuildIssue::NotMarkov(Box::new(cause)),
+                SubjectLimits {
+                    expansion: ExpansionLimits { max_candidates: 64 },
+                    meter: &meter,
+                },
+            )
+            .into_terminal(RequestIndex::new(0), BackendId::new("en-5"));
+            let direct = TerminalRecord::unsupported(
+                RequestIndex::new(0),
+                BackendId::new("en-5"),
+                unsupported.clone(),
+            );
+            let planner = TerminalRecord::from_value(
+                RequestIndex::new(0),
+                TerminalValue::Unsupported(unsupported),
+            );
+            for record in [settled, direct, planner] {
+                assert_eq!(record.value(), &TerminalValue::Failed, "count {count}");
+                assert_eq!(record.diagnostic(), Some(BROKEN));
+                let wire = serde_json::to_value(OutcomeItem::from_terminal(&record)).unwrap();
+                assert_eq!(wire["result"], "failed");
+                assert_eq!(wire["cause"]["kind"], "established-invariant-broken");
+                assert!(wire["cause"].get("post_state_count").is_none(), "{wire}");
+            }
+        }
+    }
+
     #[trace("TC-638", "FR-203-AC-6", "FR-203-AC-7")]
     #[test]
     fn build_stops_and_refusals_have_the_fr203_terminal_map() {
@@ -209,8 +294,8 @@ mod tests {
                 None,
             ),
             (
-                ExactProbBuildIssue::NotMarkov,
-                TerminalValue::Unsupported(UnavailabilityCause::NotMarkov),
+                ExactProbBuildIssue::NotMarkov(Box::new(not_markov())),
+                TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(Box::new(not_markov()))),
                 None,
             ),
             (

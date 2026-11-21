@@ -527,6 +527,7 @@ impl<'a> ModelSystem<'a> {
                 &clauses,
                 &mut budget,
                 frames::Outputs {
+                    recommendations: None,
                     contract: &mut contract,
                     successors: &mut successors,
                     enabled: Some(&mut enabled),

@@ -5,6 +5,10 @@ type: FR
 relationships:
   - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
+  - target: ix://agent-ix/filament-spec-language/FR-120
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-255
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-620
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-621
@@ -78,6 +82,13 @@ contract, this requirement is.
 - Each absent limit takes its published default (FSpec FR-461). The method
   is a request setting: it enters neither the claim's normal form nor its
   obligation identity (FR-186).
+- For either engine's model subject, the native adapter SHALL use the
+  finite local `expansion.max_candidates` default of 1,000,000 and the
+  cumulative `accounting.work_units` default of 1,000,000 under
+  [FR-120](FR-120-simulate-a-checked-package-s-state-family.md) and
+  [FR-255](FR-255-name-the-setting-that-raises-a-reached-limit.md).
+  The adapter SHALL preserve the caller's accounting limits instead of
+  replacing them with defaults or an unlimited allowance.
 
 ## Outputs
 
@@ -146,12 +157,26 @@ bindings, each with its own test row or entry.
   with no sample drawn (FR-195), and with `exact` evidence runs on EN-5.
 - **Budgets.** A run that reaches a limit stops and settles `incomplete` with
   `LimitReached` naming the limit, its value and the `statistical.<member>` or
-  `exact_prob.<member>` setting that raises it; a statistical run reports the
-  counts it reached in `verdict`.
+  `exact_prob.<member>` setting that raises it, or `expansion.max_candidates`
+  for the independent local candidate ceiling or `accounting.<counter>`
+  for an accounting stop. Candidate and clause work SHALL consume one
+  cumulative allowance for the item, rather than a renewed allowance per
+  expansion or clause. A denied charge SHALL stop before that work is
+  performed and retain the actual typed bound through
+  [FR-192](FR-192-settle-a-statistical-result-on-the-measured-axis.md) or
+  [FR-203](FR-203-bound-an-exact-run-and-settle-its-verdict.md) to the native
+  result, with no truth value or additional wall-clock cutoff.
 - **Cancellation.** A cancelled or expired run settles `incomplete` with the
   cancellation or deadline cause and reports what it reached.
 - **Reproducibility.** Two runs of one request with one seed SHALL give equal
   item results, whatever `workers` is (FR-191).
+- **Native model execution (current).** The native model probability route
+  executes serially today, without a worker pool. It retains and reports
+  the request's `workers` value but does not forward it to the model
+  sampler; it does not coerce the input to 1. Serial execution follows
+  [FR-191](FR-191-bound-and-reproduce-a-statistical-run.md)'s logical
+  admission order directly. Equal results for requested worker counts do
+  not establish multiworker execution on this route.
 - **Refusals.** A claim `under every scheduler`, an exact-only form, or a
   claim with no confidence parameters given `statistical` evidence settles
   `unsupported` with `every-scheduler`, `exact-only-form` or
@@ -169,6 +194,7 @@ bindings, each with its own test row or entry.
 | FR-741-AC-3 | An exact item for a claim whose exact value is below its threshold settles `refuted` with a `counterexample` and an item-level `replay` that is present and reproduced; FSpec FR-421-AC-1's timed claim settles through digital clocks with an accepted certificate; FR-203-AC-5's undefined claim settles `refuted` with an FSpec FR-413 `undefined-path` `counterexample` whose `replay` is present and reproduced, at either threshold. | Test (TC-2066) |
 | FR-741-AC-4 | `probability >= 0.99 [eventually holds(p.done)]` under the infinite-trace profile with `statistical` evidence settles `unsupported` `exact-only-form` with no sample drawn; a `mean of` claim requested with the method `sprt` settles `invalid-request` `not-statistical`; `statistical.max_samples` 10 settles `incomplete` `LimitReached` naming `statistical.max_samples`. | Test (TC-2066) |
 | FR-741-AC-5 | Through `fsl analyze` over the `Link` model under `Even`, with a start snapshot holding `m` undelivered and `n` delivered, FR-875's claim `E` at `rational(9, 10)` settles `proved` with a `certificate` of kind `conditional`, mode `ratio`, whose numerator is `391/400` and denominator 1 at `m`'s initial key, `n`'s confirmed vacuous, and whose `document` `fsl-probability-check` accepts in a separate process; at `rational(99, 100)` it settles `refuted` with a `counterexample` whose `instance` is `m`'s reference and whose `binding` is null. | Test (TC-3062) |
+| FR-741-AC-6 | For each engine, a source-model probability item requiring more than 1000000 cumulative candidate and clause work units under otherwise sufficient limits settles `incomplete`, `LimitReached{work_units, 1000000, accounting.work_units}` before the first unpaid charge, even though each expansion fits the local ceiling. Omitting the two limits and explicitly selecting their defaults through caller limits give equal item results. A caller accounting bound B is preserved and reported as B when reached; a local candidate denial instead reports `max_candidates`, its local bound and `expansion.max_candidates`. Neither stop carries truth or a measured decision. | Test |
 
 ## Dependencies
 

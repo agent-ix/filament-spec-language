@@ -48,16 +48,22 @@ every scheduler delivers within 2 ms with probability at least `9/10`:
 ## Behavior
 
 - The measure SHALL activate at the first observation where `A` holds,
-  complete at the first later observation where `B` holds, and be censored
-  when the elapsed clock passes `W` first; the elapsed clock SHALL be reset
-  at activation, advance with every delay while active, freeze at completion
-  or censoring, and be capped at `W + 1`.
+  complete at the first observation at or after activation where `B`
+  holds, with `M = 0` when `B` holds at the activating observation (FR-196,
+  FSpec FR-407), and be censored when the elapsed clock passes `W` first;
+  the elapsed clock SHALL be reset at activation, advance with every
+  delay while active, freeze at completion or censoring, and be capped at
+  `W + 1`.
+- A censored measure SHALL exceed every finite threshold, so its terminal
+  reward SHALL be `−q` for both `[M <= c]` and `[M < c]`.
 - `<= c` SHALL be decided as `min E[[activated] · ([M <= c] − q)] >= 0`,
   certified by an `exact` or `lower` document of that minimum. `>= c` SHALL
   be decided as `max E[[activated] · ([M < c] − q)] < 0`, certified by an
   `upper` document whose initial value is below 0; at exactly 0 the checker
   SHALL search the tight actions from the initial state (FR-201) and reject
-  `InequalityFails` at the first activated state reached.
+  `InequalityFails` at the first activated state reached, and SHALL accept
+  when the tight actions reach no activated state, since no scheduler then
+  meets equality while activating (ADR-028 CE-4, FR-201).
 - The comparison `M < c` is strict, so a `>=` claim takes the region route
   (FR-922); `M <= c` keeps the digital route when every other constraint is
   closed.

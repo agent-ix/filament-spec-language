@@ -351,6 +351,9 @@ seventeen cases: parents, cycles, object identity, operation frames, and refused
 and incomplete runs. `run` can also evaluate one pure function;
 [`tests/it/spine_run.rs`](tests/it/spine_run.rs) shows that request.
 
+The [protocol recommendation example](examples/protocol-recommendation/README.md)
+uses `fsl analyze` to return advisory calls alongside model-state changes.
+
 **Optional features.**
 
 | Feature | Adds |

@@ -196,6 +196,9 @@ pub struct TimestampedTrace {
     pub(super) base: usize,
     /// The stamp of the trace's position 0, which a cutoff's history reads.
     pub(super) first: u64,
+    /// The stamp of the last observation a carried state no longer holds
+    /// (FR-820); `None` for a trace that holds all of its positions.
+    pub(super) last_observed: Option<u64>,
     /// Each position's interval stamp, in canonical order (FR-501 "Bounded
     /// cover and interval stamps").
     pub(super) intervals: Vec<Option<StampInterval>>,
@@ -323,6 +326,7 @@ impl TimestampedTrace {
             origin: order,
             base: 0,
             first: 0,
+            last_observed: None,
             progress,
             asserted: progress,
             clock,
@@ -344,6 +348,7 @@ impl TimestampedTrace {
             observed: 0,
             base: 0,
             first: 0,
+            last_observed: None,
             positions: Vec::new(),
             origin: Vec::new(),
             intervals: Vec::new(),

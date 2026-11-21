@@ -677,7 +677,11 @@ const UNSUPPORTED: Table = &[
     ("every-scheduler", &[], &[]),
     ("exact-only-form", &[], &[]),
     ("confidence-beyond-precision", &[], &[]),
-    ("not-markov", &["post_states", "state", "transition"], &[]),
+    (
+        "not-markov",
+        &["post_state_count", "post_states", "state", "transition"],
+        &[],
+    ),
     ("not-stochastic", &["identity", "state"], &[]),
     ("time-locked-sample", &["state"], &[]),
     ("total-above-draw-range", &["total"], &[]),

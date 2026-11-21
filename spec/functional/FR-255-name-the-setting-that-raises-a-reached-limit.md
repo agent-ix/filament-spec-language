@@ -272,7 +272,7 @@ its row (FR-315 "Size limits").
 | `model_check.max_live_instances` | `max_live_instances` | EN-1 protocol subjects | `ModelCheckRequest` max_live_instances | 3 instances | FR-209 |
 | `model_check.max_store_buffer` | `max_store_buffer` | EN-1 weak memory | `ModelCheckRequest` max_store_buffer | 4 entries | FR-225 |
 | `model_check.max_messages` | `max_messages` | EN-1 weak memory and protocol channels: the live messages per location after garbage collection under `ra`, and each channel's occupancy, counted per channel | `ModelCheckRequest` max_messages | 4 messages | FR-225 |
-| `expansion.max_candidates` | `max_candidates` | model-subject expansion | `ExpansionLimits` max_candidates | none: the caller sets it; a clause-run request sets it from its `model` trace's `max_candidates`, 1000000 candidates when absent (FR-641) | FR-120 |
+| `expansion.max_candidates` | `max_candidates` | model-subject expansion; independent local per-expansion ceiling | `ExpansionLimits` max_candidates | library caller sets it; native analyze probability items and absent clause-run `model` trace `max_candidates` use 1000000 candidate units (FR-741, FR-641) | FR-120 |
 | `simulation.max_steps` | `max_steps` | simulation and model-based test traces | `SimulationLimits` max_steps; a `simulation` item's `max_steps` | 16777216 steps | FR-634, FR-752 |
 | `exact_prob.max_states` | `max_states` | EN-5 product | `ExactProbLimits.model.limits` max_states | 10000000 states | FR-203 |
 | `exact_prob.max_transitions` | `max_transitions` | EN-5 product | `ExactProbLimits.model.limits` max_transitions | 100000000 transitions | FR-203 |
@@ -383,6 +383,14 @@ defaults FR-100 gives a `1-draft` run.
 | `accounting.value_occurrences` | `value_occurrences` | 18446744073709551615 (`u64::MAX`) |
 | `accounting.work_units` | `work_units` | 1000000 units |
 | `accounting.result_units` | `result_units` | 18446744073709551615 (`u64::MAX`) |
+
+For an EN-4 or EN-5 model-subject run, `accounting.work_units` is the one
+cumulative candidate and clause-work allowance of
+[FR-120](FR-120-simulate-a-checked-package-s-state-family.md), with no
+reset across expansions or clause evaluations. Its 1000000-unit default
+is separate from the local `expansion.max_candidates` ceiling; an explicit
+caller accounting bound replaces the default without being raised by the
+native adapter.
 
 An accounting setting is not a stage limit. A reached budget settles the
 call `Incomplete`, never `LimitExceeded` (FSpec FR-461 Behavior 6), so
@@ -533,6 +541,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-20 | Setting `emit.output_bytes` through the emit limits' builder, a replay request's `stage_limits` and the settings operation changes only `EmitLimits.output_bytes` (`PackageLimits.output_bytes` of the compile lifecycle); `EmitLimits` has no `Default`, so a limits value built without an output-byte value does not compile and a fixture states an explicit value; the outer configuration's `PackageLimits::default()` supplies 16777216; and the setting accepts 0 and `u64::MAX`. | Test (TC-721) |
 | FR-255-AC-21 | The settings operation given `explore.workers=4` returns caller limits whose `workers.explore` is 4, `workers.model_check` and `workers.statistical` are 1 and every limit is at its default; likewise `model_check.workers=2` and `statistical.workers=8`. Given `explore.workers=0` it returns a usage refusal naming the operand with cause `invalid_runtime_input`/`invalid-value`; given `explore.threads=4` it refuses an unknown setting. None of the three worker names appears in the engine limit table, and `explore.workers=2` leaves `explore.states` at 10000000. | Test (TC-720) |
 | FR-255-AC-22 | The settings operation lists `export.output_bytes`, `export.nodes` and `export.work_units` with defaults 16777216, 100000 and 16777216, equal to the defaults of `emit.output_bytes`, `s3.nodes` and `s3.work_units`; given `export.nodes=7` it changes only that export limit; and an export of FR-756-AC-1's counter under `export.work_units` 1 stops `incomplete` naming `export.work_units`, bound 1, exit 22. | Test (TC-2993) |
+| FR-255-AC-23 | Native analyze probability items with omitted candidate and accounting settings use local `expansion.max_candidates` 1000000 and cumulative `accounting.work_units` 1000000 for either engine. Supplying a different accounting bound B preserves B. The local ceiling stops as `max_candidates` with `expansion.max_candidates`; the cumulative bound stops as `work_units` with `accounting.work_units`. Neither default is `u64::MAX`, and starting an expansion or clause does not renew cumulative work. | Test |
 
 ## Status
 

@@ -1415,6 +1415,85 @@ fn a_weighted_fraction_draws_the_step_leaving_its_last_position() {
     assert_eq!(verdict.estimate, Some(ratio(1, 1)));
 }
 
+/// Residence intervals are [0, 1], [1, 4], whether the next transition
+/// crosses 4 or the position at 1 begins an idle tail.
+#[trace("FR-254-AC-3", "FSpec-FR-407-AC-19", "FSpec-FR-407-AC-20")]
+#[test]
+fn delay_fractions_clip_crossing_steps_and_idle_tails() {
+    for (name, delay, predicate, expected) in [
+        ("Crossing", Some(5), "c.phase = 1", ratio(3, 4)),
+        ("AtEnd", Some(3), "c.phase = 1", ratio(3, 4)),
+        ("Idle", None, "c.phase = 0", ratio(1, 4)),
+    ] {
+        let reply = delay.map_or_else(String::new, |delay| {
+            format!(
+                "pre Reply using v on M::Call::reply {{ self.phase = 1 }}\n\
+             post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+             delay M::Call::reply ~ discrete {{ {delay} ms: 1 }};\n"
+            )
+        });
+        let operations: &[(&str, &[&str])] = if delay.is_some() {
+            &[("send", &["phase"]), ("reply", &["phase"])]
+        } else {
+            &[("send", &["phase"])]
+        };
+        let reply_weight = if delay.is_some() {
+            "weight Call::reply = 1;"
+        } else {
+            ""
+        };
+        let declarations = format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             delay M::Call::send ~ discrete {{ 1 ms: 1 }};\n\
+             {reply}\n\
+             workload Even on M {{ weight Call::send = 1; {reply_weight} }}\n\
+             probabilistic {name} using ev on M over (c: M::Call) under Even on origin\n\
+                 with alpha 0.4, beta 0.4, indifference 0.05\n\
+                 {{ mean of (fraction holds({predicate}) over [0, 4 ms] weighted by delay) >= 0.5 }}\n"
+        );
+        let world = timed_world_with(operations, &declarations);
+        let run = || {
+            completed(run_timed_method(
+                &world,
+                name,
+                StatisticalMethod::Okamoto,
+                7,
+                fsl_replay::statistical::TimedSampling::default(),
+                1,
+            ))
+        };
+        let verdict = run();
+        assert_eq!(verdict.estimate, Some(expected), "{name}");
+        assert_eq!(verdict, run(), "{name}: seeded repeat");
+        let stopped = run_timed_method(
+            &world,
+            name,
+            StatisticalMethod::Okamoto,
+            7,
+            fsl_replay::statistical::TimedSampling {
+                q: 64,
+                max_sample_steps: 0,
+            },
+            1,
+        )
+        .expect("the delay fraction honors the step budget");
+        assert!(
+            matches!(
+                stopped,
+                StatisticalOutcome::Stopped {
+                    stop: StatisticalStop::Limit {
+                        limit: StatisticalLimit::MaxSampleSteps { value: 0 },
+                        value: 0,
+                    },
+                    ..
+                }
+            ),
+            "{name}: {stopped:?}"
+        );
+    }
+}
+
 /// Checks FR-189-AC-3's first clause (TC-624 step 3): a `Service` with two
 /// initial states runs `m = 2` tests, each with `α' = β' = 1/200`, sample
 /// `i` of test `j` at trace index `2i + j`.

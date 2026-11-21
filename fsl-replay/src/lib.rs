@@ -169,8 +169,10 @@ pub use certificate::closure::{
     ClosureRefusal, ProductStateRef, ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 pub use certificate::product::{
-    check_product_closure, product_certificate, product_state_key, HyperProductMember,
-    ProductClosureCertificate, ProductClosureRefusal, ProductClosureRequest, ProductEvidence,
+    check_product_closure, product_certificate, product_state_key, HyperExecutionEdges,
+    HyperProductMember, HyperSubjectClosure, HyperTransitionEdge, HyperTransitionTuple,
+    HyperTupleStop, ProductClosure, ProductClosureCertificate, ProductClosureCheck,
+    ProductClosureClause, ProductClosureRefusal, ProductClosureRequest, ProductEvidence,
     ProductStateKey,
 };
 pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
@@ -201,7 +203,8 @@ pub use certificate::zone_certificate::{
     FairnessMember, ItemIdentity, NonZeno, ProductMark, QuotientEdge, QuotientIdentity,
     QuotientInitial, QuotientStop, QuotientVertex, RefinementIdentity, RefinementPart, SilentMove,
     StateGraphCertificateForm, StateGraphPart, TaskProductQuotient, ZoneCertificate,
-    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict, ZoneCertificateWireError,
+    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
+    ZoneCertificateWireError,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.

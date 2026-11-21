@@ -328,10 +328,16 @@ fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
         Node::Null => false,
         Node::Array(deadline) => {
             let deadline = deadline.collect::<Vec<_>>();
+            // FR-920: `["elapsed",W,e]` carries `null` before activation.
+            let elapsed = matches!(
+                deadline.first().map(|part| part.node()),
+                Some(Node::String("elapsed"))
+            );
             if deadline.len() != if region { 4 } else { 3 }
-                || !matches!(deadline[0].node(), Node::String("deadline"))
+                || !(elapsed || matches!(deadline[0].node(), Node::String("deadline")))
                 || canonical_count(deadline[1]).is_none()
                 || canonical_count(deadline[2]).is_none()
+                    && !(elapsed && matches!(deadline[2].node(), Node::Null))
                 || region && canonical_count(deadline[3]).is_none()
             {
                 return false;
@@ -411,16 +417,25 @@ pub(super) fn admit_parts(parts: &[NodeRef<'_>]) -> Result<(), ProbabilityDocume
             }
         }
         Node::Array(mut monitor) if monitor.len() == 3 => {
-            if !matches!(
-                monitor.next().map(|part| part.node()),
-                Some(Node::String("deadline"))
-            ) || !matches!(
-                monitor.next().map(|part| part.node()),
-                Some(Node::String("eventually" | "always" | "until"))
-            ) || !matches!(
-                monitor.next().map(|part| part.node()),
-                Some(Node::String("pending" | "accept" | "reject"))
-            ) {
+            let tag = monitor.next().map(|part| part.node());
+            let second = monitor.next().map(|part| part.node());
+            let third = monitor.next().map(|part| part.node());
+            let deadline = matches!(tag, Some(Node::String("deadline")))
+                && matches!(
+                    second,
+                    Some(Node::String("eventually" | "always" | "until"))
+                )
+                && matches!(third, Some(Node::String("pending" | "accept" | "reject")));
+            // FR-920: an elapsed measure's `["measure",null,phase]`.
+            let measure = matches!(tag, Some(Node::String("measure")))
+                && matches!(second, Some(Node::Null))
+                && matches!(
+                    third,
+                    Some(Node::String(
+                        "inactive" | "active" | "complete" | "censored"
+                    ))
+                );
+            if !(deadline || measure) {
                 return Err(ProbabilityDocumentError::Malformed);
             }
         }

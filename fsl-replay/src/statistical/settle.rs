@@ -91,8 +91,9 @@ impl StatisticalRecord {
     /// This record as the FR-331 terminal record of the item at
     /// `request_index`, produced by `backend`, with its diagnostic.
     pub fn into_terminal(self, request_index: RequestIndex, backend: BackendId) -> TerminalRecord {
-        TerminalRecord::with_backend(request_index, backend, self.value)
-            .with_diagnostic(self.diagnostic)
+        let record = TerminalRecord::with_backend(request_index, backend, self.value);
+        let diagnostic = self.diagnostic.or(record.diagnostic());
+        record.with_diagnostic(diagnostic)
     }
 }
 
@@ -191,7 +192,9 @@ pub fn settle_statistical(
         },
         StatisticalOutcome::Unsupported { cause, .. } => {
             StatisticalRecord::of(TerminalValue::Unsupported(match cause {
-                StatisticalUnsupported::NotMarkov(_) => UnavailabilityCause::NotMarkov,
+                StatisticalUnsupported::NotMarkov(cause) => {
+                    UnavailabilityCause::NotMarkov(cause.clone())
+                }
                 StatisticalUnsupported::TotalAboveDrawRange { total } => {
                     UnavailabilityCause::TotalAboveDrawRange {
                         total: total.clone(),
@@ -353,21 +356,34 @@ mod tests {
         }
     }
 
-    /// A non-unique post-state of a `tick` with no argument.
+    /// A `tick` with no argument and no post-state.
     fn not_markov() -> fsl_eval::simulation::model::NotMarkov {
+        let transition = fsl_eval::simulation::model::ScheduledIdentity {
+            operation: r#""tick""#.to_owned(),
+            receiver: filament_exact::ObjectReference::new(
+                crate::fixture_universe(1),
+                crate::fixture_effective(2),
+                filament_exact::ObjectId::new("n").expect("a key"),
+            ),
+            arguments: Vec::new(),
+        };
+        let drawn_transition = ModelTransition::new(
+            transition.operation.clone(),
+            Some(
+                fsl_eval::simulation::model::reference_canonical_text(&transition.receiver)
+                    .expect("a receiver"),
+            ),
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("a transition");
         fsl_eval::simulation::model::NotMarkov {
             state: fsl_eval::simulation::StateKey::from_canonical_bytes(b"\"healthy\"".to_vec()),
-            transition: fsl_eval::simulation::model::ScheduledIdentity {
-                operation: "tick".to_owned(),
-                receiver: filament_exact::ObjectReference::new(
-                    crate::fixture_universe(1),
-                    crate::fixture_effective(2),
-                    filament_exact::ObjectId::new("n").expect("a key"),
-                ),
-                arguments: Vec::new(),
-            },
+            transition,
+            drawn_transition,
             random: Vec::new(),
-            post_states: 2,
+            post_states: 0,
+            post_state_examples: Vec::new(),
         }
     }
 
@@ -437,6 +453,25 @@ mod tests {
 
     fn incomplete(limit: ModelCheckLimit, value: u64) -> TerminalValue {
         TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value })
+    }
+
+    /// EN-4 preserves terminal validation's diagnostic when its raw payload
+    /// claims one successor or omits the required actual post-state evidence.
+    #[trace("TC-622", "FR-187-AC-3", "TC-1166", "FR-192-AC-1")]
+    #[test]
+    fn malformed_not_markov_keeps_the_terminal_invariant_diagnostic() {
+        for count in [1, 2, 4] {
+            let mut cause = not_markov();
+            cause.post_states = count;
+            let record = settle(&StatisticalOutcome::Unsupported {
+                cause: StatisticalUnsupported::NotMarkov(Box::new(cause)),
+                provenance: provenance(),
+            });
+            let wire = wire(record);
+            assert_eq!(wire["result"], "failed", "{wire}");
+            assert_eq!(wire["cause"]["kind"], "established-invariant-broken");
+            assert!(wire["cause"].get("post_state_count").is_none(), "{wire}");
+        }
     }
 
     /// FR-192's map from `StatisticalOutcome`: a completed run settles
@@ -617,16 +652,16 @@ mod tests {
             })
         );
 
-        let not_markov = settle(&StatisticalOutcome::Unsupported {
+        let not_markov_record = settle(&StatisticalOutcome::Unsupported {
             cause: StatisticalUnsupported::NotMarkov(Box::new(not_markov())),
             provenance: provenance(),
         });
         assert_eq!(
-            not_markov.value,
-            TerminalValue::Unsupported(UnavailabilityCause::NotMarkov)
+            not_markov_record.value,
+            TerminalValue::Unsupported(UnavailabilityCause::NotMarkov(Box::new(not_markov())))
         );
-        assert_eq!(not_markov.category(), Category::Unsupported);
-        assert!(wire(not_markov).get("basis").is_none());
+        assert_eq!(not_markov_record.category(), Category::Unsupported);
+        assert!(wire(not_markov_record).get("basis").is_none());
         let total = Integer::from(7_i64);
         let range = settle(&StatisticalOutcome::Unsupported {
             cause: StatisticalUnsupported::TotalAboveDrawRange {

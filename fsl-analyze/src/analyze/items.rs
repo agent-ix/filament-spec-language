@@ -1042,7 +1042,7 @@ pub(super) fn zone_refusal(refusal: &ZoneCheckRefusal) -> Refusal {
         ZoneCheckRefusal::UnsupportedForm
         | ZoneCheckRefusal::CarriedClocks
         | ZoneCheckRefusal::HiddenFieldTimedAbstract
-        | ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness => Refusal::Unsupported(NOT_YET),
+        | ZoneCheckRefusal::TimedAbstractLivenessTickSource => Refusal::Unsupported(NOT_YET),
         // A request defect: an obligation that is not the item's.
         ZoneCheckRefusal::ObligationMismatch => Refusal::Failed(INVALID_VALUE),
         // Engine defects, and refusals whose types name no catalog code:

@@ -174,7 +174,7 @@ pub enum TimedLivenessHalf {
     /// The second phase ran on the symbolic product.
     Checked(TimedLivenessOutcome),
     /// The liveness half is not decided for this subject: a timed abstract
-    /// side with a hidden abstract field (the safety half is decided).
+    /// side under a tick source (the safety half is decided).
     Refused(ZoneCheckRefusal),
 }
 
@@ -320,18 +320,13 @@ fn check_refinement_with_time_source<S>(
         check_model_bounds(&abstract_system, BOUND_POSITIONS).map_err(not_simulated)?;
         None
     };
-    // The liveness half reads class enabledness from the untimed abstract
-    // state: `abstract_enabled` in `refine/live.rs` applies no abstract clock
-    // guard and does not split the cells by the guards of the `F_A` classes
-    // (FR-899 "Timed subjects"), for any timed abstract side. With a hidden
-    // abstract field, whose candidates each carry their own clock behaviour,
-    // the half is refused rather than answered from enabledness it did not
-    // read; the safety half is still decided and reported.
-    let liveness_refused = auxiliary_timed.is_some()
-        && refinement
-            .objects()
-            .iter()
-            .any(|object| !object.hidden.is_empty());
+    // The liveness half reads class enabledness of a timed abstract side
+    // from its candidates' guarded steps at each cell of the product, split
+    // by the guards of the `F_A` classes (`refine/live.rs`, FR-899 "Timed
+    // subjects"), over the instants between positions; a tick source has no
+    // such instants, so that half is refused there and the safety half is
+    // still decided and reported.
+    let liveness_refused = auxiliary_timed.is_some() && timed.tick_period().is_some();
     let mut run = Run::new(
         &timed,
         Judged::Refinement,
@@ -403,7 +398,7 @@ fn check_refinement_with_time_source<S>(
     {
         if liveness_refused {
             Some(TimedLivenessHalf::Refused(
-                ZoneCheckRefusal::HiddenFieldTimedAbstractLiveness,
+                ZoneCheckRefusal::TimedAbstractLivenessTickSource,
             ))
         } else {
             Some(TimedLivenessHalf::Checked(liveness(

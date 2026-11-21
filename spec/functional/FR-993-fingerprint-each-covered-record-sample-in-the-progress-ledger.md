@@ -29,7 +29,7 @@ FR-502 still requires that sample to be refused `Completeness`, because the
 retained assertion said the trace was complete with the earlier sample there.
 Each covered record-sample entry of a `ProgressLedger` SHALL therefore carry,
 beside its index identity, a **content fingerprint**: the SHA-256 digest of
-the sample's canonical value bytes, encoded by ADR-013's single RFC 8785
+the position's canonical content (the sample's value bytes, with its absent atoms when it has any; see Recorded), encoded by ADR-013's single RFC 8785
 encoder (`quire-canonical`). Batch evaluation (FR-330) and carried evaluation
 (FR-820) SHALL write and check the fingerprint the same way, so one sequence of
 requests gets one verdict whichever form evaluates it (FSpec FR-114).
@@ -70,7 +70,12 @@ normalized identity is never hashed still holds.
 - **Recorded.** When a completeness assertion covers a record-sample position,
   the evaluator SHALL record in that position's covered entry the SHA-256
   digest of the sample's canonical value bytes as `quire-canonical` encodes
-  them.
+  them. When the observation at that position holds no valuation of some
+  atoms (FR-641 `missing`), the evaluator SHALL record the digest of the `quire-canonical`
+  encoding of `{"absent": [a1, ..., an], "sample": v}`, the atom node indices
+  ascending without repeats and `v` the sample's value. With no absent atom the
+  evaluator SHALL record the digest of the sample's value bytes alone, so a trace with no
+  `missing` entry keeps its fingerprints.
 - **Compared.** When a request's trace re-covers an index that its input
   ledger already covers and the sample's fingerprint differs from the
   retained one, the evaluator SHALL refuse the request as FR-502's

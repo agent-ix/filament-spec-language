@@ -50,8 +50,9 @@ use super::progress::{
 use super::temporal::with_subject_counterexample;
 use super::temporal::{
     clause_trace_binding, run_package_temporal_over, streamed_sample_report, AdmissionMark,
-    CarriedAdmission, PackageTemporalRequest, TapeInput, TimestampedCover, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    CarriedAdmission, PackageTemporalRequest, TapeInput, TimestampedCover,
+    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
+    TraceBinding, TraceInput,
 };
 use super::trace_subject::{
     decisive_reach, push_subject_sample, read_subject_letter, reread_subject_stop, subject_report,
@@ -137,6 +138,9 @@ pub struct AdmittedPosition<'p> {
     pub order_key: Option<TimestampedOrderKey>,
     /// The admitted value.
     pub value: AdmittedValue<'p>,
+    /// The atom nodes of the clause the observation holds no valuation of
+    /// (FR-641 `missing` entries of this position; FR-194).
+    pub absent: Vec<u64>,
 }
 
 /// An admitted position's value.
@@ -217,6 +221,9 @@ struct Seen {
     reference: DocumentRef,
     stamp: u64,
     order_key: Option<TimestampedOrderKey>,
+    /// The atom nodes the observation holds no valuation of (FR-641
+    /// `missing`), sorted and without repeats.
+    absent: Vec<u64>,
 }
 
 /// FR-501 "Canonical order" of two positions, as the batch run orders a
@@ -678,10 +685,15 @@ impl<'a> ClauseState<'a> {
     /// A cancelled call or a contradiction; the state is unchanged.
     pub fn advance(
         &mut self,
-        position: AdmittedPosition<'_>,
+        mut position: AdmittedPosition<'_>,
         cancel: &Cancel,
     ) -> Result<Advance, ClauseRefusal> {
         cancelled(cancel)?;
+        // FR-194: only a timestamped state evaluates absent valuations; any
+        // other kind would drop or fingerprint them without reading them.
+        if !position.absent.is_empty() && self.open.kind != ClauseTraceKind::Timestamped {
+            return Err(fault("absent-valuations-need-a-timestamped-trace"));
+        }
         if self.reading == Reading::Streamed {
             return self.advance_streamed(position, cancel);
         }
@@ -699,7 +711,10 @@ impl<'a> ClauseState<'a> {
             AdmittedValue::Sample(_) => None,
         };
         let document = position.reference.clone();
-        let reference = match self.cite(index, position.reference) {
+        let mut absent = std::mem::take(&mut position.absent);
+        absent.sort_unstable();
+        absent.dedup();
+        let reference = match self.cite(index, position.reference, &absent) {
             Ok(reference) => reference,
             Err(refusal) => {
                 self.restore(mark);
@@ -710,6 +725,7 @@ impl<'a> ClauseState<'a> {
             reference,
             stamp: position.stamp,
             order_key: position.order_key,
+            absent,
         });
         match position.value {
             AdmittedValue::Sample(sample) => self.read(index, sample, &mut meter),
@@ -758,7 +774,12 @@ impl<'a> ClauseState<'a> {
     /// The identity the state keeps for the position `index` the caller names
     /// `reference`: its index, keeping the sample's text while it is held, for
     /// an indexed state.
-    fn cite(&mut self, index: u64, reference: DocumentRef) -> Result<DocumentRef, ClauseRefusal> {
+    fn cite(
+        &mut self,
+        index: u64,
+        reference: DocumentRef,
+        absent: &[u64],
+    ) -> Result<DocumentRef, ClauseRefusal> {
         if !self.indexed() || reference.authority != super::temporal::SAMPLE_AUTHORITY {
             return Ok(reference);
         }
@@ -766,7 +787,7 @@ impl<'a> ClauseState<'a> {
         // sample's content fingerprint beside its index.
         let fingerprint = if self.open.kind.carries_progress() {
             Some(
-                super::temporal::sample_fingerprint(&reference.identity)
+                super::temporal::sample_fingerprint_with(&reference.identity, absent)
                     .map_err(ClauseRefusal::Fault)?,
             )
         } else {
@@ -834,6 +855,7 @@ impl<'a> ClauseState<'a> {
             reference,
             stamp: position.stamp,
             order_key: position.order_key,
+            absent: Vec::new(),
         });
         let report = self.streamed_report(
             stream.as_ref(),
@@ -1141,7 +1163,26 @@ impl<'a> ClauseState<'a> {
                             .map(|p| p.reference.clone()),
                     );
                 }
-                TraceInput::Timestamped { observations, .. } => {
+                TraceInput::Timestamped {
+                    observations,
+                    window,
+                    ..
+                } => {
+                    // FR-194: the observations the state holds name the atoms
+                    // they hold no valuation of.
+                    window.missing_valuations = positions
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(index, position)| {
+                            position
+                                .absent
+                                .iter()
+                                .map(move |atom| TimestampedMissingValuation {
+                                    position: u64::try_from(index).unwrap_or(u64::MAX),
+                                    atom: *atom,
+                                })
+                        })
+                        .collect();
                     let keep = prefix(observations.len(), &|at| match (
                         observations.get(at),
                         positions.get(at),
@@ -1424,6 +1465,15 @@ impl<'a> ClauseState<'a> {
         let Some(trace) = admission.trace_ref() else {
             return;
         };
+        let absent: Vec<(u64, u64)> = self
+            .seen
+            .iter()
+            .enumerate()
+            .flat_map(|(index, position)| {
+                let index = u64::try_from(index).unwrap_or(u64::MAX);
+                position.absent.iter().map(move |atom| (index, *atom))
+            })
+            .collect();
         let mut meter = Meter::new(self.open.limits.accounting);
         for index in 0..evaluated {
             let Some(position) = self.seen.get(index) else {
@@ -1441,6 +1491,7 @@ impl<'a> ClauseState<'a> {
                         &self.tape,
                         trace,
                         at,
+                        &absent,
                         &mut meter,
                     ) {
                         self.tape
@@ -1509,9 +1560,11 @@ impl<'a> ClauseState<'a> {
                     let place = first.saturating_add(u64::try_from(at).unwrap_or(u64::MAX));
                     // FR-993: a `Timestamped` trace carries progress, so its
                     // ledger entry carries the fingerprint.
-                    let fingerprint =
-                        super::temporal::sample_fingerprint(&position.reference.identity)
-                            .map_err(ClauseRefusal::Fault)?;
+                    let fingerprint = super::temporal::sample_fingerprint_with(
+                        &position.reference.identity,
+                        &position.absent,
+                    )
+                    .map_err(ClauseRefusal::Fault)?;
                     let cited = super::temporal::sample_index(place, Some(&fingerprint));
                     let named = std::mem::replace(&mut position.reference, cited);
                     if let Some(text) = texts.get_mut(*index) {
@@ -1762,6 +1815,7 @@ impl<'a> ClauseState<'a> {
                     "identity": identity,
                     "fingerprint": fingerprint,
                     "stamp": position.stamp,
+                    "absent": position.absent,
                     "order_key": position.order_key.as_ref().map(|key|
                         json!({"authority": key.authority, "key": key.key})),
                     "letter": letter,
@@ -1928,6 +1982,19 @@ impl<'a> ClauseState<'a> {
                 reference,
                 stamp: position["stamp"].as_u64().ok_or_else(mismatch)?,
                 order_key,
+                absent: {
+                    let absent: Vec<u64> = position["absent"]
+                        .as_array()
+                        .ok_or_else(mismatch)?
+                        .iter()
+                        .map(|atom| atom.as_u64().ok_or_else(mismatch))
+                        .collect::<Result<_, _>>()?;
+                    // Written ascending without repeats.
+                    if !absent.windows(2).all(|pair| pair[0] < pair[1]) {
+                        return Err(mismatch());
+                    }
+                    absent
+                },
             });
         }
         let indices = |member: &str| -> Result<Vec<u64>, ClauseRefusal> {

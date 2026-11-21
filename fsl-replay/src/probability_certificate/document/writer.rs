@@ -312,7 +312,21 @@ impl Encode for Events<'_> {
         }
         writer.end_object()?;
         writer.name("kind")?;
-        writer.string("exact")?;
+        // FR-877: a `>=` quantile is decided by the transform's maximum and
+        // certified by an `upper` document.
+        writer.string(
+            if self.document.optimization == ProbabilityObjective::Maximum
+                && self
+                    .document
+                    .timed
+                    .as_ref()
+                    .is_some_and(|timed| timed.form == TimedProbabilityForm::ElapsedQuantile)
+            {
+                "upper"
+            } else {
+                "exact"
+            },
+        )?;
         writer.name("values")?;
         writer.begin_array()?;
         for row in &self.document.values {

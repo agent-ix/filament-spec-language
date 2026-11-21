@@ -482,19 +482,32 @@ mod tests {
             code(SampleStop::GeneratorMismatch { supplied: other }),
             UNSUPPORTED
         );
+        let transition = ScheduledIdentity {
+            operation: r#""tick""#.to_owned(),
+            receiver: ObjectReference::new(
+                crate::fixture_universe(1),
+                crate::fixture_effective(2),
+                ObjectId::new("n").expect("a key"),
+            ),
+            arguments: Vec::new(),
+        };
+        let drawn_transition = filament_semantic_value::model_transition::ModelTransition::new(
+            transition.operation.clone(),
+            Some(
+                fsl_eval::simulation::model::reference_canonical_text(&transition.receiver)
+                    .expect("a receiver"),
+            ),
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("a transition");
         let not_markov = NotMarkov {
             state: fsl_eval::simulation::StateKey::from_canonical_bytes(b"\"s\"".to_vec()),
-            transition: ScheduledIdentity {
-                operation: "tick".to_owned(),
-                receiver: ObjectReference::new(
-                    crate::fixture_universe(1),
-                    crate::fixture_effective(2),
-                    ObjectId::new("n").expect("a key"),
-                ),
-                arguments: Vec::new(),
-            },
+            transition,
+            drawn_transition,
             random: Vec::new(),
-            post_states: 2,
+            post_states: 0,
+            post_state_examples: Vec::new(),
         };
         assert_eq!(code(SampleStop::NotMarkov(not_markov)), NOT_MARKOV);
         assert_eq!(code(SampleStop::UndecidedSuccessor), BROKEN);

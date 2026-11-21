@@ -690,7 +690,7 @@ fn step_costs(
     use fsl_eval::simulation::model::{TransitionId, Unsteppable};
     let unsteppable = |stop| {
         ProbabilityDocumentError::Build(Box::new(match stop {
-            Unsteppable::NotMarkov(_) => crate::ExactProbBuildIssue::NotMarkov,
+            Unsteppable::NotMarkov(cause) => crate::ExactProbBuildIssue::NotMarkov(cause),
             Unsteppable::UndecidedSuccessor(_) => crate::ExactProbBuildIssue::UndecidedSuccessor,
         }))
     };

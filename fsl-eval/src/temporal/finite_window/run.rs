@@ -69,8 +69,8 @@ pub trait WindowCharge {
 enum Stop {
     Incomplete(Incomplete),
     WindowLimit(WindowLimitReached),
-    /// An `on each` guard that cannot be established at a position.
-    GuardUnresolved(TemporalPosition),
+    /// An `on each` guard that is undefined at a position.
+    GuardUndefined(UndefinedEvaluation),
     Undefined(UndefinedEvaluation),
     /// A `holds` condition, an `on each` guard or a capture was refused at
     /// this position (FR-327 "Refused condition").
@@ -158,6 +158,8 @@ pub(super) struct Prior {
     /// The union of the decision supports of the true activations, before
     /// any false or open one.
     holds: std::collections::BTreeSet<SupportPair>,
+    /// Whether any activation was summarized: a guard admitted it.
+    activated: bool,
 }
 
 impl Prior {
@@ -167,6 +169,7 @@ impl Prior {
         run: &Run<'_, L>,
         finished: &Finished,
     ) -> Result<(), InternalFault> {
+        self.activated = true;
         if self.first_false.is_some() {
             return Ok(());
         }
@@ -213,7 +216,7 @@ pub(super) enum Entry {
 #[derive(Clone, Debug)]
 pub(super) enum Tail {
     Done,
-    GuardUnresolved(TemporalPosition),
+    GuardUndefined(UndefinedEvaluation),
     Undefined(UndefinedEvaluation),
     Incomplete(Incomplete),
     WindowLimit(WindowLimitReached),
@@ -454,7 +457,7 @@ impl<'a, L: TemporalLetters> Run<'a, L> {
             Ok(()) => Tail::Done,
             Err(Stop::Incomplete(incomplete)) => Tail::Incomplete(incomplete),
             Err(Stop::WindowLimit(limit)) => Tail::WindowLimit(limit),
-            Err(Stop::GuardUnresolved(at)) => Tail::GuardUnresolved(at),
+            Err(Stop::GuardUndefined(undefined)) => Tail::GuardUndefined(undefined),
             Err(Stop::Undefined(undefined)) => Tail::Undefined(undefined),
             // In evaluation order: an atom undefined at an earlier position, or
             // an activation that ended false before the refused condition, is
@@ -698,9 +701,9 @@ impl<L: TemporalLetters> Run<'_, L> {
                 {
                     AtomReading::True => {}
                     AtomReading::False => continue,
-                    // A guard that cannot be established is an incomplete
-                    // activation, never a false guard (FR-044-AC-7).
-                    AtomReading::Undefined(_) => return Err(Stop::GuardUnresolved(at)),
+                    AtomReading::Undefined(cause) => {
+                        return Err(Stop::GuardUndefined(UndefinedEvaluation { at, cause }));
+                    }
                 }
             }
             let captured = match self.clause.capture_site() {
@@ -1359,8 +1362,8 @@ impl<L: TemporalLetters> Run<'_, L> {
             )
         } else {
             match tail {
-                Tail::GuardUnresolved(at) => (
-                    WindowVerdict::ActivationIncomplete { at },
+                Tail::GuardUndefined(undefined) => (
+                    WindowVerdict::Undefined(undefined),
                     Basis::Unavailable,
                     Vec::new(),
                 ),
@@ -1421,6 +1424,38 @@ impl<L: TemporalLetters> Run<'_, L> {
                             };
                             (verdict, basis, support)
                         }
+                        None if self.anchors.guarded && !prior.activated && done.is_empty() => {
+                            // Every guard read false (FR-044 "Outputs"): no
+                            // instance exists, so the clause has no truth.
+                            // A closed, complete scope is inactive; any other
+                            // scope may still activate and is unknown.
+                            // The observations this run holds start at `base`;
+                            // a carried state that dropped them all keeps the
+                            // stamp of the last one.
+                            let held = self.trace.observed.saturating_sub(self.base);
+                            let last = self
+                                .stamps
+                                .iter()
+                                .take(held)
+                                .max()
+                                .copied()
+                                .or(self.trace.last_observed.map(i128::from));
+                            let complete = last.is_some_and(|last| {
+                                covers(
+                                    self.trace.asserted.completeness,
+                                    last.saturating_add(self.margin),
+                                )
+                            });
+                            if scope_closed && complete {
+                                (WindowVerdict::Inactive, Basis::ClosedScope, Vec::new())
+                            } else {
+                                (
+                                    WindowVerdict::ActivationUnknown,
+                                    Basis::Unsettled,
+                                    Vec::new(),
+                                )
+                            }
+                        }
                         None => {
                             // Every summarized activation is established.
                             let established = done.iter().all(|a| a.established);
@@ -1444,6 +1479,8 @@ impl<L: TemporalLetters> Run<'_, L> {
             | WindowVerdict::WindowLimitReached(_)
             | WindowVerdict::ActivationIncomplete { .. } => Assessment::Failed,
             WindowVerdict::Holds
+            | WindowVerdict::Inactive
+            | WindowVerdict::ActivationUnknown
             | WindowVerdict::Violated { .. }
             | WindowVerdict::Pending { .. }
             | WindowVerdict::PendingNextEvent { .. }
