@@ -3840,7 +3840,9 @@ fn package_window_adapter_controls(
         .unwrap();
     let source_identity = SourceIdentity::new("agent-ix", "test:s1-16:unit.native");
     let source = |identity: SourceIdentity, bytes: &[u8]| {
-        Source::read_typed(identity, "caller.native", bytes, unit.len()).unwrap()
+        Source::read_typed(identity, "caller.native", bytes, unit.len()).unwrap_or_else(|refusal| {
+            panic!("the valid caller source reads: {}", refusal.error.message)
+        })
     };
     let sources = [source(source_identity.clone(), unit.as_bytes())];
     let region = |region: &filament_contract_model::CheckedSourceRegion| {
@@ -3906,7 +3908,7 @@ fn package_window_adapter_controls(
     };
     let trace = if clause.profile().identity() == EVENT_POSITION {
         replay::TraceInput::Progressed {
-            positions: positions.to_vec(),
+            trace: positions.to_vec(),
             progress,
             lower_boundary: replay::ProgressLowerBoundary::AuthoritativeOrigin,
             binding,
