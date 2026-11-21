@@ -5242,3 +5242,63 @@ fn the_bare_route_names_fixture_l_decision_slots_by_node_member_and_index() {
     assert_eq!(origin("Got", "related.from", 0), None);
     assert_eq!(origin("Got", "related.to", 0), None);
 }
+
+/// FR-390-AC-28: an activation guard dividing two non-integer-valued
+/// `Rational` operands gives the same value, outcome and charge log through the
+/// reader view as through the checked package.
+#[test]
+#[trace("TC-1070", "FR-390-AC-28")]
+fn reader_backed_activation_guard_keeps_rational_division_fractional() {
+    let source = SOURCE
+        .replace(
+            "profile P = \"filament.protocol.finite-global/v1\";",
+            "profile P = \"filament.protocol.finite-global/v1\";\n\
+             profile v = \"filament.value.complete/v1\";",
+        )
+        .replace(
+            "model M = \"test/orders\";",
+            "model M = \"test/orders\";\n\
+             function half using v(x: Rational[0, 20; 1, 2], d: Rational[2, 2; 1, 1]): Rational[-100, 100; 1, 4] pure { x / d }",
+        )
+        .replace(
+            "when (opened.ready) {",
+            "when (opened.ready and half(rational(1, 1), rational(2, 1)) = rational(1, 2)) {",
+        );
+    let (package, _) = fixture_from_source(&source);
+    let read = read_checked_package(&package);
+    let reader_view = read.evaluation_view().expect("the read retains its view");
+    let tick = record(
+        &package,
+        "Tick",
+        vec![("ready", Value::Boolean(true)), ("count", int(2))],
+    );
+    let selected = slot(&package, "Refunds", "Refunds", "activation.guard", None);
+    let supplies = supply(&package, "Refunds", vec![("opened", tick)], None);
+
+    let mut checked_meter = Meter::new(UNLIMITED);
+    let checked = package.evaluate_protocol_slot(&selected, &supplies, &mut checked_meter);
+    let mut reader_meter = Meter::new(UNLIMITED);
+    let reader = reader_view.evaluate_protocol_slot(&selected, &supplies, &mut reader_meter);
+    let (checked_text, reader_text) = (without_location(&checked), without_location(&reader));
+
+    let source_is_true = matches!(
+        &checked,
+        Ok(ProtocolSlotEvaluation::Evaluated(
+            filament_eval::Evaluation {
+                outcome: FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(
+                    Value::Boolean(true)
+                )),
+                ..
+            },
+            _,
+        ))
+    );
+    assert!(
+        source_is_true,
+        "source route must complete true for 1/2 = rational(1, 2); source: {checked_text}; package: {reader_text}"
+    );
+    assert_eq!(
+        reader_text, checked_text,
+        "package route must match the source route for Rational division; source: {checked_text}; package: {reader_text}"
+    );
+}
