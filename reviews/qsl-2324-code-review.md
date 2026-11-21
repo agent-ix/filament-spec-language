@@ -47,3 +47,16 @@ scope:
   - {"id":"fsl-command/tests/it/temporal_owner_cohort.rs","path":"fsl-command/tests/it/temporal_owner_cohort.rs","role":"examined","excerpt":"#[trace(\"FR-931-AC-5\")]"}
 ```
 
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1 at aba797713d36a20cfeb9d253362e3e32ae749d6a removes both mismatched FR-931-AC-5 attributes and the unused trace-macro import. QSL-2324 provenance remains; no invented criterion replaces them. |
+
+## Disposition round 1 verification
+
+**Current bounded code/Rust verdict: PASS.** FND-001 is fixed and no new defect was found in the fix. Original findings and initial verdict above remain historical.
+
+The three selected runtime tests completed on fbdb4642ecdd161b346e085b0fca8ec54650229d: 3 passed, 0 failed, 0 ignored, 174 filtered. Independent comparison of that tested module after removing exactly the two trace-attribute lines and unused macro import is byte-equal to the corrected module. All assertions, fixture values, owner calls and public type checks therefore remain identical. Cargo.lock, fsl-command/Cargo.toml and production source are unchanged from the tested head. Corrected-module rustfmt passes. No post-fix Cargo run is claimed; earlier scoped Clippy and metadata evidence is retained.
+
+The fix commit's copied review artifacts contained trailing blank lines that make diff --check report those artifact paths; the latest scratch artifacts remove that artifact-only issue when copied by the parent. Source changes introduce no whitespace error. Parent retains custody and must copy these latest versions before merge.

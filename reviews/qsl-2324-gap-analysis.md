@@ -47,3 +47,10 @@ scope:
   - {"id":"fsl-command/tests/it/temporal_owner_cohort.rs","path":"fsl-command/tests/it/temporal_owner_cohort.rs","role":"examined","excerpt":"#[trace(\"FR-931-AC-5\")]"}
 ```
 
+## Disposition round 1 evidence update
+
+**CONDITIONAL** remains the gap-analysis verdict. No finding required disposition in this artifact; the initial placeholder is not a defect. Matrix/coverage remain unavailable and no engine-backed or repository assurance PASS is claimed.
+
+The three focused runtime tests completed at fbdb4642ecdd161b346e085b0fca8ec54650229d: 3 passed, 0 failed, 0 ignored, 174 filtered. The corrected head aba797713d36a20cfeb9d253362e3e32ae749d6a removes only the two mismatched trace attributes and unused macro import from that test module. Independent source comparison confirms every assertion, fixture, owner call and type check remains byte-identical, and production/manifests/lockfile are unchanged. SR-549 FND-001 records the verified fix. No new Cargo or whole-tree audit was run.
+
+Parent must copy these latest scratch artifacts over the initial committed copies before merge; the updated artifacts also remove their prior blank line at EOF. Plan completion: not assessed.
