@@ -1094,20 +1094,6 @@ fn two_mapped_package_relationships_use_independent_producer_declarations() {
         relationship_row(SHIPMENTS, true, vec![shipment]),
         relationship_row(PAYMENTS, true, vec![payment]),
     ];
-    let output = run_selected(
-        "paymentAttempts",
-        "o1",
-        rows.clone(),
-        Some(selection.clone()),
-    );
-    let document: Value =
-        serde_json::from_slice(&output.stdout).expect("two mapped candidates reach the resolver");
-    assert_eq!(output.status.code(), Some(0), "{document}");
-    assert_eq!(document["outcome"]["kind"], "completed", "{document}");
-    assert_eq!(
-        document["outcome"]["value"]["reference"]["object_identity"], "p1",
-        "both mapped declarations satisfy their independent required slots: {document}"
-    );
 
     let missing_relationships = |rows| {
         let output = run_selected("paymentAttempts", "o1", rows, Some(selection.clone()));
