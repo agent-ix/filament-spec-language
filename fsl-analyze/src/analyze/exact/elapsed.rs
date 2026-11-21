@@ -113,6 +113,62 @@ fn transform_values(
     values.into_iter().collect()
 }
 
+/// Whether the actions that attain each state's value, followed from `start`,
+/// reach a state whose measure is activated (active, complete or censored).
+fn tight_actions_activate(product: &ProbProduct, values: &[Rational], start: usize) -> bool {
+    let ids: Vec<_> = product.ids().collect();
+    let mut seen = vec![false; product.states.len()];
+    let mut layer = vec![start];
+    seen[start] = true;
+    while !layer.is_empty() {
+        let mut next = Vec::new();
+        for state in layer {
+            if matches!(
+                product.states[state].monitor,
+                Some(MonitorState::Measure {
+                    phase: MeasurePhase::Active | MeasurePhase::Complete | MeasurePhase::Censored,
+                    ..
+                })
+            ) {
+                return true;
+            }
+            let mut choices: Vec<(
+                &crate::exact_probabilistic::ProductAction,
+                Rational,
+                Vec<usize>,
+            )> = Vec::new();
+            for edge in product.outgoing(ids[state]) {
+                if edge.probability == Rational::from_integer(0_i64.into()) {
+                    continue;
+                }
+                let weighted = edge.probability.mul(&values[edge.to.index()]);
+                match choices
+                    .iter_mut()
+                    .find(|(action, _, _)| same_mean_time_choice(action, &edge.choice))
+                {
+                    Some((_, total, targets)) => {
+                        *total = total.add(&weighted);
+                        targets.push(edge.to.index());
+                    }
+                    None => choices.push((&edge.choice, weighted, vec![edge.to.index()])),
+                }
+            }
+            for (_, total, targets) in choices {
+                if total == values[state] {
+                    for target in targets {
+                        if !seen[target] {
+                            seen[target] = true;
+                            next.push(target);
+                        }
+                    }
+                }
+            }
+        }
+        layer = next;
+    }
+    false
+}
+
 pub(super) fn run(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -204,7 +260,12 @@ pub(super) fn run(
     // `>= c` when the maximum is negative; the converse is a refutation, which
     // needs a timed witness replay that does not exist yet.
     let zero = Rational::from_integer(0_i64.into());
-    if (at_least && *value >= zero) || (!at_least && *value < zero) {
+    // A maximum of exactly 0 proves the claim only when no tight action leads
+    // to an activated state (FR-201, ADR-028 CE-4).
+    if (at_least && *value > zero)
+        || (at_least && *value == zero && tight_actions_activate(&product, &values, start.index()))
+        || (!at_least && *value < zero)
+    {
         return not_yet();
     }
     let values = values
@@ -275,5 +336,10 @@ pub(super) fn run(
             cancel,
         )
     })();
-    checked_report(checked, certificate, binding, Some(if at_least { Extremum::Max } else { Extremum::Min }), subject)
+    let extremum = if at_least {
+        Extremum::Max
+    } else {
+        Extremum::Min
+    };
+    checked_report(checked, certificate, binding, Some(extremum), subject)
 }

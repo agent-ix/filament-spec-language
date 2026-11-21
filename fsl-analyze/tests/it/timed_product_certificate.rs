@@ -739,7 +739,7 @@ fn elapsed_quantile_at_least_is_certified_over_regions() {
 /// FR-877-AC-3 (certificate half): an `upper` document whose values are
 /// lowered below the checker's own enumeration is rejected `InequalityFails`,
 /// and one raised to a non-negative initial value misses the strict threshold.
-#[trace("TC-2494", "FR-877-AC-3")]
+#[trace("TC-2494", "FR-201")]
 #[test]
 fn elapsed_quantile_altered_upper_value_is_rejected() {
     let world = quantiles();

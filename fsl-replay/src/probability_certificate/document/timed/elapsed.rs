@@ -172,6 +172,11 @@ pub(super) fn check(
         } else {
             super::super::super::RewardValues::Exact
         },
+        if at_least {
+            ProbabilityBoundSide::AtLeast
+        } else {
+            ProbabilityBoundSide::AtMost
+        },
         &activated,
         cancel,
     )

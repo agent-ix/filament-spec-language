@@ -1862,6 +1862,7 @@ fn check_exact_terminal_rewards(
     objective: ProbabilityObjective,
     bound: &Bound,
     reading: RewardValues,
+    side: ProbabilityBoundSide,
     activated: &BTreeSet<ProbabilityProductKey>,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
@@ -1910,61 +1911,73 @@ fn check_exact_terminal_rewards(
     let meets_bound = match (bound, reading) {
         (Bound::AtLeast(threshold), RewardValues::Exact) => initial >= threshold,
         (Bound::AtMost(threshold), RewardValues::Exact) => initial <= threshold,
-        (Bound::AtLeast(threshold), RewardValues::StrictUpper) => initial > threshold,
         (Bound::AtMost(threshold), RewardValues::StrictUpper) => initial < threshold,
-    };
-    if !meets_bound {
-        let at_threshold = matches!(bound, Bound::AtLeast(t) | Bound::AtMost(t) if t == initial);
-        if reading == RewardValues::StrictUpper && at_threshold {
-            // FR-201's tight actions: the actions that attain each state's
-            // value, followed from the initial state until an activated
-            // state, where the measure's transform is positive somewhere.
-            let mut seen = BTreeSet::from([graph.initial.clone()]);
-            let mut pending = std::collections::VecDeque::from([graph.initial.clone()]);
-            while let Some(key) = pending.pop_front() {
-                poll_cancel(cancel)?;
-                if activated.contains(&key) {
-                    return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
-                }
-                let Some(state) = graph.states.get(&key) else {
-                    return Err(ExactProbabilityGraphError::MissingSuccessor);
-                };
-                let Some(own) = values.get(&key) else {
-                    return Err(ExactProbabilityGraphError::MissingSuccessor);
-                };
-                let Some((_, each)) = choice_values(state, &values, objective, &zero, &one, cancel)?
-                else {
-                    continue;
-                };
-                for (choice, value) in state.choices.iter().zip(each) {
-                    if &value != own {
-                        continue;
-                    }
-                    for edge in choice {
-                        if edge.probability != zero && seen.insert(edge.target.clone()) {
-                            pending.push_back(edge.target.clone());
-                        }
-                    }
-                }
-            }
+        // An upper certificate cannot prove a lower bound.
+        (Bound::AtLeast(_), RewardValues::StrictUpper) => {
+            return Err(ExactProbabilityGraphError::UnsupportedClaimForm);
         }
+    };
+    let accepted = |value: &Rational| {
+        Ok(ExactProbabilityCertificateCheck::Accepted(
+            ExactProbabilityAcceptance {
+                initial_values: None,
+                document: None,
+                value: value.clone(),
+                certificate: certificate.clone(),
+                side,
+            },
+        ))
+    };
+    if meets_bound {
+        return accepted(initial);
+    }
+    let at_threshold = matches!(bound, Bound::AtLeast(t) | Bound::AtMost(t) if t == initial);
+    if reading != RewardValues::StrictUpper || !at_threshold {
         return Ok(rejected(
             ProbabilityCertificateRule::ThresholdMissed,
             graph.initial.clone(),
         ));
     }
-    Ok(ExactProbabilityCertificateCheck::Accepted(
-        ExactProbabilityAcceptance {
-            initial_values: None,
-            document: None,
-            value: initial.clone(),
-            certificate: certificate.clone(),
-            side: match bound {
-                Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
-                Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
-            },
-        },
-    ))
+    // FR-201's tight actions: the actions that attain each state's value,
+    // followed breadth-first from the initial state, each layer in canonical
+    // order. Reaching an activated state rejects at the first one; reaching
+    // none accepts, since no scheduler then meets equality while activating.
+    let mut seen = BTreeSet::from([graph.initial.clone()]);
+    let mut layer = BTreeSet::from([graph.initial.clone()]);
+    while !layer.is_empty() {
+        poll_cancel(cancel)?;
+        if let Some(key) = layer.iter().find(|key| activated.contains(*key)) {
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                key.clone(),
+            ));
+        }
+        let mut next = BTreeSet::new();
+        for key in &layer {
+            let Some(state) = graph.states.get(key) else {
+                return Err(ExactProbabilityGraphError::MissingSuccessor);
+            };
+            let Some(own) = values.get(key) else {
+                return Err(ExactProbabilityGraphError::MissingSuccessor);
+            };
+            let Some((_, each)) = choice_values(state, &values, objective, &zero, &one, cancel)?
+            else {
+                continue;
+            };
+            for (choice, value) in state.choices.iter().zip(each) {
+                if &value != own {
+                    continue;
+                }
+                for edge in choice {
+                    if edge.probability != zero && seen.insert(edge.target.clone()) {
+                        next.insert(edge.target.clone());
+                    }
+                }
+            }
+        }
+        layer = next;
+    }
+    accepted(initial)
 }
 
 /// The expectation of each choice of a nonterminal state under `values` and
@@ -3057,6 +3070,100 @@ mod tests {
             ),
             Err(ExactProbabilityGraphError::InvalidDigitalKey)
         );
+    }
+
+    #[trace("FR-201")]
+    #[test]
+    fn strict_upper_terminal_rewards_at_zero_follow_tight_actions() {
+        let ratio = |numerator: i64, denominator: i64| {
+            Rational::new(Integer::from(numerator), Integer::from(denominator))
+                .expect("nonzero denominator")
+        };
+        let terminal = || CheckerState {
+            terminal: Some(true),
+            choices: Vec::new(),
+        };
+        // s0 = key(0); the tight choice reaches t1 = key(1) with 9/10 and
+        // t2 = key(2) with 1/10, so its value is 9/100 - 9/100 = 0; the
+        // optional second choice reaches sx = key(3) with value -1/2.
+        let graph = |with_other: bool| {
+            let mut choices = vec![vec![edge(1, 9, 10), edge(2, 1, 10)]];
+            if with_other {
+                choices.push(vec![edge(3, 1, 1)]);
+            }
+            let mut states = BTreeMap::new();
+            states.insert(key(0), CheckerState { terminal: None, choices });
+            for target in 1..=3 {
+                states.insert(key(target), terminal());
+            }
+            CheckerGraph {
+                initial: key(0),
+                states,
+            }
+        };
+        let rewards: BTreeMap<_, _> = BTreeMap::from([
+            (key(1), ratio(1, 10)),
+            (key(2), ratio(-9, 10)),
+            (key(3), ratio(-1, 2)),
+        ]);
+        let certificate = |initial: Rational| ExactProbabilityCertificate {
+            values: vec![
+                ExactProbabilityValue {
+                    state: key(0),
+                    value: initial,
+                },
+                ExactProbabilityValue {
+                    state: key(1),
+                    value: ratio(1, 10),
+                },
+                ExactProbabilityValue {
+                    state: key(2),
+                    value: ratio(-9, 10),
+                },
+                ExactProbabilityValue {
+                    state: key(3),
+                    value: ratio(-1, 2),
+                },
+            ],
+        };
+        let check = |graph: &CheckerGraph, initial: Rational, activated: &[u8]| {
+            check_exact_terminal_rewards(
+                graph,
+                &rewards,
+                &certificate(initial),
+                ProbabilityObjective::Maximum,
+                &Bound::AtMost(rational(0)),
+                RewardValues::StrictUpper,
+                ProbabilityBoundSide::AtLeast,
+                &activated.iter().copied().map(key).collect(),
+                &Cancel::new(),
+            )
+            .expect("the check settles")
+        };
+        // (a) The initial state is activated: the tight search rejects there.
+        match check(&graph(false), rational(0), &[0]) {
+            ExactProbabilityCertificateCheck::Rejected(rejection) => {
+                assert_eq!(rejection.rule, ProbabilityCertificateRule::InequalityFails);
+                assert_eq!(rejection.at, ProbabilityCertificateLocus::ProductState(key(0)));
+            }
+            other => panic!("expected a rejection, got {other:?}"),
+        }
+        // (b) Only a non-tight choice reaches the activated state: accepted
+        // with the claim's side.
+        match check(&graph(true), rational(0), &[3]) {
+            ExactProbabilityCertificateCheck::Accepted(accepted) => {
+                assert_eq!(accepted.side, ProbabilityBoundSide::AtLeast);
+                assert_eq!(accepted.value, rational(0));
+            }
+            other => panic!("expected an acceptance, got {other:?}"),
+        }
+        // (c) An initial value below the best choice is unsound.
+        match check(&graph(false), ratio(-1, 20), &[]) {
+            ExactProbabilityCertificateCheck::Rejected(rejection) => {
+                assert_eq!(rejection.rule, ProbabilityCertificateRule::InequalityFails);
+            }
+            other => panic!("expected a rejection, got {other:?}"),
+        }
     }
 
     #[trace("FR-920-AC-1")]
