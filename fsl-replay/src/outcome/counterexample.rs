@@ -2115,6 +2115,30 @@ pub fn graph_evidence_wire(
     Ok(written)
 }
 
+/// FSpec FR-331's `TransitionIdentity` spelling of one task-derived
+/// transition: a source `transition`, a `task-transition` or the
+/// `terminal-stutter` marker.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] when the identity has no canonical spelling.
+pub fn task_product_transition_wire(
+    transition: &TaskProductTransition,
+) -> Result<Json, CounterexampleWireError> {
+    Spelling::transition(transition)
+}
+
+/// FSpec FR-331's `State` locus `{key}` of a state key.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] when the key has no wire spelling.
+pub fn state_key_wire(
+    key: &fsl_eval::simulation::StateKey,
+) -> Result<Json, CounterexampleWireError> {
+    state(key)
+}
+
 #[cfg(test)]
 mod tests {
     use filament_exact::{Integer, Origin, Role, Undefined};
@@ -2845,26 +2869,3 @@ mod tests {
     }
 }
 
-/// FSpec FR-331's `TransitionIdentity` spelling of one task-derived
-/// transition: a source `transition`, a `task-transition` or the
-/// `terminal-stutter` marker.
-///
-/// # Errors
-///
-/// [`CounterexampleWireError`] when the identity has no canonical spelling.
-pub fn task_product_transition_wire(
-    transition: &TaskProductTransition,
-) -> Result<Json, CounterexampleWireError> {
-    Spelling::transition(transition)
-}
-
-/// FSpec FR-331's `State` locus `{key}` of a state key.
-///
-/// # Errors
-///
-/// [`CounterexampleWireError`] when the key has no wire spelling.
-pub fn state_key_wire(
-    key: &fsl_eval::simulation::StateKey,
-) -> Result<Json, CounterexampleWireError> {
-    state(key)
-}

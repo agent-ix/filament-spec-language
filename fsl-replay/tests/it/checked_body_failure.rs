@@ -3,7 +3,7 @@
 
 use filament_eval::{
     Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, FamilyOutcome,
-    LiveContext, Resume, Transition,
+    Resume, Transition,
 };
 use filament_exact::{
     Cancel, CancelCause, ChargePoint, Integer, LimitKind, Meter, Outcome, ScalarLimits,
