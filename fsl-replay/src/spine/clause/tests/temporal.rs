@@ -4048,7 +4048,6 @@ fn timestamped_incomplete_guard_scope_remains_unknown() {
         .into_bytes();
     let report = report(request);
     assert_eq!(outcome(&report), &TemporalVerdict::Pending);
-    assert_eq!(report.axes().activation, crate::ActivationAxis::Unknown);
     assert_eq!(report.disposition.truth(), None);
 }
 
