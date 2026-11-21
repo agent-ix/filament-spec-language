@@ -164,3 +164,27 @@ scope:
 ## Publication
 
 Local only under Peter's Linear hold and parent-only central batch. Findings are not posted, label state is unknown, read-back is pending. Parent owns explicit baseline dispositions and publication.
+
+## Dispositions
+
+Round 1 at frozen head `ee63828c951444597cd30ecdf6ef02a6a8ea19b2`. The original findings above are preserved unchanged.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | accepted-no-change | Root explicitly accepts no change for 1164 baseline untagged criteria, represented by FR-001-AC-7, for this bounded IEEE fix; global assurance remains FAIL. |
+| FND-002 | accepted-no-change | Root explicitly accepts no change for 74 baseline ignored-only criteria, represented by FR-056-AC-60, for this bounded IEEE fix; global assurance remains FAIL. |
+| FND-003 | fixed | New trace attribute normalized; actual local binding and focused passing execution verified. |
+
+## Disposition evidence
+
+The only source changes since the original review import the existing ix_trace_rs::trace macro and change only the new test attribute to #[trace]. All three criterion IDs and the entire test body/assertions remain intact. Existing qualified attributes remain unchanged. Production protocol_locations.rs and public spine_run.rs are byte-identical to the reviewed 716f0d44a3d23dfc58e7ec4347ff29fd675f03f5 head. The two initial committed SRs were checked byte-identical to the original scratch artifacts before appending these dispositions.
+
+In /Users/peter/dev/qualification-logs/qsl-2753/, qsl2753-fix1-trace.json resolves the exact new test, with all three structural claims.verifies IDs; citations are not treated as claims. qsl2753-fix1-coverage.json's actual coverage_matrix gives FR-531-AC-39 status tagged and the exact new body_locations.rs test binder at line 339. The convenience qsl2753-fix1-binding.json has an empty criterion array and was not used as proof. Retained stderr is not empty: trace: 29 symbol-id-collision warnings in existing unrelated fixtures/cfg alternatives; coverage: 29 symbol-id-collision warnings in existing unrelated fixtures/cfg alternatives. None concerns the new test or defeats its resolved claim/binder. The two FSpec near-miss citations remain external-scope extraction limitations. This establishes supplemental carrier coverage, not complete qualification of AC-39's clause-specific fixture.
+
+At this exact head, retained qsl2753-fix1-package.log reports 1 passed, 0 failed, 0 ignored, 1074 filtered for the new package test. Dispatch attributes this Titan run to the frozen head, with -j16 --locked --test-threads=4 and exit 0. The original 5 public and 7 package passing tests remain prior-head evidence, with production collector and public regression code unchanged; they are not relabeled as new runs. Root explicitly accepts the eight unchanged fsl-replay root-Clippy errors for this scoped delivery only; root lint remains unqualified.
+
+No Cargo, gate, repeated public suite or Clippy was run by this reviewer. Direct rustfmt --check on the changed file and git diff --check passed. No source edit, rebase or dependency change was made.
+
+## Latest disposition verdict
+
+Global assurance remains FAIL. MERGEABLE for this bounded IEEE fix: baseline FND-001 and FND-002 accepted-no-change by root, local FND-003 fixed. No finding remains still-open; no new findings in this disposition round. Runtime model ID remains unknown. Publication, tracker dedup, label operations and read-back remain pending root central batch; reviewer made no tracker access.
