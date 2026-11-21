@@ -11,7 +11,9 @@ pub use key::{
     TaskArrivalPhase, TaskJobPhase, TaskLiveJob, TaskPendingBudgetChange, TaskProductKey,
     TaskProductKeyRefusal, TaskSchedulerControl,
 };
-pub(crate) use wire::{array, child, count, integer, member, object, refuse, source_transition, source_transition_wire};
+pub(crate) use wire::{
+    array, child, count, integer, member, object, refuse, source_transition, source_transition_wire,
+};
 pub use wire::{
     same_source_transition, TaskProductShapeReason, TaskProductShapeRefusal, TaskProductWireError,
 };

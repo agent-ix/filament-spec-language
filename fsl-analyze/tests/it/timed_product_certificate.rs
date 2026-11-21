@@ -630,7 +630,6 @@ fn zero_time_cycle_without_end_component_is_certified() {
 /// FR-924-AC-5: a time-locked initial state is terminal.
 #[trace("TC-2493", "FR-924-AC-5")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-6")]
-#[ignore = "QSL-2156: the timed deadline checker does not accept a workload scheduler yet"]
 #[test]
 fn time_locked_state_is_certified_terminal() {
     let world = retx(

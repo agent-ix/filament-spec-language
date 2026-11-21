@@ -313,7 +313,6 @@ fn collapse_zero_time_components(
             }
             UnboundedError::MaxPolicyIterations => FhError::PolicyIterationLimit,
             UnboundedError::Singular
-            | UnboundedError::MaxPolicyIterations
             | UnboundedError::MissingReward
             | UnboundedError::ZeroWeightComponent => FhError::Cycle,
         })?;

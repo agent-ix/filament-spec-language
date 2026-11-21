@@ -86,9 +86,6 @@ pub(super) fn check(
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    if !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every) {
-        return Err(ProbabilityDocumentError::Unsupported);
-    }
     let binding = claim_binding(system, claim)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?
         .map(|binding| binding.reference);
@@ -119,6 +116,15 @@ pub(super) fn check(
             &mut storage,
         )?,
     };
+    if matches!(
+        claim.scheduler,
+        fsl_semantics::check::ProbScheduler::Workload(_)
+    ) && graph.states.values().any(|state| state.choices.len() > 1)
+    {
+        // A workload resolves a choice by its weights; the checker mirrors
+        // only the states that leave the scheduler no choice.
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
     if target_keys(&graph) != document.targets {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
@@ -859,7 +865,10 @@ fn enumerate_region_mean_time(
         let actions = system
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+            .into_iter()
+            .filter(|action| workload_allows(system, claim, &action.identity.operation))
+            .collect::<Vec<_>>();
         for action in actions {
             charge_work(meter, cancel, 1)?;
             let mut choice: Vec<ProbabilityEdge> = Vec::new();
@@ -1375,8 +1384,14 @@ fn enumerate_digital_deadline(
         let actions = system
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-        let enabled = digital_enabled_actions(system, timed, &current.timed, cancel)?;
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+            .into_iter()
+            .filter(|action| workload_allows(system, claim, &action.identity.operation))
+            .collect::<Vec<_>>();
+        let enabled = digital_enabled_actions(system, timed, &current.timed, cancel)?
+            .into_iter()
+            .filter(|action| workload_allows(system, claim, &action.identity.operation))
+            .collect::<Vec<_>>();
         let delta = rational_units(1, key_scale)?;
         let can_delay = timed
             .delay(&current.timed, &delta)
@@ -1741,7 +1756,10 @@ fn enumerate_region_deadline(
         let actions = system
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+            .into_iter()
+            .filter(|action| workload_allows(system, claim, &action.identity.operation))
+            .collect::<Vec<_>>();
         for action in actions {
             charge_work(meter, cancel, 1)?;
             let mut choice: Vec<ProbabilityEdge> = Vec::new();
@@ -2301,6 +2319,28 @@ fn digital_idle_delay(
     };
     let key = digital_key(system, timed, binding, &state, caps, scale, deadline)?;
     Ok(Some((key, state)))
+}
+
+/// Whether `operation` runs under the claim's scheduler: every operation under
+/// every scheduler, a positively weighted one under a workload.
+fn workload_allows(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    operation: &str,
+) -> bool {
+    let fsl_semantics::check::ProbScheduler::Workload(name) = &claim.scheduler else {
+        return true;
+    };
+    system
+        .source_package()
+        .and_then(|package| package.graph().probabilistic_model().workload(name))
+        .is_some_and(|workload| {
+            workload.weights().iter().any(|(weighted, weight)| {
+                !weight.is_zero()
+                    && system.operation_text(weighted.declaring(), weighted.name())
+                        == Some(operation)
+            })
+        })
 }
 
 fn discrete_delay(system: &ModelSystem<'_>, operation: &str) -> Option<Vec<(Rational, Rational)>> {
