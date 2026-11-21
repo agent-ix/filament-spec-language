@@ -99,7 +99,7 @@ pub struct PackageAttemptContext {
 /// The package-native protocol program needed by selection and execution.
 pub struct PackageProtocolProgram<'a> {
     /// The protocol's intended terminal states, read from its admitted obligation.
-    pub terminal: PackageTerminal,
+    pub(super) terminal: PackageTerminal,
     /// The admitted protocol name.
     pub name: String,
     /// The `run` root control.
@@ -131,7 +131,7 @@ pub struct PackageProtocolProgram<'a> {
 }
 
 /// A protocol terminal declaration read directly from the admitted package.
-pub enum PackageTerminal {
+pub(super) enum PackageTerminal {
     /// No terminal declaration: a stopped live instance is deadlocked.
     None,
     /// Every stopped state is intended.
@@ -244,9 +244,9 @@ impl<'a> PackageProtocolProgram<'a> {
                                 fsl_package::CheckedTerm::Binding { name, value }
                                     if &**name == "mode" =>
                                 {
-                                    match &**value {
-                                        fsl_package::CheckedTerm::Literal { value, .. } => {
-                                            value.as_str()
+                                    match value.literal_read().map(|literal| literal.value) {
+                                        Some(fsl_package::CheckedLiteralValue::Text(mode)) => {
+                                            Some(mode)
                                         }
                                         _ => None,
                                     }

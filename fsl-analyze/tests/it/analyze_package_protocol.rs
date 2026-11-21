@@ -99,7 +99,10 @@ fn package_terminal_classifies_blocked_live_instances() {
         let path = terminal_request(&ws, terminal, true);
         let source = analyze(&path);
         assert_eq!(label(&source.item(0)), expected, "{}", source.document());
-        let package = package_run(&ws, &path);
+        let (package_path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl"))
+            .expect("remove source before package analysis");
+        let package = analyze(&package_path);
         assert_eq!(package.item(0), source.item(0), "{}", package.document());
         assert_eq!(package.exit, source.exit);
         if expected == "refuted" {
