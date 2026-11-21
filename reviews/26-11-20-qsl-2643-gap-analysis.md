@@ -46,3 +46,11 @@ Ticket: QSL-2643. Plan completion: not assessed. This is a manual AC-to-test che
 - **FND-001.** See code-review SR-2026112100331600000000001 FND-004 for the implementation side. The test side is that no assertion distinguishes a replay under the two rows from a replay under one shared system.
 - **FND-002.** Add `assert!(trace.steps.iter().all(|s| matches!(s, HyperStep::Model(_))))` for each projected trace, and assert that its kind carries no loop entry.
 - **FND-003.** Assert `verdict == "refuted"` and `item["replay"]["reproduced"] == true` without the `if`.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Engine, letters and replay now run each trace over its own alias's model system (`alias_system`/`for_alias`; tests use `seams.per_trace()`). The AC-12 CLI test asserts `replay.reproduced == true` on a refuted two-model clause. The event-position row's only content, `sequence_authority`, is that model's identity, so per-model systems are the per-row reading. |
+| FND-002 | fixed | `an_event_position_projection_aligned_clause_reaches_a_verdict` asserts kind `Closed`, which has no loop, and that every step of both traces is `HyperStep::Model` (no stutter). The naming mismatch with AC-6's "projected" is code-review FND-013. |
+| FND-003 | fixed | `analyze_family_cli.rs:907-909` asserts `verdict == "refuted"` and `item["replay"]["reproduced"] == true` unconditionally. |

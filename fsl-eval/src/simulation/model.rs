@@ -819,7 +819,7 @@ impl<'a> ModelSystem<'a> {
     /// FR-106's [`AdmissionFailure`]: `Refused` or `Incomplete`, one record.
     pub fn new(request: ModelSimulationRequest<'a>) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over(request, selections, None, false)
+        Self::over(request, selections, None, &[])
     }
 
     /// [`Self::new`] over the `model_selections` rows the subject reads: those
@@ -852,7 +852,7 @@ impl<'a> ModelSystem<'a> {
             return Self::new(request);
         }
         let sources = request.input.source_packages;
-        Self::over(request, ModelSelections::new(&read, sources), None, false)
+        Self::over(request, ModelSelections::new(&read, sources), None, &[])
     }
 
     /// [`Self::new`] with the caller's cancellation shared by qualified
@@ -866,7 +866,7 @@ impl<'a> ModelSystem<'a> {
         cancel: &filament_exact::Cancel,
     ) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over(request, selections, Some(cancel), false)
+        Self::over(request, selections, Some(cancel), &[])
     }
 
     /// The model system's selected populations in ascending declaration-key
@@ -897,7 +897,7 @@ impl<'a> ModelSystem<'a> {
             _ => None,
         };
         match model {
-            Some(model) => Self::over_model(request, &model),
+            Some(model) => Self::over_model_of(request, &model, true),
             None => Self::new(request),
         }
     }
@@ -915,6 +915,18 @@ impl<'a> ModelSystem<'a> {
         request: ModelSimulationRequest<'a>,
         model: &str,
     ) -> Result<Self, AdmissionFailure> {
+        Self::over_model_of(request, model, false)
+    }
+
+    /// [`Self::over_model`], skipping each universe of a population that
+    /// another selected model owns when `skip_other_models` (a hyper clause's
+    /// universes name the populations of every model its aliases range over).
+    /// A universe of no selected model's population is refused either way.
+    fn over_model_of(
+        request: ModelSimulationRequest<'a>,
+        model: &str,
+        skip_other_models: bool,
+    ) -> Result<Self, AdmissionFailure> {
         let selected: Vec<_> = request
             .input
             .model_selections
@@ -930,11 +942,26 @@ impl<'a> ModelSystem<'a> {
             ));
         }
         let sources = request.input.source_packages;
+        let others = if skip_other_models {
+            let every = StateModel::new(
+                request.input.model_inputs(),
+                request.input.types,
+                request.packages,
+                request.normalization,
+            )?;
+            every
+                .populations()
+                .iter()
+                .map(|population| population.key.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
         Self::over(
             request,
             fsl_semantics::model::observation::ModelSelections::new(&selected, sources),
             None,
-            true,
+            &others,
         )
     }
 
@@ -942,7 +969,7 @@ impl<'a> ModelSystem<'a> {
         request: ModelSimulationRequest<'a>,
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
         cancel: Option<&filament_exact::Cancel>,
-        foreign_universes_ignored: bool,
+        other_models: &[DeclarationKey],
     ) -> Result<Self, AdmissionFailure> {
         let input = request.input;
         let types = input.types;
@@ -956,7 +983,7 @@ impl<'a> ModelSystem<'a> {
                 .iter()
                 .any(|population| population.key == universe.population)
             {
-                if foreign_universes_ignored {
+                if other_models.contains(&universe.population) {
                     continue;
                 }
                 return Err(refused(

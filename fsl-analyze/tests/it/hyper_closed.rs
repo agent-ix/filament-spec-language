@@ -10,7 +10,7 @@
 use filament_exact::{Cancel, CancelCause};
 use fsl_replay::{
     settle_hyper_check, ExistentialOutcome, HyperCounterexampleKind, HyperOutcome, HyperStep,
-    IncompleteCause, ModelCheckLimits, ModelTraceSettlement, ModelTraceValue, ResultLabel,
+    IncompleteCause, ModelCheckLimits, ModelTraceSettlement, ModelTraceValue, ResultLabel, RunEnd,
     TerminalValue,
 };
 use fsl_route::reductions::Reductions;
@@ -364,24 +364,82 @@ fn an_event_position_run_that_a_limit_or_cancellation_stops_decides_nothing() {
     }
 }
 
-/// HP-5 over closed executions: a limit that stops the witness search leaves
-/// the instance with no decision, never `Trapped`.
+/// HP-5 over closed executions: a body evaluation whose meter is exhausted
+/// settles no witness, so the instance has no decision and is never `Trapped`.
 #[trace("TC-2243", "FR-173-AC-6")]
 #[test]
 fn an_event_position_single_existential_run_that_a_limit_stops_is_not_trapped() {
     let declaration = "hyper Possible using ep over behaviours (v: V::Vault) \
         exists trace b of V { eventually [0, 2] holds(v.h @ b = 0) }";
     let world = World::new(Vault::Secure, false, &[(1, 0)], declaration);
-    let mut limits = ModelCheckLimits::default();
-    limits.limits.max_states = 1;
     let run = world
-        .run_single(limits, None, &Cancel::new())
+        .run_single_metered(
+            ModelCheckLimits::default(),
+            None,
+            crate::counter::ZERO,
+            &Cancel::new(),
+        )
         .expect("the run is not refused");
     let [instance] = run.instances.as_slice() else {
         panic!("one instance: {run:?}");
     };
+    let ExistentialOutcome::NoDecision { end, .. } = &instance.outcome else {
+        panic!("no decision, not a trap: {instance:?}");
+    };
     assert!(
-        matches!(&instance.outcome, ExistentialOutcome::NoDecision { .. }),
-        "{instance:?}"
+        matches!(
+            end,
+            RunEnd::Stopped {
+                cause: IncompleteCause::ResourceExhausted,
+                limit: Some(_)
+            }
+        ),
+        "{end:?}"
     );
+}
+
+/// A universe naming no selected model's population is refused
+/// `wrong-role-mapping` by `over_model` and by the alias path alike; a universe
+/// of another selected model's population is refused by `over_model` and
+/// skipped by the alias path, where one clause ranges over both models.
+#[trace("TC-2243", "FR-173-AC-6")]
+#[test]
+fn a_universe_of_no_selected_model_is_refused_and_one_of_another_model_is_skipped() {
+    use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
+
+    let world = two_models(FORALL_FORALL, "always [0, 3] holds(v.l @ a = w.l @ b)");
+    let subject = world.subject();
+    let own = world
+        .package
+        .graph()
+        .model_package_identity("V")
+        .expect("V names a model")
+        .to_owned();
+    let refused = |simulation, alias: Option<&str>| {
+        let failure = match alias {
+            Some(alias) => ModelSystem::for_alias(simulation, alias),
+            None => ModelSystem::over_model(simulation, &own),
+        }
+        .err()
+        .expect("the universe is refused");
+        format!("{failure:?}")
+    };
+
+    // The alias path skips the other model's universe: both aliases admit.
+    assert!(ModelSystem::for_alias(subject.simulation.clone(), "V").is_ok());
+    assert!(ModelSystem::for_alias(subject.simulation.clone(), "N").is_ok());
+    // `over_model` keeps the refusal for it.
+    let text = refused(subject.simulation.clone(), None);
+    assert!(text.contains("wrong-role-mapping"), "{text}");
+
+    // A mis-keyed universe is refused on both paths.
+    let mut mis_keyed = subject.simulation.clone();
+    mis_keyed.universes.push(PopulationUniverse {
+        population: crate::hyper_world::key("nowhere"),
+        keys: vec![KEY.to_owned()],
+    });
+    for alias in [None, Some("V"), Some("N")] {
+        let text = refused(mis_keyed.clone(), alias);
+        assert!(text.contains("wrong-role-mapping"), "{alias:?}: {text}");
+    }
 }

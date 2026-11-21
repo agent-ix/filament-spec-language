@@ -92,3 +92,41 @@ Four things are wrong:
   - **Fix.** Assert `refuted` and `reproduced`, add the missing cases, and match the refusal's message.
 - **FND-008.** The engine enumerates existential executions with `max_states` as the limit (`closed.rs:63`). Replay uses `max_witness_set` as the limit for the same enumeration (`hyper_replay.rs:1503`), then again as the product limit. When the number of executions is above `max_witness_set` but below `max_states`, an engine refutation replays as `Stopped` and is not accepted. That direction is safe, but it is a mismatch. The `covers` check is `taken == horizon`, so a terminal trace with more than `h` steps is accepted, a shape the engine never emits.
 - **FND-009.** The comment at hyper_clause.rs:1364-1366 predates the event-position form and now misdescribes the code. It is also where the bounded-profile rule should apply (FND-001).
+
+## New findings (disposition pass 1)
+
+Head `d5ee68fd54`, rebased on FSL `origin/main` `3b91bd86a9`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | medium | FR-173-AC-3 and the arch ruling require ADR-023 §1's `NonInterference` (body `always holds(v.l @ a = v.l @ b)`, a bare operator) to classify `Universal` under event-position, but the FND-001 fix refuses bare operators there (FR-326). The AC-3 test was edited to `always [0, 2]`, so AC-3 as written is no longer met. This needs a spec amendment or an arch ruling | fsl-semantics/tests/it/hyper_clauses.rs:674-678; fsl-semantics/src/check/hyper_clause.rs:1372-1375 |
+| FND-011 | medium | `ModelSystem::over_model` now ignores every universe whose population is not in the selected model. This also changes the existing refinement callers: a universe naming no selected model's population is silently dropped, where before it was refused `wrong-role-mapping` | fsl-eval/src/simulation/model.rs:938, 952-954; fsl-replay/src/refinement/subject.rs:205, 272; fsl-analyze/src/plan.rs:373 |
+| FND-012 | low | The HP-5 limit test sets `max_states = 1`, which stops in the enumeration's existing `Err` branch. It never reaches the fixed `ClosedVerdict::Incomplete` branch, so it passes on the pre-fix code | fsl-analyze/tests/it/hyper_closed.rs:371-387; fsl-analyze/src/model_check/hyper/single.rs:1357 |
+| FND-013 | low | The HP-6 refutation is now `HyperCounterexampleKind::Closed` (wire `"closed"`) with step marks, while FR-173-AC-6 says "projected counterexample". `Closed`'s doc still says "HP-2 or HP-3" only | fsl-replay/src/model_check/hyper_counterexample.rs:135-143; fsl-analyze/tests/it/hyper_closed.rs:188 |
+
+- **FND-010.**
+  - **What changed.** `check_behaviours` now reads event-position hyper intervals with `bounded: true`, so `always holds(...)` refuses `unsupported_construct`/`expression-form`. `a_single_existential_clause_admits_no_match_and_the_event_profile_classifies` now replaces `always holds` with `always [0, 2] holds` before asserting `Universal`.
+  - **Why the code is defensible.** It is consistent with ADR-014 TR-4 (a horizon exists only for a bounded-profile formula) and FR-326.
+  - **What is missing.** FR-173-AC-3 names the unbounded clause, and so does the ticket's ruling ("NonInterference under event-position gets the form").
+  - **Fix.** Land a spec PR that restates AC-3 (and the ruling) over a bounded `NonInterference`, or have arch rule that bare operators stay refused. Whichever is chosen, record it before merge.
+- **FND-011.**
+  - **What changed.** `foreign_universes_ignored` is `true` for every `over_model` call, not only for `for_alias`.
+  - **Failure.** A refinement request whose universe is keyed to a population of neither model now runs with that universe silently dropped. Before, it was refused.
+  - **Fix.** Skip only universes whose population belongs to another selected model, and keep refusing the rest. Add a test that a mis-keyed universe is still refused.
+  - **Confidence.** Low: I did not confirm that request admission does not already refuse such a universe earlier.
+- **FND-012.** The engine stops at `closed_executions` with `ClosedStop::Executions`, which `decide_closed` already mapped to `NoDecision` before this round. Fix: use a meter (`request.meter`) small enough that `judge_closed_tuple` returns `Incomplete`, and keep `max_states` at its default.
+- **FND-013.** In substance this conforms to FR-173: two closed traces, no loop, no stutter, and they replay. It is a naming mismatch. Fix: extend `Closed`'s doc (and FR-400's wire text, if it lists kinds) to cover HP-6 with marks. Optionally ask the spec to say "closed counterexample with skip marks".
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | `hyper_clause.rs:1372-1375` reads event-position intervals `bounded: true`, so bare `always`, `eventually` and `[a,*]` refuse `expression-form`. `horizon` returns `None` for an open or missing upper bound (`fsl-eval/src/hyper/closed.rs:107-115`). Test: `an_event_position_clause_refuses_an_operator_without_a_closed_upper_bound`. The AC-3 consequence is FND-010. |
+| FND-002 | fixed | `projected.rs` no longer emits `HoldsClosed`. An event-position HP-6 clause goes through `decide_closed` with `closed_executions(..., skips)` and `ClosedExecution::projection()`, so it is a closed reading with no stutter. Replay `projected()` refuses event-position clauses, and `closed()` accepts `ProjectionAligned` with marks. The HP-6 test asserts Model-only steps. |
+| FND-003 | fixed | `single.rs:1357-1379`: `Incomplete` (or a cancelled run) and `MatchUndetermined` set `stopped` and settle `NoDecision`. Only `Violated` and the unmatched verdicts fall through. The test gap is FND-012. |
+| FND-004 | fixed | `hyper_route.rs` builds one system per alias through `alias_system`/`ModelSystem::for_alias` over that alias's own model, and passes them to the engine (`check_hyper`), the letters and the replay. Each alias's event-position row carries only `sequence_authority` = its model's declaration identity, which is exactly the model `for_alias` selects. The tests use `seams.per_trace()`. |
+| FND-005 | fixed | `StepLabel::Ended` is used for a component past its last step. `CheckedStepMatch` skips only conjuncts whose `variables()` include an ended trace (`fsl-eval/src/hyper/checked.rs:44-65`). Test: `a_match_conjunct_over_two_traces_still_holds_after_a_third_has_ended`, which would refute under the old whole-part skip. |
+| FND-006 | fixed | `PartnerSearch::Cancelled` maps to `self.cancelled(totals)`, and `Incomplete` with the cancel set also settles cancelled (`fsl-analyze/src/model_check/hyper/closed.rs:203, 219-221`). Test: `an_event_position_run_that_a_limit_or_cancellation_stops_decides_nothing` (HP-2 and HP-3). |
+| FND-007 | fixed | The AC-12 CLI test asserts `refuted` and `replay.reproduced == true`. New tests cover terminal-inside-horizon, the per-conjunct `match`, `max_states` and cancellation stops, and HP-5 limits. The not-closed replay test matches the refusal text. All 10 `hyper_closed` tests and both AC-12 tests pass at `d5ee68fd54`. |
+| FND-008 | fixed | `HyperReplay.max_states` bounds the existential enumeration, as the engine does (`hyper_replay.rs:1542`). `taken > horizon`, or a trace ending in a skipped step at the horizon, is refused (`:1475-1484`). |
+| FND-009 | fixed | The comment at `hyper_clause.rs:1364-1368` now describes the per-profile reading. |

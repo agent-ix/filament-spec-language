@@ -16,7 +16,7 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Cancel, Meter, Value};
+use filament_exact::{Cancel, Meter, ScalarLimits, Value};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::model_check::{
@@ -863,6 +863,17 @@ impl World {
         seed: Option<u64>,
         cancel: &Cancel,
     ) -> Result<SingleExistentialRun, ModelCheckRefusal> {
+        self.run_single_metered(limits, seed, UNLIMITED, cancel)
+    }
+
+    /// [`Self::run_single`] with the evaluation meter `meter`.
+    pub(crate) fn run_single_metered(
+        &self,
+        limits: ModelCheckLimits,
+        seed: Option<u64>,
+        meter: ScalarLimits,
+        cancel: &Cancel,
+    ) -> Result<SingleExistentialRun, ModelCheckRefusal> {
         let seams = self.seams();
         check_single_existential(
             SingleExistentialRequest {
@@ -872,7 +883,7 @@ impl World {
                 limits,
                 max_depth: self.max_depth,
                 seed,
-                meter: UNLIMITED,
+                meter,
             },
             cancel,
         )
