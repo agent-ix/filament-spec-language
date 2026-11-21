@@ -318,6 +318,15 @@ claim canonical-reference authority. FSpec FR-336's canonical-reference
 conversion remains a separate dependency. A temporal model/protocol replay
 SHALL also retain its typed witness envelope and the selected model/subject
 inputs required by its family replay entry; a transcript alone is insufficient.
+The model subject SHALL retain `over` as explicit null or the original typed
+counterexample's selected ModelInstance in the closed form
+`{population: {package, node}, key}`, with string members. The reader SHALL
+resolve that original selection against the admitted model and use the payload's
+canonical reference only as a cross-check; it SHALL NOT infer a population or
+original instance from the reference. Where the existing family wire omits a
+native failure detail, bounded and cancelled evaluation of the admitted prefix
+SHALL reconstruct the detail and complete owning-family wire equality SHALL
+validate it; a reason string SHALL NOT substitute for typed failure identity.
 
 The reader SHALL authenticate the immutable original request, envelope and
 subject against their admitted bytes and original proving settings before
@@ -366,9 +375,9 @@ The Counter fixture is FR-620's.
 | FR-621-AC-16 | Over the probability fixture `Eventually`, the `proved` exact item writes `certificate.identity` and `certificate.document` that validate against FSpec's backend-provider `CertificateIdentity` and `ProbabilityCertificate`, with `identity.model` the owning model's identity text and a `node_id` path whose operands are `{"node": i}`; the item's `request.claim.node` equals `certificate.identity.node_id`; the `refuted` exact item `TooLikely` writes a `request.claim` that validates as FSpec's `Locus`, a `counterexample` in which no node id's path holds a node id object; this criterion does not assert that the `counterexample` validates against `CounterexampleEntry`; and the independent EN-5 checker accepts the proved item's `certificate.document` as written, with the item naming the same model. | Test (TC-3154) |
 | FR-621-AC-17 | A composition's component-guarantee premise item writes a `package` member naming its dependency and node ids that index that dependency's graph, so that item holds no node id object whose path holds a node id; the composition's own items write no `package` member, and keep in structural form exactly the node ids whose id or operand is a node of a direct dependency's graph while every other node id is held; and a run whose package has no admitted emission (the emit limit is reached) reports the typed cause, the strict reader's refusal or an unavailable graph, and writes no document with a structural node id. | Test (TC-3154) |
 
-| FR-621-AC-16 | An external process reading the item's serialized replay_context can recover its complete original request, package/source/document bytes, initial states, universes, target, obligation and family witness envelope. Missing bytes, an inconsistent envelope, or an unavailable canonical reference refuses reconstruction before consumer accounting is applied and does not turn the original refutation into a proof. | Test |
-| FR-621-AC-17 | With different producer and consumer accounting bounds, the reader first authenticates the original request/envelope under the immutable proving context, then independent replay uses the consumer's effective bound for every accounting counter, including a counter present in the producer's stage limits. The original request and envelope remain unchanged and supplied-value ceilings remain distinct. | Test |
-| FR-621-AC-18 | Through the native serialized-context command, independent hybrid replay admits the original package and dependency bytes, resolves the actual checked claim/model, restores the producer's typed counterexample and required certificate and runs native replay under explicit consumer limits. Protocol temporal input restores the actual ProtocolTransition payload and full subject instead of entering the model/task reader. A missing input, identity mismatch or refused/faulted recheck remains explicit; the producer's terminal record, refusal, certificate status, category and exit code are preserved. | Test |
+| FR-621-AC-18 | An external process reading the item's serialized replay_context can recover its complete original request, package/source/document bytes, initial states, universes, target, obligation and family witness envelope. Missing bytes, an inconsistent envelope, or an unavailable canonical reference refuses reconstruction before consumer accounting is applied and does not turn the original refutation into a proof. | Test |
+| FR-621-AC-19 | With different producer and consumer accounting bounds, the reader first authenticates the original request/envelope under the immutable proving context, then independent replay uses the consumer's effective bound for every accounting counter, including a counter present in the producer's stage limits. The original request and envelope remain unchanged and supplied-value ceilings remain distinct. | Test |
+| FR-621-AC-20 | Through the native serialized-context command, independent hybrid replay admits the original package and dependency bytes, resolves the actual checked claim/model, restores the producer's typed counterexample and required certificate and runs native replay under explicit consumer limits. Protocol temporal input restores the actual ProtocolTransition payload and full subject instead of entering the model/task reader. A missing input, identity mismatch or refused/faulted recheck remains explicit; the producer's terminal record, refusal, certificate status, category and exit code are preserved. | Test |
 
 ## Dependencies
 

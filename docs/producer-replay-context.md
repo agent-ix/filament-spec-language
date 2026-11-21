@@ -68,7 +68,7 @@ semantics rather than claiming serde support already exists.
 
 | Existing family form | `family_payload` / source and selected subject |
 | --- | --- |
-| Model temporal | Actual FR-364 payload produced by `temporal_wire`; read with `read_temporal_counterexample<ModelTransition>`. The transcript in `request.source` is retained as transcript, never substituted for the typed payload. Subject has exactly `initial`, `universes`, `expansion`, `timed`, `temporal_selections`. |
+| Model temporal | Actual FR-364 payload produced by `temporal_wire`; restored against the admitted native model. The transcript in `request.source` is retained as transcript, never substituted for the typed payload. Subject has exactly `initial`, `universes`, `expansion`, `timed`, `temporal_selections`, `over`. |
 | Protocol temporal | Actual payload from `protocol_temporal_wire`, including its complete protocol transition alphabet and subject. The FR-621 reader must restore `TemporalCounterexample<ProtocolTransition>`; today's generic temporal reader does not support this alphabet. Subject has exactly `model`, `protocol`, `over`, `roles`, `capacities`, `memory`, `max_store_buffer`, `max_messages`, `max_live_instances`, `temporal_selections`. |
 | Hybrid | `payload` is exactly `HybridCounterexample::to_wire(model, locate)`: `{type: "hybrid-counterexample", kind, trace}` including formula or undefined-evaluation kind. `envelope` is null. The FR-621 reader restores `ReplaySource::Hybrid` through the existing hybrid counterexample reader over the admitted graph/model and restores the actual certificate. Its subject mapping is specified below. |
 
@@ -81,10 +81,18 @@ canonical unsigned decimal strings unless the owning existing family form fixes
 another spelling. Original universe document bytes remain in `documents`.
 `temporal_selections` retains actual admitted clock-selection records; package
 clock declarations still come from the complete package, not an invented
-FR-336 `clocks` member.
+FR-336 `clocks` member. `over` is explicitly null when the original typed
+counterexample has no `over_binding`; otherwise it is exactly
+`{population: {package: string, node: string}, key: string}`, captured from that
+original `ModelInstance` using the same selected-population shape as protocol
+`over`. The population declaration and exact key must resolve against the
+admitted model and original selections. The payload's canonical reference is a
+cross-check of this retained selection; it cannot select a population or infer
+the original instance.
 
 Protocol subject `model` has exactly the model fields above excluding
-`temporal_selections`, which is shared by the protocol subject. `over`, roles,
+`temporal_selections` and `over`, which are carried by the protocol subject.
+`over`, roles,
 capacities and memory are the actual admitted `ProtocolTraceSubject` selections,
 using the existing protocol counterexample/subject and analyze request mappings;
 they are reconstructed against the admitted checked protocol. All selected
@@ -101,6 +109,15 @@ and exact instance key, using the canonical-reference owner's conversion where
 required. Selected `initial` references use the existing document reference
 `{authority, identity}`. Universe rows retain the owning population declaration
 and exact selected keys, and must agree with their original universe document.
+The native FR-364 writer is not a lossless serialization of every Rust failure
+member. Where it omits native failure details, the reader must reconstruct them
+by bounded, cancelled evaluation of the actual admitted prefix and validate the
+complete owning-family wire output against the supplied payload. Reason text
+does not confer a typed locus or cause identity. A fresh validated replay proves
+that this admitted prefix reproduces the supplied wire claim under the
+consumer's effective limits; it does not prove that omitted native fields were
+serialized by the producer.
+
 Clock-selection rows retain the actual `TemporalClockSelection` members:
 `source`, `declaration_span`, `clock`, `definition`, `trace`; existing package
 source/span/clock/artifact mappings apply and explicit absent trace is `null`.
