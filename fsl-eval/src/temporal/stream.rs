@@ -201,6 +201,8 @@ pub struct ClauseStream {
     /// Whether an activation read unknown for good or was skipped short of
     /// data.
     unknown: bool,
+    /// Whether a guard read true at some position.
+    admitted: bool,
     stopped: Option<u64>,
     undefined: Option<UndefinedEvaluation>,
     refused: Option<TemporalPosition>,
@@ -296,6 +298,7 @@ impl ClauseStream {
             opens: Vec::new(),
             violated: None,
             unknown: false,
+            admitted: false,
             stopped: None,
             undefined: None,
             refused: None,
@@ -408,6 +411,7 @@ impl ClauseStream {
         if self.insufficient.is_none() {
             self.insufficient = letter.insufficient.clone();
         }
+        self.admitted |= letter.when == Some(true);
         match &letter.stop {
             None => {}
             Some(PositionStop::Undefined(undefined)) => {
@@ -861,6 +865,7 @@ struct Carried {
     opens: Vec<Open>,
     violated: Option<u64>,
     unknown: bool,
+    admitted: bool,
     stopped: Option<u64>,
     /// The first data shortfall: position, atom node, count, `min_count`.
     insufficient: Option<(u64, usize, u64, u64)>,
@@ -888,6 +893,7 @@ impl ClauseStream {
             opens: self.opens.clone(),
             violated: self.violated,
             unknown: self.unknown,
+            admitted: self.admitted,
             stopped: self.stopped,
             insufficient: self.insufficient.as_ref().map(|short| {
                 (
@@ -923,6 +929,7 @@ impl ClauseStream {
         stream.opens = carried.opens;
         stream.violated = carried.violated;
         stream.unknown = carried.unknown;
+        stream.admitted = carried.admitted;
         stream.stopped = carried.stopped;
         stream.insufficient = match carried.insufficient {
             Some((at, atom, count, min_count)) => Some(InsufficientDataEvaluation {
@@ -944,6 +951,15 @@ impl ClauseStream {
             stream.ended = Some(Ended::Fault(fault("stream-read-failed")));
         }
         Some(stream)
+    }
+
+    /// Whether the stream reads a closed trace of a guarded `on each` clause
+    /// whose every guard so far read false, so that a holding outcome has no
+    /// activation behind it.
+    pub fn inactive(&self) -> bool {
+        self.reading == Reading::Closed
+            && matches!(self.activation, Activation::Each { guarded: true })
+            && !self.admitted
     }
 
     /// The position at which the reading stopped, when it did.

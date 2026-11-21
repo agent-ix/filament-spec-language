@@ -176,6 +176,7 @@ fn classify_clause_outcome(
         ))),
         ClauseDisposition::Compile(_)
         | ClauseDisposition::UnknownLanguage { .. }
+        | ClauseDisposition::ExtractionClauseCount { .. }
         | ClauseDisposition::NotAPredicate { .. }
         | ClauseDisposition::ArgumentRefusal(_)
         | ClauseDisposition::Temporal(_)

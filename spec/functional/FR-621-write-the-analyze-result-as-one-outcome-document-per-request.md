@@ -213,8 +213,8 @@ counterexample names the instance it refutes (FSpec FR-364
   evaluation of a temporal clause over one supplied trace, or a
   `finite-replay` item's evaluation of a protocol clause over its replayed
   trace) SHALL carry it as
-  FSpec FR-352's `disposition.temporal` with one of its sixteen kinds
-  (`holds`, `violated`, `undefined`, `insufficient-data`, `pending`,
+  FSpec FR-352's `disposition.temporal` with one of its seventeen kinds
+  (`inactive`, `holds`, `violated`, `undefined`, `insufficient-data`, `pending`,
   `pending-window`, `pending-next-event`, `indeterminate`,
   `missing-fairness-premise`, `incomplete`, `activation-incomplete`,
   `window-limit-reached`, `progress-limit-reached`, `progress-contradicted`,
@@ -223,7 +223,8 @@ counterexample names the instance it refutes (FSpec FR-364
   `pending` and basis `unsettled`; `indeterminate` has basis `unavailable`;
   `activation-incomplete` and `progress-limit-reached` have category
   `incomplete` and no outcome; `progress-contradicted` has category
-  `refusal` with outcome `invalid_runtime_input`/`invalid-value`. Any other
+  `refusal` with outcome `invalid_runtime_input`/`invalid-value`; `inactive`
+  has category `success`, no truth and basis `closed-scope`. Any other
   kind is refused by the writer as below. The `axes.settlement` member of
   such an item equals the disposition's `basis`. A temporal clause is never
   evaluated over a supplied trace by a `finite-replay` item: that kind

@@ -334,6 +334,19 @@ fn the_monitor_reads_each_activations_own_capture() {
 /// of `levels`, each record's disposition equal in category to the batch run
 /// over the records so far.
 fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
+    monitored_with(directory, "", name, levels, false)
+}
+
+/// [`monitored`] over the unit with `extra` declarations appended; `strict`
+/// also requires each record's `temporal` and `truth` to equal the batch
+/// run's (FR-820 Equality), not only its category.
+fn monitored_with(
+    directory: &Path,
+    extra: &str,
+    name: &str,
+    levels: &[i64],
+    strict: bool,
+) -> Value {
     let mut records: Vec<String> = levels
         .iter()
         .map(|level| json!({"observation": sample(*level, false)}).to_string())
@@ -344,7 +357,12 @@ fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
         "models": [], "program": program(), "clocks": clocks(),
         "clauses": [{"name": name}], "trace": {"kind": "finite"},
         "records": "records.jsonl"}});
-    let monitored = run_file(&write(directory, &format!("monitor-{name}.json"), &request));
+    let monitored = run_file(&write_with(
+        directory,
+        extra,
+        &format!("monitor-{name}.json"),
+        &request,
+    ));
     assert_ne!(monitored.status.code(), Some(30));
     let document: Value = serde_json::from_slice(&monitored.stdout).expect("a monitor run");
     let events = document["events"].as_array().expect("events");
@@ -353,8 +371,9 @@ fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
         if let Some(event) = events.iter().find(|event| event["record"] == record) {
             status = event["disposition"].clone();
         }
-        let batch = result(&run(
+        let batch = result(&run_with(
             directory,
+            extra,
             name,
             json!({"finite": moving(&levels[..=record])}),
         ));
@@ -362,8 +381,277 @@ fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
             status["category"], batch["disposition"]["category"],
             "{name} at record {record}: {status} vs {batch}"
         );
+        if strict {
+            for member in ["temporal", "truth"] {
+                assert_eq!(
+                    status.get(member),
+                    batch["disposition"].get(member),
+                    "{name} {member} at record {record}: {status} vs {batch}"
+                );
+            }
+        }
     }
     status
+}
+
+const GUARDED: &str = "temporal Guarded using i over (r: Reading) clock \"steps\" \
+    on each (trigger: Reading) when (trigger.level > 0) { \
+    capture beganFast: Boolean = trigger.level > 3; \
+    eventually[0,1] holds(r.stopped or not beganFast) }\n";
+
+/// Exercise the same closed lasso through source and the library package route.
+fn guarded_routes(level: i64, stopped: bool) -> Vec<Value> {
+    let directory = tempfile::tempdir().unwrap();
+    let request = run_request(json!({"name": "Guarded", "trace": {
+        "lasso": {"prefix": [], "loop": [sample(level, stopped)]}}}));
+    let path = write_with(directory.path(), GUARDED, "source.json", &request);
+    let source = result(&run_file(&path));
+    let bytes = std::fs::read(directory.path().join("unit.native")).unwrap();
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    let package = package_run(
+        &fsl_replay::spine::ParseRequest {
+            source: &fsl_foundation::SourceIdentity::new("agent-ix", "test:temporal-capture"),
+            path: "unit.native",
+            bytes: &bytes,
+        },
+        &Default::default(),
+        &Default::default(),
+        &fsl_replay::spine::TraceInput::Lasso {
+            prefix: vec![],
+            repeat: vec![fsl_replay::spine::sample_position(
+                &sample(level, stopped)["sample"].to_string(),
+            )],
+        },
+        None,
+        "Guarded",
+    );
+    vec![source, package]
+}
+
+/// Compile once, then run the checked package with no source provision.
+fn package_run(
+    unit: &fsl_replay::spine::ParseRequest<'_>,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    snapshots: &fsl_semantics::model::observation::DocumentProvision,
+    trace: &fsl_replay::spine::TraceInput,
+    over: Option<&fsl_replay::spine::OverObject>,
+    name: &str,
+) -> Value {
+    use fsl_replay::spine;
+    let limits = spine::SpineLimits::default();
+    let cancel = filament_exact::Cancel::new();
+    let parsed = spine::parse(unit, limits.source, &cancel)
+        .unwrap()
+        .into_value();
+    let models = spine::select(&parsed, packages, limits.model, &cancel)
+        .unwrap()
+        .into_value();
+    let checked = spine::check(
+        &parsed,
+        "guarded".to_owned(),
+        &models,
+        &Default::default(),
+        limits,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let report = spine::run_package_temporal(&spine::PackageTemporalRequest {
+        package: checked.package(),
+        packages,
+        model_limits: limits.model,
+        snapshots,
+        observation_limits: Default::default(),
+        accounting: fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
+        name,
+        trace,
+        over,
+        ledger: None,
+        sources: &[],
+        authentication: None,
+        cancel: &cancel,
+    });
+    serde_json::from_slice(&spine::write_clause_run_result(&report).unwrap()).unwrap()
+}
+
+/// A closed, complete stop-only lasso has no activation and no truth.
+#[test]
+#[trace("FSpec-FR-093-AC-5", "FR-622-AC-1", "FR-267-AC-28")]
+fn a_closed_false_guard_capture_scope_is_inactive_on_both_routes() {
+    for document in guarded_routes(0, true) {
+        assert_eq!(document["axes"]["activation"], "inactive", "{document}");
+        assert_eq!(document["axes"]["execution"], "completed", "{document}");
+        assert_eq!(document["axes"]["truth"], Value::Null, "{document}");
+        assert!(document["disposition"].get("truth").is_none(), "{document}");
+        assert_eq!(temporal(&document)["kind"], "inactive", "{document}");
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let fsl_replay::spine::NativeRunResult::Clause(record) =
+            fsl_replay::spine::read_native_run_result(&bytes).expect("inactive result round-trips")
+        else {
+            panic!("expected a clause result");
+        };
+        assert_eq!(
+            record.axes().activation,
+            fsl_replay::ActivationAxis::Inactive
+        );
+        assert_eq!(record.truth(), None);
+        let mut claimed = document;
+        claimed["disposition"]["truth"] = json!(true);
+        assert!(
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&claimed).unwrap())
+                .is_err(),
+            "an inactive result cannot carry truth"
+        );
+    }
+}
+
+/// A guarded `on each` clause under a bounded profile over a closed finite
+/// trace.
+const GUARDED_CLOSED: &str = "temporal GuardedClosed using e over (r: Reading) clock \"events\" \
+    on each (trigger: Reading) when (trigger.level > 0) { \
+    capture beganFast: Boolean = trigger.level > 3; \
+    eventually[0,1] holds(r.stopped or not beganFast) }\n";
+
+/// A closed finite trace whose every guard is false has no activation and no
+/// truth; one true guard makes it active again.
+#[test]
+#[trace("FSpec-FR-093-AC-5", "FR-267-AC-28")]
+fn a_closed_finite_trace_with_every_guard_false_is_inactive() {
+    let directory = tempfile::tempdir().unwrap();
+    let inactive = result(&run_with(
+        directory.path(),
+        GUARDED_CLOSED,
+        "GuardedClosed",
+        json!({"finite": moving(&[0, 0, 0])}),
+    ));
+    assert_eq!(inactive["axes"]["activation"], "inactive", "{inactive}");
+    assert_eq!(inactive["axes"]["execution"], "completed", "{inactive}");
+    assert_eq!(inactive["axes"]["truth"], Value::Null, "{inactive}");
+    assert_eq!(temporal(&inactive)["kind"], "inactive", "{inactive}");
+    let active = result(&run_with(
+        directory.path(),
+        GUARDED_CLOSED,
+        "GuardedClosed",
+        json!({"finite": moving(&[0, 1, 0])}),
+    ));
+    assert_eq!(active["axes"]["activation"], "active", "{active}");
+    assert_ne!(temporal(&active)["kind"], "inactive", "{active}");
+}
+
+/// FR-820 Equality: the monitor's carried report over a closed trace whose
+/// every guard is false equals the batch run's for every prefix, and a later
+/// true guard makes it active again.
+#[test]
+#[trace("FSpec-FR-093-AC-5", "FR-267-AC-28")]
+fn the_monitor_reports_a_closed_false_guard_scope_inactive_like_the_batch_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let inactive = monitored_with(
+        directory.path(),
+        GUARDED_CLOSED,
+        "GuardedClosed",
+        &[0, 0, 0],
+        true,
+    );
+    assert_eq!(inactive["temporal"]["kind"], "inactive", "{inactive}");
+    let active = monitored_with(
+        directory.path(),
+        GUARDED_CLOSED,
+        "GuardedClosed",
+        &[0, 1, 0],
+        true,
+    );
+    assert_eq!(active["temporal"]["kind"], "holds", "{active}");
+}
+
+/// The actual guard, rather than the captured predicate or body truth,
+/// decides whether an obligation exists. Active controls still hold/refute.
+#[test]
+#[trace("FSpec-FR-093-AC-6", "FR-860-AC-3")]
+fn false_guard_deliveries_create_no_capture_obligation_on_both_routes() {
+    for document in guarded_routes(0, false) {
+        assert_eq!(document["axes"]["activation"], "inactive", "{document}");
+        assert_eq!(document["axes"]["truth"], Value::Null, "{document}");
+    }
+    for (level, stopped, kind, truth) in [
+        (1, false, "holds", "true"),
+        (5, true, "holds", "true"),
+        (5, false, "violated", "false"),
+    ] {
+        for document in guarded_routes(level, stopped) {
+            assert_eq!(document["axes"]["activation"], "active", "{document}");
+            assert_eq!(document["axes"]["truth"], truth, "{document}");
+            assert_eq!(temporal(&document)["kind"], kind, "{document}");
+        }
+    }
+}
+
+/// The canonical stop-speed-0 example runs unchanged from source and
+/// through the library package entry over the same admitted snapshot.
+#[test]
+#[trace("FSpec-FR-093-AC-5", "FSpec-FR-093-AC-6")]
+#[ignore = "requires the authoritative filament-examples corpus via FSL_EXAMPLES_DIR"]
+fn the_canonical_false_guard_capture_example_is_inactive() {
+    let root = PathBuf::from(
+        std::env::var_os("FSL_EXAMPLES_DIR")
+            .expect("set FSL_EXAMPLES_DIR to the authoritative filament-examples checkout"),
+    );
+    let request = root.join("examples/docs-captures/requests/false-guard-inactive.json");
+    let source_run = fsl_command::command::run(&request, &crate::negotiation::Fr290).unwrap();
+    assert_eq!(source_run.exit_code, 0);
+    let outcome: Value =
+        serde_json::from_slice(&source_run.outcome.as_ref().unwrap().to_bytes().unwrap()).unwrap();
+    let item = &outcome["items"][0];
+    assert_eq!(item["clause"], "StopForEachFastStart", "{outcome}");
+    assert_eq!(item["axes"]["activation"], "inactive", "{outcome}");
+    assert_eq!(item["axes"]["execution"], "completed", "{outcome}");
+    assert_eq!(item["axes"]["truth"], Value::Null, "{outcome}");
+
+    let input: Value = serde_json::from_slice(&std::fs::read(&request).unwrap()).unwrap();
+    let base = request.parent().unwrap();
+    let read = |file: &Value| std::fs::read(base.join(file.as_str().unwrap())).unwrap();
+    let source = &input["request"]["program"]["source"];
+    let bytes = read(&source["file"]);
+    let model = read(&input["request"]["models"][0]["source"]["file"]);
+    let packages = fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap();
+    let stop = read(&input["request"]["clause"]["observations"]["stop"]);
+    let document: Value = serde_json::from_slice(&stop).unwrap();
+    let label = fsl_semantics::model::observation::DocumentRef {
+        authority: document["identity"]["authority"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        identity: document["identity"]["identity"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    };
+    let snapshots = [(label.clone(), stop)].into_iter().collect();
+    let over = &input["request"]["clause"]["selection"]["temporal"]["over"]["reference"];
+    let package = package_run(
+        &fsl_replay::spine::ParseRequest {
+            source: &fsl_foundation::SourceIdentity::new(
+                source["authority"].as_str().unwrap(),
+                source["identity"].as_str().unwrap(),
+            ),
+            path: source["file"].as_str().unwrap(),
+            bytes: &bytes,
+        },
+        &packages,
+        &snapshots,
+        &fsl_replay::spine::TraceInput::Lasso {
+            prefix: vec![],
+            repeat: vec![label],
+        },
+        Some(&fsl_replay::spine::OverObject {
+            population: over["population"].as_str().unwrap().to_owned(),
+            key: over["key"].as_str().unwrap().to_owned(),
+        }),
+        "StopForEachFastStart",
+    );
+    assert_eq!(package["axes"]["activation"], "inactive", "{package}");
+    assert_eq!(package["axes"]["execution"], "completed", "{package}");
+    assert_eq!(package["axes"]["truth"], Value::Null, "{package}");
+    assert!(package["disposition"].get("truth").is_none(), "{package}");
 }
 
 /// FR-860-AC-4, FR-337 "Captures": a possibly-zero `mod` written in a

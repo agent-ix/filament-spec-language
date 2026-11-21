@@ -8,17 +8,19 @@
 
 mod tla;
 
-pub(super) use self::tla::{Extra, tla};
+pub(super) use self::tla::{tla, Extra};
 use super::{
-    Definition, E, Graph, Input, Lower, defer_at, define, mangle, parameters, refusal, refuse,
+    defer_at, define, mangle, parameters, refusal, refuse, Definition, Graph, Input, Lower, Target,
+    E,
 };
 use filament_contract_model::{CheckedOperationInterval, CheckedProtocolActivation};
 use fsl_package::checked_views::{
-    Activation, FormulaNodeUse, FormulaOperation, OperatorDirection, temporal_subject,
+    temporal_subject, Activation, FormulaNodeUse, FormulaOperation, OperatorDirection,
 };
+use fsl_package::{CheckedTimeSourceKind, CheckedTimedModel};
 use fsl_semantics::check::TemporalProfile;
 
-const CONSTRUCT: &str = "temporal/temporal_clause";
+pub(super) const CONSTRUCT: &str = "temporal/temporal_clause";
 
 /// An operator's interval: `None` for an unbounded operator, otherwise the
 /// inclusive lower bound and the inclusive upper bound when there is one.
@@ -40,7 +42,7 @@ impl Iv {
     fn upper(self) -> Option<u64> {
         self.0.and_then(|(_, upper)| upper)
     }
-    fn is_some(self) -> bool {
+    pub(super) fn is_some(self) -> bool {
         self.0.is_some()
     }
 }
@@ -95,6 +97,8 @@ pub(super) struct ClauseRead {
     /// The node of each atom's Boolean operand, in formula order.
     pub(super) atoms: Vec<usize>,
     pub(super) fairness: Vec<FairRead>,
+    /// The admitted dense model root, when the clause reads model time.
+    pub(super) timed_root: Option<usize>,
 }
 
 /// A temporal clause with its atoms lowered.
@@ -154,11 +158,14 @@ fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>) -> Lower<Iv> {
                 Iv(Some((lower, upper)))
             })
         }
-        Some(CheckedOperationInterval::Timed { .. }) => defer_at(
-            at_node(graph, node.node)?,
-            "temporal/timed-interval",
-            "an interval over time stamps needs the dense-time encoding",
-        ),
+        Some(CheckedOperationInterval::Timed { .. }) => {
+            let at = at_node(graph, node.node)?;
+            defer_at(
+                at,
+                &graph.construct(at),
+                "a timed interval this build does not lower",
+            )
+        }
     }
 }
 
@@ -199,9 +206,9 @@ fn build(
         *atom += 1;
         return Ok(Tf::Atom(*atom - 1));
     }
-    let iv = interval(graph, node)?;
     let here = at_node(graph, node.node)?;
     let direction = kind.direction();
+    let iv = interval(graph, node)?;
     if direction == Some(OperatorDirection::Future) {
         if scope.past {
             return defer_at(
@@ -258,7 +265,13 @@ fn build(
 /// # Errors
 ///
 /// A [`super::Refusal`] naming the clause shape this build does not lower.
-pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<ClauseRead> {
+pub(super) fn read(
+    graph: &Graph<'_>,
+    name: &str,
+    position: usize,
+    timed_models: &[CheckedTimedModel],
+    target: Target,
+) -> Lower<ClauseRead> {
     let node = graph.node(position);
     let view = temporal_subject(graph.package, &node.node_id).map_err(|_| {
         refusal(
@@ -317,14 +330,34 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
         .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder names no package node"))?;
     let (context, context_node) = super::context_of(graph, over)?;
     let profile = TemporalProfile::from_identity(&view.profile().definition.identity);
-    if profile != Some(TemporalProfile::InfiniteTrace) {
-        // The package has no node for the profile selection (a lock row), so
-        // the clause node, which carries it, is the node named.
-        return defer_at(
-            position,
-            "temporal/profile",
-            "a step-counting profile other than filament.temporal.infinite-trace/v1",
-        );
+    let timed_model = timed_models
+        .iter()
+        .find(|model| model.model == graph.node(context_node).node_id);
+    let timed_root = match (profile, timed_model) {
+        (Some(TemporalProfile::Timed), Some(model))
+            if model.source.kind == CheckedTimeSourceKind::Dense =>
+        {
+            Some(at_node(graph, &model.metadata.node_id)?)
+        }
+        (Some(TemporalProfile::InfiniteTrace), None) => None,
+        (_, Some(model)) => {
+            return defer_at(
+                at_node(graph, &model.metadata.node_id)?,
+                "timed_model/timed_model",
+                "a timed model outside the dense model-time profile",
+            );
+        }
+        _ => {
+            // A profile selection is a lock row, so name the clause node.
+            return defer_at(
+                position,
+                "temporal/profile",
+                "a profile outside the supported infinite-trace and dense model-time forms",
+            );
+        }
+    };
+    if timed_root.is_some() && target == Target::Tla {
+        check_dense_tla_operators(graph, view.formula_graph())?;
     }
     let mut atom = 0;
     let mut refuse_at = None;
@@ -366,7 +399,42 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
         refuse_at,
         atoms,
         fairness: super::fairness_of(graph, position)?,
+        timed_root,
     })
+}
+
+/// Locate unsupported operators while their checked node IDs are still
+/// available. In particular, an unbounded root `until` has no nested
+/// future operator to supply the generic monitor refusal location.
+fn check_dense_tla_operators(graph: &Graph<'_>, uses: &[FormulaNodeUse<'_>]) -> Lower<()> {
+    for usage in uses {
+        let supported = matches!(
+            usage.kind(),
+            Some(
+                FormulaOperation::True
+                    | FormulaOperation::False
+                    | FormulaOperation::Holds
+                    | FormulaOperation::And
+                    | FormulaOperation::Or
+                    | FormulaOperation::Not
+                    | FormulaOperation::Implies
+                    | FormulaOperation::Always
+                    | FormulaOperation::Eventually
+            )
+        ) && !matches!(
+            &usage.interval,
+            Some(CheckedOperationInterval::Integer { .. })
+        );
+        if !supported {
+            let at = at_node(graph, usage.node)?;
+            return defer_at(
+                at,
+                &graph.construct(at),
+                "an operator outside the dense TLA+ lowering",
+            );
+        }
+    }
+    Ok(())
 }
 
 // ---- Lean 4 --------------------------------------------------------------
@@ -595,6 +663,11 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
         let atom = mangle("at_", &clause.name);
         let holds = mangle("holds_", &clause.name);
         let ob = mangle("Ob_", &clause.name);
+        let behavior = if input.dense.is_some() {
+            "TBehaviour"
+        } else {
+            "Behaviour"
+        };
         let binder = &clause.binder;
         for (index, e) in clause.cur.iter().enumerate() {
             out.push(define(
@@ -617,7 +690,7 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             clause.position,
             Some(holds.clone()),
             format!(
-                "def {holds} (b : Behaviour) ({binder} : List Nat) (i : Int) : Prop :=\n  {formula}"
+                "def {holds} (b : {behavior}) ({binder} : List Nat) (i : Int) : Prop :=\n  {formula}"
             ),
             obligation,
         ));
@@ -637,7 +710,7 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             clause.position,
             Some(ob.clone()),
             format!(
-                "def {ob} : Prop :=\n  forall b : Behaviour, {premise}forall {binder}, {} {binder} -> (forall j : Nat, {ok} (b.st j) {binder}) /\\ {holds} b {binder} 0",
+                "def {ob} : Prop :=\n  forall b : {behavior}, {premise}forall {binder}, {} {binder} -> (forall j : Nat, {ok} (b.st j) {binder}) /\\ {holds} b {binder} 0",
                 mangle("Ids_", &object.name)
             ),
             obligation,

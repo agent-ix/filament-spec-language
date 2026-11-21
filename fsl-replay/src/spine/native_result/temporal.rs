@@ -83,6 +83,7 @@ fn undefined_cause(reason: &str) -> Option<TemporalUndefinedCause> {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub(crate) enum TemporalWire {
+    Inactive,
     Holds,
     Violated {
         position: u64,
@@ -549,7 +550,8 @@ pub(super) fn item_counterexample(
             ..
         } => return Ok(None),
         TemporalVerdict::Undefined { at, cause } => (*at, Some(undefined_reason(cause))),
-        TemporalVerdict::Holds
+        TemporalVerdict::Inactive
+        | TemporalVerdict::Holds
         | TemporalVerdict::Pending
         | TemporalVerdict::PendingWindow { .. }
         | TemporalVerdict::PendingNextEvent { .. }
@@ -573,6 +575,7 @@ pub(super) fn verdict_wire(
 ) -> Result<(TemporalWire, Option<Outcome>), NativeRunResultError> {
     let checked = |at: u64, reason| checked_counterexample(counterexample, at, reason);
     Ok(match verdict {
+        TemporalVerdict::Inactive => (TemporalWire::Inactive, None),
         TemporalVerdict::Holds => (TemporalWire::Holds, None),
         TemporalVerdict::Violated { at } => (
             TemporalWire::Violated {
@@ -732,6 +735,8 @@ pub(super) fn contradiction_wire(refusal: &ProgressRefusal) -> (TemporalWire, Ou
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum TemporalRecord {
+    /// A closed, complete scope with no activation and no truth.
+    Inactive {},
     /// `Completed(true)`.
     Holds {},
     /// `Completed(false)` at `position`.
@@ -1029,6 +1034,7 @@ impl TemporalRecord {
     /// empty `fields`: the outcome carries its reason only.
     pub fn verdict(&self) -> Option<TemporalVerdict> {
         Some(match self {
+            Self::Inactive {} => TemporalVerdict::Inactive,
             Self::Holds {} => TemporalVerdict::Holds,
             Self::Violated { position, .. } => TemporalVerdict::Violated { at: *position },
             Self::Undefined {
@@ -1119,6 +1125,7 @@ impl TemporalRecord {
     /// The row's `kind` spelling.
     pub fn kind(&self) -> &'static str {
         match self {
+            Self::Inactive {} => "inactive",
             Self::Holds {} => "holds",
             Self::Violated { .. } => "violated",
             Self::Undefined { .. } => "undefined",
@@ -1731,6 +1738,14 @@ pub(super) fn validate_temporal(
         basis: Basis::Unavailable,
     };
     let row = match temporal {
+        TemporalRecord::Inactive {} => {
+            no_outcome()?;
+            Row {
+                category: Category::Success,
+                truth: None,
+                basis: Basis::ClosedScope,
+            }
+        }
         TemporalRecord::Holds {} => {
             no_outcome()?;
             Row {

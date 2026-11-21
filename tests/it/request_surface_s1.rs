@@ -543,10 +543,16 @@ fn the_run_command_preserves_an_unavailable_markdown_extraction() {
 fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
-    let body = spine::unit_text();
+    // An extracted body declares one clause (FR-031-AC-9): the spine unit's
+    // header and its first invariant, not its later clauses and function.
+    let body = spine::unit_text()
+        .lines()
+        .take_while(|line| !line.starts_with("invariant NoCycle"))
+        .collect::<Vec<_>>()
+        .join("\n");
     std::fs::write(
         directory.path().join("spec.md"),
-        format!("# Doc\n\n## Invariants\n\n### parent_order\n```ix:native\n{body}```\n"),
+        format!("# Doc\n\n## Invariants\n\n### parent_order\n```ix:native\n{body}\n```\n"),
     )
     .unwrap();
     let mut request = current_clause_request();

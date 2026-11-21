@@ -420,17 +420,20 @@ pub(super) fn run_seeking<L: TemporalLetters>(
 ) -> (
     Result<TemporalOutcome, TemporalRefusal>,
     Option<DecisiveSearch>,
+    bool,
 ) {
     let mut decisive = None;
+    let mut inactive = false;
     let outcome = run_goal(
         clause,
         trace,
         goal,
         seek.then_some(&mut decisive),
+        &mut inactive,
         source,
         meter,
     );
-    (outcome, decisive)
+    (outcome, decisive, inactive)
 }
 
 fn run_goal<L: TemporalLetters>(
@@ -438,6 +441,7 @@ fn run_goal<L: TemporalLetters>(
     trace: TemporalTrace,
     goal: Goal,
     decisive: Option<&mut Option<DecisiveSearch>>,
+    inactive: &mut bool,
     source: &mut L,
     meter: &mut Meter,
 ) -> Result<TemporalOutcome, TemporalRefusal> {
@@ -483,6 +487,7 @@ fn run_goal<L: TemporalLetters>(
         if let Some(slot) = decisive {
             *slot = evaluator.decisive.take();
         }
+        *inactive = evaluator.inactive;
         outcome
     });
     match evaluation {
@@ -783,6 +788,9 @@ struct Evaluator<'a> {
     seek: bool,
     /// The descent's result, set when `seek` and the clause is violated.
     decisive: Option<DecisiveSearch>,
+    /// Set when a guarded `on each` clause over a closed trace or a lasso
+    /// holds with no guard true at any activation: no instance exists.
+    inactive: bool,
 }
 
 impl<'a> Evaluator<'a> {
@@ -829,6 +837,7 @@ impl<'a> Evaluator<'a> {
             memo: HashMap::new(),
             seek: false,
             decisive: None,
+            inactive: false,
         })
     }
 
@@ -1154,7 +1163,10 @@ impl<'a> Evaluator<'a> {
                 Ok(TemporalOutcome::Holds)
             }
             Mode::Prefix => Ok(TemporalOutcome::Pending),
-            Mode::Closed | Mode::Lasso if every_activation_true => Ok(TemporalOutcome::Holds),
+            Mode::Closed | Mode::Lasso if every_activation_true => {
+                self.inactive = guarded && !whens.values().any(|admitted| *admitted);
+                Ok(TemporalOutcome::Holds)
+            }
             Mode::Closed | Mode::Lasso => Err(fault("definite-trace-read-unknown").into()),
         }
     }
