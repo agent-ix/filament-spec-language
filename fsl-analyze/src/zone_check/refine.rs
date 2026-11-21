@@ -633,8 +633,28 @@ impl Product<'_, '_> {
             if let Some(failure) = self.auxiliary_invariant_failure(run, q, &zone)? {
                 self.initial_invariant_failures.insert(index, failure);
             }
+            let settled = zone.clone();
             self.auxiliary_invariants(run, q, &mut zone)?;
             if zone.is_empty() {
+                if settled.is_empty() {
+                    continue;
+                }
+                // No alive candidate's invariant holds at zero, so none holds
+                // anywhere on the initial zone: the initial state fails like
+                // one the abstract side cannot start, a `locked` entry node
+                // unless the failure refutes (FR-900 "Delay").
+                locked_failure = true;
+                let node = self.store(
+                    run,
+                    discrete,
+                    LOCKED_ENTRY,
+                    settled,
+                    Some(index),
+                    None,
+                    None,
+                    &mut queue,
+                )?;
+                initials.push(node);
                 continue;
             }
             let node = self.store(run, discrete, q, zone, Some(index), None, None, &mut queue)?;

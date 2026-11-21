@@ -601,7 +601,7 @@ fn timed_hidden_a_time_locked_dead_region_is_a_required_locked_node() {
 }
 
 /// An initial state whose abstract candidate is dead at the zero valuation
-/// (`y >= 1`) beside a healthy one refutes: it is not cut away.
+/// (`y < 0`) beside a healthy one refutes: it is not cut away.
 #[trace("TC-2538", "FR-900")]
 #[test]
 fn timed_hidden_an_initial_state_with_no_candidate_alive_at_zero_is_refuted() {
@@ -614,7 +614,7 @@ fn timed_hidden_an_initial_state_with_no_candidate_alive_at_zero_is_refuted() {
             "{DENSE}time A dense unit ms;\n\
              post ASend using v on A::Call::send {{ self.inflight }}\n\
              pre ASendable using v on A::Call::send {{ self.y >= 0 ms }}\n\
-             time invariant Late when {{ self.inflight }} {{ self.y >= 1 ms }}\n\
+             time invariant Late when {{ self.inflight }} {{ self.y < 0 ms }}\n\
              pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
              post MSent using v on M::Call::send {{ self.inflight }}\n{}",
             refinement("self.inflight").replace(" late = self.late;", "")

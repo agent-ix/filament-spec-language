@@ -1970,6 +1970,8 @@ impl<O> Checker<'_, '_, O> {
                 state.state(),
             );
             let mut expected: Option<RefinementPosition> = None;
+            let settled = zone.clone();
+            let mut dead = false;
             if let StepVerdict::Passes { post, .. } = &verdict {
                 // A candidate whose invariant fails at the initial valuation is
                 // not alive while another is. With none alive at zero the
@@ -1981,6 +1983,13 @@ impl<O> Checker<'_, '_, O> {
                     pruned.abstract_states = alive;
                 }
                 self.auxiliary_invariants(&pruned, &mut zone)?;
+                // No alive candidate holds anywhere on the initial zone: a
+                // `locked` entry node covers the zone, as for a failing
+                // initial state.
+                if zone.is_empty() && !settled.is_empty() {
+                    zone = settled;
+                    dead = true;
+                }
                 expected = Some(pruned);
             }
             if zone.is_empty() {
@@ -2003,6 +2012,9 @@ impl<O> Checker<'_, '_, O> {
             };
             let entry = &certificate.nodes[node];
             let holds = match verdict {
+                StepVerdict::Passes { .. } if dead => {
+                    entry.locked && entry.automaton_state == reserved
+                }
                 StepVerdict::Passes { post, .. } => {
                     let holds = !entry.locked
                         && entry.automaton_state < reserved
