@@ -116,7 +116,9 @@ unchanged. Its `category` adds `pending` (a pending result, with the pending cla
 and `unsupported` (a missing fairness premise). Its `disposition` for a
 `violation` (`Completed(false)` or an `Undefined` that is a violation)
 carries the failing `TemporalPosition` and the refutation's
-`TemporalCounterexample`, FSpec FR-364's observed arm, which the entry
+`TemporalCounterexample`, subject to the model `Undefined` exception below.
+For snapshot and record-sample traces this is
+FSpec FR-364's observed arm, which the entry
 builds from what it ran: one `{document}` step per represented snapshot
 position from the identities of the trace's `DocumentRef`s, and one
 `{"sample": I}` step per represented record-sample position (FR-641), `I`
@@ -132,6 +134,32 @@ an `Undefined` result the undefined-evaluation envelope whose `where`
 carries the position, that position's document identity (its `sample` index for a record-sample position) and the undefined
 atom's locus. A refused condition's disposition carries its position. The
 FR-267 writer writes these as the report holds them and derives none.
+
+For `TraceInput::Model`, a `Completed(false)` violation SHALL instead carry
+FSpec FR-364's existing model arm. The entry SHALL retain the behaviour it
+actually re-executed and validated under FR-329: the transition identity and
+canonical post-state key of each taken step, the prefix/loop boundary, the
+checked clause's fairness set and the actual typed reference bound to `over`.
+Its non-null `initial_state` SHALL select the admitted initial state in the
+request's ordered initial-state list; for this input's single `initial`
+snapshot that index is `0`. Its `trace_position` SHALL equal the report's
+failing activation position, including when that position is not zero, and
+SHALL NOT be replaced by the decisive atom's position or a serializer's
+default position. A terminal-stutter loop SHALL carry the canonical key of
+the actual replayed terminal state, including when the initial state is
+terminal and the prefix is empty. A supplied terminal-stutter key that the
+input decoder did not validate SHALL NOT supply that key. The entry SHALL
+create no observed document or document identity for a reconstructed model
+state. The native `interval` member retains FR-267's existing contract.
+
+A model trace's `Undefined` result retains its cause, position and exit 10
+and MAY omit a counterexample; this exception does not permit omission from
+a `Completed(false)` violation. If the entry carries an undefined model
+counterexample, it SHALL use the model arm, the actual transitions reaching
+the failing position as its finite prefix, an empty loop and the envelope
+`where` containing that position's actual `state_key` and undefined locus,
+with the recorded cause. It SHALL NOT require or invent an observed identity.
+The observed-arm construction and FR-331 replay route remain unchanged.
 
 The report also carries `decisive` (`ClauseRunReport::decisive`), present only
 for a temporal violation, a `Completed(false)` for which a decisive atom exists
@@ -312,6 +340,8 @@ position (FR-327); `decisive.position` may be later or earlier than it.
 | FR-330-AC-16 | Over `Model` whose initial state and steps reconstruct `c.value` 0, then the loop states 1, 2, `always holds(c.value <= 1)` is violated at position 0 with a `decisive` of `position` 2, the atom evaluated over the reconstructed state of position 2. | Test (TC-840) |
 | FR-330-AC-17 | From source, `run_trace_subject_clause` on FR-327-AC-7's non-model subject `c: Counter` and its `level` samples 0, 1, 2 runs `always[0,2] A` `on origin` and reports category `undefined`, exit 10, `InsufficientData{where: 2, atom: A, count: 0, min_count: 1}`, with no `truth` or counterexample; running `always[0,0] B` `on origin`, where `B` is `count where holds(c.level > 9) over past[0,0] min_count 0 >= 1`, reports `violation` at position 0 with a `decisive` naming `B`'s aggregate occurrence at position 0. An empty sample sequence, a sample whose record does not conform to `Counter`, a clause declared over another record type, and a model-subject clause without aggregate terms each refuse before formula evaluation; the existing `run_clause` request and model-population behavior are unchanged. | Test |
 | FR-330-AC-18 | Through `command::run`, the infinite-trace clause `always holds(r.level < 2)` over a `lasso` of record samples with prefix levels 0, 0 and loop level 2 reports `violated` with a counterexample whose `prefix` is `[{"sample": "0"}, {"sample": "1"}]` and whose `loop` is `[{"sample": "2"}]`: the two equal samples have distinct steps, no step carries a `document` member or the sample's value, no ledger in the report spells a sample's text or value (a covered entry may carry the sample's FR-993 integrity fingerprint, which is not an identity), and the counterexample replays through FSpec FR-364 against the same request. A violated finite sample trace of an event-position clause carries a counterexample of the same form. | Test (TC-2295) |
+| FR-330-AC-19 | AC-16's `Model` violation through source and checked-package execution carries equal model-arm counterexamples: non-null initial index `0`, the actual typed `over` reference, checked fairness and the validated transition/post-state sequence with its original loop boundary; `trace_position` equals the report position and `decisive.position` remains 2. A clause whose first failing activation is later than 0 keeps that later `trace_position`. A terminal initial state with no prefix steps carries one terminal-stutter loop step keyed by that actual initial state. A model `Undefined` run preserves its cause, position and exit 10 when no counterexample is carried; any carried counterexample uses its actual finite model prefix and state-key envelope. Snapshot and record-sample counterexamples remain observed-arm. | Test (TC-840) |
+| FR-330-AC-20 | With the same checked package, admitted initial snapshot, universes and request bytes available after source files are deleted, AC-19's source and checked-package model witnesses reproduce through FR-128's model replay contract with equal evaluated values and positions. Over FR-128-AC-1's branching subject, the recorded post-state key selects the actual taken successor. A different valid state key that is not a successor of the recorded transition, a disabled transition, an object binding outside the admitted subject, an unfair loop and a loop that does not close each refuse replay; structural native read alone does not authenticate those semantic facts. | Test (TC-523) |
 
 ## Dependencies
 
