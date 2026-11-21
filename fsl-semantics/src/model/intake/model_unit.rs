@@ -1213,7 +1213,7 @@ fn project_link_refusal(
 ) -> CompleteDiagnostic {
     if let super::ModelRefusalCause::IntakeLimitExceeded { bound, .. } = refusal.cause {
         if let Ok(bound) = usize::try_from(bound) {
-            let mut reported = *cst::diagnostic::resource_exhausted(
+            let mut reported = *fsl_cst::diagnostic::resource_exhausted(
                 parsed.source(),
                 Phase::Parse,
                 span,
