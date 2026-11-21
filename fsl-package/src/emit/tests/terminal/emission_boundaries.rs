@@ -110,7 +110,6 @@ fn distinct_alias_terminals_keep_key_order_when_source_declarations_are_reordere
 
 #[trace("FR-411-AC-1", "FSpec-FR-476-AC-6")]
 #[test]
-#[ignore = "QSL-2718: terminal model binding uses the object type rather than the selection root"]
 fn a_terminal_row_names_the_selected_model_root_instead_of_its_object_type() {
     let compiled = compile(&format!(
         "{MIRROR}{WHEN}\nterminal Halt using v on Mirror any;"
