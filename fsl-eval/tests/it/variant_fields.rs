@@ -145,8 +145,7 @@ fn selected_model_enum_values_match_source_and_bare_evaluation() {
             .unwrap();
         let equality_bytes = equality.to_bytes(read.admitted()).unwrap();
         let equality =
-            fsl_package::ReadEqualityRows::read(&equality_bytes, read.admitted(), &mut budget())
-                .unwrap();
+            fsl_package::ReadEqualityRows::read(&equality_bytes, read.admitted()).unwrap();
         let bare = BarePackage::new(read.admitted())
             .with_supply(
                 BareSupply {
@@ -182,13 +181,19 @@ fn selected_model_enum_values_match_source_and_bare_evaluation() {
             let FamilyOutcome::Evaluated(Outcome::Completed(bare_value)) = bytes.outcome else {
                 panic!("bare value: {bytes:?}")
             };
-            assert_eq!(bare_value, source_value, "{alias}::{name}");
             if let Some(expected) = expected {
-                assert_eq!(bare_value, Value::Boolean(expected));
-            } else {
-                let Value::Enum(member) = &bare_value else {
-                    panic!("pick returns an enum")
+                let (Value::Boolean(source), Value::Boolean(bytes)) = (&source_value, &bare_value)
+                else {
+                    panic!("{alias}::{name} returns Boolean on both routes");
                 };
+                assert_eq!(source, &expected);
+                assert_eq!(bytes, source);
+            } else {
+                let (Value::Enum(source), Value::Enum(member)) = (&source_value, &bare_value)
+                else {
+                    panic!("{alias}::{name} returns an enum on both routes")
+                };
+                assert_eq!(source, member);
                 let (case, rank) = if name == "pick" {
                     ("Gold", 0)
                 } else {
@@ -197,9 +202,9 @@ fn selected_model_enum_values_match_source_and_bare_evaluation() {
                 assert_eq!(member.variant().case(), case);
                 assert_eq!(member.rank(), rank);
                 if let Some(previous) = first.get(name) {
-                    assert_eq!(previous, &bare_value, "alias-independent opaque identity");
+                    assert_eq!(previous, member, "alias-independent opaque identity");
                 }
-                first.insert(name, bare_value);
+                first.insert(name, *member);
             }
             assert_eq!(
                 source_meter.admitted_charges(),
