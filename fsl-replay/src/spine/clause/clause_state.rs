@@ -22,7 +22,10 @@
 //! (`snapshot`): the state keeps a snapshot's bytes only where a decisive
 //! record can still read it, counted in [`ClauseState::retained`].
 
+mod progress;
 mod snapshot;
+
+pub use progress::ClauseProgress;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -663,6 +666,12 @@ impl<'a> ClauseState<'a> {
     /// across its clauses (FR-643).
     pub fn carry_ledger(&mut self, ledger: Option<ProgressLedger>) {
         self.ledger = ledger;
+    }
+
+    /// Keep only the position metadata needed by later progress assertions,
+    /// independently of a settled clause's frozen report and evaluation.
+    pub fn progress_tracker(&self) -> ClauseProgress {
+        ClauseProgress::new(self)
     }
 
     /// The farthest offset a window aggregate of the clause reads back.
@@ -1378,7 +1387,7 @@ impl<'a> ClauseState<'a> {
                     assertion.unwrap_or_else(Self::open_assertion),
                 )?;
                 let mut report = self.run(&trace, self.seen.len(), false, cancel);
-                if ledger.is_some() {
+                if assertion.is_none() && ledger.is_some() {
                     report.ledger = ledger;
                 }
                 report

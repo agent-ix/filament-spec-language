@@ -420,11 +420,34 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         .expect("opens");
     let cancel = Cancel::new();
     let mut last = None;
-    for (stamp, level) in [(0, 0), (2, 0), (5, 1)] {
+    for (stamp, level) in [(0, 0), (2, 0), (5, 1), (7, 0)] {
         let observed = text(level);
         session
             .step(stamped(&observed, stamp), &cancel)
             .expect("an observation");
+        if stamp == 5 {
+            // The decisive observation has settled T, before G5 is asserted.
+            // Its metadata-only ledger continuation survives a checkpoint.
+            let checkpoint = session.checkpoint().expect("checkpoints after settlement");
+            session = MonitorSession::resume(
+                world.unit.package(),
+                &checkpoint,
+                MonitorOpen {
+                    clauses: clauses(&["T"]),
+                    kind: MonitorTraceKind::Timestamped,
+                    lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+                    binding: Some(stamped_binding()),
+                    cover: None,
+                    ledger: None,
+                    packages: &world.packages,
+                    sources: &world.sources,
+                    temporal_selections: &world.selections,
+                },
+                &limits(DEFAULT_RETAINED_POSITIONS),
+                &cancel,
+            )
+            .expect("resumes after settlement");
+        }
         last = Some(
             session
                 .assert_progress(progress(stamp), &cancel)
@@ -448,7 +471,9 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
     let outcome = session.finish(&cancel).expect("ends");
     assert_eq!(outcome.records[0].verdict, record.verdict);
 
-    // The batch run over the same three observations.
+    // FR-643 "Batch equality": a settled clause "SHALL report exactly B(s)".
+    // The step at 5 settles under G2; later real assertions advance the
+    // session ledger, independently of that frozen report.
     let authentication = spine::authenticate_emission(
         world.unit.package(),
         &world.selections,
@@ -467,7 +492,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         .collect();
     let trace = TraceInput::Timestamped {
         observations,
-        progress: progress(5),
+        progress: progress(2),
         window: Box::new(TimestampedWindow {
             binding: Some(stamped_binding()),
             authoritative_origin: true,
@@ -476,7 +501,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
             late: Default::default(),
         }),
     };
-    let batch = run_package_temporal(&PackageTemporalRequest {
+    let request = PackageTemporalRequest {
         package: world.unit.package(),
         packages: &world.packages,
         model_limits: ModelNormalizationLimits::default(),
@@ -490,14 +515,34 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         sources: &world.sources,
         authentication: Some(PackageAuthentication::temporal(&authentication)),
         cancel: &cancel,
-    });
+    };
+    let batch = run_package_temporal(&request);
     let from_session = outcome.records[0].report();
     assert_eq!(
-        format!("{:?}", from_session.disposition),
-        format!("{:?}", batch.disposition)
+        qsl_2750_report_fields(&from_session),
+        qsl_2750_report_fields(&batch)
     );
-    assert_eq!(from_session.ledger, batch.ledger);
     assert!(batch.ledger.is_some());
+    let mut latest = trace.clone();
+    let TraceInput::Timestamped {
+        observations,
+        progress: assertion,
+        ..
+    } = &mut latest
+    else {
+        panic!("the timestamped trace");
+    };
+    observations.push(TimestampedObservation {
+        document: spine::sample_position(&text(0)),
+        stamp: 7,
+        order_key: None,
+    });
+    *assertion = progress(7);
+    let latest_batch = run_package_temporal(&PackageTemporalRequest {
+        trace: &latest,
+        ..request
+    });
+    assert_eq!(outcome.ledger, latest_batch.ledger);
 }
 
 /// FR-643 Order (TC-1667): a progress assertion that regresses the retained
