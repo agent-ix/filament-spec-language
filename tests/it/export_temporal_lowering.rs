@@ -4,9 +4,9 @@
 //! clause's definitions in each target, and the clause shapes the TLA+
 //! encoding does not cover.
 
-use crate::plan_export_surface::{counter_request, COUNTER_UNIT};
+use crate::plan_export_surface::{COUNTER_UNIT, counter_request};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const HEAD: &str =
     "temporal T using t over (c: Counter::Counter) clock \"model-steps\" on origin {";
@@ -157,13 +157,46 @@ fn export_unit_with_protocol_options(
     fidelity: Option<&str>,
     output: Option<&str>,
 ) -> (u8, Value) {
+    export_unit_with_protocol_role_type(
+        tail,
+        target,
+        start,
+        profile,
+        fixed,
+        bind_protocol,
+        bind_roles,
+        role_selection,
+        over_key,
+        capacities,
+        fidelity,
+        output,
+        "model-binding",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_unit_with_protocol_role_type(
+    tail: &str,
+    target: Target,
+    start: Option<i64>,
+    profile: &str,
+    fixed: bool,
+    bind_protocol: bool,
+    bind_roles: bool,
+    role_selection: &str,
+    over_key: &str,
+    capacities: Value,
+    fidelity: Option<&str>,
+    output: Option<&str>,
+    role_type: &str,
+) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     let mut export = json!({"profile": target.profile(), "obligations": ["T"]});
     if let Some(fidelity) = fidelity {
         export["minimum_fidelity"] = json!(fidelity);
     }
     if let Some(output) = output {
-        export["output"] = json!(output);
+        export["output"] = json!({"file": output});
     }
     if bind_protocol && tail.contains("protocol Hand") {
         let mut roles = serde_json::Map::new();
@@ -172,7 +205,7 @@ fn export_unit_with_protocol_options(
                 if tail.contains(&format!("role {role} on")) {
                     roles.insert(
                         role.to_owned(),
-                        json!({"type": "model-binding", "selection": role_selection}),
+                        json!({"type": role_type, "selection": role_selection}),
                     );
                 }
             }
@@ -2480,11 +2513,12 @@ fn a_valid_origin_protocol_subject_is_unimplemented_under_both_fidelity_floors()
             );
             assert_eq!(refusal["target"], family, "{value}");
             assert_eq!(refusal["construct"], "protocol/protocol_clause", "{value}");
-            assert!(refusal["node"].is_string(), "{value}");
             assert!(
-                refusal["locus"].is_object() || refusal["locus"].is_null(),
+                !refusal["node"].as_str().unwrap_or_default().is_empty(),
                 "{value}"
             );
+            let locus = &refusal["locus"];
+            assert!(locus.is_null() || locus["kind"] == "region", "{value}");
             let fields: std::collections::BTreeSet<_> = refusal
                 .as_object()
                 .unwrap()
@@ -2508,6 +2542,39 @@ fn a_valid_origin_protocol_subject_is_unimplemented_under_both_fidelity_floors()
             );
         }
     }
+}
+
+#[test]
+#[trace("FSpec-TC-1972", "FR-1015-AC-15")]
+fn a_protocol_refusal_survives_an_omitted_initial_snapshot() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let (exit, value) = export_unit_with_protocol_options(
+        &tail,
+        Target::Tla,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        false,
+        true,
+        true,
+        "example/counter-third",
+        "c",
+        json!({}),
+        None,
+        None,
+    );
+    assert_eq!(exit, 21, "{value}");
+    assert_eq!(
+        value["export"]["refusal"]["construct"],
+        "protocol/protocol_clause"
+    );
 }
 
 #[test]
@@ -2645,6 +2712,75 @@ fn a_protocol_whole_model_role_is_auto_bound_and_rejects_a_request_binding() {
 }
 
 #[test]
+#[trace("FSpec-FR-813-AC-24", "FR-1015-AC-15")]
+fn an_omitted_whole_model_role_binding_reaches_the_protocol_refusal() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let (exit, value) = export_unit_with_protocol_options(
+        &tail,
+        Target::Tla,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        true,
+        true,
+        false,
+        "example/counter-third",
+        "c",
+        json!({}),
+        None,
+        None,
+    );
+    assert_eq!(exit, 21, "{value}");
+    assert_eq!(
+        value["export"]["refusal"]["construct"],
+        "protocol/protocol_clause"
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-813-AC-24")]
+fn a_present_role_binding_with_the_wrong_type_refuses_wrong_role_mapping() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let (exit, value) = export_unit_with_protocol_role_type(
+        &tail,
+        Target::Tla,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        true,
+        true,
+        true,
+        "example/counter-third",
+        "c",
+        json!({}),
+        None,
+        None,
+        "object-binding",
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/request/export/protocols/0/roles/a",
+        "{value}"
+    );
+}
+
+#[test]
 #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
 fn a_protocol_each_requirement_is_refused_at_its_activation_trigger() {
     let tail = format!(
@@ -2709,6 +2845,49 @@ fn a_valid_symbolic_channel_capacity_reaches_the_protocol_typed_refusal() {
         );
         let refusal = &value["export"]["refusal"];
         assert_eq!(refusal["construct"], "protocol/protocol_clause");
+    }
+}
+
+#[test]
+#[trace("FSpec-FR-813-AC-24")]
+fn protocol_capacity_bindings_use_fr785_admission() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             role b on Counter::Counter;\n\
+             channel ch from a to b carries Boolean ordering unordered delivery exactly-once-premise capacity symbolic(Cap) overflow block;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    for (capacities, cause, name) in [
+        (json!({"Unknown": "1"}), "unknown-member", "Unknown"),
+        (json!({"Cap": "01"}), "invalid-value", "Cap"),
+    ] {
+        let (exit, value) = export_unit_with_protocol_options(
+            &tail,
+            Target::Tla,
+            None,
+            "filament.temporal.infinite-trace/v1",
+            true,
+            true,
+            true,
+            "example/counter-third",
+            "c",
+            capacities,
+            None,
+            None,
+        );
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+        assert_eq!(value["cause"], cause, "{value}");
+        assert_eq!(
+            value["details"]["path"],
+            format!("/request/export/protocols/0/capacities/{name}"),
+            "{value}"
+        );
     }
 }
 

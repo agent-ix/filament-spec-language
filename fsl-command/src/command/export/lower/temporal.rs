@@ -8,13 +8,13 @@
 
 mod tla;
 
-pub(super) use self::tla::{tla, Extra};
+pub(super) use self::tla::{Extra, tla};
 use super::{
-    defer_at, define, mangle, parameters, refusal, refuse, Definition, Graph, Input, Lower, E,
+    Definition, E, Graph, Input, Lower, defer_at, define, mangle, parameters, refusal, refuse,
 };
 use filament_contract_model::{CheckedOperationInterval, CheckedProtocolActivation};
 use fsl_package::checked_views::{
-    temporal_subject, Activation, FormulaNodeUse, FormulaOperation, OperatorDirection,
+    Activation, FormulaNodeUse, FormulaOperation, OperatorDirection, temporal_subject,
 };
 use fsl_semantics::check::TemporalProfile;
 
@@ -266,24 +266,27 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
             "a clause the package does not read as a temporal clause",
         )
     })?;
+    let activation_rows = graph.package.protocol_activation_relation();
+    for protocol in view.requirements() {
+        if let Some(row) = activation_rows
+            .iter()
+            .find(|row| &row.clause == protocol && row.required_temporal == node.node_id)
+        {
+            if let CheckedProtocolActivation::Each { trigger } = &row.activation {
+                let trigger_position = at_node(graph, &trigger)?;
+                let trigger_node = graph.node(trigger_position);
+                let construct = format!("{}/{}", trigger_node.node_tag, trigger_node.semantic_form);
+                return defer_at(
+                    trigger_position,
+                    &construct,
+                    "a required temporal clause on a protocol `on each` activation row",
+                );
+            }
+        }
+    }
     if let Some(protocol) = view.requirements().first() {
         let protocol_position = at_node(graph, protocol)?;
         let protocol_node = graph.node(protocol_position);
-        let row = graph
-            .package
-            .protocol_activation_relation()
-            .into_iter()
-            .find(|row| &row.clause == protocol && row.required_temporal == node.node_id);
-        if let Some(CheckedProtocolActivation::Each { trigger }) = row.map(|row| row.activation) {
-            let trigger_position = at_node(graph, &trigger)?;
-            let trigger_node = graph.node(trigger_position);
-            let construct = format!("{}/{}", trigger_node.node_tag, trigger_node.semantic_form);
-            return defer_at(
-                trigger_position,
-                &construct,
-                "a required temporal clause on a protocol `on each` activation row",
-            );
-        }
         let construct = format!("{}/{}", protocol_node.node_tag, protocol_node.semantic_form);
         return defer_at(
             protocol_position,
