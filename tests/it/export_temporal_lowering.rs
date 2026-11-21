@@ -3149,30 +3149,60 @@ fn tableau_phase_is_a_function_over_two_or_zero_identities() {
 #[test]
 #[trace("FSpec-FR-812-AC-1", "FSpec-FR-813-AC-6", "FSpec-TC-1972")]
 fn tableau_keeps_source_fairness_when_lamp_has_a_noop() {
+    use filament_contract_model::CheckedNodePathSegment::Name;
+    use fsl_replay::protocol_analysis::read_node_text;
+
     let (exit, tla) = tableau_export(1, Target::Tla);
     assert_eq!(exit, 0, "{tla}");
     let text = tla["export"]["target_text"].as_str().unwrap();
-    let body = |name| {
-        text.split_once(name)
-            .unwrap()
+    let names = tla["export"]["name_map"].as_array().unwrap();
+    let mapped_operation = |source_name: &str| {
+        let mut entries = names.iter().filter_map(|entry| {
+            let name = entry["name"].as_str()?;
+            if !name.starts_with("op_") {
+                return None;
+            }
+            let node = read_node_text(entry["node"].as_str()?).ok()?;
+            let [Name(tag), Name(form), _, Name(operation)] = node.path.as_slice() else {
+                return None;
+            };
+            (&**tag == "state" && &**form == "operation_anchor" && &**operation == source_name)
+                .then_some(name)
+        });
+        let name = entries
+            .next()
+            .unwrap_or_else(|| panic!("missing operation {source_name} in {names:?}"));
+        assert!(
+            entries.next().is_none(),
+            "duplicate operation {source_name}: {names:?}"
+        );
+        assert_eq!(name, format!("op_Lamp_{source_name}"));
+        name
+    };
+    let body = |header: &str| {
+        let needle = format!("\n{header}\n");
+        text.split_once(needle.as_str())
+            .unwrap_or_else(|| panic!("missing definition {header}: {text}"))
             .1
             .split("\n\n")
             .next()
             .unwrap()
     };
     assert!(text.lines().any(|line| line == "vars == <<v_Lamp>>"));
-    let init = body("Init ==\n");
+    let init = body("Init ==");
     for field in ["pending", "safe", "seen"] {
         assert!(init.contains(&format!("fld_{field} |-> FALSE")), "{init}");
     }
-    let noop = body("op_noop(r_self) ==\n");
+    let noop_name = mapped_operation("noop");
+    let noop = body(&format!("{noop_name}(r_self) =="));
     for field in ["pending", "ready", "safe", "seen", "value"] {
         assert!(
             noop.contains(&format!("v_Lamp'[k].fld_{field} = v_Lamp[k].fld_{field}")),
             "{noop}"
         );
     }
-    let light = body("op_light(r_self) ==\n");
+    let light_name = mapped_operation("light");
+    let light = body(&format!("{light_name}(r_self) =="));
     for constraint in [
         "~v_Lamp[r_self].fld_safe",
         "v_Lamp'[r_self].fld_safe",
@@ -3181,9 +3211,9 @@ fn tableau_keeps_source_fairness_when_lamp_has_a_noop() {
     ] {
         assert!(light.contains(constraint), "missing {constraint}: {light}");
     }
-    let next = body("Next ==\n");
-    assert!(next.contains("op_noop(r_self)"), "{next}");
-    assert!(next.contains("op_light(r_self)"), "{next}");
+    let next = body("Next ==");
+    assert!(next.contains(&format!("{noop_name}(r_self)")), "{next}");
+    assert!(next.contains(&format!("{light_name}(r_self)")), "{next}");
     let spec = r"Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T) /\ WF_vars(Next)";
     assert!(text.lines().any(|line| line == spec), "{text}");
 }
