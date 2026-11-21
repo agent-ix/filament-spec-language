@@ -126,13 +126,14 @@ fn evaluate_hyper_holds(
     let world = package
         .world()
         .map_err(|failure| refusal(package, failure))?;
-    let mut machine = Machine::with_world(World::Bytes(&world), first, None, None, meter, &[])
-        .with_components(super::evaluate::ComponentReads {
+    let mut machine = Machine::from_bare_package(&world, first, meter).with_components(
+        super::evaluate::ComponentReads {
             environments: components,
             pre_environments: None,
             reads: term.component_reads(),
             observations: None,
-        });
+        },
+    );
     let mut values = Vec::with_capacity(slots.len());
     for (slot, binding) in slots.into_iter().enumerate() {
         match binding {

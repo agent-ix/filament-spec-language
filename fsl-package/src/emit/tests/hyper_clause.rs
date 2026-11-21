@@ -1058,11 +1058,11 @@ fn a_package_hyper_form_refuses_unknown_traces_and_the_reader_refuses_duplicate_
 #[trace("FR-940-AC-19")]
 #[test]
 fn a_package_hyper_atom_refuses_an_admitted_mixed_component_receiver() {
-    let declarations = "function first using v(x: Reference<V::ConfigVersion>, \
+    let declarations = "function choose_ref using v(x: Reference<V::ConfigVersion>, \
         y: Reference<V::ConfigVersion>): Reference<V::ConfigVersion> pure { x }\n\
         hyper Equal using t over behaviours (c: V::ConfigVersion) \
         forall trace a of V forall trace b of V \
-        { always holds(deref(first(c, c)).versionNumber @ a <= 3 and c.versionNumber @ b <= 3) }";
+        { always holds(deref(choose_ref(c, c)).versionNumber @ a <= 3 and c.versionNumber @ b <= 3) }";
     let built = build(INFINITE, &["V"], declarations);
     let original = admitted(&built);
     let root = hyper_roots(&original).expect("hyper roots").remove(0);

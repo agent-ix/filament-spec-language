@@ -204,10 +204,12 @@ fn package_hyper_atom_preserves_absent_object_outcomes_and_charges() {
             .expect("package absent atom");
         assert!(matches!(
             source_result.outcome,
-            filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Undefined(_))
+            filament_eval::FamilyOutcome::FamilyEvaluated(filament_eval::FamilyResult::Undefined(
+                _
+            ))
         ));
         assert_eq!(outcome(&bare_result), outcome(&source_result));
-        assert!(!source_meter.admitted_charges().is_empty());
+        assert_eq!(source_meter.admitted_charges().is_empty(), missing == 0);
         assert_eq!(
             bare_meter.admitted_charges(),
             source_meter.admitted_charges()
