@@ -1466,6 +1466,31 @@ fn delay_fractions_clip_crossing_steps_and_idle_tails() {
         let verdict = run();
         assert_eq!(verdict.estimate, Some(expected), "{name}");
         assert_eq!(verdict, run(), "{name}: seeded repeat");
+        let stopped = run_timed_method(
+            &world,
+            name,
+            StatisticalMethod::Okamoto,
+            7,
+            fsl_replay::statistical::TimedSampling {
+                q: 64,
+                max_sample_steps: 0,
+            },
+            1,
+        )
+        .expect("the delay fraction honors the step budget");
+        assert!(
+            matches!(
+                stopped,
+                StatisticalOutcome::Stopped {
+                    stop: StatisticalStop::Limit {
+                        limit: StatisticalLimit::MaxSampleSteps { value: 0 },
+                        value: 0,
+                    },
+                    ..
+                }
+            ),
+            "{name}: {stopped:?}"
+        );
     }
 }
 
