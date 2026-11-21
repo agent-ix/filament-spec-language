@@ -1468,8 +1468,8 @@ pub struct PackageSampledRequest<'a> {
     )>,
     /// The package's type environment, which types each sample.
     pub types: &'a filament_semantic_value::declaration::TypeEnvironment,
-    /// The samples, each position the canonical text of one record value; a
-    /// finite trace or a lasso with a non-empty loop.
+    /// The record samples as canonical value text in the selected finite,
+    /// lasso, timed, progressed or timestamped trace.
     pub trace: &'a TraceInput,
     /// The evaluation meter's accounting limits.
     pub accounting: filament_exact::ScalarLimits,
@@ -1639,10 +1639,9 @@ fn package_disposition(
     }
 }
 
-/// FR-330: [`run_temporal`] over the record samples of a checked package's
-/// clause, for the one route the package form reads: a clause under the
-/// infinite-trace profile over a finite trace or a lasso. A refused condition
-/// reports the source route's refusal code and cause, with no source span.
+/// FR-330: run the admitted package's temporal clause over record samples.
+/// Progress and clock-bearing traces authenticate against the package's own
+/// selected declaration. Names and loci read only caller-supplied sources.
 pub fn run_package_sampled(
     request: &PackageSampledRequest<'_>,
 ) -> Result<Box<ClauseRunReport>, PackageSelectionNotRead> {

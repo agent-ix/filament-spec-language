@@ -3657,110 +3657,420 @@ fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes()
     let fixture = include_str!("../corpus/temporal/timestamped-window.native");
     let clocks = json!({"sensor": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
     let profile = "filament.temporal.timestamped-event.finite-window/v1";
-    for (body, label, candidates) in [
-        ("always[0,5] holds( p.ok )", "holds( p.ok )", 1),
-        (
-            "always[0,5] (holds( p.ok ) and holds( p.ok ))",
-            "holds( p.ok )",
-            2,
-        ),
-        (
-            "always[0,5] (holds( p.ok ) and holds(p.ok))",
-            "holds(p.ok)",
-            2,
-        ),
-    ] {
-        let unit = fixture.replace("eventually[0,7] holds(p.ok)", body);
-        let directory = tempfile::tempdir().unwrap();
-        spine::write(directory.path(), Case::Healthy).unwrap();
-        std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
-        let observations: Vec<Value> = [(0, true), (2, false), (5, true)].into_iter().map(|(stamp, ok)| {
+    for progressed in [false, true] {
+        for (body, label, candidates) in [
+            ("always[0,5] holds( p.ok )", "holds( p.ok )", 1),
+            (
+                "always[0,5] (holds( p.ok ) and holds( p.ok ))",
+                "holds( p.ok )",
+                2,
+            ),
+            (
+                "always[0,5] (holds( p.ok ) and holds(p.ok))",
+                "holds(p.ok)",
+                2,
+            ),
+        ] {
+            let profile = if progressed { EVENT_POSITION } else { profile };
+            let unit = fixture
+                .replace(
+                    "filament.temporal.timestamped-event.finite-window/v1",
+                    profile,
+                )
+                .replace("eventually[0,7] holds(p.ok)", body);
+            let clocks = if progressed {
+                json!({"sensor": {"kind":"event_position", "sequence_authority":"pulse-sequence"}})
+            } else {
+                clocks.clone()
+            };
+            let directory = tempfile::tempdir().unwrap();
+            spine::write(directory.path(), Case::Healthy).unwrap();
+            std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+            let observations: Vec<Value> = [(0, true), (2, false), (5, true)].into_iter().map(|(stamp, ok)| {
             json!({"position": {"sample": {"ok": {"boolean": ok}}}, "stamp": stamp})
         }).collect();
-        let clause = json!({"selection": {"temporal": {"name": "StampedPulse", "trace": {"timestamped": {
-            "observations": observations, "progress": {"watermark": 5, "completeness": {"complete": {"through": 5}}, "scope": "closed", "execution": "closed"},
-            "lower_boundary": "authoritative-origin", "binding": {"profile": profile, "clock": "sensor", "parameters": clocks["sensor"].clone()}
-        }}}}, "observations": {}});
-        let expected = write_request(
-            directory.path(),
-            &json!({"format":"native-run/1", "request": {
-                "models": [], "program": {"source": source("unit.native")}, "clocks": clocks, "clause": clause
-            }}),
-        );
-        assert_eq!(expected.0, 10, "source {body}: {}", expected.1);
-        assert_eq!(
-            expected.1["support"],
-            json!([{"position":1,"atom":label}]),
-            "{}",
-            expected.1
-        );
-        assert_eq!(expected.1["basis"], "closed-scope");
-        let models = compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
-        let package_bytes = std::fs::read(directory.path().join("package.json")).unwrap();
-        let package = fsl_package::admit_checked_package(
-            &package_bytes,
-            &Default::default(),
-            fsl_replay::spine::SpineLimits::default().imports,
-        )
-        .expect("the genuine package strictly admits");
-        let row = package
-            .temporal_clause_names()
-            .unwrap()
-            .iter()
-            .find(|row| row.name.as_ref() == "StampedPulse")
-            .unwrap();
-        let view =
-            fsl_package::checked_views::temporal_subject(&package, &row.declaration).unwrap();
-        let atom = view
-            .formula_graph()
-            .iter()
-            .find(|entry| entry.kind() == Some(fsl_package::checked_views::FormulaOperation::Holds))
-            .unwrap()
-            .node;
-        let expression_regions: usize = package
-            .source_map()
-            .iter()
-            .filter(|entry| {
-                entry.node_id == *atom
-                    && entry.role == filament_contract_model::CheckedOccurrenceRole::Expression
-            })
-            .map(|entry| entry.regions.len())
-            .sum();
-        assert_eq!(
-            expression_regions, candidates,
-            "{body}: the admitted shared node's actual source rows"
-        );
-        std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
-        let mut caller = source("unit.native");
-        caller["file"] = json!("caller.native");
-        caller["document"] = json!("DifferentDocument");
-        caller["formal_revision"] = json!(9);
-        let request = json!({"format":"native-run/1", "request": {"models":models,
-            "package":{"directory":"handoff"}, "sources":[caller], "clocks":clocks, "clause":clause}});
-        let actual = write_request(directory.path(), &request);
-        assert_eq!(actual, expected, "package {body}");
-        fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
-            .expect("strict native read");
-        for supplied in [
-            Value::Null,
-            json!([]),
-            json!([{ "file":"caller.native", "authority":"agent-ix", "identity":"wrong", "document":"Other", "formal_revision":1 }]),
-        ] {
-            let mut missing = request.clone();
-            if supplied.is_null() {
-                missing["request"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("sources");
+            let progress = json!({"watermark":5,"completeness":{"complete":{"through":5}},"scope":"closed","execution":"closed"});
+            let binding =
+                json!({"profile":profile,"clock":"sensor","parameters":clocks["sensor"].clone()});
+            let trace = if progressed {
+                json!({"progressed":{"positions":observations.iter().map(|observation| observation["position"].clone()).collect::<Vec<_>>(),
+                "progress":progress,"lower_boundary":"authoritative-origin","binding":binding}})
             } else {
-                missing["request"]["sources"] = supplied;
+                json!({"timestamped":{"observations":observations,"progress":progress,"lower_boundary":"authoritative-origin","binding":binding}})
+            };
+            let clause = json!({"selection":{"temporal":{"name":"StampedPulse","trace":trace}},"observations":{}});
+            let expected = write_request(
+                directory.path(),
+                &json!({"format":"native-run/1", "request": {
+                    "models": [], "program": {"source": source("unit.native")}, "clocks": clocks, "clause": clause
+                }}),
+            );
+            assert_eq!(expected.0, 10, "source {body}: {}", expected.1);
+            assert_eq!(
+                expected.1["support"],
+                json!([{"position":1,"atom":label}]),
+                "{}",
+                expected.1
+            );
+            assert_eq!(expected.1["basis"], "closed-scope");
+            let models = compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
+            let package_bytes = std::fs::read(directory.path().join("package.json")).unwrap();
+            let package = fsl_package::admit_checked_package(
+                &package_bytes,
+                &Default::default(),
+                fsl_replay::spine::SpineLimits::default().imports,
+            )
+            .expect("the genuine package strictly admits");
+            let row = package
+                .temporal_clause_names()
+                .unwrap()
+                .iter()
+                .find(|row| row.name.as_ref() == "StampedPulse")
+                .unwrap();
+            let view =
+                fsl_package::checked_views::temporal_subject(&package, &row.declaration).unwrap();
+            let atom = view
+                .formula_graph()
+                .iter()
+                .find(|entry| {
+                    entry.kind() == Some(fsl_package::checked_views::FormulaOperation::Holds)
+                })
+                .unwrap()
+                .node;
+            let expression_regions: usize = package
+                .source_map()
+                .iter()
+                .filter(|entry| {
+                    entry.node_id == *atom
+                        && entry.role == filament_contract_model::CheckedOccurrenceRole::Expression
+                })
+                .map(|entry| entry.regions.len())
+                .sum();
+            assert_eq!(
+                expression_regions, candidates,
+                "{body}: the admitted shared node's actual source rows"
+            );
+            std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+            let mut caller = source("unit.native");
+            caller["file"] = json!("caller.native");
+            caller["document"] = json!("DifferentDocument");
+            caller["formal_revision"] = json!(9);
+            let request = json!({"format":"native-run/1", "request": {"models":models,
+            "package":{"directory":"handoff"}, "sources":[caller], "clause":clause}});
+            package_window_adapter_controls(&package, directory.path(), &unit, label);
+            let actual = write_request(directory.path(), &request);
+            assert_eq!(actual, expected, "package {body}");
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
+                .expect("strict native read");
+            for supplied in [
+                Value::Null,
+                json!([]),
+                json!([{ "file":"caller.native", "authority":"agent-ix", "identity":"wrong", "document":"Other", "formal_revision":1 }]),
+            ] {
+                let mut missing = request.clone();
+                if supplied.is_null() {
+                    missing["request"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("sources");
+                } else {
+                    missing["request"]["sources"] = supplied;
+                }
+                let refusal = write_request(directory.path(), &missing);
+                assert_eq!(refusal.0, 20, "{}", refusal.1);
+                assert_eq!(refusal.1["stage"], "call", "{}", refusal.1);
+                assert_eq!(refusal.1["code"], "invalid_runtime_input", "{}", refusal.1);
+                assert_eq!(refusal.1["cause"], "missing-member", "{}", refusal.1);
+                assert_eq!(refusal.1["details"]["field"], "sources", "{}", refusal.1);
             }
-            let refusal = write_request(directory.path(), &missing);
-            assert_eq!(refusal.0, 20, "{}", refusal.1);
-            assert_eq!(refusal.1["stage"], "call", "{}", refusal.1);
-            assert_eq!(refusal.1["code"], "invalid_runtime_input", "{}", refusal.1);
-            assert_eq!(refusal.1["cause"], "missing-member", "{}", refusal.1);
-            assert_eq!(refusal.1["details"]["field"], "sources", "{}", refusal.1);
         }
+    }
+}
+
+/// The byte-only adapter retains actual loci and obeys caller source and
+/// finite progress/work boundaries, independently of command file intake.
+fn package_window_adapter_controls(
+    package: &filament_contract_model::CheckedPackageV2,
+    directory: &Path,
+    unit: &str,
+    label: &str,
+) {
+    use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef, SourceRegion};
+    use fsl_foundation::{Source, SourceIdentity};
+    use fsl_replay::spine::{self as replay, ClauseDisposition, TemporalVerdict};
+    let limits = replay::SpineLimits::default();
+    let mut budget = limits.imports.native_join_budget();
+    let identities = fsl_package::ReadIdentityRows::read(
+        &std::fs::read(directory.join("handoff/identities.json")).unwrap(),
+        package,
+        &mut budget,
+    )
+    .expect("the real handoff identity rows join");
+    let equality = fsl_package::ReadEqualityRows::read(
+        &std::fs::read(directory.join("handoff/equality.json")).unwrap(),
+        package,
+    )
+    .expect("the real equality rows read");
+    let bare = fsl_package::BarePackage::new(package)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the one bounded join admits the caller's actual witnesses");
+    let packages = fsl_semantics::model::intake::PackageInput::default();
+    let model = fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.model)
+        .expect("the admitted record package supplies its own type world");
+    let row = package
+        .temporal_clause_names()
+        .unwrap()
+        .iter()
+        .find(|row| row.name.as_ref() == "StampedPulse")
+        .unwrap();
+    let view = fsl_package::checked_views::temporal_subject(package, &row.declaration).unwrap();
+    let key = view.declaration_key().unwrap();
+    let claim = OccurrenceKey::new(
+        key.clone(),
+        filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
+    );
+    let clause = model
+        .temporal_run_clause(&claim, limits.checking.nodes())
+        .unwrap();
+    let source_identity = SourceIdentity::new("agent-ix", "test:s1-16:unit.native");
+    let source = |identity: SourceIdentity, bytes: &[u8]| {
+        Source::read_typed(identity, "caller.native", bytes, unit.len()).unwrap()
+    };
+    let sources = [source(source_identity.clone(), unit.as_bytes())];
+    let region = |region: &filament_contract_model::CheckedSourceRegion| {
+        SourceRegion::new(
+            RawSourceRef::new(
+                region.source.authority.as_ref(),
+                region.source.identity.as_ref(),
+            )
+            .unwrap(),
+            region.start,
+            region.end,
+        )
+        .unwrap()
+    };
+    let declaration = region(&row.declaration_region);
+    let atom = view
+        .formula_graph()
+        .iter()
+        .find(|entry| entry.kind() == Some(fsl_package::checked_views::FormulaOperation::Holds))
+        .unwrap()
+        .node;
+    let candidates = package
+        .source_map()
+        .iter()
+        .filter(|entry| {
+            entry.node_id == *atom
+                && entry.role == filament_contract_model::CheckedOccurrenceRole::Expression
+        })
+        .flat_map(|entry| entry.regions.iter())
+        .map(region)
+        .filter(|region| {
+            region.source() == declaration.source()
+                && region.start() >= declaration.start()
+                && region.end() <= declaration.end()
+        })
+        .collect::<Vec<_>>();
+    let expected_region = match candidates.as_slice() {
+        [only] => only.clone(),
+        [_, _, ..] => declaration.clone(),
+        _ => panic!("the genuine atom has caller regions"),
+    };
+    let positions = [true, false, true]
+        .map(|ok| replay::sample_position(&json!({"ok":{"boolean":ok}}).to_string()));
+    let progress = replay::ProgressAssertion {
+        watermark: 5,
+        completeness: replay::ProgressCompleteness::Complete { through: 5 },
+        scope: replay::ProgressClosure::Closed,
+        execution: replay::ProgressClosure::Closed,
+    };
+    let parameters = if clause.profile().identity() == EVENT_POSITION {
+        fsl_package::ClockConfiguration::EventPosition {
+            sequence_authority: "pulse-sequence".into(),
+        }
+    } else {
+        fsl_package::ClockConfiguration::TimestampedEvent {
+            timestamp_unit: "ms".into(),
+        }
+    };
+    let binding = replay::TraceBinding {
+        profile: clause.profile().identity().to_owned(),
+        clock_name: "sensor".to_owned(),
+        parameters,
+    };
+    let trace = if clause.profile().identity() == EVENT_POSITION {
+        replay::TraceInput::Progressed {
+            positions: positions.to_vec(),
+            progress,
+            lower_boundary: replay::ProgressLowerBoundary::AuthoritativeOrigin,
+            binding,
+        }
+    } else {
+        replay::TraceInput::Timestamped {
+            observations: positions
+                .iter()
+                .cloned()
+                .zip([0, 2, 5])
+                .map(|(document, stamp)| replay::TimestampedObservation {
+                    document,
+                    stamp,
+                    order_key: None,
+                })
+                .collect(),
+            progress,
+            window: Box::new(replay::TimestampedWindow {
+                binding: Some(binding),
+                authoritative_origin: true,
+                cover: None,
+                missing_valuations: Vec::new(),
+                late: Default::default(),
+            }),
+        }
+    };
+    let accounting = fsl_replay::AccountingLimits::default().0;
+    let run = |sources: &[Source], ledger, capacity, accounting| {
+        replay::run_package_sampled_authenticated(
+            &replay::PackageSampledRequest {
+                package: &bare,
+                sources,
+                ledger,
+                progress_capacity: capacity,
+                evaluator: &bare,
+                name: "StampedPulse",
+                clause: Some((&clause, &key)),
+                types: model.input().types,
+                trace: &trace,
+                accounting,
+            },
+            package,
+        )
+    };
+    let full = run(
+        &sources,
+        None,
+        limits.progress.covered_positions,
+        accounting,
+    )
+    .expect("the real byte-only trace evaluates");
+    assert!(matches!(
+        full.disposition,
+        ClauseDisposition::Temporal(TemporalVerdict::Violated { at: 0 })
+    ));
+    let window = full.finite_window.as_ref().unwrap();
+    assert_eq!(
+        window.support,
+        vec![replay::FiniteWindowSupport {
+            position: 1,
+            atom: label.to_owned()
+        }]
+    );
+    assert!(!window.atom_regions.is_empty());
+    for actual in window.atom_regions.values() {
+        assert_eq!(actual, &expected_region);
+    }
+    let checked = crate::support::front_end::checked(
+        source_identity.clone(),
+        "unit.native",
+        unit.as_bytes(),
+        &packages,
+        &replay::DependencyInput::default(),
+    )
+    .unwrap();
+    let node = checked
+        .package()
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == "StampedPulse")
+        .unwrap();
+    let first = node
+        .clause()
+        .formula()
+        .nodes()
+        .iter()
+        .position(|node| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+        .unwrap();
+    let rendered =
+        replay::render_clause_atom(checked.package(), &sources, "StampedPulse", first).unwrap();
+    assert_eq!(
+        (rendered.name.as_str(), &rendered.region),
+        (label, &expected_region)
+    );
+    let ledger = full
+        .ledger
+        .as_ref()
+        .expect("the real progress ledger is retained");
+    let repeated = run(
+        &sources,
+        Some(ledger),
+        limits.progress.covered_positions,
+        accounting,
+    )
+    .expect("the carried ledger accepts the same facts");
+    assert_eq!(repeated.ledger, full.ledger);
+    assert_eq!(
+        repeated.finite_window.as_ref().unwrap().support,
+        window.support
+    );
+    let bounded = run(&sources, None, 2, accounting).unwrap();
+    assert!(matches!(
+        bounded.disposition,
+        ClauseDisposition::Temporal(TemporalVerdict::ProgressLimitReached(_))
+    ));
+    let mut budget = accounting;
+    budget.work_units = 0;
+    let stopped = run(&sources, None, limits.progress.covered_positions, budget).unwrap();
+    assert_eq!(stopped.category().exit_code(), 22);
+    assert!(matches!(
+        stopped.disposition,
+        ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_))
+    ));
+    let mut invalid = vec![
+        Vec::new(),
+        vec![source(
+            SourceIdentity::new("other", "reference"),
+            unit.as_bytes(),
+        )],
+        vec![source(source_identity.clone(), b"short")],
+    ];
+    let mut selected_regions = candidates.clone();
+    if candidates.len() > 1 {
+        selected_regions.push(declaration);
+    }
+    for selected in selected_regions {
+        let end = usize::try_from(selected.end()).unwrap();
+        assert!(end > 0 && end < unit.len());
+        let mut bytes = unit.as_bytes().to_vec();
+        bytes.splice(end - 1..end + 1, "é".bytes());
+        assert!(
+            std::str::from_utf8(&bytes).is_ok(),
+            "the caller supplies valid UTF-8 with a split region endpoint"
+        );
+        invalid.push(vec![source(source_identity.clone(), &bytes)]);
+    }
+    for missing in invalid {
+        let refusal = run(
+            &missing,
+            None,
+            limits.progress.covered_positions,
+            accounting,
+        )
+        .unwrap_err();
+        let replay::PackageSelectionNotRead::Run(refusal) = refusal else {
+            panic!("the original caller-source refusal")
+        };
+        assert!(matches!(
+            *refusal,
+            replay::RunRefusal::SourceNotSupplied { .. }
+        ));
+        assert!(
+            matches!(replay::render_clause_atom(checked.package(), &missing, "StampedPulse", first), Err(ref refusal) if matches!(**refusal, replay::RunRefusal::SourceNotSupplied { .. }))
+        );
     }
 }
