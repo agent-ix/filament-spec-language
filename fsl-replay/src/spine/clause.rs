@@ -50,6 +50,7 @@ pub use correction::{
     settle_run_correction,
 };
 pub use ledger_wire::{LedgerReadError, read_ledger, write_ledger};
+pub use model_trace::{PackageBehaviours, run_package_behaviours};
 pub use package_authentication::{
     AuthenticationFailure, PackageAuthentication, PackagesStage, authenticate_emission,
 };
@@ -58,21 +59,20 @@ pub use progress::{
     ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLedgerEntry,
     ProgressLimitReached, ProgressLowerBoundary, ProgressValue,
 };
+pub use temporal::SAMPLE_AUTHORITY;
 use temporal::TemporalRun;
 pub use temporal::{
     AdmittedLate, DEFAULT_MODEL_MAX_CANDIDATES, FiniteWindowAssessment, FiniteWindowPremises,
     FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs, OverObject,
-    PackageSampledRequest, PackageTemporalRequest, ProgressRefusal, TemporalAuthentication,
-    TimestampedCover, TimedObservation, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow,
+    PackageSampledRequest, PackageSelectionNotRead, PackageSnapshotRequest, PackageTemporalRequest,
+    ProgressRefusal, TemporalAuthentication, TimedObservation, TimestampedCover,
+    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
     TraceBinding, TraceInput, admit_progress, authenticate_package_trace, clause_trace_binding,
-    name_clause_atom, run_package_sampled, run_package_valuation, disposition_report, run_package_temporal, run_package_temporal_bounded,
-    sample_position,
+    disposition_report, name_clause_atom, run_package_sampled, run_package_snapshots,
+    run_package_temporal, run_package_temporal_bounded, run_package_valuation, sample_position,
 };
-pub use model_trace::{run_package_behaviours, PackageBehaviours};
-pub use trace_refusal::profile_reads;
-pub use temporal::SAMPLE_AUTHORITY;
 pub(crate) use temporal::{trace_refusal, verdict};
+pub use trace_refusal::profile_reads;
 pub use trace_refusal::{REASONS as TRACE_REFUSAL_REASONS, TraceRefusal};
 pub use trace_subject::{
     PackageTraceSubjectRequest, TraceSubjectClauseRequest, run_package_trace_subject,

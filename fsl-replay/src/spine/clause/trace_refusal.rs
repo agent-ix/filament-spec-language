@@ -6,7 +6,7 @@
 //! the message.
 
 use fsl_foundation::source::provenance::SourceRegion;
-use fsl_semantics::check::{TemporalClauseNode, TemporalProfile};
+use fsl_semantics::check::{CheckedTemporalClause, TemporalClauseNode, TemporalProfile};
 
 use super::ClauseRunStage;
 
@@ -87,45 +87,42 @@ fn spelled(kinds: &[&str]) -> String {
     }
 }
 
-/// The package and sources a refusal locates its clause in.
-#[derive(Clone, Copy)]
-pub struct ClauseSite<'a> {
-    /// The compiled package.
-    pub package: &'a fsl_package::CheckedPackage,
-    /// The temporal clause.
-    pub node: &'a TemporalClauseNode,
-}
+/// Where a trace refusal locates its clause: the clause itself and, on the
+/// source route, the region of its declaration. A checked package carries no
+/// source, so its site holds no region.
+pub trait TraceSite {
+    /// The temporal clause the refusal concerns.
+    fn clause(&self) -> &CheckedTemporalClause;
 
-impl ClauseSite<'_> {
+    /// The source region of the clause's declaration, when one is held.
+    fn locus(&self) -> Option<SourceRegion>;
+
+    /// A refusal at `stage` with `reason` and `message`.
     fn refusal(
         &self,
         stage: ClauseRunStage,
         reason: &'static str,
         message: String,
     ) -> TraceRefusal {
-        let graph = self.package.graph();
-        let region = graph
-            .occurrence(self.node.identity(), self.node.claim())
-            .and_then(|location| graph.region(location));
         TraceRefusal {
             stage,
             reason,
-            profile: self.node.clause().profile().identity(),
+            profile: self.clause().profile().identity(),
             expected: Vec::new(),
             supplied: None,
             position: None,
             message,
-            locus: region,
+            locus: self.locus(),
         }
     }
 
     /// `trace-kind-mismatch`: the clause's profile does not read `supplied`.
-    pub fn kind_mismatch(&self, supplied: &'static str) -> TraceRefusal {
-        let profile = self.node.clause().profile();
+    fn kind_mismatch(&self, supplied: &'static str) -> TraceRefusal {
+        let profile = self.clause().profile();
         let expected = profile_reads(profile);
         let message = format!(
             "clause \"{}\" uses profile {}, which reads a {} trace; the request supplies a {} trace",
-            self.node.clause().name(),
+            self.clause().name(),
             profile.identity(),
             spelled(expected),
             supplied,
@@ -138,7 +135,7 @@ impl ClauseSite<'_> {
     }
 
     /// `empty-finite-trace`: a trace of `kind` holds no position.
-    pub fn empty_trace(&self, kind: &'static str) -> TraceRefusal {
+    fn empty_trace(&self, kind: &'static str) -> TraceRefusal {
         self.refusal(
             ClauseRunStage::Evaluate,
             "empty-finite-trace",
@@ -147,7 +144,7 @@ impl ClauseSite<'_> {
     }
 
     /// `empty-lasso-loop`: a lasso whose loop holds no position.
-    pub fn empty_loop(&self) -> TraceRefusal {
+    fn empty_loop(&self) -> TraceRefusal {
         self.refusal(
             ClauseRunStage::Evaluate,
             "empty-lasso-loop",
@@ -158,24 +155,64 @@ impl ClauseSite<'_> {
     /// `unsupported-window-aggregate`: a window aggregate (FR-194) over a
     /// `kind` sample trace, which only the closed finite event-position route
     /// reads (QSL-2138).
-    pub fn window_aggregate(&self, kind: &'static str) -> TraceRefusal {
+    fn window_aggregate(&self, kind: &'static str) -> TraceRefusal {
         self.refusal(
             ClauseRunStage::Admit,
             "unsupported-window-aggregate",
             format!(
                 "clause \"{}\" reads a window aggregate, which is not yet supported over a {kind} sample trace (QSL-2138)",
-                self.node.clause().name(),
+                self.clause().name(),
             ),
         )
     }
 
     /// `ledger-without-progress`: a ledger beside a trace that asserts no
     /// progress.
-    pub fn ledger_without_progress(&self) -> TraceRefusal {
+    fn ledger_without_progress(&self) -> TraceRefusal {
         self.refusal(
             ClauseRunStage::Admit,
             "ledger-without-progress",
             "a progress ledger applies only to progressed or timestamped traces".to_owned(),
         )
+    }
+}
+
+/// The package and sources a refusal locates its clause in.
+#[derive(Clone, Copy)]
+pub struct ClauseSite<'a> {
+    /// The compiled package.
+    pub package: &'a fsl_package::CheckedPackage,
+    /// The temporal clause.
+    pub node: &'a TemporalClauseNode,
+}
+
+impl TraceSite for ClauseSite<'_> {
+    fn clause(&self) -> &CheckedTemporalClause {
+        self.node.clause()
+    }
+
+    fn locus(&self) -> Option<SourceRegion> {
+        let graph = self.package.graph();
+        graph
+            .occurrence(self.node.identity(), self.node.claim())
+            .and_then(|location| graph.region(location))
+    }
+}
+
+/// A temporal clause a checked package carries, read from its nodes: the
+/// package holds no source, so its refusals name the clause and no region.
+#[derive(Clone, Copy)]
+pub struct PackageClauseSite<'a> {
+    /// The package form of the clause.
+    pub clause: &'a CheckedTemporalClause,
+}
+
+impl TraceSite for PackageClauseSite<'_> {
+    fn clause(&self) -> &CheckedTemporalClause {
+        self.clause
+    }
+
+    fn locus(&self) -> Option<SourceRegion> {
+        None
     }
 }

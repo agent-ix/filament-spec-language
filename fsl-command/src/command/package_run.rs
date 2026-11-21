@@ -49,11 +49,19 @@ enum Work {
     Clause(Box<ClauseWork>),
 }
 
-/// A `clause` run over a selected package: the clause, the trace of record
-/// samples it reads and the selection the result echoes.
+/// A `clause` run over a selected package: the clause, the trace it reads and
+/// the selection the result echoes.
 struct ClauseWork {
     name: String,
     trace: fsl_replay::spine::TraceInput,
+    /// The object the clause's `over` parameter names, for a trace of
+    /// snapshots; `None` for a trace of record samples.
+    over: Option<fsl_replay::spine::OverObject>,
+    /// The progress ledger the request carries.
+    ledger: Option<fsl_replay::spine::ProgressLedger>,
+    /// The snapshot documents the trace names.
+    snapshots: fsl_semantics::model::observation::DocumentProvision,
+    observation_limits: fsl_semantics::model::observation::ObservationLimits,
     selection: fsl_replay::spine::ClauseRunSelection,
     accounting: filament_exact::ScalarLimits,
 }
@@ -69,6 +77,8 @@ pub(super) struct AdmittedPackage {
     pub(super) packages: fsl_semantics::model::intake::PackageInput,
     pub(super) model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
     pub(super) snapshot: Option<Vec<u8>>,
+    /// The observation files [`admit_files`] read, in the order it was given.
+    pub(super) observations: Vec<Vec<u8>>,
     pub(super) selection: serde_json::Value,
     pub(super) models: Vec<fsl_foundation::Source>,
 }
@@ -218,10 +228,11 @@ pub(super) fn prepare(
 }
 
 /// FR-1039: prepare a `clause` request over a selected package. The package
-/// form reads one run: a `temporal` selection of a clause under the
-/// infinite-trace profile over a finite trace or a lasso of record samples;
-/// any other selection refuses here, before a file is opened. A run builds
-/// states over the package's model world, so a `{file}` selection refuses it.
+/// form reads a `temporal` selection of a clause: over a finite trace or a
+/// lasso of record samples, or over snapshots of its model world (a finite
+/// trace, a lasso or a model-arm behaviour). Any other selection refuses here,
+/// before a file is opened. A run builds states over the package's model
+/// world, so a `{file}` selection refuses it.
 fn prepare_clause(
     directory: &Path,
     request: &wire::Request,
@@ -230,7 +241,8 @@ fn prepare_clause(
     dependent_bytes: usize,
 ) -> Result<PreparedPackageRun> {
     use fsl_replay::spine::{
-        read_clause_selection, ClauseRunSelection, ClauseSelectionPartsKind, TraceInput,
+        ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation, TraceInput,
+        read_clause_selection,
     };
 
     if request.call.is_some() || request.tl_lowering.is_some() {
@@ -250,9 +262,6 @@ fn prepare_clause(
             "this clause run is not implemented over a selected checked package yet",
         )
     };
-    if !clause.observations.is_empty() || clause.selection.ledger_path().is_some() {
-        return Err(not_read("clause.observations"));
-    }
     let parts = clause
         .selection
         .into_parts()
@@ -260,29 +269,103 @@ fn prepare_clause(
     if !matches!(parts, ClauseSelectionPartsKind::Temporal { .. }) {
         return Err(not_read("clause.selection"));
     }
-    let selection = read_clause_selection(parts, &std::collections::BTreeMap::new(), None)
+    let observation_limits =
+        fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
+            .map_err(|error| invalid(&error.member, error.reason))?;
+    // Each observation file is read once, as the source route reads it, and the
+    // progress ledger file beside them.
+    let mut files: Vec<&str> = Vec::new();
+    for file in clause.observations.values() {
+        if !files.contains(&file.as_str()) {
+            files.push(file);
+        }
+    }
+    let observed = files.len();
+    if let Some(ledger) = clause.selection.ledger_path() {
+        files.push(ledger);
+    }
+    let admitted = admit_files(directory, request, package, dependent_bytes, &files)?;
+    let mut observations = std::collections::BTreeMap::new();
+    for (key, file) in &clause.observations {
+        let index = files
+            .iter()
+            .position(|candidate| *candidate == file.as_str())
+            .filter(|index| *index < observed)
+            .ok_or_else(|| invalid("clause.observations", "an observation names no file"))?;
+        let bytes = admitted
+            .observations
+            .get(index)
+            .ok_or_else(|| invalid("clause.observations", "an observation file was not read"))?;
+        let mut observation = SuppliedObservation::from_document(key, bytes.clone())
+            .map_err(|error| invalid(&error.member, error.reason))?;
+        observation.path = Some(file.clone());
+        observations.insert(key.clone(), observation);
+    }
+    let ledger = match clause.selection.ledger_path() {
+        Some(_) => admitted
+            .observations
+            .get(observed)
+            .map(|bytes| {
+                fsl_replay::spine::read_ledger(bytes)
+                    .map_err(|error| invalid(&error.member, error.reason))
+            })
+            .transpose()?,
+        None => None,
+    };
+    let selection = read_clause_selection(parts, &observations, ledger)
         .map_err(|error| invalid(&error.member, error.reason))?;
-    let ClauseRunSelection::SampledTemporal { name, trace, .. } = &selection else {
-        return Err(not_read("clause.selection.over"));
+    let (name, trace, over, ledger) = match &selection {
+        ClauseRunSelection::SampledTemporal {
+            name,
+            trace,
+            ledger,
+        } => {
+            let runs = match trace {
+                TraceInput::Finite(positions) => !positions.is_empty(),
+                TraceInput::Lasso { repeat, .. } => !repeat.is_empty(),
+                TraceInput::Progressed { .. }
+                | TraceInput::Timestamped { .. }
+                | TraceInput::Timed { .. }
+                | TraceInput::Model { .. } => false,
+            };
+            if !runs || ledger.is_some() {
+                return Err(not_read("clause.selection.trace"));
+            }
+            (name, trace, None, None)
+        }
+        ClauseRunSelection::Temporal {
+            name,
+            trace,
+            over,
+            ledger,
+        } => (name, trace, Some(over.clone()), ledger.clone()),
+        ClauseRunSelection::Clause(_)
+        | ClauseRunSelection::ClauseWithPath { .. }
+        | ClauseRunSelection::Function { .. }
+        | ClauseRunSelection::Frame { .. } => return Err(not_read("clause.selection")),
     };
-    let runs = match trace {
-        TraceInput::Finite(positions) => !positions.is_empty(),
-        TraceInput::Lasso { repeat, .. } => !repeat.is_empty(),
-        TraceInput::Progressed { .. }
-        | TraceInput::Timestamped { .. }
-        | TraceInput::Timed { .. }
-        | TraceInput::Model { .. } => false,
-    };
-    if !runs {
-        return Err(not_read("clause.selection.trace"));
+    // FR-106: the snapshot documents the trace names, as `read_clause_run_request`
+    // collects them.
+    let mut snapshots = std::collections::BTreeMap::new();
+    for observation in observations.into_values() {
+        match observation.format.as_str() {
+            "filament.state.snapshot/v1" => {
+                snapshots.insert(observation.reference, observation.bytes);
+            }
+            "filament.state.invocation/v1" => {}
+            _ => return Err(invalid("observation", "unsupported document format")),
+        }
     }
     let work = ClauseWork {
         name: name.clone(),
         trace: trace.clone(),
+        over,
+        ledger,
+        snapshots,
+        observation_limits,
         selection: selection.clone(),
         accounting: super::call_accounting(&clause.accounting),
     };
-    let admitted = admit(directory, request, package, dependent_bytes, None)?;
     Ok(PreparedPackageRun {
         package: admitted.package,
         identities: admitted.identities,
@@ -329,7 +412,9 @@ fn execute_clause(
                     filament_semantic_value::checking::CheckingLimits::default().nodes(),
                 )
                 .map_err(|refusal| not_read(refusal.to_string()))?;
-            if clause.profile() != fsl_semantics::check::TemporalProfile::InfiniteTrace {
+            if work.over.is_none()
+                && clause.profile() != fsl_semantics::check::TemporalProfile::InfiniteTrace
+            {
                 return Err(not_read(
                     "only a clause under the infinite-trace profile runs over record samples"
                         .to_owned(),
@@ -338,16 +423,37 @@ fn execute_clause(
             Ok((clause, key))
         })
         .transpose()?;
-    let report =
-        fsl_replay::spine::run_package_sampled(&fsl_replay::spine::PackageSampledRequest {
-            evaluator: bare,
-            name: &work.name,
-            clause: found.as_ref().map(|(clause, key)| (clause, key)),
-            types: model.input().types,
-            trace: &work.trace,
-            accounting: work.accounting,
-        });
-    output::clause_report(*report, &work.selection)
+    let report = match &work.over {
+        None => {
+            *fsl_replay::spine::run_package_sampled(&fsl_replay::spine::PackageSampledRequest {
+                evaluator: bare,
+                name: &work.name,
+                clause: found.as_ref().map(|(clause, key)| (clause, key)),
+                types: model.input().types,
+                trace: &work.trace,
+                accounting: work.accounting,
+            })
+        }
+        Some(over) => {
+            let input = model.input();
+            fsl_replay::spine::run_package_snapshots(&fsl_replay::spine::PackageSnapshotRequest {
+                package: bare,
+                input: &input,
+                name: &work.name,
+                clause: found.as_ref().map(|(clause, key)| (clause, key)),
+                packages,
+                model_limits,
+                snapshots: &work.snapshots,
+                observation_limits: work.observation_limits,
+                accounting: work.accounting,
+                trace: &work.trace,
+                over,
+                ledger: work.ledger.as_ref(),
+            })
+            .map_err(|refusal| invalid(refusal.member, refusal.reason))?
+        }
+    };
+    output::clause_report(report, &work.selection)
 }
 
 /// FR-1039: prepare a `tl_lowering` request over a selected package. Its
@@ -429,6 +535,27 @@ pub(super) fn admit(
     dependent_bytes: usize,
     snapshot: Option<&str>,
 ) -> Result<AdmittedPackage> {
+    let mut admitted = admit_files(
+        directory,
+        request,
+        package,
+        dependent_bytes,
+        snapshot.as_slice(),
+    )?;
+    admitted.snapshot = admitted.observations.pop();
+    Ok(admitted)
+}
+
+/// [`admit`] reading the observation files `files` beside the package, as the
+/// source route reads the observations of a `clause` request: each file once,
+/// counted against the same selected-file and byte ceilings.
+pub(super) fn admit_files(
+    directory: &Path,
+    request: &wire::Request,
+    package: &wire::RunPackageSelection,
+    dependent_bytes: usize,
+    files: &[&str],
+) -> Result<AdmittedPackage> {
     // FR-1039: `equality` is a string admitted on the file form only, and
     // refuses before any selected file is opened.
     let equality_file = match &package.equality {
@@ -479,7 +606,7 @@ pub(super) fn admit(
                 Selected::Directory(_) => 3,
             },
             models: request.models.len(),
-            observations: usize::from(snapshot.is_some()),
+            observations: files.len(),
             extensions: 0,
         },
         dependent_bytes,
@@ -534,9 +661,10 @@ pub(super) fn admit(
             read_witness(directory, &mut intake, handoff, &admitted, &mut budget)?
         }
     };
-    let snapshot = snapshot
+    let observations = files
+        .iter()
         .map(|file| intake.file(file, intake.remaining))
-        .transpose()?;
+        .collect::<Result<Vec<_>>>()?;
     Ok(AdmittedPackage {
         package: admitted,
         identities,
@@ -544,7 +672,8 @@ pub(super) fn admit(
         budget,
         packages: supplied,
         model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
-        snapshot,
+        snapshot: None,
+        observations,
         selection,
         models: documents
             .iter()

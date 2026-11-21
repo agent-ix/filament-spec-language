@@ -10,18 +10,18 @@ use std::collections::BTreeMap;
 use filament_exact::{Meter, Rational, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::temporal::{
-    evaluate_observed_decisive, DecisiveAtom, DecisiveSearch, DecisiveStop, FirstUndefined,
-    HoldsStop, ObservedPositions, PositionRefusal, ProgressedRefusal, TemporalOutcome,
-    TemporalPosition, TemporalRefusal, TemporalTrace, TimestampedTrace, UndefinedCause,
-    UndefinedEvaluation, WindowRefusal,
+    DecisiveAtom, DecisiveSearch, DecisiveStop, FirstUndefined, HoldsStop, ObservedPositions,
+    PositionRefusal, ProgressedRefusal, TemporalOutcome, TemporalPosition, TemporalRefusal,
+    TemporalTrace, TimestampedTrace, UndefinedCause, UndefinedEvaluation, WindowRefusal,
+    evaluate_observed_decisive,
 };
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::Source;
 use fsl_semantics::check::{CheckedGraph, FormulaNode, TemporalProfile};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    admit_trace_snapshot, population_universe_for, AdmissionFailure, AdmissionRecord,
-    AdmissionUsage, DocumentProvision, DocumentRef, Provisions,
+    AdmissionFailure, AdmissionRecord, AdmissionUsage, DocumentProvision, DocumentRef, Provisions,
+    admit_trace_snapshot, population_universe_for,
 };
 
 use super::progress::{
@@ -29,14 +29,19 @@ use super::progress::{
     ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLedgerEntry,
     ProgressLowerBoundary, ProgressValue, Refusal,
 };
-use super::trace_refusal::ClauseSite;
+use super::trace_refusal::{ClauseSite, TraceSite};
 use super::{
-    convert_call_failure, convert_outcome, ClauseDisposition, ClauseRunReport, ClauseRunUsage,
-    CompiledRun, ConsequentEventRefusal, ConsequentSourceEvents, RunRefusal,
-    TemporalIndeterminateReason, TemporalPositionRefusal, TemporalTraceRefusal,
-    TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
+    ClauseDisposition, ClauseRunReport, ClauseRunUsage, CompiledRun, ConsequentEventRefusal,
+    ConsequentSourceEvents, RunRefusal, TemporalIndeterminateReason, TemporalPositionRefusal,
+    TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
+    convert_call_failure, convert_outcome,
 };
 use crate::proof_result::SettlementBasis;
+
+mod package_selection;
+pub use package_selection::{
+    PackageSelectionNotRead, PackageSnapshotRequest, run_package_snapshots,
+};
 
 /// FR-330 Inputs: the observations a temporal clause is run over, each a
 /// snapshot named by its labels (FR-106).
@@ -1033,13 +1038,29 @@ pub(crate) fn resolve_over(
     let ValueType::Reference(type_identity) = over_type else {
         return Err(OverMiss::NotReference);
     };
-    let universe = population_universe_for(
+    resolve_over_in(
         run.package.graph().model_inputs(),
         run.packages,
         run.model_limits,
-        type_identity.clone(),
+        type_identity,
+        over,
+        environment,
     )
-    .map_err(OverMiss::Universe)?;
+}
+
+/// [`resolve_over`] for the reference type `type_identity`, over the model
+/// selections a package route reads as well as a source route does.
+pub(crate) fn resolve_over_in(
+    selections: fsl_semantics::model::observation::ModelSelections<'_>,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    type_identity: &filament_exact::EffectiveId,
+    over: &OverObject,
+    environment: Option<&ObjectEnvironment>,
+) -> Result<filament_exact::ObjectReference, OverMiss> {
+    let universe =
+        population_universe_for(selections, packages, model_limits, type_identity.clone())
+            .map_err(OverMiss::Universe)?;
     environment
         .and_then(|environment| environment.objects().find(universe, &over.key))
         .cloned()
