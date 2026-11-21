@@ -125,12 +125,23 @@ fn original_effective_identity_reaches_native_requests() {
         object Leaf extends Mid, Other {}
         population leaves: Leaf;";
     std::fs::write(directory.path().join("model.fsl"), conflict).unwrap();
-    let error = command::run(&run_path, &crate::negotiation::Fr290)
+    let refused = command::run(&run_path, &crate::negotiation::Fr290)
+        .expect("a clause refusal is a completed report");
+    assert_eq!(refused.exit_code, 20, "{:?}", refused.value);
+    assert!(refused.value.as_value()["disposition"]["outcome"]["value"].is_null());
+    let path = compile_request(
+        directory.path(),
+        &[],
+        "program.fsl",
+        json!([{"format": "native-model-unit/1", "source": source("model.fsl")}]),
+        &[],
+    );
+    let error = command::compile_outcome(&path)
         .err()
         .expect("sibling redefiners expose no executable view");
     let outcome: Value = serde_json::from_slice(
         &error
-            .outcome_document(Operation::Execute)
+            .outcome_document(Operation::Package)
             .to_bytes()
             .unwrap(),
     )
