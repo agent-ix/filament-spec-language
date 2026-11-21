@@ -180,3 +180,69 @@ fn unsupported_operation_parameters_are_named_before_search() {
         "{refusal}"
     );
 }
+
+/// The existing authored Semantic-IR fixture builder can express declared
+/// optional presence even though the native model-unit syntax cannot yet.
+/// Equal Boolean types must not hide a presence-only arguments collision.
+#[test]
+#[trace("FR-1013", "FSpec-FR-800")]
+fn conflicting_declared_parameter_presence_names_both_operations() {
+    use super::model_operations::{
+        assemble_units, config_version_document_with_operations, empty_frame, operation,
+        operation_parameter,
+    };
+    use serde_json::json;
+
+    for optional_first in [false, true] {
+        let required = operation(
+            "acceptRequired",
+            json!([operation_parameter(
+                "acceptRequired",
+                "amount",
+                "ix://filament/native/Boolean"
+            )]),
+            None,
+            empty_frame(),
+        );
+        let mut parameter =
+            operation_parameter("acceptOptional", "amount", "ix://filament/native/Boolean");
+        parameter["presence"] = json!("optional");
+        let optional = operation("acceptOptional", json!([parameter]), None, empty_frame());
+        let operations = if optional_first {
+            vec![optional, required]
+        } else {
+            vec![required, optional]
+        };
+        let document = config_version_document_with_operations(operations);
+        let mut declarations = assemble_units(
+            &[(
+                "presence-collision",
+                r#"
+profile v = "filament.temporal.infinite-trace/v1";
+model Config = "example/config-version";
+type Lengths = Int[0,1];
+synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
+"#,
+            )],
+            &[document.as_slice()],
+        );
+        declarations
+            .link_dispatch(ModelNormalizationLimits::default())
+            .expect("the two operations link");
+        let refusals = match declarations.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        ) {
+            Err(refusals) => refusals,
+            Ok(_) => panic!("a presence-only arguments collision must refuse"),
+        };
+        assert!(
+            refusals.iter().any(|refusal| matches!(&refusal.cause,
+            fsl_semantics::check::CheckCause::PlanUnsupported { form, .. }
+                if form.contains("amount") && form.contains("declared presence")
+                    && form.contains("acceptRequired") && form.contains("acceptOptional"))),
+            "{refusals:?}"
+        );
+    }
+}
