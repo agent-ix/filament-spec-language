@@ -3147,19 +3147,21 @@ fn run_window(
                 premises,
                 identity,
                 visits,
+                undefined_atom,
             } = evaluation;
-            let verdict = match window_verdict(verdict, &names, guard_location(node)) {
-                Ok(Some(verdict)) => verdict,
-                Ok(None) => {
-                    return WindowRun::stopped(ClauseDisposition::EvaluateFault(
-                        filament_semantic_value::catalog::InternalFault::new(
-                            "temporal",
-                            "unresolved-guard-has-a-guard",
-                        ),
-                    ));
-                }
-                Err(refusal) => return WindowRun::stopped(refusal_disposition(*refusal)),
-            };
+            let verdict =
+                match window_verdict(verdict, &names, guard_location(node), undefined_atom) {
+                    Ok(Some(verdict)) => verdict,
+                    Ok(None) => {
+                        return WindowRun::stopped(ClauseDisposition::EvaluateFault(
+                            filament_semantic_value::catalog::InternalFault::new(
+                                "temporal",
+                                "named-window-evaluation-retains-its-attribution",
+                            ),
+                        ));
+                    }
+                    Err(refusal) => return WindowRun::stopped(refusal_disposition(*refusal)),
+                };
             let mut report =
                 match finite_window_report(run, node, (basis, support, premises, identity)) {
                     Ok(report) => report,
@@ -3842,6 +3844,7 @@ fn window_verdict<E>(
     verdict: fsl_eval::temporal::WindowVerdict,
     names: &dyn Fn(fsl_semantics::check::FormulaNodeId) -> Result<String, E>,
     guard: Option<filament_semantic_value::location::ExpressionLocation>,
+    undefined_atom: Option<fsl_semantics::check::FormulaNodeId>,
 ) -> Result<Option<TemporalVerdict>, E> {
     use fsl_eval::temporal::{IndeterminateReason, WindowVerdict};
     Ok(Some(match verdict {
@@ -3878,6 +3881,23 @@ fn window_verdict<E>(
                 IndeterminateReason::StraddlesBound => TemporalIndeterminateReason::StraddlesBound,
             },
         },
+        WindowVerdict::Undefined(UndefinedEvaluation {
+            at,
+            cause: UndefinedCause::InsufficientData(data),
+        }) => {
+            let Some(atom) = undefined_atom else {
+                return Ok(None);
+            };
+            names(atom)?;
+            TemporalVerdict::Undefined {
+                at: at.index(),
+                cause: TemporalUndefinedCause::InsufficientData {
+                    atom: atom.index(),
+                    count: data.count,
+                    min_count: data.min_count,
+                },
+            }
+        }
         WindowVerdict::Undefined(undefined) => verdict_of_undefined(undefined),
         WindowVerdict::Incomplete(incomplete) => TemporalVerdict::Incomplete(incomplete),
         WindowVerdict::WindowLimitReached(reached) => TemporalVerdict::WindowLimitReached {

@@ -361,6 +361,18 @@ impl<'a, 'p> Context<'a, 'p> {
                 _ => {}
             }
         }
+        if let fsl_eval::temporal::WindowVerdict::Undefined(
+            fsl_eval::temporal::UndefinedEvaluation {
+                cause: fsl_eval::temporal::UndefinedCause::InsufficientData(_),
+                ..
+            },
+        ) = &evaluation.verdict
+        {
+            if let Some(atom) = evaluation.undefined_atom {
+                named_atom = Some(atom);
+                requested.push(atom);
+            }
+        }
         let mut labels = BTreeMap::new();
         let mut regions = BTreeMap::new();
         for atom in requested {
@@ -395,11 +407,13 @@ impl<'a, 'p> Context<'a, 'p> {
                     .location(term.projection().root())
                     .cloned()
             });
-        let Some(verdict) = super::window_verdict(evaluation.verdict, &names, guard)? else {
+        let Some(verdict) =
+            super::window_verdict(evaluation.verdict, &names, guard, evaluation.undefined_atom)?
+        else {
             return Ok(WindowRun::stopped(ClauseDisposition::EvaluateFault(
                 filament_semantic_value::catalog::InternalFault::new(
                     "temporal",
-                    "unresolved-guard-has-a-guard",
+                    "named-window-evaluation-retains-its-attribution",
                 ),
             )));
         };
