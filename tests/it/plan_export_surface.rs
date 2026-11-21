@@ -15,9 +15,15 @@ const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.model.complete/v1\";\n\
      model Config = \"example/config-version\";\n";
 
+// The domain document supplies the operation frame; the authored spine
+// postcondition constrains that frame's possible post-states.
 const PLAN_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.temporal.infinite-trace/v1\";\n\
-     model Config = \"example/config-version\";\n";
+     profile g = \"filament.state.graph/v1\";\n\
+     model Config = \"example/config-version\";\n\
+     post VersionAdvances using g on Config::ConfigVersion::attemptUpdate {\n\
+       (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)\n\
+       and (not result implies self.versionNumber = pre(self.versionNumber)) }\n";
 
 /// FR-447's `Braking` without `t`, with `SlowEnough` over it.
 const BRAKING: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -113,30 +119,43 @@ fn plan(unit: &str, synthesis: Value) -> (u8, Value) {
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-1")]
 #[trace("FSpec-TC-1950", "FSpec-FR-800-AC-1")]
 fn an_optimal_plan_writes_the_plan_outcome_document() {
-    let (exit, value) = plan(&plan_unit("Int[0, 3]", "", "Reach.length >= 1"), json!({}));
-    let outcome = &value["synthesis"];
-    assert_eq!(outcome["format"], "filament.plan-outcome/v1", "{value}");
-    assert_eq!(outcome["status"], "optimal", "{value}");
-    for member in [
-        "objective",
-        "plan",
-        "replay",
-        "certificate",
-        "certification",
-        "explored",
-        "limits",
-    ] {
-        assert!(outcome.get(member).is_some(), "{member}: {value}");
+    for objective in ["", "minimize Reach.length"] {
+        let (exit, value) = plan(
+            &plan_unit("Int[0, 3]", objective, "Reach.length >= 1"),
+            json!({}),
+        );
+        let outcome = &value["synthesis"];
+        assert_eq!(outcome["format"], "filament.plan-outcome/v1", "{value}");
+        assert_eq!(outcome["status"], "optimal", "{value}");
+        for member in [
+            "objective",
+            "plan",
+            "replay",
+            "certificate",
+            "certification",
+            "explored",
+            "limits",
+        ] {
+            assert!(outcome.get(member).is_some(), "{member}: {value}");
+        }
+        assert_eq!(outcome["replay"]["outcome"], "reproduced", "{value}");
+        let steps = outcome["plan"]["steps"].as_array().expect("steps");
+        assert_eq!(steps.len(), 1, "the shortest admissible plan: {value}");
+        assert_eq!(steps[0]["index"], 0, "{value}");
+        assert_eq!(
+            outcome["objective"]["value"],
+            json!({"type": "integer", "value": "1"}),
+            "{value}"
+        );
+        assert_eq!(outcome["certificate"]["type"], "potential", "{value}");
+        assert_eq!(outcome["certification"], "certified", "{value}");
+        assert_eq!(
+            outcome["plan"]["states"].as_array().map(Vec::len),
+            Some(steps.len() + 1),
+            "{value}"
+        );
+        assert_eq!(exit, 0, "{value}");
     }
-    assert_eq!(outcome["replay"]["outcome"], "reproduced", "{value}");
-    let steps = outcome["plan"]["steps"].as_array().expect("steps");
-    assert_eq!(steps[0]["index"], 0, "{value}");
-    assert_eq!(
-        outcome["plan"]["states"].as_array().map(Vec::len),
-        Some(steps.len() + 1),
-        "{value}"
-    );
-    assert_eq!(exit, 0, "{value}");
 }
 
 /// FR-1010-AC-2 and FSpec FR-805-AC-2/AC-4, FR-806-AC-5: `infeasible`

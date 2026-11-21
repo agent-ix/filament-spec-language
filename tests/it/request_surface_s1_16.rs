@@ -11,9 +11,15 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;
 
+// The domain document supplies the operation frame; the authored spine
+// postcondition constrains that frame's possible post-states.
 const PLAN_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.temporal.infinite-trace/v1\";\n\
-     model Config = \"example/config-version\";\n";
+     profile g = \"filament.state.graph/v1\";\n\
+     model Config = \"example/config-version\";\n\
+     post VersionAdvances using g on Config::ConfigVersion::attemptUpdate {\n\
+       (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)\n\
+       and (not result implies self.versionNumber = pre(self.versionNumber)) }\n";
 
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.model.complete/v1\";\n\
