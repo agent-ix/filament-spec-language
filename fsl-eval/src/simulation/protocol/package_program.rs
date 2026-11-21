@@ -133,7 +133,10 @@ pub struct PackageProtocolProgram<'a> {
 pub enum PackageProgramRefusal {
     /// No protocol of the requested name is in the admitted package.
     #[error("invalid_runtime_input/invalid-value: no protocol {name}")]
-    UnknownProtocol { name: String },
+    UnknownProtocol {
+        /// The protocol name requested by the caller.
+        name: String,
+    },
     /// The request's memory selection did not resolve over the package form.
     #[error(transparent)]
     Memory(#[from] MemorySelectionRefusal),
@@ -142,7 +145,12 @@ pub enum PackageProgramRefusal {
     MissingIdentity(fsl_package::CheckedNodeId),
     /// The evaluator cannot expose the admitted binders of a selected slot.
     #[error("the package has no admitted binder inventory for slot {node:?}.{member}")]
-    MissingSlotBinders { node: NodeKey, member: String },
+    MissingSlotBinders {
+        /// The admitted identity of the node that owns the slot.
+        node: NodeKey,
+        /// The node member containing the slot.
+        member: String,
+    },
     /// The execution engine does not step this checked package operation yet.
     #[error("unsupported_construct/not-yet-implemented: package control {0:?}")]
     Unsupported(ControlOperation),
