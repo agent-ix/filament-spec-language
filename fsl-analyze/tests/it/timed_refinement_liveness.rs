@@ -1293,14 +1293,21 @@ fn a_fair_loop_of_a_timed_component_does_not_hide_an_unfair_one() {
     let world = two_loop_world(true);
     let counterexample = violation(check(&world));
     assert!(names(&counterexample).iter().all(|name| name == "poll"));
-    // FR-241: the loop elapses positive time; `x <= 1 ms` while quiescent
-    // bounds each wait, but the zone representative need not be the bound.
-    let delay = counterexample.prefix[0]
-        .delay
-        .clone()
-        .expect("the poll step carries a delay");
-    assert!(delay > Rational::from_integer(Integer::zero()), "{delay:?}");
-    assert!(delay <= Rational::from_integer(Integer::one()), "{delay:?}");
+    // FR-241: a non-terminal loop elapses positive total time. `x <= 1 ms`
+    // bounds each wait, not the loop, and the zone representative is free.
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
+    assert!(!lasso.terminal_stutter, "{lasso:?}");
+    let loop_steps = &counterexample.prefix[lasso.entry..];
+    assert!(!loop_steps.is_empty());
+    let one = Rational::from_integer(Integer::one());
+    let mut total = Rational::from_integer(Integer::zero());
+    for step in loop_steps {
+        if let Some(delay) = &step.delay {
+            assert!(delay <= &one, "{delay:?}");
+            total = total.add(delay);
+        }
+    }
+    assert!(total > Rational::from_integer(Integer::zero()), "{total:?}");
     assert_eq!(hidden_unfair_name(&counterexample), "idle");
     assert!(matches!(
         replay(&world, &counterexample),
