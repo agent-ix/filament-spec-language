@@ -82,7 +82,7 @@ pub(super) fn run(
             Some("unimplemented-meaning"),
             code.as_str(),
             None,
-            "export evidence settlement is not implemented: original generated-package binding and target-result verification are unavailable",
+            "export_evidence settlement is not implemented: original generated-package binding and target-result verification are unavailable",
         )]);
     let value = serde_json::to_value(&document).map_err(RunCause::Output)?;
     Ok(RunResult {
@@ -168,6 +168,10 @@ mod tests {
             "unimplemented_capability"
         );
         assert_eq!(document["diagnostics"][0]["cause"], "unimplemented-meaning");
+        assert!(document["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("export_evidence"));
         assert!(!document.to_string().contains("tool-unavailable"));
         assert_eq!(result.value.as_value(), &document);
     }
