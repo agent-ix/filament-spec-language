@@ -499,11 +499,31 @@ fn every_scheduler_discrete_delay_is_certified() {
 
 /// FR-923-AC-1: a bound above the discrete delay's exact value is refuted.
 #[trace("TC-2492", "FR-923-AC-1")]
-#[ignore = "QSL-2156: timed witness replay of a refuted every-scheduler deadline claim is not implemented yet"]
 #[test]
 fn every_scheduler_discrete_delay_refutes() {
     let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
     assert!(is_refuted(&settle(&world, "Strict")));
+}
+
+/// FR-923-AC-1: a refutation is evidence only when the checker's own replay of
+/// the timed product reproduces it, so a witness whose step reaches a state
+/// the leaving state has no outcome to does not settle `refuted`.
+#[trace("TC-2492", "FR-923-AC-1")]
+#[test]
+fn altered_timed_witness_is_not_refuted() {
+    let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+        RequestIndex::new(0),
+        request(&world, "Strict"),
+        |witness| {
+            let initial = witness.initial_key.clone();
+            witness.paths[0].steps[0].post_key = initial;
+        },
+    );
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    assert!(!is_refuted(&record), "{record:#?}");
+    assert!(record.probabilistic_counterexample.is_none());
 }
 
 /// FR-923-AC-2: values that read the drawn delay as a free choice are
@@ -529,7 +549,6 @@ fn distribution_free_values_are_rejected() {
 /// FR-923-AC-3: over every scheduler a tie at the least delay is the
 /// scheduler's choice, so the maximum is 1 where `Both` gives `21/40`.
 #[trace("TC-2492", "FR-923-AC-3")]
-#[ignore = "QSL-2156: timed witness replay of an every-scheduler tie refutation and a workload-scheduler timed deadline check are not implemented yet"]
 #[test]
 fn every_scheduler_tie_is_the_schedulers_choice() {
     // `send` is drawn at 2 ms; `tick` is free but can only fire at x = 2 ms.
