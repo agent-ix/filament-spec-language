@@ -313,6 +313,9 @@ pub(super) struct Request {
     /// refinement, exclusive with the other native-run selections.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub refinement_transfer: Option<RefinementTransfer>,
+    /// FR-1022: closed export-evidence selection, admitted by its own reader.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub export_evidence: Option<serde_json::Value>,
 }
 
 /// FR-1030's closed native-run transfer request member.

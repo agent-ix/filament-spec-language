@@ -1,0 +1,184 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-026/FR-1015/FR-1022: required export selection shares one bounded intake.
+
+use std::path::Path;
+
+use fsl_command::command::{
+    export_with_limits_and_overrides, ExportSelection, RequestOverrides, RunLimits,
+};
+use fsl_replay::Operation;
+use ix_trace_rs::trace;
+use serde_json::{json, Value};
+
+fn run(path: &Path, selection: ExportSelection, limits: RunLimits) -> Value {
+    let (exit, document) = match export_with_limits_and_overrides(
+        path,
+        selection,
+        limits,
+        &RequestOverrides::default(),
+    ) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::to_value(result.outcome.expect("selected export lifecycle outcome"))
+                .unwrap(),
+        ),
+        Err(error) => (
+            error.category().exit_code(),
+            serde_json::to_value(error.outcome_document(Operation::Export)).unwrap(),
+        ),
+    };
+    json!({"exit": exit, "document": document})
+}
+
+fn request(source: &Path) -> Value {
+    json!({"format": "native-run/1", "request": {
+        "models": [],
+        "program": {"source": {"file": source, "authority": "export-contracts",
+            "identity": "contracts:bin-capacity", "document": "BinCapacity", "formal_revision": 1}},
+        "export": {"profile": "filament.output.tla2/v1", "obligations": ["Capacity"]}}})
+}
+
+/// Required selection is checked before opening a program or producing a target.
+#[test]
+#[trace("FR-026", "FR-1015", "FR-1022", "TC-104")]
+fn wrong_or_missing_required_selection_refuses_before_source_io() {
+    let directory = tempfile::tempdir().unwrap();
+    for (selection, body, required) in [
+        (ExportSelection::Ordinary, json!({}), "export"),
+        (
+            ExportSelection::Evidence,
+            json!({"export": {}}),
+            "export_evidence",
+        ),
+        (
+            ExportSelection::Ordinary,
+            json!({"export_evidence": {}}),
+            "export",
+        ),
+    ] {
+        let path = directory.path().join("request.json");
+        let mut input = request(&directory.path().join("absent.native"));
+        input["request"].as_object_mut().unwrap().remove("export");
+        input["request"]
+            .as_object_mut()
+            .unwrap()
+            .extend(body.as_object().unwrap().clone());
+        std::fs::write(&path, input.to_string()).unwrap();
+        let output = run(&path, selection, RunLimits::default());
+        assert_eq!(output["exit"], 20, "{output}");
+        assert!(output["document"]["result"].is_null(), "{output}");
+        assert!(output.to_string().contains(required), "{output}");
+        assert!(!output.to_string().contains("No such file"), "{output}");
+    }
+}
+
+/// Raw duplicate and closed-envelope defects precede both selection and source I/O.
+#[test]
+#[trace("FR-026", "TC-104")]
+fn raw_admission_refuses_before_required_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    for (bytes, expected) in [
+        (
+            br#"{"format":"native-run/1","request":{"models":[],"models":[{}]}}"#.as_slice(),
+            "duplicate object key models",
+        ),
+        (
+            br#"{"format":"native-run/1","request":{},"extra":true}"#.as_slice(),
+            "extra",
+        ),
+    ] {
+        let path = directory.path().join("request.json");
+        std::fs::write(&path, bytes).unwrap();
+        let output = run(&path, ExportSelection::Ordinary, RunLimits::default());
+        assert_eq!(output["exit"], 20, "{output}");
+        assert!(output["document"]["result"].is_null());
+        assert!(output.to_string().contains(expected), "{output}");
+    }
+}
+
+/// A source with no selected obligation still reaches the ordinary export record.
+#[test]
+#[trace("FR-026", "FR-1015", "TC-104")]
+fn a_regular_export_reaches_its_typed_obligation_record() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("unit.native");
+    std::fs::write(&source, "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Ready using v(): Boolean pure { true }\n").unwrap();
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, request(&source).to_string()).unwrap();
+    let output = run(&path, ExportSelection::Ordinary, RunLimits::default());
+    assert_eq!(output["exit"], 21, "{output}");
+    assert_eq!(output["document"]["result"]["kind"], "exported", "{output}");
+    assert!(output.to_string().contains("not-an-obligation"), "{output}");
+    assert!(output.to_string().contains("Capacity"), "{output}");
+}
+
+/// An explicit streamed operand receives the same bounded, required-selection intake.
+#[cfg(unix)]
+#[test]
+#[trace("FR-026", "FR-1015", "TC-104")]
+fn an_explicit_stdin_export_is_read_once_with_regular_file_parity() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    const CHILD: &str = "FSL_EXPORT_INTAKE_CHILD_RESULT";
+    const LIMIT: &str = "FSL_EXPORT_INTAKE_CHILD_LIMIT";
+    if let Some(output) = std::env::var_os(CHILD) {
+        let maximum = std::env::var(LIMIT).unwrap().parse().unwrap();
+        let result = run(
+            Path::new("/dev/stdin"),
+            ExportSelection::Ordinary,
+            RunLimits {
+                request_bytes: maximum,
+                ..RunLimits::default()
+            },
+        );
+        std::fs::write(output, result.to_string()).unwrap();
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("unit.native");
+    std::fs::write(&source, "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Ready using v(): Boolean pure { true }\n").unwrap();
+    let original = request(&source).to_string().into_bytes();
+    for (index, bytes, maximum, expected_exit, expected_text) in [
+        (0, original.clone(), 1_048_576, 21, "not-an-obligation"),
+        (
+            1,
+            br#"{"format":"native-run/1","request":{}}"#.to_vec(),
+            1_048_576,
+            20,
+            "export",
+        ),
+        (2, original, 64, 22, "request"),
+    ] {
+        let output_path = directory.path().join(format!("child-{index}.json"));
+        let regular_path = directory.path().join(format!("request-{index}.json"));
+        std::fs::write(&regular_path, &bytes).unwrap();
+        let regular = run(
+            &regular_path,
+            ExportSelection::Ordinary,
+            RunLimits {
+                request_bytes: maximum,
+                ..RunLimits::default()
+            },
+        );
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "export_selection::an_explicit_stdin_export_is_read_once_with_regular_file_parity",
+                "--test-threads=1",
+            ])
+            .env(CHILD, &output_path)
+            .env(LIMIT, maximum.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&bytes).unwrap();
+        let status = child.wait_with_output().unwrap();
+        assert!(status.status.success(), "{status:?}");
+        let streamed: Value = serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();
+        assert_eq!(streamed["exit"], expected_exit, "{streamed}");
+        assert!(streamed.to_string().contains(expected_text), "{streamed}");
+        assert_eq!(streamed, regular);
+    }
+}

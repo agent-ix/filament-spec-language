@@ -5,13 +5,14 @@
 //! `filament.export-outcome/v1` document and, when a file is named and a
 //! package was assembled, the target file.
 
+mod evidence;
 mod lower;
 mod map;
 mod request;
 
 use super::{
-    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, FileCounts,
-    RequestOverrides, Result, RunCause, RunLimits, RunResult,
+    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, ExportSelection,
+    FileCounts, RequestOverrides, Result, RunCause, RunLimits, RunResult,
 };
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{OutcomeDocument, OutcomeStage};
@@ -125,7 +126,50 @@ pub(super) fn run_bytes(
     limits: RunLimits,
     overrides: &RequestOverrides<'_>,
 ) -> Result<Option<RunResult>> {
-    let mut document = admitted_document(bytes)?;
+    let document = admitted_document(bytes)?;
+    run_document(directory, bytes, document, limits, overrides)
+}
+
+/// Execute an explicit export selection from the same bounded raw bytes.
+pub(super) fn run_selected_bytes(
+    directory: &Path,
+    bytes: &[u8],
+    selection: ExportSelection,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+) -> Result<RunResult> {
+    let document = admitted_document(bytes)?;
+    if document.get("format").and_then(Value::as_str)
+        != Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
+    {
+        return Err(RunCause::Format);
+    }
+    let required = selection.member();
+    if document
+        .get("request")
+        .and_then(|body| body.get(required))
+        .is_none()
+    {
+        return Err(RunCause::ClauseRequest {
+            member: required.to_owned(),
+            reason: format!("the selected export invocation requires {required}"),
+        });
+    }
+    run_document(directory, bytes, document, limits, overrides)?.ok_or_else(|| {
+        RunCause::ClauseRequest {
+            member: required.to_owned(),
+            reason: format!("the selected export invocation requires {required}"),
+        }
+    })
+}
+
+fn run_document(
+    directory: &Path,
+    bytes: &[u8],
+    mut document: crate::unique_json::Deep,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+) -> Result<Option<RunResult>> {
     if document.get("format").and_then(Value::as_str)
         != Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
     {
@@ -134,6 +178,15 @@ pub(super) fn run_bytes(
     let Some(body) = document.get_mut("request").and_then(Value::as_object_mut) else {
         return Ok(None);
     };
+    if let Some(member) = body.get("export_evidence") {
+        if body.contains_key("export") {
+            return Err(RunCause::ClauseRequest {
+                member: "export_evidence".to_owned(),
+                reason: "export_evidence is exclusive with export".to_owned(),
+            });
+        }
+        return evidence::run(bytes, member, overrides).map(Some);
+    }
     let Some(member) = body.remove("export") else {
         return Ok(None);
     };
@@ -240,19 +293,17 @@ pub(super) fn run_bytes(
 /// The shared reader preserves duplicate names until it can refuse them;
 /// the typed envelope rejects additional top-level members.
 pub(super) fn admitted_document(bytes: &[u8]) -> Result<crate::unique_json::Deep> {
-    let document = match crate::unique_json::read(bytes) {
-        Ok(document) => document,
-        Err(reason) => {
-            let _: Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
-            return Err(RunCause::ClauseRequest {
-                member: "request".to_owned(),
-                reason,
-            });
-        }
-    };
+    let document = crate::unique_json::read(bytes).map_err(|reason| RunCause::ClauseRequest {
+        member: "request".to_owned(),
+        reason,
+    })?;
     let document = crate::unique_json::Deep::new(document);
-    let super::Object(_): super::Object<wire::Envelope<'_>> =
-        serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+    if document.get("format").and_then(Value::as_str)
+        == Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
+    {
+        let super::Object(_): super::Object<wire::Envelope<'_>> =
+            serde_json::from_slice(bytes).map_err(RunCause::Json)?;
+    }
     Ok(document)
 }
 

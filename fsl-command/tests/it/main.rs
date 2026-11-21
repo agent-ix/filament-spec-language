@@ -7,6 +7,7 @@ mod cli_contract;
 mod compile_limits;
 #[path = "../../../examples/config-version/spine_corpus.rs"]
 pub mod config_version_spine;
+mod export_selection;
 mod extraction_request_refusals;
 mod inspect_handoff_locus;
 mod integer_division_request;
