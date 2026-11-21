@@ -898,7 +898,10 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         .with_reference_bindings(reference_bindings);
         if let Some(population) = absent_population {
             let Value::Reference(key) = &over else {
-                return Err(CallFailure::Fault(InternalFault::new("FR-125", "absent-model-over-is-reference")));
+                return Err(CallFailure::Fault(InternalFault::new(
+                    "FR-125",
+                    "absent-model-over-is-reference",
+                )));
             };
             for (slot, binder) in term.binders() {
                 if matches!(binder, ClauseBinder::Over | ClauseBinder::Trigger) {
@@ -906,12 +909,13 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 }
             }
         }
-        machine.run(
-            ReaderNode::root(term.projection()),
-            term.projection().frame_slots(),
-            arguments,
-        )
-        .map_err(CallFailure::Fault)
+        machine
+            .run(
+                ReaderNode::root(term.projection()),
+                term.projection().frame_slots(),
+                arguments,
+            )
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_holds_traced(
@@ -1017,7 +1021,10 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         .with_reference_bindings(reference_bindings);
         if let Some(population) = absent_population {
             let Value::Reference(key) = &over else {
-                return Err(CallFailure::Fault(InternalFault::new("FR-125", "absent-model-over-is-reference")));
+                return Err(CallFailure::Fault(InternalFault::new(
+                    "FR-125",
+                    "absent-model-over-is-reference",
+                )));
             };
             for (slot, binder) in term.binders() {
                 if matches!(binder, ClauseBinder::Over | ClauseBinder::Trigger) {
@@ -1025,12 +1032,13 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 }
             }
         }
-        machine.run(
-            ReaderNode::root(term.projection()),
-            term.projection().frame_slots(),
-            arguments,
-        )
-        .map_err(CallFailure::Fault)
+        machine
+            .run(
+                ReaderNode::root(term.projection()),
+                term.projection().frame_slots(),
+                arguments,
+            )
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_hyper_holds(

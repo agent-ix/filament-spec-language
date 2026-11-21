@@ -2698,14 +2698,18 @@ impl CheckedPackageEvaluation for CheckedPackage {
         .with_reference_bindings(reference_bindings);
         if let Some(population) = absent_population {
             let Value::Reference(key) = &over else {
-                return Err(CallFailure::Fault(InternalFault::new("FR-125", "absent-model-over-is-reference")));
+                return Err(CallFailure::Fault(InternalFault::new(
+                    "FR-125",
+                    "absent-model-over-is-reference",
+                )));
             };
             machine = machine.with_absent_key(0, population.to_owned(), key.clone());
             if clause.trigger().is_some() {
                 machine = machine.with_absent_key(1, population.to_owned(), key.clone());
             }
         }
-        machine.run(condition, slots, holds_bindings(clause, over, captures))
+        machine
+            .run(condition, slots, holds_bindings(clause, over, captures))
             .map_err(CallFailure::Fault)
     }
 
@@ -2801,13 +2805,17 @@ impl CheckedPackageEvaluation for CheckedPackage {
         .with_reference_bindings(reference_bindings);
         if let Some(population) = absent_population {
             let Value::Reference(key) = &over else {
-                return Err(CallFailure::Fault(InternalFault::new("FR-125", "absent-model-over-is-reference")));
+                return Err(CallFailure::Fault(InternalFault::new(
+                    "FR-125",
+                    "absent-model-over-is-reference",
+                )));
             };
             for slot in [0, 1] {
                 machine = machine.with_absent_key(slot, population.to_owned(), key.clone());
             }
         }
-        machine.run(guard, slots, vec![over.clone(), over])
+        machine
+            .run(guard, slots, vec![over.clone(), over])
             .map_err(CallFailure::Fault)
     }
 
