@@ -118,6 +118,48 @@ the admitted package graph; they are not copied into a second model schema.
 The actual trace includes its original start, jumps, optional before states,
 delta, loop and end. Its state times and enclosures use the existing hybrid
 rational/interval mapping. No initial state is guessed from the final state.
+The following closed mappings define the hybrid identity and bounds fields:
+
+| Field | Exact JSON and native resolution |
+| --- | --- |
+| `claim` | Exactly `{node: N, occurrence: {role: R, ordinal: O}}`, the shape emitted by `analyze/hybrid_process.rs::compose` at line 147. `N` is the JSON `CheckedNodeId` returned by the original package's `WireGraph::wire_value(original_occurrence.node())`; use that actual encoder, not a printed NodeKey or a numeric operand slot. Its owning mapping is the existing closed CheckedNodeId `{package, path, ordinal}` form. `R` is the original occurrence role string and must be `"claim"`; `O` is the original nonnegative JSON integer ordinal. |
+| `model` | A JSON string equal to `graph.hybrid_models()[checked_claim.model.get()].name.as_str()`. It is a checked assertion about the model selected by the claim, never a lookup key that may select another model. No model-name-only resolution is permitted. |
+| `proof_bounds` | An array whose rows have exactly `{domain, kind, bound}`, using the existing `declared_domain` codec at `fsl-command/src/replay_request.rs:494`. Rows retain the actual `HybridItem.proof_bounds` order and must decode to the same ordered `ProofBound` values as `request.declared_domains`; a duplicate domain or unequal value refuses. No `ProofBound::to_wire` API is assumed. |
+
+For `claim`, resolve `N` with the admitted package's `WireGraph::key_of_value`,
+obtain its document-held graph position with `index_of`, and require exact
+roundtrip equality with `wire_value`. Require the original package row at that
+position to have semantic form `temporal_clause` and to contain exactly the
+supplied occurrence in its occurrences array. Then find exactly one
+`graph.hybrid_claim_sites()` row whose `identity` and `claim` equal that resolved
+node and occurrence, as `hybrid_item.rs:70` does; use the same position in
+`graph.hybrid_claims()`. Resolve its `model` index through `hybrid_models()` and
+compare the model string above. Require the resolved occurrence to equal the
+original request obligation and selected target under native identity rules.
+Absent, ambiguous, wrong-form, wrong-role, ordinal or model mismatch refuses
+at the offending subject field. A dependency node cannot silently select a
+different package's local claim. The existing package reader's `claim_position`
+at `hybrid/process_request.rs:591` supplies the document-held resolution rule;
+the FR-621 builder must preserve it rather than reinterpret node-local slots.
+
+Each proof-bound `domain` is exactly one of
+`{kind: "node", node: N, path: [U32String, ...]}` or
+`{kind: "population", member_type: N, ordinal: U32String}`. Its node references
+resolve with that same admitted `WireGraph` codec. `kind` is null or exactly
+`{kind: K}`, where `K` is `DomainKind::to_wire()`'s spelling: `collection`,
+`population`, `integer`, `recursive`, `loop`, `infinite-trace`, or `quantity`.
+`bound` is exactly `{kind: "cardinality", maximum: U64String}`,
+`{kind: "depth", maximum: U64String}`,
+`{kind: "integer_range", lower: IntegerString, upper: IntegerString}`, or
+`{kind: "variants", members: [String, ...]}`. Unsigned strings are canonical
+decimal values in the stated range; integer strings use the existing admitted
+integer codec. Use `FiniteBound` constructors and `ProofBound::new` for native
+range/domain validation; reject extra/missing members, wrong types, unresolved
+domain nodes and invalid ranges. After admission the values must agree with
+the original checked item's substituted domains and obligation identity;
+bounds never supply accounting authority. A genuinely empty bound vector is
+`[]`, not inferred absence or a placeholder bounded extent.
+
 `budget` is `{max_solver_time, max_solver_steps}` with the resolved original
 positive counts or explicit null when native ownership left a ceiling unset;
 the existing `SolverBudget` admitted count rules apply. `deadline_ms` is a
@@ -227,6 +269,46 @@ not alter the envelope or bypass a mismatch by fabricating a second original.
 Output remains a `filament-outcome/1` replay outcome with the native result,
 refusal or fault and category/exit behavior; successful input parsing alone
 does not mean the counterexample was reproduced.
+
+## Outcome integration
+
+The owner `OUTCOME_SCHEMA_1` (declared in `fsl-replay/src/outcome.rs:95`) must
+admit optional item member `replay_context` with this exact composition. Existing
+items without context remain valid. The producer writer must embed the context
+as retained raw JSON, including the exact original `request.package` fragment.
+The consumer retains this context as `RawValue` from original stdout and forwards
+those bytes unchanged. Parsing or re-emitting the package through a JSON value
+that changes its authenticated lexical bytes is forbidden.
+
+The native command returns a fresh outcome with `format: "filament-outcome/1"`,
+`operation: "replay"`, `last_stage: "S8"` for completed native replay and
+`result: {kind: "replayed", results: [row]}`. It never returns the original
+producer item as replay evidence. For hybrid, `row` is the existing
+`ReplayResult::to_function_json` hybrid row: `arm: "hybrid"` and settlement
+`reproduced-with-evaluated-witness`, `reproduced-with-validated-witness`,
+`inconclusive`, or `incomplete`, with the native static/exact result,
+counterexample/disagreement/limit fields from `result/wire/replay/arms.rs:72`.
+The existing outcome writer owns its category and exit mapping.
+
+For model/protocol the new command writer maps the fresh
+`ModelTraceReplayResult.settlement` into one row with `arm` respectively
+`"model-trace"` or `"protocol-trace"`, and these required fields:
+`settlement`, `category`, `value`, `trace_position`, `undefined`,
+`disagreement`, `limit`. `Reproduced` maps to settlement
+`"reproduced-with-evaluated-witness"`, category `"success"`, actual trace
+position (unsigned decimal string or null), and actual `Truth(b)` as JSON
+Boolean `value`; reproduced undefined evaluation uses `value: null` and the
+existing FR-364 undefined-evaluation form in `undefined`. Other nullable
+fields are null. `Inconclusive(cause)` maps to `"inconclusive"` settlement and
+category, with the native disagreement codec in `disagreement` and no value,
+position or undefined result. `Stopped` maps to `"incomplete"` settlement and
+category, and native reached-limit/value/count data in `limit`, with other
+nullable fields null. No produced row means reconstruction/refusal/fault,
+reported through the native refusal/fault outcome and diagnostics; it is never
+converted to a reproduction row. A serialization fault writes no partial row.
+The consumer decides independent reproduction from this fresh arm/settlement
+and native payload, never from the producer's `replay.reproduced`, a zero exit
+code, or category `success` alone.
 
 `replay.reproduced` is history, never independent recheck evidence. Missing
 context, refusal, replay disagreement, unsupported transport and internal fault
