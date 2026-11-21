@@ -80,7 +80,7 @@ pub(super) trait SlotHost {
 /// The frame a slot's supply admits to.
 pub(super) struct AdmittedSupply {
     pub(super) frame: Vec<Option<Value>>,
-    pub(super) reference_origins: Vec<Vec<super::protocol_slot::ProtocolReferenceOccurrence>>,
+    pub(super) reference_origins: Vec<super::evaluate::ReferenceOrigins>,
     pub(super) unavailable:
         std::collections::BTreeMap<usize, (NodeKey, filament_semantic_value::catalog::CatalogCode)>,
     pub(super) binder_slots: std::collections::BTreeMap<usize, NodeKey>,
@@ -129,7 +129,7 @@ pub(super) fn admit_slot_supply(
         }
     }
     let mut frame = vec![None; frame_len];
-    let mut reference_origins = vec![Vec::new(); frame_len];
+    let mut reference_origins = vec![None; frame_len];
     let mut unavailable = std::collections::BTreeMap::new();
     let binder_slots = sources
         .iter()
@@ -392,9 +392,23 @@ pub(super) fn admit_slot_supply(
                     {
                         return Err(protocol_reference_failure(observation, key, failure));
                     }
+                    // These paths were already owned by the existing typed
+                    // admission walk. Move them once after validation; every
+                    // frame and Local read subsequently shares this backing.
+                    reference_origins[index] = Some(
+                        seeds
+                            .into_iter()
+                            .map(|(_, population, path)| {
+                                super::protocol_slot::ProtocolReferenceOccurrence {
+                                    path,
+                                    population,
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                    );
                 }
                 frame[index] = Some(value.clone());
-                reference_origins[index] = supplied.references.clone();
             }
             SuppliedValue::Unavailable(cause) => {
                 if let Some(metadata) = supplied.references.first() {
