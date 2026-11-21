@@ -586,6 +586,7 @@ mod nonlinear_tests {
     /// Trace: FR-450
     /// Positive lower bounds force the product minimum t^d. The analytical
     /// boundary is the positive root of 2t^d-1, including its exact section.
+    #[ix_trace_rs::trace("FR-450")]
     #[test]
     fn cad_product_boundary_in_two_and_three_dimensions() {
         for dimensions in [2, 3] {
@@ -636,6 +637,7 @@ mod nonlinear_tests {
     }
 
     /// Trace: FR-450
+    #[ix_trace_rs::trace("FR-450")]
     #[test]
     fn cad_denominator_holes_and_short_circuit_branches() {
         let quotient = op(
@@ -686,6 +688,7 @@ mod nonlinear_tests {
     }
 
     /// Trace: FR-450
+    #[ix_trace_rs::trace("FR-450")]
     #[test]
     fn cad_meter_repeats_and_denies_the_last_actual_charge() {
         let parts = product_parts(2, CompareOp::Le);
@@ -706,6 +709,7 @@ mod nonlinear_tests {
     }
 
     /// Trace: FR-450
+    #[ix_trace_rs::trace("FR-450")]
     #[test]
     fn cad_collects_late_branch_and_coefficient_only_time_boundaries() {
         let branch = logic(
@@ -746,6 +750,7 @@ mod nonlinear_tests {
     }
 
     /// Trace: FR-450
+    #[ix_trace_rs::trace("FR-450")]
     #[test]
     fn cad_numeric_conditionals_negative_denominators_and_undefined_negation() {
         let hole = cmp(CompareOp::Eq, v(0), v(1));

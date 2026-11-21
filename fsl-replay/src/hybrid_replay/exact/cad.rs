@@ -4,6 +4,16 @@
 //! variables. Coefficients are never divided by algebraic values: specialized
 //! signed pseudo-remainders and Sturm-Tarski queries reduce each sign to the
 //! shorter, actual sample prefix, including reducible defining polynomials.
+//!
+//! Projection uses the full Collins reducta/coefficient/PSC family (Collins,
+//! 1975, Theorem 5; also Viehmann/Kremer/Abraham, 2017, section 2.4).
+//! Lifting uses the real-coefficient Sturm-Tarski theorem (Li/Passmore/Paulson,
+//! <https://arxiv.org/abs/1506.08238>, Theorem 1), inductively on prefix length.
+//! Each signed pseudo-remainder is a positive multiple of the negative
+//! Euclidean remainder AFTER specialization, rather than a remainder in a
+//! quotient by a possibly reducible defining polynomial. See Li/Paulson,
+//! <https://www.cl.cam.ac.uk/~lp15/papers/Formath/LiRealAlgebraicNumbers.pdf>,
+//! section 3.2, for the specialization and signed-remainder distinction.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -807,6 +817,7 @@ mod tests {
     /// A reducible polynomial with repeated roots defines +sqrt(2).
     /// Specialization lowers degree three to one, and separately nullifies
     /// an entire fiber. The surviving root is exactly -1.
+    #[ix_trace_rs::trace("FR-450")]
     #[test]
     fn cad_specialized_degree_and_nullified_fiber_are_decided_before_prs() {
         let time = ExactReal::Rational(n(0));
@@ -846,6 +857,7 @@ mod tests {
     /// The tower x=sqrt(2), y=sqrt(2+x) is correlated: y^2-x-2=0,
     /// and y^2-3=x-1>0. Neither root is represented by an unrelated field
     /// quotient. Negative leading coefficients exercise signed PRS parity.
+    #[ix_trace_rs::trace("FR-450")]
     #[test]
     fn cad_correlated_algebraic_tower_preserves_signs_and_root_branches() {
         let time = ExactReal::Rational(n(0));
@@ -880,6 +892,7 @@ mod tests {
     /// Full reducta expose the discriminant even when the formal leading
     /// coefficient specializes to zero; coefficient-only x-constraints
     /// must survive elimination of y and then reach the time partition.
+    #[ix_trace_rs::trace("FR-450")]
     #[test]
     fn cad_projection_carries_coefficients_and_lower_degree_discriminants() {
         let mut meter = HybridReplayMeter::new(u64::MAX);
@@ -903,5 +916,57 @@ mod tests {
                 .any(|p| p.degree().unwrap_or(0) > 0 && p.eval(&n(0)).is_zero()),
             "t=0 degree drop must remain a partition boundary"
         );
+    }
+
+    /// Trace: FR-450
+    /// Analytic roots -2, 1, 3 independently determine every Tarski query.
+    /// Changing leading sign and multiplicity must not change those sums.
+    #[ix_trace_rs::trace("FR-450")]
+    #[test]
+    fn cad_signed_prs_matches_known_roots_with_both_parities_and_leading_signs() {
+        let time = ExactReal::Rational(n(0));
+        let mut meter = HybridReplayMeter::new(u64::MAX);
+        let x = Polynomial::variable(1);
+        let base = x
+            .add(&c(2), &mut meter)
+            .unwrap()
+            .mul(&x.sub(&c(1), &mut meter).unwrap(), &mut meter)
+            .unwrap()
+            .mul(&x.sub(&c(3), &mut meter).unwrap(), &mut meter)
+            .unwrap();
+        let q = square(&x, &mut meter).sub(&c(4), &mut meter).unwrap();
+        for repeated in [false, true] {
+            let p = if repeated {
+                square(&base, &mut meter)
+            } else {
+                base.clone()
+            };
+            for negative in [false, true] {
+                let p = if negative {
+                    p.neg(&mut meter).unwrap()
+                } else {
+                    p.clone()
+                };
+                let mut kernel = Kernel::new(&time, &mut meter);
+                assert_eq!(
+                    kernel.count(&p, 1, &Bound::Below, &Bound::Above).unwrap(),
+                    3
+                );
+                for (low, high, expected) in [(-3, -1, 0), (0, 2, -1), (2, 4, 1)] {
+                    assert_eq!(
+                        kernel
+                            .tarski(&p, &q, 1, &Bound::At(n(low)), &Bound::At(n(high)))
+                            .unwrap(),
+                        expected
+                    );
+                }
+                assert_eq!(
+                    kernel
+                        .tarski(&p, &q, 1, &Bound::Below, &Bound::Above)
+                        .unwrap(),
+                    0
+                );
+            }
+        }
     }
 }
