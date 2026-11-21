@@ -4121,7 +4121,7 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         record Counter { level: Int[0, 9]; }\n\
         type Zero = Int[0, 0];\n\
         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
-        function refusingCount using v(n: Integer): Zero pure { count<Zero>(m in ints(sequence[n]): m > 0) }\n\
+        function refusingCount using v(n: Integer): Boolean pure { count<Zero>(m in ints(sequence[n]): m > 0) = 0 }\n\
         temporal C using t over (c: Counter) clock \"sensor\" on origin \
         { always[0,5] holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n\
         temporal Other using t over (c: Counter) clock \"sensor\" on origin \
