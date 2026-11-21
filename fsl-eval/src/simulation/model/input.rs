@@ -599,9 +599,11 @@ impl<'p> PackageModelInput<'p> {
     /// from the nodes and identity rows;
     /// [`PendingPackageForm::Model`] when the supplied packages do not re-admit
     /// against the package's types; [`PendingPackageForm::Operations`] when
-    /// their operations are not typed. A type that names a unit is typed
-    /// against no unit names: the package route reads none yet, so such an
-    /// operation refuses rather than being left out.
+    /// their operations are not typed. Unit names are reconstructed from
+    /// authenticated source-unit witness rows and admitted nominal declarations
+    /// with single-segment names. Units outside that reconstruction are not
+    /// supplied by this bridge; an operation that cannot be typed still refuses
+    /// rather than being left out.
     pub fn of(
         package: &'p BarePackage<'p>,
         packages: &fsl_semantics::model::intake::PackageInput,
