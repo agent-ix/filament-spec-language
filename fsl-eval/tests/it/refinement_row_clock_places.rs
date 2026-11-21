@@ -318,7 +318,7 @@ fn clock_snapshot(reference: &ObjectReference) -> (DocumentRef, Vec<u8>) {
         "populations": [{"population": crate::ring_queue::node(CLOCKS, "calls"), "complete": true,
             "objects": [{"key": "c1", "type": crate::ring_queue::node(CLOCKS, "Call"), "fields": {
                 "n": {"integer": "1"}, "d": {"integer": "0"}, "r": r,
-                "maybe": {"present": r}, "refs": {"sequence": [r]}, "peer": {"absent": true},
+                "maybe": {"present": r}, "refs": {"sequence": [r]}, "peer": {"absent": {}},
             }}]}],
     })).expect("JSON");
     (identity, bytes)
@@ -414,7 +414,7 @@ fn clock_reference_snapshot_refuses_an_undeclared_place() {
             let reference = json!({"reference": {"population": crate::ring_queue::node(CLOCKS, "calls"),
             "key": if field == "peer" { "ghost" } else { missing.object().as_str() }}});
             document["populations"][0]["objects"][0]["fields"][field] = match field {
-                "maybe" => json!({"present": reference}),
+                "maybe" | "peer" => json!({"present": reference}),
                 "refs" => json!({"sequence": [reference]}),
                 _ => reference,
             };
