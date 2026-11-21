@@ -4116,7 +4116,7 @@ fn package_window_adapter_controls(
 fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
     use fsl_foundation::{Source, SourceIdentity, Span};
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
-        profile v = \"filament.value.complete/v1\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
         profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
         model Config = \"example/config-version\";\n\
         record Counter { level: Int[0, 9]; }\n\
@@ -4124,10 +4124,10 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         type Total = Int[0, 4000];\n\
         function totalVersions using v(p: Population<Config::ConfigVersion>[4]): Total pure { sum<Total>(r in allInstances<Config::ConfigVersion>(p): deref(r).versionNumber) }\n\
-        temporal C using t over (c: Counter) clock \"sensor\" on origin \
-        { always[0,5] holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n\
-        temporal Other using t over (c: Counter) clock \"sensor\" on origin \
-        { always[0,5] holds(count<Zero>(m in ints(sequence[c.level]): m > 0) = 0) }\n";
+        temporal C using t over (c: Config::ConfigVersion) clock \"sensor\" on origin \
+        { always[0,5] holds(sum<Total>(r in allInstances<Config::ConfigVersion>(Config::config_history): deref(r).versionNumber) >= 0) }\n\
+        temporal Other using t over (c: Config::ConfigVersion) clock \"sensor\" on origin \
+        { always[0,5] holds(sum<Total>(r in allInstances<Config::ConfigVersion>(Config::config_history): deref(r).versionNumber) >= 0) }\n";
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Incomplete).unwrap();
     std::fs::write(directory.path().join("caller.native"), unit).unwrap();
@@ -4149,12 +4149,12 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         (
             "clause",
             json!({"selection":{"temporal":{"name":"C","trace":{"timestamped":{
-            "observations":[{"position":level_sample(1),"stamp":0}],
+            "observations":[{"position":"s0","stamp":0}],
             "progress":{"watermark":5,"completeness":{"complete":{"through":5}},"scope":"closed","execution":"closed"},
             "lower_boundary":"authoritative-origin",
             "binding":{"profile":"filament.temporal.timestamped-event.finite-window/v1","clock":"sensor","parameters":clocks["sensor"]}
-        }}}},"observations":{}}),
-            "count<Zero>(m in ints(sequence[c.level]): m > 0)",
+        }},"over":{"reference":{"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY),"key":"child"}}}},"observations":{"s0":"spine-snapshot.json"}}),
+            "allInstances<Config::ConfigVersion>(Config::config_history)",
         ),
     ] {
         let start = unit.find(term).unwrap();
@@ -4176,12 +4176,7 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         }});
         source_request["request"][member] = selection.clone();
         let expected = write_request(directory.path(), &source_request);
-        assert_eq!(
-            expected.0,
-            if member == "call" { 22 } else { 20 },
-            "source {member}: {}",
-            expected.1
-        );
+        assert_eq!(expected.0, 22, "source {member}: {}", expected.1);
         let outcome = |value: &Value| {
             if member == "call" {
                 value["outcome"].clone()
@@ -4191,18 +4186,12 @@ fn package_remainder_call_and_condition_refusals_keep_caller_source_loci() {
         };
         let refusal = outcome(&expected.1);
         assert_eq!(refusal["kind"], "refused", "{}", expected.1);
-        if member == "call" {
-            assert_eq!(refusal["code"], "incomplete_population", "{refusal}");
-            assert_eq!(refusal["cause"], "incomplete-scope", "{refusal}");
-            assert_eq!(
-                refusal["fields"],
-                json!({"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)})
-            );
-        } else {
-            assert_eq!(refusal["code"], "integer_out_of_domain", "{refusal}");
-            assert_eq!(refusal["cause"], "outside-domain", "{refusal}");
-            assert_eq!(refusal["fields"], json!({"expected":"Int[0, 0]"}));
-        }
+        assert_eq!(refusal["code"], "incomplete_population", "{refusal}");
+        assert_eq!(refusal["cause"], "incomplete-scope", "{refusal}");
+        assert_eq!(
+            refusal["fields"],
+            json!({"population":format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)})
+        );
         assert_eq!(
             refusal["locus"],
             json!({"file":"caller.native","span":span})
