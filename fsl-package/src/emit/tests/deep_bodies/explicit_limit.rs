@@ -123,7 +123,7 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
                     matches!(node.at(*left).kind(), NodeKind::Local(previous) if *previous + 1 == *slot)
                 );
                 assert!(
-                    matches!(node.at(*right).kind(), NodeKind::Literal(literal) if matches!(&literal.0, filament_exact::Value::Integer(value) if value == &1.into()))
+                    matches!(node.at(*right).kind(), NodeKind::Literal(literal) if matches!(&literal.0, filament_exact::Value::Integer(value) if value == &filament_exact::Integer::from(1_i64)))
                 );
                 if bindings == count {
                     assert!(
