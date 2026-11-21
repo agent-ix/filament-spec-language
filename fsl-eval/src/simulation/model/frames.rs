@@ -343,7 +343,7 @@ fn apply_argument(
     Ok(())
 }
 
-/// Declaration -> typed argument -> receiver order, reusing apply_argument.
+/// Declaration -> receiver -> typed argument order, reusing apply_argument.
 /// The supported scalar domains are indexed lazily rather than collected.
 pub(super) fn visit_operation(
     walk: &Walk<'_, '_>,

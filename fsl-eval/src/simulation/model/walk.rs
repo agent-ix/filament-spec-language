@@ -377,8 +377,9 @@ pub(super) fn walk_of<'s, 'a>(
     })
 }
 
-/// A source-plan walk never materializes the operation/argument/post-state
-/// Cartesian product. Operation order is supplied by admitted declarations.
+/// A source-plan walk does not retain the full node's invocation product.
+/// It sorts only one invocation's accounted outcomes before advancing.
+/// Operation order is supplied by admitted declarations.
 pub(super) fn visit_plan_candidates(
     system: &ModelSystem<'_>,
     state: &ModelSimState,
