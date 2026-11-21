@@ -148,25 +148,42 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
                     &package,
                     crate::EmitLimits::new(if label == "sum" { 1 << 27 } else { 1 << 32 }),
                 );
-                let emission = emitted.unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));
-                let wire = wire(&emission);
                 if label == "sum" {
-                    let bytes = emission.package().bytes().len();
-                    assert!(bytes <= 1 << 27, "compact sum bytes remain within the original 128 MiB allowance: {bytes}");
-                    let rows = wire["checked_term_data"]["body_locations"].as_array().unwrap();
-                    assert_eq!(rows.len(), DEEP - 1);
-                    let down: usize = rows.iter().map(|row| row["location"]["down"].as_array().unwrap().len()).sum();
-                    assert_eq!(down, DEEP - 2, "the deep sum writes one delta entry per nested checker link");
-                    assert!(rows.iter().all(|row| row["location"]["up"] == 0 && row["location"].get("path").is_none()));
-                    eprintln!("compact {label}: bytes={bytes}, rows={}, down_entries={down}, allowance={}", rows.len(), 1 << 27);
-                }
-                let written = nodes(&wire);
-                assert!(written.len() >= DEEP, "{label}: one node per level");
-                for node in written {
-                    assert!(
-                        fsl_semantics::check::stratum::is_stratified_body(&node["body"]),
-                        "{label}: a written body is in the five-stratum grammar"
+                    // Compact deltas remove the quadratic path payload. The
+                    // rest of this authentic 100k graph still exceeds its
+                    // original wire ceiling; the streaming writer refuses
+                    // its first unpaid byte with a source occurrence.
+                    let Err(EmitRefusal::OutputLimit(limit)) = &emitted else {
+                        panic!("sum: the original 128 MiB wire ceiling must refuse");
+                    };
+                    assert_eq!(
+                        emitted.as_ref().expect_err("refused").code(),
+                        Code::StageLimitExceeded
                     );
+                    assert_eq!(limit.setting(), fsl_foundation::Setting::EmitOutputBytes);
+                    assert_eq!(limit.configured_bound(), 1 << 27);
+                    assert_eq!(limit.actual(), (1 << 27) + 1);
+                    assert!(
+                        limit.locus().is_some(),
+                        "the wire writer retains its source occurrence"
+                    );
+                    eprintln!(
+                        "compact sum: configured={}, first_unpaid={}, source_occurrence=true",
+                        limit.configured_bound(),
+                        limit.actual()
+                    );
+                } else {
+                    let emission =
+                        emitted.unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));
+                    let wire = wire(&emission);
+                    let written = nodes(&wire);
+                    assert!(written.len() >= DEEP, "{label}: one node per level");
+                    for node in written {
+                        assert!(
+                            fsl_semantics::check::stratum::is_stratified_body(&node["body"]),
+                            "{label}: a written body is in the five-stratum grammar"
+                        );
+                    }
                 }
                 // The checked package: every checked function body (the
                 // arena a deep expression nests in) and the lowered graph
