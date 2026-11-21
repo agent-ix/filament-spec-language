@@ -5,6 +5,7 @@
 //! with no fallback to source compilation.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use filament_contract_model::{
     read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
@@ -18,15 +19,18 @@ use crate::checked_v2::{ImportViewRefusal, V2ReadLimits, V2ReadRefusal};
 /// A package the strict reader refused.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PackageAdmissionRefusal {
+    /// Original cumulative read-budget denial, when admission exhausted it.
+    pub limit: Option<Box<fsl_foundation::diagnostic::LimitExceeded>>,
     /// The catalogued code: `missing_import` where no document is supplied
     /// under a selected domain package identity, `resource_exhausted` where
-    /// a read ceiling was reached, `invalid_package` for every other refusal.
+    /// a read ceiling was reached, `stage_limit_exceeded` for a shared-budget
+    /// denial, and `invalid_package` for every other refusal.
     pub code: Code,
     /// The reader's typed cause tag, such as `missing-selection`.
     pub cause: Option<String>,
     /// The RFC 6901 pointer the reader names, absent for a byte-stream defect.
     pub pointer: Option<String>,
-    /// The domain package identity a `missing-selection` refusal is for.
+    /// The domain or library identity a `missing-selection` refusal names.
     pub identity: Option<String>,
 }
 
@@ -44,6 +48,127 @@ pub fn admit_checked_package(
     documents: &BTreeMap<String, Vec<u8>>,
     limits: V2ReadLimits,
 ) -> Result<CheckedPackageV2, PackageAdmissionRefusal> {
+    admit_checked_package_with_dependencies(bytes, documents, &BTreeMap::new(), limits)
+}
+
+/// Admit a package with authenticated direct library artifacts. The strict
+/// reader verifies the supplied identities and retains their shared closure.
+///
+/// # Errors
+/// Returns the original strict reader refusal or a conflicting evidence refusal.
+pub fn admit_checked_package_with_dependencies(
+    bytes: &[u8],
+    documents: &BTreeMap<String, Vec<u8>>,
+    dependencies: &BTreeMap<String, Arc<CheckedPackageV2>>,
+    limits: V2ReadLimits,
+) -> Result<CheckedPackageV2, PackageAdmissionRefusal> {
+    let evidence = checked_package_evidence(documents, dependencies)?;
+    match read_checked_package(bytes, limits.for_ir(), &evidence) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => Ok(*package),
+        CheckedPackageDispatchResult::Refused(refusal) => {
+            Err(of_reader_refusal(&refusal).naming_identity_in(Some(bytes)))
+        }
+        CheckedPackageDispatchResult::Incomplete(incomplete) => Err(PackageAdmissionRefusal {
+            limit: None,
+            code: Code::ResourceExhausted,
+            cause: None,
+            pointer: incomplete.path.map(|path| path.as_str().to_owned()),
+            identity: None,
+        }),
+        CheckedPackageDispatchResult::CatalogUnavailable(_) => Err(PackageAdmissionRefusal {
+            limit: None,
+            code: Code::InvalidPackage,
+            cause: None,
+            pointer: None,
+            identity: None,
+        }),
+    }
+}
+
+/// Strict admission consuming the invocation's shared work allowance.
+///
+/// # Errors
+/// Preserves strict-reader refusals and cumulative typed budget denials.
+pub fn admit_checked_package_with_budget(
+    bytes: &[u8],
+    documents: &BTreeMap<String, Vec<u8>>,
+    dependencies: &BTreeMap<String, Arc<CheckedPackageV2>>,
+    limits: V2ReadLimits,
+    budget: &mut filament_contract_model::NativeJoinBudget,
+) -> Result<CheckedPackageV2, PackageAdmissionRefusal> {
+    let evidence = checked_package_evidence(documents, dependencies)?;
+    admit_checked_package_with_evidence(bytes, &evidence, limits, budget)
+}
+
+/// Read against invocation-owned evidence without copying domain documents or
+/// dependency graphs at each package boundary. The strict reader retains only
+/// the dependencies its lock selects.
+///
+/// # Errors
+/// Preserves strict-reader refusals and cumulative typed budget denials.
+pub fn admit_checked_package_with_evidence(
+    bytes: &[u8],
+    evidence: &CheckedPackageEvidence,
+    limits: V2ReadLimits,
+    budget: &mut filament_contract_model::NativeJoinBudget,
+) -> Result<CheckedPackageV2, PackageAdmissionRefusal> {
+    use filament_contract_model::CheckedPackageBudgetedDispatchResult as Read;
+    let denial = |limit, actual, pointer| PackageAdmissionRefusal {
+        limit: Some(Box::new(fsl_foundation::diagnostic::LimitExceeded::new(
+            fsl_foundation::Setting::I2WorkUnits,
+            limit,
+            actual,
+        ))),
+        code: Code::StageLimitExceeded,
+        cause: Some("insufficient-next-charge".to_owned()),
+        pointer,
+        identity: None,
+    };
+    match filament_contract_model::read_checked_package_with_budget(
+        bytes,
+        limits.for_ir(),
+        evidence,
+        budget,
+    ) {
+        Read::AdmittedV2(package) => Ok(*package),
+        Read::Refused(refusal) => Err(of_reader_refusal(&refusal).naming_identity_in(Some(bytes))),
+        Read::BudgetIncomplete(incomplete) => Err(denial(
+            incomplete.limit,
+            u128::from(incomplete.consumed),
+            incomplete.path.map(|path| path.as_str().to_owned()),
+        )),
+        Read::Exhausted(exhausted) => Err(denial(
+            exhausted.configured_bound,
+            u128::from(budget.consumed().work).saturating_add(exhausted.denied.amount),
+            None,
+        )),
+        Read::Incomplete(incomplete) => Err(PackageAdmissionRefusal {
+            limit: None,
+            code: Code::ResourceExhausted,
+            cause: None,
+            pointer: incomplete.path.map(|path| path.as_str().to_owned()),
+            identity: None,
+        }),
+        Read::CatalogUnavailable(_) => Err(PackageAdmissionRefusal {
+            limit: None,
+            code: Code::InvalidPackage,
+            cause: None,
+            pointer: None,
+            identity: None,
+        }),
+    }
+}
+
+/// Own the invocation's domain documents once and supply authenticated library
+/// values by shared ownership. Additional admitted libraries can be inserted
+/// through IR's existing evidence API before subsequent reads.
+///
+/// # Errors
+/// Refuses conflicting documents or library identities through IR's insertion API.
+pub fn checked_package_evidence(
+    documents: &BTreeMap<String, Vec<u8>>,
+    dependencies: &BTreeMap<String, Arc<CheckedPackageV2>>,
+) -> Result<CheckedPackageEvidence, PackageAdmissionRefusal> {
     let mut evidence = CheckedPackageEvidence::new();
     // The one feature FSL emits and so the one it reads: a package that
     // requires another is refused by the reader.
@@ -54,6 +179,7 @@ pub fn admit_checked_package(
             .is_err()
         {
             return Err(PackageAdmissionRefusal {
+                limit: None,
                 code: Code::InvalidPackage,
                 cause: Some("conflicting-definition".to_owned()),
                 pointer: None,
@@ -61,24 +187,18 @@ pub fn admit_checked_package(
             });
         }
     }
-    match read_checked_package(bytes, limits.for_ir(), &evidence) {
-        CheckedPackageDispatchResult::AdmittedV2(package) => Ok(*package),
-        CheckedPackageDispatchResult::Refused(refusal) => {
-            Err(of_reader_refusal(&refusal).naming_identity_in(Some(bytes)))
-        }
-        CheckedPackageDispatchResult::Incomplete(incomplete) => Err(PackageAdmissionRefusal {
-            code: Code::ResourceExhausted,
-            cause: None,
-            pointer: incomplete.path.map(|path| path.as_str().to_owned()),
-            identity: None,
-        }),
-        CheckedPackageDispatchResult::CatalogUnavailable(_) => Err(PackageAdmissionRefusal {
-            code: Code::InvalidPackage,
-            cause: None,
-            pointer: None,
-            identity: None,
-        }),
+    for (identity, dependency) in dependencies {
+        evidence
+            .insert_dependency_package(identity.as_str(), Arc::clone(dependency))
+            .map_err(|_| PackageAdmissionRefusal {
+                limit: None,
+                code: Code::InvalidPackage,
+                cause: Some("conflicting-definition".to_owned()),
+                pointer: None,
+                identity: Some(identity.clone()),
+            })?;
     }
+    Ok(evidence)
 }
 
 /// The refusal IR's reader raised, with its pointer and typed cause. The
@@ -110,6 +230,7 @@ fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal
         Code::InvalidPackage
     };
     PackageAdmissionRefusal {
+        limit: None,
         code,
         cause,
         pointer,
@@ -183,6 +304,7 @@ impl PackageAdmissionRefusal {
             V2ReadRefusal::Envelope { refusal, .. } => Some(of_reader_refusal(refusal)),
             V2ReadRefusal::Fault(_) => None,
             other => Some(Self {
+                limit: None,
                 code: other.code(),
                 cause: None,
                 pointer: None,
@@ -190,6 +312,7 @@ impl PackageAdmissionRefusal {
             }),
         };
         let exhausted = || Self {
+            limit: None,
             code: Code::ResourceExhausted,
             cause: None,
             pointer: None,

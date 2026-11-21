@@ -3384,6 +3384,73 @@ fn conforming_reference_equality_is_accepted_by_the_i2_read() {
     assert_equality_reader_outcomes(&emission, read);
 }
 
+/// Reference comparisons use the retained equality authority and refuse a
+/// missing witness before producing a reader projection.
+#[trace("TC-1331", "FR-531-AC-16", "FR-940-AC-6")]
+#[test]
+fn reference_equalities_require_the_admitted_witness_for_projection() {
+    use filament_semantic_value::declaration::EqualityOperator;
+
+    for (comparison, expected) in [
+        ("=", EqualityOperator::Equal),
+        ("!=", EqualityOperator::NotEqual),
+    ] {
+        let unit = spine_model_without(&[FIELD_ACCESS, CONFORMING_EQUALITY])
+            + &format!(
+                "function same using v(a: M::Widget, b: M::Widget): Boolean pure {{ a {comparison} b }}\n"
+            );
+        let (emission, _, read) = emit_model_unit(&unit, None);
+        let Read::Verified { admitted, .. } = read else {
+            panic!("the emitted reference comparison is admitted");
+        };
+        let identities = emission
+            .identity_rows(
+                &admitted,
+                &mut filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000),
+            )
+            .expect("the original identity rows");
+        let equality = emission
+            .equality_witness(
+                &admitted,
+                &mut filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000),
+            )
+            .expect("the retained producer equality witness");
+        let bytes = equality.to_bytes(&admitted).expect("the equality handoff");
+        let equality = crate::ReadEqualityRows::read(&bytes, &admitted)
+            .expect("the admitted equality handoff rows");
+        let bare = crate::BarePackage::new(&admitted)
+            .with_supply(
+                crate::BareSupply {
+                    identities: &identities,
+                    equality: Some(&equality),
+                },
+                &mut filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000),
+            )
+            .expect("the supplied native authorities admit");
+        let projection = bare
+            .project_function("same")
+            .expect("the admitted reference equality projects")
+            .expect("the named comparison function");
+        assert!(matches!(projection.kind(projection.root()),
+            Some(filament_checked::NodeKind::Equality(operator, _, _, _)) if *operator == expected));
+        let missing = crate::BarePackage::new(&admitted)
+            .with_supply(
+                crate::BareSupply {
+                    identities: &identities,
+                    equality: None,
+                },
+                &mut filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000),
+            )
+            .expect("missing equality authority is deferred until its read");
+        assert!(matches!(
+            missing.project_function("same"),
+            Err(crate::BareSelectionFailure::Equality(
+                crate::equality_file::EqualityWitnessRefusal::Missing
+            ))
+        ));
+    }
+}
+
 /// FR-056-AC-9 (TC-442 step 3): `M::Nope` names no object type of the
 /// admitted domain package and refuses at the assembler, at the name's
 /// span, as `missing_declaration`; the same unit given no domain package

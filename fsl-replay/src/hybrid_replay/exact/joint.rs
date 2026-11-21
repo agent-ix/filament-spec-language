@@ -1,320 +1,386 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-450 "Exact replay": joint real quantifier elimination over the
-//! post-jump variables a reset leaves free when one condition of the target
-//! invariant or the reset reads two or more of them (`v + w <= 1`).
-//!
-//! At the instant `u` of a dwell every condition that is linear in the free
-//! variables is `sum(c_i * y_i) + c_0 R 0` with each `c` a rational function
-//! of time and `R` one of `<` and `<=` (an equation is the two inequalities).
-//! The existence of a real point satisfying every condition at `u` is decided
-//! exactly by Fourier-Motzkin elimination: the sign of each coefficient at `u`
-//! is read exactly ([`super::super::real::ExactReal`]), a variable's lower and
-//! upper bounds are combined pairwise with the positive multipliers those
-//! signs give, and what is left is a conjunction of conditions on the
-//! constants alone. Every sign read is pushed as a decision, so the caller
-//! cuts the dwell at the roots of the polynomials read and each cell is read
-//! at one sample, as for every other exact decision.
-//!
-//! A condition that is not linear in the variables it couples (a product of
-//! two free variables, a conditional, a disequation) is the one shape this
-//! elimination does not decide: it is refused as
-//! [`ExactGap::CoupledReset`].
-//!
-//! Work accounting: the meter is charged before every pairing of a lower and
-//! an upper bound, by the size of the two conditions' coefficients, and every
-//! sign read at an irrational instant is charged by [`ExactReal::sign_with`].
+//! Exact existential reset constraints. Symbolic execution preserves division
+//! holes and left-to-right Boolean evaluation in a finite sign decision DAG.
+//! Every branch's polynomials are collected before CAD projection or witness
+//! search, so an early witness cannot hide a later time-cell boundary.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::rc::Rc;
 
-use fsl_semantics::check::{ArithmeticOp, CompareOp};
+use filament_exact::Rational;
+use fsl_semantics::check::{ArithmeticOp, CompareOp, LogicOp};
 
-use super::super::eval::{eval, Env, Ev};
+use super::super::eval::{Constant, Env};
 use super::super::expand::Exp;
-use super::super::poly::{Poly, RatFunc};
+use super::super::poly::Poly;
 use super::super::real::ExactReal;
 use super::super::{ExactGap, HybridReplayMeter, HybridReplayRefusal};
+use super::cad::{self, Kernel, Polynomial};
 
-/// A set of free variables coupled by conditions, and those conditions.
+type Result<T> = std::result::Result<T, HybridReplayRefusal>;
+type Node = Rc<Decision>;
+
 pub(super) struct Joint {
-    /// The free variables, by position.
     pub(super) variables: Vec<usize>,
-    /// The conditions that read at least one of them.
     pub(super) conjuncts: Vec<Exp>,
-    /// The source mode's position and the transition's, for the gap.
-    pub(super) mode: usize,
-    pub(super) transition: usize,
 }
 
-/// `sum(coefficients[i] * y_i) + constant`.
 #[derive(Clone)]
-struct Linear {
-    coefficients: BTreeMap<usize, RatFunc>,
-    constant: RatFunc,
+struct Fraction {
+    numerator: Polynomial,
+    denominator: Polynomial,
 }
 
-impl Linear {
-    fn constant(value: RatFunc) -> Self {
+impl Fraction {
+    fn of(numerator: Polynomial) -> Self {
         Self {
-            coefficients: BTreeMap::new(),
-            constant: value,
+            numerator,
+            denominator: Polynomial::constant(Rational::from_integer(1_i64.into())),
         }
     }
 
-    fn combine(&self, other: &Self, mine: &RatFunc, theirs: &RatFunc) -> Self {
-        let mut coefficients = BTreeMap::new();
-        for (&variable, c) in &self.coefficients {
-            coefficients.insert(variable, c.mul(mine));
-        }
-        for (&variable, c) in &other.coefficients {
-            let scaled = c.mul(theirs);
-            let next = match coefficients.remove(&variable) {
-                Some(have) => have.add(&scaled),
-                None => scaled,
-            };
-            coefficients.insert(variable, next);
-        }
-        Self {
-            coefficients,
-            constant: self.constant.mul(mine).add(&other.constant.mul(theirs)),
-        }
-    }
-
-    fn scaled(&self, factor: &RatFunc) -> Self {
-        self.combine(
-            &Self::constant(RatFunc::constant(zero())),
-            factor,
-            &one_function(),
-        )
-    }
-
-    fn negated(&self) -> Self {
-        self.scaled(&RatFunc::constant(minus_one()))
-    }
-
-    fn sum(&self, other: &Self) -> Self {
-        self.combine(other, &one_function(), &one_function())
-    }
-
-    fn size(&self) -> u64 {
-        self.coefficients
-            .values()
-            .chain(std::iter::once(&self.constant))
-            .map(|c| c.numerator.size() + c.denominator.size())
-            .sum()
+    fn arithmetic(
+        &self,
+        op: ArithmeticOp,
+        b: &Self,
+        meter: &mut HybridReplayMeter,
+    ) -> Result<Self> {
+        let (numerator, denominator) = match op {
+            ArithmeticOp::Add | ArithmeticOp::Sub => {
+                let a = self.numerator.mul(&b.denominator, meter)?;
+                let b_top = b.numerator.mul(&self.denominator, meter)?;
+                let numerator = match op {
+                    ArithmeticOp::Add => a.add(&b_top, meter)?,
+                    ArithmeticOp::Sub => a.sub(&b_top, meter)?,
+                    ArithmeticOp::Mul | ArithmeticOp::Div => unreachable!("an additive operation"),
+                };
+                (numerator, self.denominator.mul(&b.denominator, meter)?)
+            }
+            ArithmeticOp::Mul => (
+                self.numerator.mul(&b.numerator, meter)?,
+                self.denominator.mul(&b.denominator, meter)?,
+            ),
+            ArithmeticOp::Div => (
+                self.numerator.mul(&b.denominator, meter)?,
+                self.denominator.mul(&b.numerator, meter)?,
+            ),
+        };
+        Ok(Self {
+            numerator,
+            denominator,
+        })
     }
 }
 
-fn zero() -> filament_exact::Rational {
-    filament_exact::Rational::from_integer(0_i64.into())
-}
-
-fn minus_one() -> filament_exact::Rational {
-    filament_exact::Rational::from_integer((-1_i64).into())
-}
-
-fn one_function() -> RatFunc {
-    RatFunc::constant(filament_exact::Rational::from_integer(1_i64.into()))
-}
-
-/// What a term reads as at an instant.
-enum Read {
-    Form(Linear),
-    /// A subterm with no value at the instant.
+/// Undefined leaves represent hypothetical assignments with no value. They
+/// never satisfy the existential; actual trace evaluation retains its own
+/// existing cause and locus through the ordinary replay evaluator.
+enum Decision {
+    Number(Fraction),
+    Boolean(bool),
     Undefined,
+    Sign {
+        polynomial: Polynomial,
+        less: Node,
+        equal: Node,
+        greater: Node,
+    },
 }
 
-/// A condition `form < 0` (strict) or `form <= 0`.
-struct Condition {
-    form: Linear,
-    strict: bool,
+impl Decision {
+    fn boolean(value: bool) -> Node {
+        Rc::new(Self::Boolean(value))
+    }
+
+    fn select(
+        condition: &Node,
+        yes: &Node,
+        no: &Node,
+        meter: &mut HybridReplayMeter,
+    ) -> Result<Node> {
+        meter.charge()?;
+        Ok(match condition.as_ref() {
+            Self::Boolean(true) => yes.clone(),
+            Self::Boolean(false) => no.clone(),
+            Self::Undefined => condition.clone(),
+            Self::Number(_) => return Err(ExactGap::IllKindedTerm.into()),
+            Self::Sign {
+                polynomial,
+                less,
+                equal,
+                greater,
+            } => Rc::new(Self::Sign {
+                polynomial: polynomial.clone(),
+                less: Self::select(less, yes, no, meter)?,
+                equal: Self::select(equal, yes, no, meter)?,
+                greater: Self::select(greater, yes, no, meter)?,
+            }),
+        })
+    }
+
+    fn binary(a: &Node, b: &Node, op: Operation, meter: &mut HybridReplayMeter) -> Result<Node> {
+        meter.charge()?;
+        let split = |polynomial: &Polynomial,
+                     less: &Node,
+                     equal: &Node,
+                     greater: &Node,
+                     left: bool,
+                     meter: &mut HybridReplayMeter|
+         -> Result<Node> {
+            let mut apply = |child: &Node| {
+                if left {
+                    Self::binary(child, b, op, meter)
+                } else {
+                    Self::binary(a, child, op, meter)
+                }
+            };
+            Ok(Rc::new(Self::Sign {
+                polynomial: polynomial.clone(),
+                less: apply(less)?,
+                equal: apply(equal)?,
+                greater: apply(greater)?,
+            }))
+        };
+        match a.as_ref() {
+            Self::Undefined => return Ok(a.clone()),
+            Self::Sign {
+                polynomial,
+                less,
+                equal,
+                greater,
+            } => return split(polynomial, less, equal, greater, true, meter),
+            Self::Number(_) | Self::Boolean(_) => {}
+        }
+        match b.as_ref() {
+            Self::Undefined => return Ok(b.clone()),
+            Self::Sign {
+                polynomial,
+                less,
+                equal,
+                greater,
+            } => return split(polynomial, less, equal, greater, false, meter),
+            Self::Number(_) | Self::Boolean(_) => {}
+        }
+        let (Self::Number(a), Self::Number(b)) = (a.as_ref(), b.as_ref()) else {
+            return Err(ExactGap::IllKindedTerm.into());
+        };
+        Ok(match op {
+            Operation::Arithmetic(operation) => {
+                let value = Rc::new(Self::Number(a.arithmetic(operation, b, meter)?));
+                if operation == ArithmeticOp::Div {
+                    Rc::new(Self::Sign {
+                        polynomial: b.numerator.clone(),
+                        less: value.clone(),
+                        equal: Rc::new(Self::Undefined),
+                        greater: value,
+                    })
+                } else {
+                    value
+                }
+            }
+            Operation::Compare(operation) => {
+                let difference = a.arithmetic(ArithmeticOp::Sub, b, meter)?;
+                let holds = |sign| {
+                    Self::boolean(match operation {
+                        CompareOp::Eq => sign == Ordering::Equal,
+                        CompareOp::Ne => sign != Ordering::Equal,
+                        CompareOp::Lt => sign == Ordering::Less,
+                        CompareOp::Le => sign != Ordering::Greater,
+                        CompareOp::Gt => sign == Ordering::Greater,
+                        CompareOp::Ge => sign != Ordering::Less,
+                    })
+                };
+                let positive = Rc::new(Self::Sign {
+                    polynomial: difference.numerator.clone(),
+                    less: holds(Ordering::Less),
+                    equal: holds(Ordering::Equal),
+                    greater: holds(Ordering::Greater),
+                });
+                if difference.denominator.constant_sign() == Some(Ordering::Greater) {
+                    return Ok(positive);
+                }
+                let negative = Rc::new(Self::Sign {
+                    polynomial: difference.numerator,
+                    less: holds(Ordering::Greater),
+                    equal: holds(Ordering::Equal),
+                    greater: holds(Ordering::Less),
+                });
+                Rc::new(Self::Sign {
+                    polynomial: difference.denominator,
+                    less: negative,
+                    equal: Rc::new(Self::Undefined),
+                    greater: positive,
+                })
+            }
+        })
+    }
+
+    fn collect(
+        node: &Node,
+        set: &mut Vec<Polynomial>,
+        visited: &mut std::collections::BTreeSet<usize>,
+        meter: &mut HybridReplayMeter,
+    ) -> Result<()> {
+        meter.charge()?;
+        // Rc identity avoids traversing shared continuations repeatedly.
+        if !visited.insert(Rc::as_ptr(node) as usize) {
+            return Ok(());
+        }
+        match node.as_ref() {
+            Self::Sign {
+                polynomial,
+                less,
+                equal,
+                greater,
+            } => {
+                if !set.contains(polynomial) {
+                    set.push(polynomial.clone());
+                }
+                for child in [less, equal, greater] {
+                    Self::collect(child, set, visited, meter)?;
+                }
+            }
+            Self::Number(_) | Self::Boolean(_) | Self::Undefined => {}
+        }
+        Ok(())
+    }
+
+    fn holds(node: &Node, kernel: &mut Kernel<'_>) -> Result<bool> {
+        kernel.meter.charge()?;
+        match node.as_ref() {
+            Self::Boolean(value) => Ok(*value),
+            Self::Undefined => Ok(false),
+            Self::Number(_) => Err(ExactGap::IllKindedTerm.into()),
+            Self::Sign {
+                polynomial,
+                less,
+                equal,
+                greater,
+            } => {
+                let child = match kernel.sign(polynomial)? {
+                    Ordering::Less => less,
+                    Ordering::Equal => equal,
+                    Ordering::Greater => greater,
+                };
+                Self::holds(child, kernel)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Operation {
+    Arithmetic(ArithmeticOp),
+    Compare(CompareOp),
 }
 
 impl Joint {
-    fn gap(&self) -> HybridReplayRefusal {
-        ExactGap::CoupledReset {
-            mode: self.mode,
-            transition: self.transition,
-        }
-        .into()
-    }
-
-    /// The sign of `poly` at `at`, charged as [`super::super::section::Section`]
-    /// charges its sign reads.
-    fn sign(
-        at: &ExactReal,
-        poly: &Poly,
-        meter: &mut HybridReplayMeter,
-    ) -> Result<Ordering, HybridReplayRefusal> {
-        at.sign_with(poly, &mut |weight| meter.charge_by(weight))
-    }
-
-    /// `exp` as a linear form in the free variables.
-    fn form(
-        &self,
-        exp: &Exp,
-        env: &Env<'_>,
-        at: &ExactReal,
-        decisions: &mut Vec<Poly>,
-        meter: &mut HybridReplayMeter,
-    ) -> Result<Read, HybridReplayRefusal> {
-        if !exp.any_node(|node| matches!(node, Exp::Variable(i) if self.variables.contains(i))) {
-            return Ok(match eval(exp, env, at, decisions)? {
-                Ev::Number(value) => Read::Form(Linear::constant(value)),
-                Ev::Undefined { .. } => Read::Undefined,
-                Ev::Boolean(_) => return Err(ExactGap::IllKindedTerm.into()),
-            });
-        }
-        macro_rules! form {
-            ($e:expr) => {
-                match self.form($e, env, at, decisions, meter)? {
-                    Read::Form(form) => form,
-                    Read::Undefined => return Ok(Read::Undefined),
+    fn lower(&self, exp: &Exp, env: &Env<'_>, meter: &mut HybridReplayMeter) -> Result<Node> {
+        meter.charge()?;
+        let number = |p| Rc::new(Decision::Number(Fraction::of(p)));
+        Ok(match exp {
+            Exp::Number(q) => number(Polynomial::constant(q.clone())),
+            Exp::Boolean(b) => Decision::boolean(*b),
+            Exp::Variable(i) => {
+                if let Some(coordinate) = self.variables.iter().position(|v| v == i) {
+                    number(Polynomial::variable(coordinate + 1))
+                } else {
+                    number(Polynomial::time(
+                        env.variables.get(*i).ok_or(ExactGap::IllKindedTerm)?,
+                    ))
                 }
-            };
-        }
-        Ok(Read::Form(match exp {
-            Exp::Variable(i) => Linear {
-                coefficients: BTreeMap::from([(*i, one_function())]),
-                constant: RatFunc::constant(zero()),
+            }
+            Exp::Activation(i) => number(Polynomial::time(
+                env.activation.get(*i).ok_or(ExactGap::IllKindedTerm)?,
+            )),
+            Exp::Capture(i) => match env.captures.get(*i).ok_or(ExactGap::IllKindedTerm)? {
+                Constant::Number(q) => number(Polynomial::constant(q.clone())),
+                Constant::Boolean(b) => Decision::boolean(*b),
             },
-            Exp::Negate(a) => form!(a).negated(),
-            Exp::Arithmetic(ArithmeticOp::Add, a, b, _) => form!(a).sum(&form!(b)),
-            Exp::Arithmetic(ArithmeticOp::Sub, a, b, _) => form!(a).sum(&form!(b).negated()),
-            Exp::Arithmetic(ArithmeticOp::Mul, a, b, _) => {
-                let (a, b) = (form!(a), form!(b));
-                match (a.coefficients.is_empty(), b.coefficients.is_empty()) {
-                    (true, _) => b.scaled(&a.constant),
-                    (_, true) => a.scaled(&b.constant),
-                    _ => return Err(self.gap()),
+            Exp::Parameter(_) | Exp::Recursive(_) => return Err(ExactGap::RecursiveCall.into()),
+            Exp::Negate(a) => Decision::binary(
+                &number(Polynomial::constant(Rational::from_integer(0_i64.into()))),
+                &self.lower(a, env, meter)?,
+                Operation::Arithmetic(ArithmeticOp::Sub),
+                meter,
+            )?,
+            Exp::Not(a) => Decision::select(
+                &self.lower(a, env, meter)?,
+                &Decision::boolean(false),
+                &Decision::boolean(true),
+                meter,
+            )?,
+            Exp::Arithmetic(op, a, b, _) => Decision::binary(
+                &self.lower(a, env, meter)?,
+                &self.lower(b, env, meter)?,
+                Operation::Arithmetic(*op),
+                meter,
+            )?,
+            Exp::Compare(op, a, b) => Decision::binary(
+                &self.lower(a, env, meter)?,
+                &self.lower(b, env, meter)?,
+                Operation::Compare(*op),
+                meter,
+            )?,
+            Exp::Logic(op, a, b) => {
+                let a = self.lower(a, env, meter)?;
+                let b = self.lower(b, env, meter)?;
+                match op {
+                    LogicOp::And => Decision::select(&a, &b, &Decision::boolean(false), meter)?,
+                    LogicOp::Or => Decision::select(&a, &Decision::boolean(true), &b, meter)?,
+                    LogicOp::Implies => Decision::select(&a, &b, &Decision::boolean(true), meter)?,
                 }
             }
-            Exp::Arithmetic(ArithmeticOp::Div, a, b, _) => {
-                let (a, b) = (form!(a), form!(b));
-                if !b.coefficients.is_empty() {
-                    return Err(self.gap());
+            Exp::Conditional(c, a, b, _) => Decision::select(
+                &self.lower(c, env, meter)?,
+                &self.lower(a, env, meter)?,
+                &self.lower(b, env, meter)?,
+                meter,
+            )?,
+            Exp::Ranged { value, range, .. } => {
+                let value = self.lower(value, env, meter)?;
+                let mut inside = Decision::boolean(true);
+                for (bound, op) in [(&range.lower, CompareOp::Ge), (&range.upper, CompareOp::Le)] {
+                    if let Some(bound) = bound {
+                        let check = Decision::binary(
+                            &value,
+                            &number(Polynomial::constant(bound.clone())),
+                            Operation::Compare(op),
+                            meter,
+                        )?;
+                        inside =
+                            Decision::select(&inside, &check, &Decision::boolean(false), meter)?;
+                    }
                 }
-                let divisor = b.constant.numerator.clone();
-                let zero = Self::sign(at, &divisor, meter)? == Ordering::Equal;
-                decisions.push(divisor);
-                if zero {
-                    return Ok(Read::Undefined);
-                }
-                let inverse = one_function().div(&b.constant);
-                a.scaled(&inverse)
+                Decision::select(&inside, &value, &Rc::new(Decision::Undefined), meter)?
             }
-            _ => return Err(self.gap()),
-        }))
+        })
     }
 
-    /// `conjunct` as the conditions it states at `at`, or `None` when a
-    /// subterm of it has no value there.
-    fn conditions(
-        &self,
-        conjunct: &Exp,
-        env: &Env<'_>,
-        at: &ExactReal,
-        decisions: &mut Vec<Poly>,
-        meter: &mut HybridReplayMeter,
-    ) -> Result<Option<Vec<Condition>>, HybridReplayRefusal> {
-        let Exp::Compare(op, a, b) = conjunct else {
-            return Err(self.gap());
-        };
-        let (Read::Form(a), Read::Form(b)) = (
-            self.form(a, env, at, decisions, meter)?,
-            self.form(b, env, at, decisions, meter)?,
-        ) else {
-            return Ok(None);
-        };
-        let difference = a.sum(&b.negated());
-        let condition = |form: Linear, strict: bool| Condition { form, strict };
-        Ok(Some(match op {
-            CompareOp::Lt => vec![condition(difference, true)],
-            CompareOp::Le => vec![condition(difference, false)],
-            CompareOp::Gt => vec![condition(difference.negated(), true)],
-            CompareOp::Ge => vec![condition(difference.negated(), false)],
-            CompareOp::Eq => vec![
-                condition(difference.negated(), false),
-                condition(difference, false),
-            ],
-            CompareOp::Ne => return Err(self.gap()),
-        }))
-    }
-
-    /// Whether some real point of the free variables satisfies every
-    /// condition at the instant `at`.
     pub(super) fn exists(
         &self,
         env: &Env<'_>,
         at: &ExactReal,
         decisions: &mut Vec<Poly>,
         meter: &mut HybridReplayMeter,
-    ) -> Result<bool, HybridReplayRefusal> {
-        let mut conditions = Vec::new();
+    ) -> Result<bool> {
+        let mut body = Decision::boolean(true);
         for conjunct in &self.conjuncts {
-            meter.charge()?;
-            match self.conditions(conjunct, env, at, decisions, meter)? {
-                Some(read) => conditions.extend(read),
-                None => return Ok(false),
-            }
+            let part = self.lower(conjunct, env, meter)?;
+            body = Decision::select(&body, &part, &Decision::boolean(false), meter)?;
         }
-        for &variable in &self.variables {
-            let mut rest = Vec::new();
-            let mut lower = Vec::new();
-            let mut upper = Vec::new();
-            for mut condition in conditions {
-                let Some(coefficient) = condition.form.coefficients.get(&variable) else {
-                    rest.push(condition);
-                    continue;
-                };
-                let poly = coefficient.sign_poly();
-                let sign = Self::sign(at, &poly, meter)?;
-                decisions.push(poly);
-                match sign {
-                    Ordering::Equal => {
-                        condition.form.coefficients.remove(&variable);
-                        rest.push(condition);
-                    }
-                    Ordering::Greater => upper.push(condition),
-                    Ordering::Less => lower.push(condition),
-                }
-            }
-            for low in &lower {
-                for high in &upper {
-                    meter.charge_by(low.form.size().saturating_mul(high.form.size()))?;
-                    let (Some(low_c), Some(high_c)) = (
-                        low.form.coefficients.get(&variable),
-                        high.form.coefficients.get(&variable),
-                    ) else {
-                        continue;
-                    };
-                    let mut form = low.form.combine(&high.form, high_c, &low_c.neg());
-                    form.coefficients.remove(&variable);
-                    rest.push(Condition {
-                        form,
-                        strict: low.strict || high.strict,
-                    });
-                }
-            }
-            conditions = rest;
-        }
-        for condition in conditions {
-            let poly = condition.form.constant.sign_poly();
-            let sign = Self::sign(at, &poly, meter)?;
-            decisions.push(poly);
-            let holds = if condition.strict {
-                sign == Ordering::Less
-            } else {
-                sign != Ordering::Greater
-            };
-            if !holds {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        let mut set = Vec::new();
+        Decision::collect(
+            &body,
+            &mut set,
+            &mut std::collections::BTreeSet::new(),
+            meter,
+        )?;
+        let (levels, projected) = cad::project(set, self.variables.len(), meter)?;
+        decisions.extend(projected);
+        Kernel::new(at, meter).exists(&levels, &mut |kernel| Decision::holds(&body, kernel))
     }
 }
-
 #[cfg(test)]
 mod tests {
     use filament_exact::Rational;
@@ -370,8 +436,6 @@ mod tests {
         let joint = Joint {
             variables: vec![0, 1],
             conjuncts,
-            mode: 0,
-            transition: 0,
         };
         let mut decisions = Vec::new();
         let mut meter = HybridReplayMeter::new(u64::MAX);
@@ -457,5 +521,292 @@ mod tests {
         };
         assert!(joint_at(bounds(3), &at).0);
         assert!(!joint_at(bounds(2), &at).0);
+    }
+}
+
+#[cfg(test)]
+mod nonlinear_tests {
+    use super::super::super::expand::TermLocus;
+    use super::*;
+    use fsl_semantics::check::LogicOp;
+
+    fn n(i: i64) -> Rational {
+        Rational::from_integer(i.into())
+    }
+    fn q(i: i64) -> Exp {
+        Exp::Number(n(i))
+    }
+    fn v(i: usize) -> Exp {
+        Exp::Variable(i)
+    }
+    fn op(op: ArithmeticOp, a: Exp, b: Exp) -> Exp {
+        Exp::Arithmetic(op, Box::new(a), Box::new(b), TermLocus::default())
+    }
+    fn mul(a: Exp, b: Exp) -> Exp {
+        op(ArithmeticOp::Mul, a, b)
+    }
+    fn cmp(op: CompareOp, a: Exp, b: Exp) -> Exp {
+        Exp::Compare(op, Box::new(a), Box::new(b))
+    }
+    fn logic(op: LogicOp, a: Exp, b: Exp) -> Exp {
+        Exp::Logic(op, Box::new(a), Box::new(b))
+    }
+    fn run(
+        parts: Vec<Exp>,
+        dimensions: usize,
+        at: &ExactReal,
+        bound: u64,
+    ) -> (Result<bool>, Vec<Poly>, u64) {
+        let mut variables = vec![Poly::zero(); dimensions];
+        variables.push(Poly::new(vec![n(0), n(1)]));
+        let env = Env {
+            variables: &variables,
+            activation: &variables,
+            captures: &[],
+        };
+        let joint = Joint {
+            variables: (0..dimensions).collect(),
+            conjuncts: parts,
+        };
+        let mut decisions = Vec::new();
+        let mut meter = HybridReplayMeter::new(bound);
+        let result = joint.exists(&env, at, &mut decisions, &mut meter);
+        (result, decisions, meter.consumed)
+    }
+
+    fn product_parts(dimensions: usize, comparison: CompareOp) -> Vec<Exp> {
+        let mut parts = (0..dimensions)
+            .map(|i| cmp(CompareOp::Ge, v(i), v(dimensions)))
+            .collect::<Vec<_>>();
+        let product = (1..dimensions).fold(v(0), |a, i| mul(a, v(i)));
+        parts.push(cmp(comparison, mul(q(2), product), q(1)));
+        parts
+    }
+
+    /// Trace: FR-450
+    /// Positive lower bounds force the product minimum t^d. The analytical
+    /// boundary is the positive root of 2t^d-1, including its exact section.
+    #[ix_trace_rs::trace("FR-450")]
+    #[test]
+    fn cad_product_boundary_in_two_and_three_dimensions() {
+        for dimensions in [2, 3] {
+            let mut coefficients = vec![n(-1)];
+            coefficients.resize(dimensions, n(0));
+            coefficients.push(n(2));
+            let polynomial = Poly::new(coefficients);
+            let at = polynomial
+                .roots_in(&n(0), &n(1))
+                .into_iter()
+                .next()
+                .expect("one positive boundary");
+            let closed = run(
+                product_parts(dimensions, CompareOp::Le),
+                dimensions,
+                &at,
+                u64::MAX,
+            );
+            assert_eq!(closed.0, Ok(true), "dimension {dimensions}");
+            assert!(
+                closed
+                    .1
+                    .iter()
+                    .any(|p| at.sign_of(p) == Ordering::Equal && p.degree().unwrap_or(0) > 0),
+                "projection must expose the irrational boundary"
+            );
+            assert_eq!(
+                run(
+                    product_parts(dimensions, CompareOp::Lt),
+                    dimensions,
+                    &at,
+                    u64::MAX
+                )
+                .0,
+                Ok(false)
+            );
+            assert_eq!(
+                run(
+                    product_parts(dimensions, CompareOp::Le),
+                    dimensions,
+                    &ExactReal::Rational(n(1)),
+                    u64::MAX
+                )
+                .0,
+                Ok(false)
+            );
+        }
+    }
+
+    /// Trace: FR-450
+    #[ix_trace_rs::trace("FR-450")]
+    #[test]
+    fn cad_denominator_holes_and_short_circuit_branches() {
+        let quotient = op(
+            ArithmeticOp::Div,
+            op(ArithmeticOp::Sub, v(0), v(1)),
+            op(ArithmeticOp::Sub, v(0), v(1)),
+        );
+        let hole = cmp(CompareOp::Eq, v(0), v(1));
+        let quotient_one = cmp(CompareOp::Eq, quotient.clone(), q(1));
+        let at = ExactReal::Rational(n(0));
+        assert_eq!(
+            run(vec![hole.clone(), quotient_one.clone()], 2, &at, u64::MAX).0,
+            Ok(false)
+        );
+        assert_eq!(
+            run(
+                vec![
+                    hole.clone(),
+                    logic(LogicOp::Or, Exp::Boolean(true), quotient_one.clone())
+                ],
+                2,
+                &at,
+                u64::MAX
+            )
+            .0,
+            Ok(true)
+        );
+        assert_eq!(
+            run(
+                vec![
+                    hole.clone(),
+                    logic(LogicOp::Or, quotient_one.clone(), Exp::Boolean(true))
+                ],
+                2,
+                &at,
+                u64::MAX
+            )
+            .0,
+            Ok(false)
+        );
+        let branch = Exp::Conditional(
+            Box::new(hole),
+            Box::new(Exp::Boolean(true)),
+            Box::new(quotient_one),
+            TermLocus::default(),
+        );
+        assert_eq!(run(vec![branch], 2, &at, u64::MAX).0, Ok(true));
+    }
+
+    /// Trace: FR-450
+    #[ix_trace_rs::trace("FR-450")]
+    #[test]
+    fn cad_meter_repeats_and_denies_the_last_actual_charge() {
+        let parts = product_parts(2, CompareOp::Le);
+        let at = ExactReal::Rational(n(0));
+        let first = run(parts.clone(), 2, &at, u64::MAX);
+        let repeated = run(parts.clone(), 2, &at, u64::MAX);
+        assert_eq!(first, repeated);
+        assert_eq!(first.0, Ok(true));
+        let work = first.2;
+        assert!(work > 0);
+        let exact = run(parts.clone(), 2, &at, work);
+        assert_eq!(exact.0, Ok(true));
+        assert_eq!(exact.2, work);
+        assert!(matches!(
+            run(parts, 2, &at, work - 1).0,
+            Err(HybridReplayRefusal::ResourceExhausted { .. })
+        ));
+    }
+
+    /// Trace: FR-450
+    #[ix_trace_rs::trace("FR-450")]
+    #[test]
+    fn cad_collects_late_branch_and_coefficient_only_time_boundaries() {
+        let branch = logic(
+            LogicOp::Or,
+            logic(
+                LogicOp::And,
+                cmp(CompareOp::Lt, v(0), q(0)),
+                cmp(CompareOp::Lt, v(2), q(0)),
+            ),
+            logic(
+                LogicOp::And,
+                cmp(CompareOp::Ge, v(0), q(0)),
+                cmp(CompareOp::Gt, v(2), q(1)),
+            ),
+        );
+        let parts = vec![branch, cmp(CompareOp::Eq, mul(v(0), v(1)), q(0))];
+        let early = run(parts.clone(), 2, &ExactReal::Rational(n(-1)), u64::MAX);
+        assert_eq!(early.0, Ok(true));
+        assert!(
+            early
+                .1
+                .iter()
+                .any(|p| p.degree().unwrap_or(0) > 0 && p.eval(&n(1)).is_zero()),
+            "the early negative witness must not hide the other branch's t=1 boundary"
+        );
+        assert_eq!(
+            run(parts.clone(), 2, &ExactReal::Rational(n(0)), u64::MAX).0,
+            Ok(false)
+        );
+        assert_eq!(
+            run(parts.clone(), 2, &ExactReal::Rational(n(1)), u64::MAX).0,
+            Ok(false)
+        );
+        assert_eq!(
+            run(parts, 2, &ExactReal::Rational(n(2)), u64::MAX).0,
+            Ok(true)
+        );
+    }
+
+    /// Trace: FR-450
+    #[ix_trace_rs::trace("FR-450")]
+    #[test]
+    fn cad_numeric_conditionals_negative_denominators_and_undefined_negation() {
+        let hole = cmp(CompareOp::Eq, v(0), v(1));
+        let division = op(ArithmeticOp::Div, v(1), op(ArithmeticOp::Sub, v(0), v(1)));
+        let at = ExactReal::Rational(n(0));
+        let conditional = Exp::Conditional(
+            Box::new(hole.clone()),
+            Box::new(q(1)),
+            Box::new(division.clone()),
+            TermLocus::default(),
+        );
+        let nested = Exp::Conditional(
+            Box::new(Exp::Boolean(true)),
+            Box::new(conditional),
+            Box::new(division.clone()),
+            TermLocus::default(),
+        );
+        assert_eq!(
+            run(
+                vec![hole.clone(), cmp(CompareOp::Eq, nested, q(1))],
+                2,
+                &at,
+                u64::MAX
+            )
+            .0,
+            Ok(true)
+        );
+        let negative = vec![
+            cmp(CompareOp::Eq, v(0), q(0)),
+            cmp(CompareOp::Eq, v(1), q(1)),
+            cmp(CompareOp::Lt, division.clone(), q(0)),
+        ];
+        assert_eq!(run(negative, 2, &at, u64::MAX).0, Ok(true));
+        let undefined = cmp(CompareOp::Eq, division, q(1));
+        assert_eq!(
+            run(
+                vec![hole.clone(), Exp::Not(Box::new(undefined.clone()))],
+                2,
+                &at,
+                u64::MAX
+            )
+            .0,
+            Ok(false)
+        );
+        assert_eq!(
+            run(
+                vec![
+                    hole,
+                    logic(LogicOp::Implies, Exp::Boolean(false), undefined)
+                ],
+                2,
+                &at,
+                u64::MAX
+            )
+            .0,
+            Ok(true)
+        );
     }
 }
