@@ -583,17 +583,29 @@ fn the_timed_liveness_half_honours_strong_abstract_fairness() {
 
 /// FR-899-AC-9: with free initial `h`, the candidate with `h = true` has
 /// `send` disabled, so the weak fairness obligation has a coherent fair run.
-#[trace("TC-2536", "FR-899-AC-9")]
+/// The dense product's fair component holds more than one loop (a delay and a
+/// poll leave each position), and a fair candidate run on one loop answers
+/// only for a component that is that one loop, so the half is undecided, not
+/// `Holds`: the exact per-component check of FR-899-AC-9 is not yet built
+/// (QSL-2243), and this test makes no claim that the AC is met.
+#[trace("TC-2536", "FR-899")]
 #[test]
-fn timed_hidden_free_initial_valuation_can_disable_weak_send() {
+fn timed_hidden_free_initial_valuation_with_a_multi_loop_component_is_undecided() {
     let outcome = check(&hidden_timed_world(&[false, true], "weak", false));
     assert!(matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }));
-    assert!(matches!(
-        outcome.liveness,
-        Some(TimedLivenessHalf::Checked(
-            TimedLivenessOutcome::Holds { .. }
-        ))
-    ));
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Undecided {
+                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
+                    ..
+                }
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
 }
 
 /// FR-899-AC-9: fixing `h = false` leaves `send` continuously enabled; the

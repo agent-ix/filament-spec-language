@@ -267,13 +267,6 @@ pub enum RefinementCause {
         /// The selected profile identity.
         profile: String,
     },
-    /// The abstract model is timed: it declares a time source (FSpec FR-430
-    /// "Timed refinement"): `unsupported_construct`/`declaration-form` at
-    /// the refinement's abstract model reference.
-    TimedAbstract {
-        /// The abstract model's alias.
-        model: String,
-    },
     /// A row reads a clock field of the concrete model, so the mapped
     /// abstract state would not be a function of the discrete state alone
     /// (FSpec FR-430 "Timed refinement"): `unsupported_construct`/
@@ -361,7 +354,6 @@ impl RefinementCause {
             Self::Unsupported { .. }
             | Self::UnsupportedRowForm { .. }
             | Self::AbstractRelationships { .. }
-            | Self::TimedAbstract { .. }
             | Self::ClockRead => Code::UnsupportedConstruct,
             Self::PopulationBound { .. }
             | Self::NodeArgumentCount { .. }
@@ -387,9 +379,7 @@ impl RefinementCause {
             Self::Malformed { .. } => Some("malformed-declaration"),
             Self::Unsupported { .. } => Some("not-yet-implemented"),
             Self::UnsupportedRowForm { .. } | Self::ClockRead => Some("expression-form"),
-            Self::AbstractRelationships { .. } | Self::TimedAbstract { .. } => {
-                Some("declaration-form")
-            }
+            Self::AbstractRelationships { .. } => Some("declaration-form"),
             Self::PopulationBound { .. } | Self::NodeArgumentType { .. } => Some("type-mismatch"),
             Self::NodeArgumentCount { .. } => Some("operator-ineligible"),
             Self::Check(cause) => cause.cause(),

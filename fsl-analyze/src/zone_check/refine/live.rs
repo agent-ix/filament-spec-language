@@ -292,8 +292,14 @@ impl Product<'_, '_> {
                         .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
                     cycle.push(index);
                 }
+                let mut named = class.constraint();
                 if hidden {
-                    match self.candidate_loop_has_fair_run(run, live, &cycle, class.constraint())? {
+                    match self.candidate_loop_has_fair_run(
+                        run,
+                        live,
+                        &cycle,
+                        FairScope::Through(class.constraint()),
+                    )? {
                         // The fair run answers for the whole component only
                         // when the component is that one loop; another loop
                         // through it may still violate, so decide nothing.
@@ -302,11 +308,16 @@ impl Product<'_, '_> {
                             not_concretised = true;
                             continue;
                         }
-                        Ok(false) => {}
+                        Ok(false) => {
+                            named = match self.first_unfair_constraint(run, live, &cycle)? {
+                                Ok(index) => index,
+                                Err(ends) => return Ok(Lived::Ends(ends)),
+                            };
+                        }
                         Err(ends) => return Ok(Lived::Ends(ends)),
                     }
                 }
-                if let Some(found) = self.lasso(run, live, class, entry.index(), &cycle)? {
+                if let Some(found) = self.lasso(run, live, class, named, entry.index(), &cycle)? {
                     return Ok(Lived::Violated(Box::new(found)));
                 }
                 not_concretised = true;
@@ -681,7 +692,7 @@ impl Product<'_, '_> {
         run: &mut Run<'_, '_, '_>,
         live: &Live,
         cycle: &[usize],
-        through: usize,
+        scope: FairScope,
     ) -> Result<Result<bool, Decided>, Halt> {
         let mut positions = Vec::with_capacity(cycle.len());
         let mut transitions = BTreeSet::<ModelTransition>::new();
@@ -841,7 +852,10 @@ impl Product<'_, '_> {
             .cloned()
             .collect();
         let mut constraints = Vec::new();
-        for constraint in fairness_constraints.iter().take(through.saturating_add(1)) {
+        for (index, constraint) in fairness_constraints.iter().enumerate() {
+            if !scope.covers(index) {
+                continue;
+            }
             let operation = constraint.operation();
             let name = self
                 .abstract_system
@@ -875,6 +889,35 @@ impl Product<'_, '_> {
                 },
             )),
         }
+    }
+
+    /// FR-899's naming rule for a loop no candidate run satisfies `F_A` along:
+    /// the first constraint, in source order, that every candidate cycle
+    /// violates on its own; when each is satisfiable alone, the first
+    /// constraint whose prefix no candidate cycle satisfies jointly. Replay
+    /// applies the same rule.
+    fn first_unfair_constraint(
+        &self,
+        run: &mut Run<'_, '_, '_>,
+        live: &Live,
+        cycle: &[usize],
+    ) -> Result<Result<usize, Decided>, Halt> {
+        let count = self.refinement.abstract_operation_fairness().count();
+        for index in 0..count {
+            match self.candidate_loop_has_fair_run(run, live, cycle, FairScope::Only(index))? {
+                Ok(false) => return Ok(Ok(index)),
+                Ok(true) => {}
+                Err(ends) => return Ok(Err(ends)),
+            }
+        }
+        for index in 0..count {
+            match self.candidate_loop_has_fair_run(run, live, cycle, FairScope::Through(index))? {
+                Ok(false) => return Ok(Ok(index)),
+                Ok(true) => {}
+                Err(ends) => return Ok(Err(ends)),
+            }
+        }
+        Err(ZoneCheckRefusal::Fault("an-unsatisfied-candidate-fairness-prefix-exists").into())
     }
 
     /// The product as the fairness kernels read it for `class`: each
@@ -1022,6 +1065,7 @@ impl Product<'_, '_> {
         run: &mut Run<'_, '_, '_>,
         live: &mut Live,
         class: &AbstractClass,
+        named: usize,
         entry: usize,
         cycle: &[usize],
     ) -> Result<Option<TemporalCounterexample>, Halt> {
@@ -1034,7 +1078,7 @@ impl Product<'_, '_> {
         let constraint = self
             .refinement
             .abstract_operation_fairness()
-            .nth(class.constraint())
+            .nth(named)
             .ok_or(ZoneCheckRefusal::Fault("class-constraint"))?
             .clone();
         let hidden = self
@@ -1308,6 +1352,23 @@ fn fairness(run: &Run<'_, '_, '_>, error: FairnessError) -> Halt {
     match error {
         FairnessError::Cancelled => run.stop(crate::zone_check::search::ZoneStop::Cancelled),
         _ => ZoneCheckRefusal::Fault("fairness-graph").into(),
+    }
+}
+
+/// Which abstract fairness constraints a candidate-run check demands: the
+/// first `through + 1` jointly, or one alone.
+#[derive(Clone, Copy)]
+enum FairScope {
+    Through(usize),
+    Only(usize),
+}
+
+impl FairScope {
+    fn covers(self, constraint: usize) -> bool {
+        match self {
+            Self::Through(last) => constraint <= last,
+            Self::Only(only) => constraint == only,
+        }
     }
 }
 

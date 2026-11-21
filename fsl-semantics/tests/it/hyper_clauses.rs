@@ -2126,24 +2126,55 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
         assert_eq!(cause.tag(), tag, "{declaration}");
         assert_eq!(cause.span(), Some(span(&text)), "{declaration}");
     }
-    for (declaration, code) in [
-        (FINITE_DET.replace("b.res)", "c.res)"), Code::MissingDeclaration),
+    // The refusals located by the body or by the profile alias: each is a
+    // hyper cause with its code, tag and exact span.
+    let in_text = |text: &str, needle: &str, within: &str| {
+        let at = text.find(within).expect("the source holds the text")
+            + within.find(needle).expect("the needle is within its context");
+        Span {
+            start: at,
+            end: at + needle.len(),
+        }
+    };
+    let body_cases = [
+        (
+            FINITE_DET.replace("b.res)", "c.res)"),
+            EVENT,
+            Code::MissingDeclaration,
+            "missing-name",
+            "c",
+            "c.res",
+        ),
         (
             FINITE_DET.replace("(a.inp = b.inp) implies (a.res = b.res)", "a.res"),
+            EVENT,
             Code::IllTyped,
+            "type-mismatch",
+            "a.res",
+            "a.res",
         ),
-    ] {
-        let (_, outcome) = check_under(&[], EVENT, &declaration);
+        (
+            FINITE_DET.to_owned(),
+            INFINITE,
+            Code::IllTyped,
+            "type-mismatch",
+            "inf",
+            "using inf over",
+        ),
+    ];
+    for (declaration, profile, code, tag, needle, within) in body_cases {
+        let (text, outcome) = check_under(&[], profile, &declaration);
         let Err(StageFailure::Refused(refusal)) = outcome else {
             panic!("{declaration}: a refusal, not {outcome:?}");
         };
-        assert_eq!(refusal.cause.code(), code, "{declaration}");
+        let CheckCause::Hyper(cause) = &refusal.cause else {
+            panic!("{declaration}: a hyper cause, not {:?}", refusal.cause);
+        };
+        assert_eq!(cause.code(), code, "{declaration}");
+        assert_eq!(cause.tag(), tag, "{declaration}");
+        let span = cause.span().expect("the refusal is located");
+        assert_eq!(span, in_text(&text, needle, within), "{declaration}");
     }
-    let (_, outcome) = check_under(&[], INFINITE, FINITE_DET);
-    let Err(StageFailure::Refused(refusal)) = outcome else {
-        panic!("an infinite-trace profile refuses: {outcome:?}");
-    };
-    assert_eq!(refusal.cause.code(), Code::IllTyped);
 }
 
 /// FR-173 "Event-position form" with FR-326: a temporal operator with no
