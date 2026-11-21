@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{Integer, Meter, ObjectReference, Outcome, ScalarLimits, Value};
+use filament_semantic_value::admission::{AdmissionRecord, PathStep};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::value::{evaluate_refinement_row, CheckedPackageEvaluation, QualifiedName};
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
@@ -577,18 +578,48 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
                 ObservationLimits::default(),
             )
             .expect_err("Bare must reject old x, never resolve y");
+        let mut path = vec![
+            PathStep::Field("populations".to_owned()),
+            PathStep::Index(0),
+            PathStep::Field("objects".to_owned()),
+            PathStep::Index(0),
+            PathStep::Field("fields".to_owned()),
+            PathStep::Field(field.to_owned()),
+        ];
+        let suffix = match field {
+            "maybe" => {
+                path.push(PathStep::OptionValue);
+                "/present"
+            }
+            "refs" => {
+                path.push(PathStep::Index(0));
+                "/sequence/0"
+            }
+            _ => "",
+        };
+        let expected = AdmissionRecord {
+            catalog: CatalogCode::new("dangling_reference", "absent-target-in-complete-population"),
+            fields: BTreeMap::from([
+                ("document", identity().identity),
+                ("population", node(CLOCKS, "calls")),
+                ("object", "c1".to_owned()),
+                ("field", field.to_owned()),
+                ("target", old_x.object().as_str().to_owned()),
+                (
+                    "path",
+                    format!("/populations/0/objects/0/fields/{field}{suffix}"),
+                ),
+            ]),
+            path,
+            kernel: None,
+        };
         for refusal in [source, bytes] {
             let AdmissionFailure::Refused(record) = refusal else {
                 panic!("typed stale-reference refusal")
             };
             assert_eq!(
-                record.catalog,
-                CatalogCode::new("dangling_reference", "absent-target-in-complete-population")
-            );
-            assert_eq!(record.fields.get("field").map(String::as_str), Some(field));
-            assert!(
-                !record.path.is_empty(),
-                "refusal retains affected value path"
+                *record, expected,
+                "exact stale-reference owner, target and nested path"
             );
         }
     }
