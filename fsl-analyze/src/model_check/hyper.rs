@@ -198,7 +198,9 @@ pub struct HyperCheckRequest<'a> {
 #[derive(Debug, thiserror::Error)]
 pub enum HyperRefusal {
     /// The clause is not an HP-2, HP-3 or HP-6 clause.
-    #[error("EN-1 decides a universal (HP-2), forall-exists safety (HP-3) or projection-aligned (HP-6) hyperproperty here, not {form:?}")]
+    #[error(
+        "EN-1 decides a universal (HP-2), forall-exists safety (HP-3) or projection-aligned (HP-6) hyperproperty here, not {form:?}"
+    )]
     FormNotDecided {
         /// The clause's form.
         form: Option<HyperForm>,
@@ -345,8 +347,8 @@ pub fn check_hyper(
     run.decide(&instances)
 }
 
-/// Whether the clause is decided by enumerating closed finite executions,
-/// rather than by the lockstep product that executes selected reductions.
+/// Whether the clause is decided over closed finite execution tuples rather
+/// than an infinite lockstep product. Both execute eligible HP-2 reductions.
 fn uses_closed_executions(clause: &CheckedHyperClause) -> bool {
     clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
 }
@@ -840,8 +842,6 @@ impl<'a> Run<'_, 'a> {
             });
         }
         if uses_closed_executions(self.request.clause) {
-            // Selected reductions have already settled before admission:
-            // closed enumeration does not execute product reductions.
             return self.decide_closed(instances, totals);
         }
         if let Some(outcome) = self.precheck(&totals)? {
@@ -1303,6 +1303,7 @@ impl<'a> Run<'_, 'a> {
             } else {
                 HyperOutcome::HoldsReduced {
                     certificates: self.certificates(explored)?,
+                    scope: fsl_replay::HyperReducedScope::Product,
                     reductions,
                     stats: totals.stats(),
                 }
@@ -1443,7 +1444,7 @@ impl<'a> Run<'_, 'a> {
             ),
             Halt::AutomatonKey(error) => return Err(HyperRefusal::Automaton(error).into()),
             Halt::ConstraintUndefined(cause) => {
-                return Err(HyperRefusal::ConstraintUndefined { cause }.into())
+                return Err(HyperRefusal::ConstraintUndefined { cause }.into());
             }
             Halt::Atom(stop) => return Err(atom_halt(stop)),
             Halt::Encoding(refusal) => return Err(ModelCheckRefusal::Encoding(refusal)),
@@ -1528,7 +1529,7 @@ impl<'a> Run<'_, 'a> {
                     ModelCheckLimit::MaxAutomatonStates,
                     limit,
                     totals,
-                )))
+                )));
             }
             Err(other) => return Err(HyperRefusal::Automaton(other).into()),
         };

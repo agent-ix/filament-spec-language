@@ -301,7 +301,9 @@ pub use model_check::hyper_counterexample::{
     HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperStep, HyperTrace,
     HyperUndefined, MatchWitness, MatchWitnessCheck, StepMark,
 };
-pub use model_check::hyper_outcome::{BoundCovers, HyperOutcome, HyperReductionCause};
+pub use model_check::hyper_outcome::{
+    BoundCovers, HyperOutcome, HyperReducedScope, HyperReductionCause,
+};
 pub use model_check::hyper_replay::{
     check_match_witness, replay_hyper_trace_tuple, replay_model_relation_tuple, HyperReplay,
     ModelRelationReplay,
@@ -397,10 +399,10 @@ pub use refinement::{
     open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,
     step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
-    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, CandidateLivenessError, ConcreteStep,
-    EvalFailure, HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure,
-    MappingRowRef, MappingUndetermined, ObjectKey, ObservationField, ObservationLabel,
-    PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,
+    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
+    CandidateLivenessError, ConcreteStep, EvalFailure, HiddenSlot, HistoryValues, LivenessHalf,
+    MappedState, MappingFailure, MappingRowRef, MappingUndetermined, ObjectKey, ObservationField,
+    ObservationLabel, PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,
     ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError,
     ProtocolStateRelation, ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal,
     ProtocolTrace, RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems,

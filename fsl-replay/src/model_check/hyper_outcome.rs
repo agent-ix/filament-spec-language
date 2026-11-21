@@ -71,6 +71,17 @@ pub enum BoundCovers {
     Moves,
 }
 
+/// The complete scope a reduced holding hyper run established.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HyperReducedScope {
+    /// The infinite product, whose core closure certificates are required
+    /// unless a selected key symmetry has no core checker.
+    Product,
+    /// Every orbit of closed finite execution tuples (FR-173), requiring no
+    /// infinite-product closure certificate.
+    ClosedExecutions,
+}
+
 /// One EN-1 run's outcome over an HP-1, HP-2, HP-3 or HP-6 item.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HyperOutcome {
@@ -83,13 +94,16 @@ pub enum HyperOutcome {
         /// The run's counts.
         stats: RunStats,
     },
-    /// Every reachable state of the product reduced by the copy group, and by
-    /// the selected key symmetry, was examined and no violation exists (V-1
-    /// under ADR-023 CS-5). Copy-swap alone carries each binding's FR-163
-    /// certificate; a key symmetry has no core checker and stays uncertified.
+    /// Every member of the reduced scope was examined and no violation exists
+    /// (V-1 under ADR-023 CS-5). An infinite product under copy-swap carries each
+    /// binding's FR-163 certificate; a key symmetry has no core checker and
+    /// stays uncertified. Closed finite tuples use FR-173's complete scope.
     HoldsReduced {
         /// Each object binding's independently checkable reduced product.
         certificates: Vec<crate::ProductClosureCertificate>,
+        /// Whether completeness is over the infinite product or a quotient of
+        /// closed finite executions (FR-173).
+        scope: HyperReducedScope,
         /// The applied reductions: a key symmetry, then the copy group's swap.
         reductions: Vec<AppliedReduction>,
         /// The run's counts.

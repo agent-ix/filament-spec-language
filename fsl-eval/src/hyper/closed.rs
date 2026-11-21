@@ -19,7 +19,9 @@ use fsl_semantics::check::{
     CheckedFormula, CheckedHyperClause, CheckedInterval, FormulaNode, FormulaNodeId,
 };
 
-use crate::hyper::seam::{HyperLetters, MatchReading, ParameterBinding, StepLabel, StepMatch};
+use crate::hyper::seam::{
+    HyperLetters, MatchPart, MatchReading, ParameterBinding, StepLabel, StepMatch,
+};
 use crate::temporal::{
     evaluate_closed_tuple, AtomReading, ComponentPosition, LetterStop, TemporalOutcome,
     TemporalPosition, TupleLetters,
@@ -312,29 +314,44 @@ impl TupleLetters for ClosedStates<'_> {
 /// with no such step is labelled ended, and a conjunct that reads it is not
 /// evaluated there, so `μ` constrains only the joint steps every component a
 /// conjunct reads takes (FR-173 "Event-position form").
-fn step_reading(
+/// Read one entering joint step's match, retaining ended-component handling
+/// and the ordinary checked evaluator's refusal and fault distinctions.
+/// `joint` is one-based; `part` selects the universal prefix or all components.
+///
+/// # Errors
+///
+/// A fault or undetermined match that prevents the tuple from being decided.
+pub fn match_closed_step(
     inputs: &ClosedInputs<'_>,
     executions: &[&ClosedExecution],
-    components: usize,
     joint: usize,
-    existential: bool,
+    part: MatchPart,
 ) -> Result<MatchReading, ClosedVerdict> {
+    let Some(step) = joint.checked_sub(1) else {
+        return Err(closed_fault("an-entering-closed-step-is-one-based"));
+    };
+    let components = match part {
+        MatchPart::Universal => inputs.clause.universals(),
+        MatchPart::Existential => executions.len(),
+    };
+    if components > executions.len() {
+        return Err(closed_fault("a-closed-match-has-every-component"));
+    }
     let mut labels = Vec::with_capacity(components);
     for execution in executions.iter().take(components) {
-        labels.push(match execution.steps.get(joint - 1) {
+        labels.push(match execution.steps.get(step) {
             Some(step) => StepLabel::Operation(&step.transition),
             None => StepLabel::Ended,
         });
     }
     let mut meter = Meter::new(inputs.meter).with_cancel(inputs.cancel.clone());
-    let reading = if existential {
-        inputs
+    let reading = match part {
+        MatchPart::Existential => inputs
             .matcher
-            .existential(inputs.instance, &labels, &mut meter)
-    } else {
-        inputs
+            .existential(inputs.instance, &labels, &mut meter),
+        MatchPart::Universal => inputs
             .matcher
-            .universal(inputs.instance, &labels, &mut meter)
+            .universal(inputs.instance, &labels, &mut meter),
     };
     match reading {
         Ok(MatchReading::Fault(fault)) => Err(ClosedVerdict::Fault(fault)),
@@ -380,7 +397,12 @@ pub fn judge_closed_tuple(
             .max()
             .unwrap_or(0);
         for joint in 1..=longest {
-            match step_reading(inputs, executions, components, joint, existential) {
+            let part = if existential {
+                MatchPart::Existential
+            } else {
+                MatchPart::Universal
+            };
+            match match_closed_step(inputs, executions, joint, part) {
                 Ok(MatchReading::Holds) => {}
                 Ok(MatchReading::Fails) => {
                     return if existential {

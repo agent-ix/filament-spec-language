@@ -25,16 +25,21 @@
 //! `fsl_replay::replay_hyper_trace_tuple` recomputes either verdict with the
 //! same `fsl-eval` code.
 
+mod reduction;
+
 use std::collections::BTreeSet;
 
 use filament_exact::LimitKind;
 use fsl_eval::hyper::{
-    closed_executions, horizon, judge_closed_tuple, search_partner, ClosedExecution, ClosedInputs,
-    ClosedStop, ClosedVerdict, ParameterBinding, PartnerSearch, Tuples,
+    closed_executions, horizon, judge_closed_tuple, match_closed_step, search_partner,
+    ClosedExecution, ClosedInputs, ClosedStop, ClosedVerdict, MatchPart, MatchReading,
+    ParameterBinding, PartnerSearch, Tuples,
 };
+use fsl_eval::simulation::ConstraintValue;
 use fsl_replay::{
-    HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep, HyperTrace,
-    IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark, UndecidedCause,
+    AppliedReduction, HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep,
+    HyperTrace, IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark,
+    UndecidedCause,
 };
 
 use super::{exhausted, fault, stopped, widen, Ending, HyperRefusal, Run, Totals};
@@ -50,6 +55,14 @@ enum Reading {
     Ended(HyperOutcome),
 }
 
+enum ConstraintReading {
+    Allowed,
+    Unmatched,
+    Cut(usize),
+    Stopped(ClosedVerdict),
+    Ended(HyperOutcome),
+}
+
 impl Run<'_, '_> {
     /// Decide the event-position HP-2 or HP-3 clause over `instances`.
     pub(super) fn decide_closed(
@@ -60,6 +73,9 @@ impl Run<'_, '_> {
         let clause = self.request.clause;
         let depth = horizon(clause.body()).ok_or_else(|| fault("a-body-has-a-horizon"))?;
         let limits = self.request.limits;
+        if !self.witness && !self.projected {
+            return self.decide_closed_universal(instances, depth, totals);
+        }
         let mut lists: Vec<Vec<ClosedExecution>> = Vec::with_capacity(self.systems.len());
         for (index, system) in self.systems.iter().enumerate() {
             let skips: BTreeSet<String> = clause
@@ -154,6 +170,238 @@ impl Run<'_, '_> {
         Ok(HyperOutcome::HoldsClosed {
             stats: totals.stats(),
         })
+    }
+
+    /// HP-2's finite scope, optionally quotiented by an admitted key group
+    /// and the compiler's copy group. Only genuinely closed paths are read;
+    /// cut predecessors remain boundary evidence, never artificial terminals.
+    fn decide_closed_universal(
+        &self,
+        instances: &[Vec<ParameterBinding>],
+        depth: u64,
+        mut totals: Totals,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let limits = self.request.limits.limits;
+        let selected = self.symmetric || self.request.reductions.constraint.is_some();
+        let mut lists = Vec::with_capacity(self.systems.len());
+        for (subject, system) in self.systems.iter().enumerate() {
+            match closed_executions(
+                system,
+                depth,
+                limits.max_states,
+                &BTreeSet::new(),
+                self.cancel,
+            ) {
+                Ok(found) => lists.push(found),
+                Err(stop) => return self.closed_stop(stop, subject, &totals),
+            }
+        }
+        totals.depth = depth;
+        let clause = self.request.clause;
+        let mut matched = false;
+        let mut reductions = Vec::new();
+        let mut boundaries = BTreeSet::new();
+        for instance in instances {
+            let mut quotient = if selected {
+                match self.closed_quotient(&lists, instance, &mut totals)? {
+                    Ok(quotient) => Some(quotient),
+                    Err(outcome) => return Ok(outcome),
+                }
+            } else {
+                None
+            };
+            let inputs = ClosedInputs {
+                clause,
+                instance,
+                letters: self.request.letters,
+                matcher: self.request.matcher,
+                meter: self.request.meter,
+                cancel: self.cancel,
+            };
+            let lens = self.slots.iter().map(|slot| lists[*slot].len()).collect();
+            let ordinary = Tuples::over(lens).map(|picked| reduction::Representative {
+                picked,
+                orbit: Vec::new(),
+            });
+            let tuples: Box<dyn Iterator<Item = reduction::Representative>> =
+                if let Some(quotient) = &mut quotient {
+                    Box::new(std::mem::take(&mut quotient.representatives).into_iter())
+                } else {
+                    Box::new(ordinary)
+                };
+            for representative in tuples {
+                if self.cancel.poll() {
+                    return self.cancelled(&totals);
+                }
+                if !selected {
+                    if totals.edges >= widen(limits.max_transitions) {
+                        return Ok(exhausted(
+                            ModelCheckLimit::MaxTransitions,
+                            widen(limits.max_transitions),
+                            &totals,
+                        ));
+                    }
+                    totals.edges += 1;
+                }
+                let mut tuple = Vec::with_capacity(representative.picked.len());
+                for (variable, index) in representative.picked.iter().enumerate() {
+                    let execution = self
+                        .slots
+                        .get(variable)
+                        .and_then(|slot| lists.get(*slot))
+                        .and_then(|list| list.get(*index))
+                        .ok_or_else(|| fault("a-reduced-closed-representative-is-a-real-tuple"))?;
+                    tuple.push(execution);
+                }
+                match self.closed_constraint(&inputs, &tuple, &totals)? {
+                    ConstraintReading::Allowed => {}
+                    ConstraintReading::Unmatched => continue,
+                    ConstraintReading::Ended(outcome) => return Ok(outcome),
+                    ConstraintReading::Stopped(verdict) => {
+                        match self.stopped_reading(verdict, &totals)? {
+                            Reading::Ended(outcome) => return Ok(outcome),
+                            Reading::Continue | Reading::Refuted(_) => {
+                                return Err(fault("a-stopped-constraint-ends-the-item"));
+                            }
+                        }
+                    }
+                    ConstraintReading::Cut(at) => {
+                        let quotient = quotient
+                            .as_ref()
+                            .ok_or_else(|| fault("a-constraint-has-a-closed-quotient"))?;
+                        let boundary = self.closed_boundary_key(&representative, quotient, at)?;
+                        boundaries.insert((Self::instance_of(instance), boundary));
+                        totals.boundary = widen(boundaries.len());
+                        continue;
+                    }
+                }
+                if totals.states >= widen(limits.max_states) {
+                    return Ok(exhausted(
+                        ModelCheckLimit::MaxStates,
+                        widen(limits.max_states),
+                        &totals,
+                    ));
+                }
+                totals.states += 1;
+                match self.tuple_reading(
+                    judge_closed_tuple(&inputs, &tuple),
+                    &mut matched,
+                    &totals,
+                )? {
+                    Reading::Continue => {}
+                    Reading::Ended(outcome) => return Ok(outcome),
+                    Reading::Refuted(position) => {
+                        return Ok(HyperOutcome::Violated {
+                            counterexample: Box::new(HyperCounterexample {
+                                kind: HyperCounterexampleKind::Closed,
+                                instance: Self::instance_of(instance),
+                                traces: self.closed_traces(&tuple)?,
+                                trace_position: position,
+                            }),
+                            stats: totals.stats(),
+                        });
+                    }
+                }
+            }
+            if self.symmetric {
+                reductions.push(AppliedReduction::Symmetry {
+                    groups: self.keys.classes.clone(),
+                    orbit: self.orbit_of(instance),
+                    stabiliser: self.stabiliser_of(instance).classes,
+                });
+            }
+        }
+        if totals.boundary > 0 {
+            return Ok(Self::constraint_reached(&totals));
+        }
+        if !clause.mu_universal().is_empty() && !matched {
+            return Ok(HyperOutcome::Undecided {
+                cause: UndecidedCause::VacuousMatch,
+                stats: totals.stats(),
+            });
+        }
+        if !selected {
+            return Ok(HyperOutcome::HoldsClosed {
+                stats: totals.stats(),
+            });
+        }
+        if !self.copy.classes.is_empty() {
+            reductions.push(AppliedReduction::CopySwap {
+                classes: self.copy.classes.clone(),
+            });
+        }
+        Ok(HyperOutcome::HoldsReduced {
+            certificates: Vec::new(),
+            scope: fsl_replay::HyperReducedScope::ClosedExecutions,
+            reductions,
+            stats: totals.stats(),
+        })
+    }
+
+    /// Only component enumeration precedes this product admission. At a joint
+    /// position the entering match is read before its constraint, exactly as
+    /// in the infinite product. A cut names the concrete predecessor prefix;
+    /// no body evaluation reads the excluded state as a terminal trace.
+    fn closed_constraint(
+        &self,
+        inputs: &ClosedInputs<'_>,
+        tuple: &[&ClosedExecution],
+        totals: &Totals,
+    ) -> Result<ConstraintReading, ModelCheckRefusal> {
+        let Some(constraint) = &self.request.reductions.constraint else {
+            return Ok(ConstraintReading::Allowed);
+        };
+        let positions = tuple
+            .iter()
+            .map(|path| path.states.len())
+            .max()
+            .unwrap_or(0);
+        for position in 0..positions {
+            if position > 0 && !inputs.clause.mu_universal().is_empty() {
+                match match_closed_step(inputs, tuple, position, MatchPart::Universal) {
+                    Ok(MatchReading::Holds) => {}
+                    Ok(MatchReading::Fails) => return Ok(ConstraintReading::Unmatched),
+                    Ok(MatchReading::Undefined { .. } | MatchReading::Refused { .. }) => {
+                        return Ok(ConstraintReading::Stopped(ClosedVerdict::MatchUndetermined))
+                    }
+                    Ok(MatchReading::Fault(internal)) => {
+                        return Err(ModelCheckRefusal::Fault(internal));
+                    }
+                    Err(verdict) => return Ok(ConstraintReading::Stopped(verdict)),
+                }
+            }
+            let mut cut = false;
+            for (component, path) in tuple.iter().enumerate() {
+                let Some(state) = path.states.get(position) else {
+                    continue;
+                };
+                let system = self
+                    .slots
+                    .get(component)
+                    .and_then(|slot| self.systems.get(*slot))
+                    .ok_or_else(|| fault("a-closed-constraint-has-a-component-system"))?;
+                match system.constraint_value(state, constraint) {
+                    Ok(ConstraintValue::Holds) => {}
+                    Ok(ConstraintValue::Boundary) => cut = true,
+                    Ok(ConstraintValue::Undefined { cause, .. }) => {
+                        return Err(HyperRefusal::ConstraintUndefined { cause }.into());
+                    }
+                    Err(stop) => {
+                        let ending = self.expansion_ending(Some(component), stop)?;
+                        return match ending {
+                            Ending::Complete => Err(fault("a-stopped-constraint-expansion-stops")),
+                            Ending::Stopped(cause, limit, count) => Ok(ConstraintReading::Ended(
+                                stopped(cause, limit, count, totals),
+                            )),
+                        };
+                    }
+                }
+            }
+            if cut {
+                return Ok(ConstraintReading::Cut(position.saturating_sub(1)));
+            }
+        }
+        Ok(ConstraintReading::Allowed)
     }
 
     /// The reading of an HP-2 tuple's verdict.
