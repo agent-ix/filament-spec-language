@@ -807,7 +807,8 @@ fn admit_package<'d>(
     )?;
     let limits =
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
-    let loaded = super::handoff::admit(&mut intake, &handoff, bytes, &supplied, limits)?;
+    let loaded = super::handoff::admit(&mut intake, &handoff, bytes, &supplied, limits)
+        .map_err(super::handoff::AdmissionFailure::for_analyze)?;
     Ok((
         AdmittedHandoff {
             package: loaded.package,

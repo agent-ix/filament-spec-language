@@ -20,6 +20,39 @@ pub(super) struct Admitted {
     pub(super) dependencies: Vec<fsl_package::DependencyArtifact>,
 }
 
+#[derive(Debug)]
+pub(super) enum AdmissionFailure {
+    Artifact(RunCause),
+    UnselectedModel { index: usize, identity: String },
+}
+
+impl From<RunCause> for AdmissionFailure {
+    fn from(cause: RunCause) -> Self {
+        Self::Artifact(cause)
+    }
+}
+
+impl AdmissionFailure {
+    pub(super) fn for_run(self) -> RunCause {
+        match self {
+            Self::Artifact(cause) => cause,
+            Self::UnselectedModel { index, identity } => RunCause::ClauseRequest {
+                member: format!("/request/models/{index}"),
+                reason: format!("the package records no model selection {identity}"),
+            },
+        }
+    }
+
+    pub(super) fn for_analyze(self) -> RunCause {
+        match self {
+            Self::Artifact(cause) => cause,
+            Self::UnselectedModel { identity, .. } => {
+                refusal("models", "conflicting-definition", None, identity)
+            }
+        }
+    }
+}
+
 pub(super) fn refusal(
     file: &str,
     cause: &str,
@@ -232,7 +265,7 @@ pub(super) fn admit(
     bytes: Vec<u8>,
     supplied: &fsl_semantics::model::intake::PackageInput,
     limits: fsl_package::V2ReadLimits,
-) -> Result<Admitted> {
+) -> std::result::Result<Admitted, AdmissionFailure> {
     let manifest_bytes = read_file(intake, directory, "dependencies.json", true)?;
     let manifest = Manifest::read(&manifest_bytes).map_err(|error| {
         refusal(
@@ -323,7 +356,8 @@ pub(super) fn admit(
                 "definition-cycle",
                 Some(format!("/lock/dependency_selections/{edge}")),
                 format!("{cycle:?}"),
-            ));
+            )
+            .into());
         }
         path.push(identity.clone());
         stack.push((identity.clone(), true, file, edge));
@@ -371,7 +405,8 @@ pub(super) fn admit(
                 "definition-cycle",
                 None,
                 "no acyclic dependency is ready",
-            ));
+            )
+            .into());
         };
         let Some(package) = pending.remove(&identity) else {
             continue;
@@ -385,12 +420,7 @@ pub(super) fn admit(
         )
         .map_err(|error| package_failure(&file, error))?;
         if read.name() != package.identity {
-            return Err(refusal(
-                &file,
-                "conflicting-definition",
-                None,
-                &package.identity,
-            ));
+            return Err(refusal(&file, "conflicting-definition", None, &package.identity).into());
         }
         let identity_file = format!("{}/identities.json", package.directory);
         let equality_file = format!("{}/equality.json", package.directory);
@@ -445,10 +475,11 @@ pub(super) fn admit(
                 "invalid-value",
                 Some(format!("/dependencies/{index}/identity")),
                 "unreachable dependency artifact",
-            ));
+            )
+            .into());
         }
     }
-    for identity in supplied.keys() {
+    for (index, identity) in supplied.keys().enumerate() {
         if !package
             .selected_model_packages()
             .any(|selected| selected == identity)
@@ -459,7 +490,10 @@ pub(super) fn admit(
                     .any(|selected| selected == identity)
             })
         {
-            return Err(refusal("models", "conflicting-definition", None, identity));
+            return Err(AdmissionFailure::UnselectedModel {
+                index,
+                identity: identity.clone(),
+            });
         }
     }
     let identity_bytes = read_file(intake, directory, "identities.json", false)?;
@@ -479,7 +513,8 @@ pub(super) fn admit(
             "missing-file",
             None,
             "required equality witness is absent",
-        ));
+        )
+        .into());
     } else {
         None
     };
@@ -545,10 +580,17 @@ mod tests {
         .unwrap();
     }
 
+    #[derive(Debug)]
+    struct NativeDenial {
+        native: fsl_package::NativeJoinFailure,
+        consumed: filament_contract_model::NativeJoinCharge,
+        unpaid: filament_contract_model::NativeJoinDeniedCharge,
+    }
+
     fn load(
         directory: &Path,
         limits: fsl_package::V2ReadLimits,
-    ) -> Result<filament_contract_model::NativeJoinCharge> {
+    ) -> std::result::Result<filament_contract_model::NativeJoinCharge, NativeDenial> {
         let mut intake = super::super::intake_with_bytes(
             directory,
             super::super::FileCounts {
@@ -556,9 +598,13 @@ mod tests {
                 ..Default::default()
             },
             1 << 28,
-        )?;
-        let bytes = read_file(&mut intake, "handoff", "checked-package.json", false)?;
-        let mut loaded = admit(&mut intake, "handoff", bytes, &BTreeMap::new(), limits)?;
+        )
+        .expect("the fixture fits its intake allowance");
+        let bytes = read_file(&mut intake, "handoff", "checked-package.json", false)
+            .expect("the root fixture exists");
+        let mut loaded = admit(&mut intake, "handoff", bytes, &BTreeMap::new(), limits).expect(
+            "the one-short completed-pass bound still admits all strict reads and witness files",
+        );
         let _view = fsl_package::BarePackage::new(&loaded.package)
             .with_dependency_artifacts(&loaded.dependencies, &mut loaded.budget)
             .and_then(|package| {
@@ -570,11 +616,13 @@ mod tests {
                     &mut loaded.budget,
                 )
             })
-            .map_err(|error| RunCause::AnalyzePackage {
-                code: fsl_foundation::Code::StageLimitExceeded,
-                cause: None,
-                pointer: None,
-                message: format!("{error:?}"),
+            .map_err(|native| NativeDenial {
+                native,
+                consumed: loaded.budget.consumed(),
+                unpaid: loaded
+                    .budget
+                    .first_unpaid()
+                    .expect("a native denial retains its unpaid charge"),
             })?;
         Ok(loaded.budget.consumed())
     }
@@ -592,26 +640,56 @@ mod tests {
         limits.work = measured.work;
         limits.storage = measured.storage;
         assert_eq!(load(directory.path(), limits).unwrap(), measured);
-        for shortened in [
-            fsl_package::V2ReadLimits {
-                work: measured.work - 1,
-                ..limits
-            },
-            fsl_package::V2ReadLimits {
-                storage: measured.storage - 1,
-                ..limits
-            },
+        for (shortened, setting, kind, completed) in [
+            (
+                fsl_package::V2ReadLimits {
+                    work: measured.work - 1,
+                    ..limits
+                },
+                fsl_foundation::Setting::I2WorkUnits,
+                filament_contract_model::NativeJoinChargeKind::Work,
+                measured.work,
+            ),
+            (
+                fsl_package::V2ReadLimits {
+                    storage: measured.storage - 1,
+                    ..limits
+                },
+                fsl_foundation::Setting::I2NativeJoinStorage,
+                filament_contract_model::NativeJoinChargeKind::Storage,
+                measured.storage,
+            ),
         ] {
             let refusal = load(directory.path(), shortened)
                 .expect_err("one-short cumulative allowance must stop the pass");
+            let original = refusal
+                .native
+                .limit()
+                .expect("the native owner attaches its typed stage limit");
+            assert!(
+                matches!(refusal.native, fsl_package::NativeJoinFailure::Limit(_)),
+                "{refusal:?}"
+            );
+            assert_eq!(refusal.native.setting(), Some(setting), "{refusal:?}");
+            assert_eq!(original.setting(), setting, "{refusal:?}");
+            assert_eq!(original.configured_bound(), completed - 1, "{refusal:?}");
+            assert_eq!(original.actual(), u128::from(completed), "{refusal:?}");
+            assert_eq!(refusal.unpaid.kind, kind, "{refusal:?}");
+            let consumed = match kind {
+                filament_contract_model::NativeJoinChargeKind::Work => refusal.consumed.work,
+                filament_contract_model::NativeJoinChargeKind::Storage => refusal.consumed.storage,
+            };
             assert_eq!(
-                refusal.code(),
-                fsl_foundation::Code::StageLimitExceeded,
-                "{refusal}"
+                u128::from(consumed) + refusal.unpaid.amount,
+                u128::from(completed),
+                "the first unpaid charge retains the cumulative attempted total: {refusal:?}"
             );
             assert!(
-                refusal.to_string().contains("i2.") || refusal.to_string().contains("I2"),
-                "the original setting is retained: {refusal}"
+                matches!(
+                    refusal.native.native(),
+                    fsl_package::NativeJoinFailure::Projection(_)
+                ),
+                "the original typed projection refusal is preserved: {refusal:?}"
             );
         }
     }

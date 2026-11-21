@@ -669,7 +669,8 @@ pub(super) fn admit_files(
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
     let (admitted, identities, equality, budget, dependencies) = match &handoff {
         Selected::Directory(handoff) => {
-            let loaded = super::handoff::admit(&mut intake, handoff, bytes, &supplied, limits)?;
+            let loaded = super::handoff::admit(&mut intake, handoff, bytes, &supplied, limits)
+                .map_err(super::handoff::AdmissionFailure::for_run)?;
             (
                 loaded.package,
                 Some(loaded.identities),
