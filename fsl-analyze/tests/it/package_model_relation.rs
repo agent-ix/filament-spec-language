@@ -911,11 +911,22 @@ fn relation_emission_retains_exact_execution_clause_joins() {
         pre Second using v on V::Vault::step { self.h >= 0 }\n\
         post Step using v on V::Vault::step { self.l = i }\n\
         post Keep using v on V::Vault::step { self.h = pre(self.h) }\n\
-        post Other using v on V::Vault::reset { self.l = 0 }\n";
-    let (source, _, _) = crate::relation_claims::package_and_relation_with_document(
-        hyper_world::document(false, true),
-        Vault::Custom(CLAUSES),
-        DETERMINISTIC,
+        post Other using v on V::Vault::reset { self.l = 0 }\n\
+        invariant LocalH using v on V::Vault at current { self.h >= 0 }\n\
+        invariant LocalL using v on V::Vault at current { self.l >= 0 }\n\
+        invariant Foreign using v on N::Vault at current { self.l >= 0 }\n\
+        constraint NotInvariant using v on V::Vault at current { true }\n";
+    let document = hyper_world::document(false, true);
+    let other = hyper_world::other_document(&document);
+    let unit = hyper_world::unit_text(Some(&other), Vault::Custom(CLAUSES), false, DETERMINISTIC);
+    let source = fsl_package::CheckedPackage::link(
+        hyper_world::declarations(&[document.as_slice(), other.as_slice()], &unit)
+            .check(
+                filament_semantic_value::checking::CheckMode::Linked,
+                filament_semantic_value::checking::CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .expect("both models and their independent invariants check"),
     );
     let graph = source.graph().semantic_graph();
     let relation = graph
@@ -988,6 +999,78 @@ fn relation_emission_retains_exact_execution_clause_joins() {
             );
         }
     }
+    let BindingValue::Group(subjects) = binding(body, "subjects") else {
+        panic!("subject group");
+    };
+    let [GroupMember::Binding(subject)] = subjects.members.as_slice() else {
+        panic!("one selected model");
+    };
+    let LeafTerm::Reference { target: root } = &subject.value else {
+        panic!("model root reference");
+    };
+    let identity = root.admitted().expect("selected model root").package();
+    let mut expected = Vec::new();
+    let mut foreign = Vec::new();
+    let mut constraints = Vec::new();
+    for node in graph
+        .nodes()
+        .filter(|node| node.semantic_form() == "state_clause")
+    {
+        let BodyTerm::Application(application) = node.body() else {
+            panic!("clause application");
+        };
+        let Some(Member::StateClause { clause, .. }) = application.operation.member() else {
+            panic!("clause kind");
+        };
+        let Some(MemberTerm::Leaf(LeafTerm::Reference { target })) = application.arguments.get(1)
+        else {
+            panic!("clause anchor");
+        };
+        if *clause == StateClauseKind::Constraint {
+            constraints.push(node.key());
+        }
+        if *clause != StateClauseKind::Invariant {
+            continue;
+        }
+        let anchor = graph
+            .node(target.admitted().expect("anchor key").clone())
+            .expect("context object");
+        let Some(fsl_semantics::check::Owner::Model(owner)) = anchor.owner() else {
+            panic!("model-owned context");
+        };
+        if owner.identity() == identity {
+            expected.push(node.key());
+        } else {
+            foreign.push(node.key());
+        }
+    }
+    expected.sort();
+    expected.dedup();
+    assert_eq!(expected.len(), 2);
+    assert_eq!(foreign.len(), 1, "the unrelated model invariant exists");
+    assert_eq!(constraints.len(), 1, "the non-invariant control exists");
+    let BindingValue::Aggregate(invariants) = binding(body, "invariants") else {
+        panic!("invariant entries");
+    };
+    assert_eq!(invariants.members.len(), 1);
+    let BindingValue::Group(group) = binding(invariants, &subject.name) else {
+        panic!("selected invariant group");
+    };
+    let actual: Vec<_> = group
+        .members
+        .iter()
+        .map(|member| {
+            let GroupMember::Leaf(LeafTerm::Reference { target }) = member else {
+                panic!("invariant reference");
+            };
+            target.admitted().expect("invariant key").clone()
+        })
+        .collect();
+    assert_eq!(actual, expected, "exact sorted model-owned invariants");
+    assert!(foreign
+        .iter()
+        .chain(&constraints)
+        .all(|key| !actual.contains(key)));
     let emission = fsl_package::emit_checked(&source, fsl_package::EmitLimits::fixture())
         .expect("genuine source emits");
     let wire: Value = serde_json::from_slice(emission.package().bytes()).expect("emitted JSON");
@@ -997,6 +1080,13 @@ fn relation_emission_retains_exact_execution_clause_joins() {
         .iter()
         .find(|node| node["semantic_form"] == "step_relation")
         .expect("wire relation");
+    assert_eq!(
+        relation["body"]["members"][2]["value"]["members"][0]["value"]["members"]
+            .as_array()
+            .expect("wire model invariants")
+            .len(),
+        2
+    );
     for execution in relation["body"]["members"][1]["value"]["members"]
         .as_array()
         .expect("wire executions")

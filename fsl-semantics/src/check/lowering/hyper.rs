@@ -34,7 +34,7 @@ use crate::check::hyper_clause::{
 };
 use crate::check::node_key::{
     AggregateTerm, Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm,
-    MemberTerm, NodeRef, NodeTag, Operation, OperationLaw, Operator, TupleMember, TupleTerm,
+    MemberTerm, NodeRef, NodeTag, Operation, OperationLaw, Operator, Owner, TupleMember, TupleTerm,
 };
 use crate::check::refusal::CheckRefusal;
 use crate::value::member::FairnessTarget;
@@ -319,17 +319,32 @@ impl Lowering<'_> {
         }
 
         let mut invariant_terms = Vec::with_capacity(input.subjects.len());
-        for (alias, _) in input.subjects {
+        for (alias, root) in input.subjects {
             let mut invariants = Vec::new();
             for (form, node) in input.state_forms.iter().zip(input.state_nodes) {
                 let Some(node) = node else { continue };
-                if form.kind == fsl_forms::StateClauseKind::Invariant
-                    && form.selection.alias == *alias
-                {
+                if form.kind != fsl_forms::StateClauseKind::Invariant {
+                    continue;
+                }
+                // The actual lowered invariant anchor is a model-owned
+                // object. Its owner joins the selected root's canonical
+                // package identity, independently of profile/model aliases.
+                let Some(Owner::Model(owner)) = self
+                    .graph
+                    .node(node.anchor.clone())
+                    .and_then(|anchor| anchor.owner())
+                else {
+                    return Err(stage_fault(
+                        &claim,
+                        "relation-invariant-anchor-is-model-owned",
+                    ));
+                };
+                if owner.identity() == root.package() {
                     invariants.push(node.key.clone());
                 }
             }
             invariants.sort();
+            invariants.dedup();
             invariant_terms.push(MemberTerm::binding(
                 alias.clone(),
                 BindingValue::Group(GroupTerm::references_nodes(invariants)),
