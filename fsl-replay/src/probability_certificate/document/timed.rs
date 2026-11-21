@@ -1,9 +1,4 @@
-    if !optimization_admitted {
-        return Err(ProbabilityDocumentError::OptimizationMismatch);
-    }
-    if !document.ranking.is_empty() {
-        return Err(ProbabilityDocumentError::ObjectiveMismatch);
-    }// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-921's independent timed-product certificate admission.
 
 use super::*;
@@ -106,7 +101,10 @@ pub(super) fn check(
     } else {
         document.optimization == optimization
     };
-    if !optimization_admitted || !document.ranking.is_empty() {
+    if !optimization_admitted {
+        return Err(ProbabilityDocumentError::OptimizationMismatch);
+    }
+    if !document.ranking.is_empty() {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if document.cyclic_dtmc
