@@ -13,14 +13,22 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_contract_model::{CheckedNodeId, CheckedSemanticNodeV2, CheckedTerm};
+use filament_contract_model::{
+    CheckedFairnessGranularity, CheckedFairnessKind, CheckedFairnessTarget, CheckedNodeId,
+    CheckedNodeKind, CheckedOperationMember, CheckedSemanticNodeV2, CheckedTerm, NativeJoinBudget,
+    NativeJoinLocus, SelectedExactIdentity, TemporalForm,
+};
 use filament_exact::{EffectiveId, NodeKey};
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::fairness::{
+    FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation,
+};
 
 use crate::bare::BarePackage;
 use crate::bare_slot::BareSelectionFailure;
 use crate::checked_v2::wire_graph;
 use crate::checked_views::{temporal_subject, Activation, FormulaOperation};
+use crate::native_row::{self, NativeRowError};
 use crate::protocol_selection::SlotSelectionFailure;
 use crate::protocol_view::{group_member, text};
 use crate::reader_protocol_projection::{
@@ -88,7 +96,169 @@ enum ClauseTerm {
     Guard,
 }
 
+/// A fairness projection preserves both the original clause refusal and a
+/// denial on the invocation's cumulative native work/storage ledger.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum BareFairnessRefusal {
+    /// The clause or fairness target has no admitted package form.
+    #[error(transparent)]
+    Clause(#[from] BareClauseRefusal),
+    /// The existing native allowance was exhausted before the read or copy.
+    #[error(transparent)]
+    Native(#[from] NativeRowError),
+}
+
+trait FairnessWork {
+    type Error: From<BareClauseRefusal>;
+    fn visit(&mut self) -> Result<(), Self::Error>;
+    fn items(&mut self, count: usize) -> Result<(), Self::Error>;
+    fn text(&mut self, value: &str) -> Result<(), Self::Error>;
+    fn effective(&mut self, value: &EffectiveId) -> Result<(), Self::Error> {
+        self.items(value.owner_chain().len())?;
+        for original in value.owner_chain() {
+            self.text(original.package())?;
+            self.text(original.node())?;
+        }
+        Ok(())
+    }
+}
+
+struct UnmeteredFairness;
+
+impl FairnessWork for UnmeteredFairness {
+    type Error = BareClauseRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn items(&mut self, _: usize) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn text(&mut self, _: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+struct MeteredFairness<'a> {
+    budget: &'a mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+}
+
+impl FairnessWork for MeteredFairness<'_> {
+    type Error = BareFairnessRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(native_row::work(self.budget, self.locus, 1)?)
+    }
+    fn items(&mut self, count: usize) -> Result<(), Self::Error> {
+        Ok(native_row::items(self.budget, self.locus, count)?)
+    }
+    fn text(&mut self, value: &str) -> Result<(), Self::Error> {
+        Ok(native_row::text(self.budget, self.locus, value)?)
+    }
+}
+
 impl<'p> BarePackage<'p> {
+    /// Read a document-held temporal clause's model-operation fairness from
+    /// admitted operation members and this owner's joined identity rows.
+    /// Every visited member/identity row and retained copy is charged to the
+    /// invocation's existing native allowance before it is read or copied.
+    pub fn temporal_clause_fairness_with_budget(
+        &self,
+        declaration: &CheckedNodeId,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Vec<FairnessConstraint>, BareFairnessRefusal> {
+        let locus = native_row::start(budget, "temporal_fairness")?;
+        let mut work = MeteredFairness { budget, locus };
+        work.visit()?;
+        if self.package().node_kind(declaration)
+            != Some(CheckedNodeKind::Temporal(TemporalForm::TemporalClause))
+        {
+            return Err(BareClauseRefusal::from(fault("fairness-clause-is-admitted")).into());
+        }
+        let term = self
+            .package()
+            .term(declaration)
+            .ok_or_else(|| BareClauseRefusal::from(fault("fairness-clause-is-admitted")))?;
+        self.read_clause_fairness(declaration, term, &mut work)
+    }
+
+    fn read_clause_fairness<W: FairnessWork>(
+        &self,
+        declaration: &CheckedNodeId,
+        term: &CheckedTerm,
+        work: &mut W,
+    ) -> Result<Vec<FairnessConstraint>, W::Error> {
+        let malformed = || BareClauseRefusal::from(fault("fairness-member-is-admitted"));
+        let (_, identities) = self.witness().map_err(BareClauseRefusal::from)?;
+        let CheckedTerm::Application { arguments, .. } = term else {
+            return Err(malformed().into());
+        };
+        let [_, _, _, _, CheckedTerm::Aggregate { members }, _] = arguments.as_slice() else {
+            return Err(malformed().into());
+        };
+        work.items(members.len())?;
+        let mut fairness = Vec::with_capacity(members.len());
+        for member in members {
+            work.visit()?;
+            let CheckedTerm::Reference { target } = member else {
+                return Err(malformed().into());
+            };
+            let Some(CheckedTerm::Application { operation, .. }) = self.package().term(target)
+            else {
+                return Err(malformed().into());
+            };
+            let read = operation.read().map_err(|_| malformed())?;
+            let Some(CheckedOperationMember::Fairness {
+                fairness_kind,
+                granularity,
+                target,
+            }) = read.member
+            else {
+                return Err(malformed().into());
+            };
+            let CheckedFairnessTarget::Operation {
+                declaration: context,
+                name,
+            } = target
+            else {
+                return Err(BareClauseRefusal::Pending {
+                    fact: "fairness-target",
+                    node: declaration.clone(),
+                }
+                .into());
+            };
+            let structural = self
+                .package()
+                .structural_key(context)
+                .ok_or_else(malformed)?;
+            let mut declaring = None;
+            for row in identities.declaration_rows() {
+                work.visit()?;
+                if row.structural_node == *structural {
+                    let SelectedExactIdentity::Object(owner) = &row.exact_identity else {
+                        return Err(malformed().into());
+                    };
+                    declaring = Some(owner);
+                    break;
+                }
+            }
+            let declaring = declaring.ok_or_else(malformed)?;
+            work.effective(declaring)?;
+            work.text(name)?;
+            fairness.push(FairnessConstraint::new(
+                match fairness_kind {
+                    CheckedFairnessKind::Weak => FairnessKind::Weak,
+                    CheckedFairnessKind::Strong => FairnessKind::Strong,
+                },
+                FairnessOperation::new(declaring.clone(), name.to_string()),
+                match granularity {
+                    CheckedFairnessGranularity::Whole => FairnessGranularity::Whole,
+                    CheckedFairnessGranularity::Each => FairnessGranularity::Each,
+                },
+            ));
+        }
+        Ok(fairness)
+    }
+
     /// The `holds` condition at use `position` of the `formula_graph()` of
     /// the temporal clause whose node key is `clause`, projected over the
     /// clause binders it reads. Charges nothing.
@@ -909,7 +1079,7 @@ impl<'p> BarePackage<'p> {
     ///
     /// [`BareClauseRefusal::Selection`] for a clause the package does not
     /// select; [`BareClauseRefusal::Pending`] for a fact the form does not
-    /// read yet: a fairness set, an interval or an aggregate atom.
+    /// read yet: a non-operation fairness target, an interval or an aggregate atom.
     pub fn temporal_clause_form(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
@@ -1028,17 +1198,11 @@ impl<'p> BarePackage<'p> {
         };
         // FR-337 "Clause emission": `over`, clock, activation, captures,
         // fairness, formula.
-        let [_, clock, _, _, CheckedTerm::Aggregate { members: fairness }, _] =
-            arguments.as_slice()
-        else {
+        let [_, clock, _, _, CheckedTerm::Aggregate { .. }, _] = arguments.as_slice() else {
             return Err(malformed().into());
         };
-        if !fairness.is_empty() {
-            return Err(BareClauseRefusal::Pending {
-                fact: "fairness",
-                node: node.node_id.clone(),
-            });
-        }
+        let fairness =
+            self.read_clause_fairness(&node.node_id, &node.body, &mut UnmeteredFairness)?;
         let clock = text(clock).ok_or_else(malformed)?.to_owned();
         // FSpec FR-322 "Clause declaration regions": the whole declaration.
         let span = region_span(&row.declaration_region);
@@ -1158,6 +1322,7 @@ impl<'p> BarePackage<'p> {
             trigger,
             captures,
             formula,
+            fairness,
             populations: Vec::new(),
         })
     }

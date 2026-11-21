@@ -2698,6 +2698,9 @@ pub struct PackageClauseForm {
     pub captures: Vec<(String, ValueType)>,
     /// The formula's nodes in arena order; the root is the first.
     pub formula: Vec<PackageFormulaNode>,
+    /// The admitted model-operation fairness constraints, in first-occurrence
+    /// order, with their authenticated effective declaring identities.
+    pub fairness: Vec<FairnessConstraint>,
     /// The populations of the `over` type with no authored maximum.
     pub populations: Vec<PopulationDomain>,
 }
@@ -2948,7 +2951,7 @@ impl CheckedTemporalClause {
                     .into_iter()
                     .filter(|domain| domain.maximum.is_none())
                     .collect(),
-                fairness: BTreeSet::new(),
+                fairness: form.fairness.iter().map(FairnessConstraint::kind).collect(),
                 punctual: None,
                 model_subject,
             },
@@ -2956,9 +2959,11 @@ impl CheckedTemporalClause {
             activation: form.activation,
             trigger: form.trigger,
             captures: form.captures,
-            fairness: Vec::new(),
+            fairness_order: (0..form.fairness.len())
+                .map(CheckedFairnessMember::Operation)
+                .collect(),
+            fairness: form.fairness,
             fairness_sources: Vec::new(),
-            fairness_order: Vec::new(),
             protocol_fairness: Vec::new(),
             aggregates: BTreeMap::new(),
             property_form,

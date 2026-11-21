@@ -5,7 +5,7 @@ use filament_contract_model::{
     CheckedComponentClause, CheckedCompositionComponent, CheckedCompositionPremise,
     CheckedEnvironmentEntry, CheckedFairnessSupply, CheckedNodeId, CheckedNodePathSegment,
     CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry, CheckedPackageV2, CheckedTerm,
-    ClaimNameRow, NativeJoinBudget, NativeJoinLocus,
+    ClaimNameRow, NativeJoinBudget, NativeJoinLocus, TemporalClauseName,
 };
 
 use crate::native_row::{self, NativeRowError};
@@ -29,6 +29,15 @@ pub enum CompositionViewRefusal {
     /// A member target does not resolve in its authenticated owning package.
     #[error("the composition target does not belong to its owner")]
     UnknownTarget,
+    /// The authentic clause node has several named claim occurrences and
+    /// the composition's NodeRef does not select one of them.
+    #[error("component {component} clause {clause:?} has multiple admitted naming occurrences")]
+    AmbiguousClause {
+        /// The admitted composition component label.
+        component: String,
+        /// The authentic owner-held clause reference.
+        clause: CheckedNodeId,
+    },
     /// A canonical member position cannot be represented as an occurrence.
     #[error("the composition member position is out of range")]
     MemberOrdinal,
@@ -98,6 +107,7 @@ impl<'a> ProjectionWork<'a> {
 pub struct OwnedNodeRef<'p> {
     owner: &'p CheckedPackageV2,
     node: CheckedNodeId,
+    name: Option<&'p TemporalClauseName>,
 }
 
 impl<'p> OwnedNodeRef<'p> {
@@ -110,6 +120,12 @@ impl<'p> OwnedNodeRef<'p> {
     /// `node_kind` and `structural_key` lookups. It is not an expanded key.
     pub fn node(&self) -> &CheckedNodeId {
         &self.node
+    }
+
+    /// The exact unique owning claim-name row of a clause reference.
+    /// Component subject references have no clause naming row.
+    pub fn clause_name(&self) -> Option<&'p TemporalClauseName> {
+        self.name
     }
 }
 
@@ -342,7 +358,28 @@ impl<'p> CompositionView<'p> {
             return Err(CompositionViewRefusal::UnknownTarget);
         }
         let component = self.component(&clause.component, work)?;
-        self.target(component, &clause.clause, work)
+        let mut target = self.target(component, &clause.clause, work)?;
+        let key = target
+            .owner
+            .structural_key(&target.node)
+            .ok_or(CompositionViewRefusal::UnknownTarget)?;
+        let mut name = None;
+        for row in target.owner.temporal_clause_names().unwrap_or_default() {
+            work.visit()?;
+            if target.owner.structural_key(&row.declaration) == Some(key) {
+                if name.is_some() {
+                    work.text(&clause.component)?;
+                    work.node(&target.node)?;
+                    return Err(CompositionViewRefusal::AmbiguousClause {
+                        component: clause.component.to_string(),
+                        clause: target.node.clone(),
+                    });
+                }
+                name = Some(row);
+            }
+        }
+        target.name = Some(name.ok_or(CompositionViewRefusal::UnknownTarget)?);
+        Ok(target)
     }
 
     fn component(
@@ -404,6 +441,7 @@ impl<'p> CompositionView<'p> {
         Ok(OwnedNodeRef {
             owner,
             node: reference,
+            name: None,
         })
     }
 }

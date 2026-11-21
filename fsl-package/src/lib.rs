@@ -122,7 +122,7 @@ pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
 pub use bare_state_graph::BareStatePredicate;
 #[cfg(feature = "std")]
 pub use bare_term::{
-    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause,
+    BareClauseRefusal, BareClauseTerm, BareFairnessRefusal, BareFrameOperation, BareStateClause,
     BareStateClauseDeclaration, ClauseBinder, DeclaredComposite, DeclaredShape,
 };
 #[cfg(feature = "std")]
