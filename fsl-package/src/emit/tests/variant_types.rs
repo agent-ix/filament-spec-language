@@ -860,7 +860,23 @@ fn model_enum_carrier_refuses_missing_repeated_foreign_and_conflicting_evidence(
             &admitted,
             &mut budget(),
         );
-        assert!(result.is_err(), "{edit} cannot authenticate: {result:?}");
+        use filament_contract_model::ExactTypeProjectionErrorCode as Native;
+        match (edit, result) {
+            ("unknown", Err(IdentityFileRefusal::Malformed { .. })) => {}
+            ("old", Err(IdentityFileRefusal::Format(format))) => {
+                assert_eq!(format, "filament.checked-handoff.identities/4")
+            }
+            ("missing", Err(IdentityFileRefusal::Native(error))) => {
+                assert_eq!(error.code, Native::UnavailableIdentityWitness)
+            }
+            ("duplicate", Err(IdentityFileRefusal::Native(error))) => {
+                assert_eq!(error.code, Native::ConflictingIdentityWitness)
+            }
+            ("foreign" | "rank" | "case_order", Err(IdentityFileRefusal::Native(error))) => {
+                assert_eq!(error.code, Native::MismatchedIdentityWitness)
+            }
+            (_, other) => panic!("{edit} must preserve its typed refusal: {other:?}"),
+        }
     }
 }
 
