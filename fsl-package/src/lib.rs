@@ -125,6 +125,8 @@ pub use bare_term::{
 #[cfg(feature = "std")]
 pub use bare_terminal::{BareTerminal, BareTerminalDeclaration, BareTerminalPredicate};
 #[cfg(feature = "std")]
+pub use checked_views::BareHyperTerm;
+#[cfg(feature = "std")]
 pub use bare_world::BareWorld;
 pub use checked::{CheckedPackage, ResolvedDependency};
 #[cfg(feature = "std")]

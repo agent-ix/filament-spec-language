@@ -65,6 +65,7 @@ fn refusal(package: &BarePackage<'_>, failure: BareSelectionFailure) -> CallFail
     }
 }
 
+<<<<<<< HEAD
 fn clock_declarations(
     package: &BarePackage<'_>,
 ) -> Result<fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable, CallFailure>
@@ -87,6 +88,57 @@ fn clock_declarations(
                 }),
             )),
         })
+=======
+/// Run the package atom through the same component-aware machine as a source
+/// atom, including absent-key and subject reference bindings.
+pub(crate) fn evaluate_hyper_holds(
+    package: &BarePackage<'_>,
+    clause: &fsl_semantics::check::CheckedHyperClause,
+    atom: fsl_semantics::check::FormulaNodeId,
+    slots: Vec<crate::hyper::HyperSlot>,
+    components: &[&ObjectEnvironment],
+    reference_bindings: Option<&[&crate::simulation::model::ReferenceBindings]>,
+    meter: &mut Meter,
+) -> Result<Evaluation, CallFailure> {
+    let fault = |invariant| CallFailure::Fault(InternalFault::new("S6a", invariant));
+    if slots.len() != clause.atom_slots().len() {
+        return Err(fault("hyper-atom-binds-one-value-per-slot"));
+    }
+    if components.len() != clause.quantifiers().len() {
+        return Err(fault("hyper-atom-observes-one-state-per-trace"));
+    }
+    let first = components.first().copied()
+        .ok_or_else(|| fault("hyper-atom-observes-one-state-per-trace"))?;
+    let claim = clause.assembled_occurrence()
+        .ok_or_else(|| fault("hyper-clause-has-an-assembled-occurrence"))?;
+    let term = package.project_hyper_holds(claim, atom.index()).map_err(|failure| match failure {
+        fsl_package::BareClauseRefusal::Selection(failure) => refusal(package, failure),
+        fsl_package::BareClauseRefusal::Pending { fact, .. } => unmet(package, fact),
+    })?;
+    let world = package.world().map_err(|failure| refusal(package, failure))?;
+    let mut machine = Machine::with_world(World::Bytes(&world), first, None, None, meter, &[])
+        .with_components(super::evaluate::ComponentReads {
+            environments: components,
+            pre_environments: None,
+            reads: term.component_reads(),
+            observations: None,
+        });
+    if let Some(bindings) = reference_bindings {
+        machine = machine.with_component_reference_bindings(bindings);
+    }
+    let mut values = Vec::with_capacity(slots.len());
+    for (slot, binding) in slots.into_iter().enumerate() {
+        match binding {
+            crate::hyper::HyperSlot::Bound(value) => values.push(value),
+            crate::hyper::HyperSlot::Absent { key, population } => {
+                machine = machine.with_absent_key(slot, population, key.clone());
+                values.push(Value::Reference(key));
+            }
+        }
+    }
+    machine.run(ReaderNode::root(term.projection()), term.projection().frame_slots(), values)
+        .map_err(CallFailure::Fault)
+>>>>>>> 4b199dc736 (Evaluate package hyper atoms through the reader projection)
 }
 
 fn function_projection(
@@ -1123,13 +1175,13 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
 
     fn evaluate_hyper_holds(
         &self,
-        _clause: &fsl_semantics::check::CheckedHyperClause,
-        _atom: fsl_semantics::check::FormulaNodeId,
-        _slots: Vec<crate::hyper::HyperSlot>,
-        _components: &[&ObjectEnvironment],
-        _meter: &mut Meter,
+        clause: &fsl_semantics::check::CheckedHyperClause,
+        atom: fsl_semantics::check::FormulaNodeId,
+        slots: Vec<crate::hyper::HyperSlot>,
+        components: &[&ObjectEnvironment],
+        meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        Err(unmet(self, SOURCE_CHECKED_FORM))
+        evaluate_hyper_holds(self, clause, atom, slots, components, None, meter)
     }
 
     fn evaluate_step_predicate(

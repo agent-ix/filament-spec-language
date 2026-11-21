@@ -2,6 +2,9 @@
 //! FR-940: source-independent facts of a universal hyper clause.
 
 mod normal;
+mod projection;
+
+pub use projection::BareHyperTerm;
 
 use std::collections::{BTreeMap, BTreeSet};
 
