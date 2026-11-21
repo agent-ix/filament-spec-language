@@ -591,7 +591,6 @@ fn zeno_values_are_rejected() {
 /// FR-924-AC-3: a retry cycle holds delays and is not collapsed.
 #[trace("TC-2493", "FR-924-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-3")]
-#[ignore = "QSL-2156: expected elapsed time over the digital route is not checked yet; the checker requires the region route"]
 #[test]
 fn delay_cycles_are_not_collapsed() {
     let world = retx(

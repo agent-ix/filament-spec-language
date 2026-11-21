@@ -163,8 +163,7 @@ fn check_expected_elapsed(
     let Some((bound, predicate)) = mean_time_query(claim) else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
-    if route != TimedProbabilityRoute::Region
-        || !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every)
+    if !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every)
         || !claim.fairness.is_empty()
         || document.cyclic_dtmc
         || document.event.is_some()
@@ -190,6 +189,7 @@ fn check_expected_elapsed(
         binding.as_ref(),
         predicate,
         scale,
+        route,
         limits,
         cancel,
         meter,
@@ -746,12 +746,16 @@ fn enumerate_region_mean_time(
     binding: Option<&filament_exact::ObjectReference>,
     predicate: &fsl_semantics::check::CheckedPredicate,
     scale: u64,
+    route: TimedProbabilityRoute,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
 ) -> Result<(CheckerGraph, RegionPolicyWeights), ProbabilityDocumentError> {
-    let (base_scale, subdivisions) = region_scale_parts(timed, claim, scale)?;
+    let (base_scale, subdivisions) = match route {
+        TimedProbabilityRoute::Region => region_scale_parts(timed, claim, scale)?,
+        TimedProbabilityRoute::Digital => (scale, 1),
+    };
     let mut caps = Vec::with_capacity(timed.places().len());
     for place in timed.places() {
         let mut largest = 0_u64;
@@ -788,6 +792,7 @@ fn enumerate_region_mean_time(
         base_scale,
         subdivisions,
         scale,
+        route,
     )?;
     reserve_storage(
         storage,
@@ -841,6 +846,7 @@ fn enumerate_region_mean_time(
             base_scale,
             subdivisions,
             scale,
+            route,
             cancel,
         )? {
             admit_mean_region_state(
@@ -906,6 +912,7 @@ fn enumerate_region_mean_time(
                     base_scale,
                     subdivisions,
                     scale,
+                    route,
                 )?;
                 admit_mean_region_state(
                     target_key.clone(),
@@ -993,6 +1000,7 @@ fn mean_region_key(
     base_scale: u64,
     subdivisions: u64,
     scale: u64,
+    route: TimedProbabilityRoute,
 ) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
     let (discrete_bytes, _) = system
         .state_key(state.timed.discrete())
@@ -1043,6 +1051,28 @@ fn mean_region_key(
             cap: *cap,
         });
     }
+    if route == TimedProbabilityRoute::Digital {
+        return crate::digital_probability_product_key(crate::DigitalProductKeyInput {
+            binding,
+            discrete,
+            unit,
+            scale: base_scale,
+            clocks: clocks
+                .into_iter()
+                .map(|clock| DigitalClockKey {
+                    identity: clock.identity,
+                    value: clock.value,
+                    cap: clock.cap,
+                })
+                .collect(),
+            deadline: None,
+            tail: crate::DigitalTail::Running,
+            monitor: None,
+            accumulator: None,
+            pending: None,
+        })
+        .map_err(ProbabilityDocumentError::Graph);
+    }
     let mut coordinates = clocks
         .iter()
         .map(|clock| {
@@ -1087,6 +1117,7 @@ fn next_mean_region_delay(
     base_scale: u64,
     subdivisions: u64,
     scale: u64,
+    route: TimedProbabilityRoute,
     cancel: &Cancel,
 ) -> Result<Option<(ProbabilityProductKey, MeanRegionState, Rational)>, ProbabilityDocumentError> {
     let current_key = mean_region_key(
@@ -1098,15 +1129,19 @@ fn next_mean_region_delay(
         base_scale,
         subdivisions,
         scale,
+        route,
     )?;
     let delta = rational_units(1, scale)?;
-    let max_steps = caps
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0)
-        .saturating_add(subdivisions.saturating_mul(2))
-        .saturating_add(1);
+    let max_steps = if route == TimedProbabilityRoute::Digital {
+        1
+    } else {
+        caps.iter()
+            .copied()
+            .max()
+            .unwrap_or(0)
+            .saturating_add(subdivisions.saturating_mul(2))
+            .saturating_add(1)
+    };
     let mut state = current.timed.clone();
     for elapsed in 1..=max_steps {
         poll(cancel)?;
@@ -1132,7 +1167,11 @@ fn next_mean_region_delay(
             base_scale,
             subdivisions,
             scale,
+            route,
         )?;
+        if route == TimedProbabilityRoute::Digital && key == current_key {
+            return Ok(None);
+        }
         if key != current_key || elapsed == max_steps {
             let cost = rational_units(elapsed, scale)?;
             return Ok(Some((key, reached, cost)));
