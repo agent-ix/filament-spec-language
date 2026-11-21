@@ -22,9 +22,13 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_input(SOURCE, MODEL)
+    }
+
+    fn with_input(source: &str, model: &[u8]) -> Self {
         let case = Case::new();
-        case.write("workflow.native", SOURCE.as_bytes());
-        case.write("counter.json", MODEL);
+        case.write("workflow.native", source.as_bytes());
+        case.write("counter.json", model);
         case.write("start.json", SNAPSHOT);
         let mut request: Value = serde_json::from_str(include_str!(
             "../../../examples/protocol-recommendation/analyze.json"
@@ -35,7 +39,14 @@ impl Fixture {
         assert_eq!(baseline.exit, 10, "genuine baseline: {}", baseline.document);
         let item = &baseline.document["items"][0];
         assert_eq!(item["replay"]["reproduced"], true, "{item}");
-        let decision = item["counterexample"]["prefix"][0]["transition"]["recommendation"].clone();
+        let decision = item["counterexample"]["prefix"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|step| &step["transition"]["recommendation"])
+            .find(|record| record["type"] == "protocol-recommendation")
+            .unwrap()
+            .clone();
         assert_eq!(decision["type"], "protocol-recommendation", "{item}");
         let receipt = json!({"contract_version": "filament.effect-decision/v1", "decision": decision,
             "authority_grant": {}, "idempotency_key": "caller-key", "effect_request": {},
@@ -84,7 +95,9 @@ impl Fixture {
         );
         let schema: Value = serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
         assert!(
-            jsonschema::validator_for(&schema)
+            jsonschema::JSONSchema::options()
+                .with_draft(jsonschema::Draft::Draft202012)
+                .compile(&schema)
                 .unwrap()
                 .is_valid(&bound.document),
             "{}",
@@ -115,6 +128,16 @@ fn refused(outcome: &Outcome, cause: &str, reason: &str, pointer: &str) {
     assert!(message.contains(pointer), "{diagnostic}");
     assert_eq!(diagnostic["details"], Value::Null);
     assert_eq!(diagnostic["locus"], Value::Null);
+    let schema: Value = serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+    assert!(
+        jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .compile(&schema)
+            .unwrap()
+            .is_valid(&outcome.document),
+        "refusal must keep the published schema: {}",
+        outcome.document
+    );
 }
 
 #[test]
@@ -150,6 +173,10 @@ fn every_canonical_decision_component_is_matched() {
         refused(&outcome, "invalid-value", "wrong-decision", "/decision");
         assert!(outcome.document["items"][0].get("counterexample").is_none());
         assert!(outcome.document["items"][0].get("certificate").is_none());
+        assert_eq!(
+            outcome.document["items"][0]["record"]["diagnostic"]["code"],
+            "invalid_runtime_input"
+        );
     }
 }
 
@@ -314,7 +341,7 @@ fn receipt_bytes_use_the_exact_aggregate_dependent_allowance() {
 fn equal_actual_recommendations_in_other_items_do_not_change_local_matching() {
     let mut fixture = Fixture::new();
     fixture.valid();
-    let mut second = fixture.request["request"]["items"][0].clone();
+    let second = fixture.request["request"]["items"][0].clone();
     fixture.request["request"]["items"][0]
         .as_object_mut()
         .unwrap()
@@ -342,7 +369,129 @@ fn equal_actual_recommendations_in_other_items_do_not_change_local_matching() {
         fixture.baseline.document["items"][0]
     );
     assert!(refused.document["items"][1].get("counterexample").is_none());
-    second["claim"] = json!("unknown");
+}
+
+#[test]
+#[trace("FR-1046-AC-3")]
+fn parameter_order_and_replicated_actor_retain_their_typed_identity() {
+    let mut model: Value = serde_json::from_slice(MODEL).unwrap();
+    let mut params = Vec::new();
+    for name in ["first", "second"] {
+        let mut parameter = model["types"][1]["fields"][0].clone();
+        let identity = format!("ix://test/counter/Counter/inc/{name}");
+        parameter["identity"] = json!(identity);
+        parameter["name"] = json!(name);
+        parameter["typeRef"] = json!("ix://filament/native/Boolean");
+        parameter["origin"]["generated"]["generatorIdentity"] = json!(identity);
+        parameter["origin"]["generated"]["inputIdentities"] = json!([identity]);
+        params.push(parameter);
+    }
+    model["types"][1]["operations"][0]["params"] = json!(params);
+    let source = SOURCE.replace("self.value < 2", "self.value < 2 and first and not second");
+    let mut fixture = Fixture::with_input(&source, &serde_json::to_vec(&model).unwrap());
+    fixture.valid();
+    let mut reordered = fixture.receipt.clone();
+    let arguments = reordered["decision"]["arguments"].as_array_mut().unwrap();
+    assert_eq!(arguments.len(), 2);
+    assert_ne!(arguments[0], arguments[1]);
+    arguments.swap(0, 1);
+    fixture
+        .case
+        .write("first.json", &canonical_json::encode(&reordered).unwrap());
+    refused(
+        &fixture.run(),
+        "invalid-value",
+        "wrong-decision",
+        "/decision",
+    );
+
+    let source = SOURCE.replace(
+        "observe role Auditor on M::Counter;",
+        "observe role Auditor each M::Counter from counters max 1 lifetime workflow;",
+    );
+    let mut fixture = Fixture::with_input(&source, MODEL);
+    fixture.valid();
+    let mut actor = fixture.receipt.clone();
+    assert_eq!(actor["decision"]["actor"]["identity"], "counter");
+    actor["decision"]["actor"]["identity"] = json!("different-actor");
+    fixture
+        .case
+        .write("first.json", &canonical_json::encode(&actor).unwrap());
+    refused(
+        &fixture.run(),
+        "invalid-value",
+        "wrong-decision",
+        "/decision",
+    );
+}
+
+#[test]
+#[trace("FR-1046-AC-4")]
+fn repeated_indistinguishable_actual_occurrences_refuse_ambiguity() {
+    let source = SOURCE.replace(
+        "recommend Advise by Auditor on M::Counter::inc contracts [SpaceAvailable]\n        as (advice: Boolean) { true };",
+        "repeat Again by Seller visible () max 2 while { true } sequence Body {\n\
+         recommend Advise by Auditor on M::Counter::inc contracts [SpaceAvailable]\n\
+         as (advice: Boolean) { true }; } exhausted sequence End { }");
+    assert_ne!(source, SOURCE);
+    let mut fixture = Fixture::with_input(&source, MODEL);
+    let actual: Vec<_> = fixture.baseline.document["items"][0]["counterexample"]["prefix"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|step| step["transition"].get("recommendation"))
+        .collect();
+    assert_eq!(
+        actual.len(),
+        2,
+        "actual repeated events: {}",
+        fixture.baseline.document
+    );
+    assert_eq!(actual[0], actual[1]);
+    fixture.select("loop", &fixture.receipt.clone());
+    refused(
+        &fixture.run(),
+        "invalid-value",
+        "ambiguous-decision",
+        "/decision",
+    );
+}
+
+#[test]
+#[trace("FR-1046-AC-4")]
+fn another_items_recommendation_does_not_supply_a_missing_local_match() {
+    let second = SOURCE.split_once("protocol Review").unwrap().1;
+    let source = format!(
+        "{SOURCE}\nprotocol Other{}",
+        second.replace("Advise", "DifferentAdvice")
+    );
+    let mut fixture = Fixture::with_input(&source, MODEL);
+    let mut item = fixture.request["request"]["items"][0].clone();
+    item["claim"] = json!("Other");
+    let mut subject = fixture.request["request"]["subject"].clone();
+    subject["protocol"]["protocol"] = json!("Other");
+    item["temporal"]["subject"] = subject;
+    fixture.request["request"]["items"]
+        .as_array_mut()
+        .unwrap()
+        .push(item);
+    let baseline = fixture.run();
+    assert_eq!(baseline.exit, 10, "{}", baseline.document);
+    assert_eq!(baseline.document["items"][1]["replay"]["reproduced"], true);
+    fixture.select("other-item", &fixture.receipt.clone());
+    let selectors = fixture.request["request"]["items"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("effect_decisions")
+        .unwrap();
+    fixture.request["request"]["items"][1]["effect_decisions"] = selectors;
+    let refused = fixture.run();
+    assert_eq!(refused.exit, 20, "{}", refused.document);
+    assert_eq!(refused.document["items"][0], baseline.document["items"][0]);
+    assert!(refused.document["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("effect-decision wrong-decision"));
 }
 
 #[test]
