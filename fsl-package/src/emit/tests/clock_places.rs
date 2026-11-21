@@ -292,6 +292,7 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
     assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }] if position.as_str() == "1")));
     assert!(source_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Case { name, .. }] if name == "armed")));
 
+    let source_table = graph.clock_declaration_table().clone();
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("source emits");
     let Read::Verified {
         admitted,
@@ -304,6 +305,14 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
     let declarations = crate::BarePackage::new(&admitted)
         .clock_declarations()
         .expect("admitted declaration provenance");
+    let bare_table = declarations
+        .table(&timed_models)
+        .expect("atomic admitted place table");
+    assert_eq!(
+        source_table.entries().collect::<Vec<_>>(),
+        bare_table.entries().collect::<Vec<_>>(),
+        "both routes retain the same complete original member chains"
+    );
     let [timed] = timed_models.as_slice() else {
         panic!("one admitted timed model");
     };
