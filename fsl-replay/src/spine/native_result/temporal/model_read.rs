@@ -129,9 +129,22 @@ mod tests {
     // These fixtures establish structural read behavior only. A valid key or
     // reference can still fail the model's separate semantic replay checks.
     fn binding() -> Value {
-        json!({"type": "reference", "universe": {"package": "counter", "path": [], "ordinal": 0},
-            "object_type": {"owner_effective_type": null,
-                "original": {"package": "counter", "node": "Counter"}}, "identity": "a"})
+        let declaration = filament_checked::key::DeclarationKey {
+            package: "test/counters".to_owned(),
+            node: "test/counters/Counter".to_owned(),
+        };
+        let node = fsl_semantics::model::key::object_type_node_key(&declaration)
+            .expect("the shared model declaration constructor admits this fixture");
+        let reference = ObjectReference::new(
+            UniverseId::new(node),
+            filament_exact::EffectiveId::new(
+                None,
+                filament_exact::OriginalDeclarationKey::new(declaration.package, declaration.node),
+            ),
+            ObjectId::new("a").expect("a nonempty authored object identity"),
+        );
+        fsl_eval::simulation::model::value_json(&filament_exact::Value::Reference(reference))
+            .expect("the existing canonical producer encodes the reference")
     }
 
     fn state(octets: &[u8]) -> Value {
