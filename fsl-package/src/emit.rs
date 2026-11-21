@@ -6428,6 +6428,7 @@ pub fn emit_timed_models(
     rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut checked_term_data)?;
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
     write_index_segments(
+        ids,
         &mut nodes,
         &mut source_map,
         &mut [],
@@ -7426,6 +7427,7 @@ fn emit_package_inner(
     };
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
     let emitted_node_ids = write_index_segments(
+        ids,
         &mut nodes,
         &mut source_map,
         &mut step_rows,
@@ -9769,6 +9771,7 @@ impl ForeignNodes {
 ///
 /// [`StructuralKeys`]: fsl_semantics::check::wire_id::StructuralKeys
 fn write_index_segments(
+    ids: &StructuralIds,
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
     step_rows: &mut [filament_contract_model::CheckedRefinementStepRowRegion],
@@ -9777,7 +9780,9 @@ fn write_index_segments(
 ) -> Result<HashMap<NodeKey, CheckedNodeId>, EmitRefusal> {
     use filament_contract_model::CheckedNodePathSegment as Segment;
     let is_operand = |segment: &Segment| matches!(segment, Segment::Node(_));
-    let mut keys = fsl_semantics::check::wire_id::StructuralKeys::default();
+    // Retain the encoder's original operand keys. Rebuilding an independent
+    // key table makes every later source-key equality walk its full depth.
+    let mut keys = ids.key_reader();
     let invariant = |_| EmitRefusal::SourceMapInvariant;
     let graph_keys = nodes
         .iter()

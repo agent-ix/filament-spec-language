@@ -1254,6 +1254,7 @@ fn written_nodes(package: &CheckedPackage) -> Vec<Value> {
         })
         .collect();
     write_index_segments(
+        &StructuralIds::default(),
         &mut nodes,
         &mut [],
         &mut [],

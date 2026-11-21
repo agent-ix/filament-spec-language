@@ -405,6 +405,7 @@ fn emit_monitor_plan(
         });
     }
     write_index_segments(
+        ids,
         &mut nodes,
         &mut source_map,
         &mut [],
