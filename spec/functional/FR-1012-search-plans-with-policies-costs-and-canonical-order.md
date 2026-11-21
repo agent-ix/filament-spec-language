@@ -23,6 +23,14 @@ FSL's plan search in `fsl-analyze` SHALL implement FSpec FR-800 to FR-804, FR-80
 - Every reported plan SHALL replay natively before it is written (FR-755).
 - A state at which a model invariant is violated SHALL be inadmissible and never part of a plan. A state at which an invariant cannot be decided SHALL NOT be expanded; if the search excluded any state for that reason, it SHALL settle `incomplete` with cause `invariant-undetermined` naming the invariant, carrying the best plan found that does not pass through such a state, and SHALL NOT settle `optimal` or `infeasible` or write a certificate. A certificate check that re-derives such a state SHALL end with the same cause, not a certificate rejection, and a plan that passes through such a state is not admissible evidence at replay.
 
+The first positive-length source-policy increment covers capture-free,
+origin-activated infinite-trace `always holds(A)`, `eventually[0,k] holds(A)`
+and `always[0,k] holds(A)` through their canonical shared monitor states and
+terminal-stutter closure. Other checked positive-length shapes retain an
+explicit unsupported result until implemented. Captures, general liveness
+and FR-1012-AC-1 remain required subsequent increments; this staged boundary
+does not change their acceptance obligations.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |

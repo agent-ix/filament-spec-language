@@ -56,6 +56,7 @@ mod letter;
 mod monitor;
 mod numbering;
 mod past;
+mod policy;
 mod qualified_bounded;
 mod state;
 mod timed_claim;
@@ -83,6 +84,7 @@ pub use key_state::{
 pub use letter::{Atom, Guard, Letter, MAX_ATOMS};
 pub use monitor::{Monitor, SafetyAutomaton};
 pub use numbering::{Interned, Numbering};
+pub use policy::{PolicyContext, PolicyState, PolicyStateError, StepPolicy};
 pub use qualified_bounded::{QualifiedBoundedError, QualifiedBoundedMonitor};
 pub use state::StateId;
 pub use timed_claim::{
