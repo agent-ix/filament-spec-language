@@ -2251,3 +2251,58 @@ fn zero_weight_fraction_replays_its_tentative_value_before_an_outside_window_pre
         proof(&positive, "Q", ratio(1, 1));
     }
 }
+
+#[trace("FR-1043-AC-7", "FR-202-AC-26")]
+#[test]
+fn object_parameter_reward_undefined_is_replayed_with_its_actual_draw() {
+    for scheduler in ["Steady", "every scheduler"] {
+        let mut model = retry(&claim("Q", scheduler,
+            "probability >= 0.5 [accumulate duration from holds(true) until holds(m.delivered) within 2 <= 1]"));
+        model
+            .operations
+            .iter_mut()
+            .find(|operation| operation.name == "fast")
+            .unwrap()
+            .parameters
+            .push(("peer", "ix://test/retry/Msg".into()));
+        model.body += "\nreward duration on Msg::fast = if peer = peer then 1 mod 0 else 0;\n";
+        let world = World::new(&model);
+        let system =
+            ModelSystem::new(world.subject().simulation).expect("the object parameter is admitted");
+        let record = settle(&world, "Q", ModelCheckLimits::default());
+        assert_eq!(
+            record.terminal().unwrap().value(),
+            &TerminalValue::Refuted,
+            "an admitted actual reward read must retain Undefined, not BROKEN: {:?}",
+            record.settlement
+        );
+        let token = record.probabilistic_counterexample.as_ref().unwrap();
+        let undefined = token.undefined().expect("reward undefined evidence");
+        assert_eq!(undefined.evaluation.site.position, 1);
+        assert_eq!(undefined.path.paths[0].steps.len(), 1);
+        assert!(token.mass() > &ratio(0, 1));
+        let step = undefined.path.paths[0].steps.first().unwrap();
+        assert!(step.action.is_some() && step.draw.is_some() && step.transition.is_some());
+        assert_eq!(
+            system.state_key(&step.post).unwrap().1,
+            undefined.evaluation.site.state_key
+        );
+        let wire = token.wire.as_ref().unwrap();
+        assert_eq!(wire["evidence"]["undefined"]["cause"], "division-by-zero");
+        let replay = fsl_replay::replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &undefined.path.item,
+            undefined,
+            &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(
+                replay,
+                Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+            ),
+            "{replay:?}"
+        );
+    }
+}
