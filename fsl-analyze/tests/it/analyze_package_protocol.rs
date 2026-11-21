@@ -60,6 +60,346 @@ fn repeat_attempt(name: &str, binder: &str, constraint: &str) -> String {
     crate::fill::attempt(name, "touch", "", binder, constraint).replace(" by w ", " by Machining ")
 }
 
+fn workflow_roles_request(
+    ws: &Workspace,
+    maximum: u64,
+    lifetime: &str,
+    empty_universe: bool,
+    controls: &str,
+    finish: &str,
+) -> std::path::PathBuf {
+    let path = channel_request(
+        ws,
+        finite_channel_model(),
+        if empty_universe {
+            "ordering unordered delivery exactly-once-premise capacity 2 overflow reject"
+        } else {
+            "ordering unordered delivery unknown capacity 2 overflow reject"
+        },
+        controls,
+        finish,
+    );
+    let (object, population) = if empty_universe {
+        ("Idle", "idles")
+    } else {
+        ("Cell", "cells")
+    };
+    let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("the role unit");
+    let unit = unit
+        .replace(
+            "role Machining on M::Cell;",
+            &format!(
+                "role Worker each M::{object} from {population} max {maximum} lifetime {lifetime};"
+            ),
+        )
+        .replace("to Machining", "to Worker");
+    ws.write("program.fsl", unit.as_bytes());
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    request["request"]["items"][0]["temporal"]["subject"]["protocol"]["roles"]
+        .as_object_mut()
+        .expect("role bindings")
+        .remove("Machining");
+    ws.write("analyze.json", request.to_string().as_bytes());
+    ws.write(
+        "snapshot-0.json",
+        &channel_snapshots(&[("c", 0), ("d", 0)])[0],
+    );
+    path
+}
+
+/// Explore both routes from the same external snapshot and universe. Only the
+/// source input uses the checked graph; the other input has admitted supply.
+fn workflow_role_graph(ws: &Workspace, path: &std::path::Path) -> Vec<crate::fill::Reached> {
+    use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
+    use fsl_eval::simulation::model::{ModelSystem, PackageModelInput};
+    use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory, Sc};
+    use fsl_package::{AnalysisView, BarePackage, BareSupply, EmitLimits, V2ReadLimits};
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+
+    let _ = package_request(ws, path);
+    let compiled =
+        fsl_command::checked_handoff::compile(&ws.path(crate::analyze_cli_support::HANDOFF))
+            .expect("the role fixture compiles");
+    let mut documents = crate::fill::Documents::new();
+    documents.packages = compiled.packages().clone();
+    let start = documents.start("s0", &[("c", 0), ("d", 0)]);
+    let source = ProtocolSubject {
+        model: crate::fill::model_subject(compiled.checked(), &documents, vec![start], &["c", "d"]),
+        protocol: "Flow".to_owned(),
+        over: crate::fill::instance("c"),
+        roles: vec![RoleBinding {
+            role: "Planning".to_owned(),
+            model: crate::fill::PACKAGE.to_owned(),
+        }],
+        capacities: Vec::new(),
+        memory: crate::fill::source_memory(compiled.checked(), "Flow"),
+    };
+    let emission =
+        fsl_package::emit_checked(compiled.checked(), EmitLimits::fixture()).expect("emission");
+    let admitted = compiled.admitted();
+    let identities = emission
+        .identity_rows(admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("identities");
+    let equality = emission
+        .equality_witness(admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("equality");
+    let bare = BarePackage::new(admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("supply");
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("package model");
+    let mut model = crate::fill::model_subject(
+        compiled.checked(),
+        &documents,
+        source.model.simulation.initial.clone(),
+        &["c", "d"],
+    );
+    model.simulation.input = input.input();
+    assert!(model.simulation.source_package().is_none());
+    let package = ProtocolSubject {
+        model,
+        protocol: source.protocol.clone(),
+        over: source.over.clone(),
+        roles: source.roles.clone(),
+        capacities: Vec::new(),
+        memory: ResolvedMemory::resolve_package(
+            &bare
+                .protocol_execution_named("Flow")
+                .expect("protocol selection")
+                .expect("Flow"),
+            &[],
+        )
+        .expect("package memory"),
+    };
+    let source_system = ProtocolSystem::new(
+        ModelSystem::new(source.model.simulation.clone()).expect("source model"),
+        &source,
+        Sc,
+    )
+    .expect("source roles");
+    let package_system = ProtocolSystem::new_package(
+        ModelSystem::new(package.model.simulation.clone()).expect("package model"),
+        &package,
+        Sc,
+    )
+    .expect("package roles");
+    let workers = std::num::NonZeroUsize::new(1).expect("one worker");
+    let source = source_system
+        .reachable(workers)
+        .expect("source graph")
+        .states;
+    let package = package_system
+        .reachable(workers)
+        .expect("package graph")
+        .states;
+    let canonical = |states: &[crate::fill::Reached]| {
+        let mut rows: Vec<_> = states
+            .iter()
+            .map(|state| {
+                let mut steps: Vec<_> = state
+                    .steps
+                    .iter()
+                    .map(|(step, next)| {
+                        (
+                            quire_canonical::to_vec(step, quire_canonical::Limits::new(u64::MAX))
+                                .expect("transition identity"),
+                            states[*next].key.as_bytes().to_vec(),
+                        )
+                    })
+                    .collect();
+                steps.sort();
+                (state.key.as_bytes().to_vec(), steps)
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    assert_eq!(canonical(&package), canonical(&source));
+    source
+}
+
+fn live_workflow_roles(state: &crate::fill::Reached) -> usize {
+    let key: Value = serde_json::from_slice(state.key.as_bytes()).expect("state key JSON");
+    key["roles"]["entries"]
+        .as_array()
+        .expect("role map")
+        .iter()
+        .filter(|entry| entry["key"]["role"] == "Worker")
+        .flat_map(|entry| entry["value"]["entries"].as_array().expect("instance map"))
+        .filter(|entry| entry["value"]["value"] == "live")
+        .count()
+}
+
+/// The complete replicated-role example has an empty run and an unused channel;
+/// its two spawn orders meet at the same state, and finish tears down both actors.
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FR-531",
+    "FR-208-AC-2",
+    "FR-208-AC-3",
+    "FR-850"
+)]
+#[test]
+fn package_workflow_roles_runs_the_complete_body_and_tears_down() {
+    use fsl_eval::simulation::protocol::StepKind;
+    let ws = Workspace::new("package-workflow-role-body");
+    let path = workflow_roles_request(&ws, 2, "workflow", false, "", "closing");
+    let graph = workflow_role_graph(&ws, &path);
+    assert_eq!(graph.iter().map(live_workflow_roles).max(), Some(2));
+    let both = graph
+        .iter()
+        .position(|state| live_workflow_roles(state) == 2)
+        .expect("both workers live");
+    assert_eq!(
+        graph
+            .iter()
+            .flat_map(|state| &state.steps)
+            .filter(|(step, next)| step.kind() == StepKind::Spawn && *next == both)
+            .count(),
+        2,
+        "the two spawn orders converge"
+    );
+    let finished: Vec<_> = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(step, _)| step.kind() == StepKind::Finish)
+        .collect();
+    assert!(!finished.is_empty());
+    for (_, next) in finished {
+        assert_eq!(live_workflow_roles(&graph[*next]), 0);
+        assert!(graph[*next].steps.is_empty());
+    }
+    channel_send_parity(&ws, &path, "proved");
+}
+
+/// The bound changes real reachable actors; owned attempts retain their actor
+/// identity in both graphs, and a blocked continuation replays without source.
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FR-208-AC-1",
+    "FR-208-AC-2",
+    "FR-211-AC-4",
+    "FR-850"
+)]
+#[test]
+fn package_workflow_roles_bounds_instances_and_executes_owned_attempts() {
+    use fsl_eval::simulation::protocol::StepKind;
+    let controls = repeat_attempt("Work", "worked", "true").replace("by Machining", "by Worker");
+    for maximum in [1, 2] {
+        let ws = Workspace::new(&format!("package-workflow-role-bound-{maximum}"));
+        let path = workflow_roles_request(&ws, maximum, "workflow", false, &controls, "false");
+        let graph = workflow_role_graph(&ws, &path);
+        assert_eq!(
+            graph.iter().map(live_workflow_roles).max(),
+            Some(usize::try_from(maximum).expect("small bound"))
+        );
+        let actors: std::collections::BTreeSet<_> = graph
+            .iter()
+            .flat_map(|state| &state.steps)
+            .filter(|(step, _)| step.kind() == StepKind::Attempt)
+            .map(|(step, _)| {
+                let actor = step.actor().expect("a replicated attempt has an actor");
+                assert_eq!(actor.role, "Worker");
+                actor.object.clone()
+            })
+            .collect();
+        assert_eq!(actors.len(), 2, "either cell can execute Work");
+        channel_send_parity(&ws, &path, "refuted");
+    }
+}
+
+/// An empty selected universe cannot manufacture an actor, and malformed caller
+/// role bindings retain the source route's typed refusal before exploration.
+#[trace("TC-2958", "FR-940-AC-6", "FR-208-AC-5", "FR-531", "FR-850")]
+#[test]
+fn package_workflow_roles_empty_universe_and_binding_refusal() {
+    let ws = Workspace::new("package-workflow-role-empty");
+    let controls = channel_send("Released", "order", "order.n = k.v")
+        + "receive Heard via Release of Released as (heard: M::Attempt) { true };";
+    let path = workflow_roles_request(&ws, 2, "workflow", true, &controls, "closing");
+    let graph = workflow_role_graph(&ws, &path);
+    assert!(graph.iter().all(|state| live_workflow_roles(state) == 0));
+    assert!(graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .all(|(step, _)| step.actor().is_none()));
+    channel_send_parity(&ws, &path, "refuted");
+
+    let ws = Workspace::new("package-workflow-role-invalid-binding");
+    let path = workflow_roles_request(&ws, 2, "workflow", false, "", "closing");
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    let roles = request["request"]["items"][0]["temporal"]["subject"]["protocol"]["roles"]
+        .as_object_mut()
+        .expect("bindings");
+    let binding = roles.remove("Planning").expect("static role binding");
+    roles.insert("Unexpected".to_owned(), binding);
+    ws.write("analyze.json", request.to_string().as_bytes());
+    let item = repeat_parity(&ws, &path);
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "wrong-role-mapping",
+        "{item}"
+    );
+    assert!(item.get("exploration").is_none(), "{item}");
+}
+
+/// Other declared lifetimes remain an explicit package capability boundary.
+#[trace("TC-2958", "FR-940-AC-6", "FR-531", "FR-208")]
+#[test]
+fn package_workflow_roles_other_lifetimes_remain_named_refusals() {
+    for lifetime in ["scope", "until(true)"] {
+        let ws = Workspace::new(&format!("package-workflow-role-lifetime-{lifetime}"));
+        let controls =
+            repeat_attempt("Work", "worked", "true").replace("by Machining", "by Worker");
+        let path = workflow_roles_request(&ws, 2, lifetime, false, &controls, "closing");
+        let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "{}",
+            source.document()
+        );
+        assert!(
+            matches!(label(&source.item(0)), "proved" | "refuted"),
+            "{}",
+            source.document()
+        );
+        let (path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl")).expect("remove source");
+        let package = analyze(&path);
+        let item = package.item(0);
+        let diagnostic = &item["record"]["diagnostic"];
+        assert_eq!(diagnostic["code"], "unsupported_construct", "{item}");
+        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{item}");
+        assert_eq!(
+            diagnostic["detail"]["fact"], "replicated-role-lifetime",
+            "{item}"
+        );
+        assert_eq!(
+            diagnostic["detail"]["lifetime"],
+            lifetime.split('(').next().expect("lifetime name"),
+            "{item}"
+        );
+        assert!(item.get("exploration").is_none(), "{item}");
+    }
+}
+
 fn repeat_request(ws: &Workspace, controls: &str, finish: &str) -> std::path::PathBuf {
     channel_request(
         ws,

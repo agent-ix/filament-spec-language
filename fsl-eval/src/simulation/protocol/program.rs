@@ -1348,7 +1348,28 @@ impl<'a> Program<'a> {
             spans: BTreeMap::new(),
             reader_positions: Vec::new(),
             loop_of: BTreeMap::new(),
-            replicated: Vec::new(),
+            replicated: package
+                .roles
+                .iter()
+                .filter(|role| role.replicated)
+                .map(|role| {
+                    let owns = package
+                        .controls
+                        .values()
+                        .filter(|control| control.role.as_ref() == Some(&role.node))
+                        .map(|control| control.id)
+                        .collect();
+                    Ok(Replicated {
+                        name: role.name.clone(),
+                        object: role.model_identity.clone(),
+                        max: role.maximum.ok_or_else(|| {
+                            ProtocolRefusal::fault("a-package-replicated-role-has-a-maximum")
+                        })?,
+                        lifetime: Lifetime::Workflow,
+                        owns,
+                    })
+                })
+                .collect::<Result<Vec<_>, ProtocolRefusal>>()?,
             acting: BTreeMap::new(),
             activation: None,
             activation_slot: None,
@@ -1356,6 +1377,11 @@ impl<'a> Program<'a> {
             captures,
             capture_slots,
         };
+        for (index, role) in program.replicated.iter().enumerate() {
+            for node in &role.owns {
+                program.acting.insert(*node, index);
+            }
+        }
         program.spans = program.spans()?;
         program.loop_of = program.enclosing_loops()?;
         program.reader_positions = program

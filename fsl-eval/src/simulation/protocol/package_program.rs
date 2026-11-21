@@ -49,9 +49,9 @@ pub struct PackageControl {
     pub operation_path: Option<Vec<String>>,
     /// The admitted operation declaration's name.
     pub operation_name: Option<String>,
-    /// The attempt's role node identity.
+    /// The acting role node identity, including channel endpoint ownership.
     pub role: Option<fsl_package::CheckedNodeId>,
-    /// The FR-531 identity of the attempt's role node.
+    /// The FR-531 identity of the acting role node.
     pub role_key: Option<NodeKey>,
     /// The step's result or message-payload binder node identity.
     pub binder: Option<fsl_package::CheckedNodeId>,
@@ -335,6 +335,16 @@ pub enum PackageProgramRefusal {
     RepeatProof {
         /// The admitted repeat whose proof is nonempty.
         node: fsl_package::CheckedNodeId,
+    },
+    /// A replicated role's lifetime needs a package evaluator or scope form.
+    #[error(
+        "unsupported_construct/not-yet-implemented: package role lifetime {lifetime} at {node:?}"
+    )]
+    RoleLifetime {
+        /// The admitted role node.
+        node: fsl_package::CheckedNodeId,
+        /// The admitted lifetime, `scope` or `until`.
+        lifetime: String,
     },
     /// A node referenced by the control tree has no package execution entry.
     #[error("the package control tree references an absent control")]
@@ -891,6 +901,29 @@ impl<'a> PackageProtocolProgram<'a> {
                         .ok_or_else(|| PackageProgramRefusal::MissingIdentity(contract.clone()))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let role = match &control.body {
+                ControlBody::Send { channel, .. } | ControlBody::Receive { channel, .. } => {
+                    let channel = form
+                        .channels
+                        .iter()
+                        .find(|node| &node.node_id == *channel)
+                        .ok_or_else(|| {
+                            PackageProgramRefusal::MissingIdentity((*channel).clone())
+                        })?;
+                    let ends = protocol_view::channel_endpoints(channel).map_err(|_| {
+                        PackageProgramRefusal::MissingIdentity(channel.node_id.clone())
+                    })?;
+                    Some(
+                        if control.operation == ControlOperation::Send {
+                            ends.sender
+                        } else {
+                            ends.receiver
+                        }
+                        .clone(),
+                    )
+                }
+                _ => role,
+            };
             let role_key = role
                 .as_ref()
                 .map(|role| {
@@ -964,6 +997,48 @@ impl<'a> PackageProtocolProgram<'a> {
                     .evaluator
                     .package_protocol_role_model(role.model)
                     .ok_or_else(|| PackageProgramRefusal::MissingIdentity(role.model.clone()))?;
+                if role.replicated {
+                    let absent =
+                        || PackageProgramRefusal::MissingIdentity(role.node.node_id.clone());
+                    let replication = member(&role.node.body, "replication").ok_or_else(absent)?;
+                    let text = |name| {
+                        member(replication, name)
+                            .and_then(|term| term.literal_read())
+                            .and_then(|literal| match literal.value {
+                                fsl_package::CheckedLiteralValue::Text(text) => Some(text),
+                                _ => None,
+                            })
+                    };
+                    match text("lifetime") {
+                        Some("workflow") => {}
+                        Some(lifetime @ ("scope" | "until")) => {
+                            return Err(PackageProgramRefusal::RoleLifetime {
+                                node: role.node.node_id.clone(),
+                                lifetime: lifetime.to_owned(),
+                            })
+                        }
+                        _ => return Err(absent()),
+                    }
+                    if text("population").is_none_or(str::is_empty) || role.maximum.is_none() {
+                        return Err(absent());
+                    }
+                    let Some(fsl_package::CheckedTerm::Reference { target: binder }) =
+                        member(replication, "binder")
+                    else {
+                        return Err(absent());
+                    };
+                    let binder_type = input
+                        .evaluator
+                        .package_protocol_parameter_type(binder)
+                        .map_err(|failure| PackageProgramRefusal::ParameterType {
+                            package: admitted.name().to_owned(),
+                            node: binder.clone(),
+                            failure: Box::new(failure),
+                        })?;
+                    if binder_type != filament_exact::ValueType::Reference(model_identity.clone()) {
+                        return Err(absent());
+                    }
+                }
                 Ok(PackageRole {
                     name: role.path.last().cloned().unwrap_or_default(),
                     node: role.node.node_id.clone(),

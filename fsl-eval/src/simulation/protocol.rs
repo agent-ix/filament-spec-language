@@ -133,6 +133,8 @@ pub enum Unsupported {
     /// A package protocol declares a replicated role this program does not
     /// step yet.
     PackageReplicatedRole,
+    /// A replicated role has a scope or predicate lifetime without a package form.
+    PackageRoleLifetime,
 }
 
 impl Unsupported {
@@ -145,6 +147,7 @@ impl Unsupported {
             Self::PackageCorrelation => "package protocol correlation",
             Self::PackageRepeatProof => "package repeat proof",
             Self::PackageReplicatedRole => "package replicated role",
+            Self::PackageRoleLifetime => "package replicated role lifetime",
         }
     }
 }
@@ -1627,6 +1630,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 PackageProgramRefusal::RepeatProof { .. } => {
                     ProtocolRefusal::Unsupported(Unsupported::PackageRepeatProof)
                 }
+                PackageProgramRefusal::RoleLifetime { .. } => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageRoleLifetime)
+                }
                 PackageProgramRefusal::ParameterType {
                     package,
                     node,
@@ -1642,11 +1648,6 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             return Err(ProtocolRefusal::Capacity(CapacityRefusal::UnknownName {
                 name: binding.name.clone(),
             }));
-        }
-        if package.roles.iter().any(|role| role.replicated) {
-            return Err(ProtocolRefusal::Unsupported(
-                Unsupported::PackageReplicatedRole,
-            ));
         }
         let mut roles = Vec::new();
         for role in package.roles.iter().filter(|role| !role.replicated) {
@@ -1667,12 +1668,11 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             }
             roles.push((role.name.clone(), binding.model.clone()));
         }
-        if let Some(unknown) = subject.roles.iter().find(|binding| {
-            !package
-                .roles
-                .iter()
-                .any(|role| !role.replicated && role.name == binding.role)
-        }) {
+        if let Some(unknown) = subject
+            .roles
+            .iter()
+            .find(|binding| !package.roles.iter().any(|role| role.name == binding.role))
+        {
             return Err(ProtocolRefusal::RoleMapping {
                 role: unknown.role.clone(),
             });
