@@ -2,7 +2,7 @@
 //! FR-280's in-process provider boundary over the same admitted analyze request.
 
 use crate::analyze::{
-    analyze_bound,AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
+    analyze_bound, AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
     SourceProvision, SubjectBinding,
 };
 use filament_exact::Cancel;
