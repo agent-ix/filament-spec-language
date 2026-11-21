@@ -54,6 +54,7 @@ pub struct Action {
     pub draws: Vec<Draw>,                       // canonical order of random vectors
 }
 pub struct Draw {
+    pub transition: ModelTransition,            // complete operation identity, including all arguments in declared order, retained even with no successor
     pub random: Vec<Value>,                     // one per random parameter, declared order
     pub probability: Rational,                  // product of the PM-1 probabilities
     pub successors: Vec<(ModelTransition, ModelSimState)>, // FR-120 post-states, canonical order
