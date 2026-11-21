@@ -171,15 +171,8 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
         );
         assert!(target.owner().term(target.node()).is_some());
         let named = target
-            .owner()
-            .temporal_clause_names()
-            .expect("owner names")
-            .iter()
-            .find(|row| {
-                target.owner().structural_key(&row.declaration)
-                    == target.owner().structural_key(target.node())
-            })
-            .expect("the exact owning declaration");
+            .clause_name()
+            .expect("the exact unique owning declaration");
         canonical_guarantees.push(format!("{}::{}", component, named.name));
         authored_guarantees.push((region.start(), format!("{}::{}", component, named.name)));
         let forged = clause.clone();
@@ -422,4 +415,197 @@ fn composition_view_projection_preserves_the_cumulative_native_budget() {
             "a denied phase performs no later charge or copy"
         );
     }
+}
+
+/// A composition NodeRef must not choose the first naming occurrence when
+/// two real dependency declarations share its semantic clause node.
+#[trace("FR-530-AC-1", "FR-940-AC-1", "FSpec-FR-491-AC-6")]
+#[test]
+fn composition_view_refuses_an_ambiguous_owning_clause_occurrence() {
+    let producer = dependency("test/producer", "temporal First using t over (p: M::Producer) clock \"model-steps\" on origin { always holds(p.sent_count >= 0) }\n temporal Second using t over (p: M::Producer) clock \"model-steps\" on origin { always holds(p.sent_count >= 0) }\n");
+    let consumer = dependency("test/consumer", CONSUMER);
+    let source = unit(&format!("compose Sys rule interface {{ {COMPONENTS} guarantee Producer::Second; guarantee Consumer::Done; }}"));
+    let package = compile_with(&source, &[&producer, &consumer]).expect("the actual source checks");
+    let emission = emit_checked(&package).expect("the actual source emits");
+    let document = serde_json::to_vec(&fixture::document()).expect("model document");
+    let models =
+        fsl_semantics::model::intake::package_input([document.as_slice()]).expect("model input");
+    let read = crate::checked_v2::read_evaluation_emission(
+        &package,
+        &emission,
+        library(),
+        &models,
+        crate::V2ReadLimits::fixture(),
+        crate::EmitLimits::fixture(),
+        crate::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the genuine composition with its dependency packages is admitted");
+    let found = read.claim_name("Sys").expect("admitted Sys name");
+    let view = read
+        .composition(&found.declaration)
+        .expect("composition view");
+    let member = view.members().map(|member| member.expect("actual attribution"))
+        .find(|member| matches!(member.value(), CompositionMemberValue::Guarantee(clause) if clause.component.as_ref() == "Producer"))
+        .expect("the Producer guarantee");
+    let CompositionMemberValue::Guarantee(clause) = member.value() else {
+        panic!("guarantee");
+    };
+    let mut budget = filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000);
+    for refusal in [
+        view.clause(clause),
+        view.clause_with_budget(clause, &mut budget),
+    ] {
+        let Err(CompositionViewRefusal::AmbiguousClause {
+            component,
+            clause: target,
+        }) = refusal
+        else {
+            panic!("the target requires a claim occurrence instead of first-row selection");
+        };
+        assert_eq!(component, "Producer");
+        let owner = read
+            .admitted()
+            .direct_dependencies()
+            .find(|owner| owner.name() == "test/producer")
+            .expect("authentic owner");
+        let key = owner
+            .structural_key(&target)
+            .expect("authentic owner-held target");
+        let mut names: Vec<_> = owner
+            .temporal_clause_names()
+            .expect("own naming rows")
+            .iter()
+            .filter(|row| owner.structural_key(&row.declaration) == Some(key))
+            .map(|row| (row.occurrence, row.name.as_ref()))
+            .collect();
+        names.sort();
+        assert_eq!(names, [(0, "First"), (1, "Second")]);
+    }
+}
+
+/// Model-operation fairness survives real source emission/read-back with
+/// exact effective identities, first occurrence order and finite ledgers.
+#[trace("FR-940-AC-1", "FR-530-AC-1", "FSpec-FR-491-AC-6")]
+#[test]
+fn fair_clause_readback_preserves_constraints_and_key_fairness() {
+    use crate::{BareFairnessRefusal, BareSupply, NativeRowErrorCode};
+    use filament_contract_model::NativeJoinBudget;
+    let dependency = dependency("test/producer", "temporal Fair using t over (p: M::Producer) clock \"model-steps\" on origin { fair strong whole M::Producer::send; fair weak each M::Producer::send; fair strong each M::Producer::send; fair weak whole M::Producer::send; fair strong whole M::Producer::send; always eventually holds(p.sent) }\n");
+    let emission = emit_checked(&dependency.package).expect("the actual source emits");
+    let document = serde_json::to_vec(&fixture::document()).expect("model document");
+    let models =
+        fsl_semantics::model::intake::package_input([document.as_slice()]).expect("model input");
+    let read = crate::checked_v2::read_evaluation_emission(
+        &dependency.package,
+        &emission,
+        dependency.identity.clone(),
+        &models,
+        crate::V2ReadLimits::fixture(),
+        crate::EmitLimits::fixture(),
+        crate::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the actual fair clause is strictly admitted");
+    let mut budget = NativeJoinBudget::new(1_000_000, 1_000_000);
+    let rows = emission
+        .identity_rows(read.admitted(), &mut budget)
+        .expect("authentic identity rows");
+    let bare = BarePackage::new(read.admitted())
+        .with_supply(
+            BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut budget,
+        )
+        .expect("the original caller budget joins the owning identity rows");
+    let named = read
+        .claim_name("Fair")
+        .expect("the actual fair clause name");
+    let source = dependency
+        .package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|clause| clause.clause().name() == "Fair")
+        .expect("source clause");
+    let claim = fsl_foundation::source::provenance::OccurrenceKey::new(
+        source.identity(),
+        filament_exact::Origin::new(filament_exact::Role::new("claim"), named.occurrence.ordinal),
+    );
+    let before = budget.consumed();
+    let fairness = bare
+        .temporal_clause_fairness_with_budget(&named.declaration, &mut budget)
+        .expect("the admitted operation fairness projects");
+    assert!(budget.consumed().work > before.work);
+    assert!(budget.consumed().storage > before.storage);
+    assert_eq!(fairness, source.clause().fairness());
+    assert_eq!(
+        fairness
+            .iter()
+            .map(|constraint| (constraint.kind(), constraint.granularity()))
+            .collect::<Vec<_>>(),
+        [
+            (FairnessKind::Strong, FairnessGranularity::Whole),
+            (FairnessKind::Weak, FairnessGranularity::Each),
+            (FairnessKind::Strong, FairnessGranularity::Each),
+            (FairnessKind::Weak, FairnessGranularity::Whole),
+        ],
+        "first authored occurrence is retained; duplicate constraints are not reintroduced"
+    );
+    let canonical = |constraints: &[filament_semantic_value::fairness::FairnessConstraint]| {
+        constraints
+            .iter()
+            .map(|constraint| {
+                quire_canonical::to_vec(constraint, quire_canonical::Limits::new(1_000_000))
+                    .expect("canonical fairness key member")
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(canonical(&fairness), canonical(source.clause().fairness()));
+    let form = bare
+        .temporal_clause_form(&claim)
+        .expect("a fair clause is no longer a Pending fairness form");
+    assert_eq!(form.fairness, fairness);
+    let world = bare.world().expect("owning world");
+    let rebuilt = fsl_semantics::check::CheckedTemporalClause::of_package_form(
+        form,
+        world.types(),
+        1_000_000,
+    )
+    .expect("the checked package clause retains its actual fairness");
+    assert_eq!(rebuilt.fairness(), source.clause().fairness());
+    assert_eq!(rebuilt.property_form(), source.clause().property_form());
+    assert_eq!(
+        rebuilt
+            .claim()
+            .requirements_over(fsl_semantics::family::ClaimExtent::Unbounded),
+        source
+            .clause()
+            .claim()
+            .requirements_over(fsl_semantics::family::ClaimExtent::Unbounded)
+    );
+    let paid = budget.consumed();
+    for (work, storage, code) in [
+        (0, 1_000_000, NativeRowErrorCode::WorkLimit),
+        (1_000_000, 0, NativeRowErrorCode::StorageLimit),
+    ] {
+        let mut denied = NativeJoinBudget::new(work, storage);
+        let Err(BareFairnessRefusal::Native(refusal)) =
+            bare.temporal_clause_fairness_with_budget(&named.declaration, &mut denied)
+        else {
+            panic!("the fairness read refuses unpaid work/storage before copying");
+        };
+        assert_eq!(refusal.code(), code);
+        assert_eq!(refusal.denied(), denied.first_unpaid());
+        let consumed = denied.consumed();
+        assert!(
+            matches!(bare.temporal_clause_fairness_with_budget(&named.declaration, &mut denied), Err(BareFairnessRefusal::Native(error)) if error == refusal)
+        );
+        assert_eq!(denied.consumed(), consumed);
+    }
+    assert_eq!(
+        budget.consumed(),
+        paid,
+        "negative controls never replace the invocation's paid ledger"
+    );
 }
