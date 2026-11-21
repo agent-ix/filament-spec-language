@@ -19,27 +19,27 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
 };
 use fsl_eval::temporal::{
-    DecisiveStop, HoldsStop, PackagePositions, TemporalOutcome, TemporalRefusal,
-    evaluate_package_positions_decisive,
+    evaluate_package_positions_decisive, DecisiveStop, HoldsStop, PackagePositions,
+    TemporalOutcome, TemporalRefusal,
 };
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNode};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
-    AdmissionUsage, DocumentProvision, ModelSelections, ObservationLimits, admit_trace_snapshot,
+    admit_trace_snapshot, AdmissionUsage, DocumentProvision, ModelSelections, ObservationLimits,
 };
 
 use super::super::model_trace::{behaviour_payload, expansion_stop, replay_refusal, universes};
 use super::super::trace_refusal::{PackageClauseSite, TraceSite};
 use super::super::{
-    ClauseDisposition, ClauseRunReport, ClauseRunUsage, ConsequentEventRefusal,
-    ConsequentSourceEvents, TemporalVerdict, convert_call_failure,
+    convert_call_failure, ClauseDisposition, ClauseRunReport, ClauseRunUsage,
+    ConsequentEventRefusal, ConsequentSourceEvents, TemporalVerdict,
 };
 use super::{
-    OverObject, TraceInput, refusal_disposition, refused, resolve_over_in,
-    trace_refusal as temporal_refusal, verdict, with_counterexample,
+    refusal_disposition, refused, resolve_over_in, trace_refusal as temporal_refusal, verdict,
+    with_counterexample, OverObject, TraceInput,
 };
-use crate::model_check::replay::{ModelTraceEnd, ModelTraceRun, evaluate_model_trace};
+use crate::model_check::replay::{evaluate_model_trace, ModelTraceEnd, ModelTraceRun};
 use crate::proof_result::SettlementBasis;
 
 /// A run the package route reads no verdict for, and why.
@@ -223,7 +223,7 @@ pub fn run_package_snapshots(
     }
     if matches!(
         trace,
-        TraceInput::Progressed { .. } | TraceInput::Timestamped { .. } | TraceInput::Timed { .. }
+        TraceInput::Progressed { .. } | TraceInput::Timestamped { .. }
     ) {
         return Err(PackageSelectionNotRead {
             member: "clause.selection.trace",
@@ -240,6 +240,10 @@ pub fn run_package_snapshots(
             site.ledger_without_progress(),
         )));
     }
+    let authenticated = match super::authenticate_bare_timed(package.package(), name, trace) {
+        Ok(selection) => selection,
+        Err(disposition) => return early(*disposition),
+    };
     let (_, over_type) = clause.over();
     let ValueType::Reference(type_identity) = over_type else {
         return early(refused(
@@ -318,22 +322,60 @@ pub fn run_package_snapshots(
         }
     };
     let mut meter = Meter::new(accounting);
-    let observed = evaluate_package_positions_decisive(
-        input.evaluator,
-        clause,
-        key,
-        PackagePositions::Objects {
-            environments: &environments,
-            over: &resolved,
-        },
-        shape,
-        &mut meter,
-    );
+    let positions = PackagePositions::Objects {
+        environments: &environments,
+        over: &resolved,
+    };
+    let observed = if let TraceInput::Timed {
+        prefix,
+        repeat,
+        period,
+        through,
+        ..
+    } = trace
+    {
+        fsl_eval::temporal::evaluate_package_timed(
+            input.evaluator,
+            clause,
+            key,
+            positions,
+            (
+                prefix
+                    .iter()
+                    .chain(repeat)
+                    .map(|p| p.stamp.clone())
+                    .collect(),
+                period.as_ref().map(|period| {
+                    (
+                        u64::try_from(prefix.len()).unwrap_or(u64::MAX),
+                        period.clone(),
+                    )
+                }),
+                through.clone(),
+            ),
+            &mut meter,
+        )
+    } else {
+        evaluate_package_positions_decisive(
+            input.evaluator,
+            clause,
+            key,
+            positions,
+            shape,
+            &mut meter,
+        )
+    };
+    let inactive = observed.inactive;
     // FR-330 Outputs: a violation carries the decisive record of the atom the
     // search found; the package reads a search that found none, and a search
     // that stopped, as the source route does.
     let decisive = observed.decisive;
     let (disposition, refused_at) = package_disposition(observed.stopped, observed.result);
+    let disposition = if inactive {
+        ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+    } else {
+        disposition
+    };
     let violated = matches!(
         disposition,
         ClauseDisposition::Temporal(TemporalVerdict::Violated { .. })
@@ -368,12 +410,9 @@ pub fn run_package_snapshots(
             ));
         }
     };
-    Ok(finished(
-        disposition,
-        (&meter, admitted),
-        counterexample,
-        refused_at,
-    ))
+    let mut finished = finished(disposition, (&meter, admitted), counterexample, refused_at);
+    finished.authenticated_temporal_selection = authenticated;
+    Ok(finished)
 }
 
 fn finished(

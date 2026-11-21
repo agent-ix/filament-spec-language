@@ -1099,7 +1099,10 @@ fn model_based_test_request_rules() {
         "{first}"
     );
     assert_eq!(first["model_based_test"]["status"], "tested", "{first}");
-    assert_eq!(first["model_based_test"]["cases"]["generated"], 20, "{first}");
+    assert_eq!(
+        first["model_based_test"]["cases"]["generated"], 20,
+        "{first}"
+    );
     assert!(
         partitions.iter().all(|partition| {
             partition["value"]["value"]
@@ -1129,12 +1132,42 @@ fn model_based_test_request_rules() {
         );
     }
     for (member, value, code, cause) in [
-        ("max_cases", json!(0), "invalid_runtime_input", "invalid-value"),
-        ("max_cases", json!(-1), "invalid_runtime_input", "invalid-value"),
-        ("max_value_bits", json!(256), "invalid_runtime_input", "invalid-value"),
-        ("max_value_bits", json!(-1), "invalid_runtime_input", "invalid-value"),
-        ("max_trace_length", json!(0), "invalid_runtime_input", "invalid-value"),
-        ("clause", json!("Nothing"), "invalid_runtime_input", "unknown-member"),
+        (
+            "max_cases",
+            json!(0),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "max_cases",
+            json!(-1),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "max_value_bits",
+            json!(256),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "max_value_bits",
+            json!(-1),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "max_trace_length",
+            json!(0),
+            "invalid_runtime_input",
+            "invalid-value",
+        ),
+        (
+            "clause",
+            json!("Nothing"),
+            "invalid_runtime_input",
+            "unknown-member",
+        ),
     ] {
         let mut request = bounded.clone();
         request[member] = value;
@@ -1160,7 +1193,10 @@ fn model_based_test_request_rules() {
         ),
     );
     assert_eq!(bounded_code, 20, "{bounded_value}");
-    assert_eq!(bounded_value["code"], "invalid_runtime_input", "{bounded_value}");
+    assert_eq!(
+        bounded_value["code"], "invalid_runtime_input",
+        "{bounded_value}"
+    );
     assert_eq!(bounded_value["cause"], "unknown-member", "{bounded_value}");
 
     let (code, conflict) = run_with_members(
@@ -1175,13 +1211,11 @@ fn model_based_test_request_rules() {
     assert_eq!(conflict["code"], "invalid-request", "{conflict}");
     assert_eq!(conflict["stage"], "request", "{conflict}");
     assert!(
-        conflict["message"]
-            .as_str()
-            .is_some_and(|message| {
-                message.contains("model_based_test")
-                    && message.contains("tl_lowering")
-                    && message.contains("mutually exclusive")
-            }),
+        conflict["message"].as_str().is_some_and(|message| {
+            message.contains("model_based_test")
+                && message.contains("tl_lowering")
+                && message.contains("mutually exclusive")
+        }),
         "{conflict}"
     );
 }
@@ -2990,4 +3024,116 @@ fn a_model_alias_type_argument_carries_the_model_key_and_a_model_scalar_none() {
         &Some(json!({"package": "example/config-version", "node": model_key})),
         "a model alias gets the model key"
     );
+}
+
+/// Run supplied clauses through both selectors after removing the source file.
+fn package_clause_selection_parity(unit: &str, traces: &[(Value, u8)]) {
+    let directory = bump_directory(unit, &["a"], true);
+    let mut second = snapshot_of(directory.path(), &["a"], true);
+    second["identity"]["identity"] = json!("selection-second");
+    second["populations"][0]["objects"][0]["fields"]["versionNumber"] = json!({"integer": "1"});
+    std::fs::write(
+        directory.path().join("second.json"),
+        serde_json::to_vec(&second).unwrap(),
+    )
+    .unwrap();
+    let first = snapshot_of(directory.path(), &["a"], true);
+    let population = first["populations"][0]["population"].clone();
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    let clauses: Vec<_> = traces
+        .iter()
+        .map(|(trace, expected)| {
+            let clause = json!({"selection": {"temporal": {"name": "Low", "trace": trace,
+            "over": {"reference": {"population": population, "key": "a"}}}},
+            "observations": {"s0": "s.json", "s1": "second.json"}});
+            let result = write_request(
+                directory.path(),
+                &json!({"format": "native-run/1", "request": {
+            "models": models, "program": {"source": source("unit.native")}, "clause": clause}}),
+            );
+            assert_eq!(result.0, *expected, "source {trace}: {}", result.1);
+            (clause, result)
+        })
+        .collect();
+    let models = compile_handoff(directory.path(), unit);
+    for (clause, expected) in clauses {
+        let actual = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {
+            "models": models, "package": {"directory": "handoff"}, "clause": clause}}),
+        );
+        assert_eq!(actual, expected, "{clause}");
+    }
+}
+
+/// FR-1039 Outputs: finite observations and distinct lasso slots have the
+/// source outcome, including undefined conditions, with no source file available.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn package_clause_selections_snapshot_results_match_source() {
+    for (body, expected) in [
+        ("holds(c.versionNumber <= 2)", 0),
+        ("holds(deref(value(c.parent)).versionNumber = 0)", 10),
+    ] {
+        let unit = bump_low().replace(LOW_BODY, body);
+        package_clause_selection_parity(&unit, &[(json!({"finite": ["s0", "s1"]}), expected)]);
+        let unit = unit.replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1");
+        package_clause_selection_parity(
+            &unit,
+            &[(
+                json!({"lasso": {"prefix": ["s0"], "loop": ["s1"]}}),
+                expected,
+            )],
+        );
+    }
+}
+
+/// FR-1039 Outputs: model behaviours are re-executed over the package world;
+/// a terminal state's true and undefined conditions retain the source outcomes.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn package_clause_selections_model_results_match_source() {
+    for (body, expected) in [
+        ("holds(c.versionNumber <= 2)", 0),
+        ("holds(deref(value(c.parent)).versionNumber = 0)", 10),
+    ] {
+        let unit = bump_low()
+            .replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1")
+            .replace(
+                "pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1",
+                "false",
+            )
+            .replace(LOW_BODY, body);
+        let trace = json!({"model": {"initial": "s0", "universes": ["s0"], "prefix": [],
+            "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}});
+        package_clause_selection_parity(&unit, &[(trace, expected)]);
+    }
+}
+
+/// FR-1039 Outputs: timed snapshots use exact intervals, finite completeness
+/// and the lasso period, authenticating the same selected clock occurrence.
+#[test]
+#[trace("TC-3019", "FR-1039")]
+fn package_clause_selections_timed_results_match_source() {
+    for (body, expected) in [
+        ("holds(c.versionNumber <= 2)", 0),
+        ("holds(deref(value(c.parent)).versionNumber = 0)", 10),
+    ] {
+        let unit = timed_low().replace("holds(c.versionNumber <= 2)", body);
+        let prefix = json!([{"position": "s0", "stamp": "0"}]);
+        package_clause_selection_parity(
+            &unit,
+            &[
+                (
+                    json!({"timed": {"prefix": prefix, "through": "3"}}),
+                    expected,
+                ),
+                (
+                    json!({"timed": {"prefix": prefix, "loop": [{"position": "s1", "stamp": "2"}], "period": "3"}}),
+                    expected,
+                ),
+            ],
+        );
+    }
 }

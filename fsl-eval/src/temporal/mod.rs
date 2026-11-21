@@ -58,32 +58,32 @@ mod tuple;
 mod window;
 
 pub use covered::CoveredList;
-pub use engine::{DecisiveAtom, DecisiveSearch, DecisiveStop, Unrolling, unrolling};
+pub use engine::{unrolling, DecisiveAtom, DecisiveSearch, DecisiveStop, Unrolling};
 pub use finite_window::{
+    correction_identity, evaluate_finite_window, evaluate_finite_window_at, window_reach,
     Assessment, Basis, ClockCover, Containment, IndeterminateReason, LateCutoff, LateObservation,
     Lateness, LowerBoundary, OrderKey, Premises, ProgressedRefusal, ResultIdentity, SampleProgress,
     StampInterval, SupportPair, TimestampedObservation, TimestampedTrace, Valuation, Watermark,
     WindowCharge, WindowClock, WindowEvaluation, WindowProgress, WindowState, WindowUnit,
-    WindowVerdict, correction_identity, evaluate_finite_window, evaluate_finite_window_at,
-    window_reach,
+    WindowVerdict,
 };
 pub use input::TemporalTrace;
 pub use ledger::{
-    COVERED_POSITIONS_SETTING, ContradictedDimension, CoveredPositionsLimitReached,
-    DEFAULT_COVERED_POSITIONS, LedgerBinding, LedgerEntry, LedgerRefusal, ObservedPosition,
-    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
-    ProgressLedger, ProgressValue,
+    ContradictedDimension, CoveredPositionsLimitReached, LedgerBinding, LedgerEntry, LedgerRefusal,
+    ObservedPosition, ProgressAssertion, ProgressClosure, ProgressCompleteness,
+    ProgressContradiction, ProgressLedger, ProgressValue, COVERED_POSITIONS_SETTING,
+    DEFAULT_COVERED_POSITIONS,
 };
 pub use letters::{AtomReading, CaptureReading, LetterStop, TemporalLetters, UndefinedCause};
 pub use observed::{
-    CarriedWindow, DescentSlice, FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions,
-    ObservedRun, ObservedValuation, ObservedWindowRun, SampleStop, ValuationStop, WindowValuations,
     descend_positions, evaluate_observed, evaluate_observed_at, evaluate_observed_decisive,
     evaluate_observed_finite_window, evaluate_observed_timed, evaluate_package_positions,
     evaluate_package_positions_decisive, evaluate_package_timed, evaluate_positions,
     evaluate_positions_finite_window, evaluate_sampled, evaluate_sampled_finite_window,
     letters_valuation, observed_valuation, package_observed_valuation, push_object, push_sample,
-    read_anchor_letter, read_object_stop, read_sample_stop,
+    read_anchor_letter, read_object_stop, read_sample_stop, CarriedWindow, DescentSlice,
+    FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun, ObservedValuation,
+    ObservedWindowRun, PackagePositions, SampleStop, ValuationStop, WindowValuations,
 };
 pub use observed_window::{ObservedWindowExpressions, ObservedWindowSource};
 pub use outcome::{
@@ -92,22 +92,22 @@ pub use outcome::{
 pub use position::{PositionRefusal, TemporalPosition};
 pub use stream::{ClauseStream, StreamStop};
 pub use tape::{
-    LetterTape, TapeEntry, TapeLetter, TapeReading, read_object_letter, read_sample_letter,
+    read_object_letter, read_sample_letter, LetterTape, TapeEntry, TapeLetter, TapeReading,
 };
 pub use tick_monitor::{
-    TickBound, TickMonitorReference, TickMonitorSpec, TickOutcome, TickResult, TickStep,
-    TickStepError, definitely_before, within_bound,
+    definitely_before, within_bound, TickBound, TickMonitorReference, TickMonitorSpec, TickOutcome,
+    TickResult, TickStep, TickStepError,
 };
-pub use tick_shape::{NodeShape, TickShape, operator_parts, temporal_leaves};
-pub use timed::{TimedTrace, evaluate_timed_at};
+pub use tick_shape::{operator_parts, temporal_leaves, NodeShape, TickShape};
+pub use timed::{evaluate_timed_at, TimedTrace};
 pub use tuple::{
-    ComponentPosition, ComponentTrace, TupleLetters, evaluate_closed_tuple,
-    evaluate_projected_prefix, evaluate_tuple,
+    evaluate_closed_tuple, evaluate_projected_prefix, evaluate_tuple, ComponentPosition,
+    ComponentTrace, TupleLetters,
 };
 pub use window::{
-    AggregateAtom, AggregateKind, AggregateSample, AggregateTerm, DEFAULT_MAX_WINDOW_VALUES,
-    InsufficientData, MAX_WINDOW_VALUES_SETTING, PastWindow, SampledWindow, TermRefusal,
-    WindowLimitReached, WindowRead, WindowRefusal, WindowSource, WindowTrace,
+    AggregateAtom, AggregateKind, AggregateSample, AggregateTerm, InsufficientData, PastWindow,
+    SampledWindow, TermRefusal, WindowLimitReached, WindowRead, WindowRefusal, WindowSource,
+    WindowTrace, DEFAULT_MAX_WINDOW_VALUES, MAX_WINDOW_VALUES_SETTING,
 };
 
 use filament_exact::Meter;

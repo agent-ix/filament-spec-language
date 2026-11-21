@@ -2753,6 +2753,20 @@ impl CheckedTemporalClause {
         if form.profile == TemporalProfile::Timed {
             return Err(PackageClauseRefusal::Profile(form.profile));
         }
+        Self::of_package_run_form(form, types, position_limit)
+    }
+
+    /// Rebuild a clause for reference evaluation over supplied traces.
+    /// Timed intervals are admitted here; lowering keeps its untimed restriction.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same malformed-arena and domain refusals as [`Self::of_package_form`].
+    pub fn of_package_run_form(
+        form: PackageClauseForm,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        position_limit: u64,
+    ) -> Result<Self, PackageClauseRefusal> {
         let bounded = form.profile.is_bounded();
         let mut nodes = Vec::with_capacity(form.formula.len());
         let mut operators = Vec::new();

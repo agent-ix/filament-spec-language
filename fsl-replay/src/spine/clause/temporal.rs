@@ -10,18 +10,18 @@ use std::collections::BTreeMap;
 use filament_exact::{Meter, Rational, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::temporal::{
-    DecisiveAtom, DecisiveSearch, DecisiveStop, FirstUndefined, HoldsStop, ObservedPositions,
-    PositionRefusal, ProgressedRefusal, TemporalOutcome, TemporalPosition, TemporalRefusal,
-    TemporalTrace, TimestampedTrace, UndefinedCause, UndefinedEvaluation, WindowRefusal,
-    evaluate_observed_decisive,
+    evaluate_observed_decisive, DecisiveAtom, DecisiveSearch, DecisiveStop, FirstUndefined,
+    HoldsStop, ObservedPositions, PositionRefusal, ProgressedRefusal, TemporalOutcome,
+    TemporalPosition, TemporalRefusal, TemporalTrace, TimestampedTrace, UndefinedCause,
+    UndefinedEvaluation, WindowRefusal,
 };
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::Source;
 use fsl_semantics::check::{CheckedGraph, FormulaNode, TemporalProfile};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    AdmissionFailure, AdmissionRecord, AdmissionUsage, DocumentProvision, DocumentRef, Provisions,
-    admit_trace_snapshot, population_universe_for,
+    admit_trace_snapshot, population_universe_for, AdmissionFailure, AdmissionRecord,
+    AdmissionUsage, DocumentProvision, DocumentRef, Provisions,
 };
 
 use super::progress::{
@@ -31,16 +31,16 @@ use super::progress::{
 };
 use super::trace_refusal::{ClauseSite, TraceSite};
 use super::{
-    ClauseDisposition, ClauseRunReport, ClauseRunUsage, CompiledRun, ConsequentEventRefusal,
-    ConsequentSourceEvents, RunRefusal, TemporalIndeterminateReason, TemporalPositionRefusal,
-    TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
-    convert_call_failure, convert_outcome,
+    convert_call_failure, convert_outcome, ClauseDisposition, ClauseRunReport, ClauseRunUsage,
+    CompiledRun, ConsequentEventRefusal, ConsequentSourceEvents, RunRefusal,
+    TemporalIndeterminateReason, TemporalPositionRefusal, TemporalTraceRefusal,
+    TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
 };
 use crate::proof_result::SettlementBasis;
 
 mod package_selection;
 pub use package_selection::{
-    PackageSelectionNotRead, PackageSnapshotRequest, run_package_snapshots,
+    run_package_snapshots, PackageSelectionNotRead, PackageSnapshotRequest,
 };
 
 /// FR-330 Inputs: the observations a temporal clause is run over, each a
@@ -1141,6 +1141,45 @@ pub(super) fn refused(
     })))
 }
 
+/// Authenticate a timed supplied trace against its selected package occurrence.
+fn authenticate_bare_timed(
+    package: &filament_contract_model::CheckedPackageV2,
+    name: &str,
+    trace: &TraceInput,
+) -> Result<Option<crate::spine::AuthenticatedTemporalSelection>, Box<ClauseDisposition>> {
+    let TraceInput::Timed { binding, .. } = trace else {
+        return Ok(None);
+    };
+    let row = package
+        .temporal_clause_names()
+        .unwrap_or_default()
+        .iter()
+        .find(|row| row.name == name)
+        .ok_or_else(|| {
+            Box::new(ClauseDisposition::MissingName {
+                name: name.to_owned(),
+            })
+        })?;
+    let subject = fsl_package::checked_views::temporal_subject(package, &row.declaration)
+        .map_err(|_| Box::new(refused("invalid-value", BTreeMap::new())))?;
+    let derived = subject
+        .occurrences()
+        .iter()
+        .find(|found| found.ordinal == row.occurrence)
+        .and_then(|found| subject.clock_of(found))
+        .map(|clock| TraceBinding {
+            profile: subject.profile().definition.identity.to_string(),
+            clock_name: clock.clock_name.to_string(),
+            parameters: clock.clock.clone(),
+        });
+    authenticate_binding(
+        binding.as_ref().or(derived.as_ref()),
+        &subject,
+        row.occurrence,
+    )
+    .map(Some)
+}
+
 /// FR-330 Inputs and FR-522: the profile `node`'s clause reads `trace`
 /// under, and the authentication of a clock-bearing trace's binding against
 /// the emitted rows. The authentication precedes every position of the trace
@@ -1495,19 +1534,73 @@ pub fn run_package_valuation(
 /// infinite-trace profile over a finite trace or a lasso. A refused condition
 /// reports the source route's refusal code and cause, with no source span.
 pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRunReport> {
+    run_sampled(request, None)
+}
+
+/// Run record samples with timed clock authentication from their admitted package.
+pub fn run_package_sampled_authenticated(
+    request: &PackageSampledRequest<'_>,
+    package: &filament_contract_model::CheckedPackageV2,
+) -> Box<ClauseRunReport> {
+    run_sampled(request, Some(package))
+}
+
+fn run_sampled(
+    request: &PackageSampledRequest<'_>,
+    package: Option<&filament_contract_model::CheckedPackageV2>,
+) -> Box<ClauseRunReport> {
+    let authenticated = match package
+        .map(|package| authenticate_bare_timed(package, request.name, request.trace))
+        .transpose()
+    {
+        Ok(value) => value.flatten(),
+        Err(disposition) => return disposition_report(*disposition, ClauseRunUsage::default()),
+    };
     let (clause, key, samples, shape) = match package_samples(request) {
         Ok(read) => read,
         Err(report) => return report,
     };
     let mut meter = Meter::new(request.accounting);
-    let observed = fsl_eval::temporal::evaluate_package_positions(
-        request.evaluator,
-        clause,
-        key,
-        &samples,
-        shape,
-        &mut meter,
-    );
+    let positions = fsl_eval::temporal::PackagePositions::Samples(&samples);
+    let observed = if let TraceInput::Timed {
+        prefix,
+        repeat,
+        period,
+        through,
+        ..
+    } = request.trace
+    {
+        fsl_eval::temporal::evaluate_package_timed(
+            request.evaluator,
+            clause,
+            key,
+            positions,
+            (
+                prefix
+                    .iter()
+                    .chain(repeat)
+                    .map(|p| p.stamp.clone())
+                    .collect(),
+                period.as_ref().map(|period| {
+                    (
+                        u64::try_from(prefix.len()).unwrap_or(u64::MAX),
+                        period.clone(),
+                    )
+                }),
+                through.clone(),
+            ),
+            &mut meter,
+        )
+    } else {
+        fsl_eval::temporal::evaluate_package_positions(
+            request.evaluator,
+            clause,
+            key,
+            &samples,
+            shape,
+            &mut meter,
+        )
+    };
     let inactive = observed.inactive;
     let (disposition, refused_at) = match (observed.stopped, observed.result) {
         // A refused condition is the caller's: the source route's code and
@@ -1538,6 +1631,7 @@ pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRun
     let mut finished = disposition_report(disposition, usage);
     finished.counterexample = counterexample;
     finished.refused_at = refused_at;
+    finished.authenticated_temporal_selection = authenticated;
     finished
 }
 

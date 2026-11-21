@@ -1040,16 +1040,42 @@ fn checked_interval(
 ) -> Option<fsl_semantics::check::CheckedInterval> {
     use fsl_foundation::bound::{TemporalInterval, TemporalUpper};
 
-    let crate::CheckedOperationInterval::Integer { lower, upper } = interval else {
-        return None;
-    };
-    let upper = match upper {
-        None => TemporalUpper::Open,
-        Some(upper) => TemporalUpper::Finite(upper.to_u64()?),
-    };
-    Some(fsl_semantics::check::CheckedInterval::Steps(
-        TemporalInterval::new(lower.to_u64()?, upper).ok()?,
-    ))
+    match interval {
+        crate::CheckedOperationInterval::Integer { lower, upper } => {
+            let upper = match upper {
+                None => TemporalUpper::Open,
+                Some(upper) => TemporalUpper::Finite(upper.to_u64()?),
+            };
+            Some(fsl_semantics::check::CheckedInterval::Steps(
+                TemporalInterval::new(lower.to_u64()?, upper).ok()?,
+            ))
+        }
+        crate::CheckedOperationInterval::Timed {
+            lower,
+            upper,
+            lower_end,
+            upper_end,
+        } => {
+            let rational = |value: &crate::CheckedOperationRational| {
+                filament_exact::NonZeroInteger::new(value.denominator.clone()).map(|denominator| {
+                    filament_exact::Rational::new(value.numerator.clone(), denominator)
+                })
+            };
+            let lower = rational(lower)?;
+            let lower_closed = *lower_end == crate::CheckedIntervalEnd::Closed;
+            let interval = match upper {
+                Some(upper) => fsl_foundation::bound::TimedInterval::new(
+                    lower,
+                    lower_closed,
+                    rational(upper)?,
+                    *upper_end == crate::CheckedIntervalEnd::Closed,
+                ),
+                None => fsl_foundation::bound::TimedInterval::unbounded(lower, lower_closed),
+            }
+            .ok()?;
+            Some(fsl_semantics::check::CheckedInterval::Timed(interval))
+        }
+    }
 }
 
 fn region_span(region: &filament_contract_model::CheckedSourceRegion) -> fsl_foundation::Span {

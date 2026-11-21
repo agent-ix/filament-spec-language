@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use super::{FileCounts, Result, RunCause, RunResult, output, wire};
+use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 
 /// The FR-517 files a `{directory}` selection reads.
 const PACKAGE_FILE: &str = "checked-package.json";
@@ -241,8 +241,8 @@ fn prepare_clause(
     dependent_bytes: usize,
 ) -> Result<PreparedPackageRun> {
     use fsl_replay::spine::{
-        ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation, TraceInput,
-        read_clause_selection,
+        read_clause_selection, ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation,
+        TraceInput,
     };
 
     if request.call.is_some() || request.tl_lowering.is_some() {
@@ -325,8 +325,8 @@ fn prepare_clause(
                 TraceInput::Lasso { repeat, .. } => !repeat.is_empty(),
                 TraceInput::Progressed { .. }
                 | TraceInput::Timestamped { .. }
-                | TraceInput::Timed { .. }
                 | TraceInput::Model { .. } => false,
+                TraceInput::Timed { .. } => true,
             };
             if !runs || ledger.is_some() {
                 return Err(not_read("clause.selection.trace"));
@@ -413,7 +413,11 @@ fn execute_clause(
                 )
                 .map_err(|refusal| not_read(refusal.to_string()))?;
             if work.over.is_none()
-                && clause.profile() != fsl_semantics::check::TemporalProfile::InfiniteTrace
+                && !matches!(
+                    clause.profile(),
+                    fsl_semantics::check::TemporalProfile::InfiniteTrace
+                        | fsl_semantics::check::TemporalProfile::Timed
+                )
             {
                 return Err(not_read(
                     "only a clause under the infinite-trace profile runs over record samples"
@@ -424,16 +428,17 @@ fn execute_clause(
         })
         .transpose()?;
     let report = match &work.over {
-        None => {
-            *fsl_replay::spine::run_package_sampled(&fsl_replay::spine::PackageSampledRequest {
+        None => *fsl_replay::spine::run_package_sampled_authenticated(
+            &fsl_replay::spine::PackageSampledRequest {
                 evaluator: bare,
                 name: &work.name,
                 clause: found.as_ref().map(|(clause, key)| (clause, key)),
                 types: model.input().types,
                 trace: &work.trace,
                 accounting: work.accounting,
-            })
-        }
+            },
+            bare.package(),
+        ),
         Some(over) => {
             let input = model.input();
             fsl_replay::spine::run_package_snapshots(&fsl_replay::spine::PackageSnapshotRequest {
