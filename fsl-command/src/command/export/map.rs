@@ -121,6 +121,79 @@ fn internal(reason: &str) -> RunCause {
     }
 }
 
+/// The target node of a named checked-term binding on a protocol node.
+fn binding_reference(
+    graph: &Graph<'_>,
+    node: &filament_contract_model::CheckedSemanticNodeV2,
+    name: &str,
+) -> Option<usize> {
+    let body = serde_json::to_value(&node.body).ok()?;
+    let target = body
+        .get("arguments")?
+        .as_array()?
+        .iter()
+        .find(|argument| {
+            argument.get("term").and_then(Value::as_str) == Some("binding")
+                && argument.get("name").and_then(Value::as_str) == Some(name)
+        })?
+        .get("value")?
+        .get("target")?;
+    let target: CheckedNodeId = serde_json::from_value(target.clone()).ok()?;
+    graph.position(&target)
+}
+
+/// The selected model object type identity of a reference-typed parameter.
+fn parameter_object_type(graph: &Graph<'_>, position: usize) -> Option<String> {
+    let parameter = graph.node(position);
+    let type_position = graph.position(&parameter.semantic_type)?;
+    let body = serde_json::to_value(&graph.node(type_position).body).ok()?;
+    body.get("members")?
+        .as_array()?
+        .first()?
+        .get("target")?
+        .get("path")?
+        .as_array()?
+        .get(2)?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// The type identity named by a protocol's `over` parameter.
+fn protocol_over_type(
+    graph: &Graph<'_>,
+    protocol: &filament_contract_model::CheckedSemanticNodeV2,
+) -> Option<String> {
+    let over = binding_reference(graph, protocol, "over")?;
+    parameter_object_type(graph, over)
+}
+
+/// Whether a protocol role is a static binding to an object type. Whole-model
+/// roles carry a text literal and are auto-bound by FR-425 instead.
+fn role_is_type_bound(node: &filament_contract_model::CheckedSemanticNodeV2) -> Result<bool> {
+    let body = serde_json::to_value(&node.body)
+        .map_err(|_| internal("a protocol role body does not serialize"))?;
+    let value = body
+        .get("arguments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|argument| {
+            argument.get("term").and_then(Value::as_str) == Some("binding")
+                && argument.get("name").and_then(Value::as_str) == Some("model")
+        })
+        .and_then(|argument| argument.get("value"))
+        .ok_or_else(|| internal("a protocol role has no model binding"))?;
+    match value.get("term").and_then(Value::as_str) {
+        Some("reference") => Ok(true),
+        Some("literal") if value.get("value_kind").and_then(Value::as_str) == Some("text") => {
+            Ok(false)
+        }
+        _ => Err(internal(
+            "a protocol role model binding has an unreadable shape",
+        )),
+    }
+}
+
 /// The export's FR-255 charges: one node and one work unit per node of the
 /// dependency closures read.
 struct Meter<'a> {
@@ -317,7 +390,7 @@ pub(super) fn run(
     effective: &EffectiveLimits,
 ) -> Result<Mapped> {
     let graph = Graph::new(package)?;
-    validate_protocol_bindings(&graph, clauses, request)?;
+    validate_protocol_bindings(&graph, clauses, initial, request)?;
     let mut meter = Meter {
         limits: effective,
         nodes: 0,
@@ -466,6 +539,7 @@ pub(super) fn run(
 fn validate_protocol_bindings(
     graph: &Graph<'_>,
     clauses: &[ClauseFact],
+    initial: Option<&Value>,
     request: &Request,
 ) -> Result<()> {
     let selected: BTreeSet<_> = request.obligations.iter().map(String::as_str).collect();
@@ -492,22 +566,23 @@ fn validate_protocol_bindings(
             continue;
         }
         let node = graph.node(root);
-        let Ok(subject) =
-            fsl_package::checked_views::temporal_subject(graph.package, &node.node_id)
-        else {
-            continue;
-        };
+        let subject = fsl_package::checked_views::temporal_subject(graph.package, &node.node_id)
+            .map_err(|_| internal("a selected temporal clause has no readable subject"))?;
         for protocol_id in subject.requirements() {
             let Some(protocol_position) = graph.position(protocol_id) else {
-                continue;
+                return Err(internal("a temporal requirement names no package protocol"));
             };
             let protocol_node = graph.node(protocol_position);
             let Ok((_, protocol_name)) = fsl_package::protocol_view::declaration(protocol_node)
             else {
-                continue;
+                return Err(internal(
+                    "a temporal requirement has no protocol declaration",
+                ));
             };
             if protocol_name.is_empty() {
-                continue;
+                return Err(internal(
+                    "a temporal requirement has an empty protocol name",
+                ));
             }
             let protocol_name = protocol_name
                 .iter()
@@ -534,20 +609,94 @@ fn validate_protocol_bindings(
                     reason: "the required protocol binding has no `over` selection".to_owned(),
                 });
             }
+            if !binding.capacities.is_empty() {
+                return Err(RunCause::ExportRequest {
+                    path: format!("/request/export/protocols/{binding_index}/capacities"),
+                    cause: "unsupported-selection",
+                    reason: "symbolic protocol capacities are outside the origin subset".to_owned(),
+                });
+            }
+            let selected_models: Vec<_> = graph.package.selected_model_packages().collect();
+            let [selected_model] = selected_models.as_slice() else {
+                return Err(RunCause::ExportRequest {
+                    path: format!("/request/export/protocols/{binding_index}/roles"),
+                    cause: "unsupported-selection",
+                    reason: "the origin subset requires exactly one selected model package"
+                        .to_owned(),
+                });
+            };
+            let Some(initial) = initial else {
+                return Err(RunCause::ExportRequest {
+                    path: format!("/request/export/protocols/{binding_index}/over"),
+                    cause: "unsupported-selection",
+                    reason: "the origin subset requires an initial snapshot to validate `over`"
+                        .to_owned(),
+                });
+            };
+            if initial.pointer("/model/identity").and_then(Value::as_str) != Some(selected_model) {
+                return Err(RunCause::ExportRequest {
+                    path: format!("/request/export/protocols/{binding_index}/over"),
+                    cause: "wrong-role-mapping",
+                    reason: "the initial snapshot does not belong to the selected model package"
+                        .to_owned(),
+                });
+            }
+            let Some(over) = binding.over.as_ref() else {
+                return Err(internal(
+                    "the protocol over selection disappeared after validation",
+                ));
+            };
+            let population = initial
+                .get("populations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|row| {
+                    row.get("population").and_then(Value::as_str)
+                        == Some(over.reference.population.as_str())
+                });
+            if !population.is_some_and(|row| row.get("complete") == Some(&Value::Bool(true))) {
+                return Err(RunCause::ExportRequest {
+                    path: format!("/request/export/protocols/{binding_index}/over"),
+                    cause: "wrong-role-mapping",
+                    reason:
+                        "the selected `over` population must be complete in the initial snapshot"
+                            .to_owned(),
+                });
+            }
+            let selected_object = population
+                .and_then(|row| row.get("objects"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|object| {
+                    object.get("key").and_then(Value::as_str) == Some(over.reference.key.as_str())
+                });
+            let protocol_over_type = protocol_over_type(graph, protocol_node);
+            if selected_object.is_none_or(|object| {
+                object.get("type").and_then(Value::as_str) != protocol_over_type.as_deref()
+            }) {
+                return Err(RunCause::ExportRequest {
+                    path: format!("/request/export/protocols/{binding_index}/over"),
+                    cause: "wrong-role-mapping",
+                    reason: "the selected `over` population, key, and protocol input type must identify one object in the initial snapshot"
+                        .to_owned(),
+                });
+            }
             let view =
                 fsl_package::protocol_view::protocol_view(graph.package, &protocol_node.node_id)
                     .map_err(|_| internal("a required protocol has no readable view"))?;
             let mut required_roles = BTreeSet::new();
             for role_id in view.roles() {
                 let Some(role_position) = graph.position(role_id) else {
-                    continue;
+                    return Err(internal("a protocol role names no package node"));
                 };
                 let role_node = graph.node(role_position);
                 let Ok((_, role_name)) = fsl_package::protocol_view::declaration(role_node) else {
-                    continue;
+                    return Err(internal("a protocol role has no declaration"));
                 };
                 let Some(role_name) = role_name.last() else {
-                    continue;
+                    return Err(internal("a protocol role has an empty declaration name"));
                 };
                 let role_name = role_name.as_ref();
                 let role_path = super::request::pointer_token(role_name);
@@ -563,12 +712,18 @@ fn validate_protocol_bindings(
                             .to_owned(),
                     });
                 }
-                required_roles.insert(role_name.to_owned());
-                if !binding
-                    .roles
-                    .get(role_name)
-                    .is_some_and(|role| role.kind == "model-binding" && !role.selection.is_empty())
-                {
+                let type_bound = role_is_type_bound(role_node)?;
+                if type_bound {
+                    required_roles.insert(role_name.to_owned());
+                }
+                let role_binding_is_valid = if type_bound {
+                    binding.roles.get(role_name).is_some_and(|role| {
+                        role.kind == "model-binding" && role.selection.as_str() == *selected_model
+                    })
+                } else {
+                    !binding.roles.contains_key(role_name)
+                };
+                if !role_binding_is_valid {
                     return Err(RunCause::ExportRequest {
                         path: format!(
                             "/request/export/protocols/{binding_index}/roles/{role_path}"

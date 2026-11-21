@@ -1310,6 +1310,7 @@ pub(super) fn lower(
             cur,
             next,
             fairness,
+            protocols: read.protocols,
         });
     }
 

@@ -106,7 +106,15 @@ fn export_unit(
     profile: &str,
     fixed: bool,
 ) -> (u8, Value) {
-    export_unit_with_protocol_binding(tail, target, start, profile, fixed, false, false)
+    export_unit_with_protocol_binding(
+        tail,
+        target,
+        start,
+        profile,
+        fixed,
+        tail.contains("protocol Hand"),
+        true,
+    )
 }
 
 fn export_unit_with_protocol_binding(
@@ -127,14 +135,16 @@ fn export_unit_with_protocol_binding(
                 if tail.contains(&format!("role {role} on")) {
                     roles.insert(
                         role.to_owned(),
-                        json!({"type": "model-binding", "selection": "model/Counter"}),
+                        json!({"type": "model-binding", "selection": "example/counter-third"}),
                     );
                 }
             }
         }
         export["protocols"] = json!([{
             "protocol": "Hand",
-            "over": {"reference": {"population": "counters", "key": "<<99>>"}},
+            "over": {"reference": {
+                "population": "ix://example/counter-third/counters", "key": "c"
+            }},
             "roles": roles
         }]);
     }
@@ -2377,11 +2387,11 @@ fn a_non_object_subject_is_refused_at_its_binder() {
     }
 }
 
-/// Origin-required clauses that a protocol requires retain their typed
-/// refusal until the exporter lowers the complete protocol behavior.
+/// FSpec FR-813-AC-17: the safe origin protocol subset admits an exact
+/// protocol selection and exports its stutter-only behavior.
 #[test]
-#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
-fn a_check_only_protocol_subject_keeps_its_typed_refusal() {
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-17")]
+fn a_check_only_protocol_subject_uses_its_origin_requirement() {
     let tail = format!(
         "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
              role a on Counter::Counter;\n\
@@ -2392,8 +2402,23 @@ fn a_check_only_protocol_subject_keeps_its_typed_refusal() {
         clause_tail("always holds(c.value <= 5)")
     );
     for target in [Target::Tla, Target::Lean] {
-        let refusal = refusal_of(&tail, target);
-        assert_eq!(refusal["construct"], "protocol/protocol_clause");
+        let (exit, value) = export_tail(&tail, target);
+        assert_eq!(exit, 0, "{value}");
+        assert_eq!(value["export"]["records"][0]["disposition"], "preserved");
+        let text = value["export"]["target_text"].as_str().unwrap();
+        match target {
+            Target::Tla => {
+                assert!(
+                    text.contains("PSpec_Hand == Init /\\ [][UNCHANGED vars]_vars"),
+                    "{text}"
+                );
+                assert!(text.contains("THEOREM Th_T == PSpec_Hand =>"), "{text}");
+            }
+            Target::Lean => {
+                assert!(text.contains("structure PBehaviour where"), "{text}");
+                assert!(text.contains("forall b : PBehaviour"), "{text}");
+            }
+        }
     }
 }
 
