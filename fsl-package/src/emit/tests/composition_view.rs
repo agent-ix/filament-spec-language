@@ -671,6 +671,89 @@ fn fair_clause_readback_preserves_constraints_and_key_fairness() {
         .temporal_clause_form(&claim)
         .expect("a fair clause is no longer a Pending fairness form");
     assert_eq!(form.fairness, fairness);
+    let names = read
+        .admitted()
+        .temporal_clause_names()
+        .expect("owning temporal names");
+    let fair_row = names
+        .iter()
+        .find(|row| row.name.as_ref() == "Fair")
+        .expect("authentic Fair row");
+    let calm_row = names
+        .iter()
+        .find(|row| row.name.as_ref() == "Calm")
+        .expect("authentic Calm row");
+    let before_forms = budget.consumed();
+    let forms = bare
+        .temporal_clause_forms_with_budget(&[fair_row, calm_row], &mut budget)
+        .expect("one charged owner batch creates actual package forms");
+    let after_forms = budget.consumed();
+    let form_work = after_forms.work - before_forms.work;
+    let form_storage = after_forms.storage - before_forms.storage;
+    assert_eq!(forms.len(), 2);
+    let actual = &forms[0];
+    assert_eq!(actual.name, form.name);
+    assert_eq!(actual.span, form.span);
+    assert_eq!(actual.profile, form.profile);
+    assert_eq!(actual.package_name, form.package_name);
+    assert_eq!(actual.over, form.over);
+    assert_eq!(actual.clock, form.clock);
+    assert_eq!(actual.activation, form.activation);
+    assert_eq!(actual.trigger, form.trigger);
+    assert_eq!(actual.captures, form.captures);
+    assert_eq!(actual.fairness, form.fairness);
+    assert_eq!(
+        format!("{:?}", actual.formula),
+        format!("{:?}", form.formula)
+    );
+    assert_eq!(forms[1].name, "Calm");
+    assert!(forms[1].fairness.is_empty());
+    let mut exact_forms = NativeJoinBudget::new(form_work, form_storage);
+    assert_eq!(
+        bare.temporal_clause_forms_with_budget(&[fair_row, calm_row], &mut exact_forms)
+            .expect("exact batch form allowance")
+            .len(),
+        2
+    );
+    assert_eq!(exact_forms.consumed().work, form_work);
+    assert_eq!(exact_forms.consumed().storage, form_storage);
+    for (work, storage, kind) in [
+        (
+            form_work - 1,
+            1_000_000,
+            filament_contract_model::NativeJoinChargeKind::Work,
+        ),
+        (
+            1_000_000,
+            form_storage - 1,
+            filament_contract_model::NativeJoinChargeKind::Storage,
+        ),
+    ] {
+        let mut short = NativeJoinBudget::new(work, storage);
+        let Err(crate::BareClauseFormRefusal::Native(error)) =
+            bare.temporal_clause_forms_with_budget(&[fair_row, calm_row], &mut short)
+        else {
+            panic!("full batch projection keeps native denial typed");
+        };
+        assert_eq!(error.denied(), short.first_unpaid());
+        assert_eq!(error.denied().expect("unpaid").kind, kind);
+        assert_eq!(error.locus(), short.first_unpaid_locus());
+        assert_eq!(
+            error.configured_bound(),
+            Some(match kind {
+                filament_contract_model::NativeJoinChargeKind::Work => work,
+                filament_contract_model::NativeJoinChargeKind::Storage => storage,
+            })
+        );
+    }
+    let copied_row = fair_row.clone();
+    let mut ample = NativeJoinBudget::new(1_000_000, 1_000_000);
+    assert!(matches!(
+        bare.temporal_clause_forms_with_budget(&[&copied_row], &mut ample),
+        Err(crate::BareClauseFormRefusal::View(
+            crate::checked_views::ViewRefusal::UnresolvedClause
+        ))
+    ));
     let world = bare.world().expect("owning world");
     let mut bounded = form.clone();
     bounded.profile = fsl_semantics::check::TemporalProfile::EventPositionFalseExtension;
