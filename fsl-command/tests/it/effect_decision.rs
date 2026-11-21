@@ -120,7 +120,11 @@ impl Fixture {
 }
 
 fn unbounded_recommendation_lasso(stem: bool) -> Fixture {
-    let header = SOURCE.split_once("protocol Review").unwrap().0;
+    let header = SOURCE.split_once("protocol Review").unwrap().0.replacen(
+        "profile v =",
+        "profile T = \"filament.temporal.infinite-trace/v1\";\nprofile v =",
+        1,
+    );
     let advice = |name: &str| {
         format!(
             "recommend {name} by Auditor on M::Counter::inc contracts [SpaceAvailable] \
@@ -135,7 +139,6 @@ fn unbounded_recommendation_lasso(stem: bool) -> Fixture {
     let repeated = advice(if stem { "OtherAdvice" } else { "Advise" });
     let source = format!(
         r#"{header}
-profile T = "filament.temporal.infinite-trace/v1";
 protocol Review using P over (view: M::Counter) on origin {{
   observe role Auditor on M::Counter;
   role Seller on M::Counter;
@@ -341,12 +344,14 @@ fn every_canonical_decision_component_is_matched() {
 }
 
 #[test]
-#[trace("FR-1046-AC-5", "FR-1046-AC-6", "FR-1046-AC-12")]
+#[trace("FR-1046-AC-5", "FR-1046-AC-6", "FR-1046-AC-7", "FR-1046-AC-12")]
 fn the_full_canonical_grant_and_caller_key_distinguish_requests() {
     let mut fixture = Fixture::new();
     fixture.valid();
     let mut different_grant = fixture.receipt.clone();
-    different_grant["authority_grant"] = json!({"descriptive": {"scope": ["other"]}});
+    different_grant["authority_grant"] = json!({"descriptive": {
+        "scope": ["other"], "scale": 1e30
+    }});
     different_grant["effect_request"] = json!({"different": "request"});
     fixture.select("different-grant", &different_grant);
     let mut different_key = fixture.receipt.clone();

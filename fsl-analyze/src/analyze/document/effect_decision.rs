@@ -351,8 +351,14 @@ fn invalid_integer(root: NodeRef<'_>) -> Option<String> {
             Task::Leave(length) => pointer.truncate(length),
             Task::Value(node) => match node.node() {
                 Node::Number(number)
-                    if number.value().fract() == 0.0
-                        && number.value().abs() > 9_007_199_254_740_991.0 =>
+                    if number
+                        .text()
+                        .parse::<u64>()
+                        .is_ok_and(|value| value > 9_007_199_254_740_991)
+                        || number
+                            .text()
+                            .parse::<i64>()
+                            .is_ok_and(|value| value.unsigned_abs() > 9_007_199_254_740_991) =>
                 {
                     return Some(pointer)
                 }
