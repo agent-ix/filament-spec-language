@@ -3429,13 +3429,13 @@ fn equality_fact_witness_rows(
                     application: row.application().clone(),
                 });
             };
-            if structural_node.package != row.checked_node().package {
-                return Ok(());
-            }
             let Some(wire_node) = wire_nodes
                 .iter()
                 .find(|node| node.node_id == structural_node)
             else {
+                if key.package() != row.application().package() {
+                    return Ok(());
+                }
                 return Err(EmitRefusal::MissingEqualityIdentityContext {
                     application: row.application().clone(),
                 });
