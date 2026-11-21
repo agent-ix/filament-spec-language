@@ -29,8 +29,10 @@ use super::{
 };
 
 mod activation;
+mod joint;
 
 use activation::Obligations;
+use joint::Joint;
 
 /// One state of a point trace: its time and point.
 #[derive(Clone, Debug)]
@@ -1150,6 +1152,8 @@ struct Quantified {
     fixed: Vec<Exp>,
     /// Each free variable and the conjuncts that read it.
     free: Vec<(usize, Exp)>,
+    /// Each set of free variables some condition couples, with its conditions.
+    joint: Vec<Joint>,
 }
 
 /// The conjuncts of `exp`, a tree of `and`.
@@ -1216,23 +1220,51 @@ impl Replay<'_, '_, '_> {
         conjuncts(target, &mut all);
         let mut fixed = Vec::new();
         let mut grouped: BTreeMap<usize, Vec<Exp>> = BTreeMap::new();
+        // Sets of free variables coupled by a condition, with the conditions.
+        let mut coupled: Vec<(BTreeSet<usize>, Vec<Exp>)> = Vec::new();
         for conjunct in all {
-            let reads: Vec<usize> = free
+            let reads: BTreeSet<usize> = free
                 .iter()
                 .copied()
                 .filter(|&i| conjunct.reads_variable(i))
                 .collect();
-            match reads.as_slice() {
-                [] => fixed.push(conjunct),
-                [only] => grouped.entry(*only).or_default().push(conjunct),
+            match reads.len() {
+                0 => fixed.push(conjunct),
+                1 => {
+                    let only = reads.iter().next().copied().unwrap_or_default();
+                    grouped.entry(only).or_default().push(conjunct);
+                }
                 _ => {
-                    return Err(ExactGap::CoupledReset {
-                        mode: source,
-                        transition,
+                    let mut set = reads;
+                    let mut conditions = vec![conjunct];
+                    let mut kept = Vec::new();
+                    for (variables, parts) in coupled {
+                        if variables.is_disjoint(&set) {
+                            kept.push((variables, parts));
+                        } else {
+                            set.extend(variables);
+                            conditions.extend(parts);
+                        }
                     }
-                    .into());
+                    kept.push((set, conditions));
+                    coupled = kept;
                 }
             }
+        }
+        // A single-variable condition on a coupled variable joins its set.
+        let mut joint = Vec::new();
+        for (variables, mut conditions) in coupled {
+            for variable in &variables {
+                if let Some(parts) = grouped.remove(variable) {
+                    conditions.extend(parts);
+                }
+            }
+            joint.push(Joint {
+                variables: variables.into_iter().collect(),
+                conjuncts: conditions,
+                mode: source,
+                transition,
+            });
         }
         let free = grouped
             .into_iter()
@@ -1243,7 +1275,12 @@ impl Replay<'_, '_, '_> {
                     .map(|body| (variable, body))
             })
             .collect();
-        Ok(Enablement::Quantified(Quantified { guard, fixed, free }))
+        Ok(Enablement::Quantified(Quantified {
+            guard,
+            fixed,
+            free,
+            joint,
+        }))
     }
 }
 
@@ -1301,6 +1338,11 @@ impl Enabled<'_> {
             let (satisfied, read) = section.exists(body, &env)?;
             decisions.extend(projection(&read, &mut |work| section.charge_by(work))?);
             if !satisfied {
+                return Ok(false);
+            }
+        }
+        for joint in &quantified.joint {
+            if !joint.exists(&env, at, decisions, &mut *self.meter)? {
                 return Ok(false);
             }
         }

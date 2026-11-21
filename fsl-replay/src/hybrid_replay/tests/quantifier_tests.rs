@@ -330,25 +330,31 @@ fn a_reset_reading_a_free_variables_pre_jump_value_is_decided() {
 }
 
 /// Two free variables that the target invariant couples in one condition are
-/// the one reset shape exact replay does not yet decide (QSL-2639 remaining
-/// work), so the trace settles `NotExact`.
+/// decided jointly (FR-450 "Exact replay"): `Run -> Gone` leaves `v` above
+/// its pre-jump value `t` and `w` at least 1/2 free, and `Gone`'s invariant
+/// `v + w <= 1` couples them, so some post-jump state exists exactly for
+/// `t <= 1/2`. The transition is enabled for part of every period: a weak
+/// constraint is not violated (it is disabled somewhere) and a strong one is
+/// (it is enabled infinitely often and never taken).
 #[trace("TC-3037", "FR-750-AC-12")]
 #[test]
-fn coupled_free_variables_are_not_yet_decided() {
-    let graph = check(
-        "hybrid Coupled using p {\n\
-           mode Run invariant { v >= 0 and v <= 1 and w >= 0 and w <= 1 }\n\
-             flow { v' = 1; w' = 0; }\n\
-             transition to Run when { v = 1 } reset { v = 0 };\n\
-             transition to Gone when { true } reset { v >= 0 and w >= 0 };\n\
-           mode Gone invariant { v + w <= 1 }\n\
-             flow { v' = 0; w' = 0; }\n\
-         }\n\
-         temporal Fairly using p over (h: Coupled) clock \"model-time\" on origin {\n\
-           fair Run::Gone;\n\
-           always holds(h.v >= 1)\n\
-         }\n",
-    );
+fn coupled_free_variables_are_decided_jointly() {
+    let source = |kind: &str| {
+        format!(
+            "hybrid Coupled using p {{\n\
+               mode Run invariant {{ v >= 0 and v <= 1 and w >= 0 and w <= 1 }}\n\
+                 flow {{ v' = 1; w' = 0; }}\n\
+                 transition to Run when {{ v = 1 }} reset {{ v = 0 }};\n\
+                 transition to Gone when {{ true }} reset {{ v >= v and w >= 1/2 }};\n\
+               mode Gone invariant {{ v + w <= 1 }}\n\
+                 flow {{ v' = 0; w' = 0; }}\n\
+             }}\n\
+             temporal Fairly using p over (h: Coupled) clock \"model-time\" on origin {{\n\
+               fair {kind} Run::Gone;\n\
+               always holds(h.v >= 1)\n\
+             }}\n"
+        )
+    };
     let lasso = HybridTrace {
         start: state(0, n(0), &[n(0), n(0)]),
         jumps: vec![TraceJump {
@@ -360,9 +366,68 @@ fn coupled_free_variables_are_not_yet_decided() {
         loop_to: Some(0),
         end: None,
     };
+    let weak = check(&source("weak"));
     assert_eq!(
-        exact_replay(&graph, claim(&graph, "Fairly"), &lasso),
-        Ok(ExactReplay::NotExact)
+        exact_replay(&weak, claim(&weak, "Fairly"), &lasso),
+        Ok(reproduced_formula(&lasso))
+    );
+    let strong = check(&source("strong"));
+    assert_eq!(
+        exact_replay(&strong, claim(&strong, "Fairly"), &lasso),
+        Ok(ExactReplay::NotReproduced {
+            at: JsonPointer::root(),
+            check: ExactCheck::Claim,
+        })
+    );
+}
+
+/// Joint elimination reads the coupled conditions exactly: with `w >= 3/4`
+/// the sum `v + w <= 1` needs `v <= 1/4` and `v >= t`, so a strong
+/// constraint is still enabled for `t` in `[0, 1/4]`, and with `w >= 2` no
+/// state satisfies `v + w <= 1` at any instant, so even a strong constraint
+/// is never enabled and the lasso is fair.
+#[trace("TC-3037", "FR-750-AC-12")]
+#[test]
+fn coupled_free_variables_with_no_joint_solution_leave_fairness_satisfied() {
+    let source = |bound: &str| {
+        format!(
+            "hybrid Coupled using p {{\n\
+               mode Run invariant {{ v >= 0 and v <= 1 and w >= 0 and w <= 1 }}\n\
+                 flow {{ v' = 1; w' = 0; }}\n\
+                 transition to Run when {{ v = 1 }} reset {{ v = 0 }};\n\
+                 transition to Gone when {{ true }} reset {{ v >= v and w >= {bound} }};\n\
+               mode Gone invariant {{ v + w <= 1 }}\n\
+                 flow {{ v' = 0; w' = 0; }}\n\
+             }}\n\
+             temporal Fairly using p over (h: Coupled) clock \"model-time\" on origin {{\n\
+               fair strong Run::Gone;\n\
+               always holds(h.v >= 1)\n\
+             }}\n"
+        )
+    };
+    let lasso = HybridTrace {
+        start: state(0, n(0), &[n(0), n(0)]),
+        jumps: vec![TraceJump {
+            transition: 0,
+            before: Some(before(n(1), &[n(1), n(0)])),
+            state: state(0, n(1), &[n(0), n(0)]),
+        }],
+        delta: None,
+        loop_to: Some(0),
+        end: None,
+    };
+    let enabled = check(&source("3/4"));
+    assert_eq!(
+        exact_replay(&enabled, claim(&enabled, "Fairly"), &lasso),
+        Ok(ExactReplay::NotReproduced {
+            at: JsonPointer::root(),
+            check: ExactCheck::Claim,
+        })
+    );
+    let never = check(&source("2"));
+    assert_eq!(
+        exact_replay(&never, claim(&never, "Fairly"), &lasso),
+        Ok(reproduced_formula(&lasso))
     );
 }
 
