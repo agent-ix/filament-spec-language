@@ -123,6 +123,61 @@ fn call(function: &str, arguments: Value) -> Value {
     json!({"function": function, "arguments": arguments})
 }
 
+fn assert_ieee_same_operand_holds(body: &str) {
+    let program = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         function example using v(): Boolean pure {{ {body} }}\n"
+    );
+    let directory = tempfile::tempdir().unwrap();
+    spine_run_request(
+        directory.path(),
+        program.as_bytes(),
+        call("example", json!([])),
+    );
+    let output = run(directory.path());
+    assert_eq!(output.status.code(), Some(0), "{body}: {output:?}");
+    assert!(output.stderr.is_empty(), "{body}: {output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "completed", "value": {"boolean": true}}),
+        "{body}: {document}"
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-148-AC-1", "FSpec-FR-148-AC-12")]
+fn float64_less_equal_same_operand() {
+    assert_ieee_same_operand_holds(
+        "let one: Float64[nearest-even] = float64(bits: 0x3ff0000000000000) in one <= one",
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-148-AC-1", "FSpec-FR-148-AC-12")]
+fn float64_less_than_same_operand() {
+    assert_ieee_same_operand_holds(
+        "let one: Float64[nearest-even] = float64(bits: 0x3ff0000000000000) in not (one < one)",
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-148-AC-1", "FSpec-FR-148-AC-12")]
+fn float32_greater_equal_same_operand() {
+    assert_ieee_same_operand_holds(
+        "let one: Float32[nearest-even] = float32(bits: 0x3f800000) in one >= one",
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-148-AC-1", "FSpec-FR-148-AC-12")]
+fn float64_infinity_less_equal_same_operand() {
+    assert_ieee_same_operand_holds(
+        "let pinf: Float64[nearest-even] = float64(bits: 0x7ff0000000000000) in pinf <= pinf",
+    );
+}
+
 #[test]
 #[trace("TC-3063", "FR-680-AC-8")]
 fn matching_map_key_guards_evaluate_present_and_absent_keys() {
