@@ -9,6 +9,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-120
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-189
     type: depends_on
 ---
@@ -18,7 +20,9 @@ relationships:
 
 EN-4's cost SHALL be bounded only by caller-set budgets,
 `StatisticalLimits{max_samples, max_draws, max_cycle_steps}`, each an
-ADR-014 B-5 budget with a published default, plus time, the clause meter and
+ADR-014 B-5 budget with a published default, plus time, the clause meter,
+[FR-120](FR-120-simulate-a-checked-package-s-state-family.md)'s cumulative
+candidate and clause work allowance, the local expansion ceiling and
 cancellation (ADR-024 ST-8). Reaching a budget SHALL stop the run and name
 the budget, its value and the request setting that raises it, `max_cycle_steps` included (FR-190). EN-4 SHALL
 identify a statistical run by its provenance, from which the run reproduces
@@ -108,6 +112,22 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
 - For every `workers >= 1` a run SHALL return the same decision, counts,
   estimates, witnesses, provenance and stop (limit and value) as the
   one-worker run.
+- For a model subject, admission of candidate and clause work against
+  [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)'s cumulative
+  allowance SHALL follow the one-worker logical order: tests in ascending
+  test index, samples in trace-index order within each test, and each
+  sample's existing deterministic expansion and clause-charge order.
+  Earlier tests may exhaust the shared allowance before a later test
+  begins; the run SHALL NOT divide it into fresh per-test quotas.
+- Workers SHALL admit or reserve cumulative work before performing it,
+  preserving the entitlement of every earlier logical charge and the same
+  first unpaid charge as the one-worker run. Speculative samples SHALL
+  NOT consume that entitlement or perform candidate or clause work outside
+  the physical run allowance, even when later discarded under the sample
+  merge rule above. Worker scheduling SHALL NOT choose the exhausted
+  bound or change the stop, counts or provenance. These rules SHALL retain
+  every supported positive worker count and the existing cancellation
+  semantics, without prescribing a locking or scheduling mechanism.
 - A run stopped by `Cancel` MAY stop at a different trace index from one
   run to the next, and its result SHALL be the one-worker result at some
   trace index, with every sample before it counted and none after it.
@@ -136,6 +156,7 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
 | FR-191-AC-5 | `NoFault` with `max_samples` 9,210,341 completes at exactly 9,210,341 samples while 9,210,340 stops `Limit{MaxSamples, 9,210,340}` after counting 9,210,340 samples without drawing another; a `Stopped` and an `Unsupported` outcome (FR-189-AC-7's `Wide`) each carry the run's `StatisticalProvenance`, and a cancelled handle stops `Cancelled`. | Test (TC-626) |
 | FR-191-AC-6 | `P95` with SPRT and seed 7, and `NoFault` with Okamoto and `max_samples` 1,000 (a stop well below Okamoto's `N`), each run with `workers` 1, 2, 4 and 64, give results byte-equal to the one-worker run's: provenance, per-test counts, estimates, witnesses, decision and, for the second run, `Limit{MaxSamples, 1,000}` with 1,000 samples counted. A sampler test double that makes the sample at a higher trace index finish first changes no result. The run stopped by `max_samples` 100, with `workers` 4, draws samples at trace indices 0 to 99 equal to the one-worker run's samples at those indices and counts none beyond 99; the double records at most 103 draws. | Test (TC-1417) |
 | FR-191-AC-7 | A run with `workers` 4 whose `Cancel` handle is cancelled after a delay returns `Cancelled` with counts and estimates equal to the one-worker run stopped at the same trace index, for the index it reached; the result carries no sample of a higher trace index. `workers` 0 returns `StatisticalRefusal::Workers` (`invalid_runtime_input`/`invalid-value`) and draws no sample. | Test (TC-1417) |
+| FR-191-AC-8 | A two-test model-subject run with cumulative candidate and clause bound B, sufficient for each test alone but insufficient for both in ascending test order, spends the remainder on the later test and stops at the same first unpaid charge with workers 1, 2, 4 and 64. Reversing completion order of speculative samples changes no stop, counts, provenance, estimates or witnesses. Instrumented admitted candidate and clause work never exceeds B across all workers, including discarded samples; no later sample consumes an earlier sample's entitlement. If the first test alone exhausts B, the later test performs no work. Cancellation retains AC-7's prefix semantics. | Test |
 
 ## Dependencies
 
