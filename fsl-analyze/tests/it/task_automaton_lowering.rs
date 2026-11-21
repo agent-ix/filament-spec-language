@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-249-AC-7 to AC-9 (TC-3008): a task automaton lowers to a timed subject
 //! that carries the declared periods and deadlines, EN-6's verdict on it
-//! equals EN-7's response-time verdict on the three-task set `B`, and an
+//! equals EN-7's response-time verdict on the retimed three-task set `BReduced`, and an
 //! unschedulable set refutes with a replayed counterexample whose first
 //! deadline miss is exact. The source is ADR-026 section 11's `Rpc` with one
 //! always-enabled `fire_*` operation per task, each releasing its task.
@@ -373,32 +373,109 @@ fn run_bare() -> Value {
     .item(0)
 }
 
+/// The request remains release-backed even when its checked release cannot
+/// occur; its proof uses the source closure rather than fixed-work regions.
+#[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
+#[test]
+fn an_unreachable_checked_release_proves_with_the_source_certificate() {
+    let declarations = format!(
+        "taskset N {{ task t periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable NFp on N under fixed_priority;\n\
+         pre Blocked using v on M::Call::fire_t {{ self.phase = 3 }}\n{}",
+        sources("N", &["t"])
+    );
+    let run = run(
+        "unreachable-task-release",
+        &["t"],
+        &declarations,
+        json!([{"claim":"NFp", "backend":"en-6"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(
+        item["certificate"]["task_product"]["time_progress"]["method"],
+        "closed-no-release-product/v1",
+        "{item}"
+    );
+    assert!(item["record"].get("task_search").is_none(), "{item}");
+    let bare = run_bare();
+    assert_eq!(bare["request"]["candidates"]["backends"], json!([]));
+    assert_eq!(label(&bare), "unsupported", "{bare}");
+}
+
+fn reduced_agreement(third: u32, policy: &str, want: &str) {
+    let declarations = task_set_b(third)
+        .replace("taskset B", "taskset BReduced")
+        .replace("on B under", "on BReduced under")
+        .replace("release B.", "release BReduced.")
+        .replace("periodic 4 ms deadline 4 ms", "periodic 6 ms deadline 6 ms")
+        .replace(
+            "periodic 10 ms deadline 10 ms",
+            "periodic 8 ms deadline 8 ms",
+        );
+    let claim = if policy == "fixed_priority" {
+        "BFp"
+    } else {
+        "BEdf"
+    };
+    let run = run(
+        &format!("b-reduced-{third}-{policy}"),
+        &["t1", "t2", "t3"],
+        &declarations,
+        json!([
+            {"claim": claim}, {"claim": claim, "backend": "en-6"}
+        ]),
+    );
+    let closed = run.item(0);
+    let zone = run.item(1);
+    println!("BReduced work {third} {policy}: EN-6 {zone}");
+    assert_eq!(label(&closed), want, "EN-7: {closed}");
+    assert_eq!(label(&zone), want, "EN-6: {zone}");
+}
+
 #[trace("TC-3008", "FR-249-AC-8")]
 #[test]
-#[ignore = "FR-249-AC-8: set B region quotient exceeds max_check_work (100M) at 791 s release; pending arch ruling on abstraction/AC wording, QSL-2240"]
-fn the_zone_verdict_equals_the_response_time_verdict_on_task_set_b() {
-    let items = json!([
-        {"claim": "BFp"}, {"claim": "BFp", "backend": "en-6"},
-        {"claim": "BEdf"}, {"claim": "BEdf", "backend": "en-6"},
-    ]);
-    for (third, expected) in [(3, ["proved", "proved"]), (4, ["refuted", "proved"])] {
-        let run = run(
-            &format!("task-set-b-{third}"),
-            &["t1", "t2", "t3"],
-            &task_set_b(third),
-            items.clone(),
-        );
-        for (claim, want) in expected.iter().enumerate() {
-            let closed = run.item(2 * claim);
-            let zone = run.item(2 * claim + 1);
-            assert_eq!(label(&closed), *want, "EN-7, t3 work {third}: {closed}");
-            assert_eq!(
-                label(&zone),
-                label(&closed),
-                "EN-6 = EN-7, t3 work {third}: {zone}"
-            );
-        }
-    }
+fn b_reduced_work_three_fixed_priority_agrees() {
+    reduced_agreement(3, "fixed_priority", "proved");
+}
+
+#[trace("TC-3008", "FR-249-AC-8")]
+#[test]
+fn b_reduced_work_three_edf_agrees() {
+    reduced_agreement(3, "edf", "proved");
+}
+
+#[trace("TC-3008", "FR-249-AC-8")]
+#[test]
+fn b_reduced_work_four_fixed_priority_agrees() {
+    reduced_agreement(4, "fixed_priority", "refuted");
+}
+
+#[trace("TC-3008", "FR-249-AC-8")]
+#[test]
+fn b_reduced_work_four_edf_agrees() {
+    reduced_agreement(4, "edf", "proved");
+}
+
+/// The original baseline is measured at defaults, with no full-verdict claim.
+#[trace("TC-3008", "FR-249-AC-8")]
+#[test]
+fn the_original_task_set_b_stops_at_its_first_default_limit() {
+    let run = run(
+        "original-b-default-limit",
+        &["t1", "t2", "t3"],
+        &task_set_b(3),
+        json!([{"claim":"BFp", "backend":"en-6"}]),
+    );
+    let item = run.item(0);
+    println!("Original B default FP work 3: {item}");
+    assert_eq!(label(&item), "incomplete", "{item}");
+    let cause = &item["record"]["cause"];
+    assert_eq!(cause["kind"], "limit-reached", "{item}");
+    assert_eq!(cause["limit"], "max_check_work", "{item}");
+    assert_eq!(cause["setting"], "zone_check.max_check_work", "{item}");
+    assert!(item.get("certificate").is_none(), "{item}");
 }
 
 #[trace("TC-3008", "FR-249-AC-9")]

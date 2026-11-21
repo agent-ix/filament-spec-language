@@ -2236,6 +2236,17 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         ))
     }
 
+    /// The source clock place's canonical identity, using the same object,
+    /// field and resolved slot path as a bound `Clock` argument. The name
+    /// comes from the original source context and never from an engine index.
+    pub fn clock_place_identity(&self, place: usize) -> Option<String> {
+        self.place_enc(place)?
+            .canonical_text(quire_canonical::Limits::new(
+                super::identity_limits().input_bytes,
+            ))
+            .ok()
+    }
+
     /// [`Self::placed`] for an instance: a constraint reading a `Clock`
     /// parameter constrains the place `instance` binds it to; `None` when
     /// that place is not of the constraint's clock, so the part is not this
