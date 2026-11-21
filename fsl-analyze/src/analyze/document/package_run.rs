@@ -299,6 +299,7 @@ pub fn settle_package_run(
             | PendingPackageForm::Operations(_)
             | PendingPackageForm::ProbabilisticNodes(_)
             | PendingPackageForm::Probabilistic(_)
+            | PendingPackageForm::Reward(_)
             // Only `source_object_probabilistic_model` reads the source-object
             // rows, so `of` never gives this one.
             | PendingPackageForm::SourceModel(_) => {
@@ -627,6 +628,9 @@ fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
             "the package's random parameters and workloads do not rebuild against its model"
                 .to_owned(),
         ),
+        PendingPackageForm::Reward(_) => {
+            Some("a reward's clause function does not project from the package".to_owned())
+        }
         PendingPackageForm::World(_)
         | PendingPackageForm::Model(_)
         | PendingPackageForm::Operations(_)

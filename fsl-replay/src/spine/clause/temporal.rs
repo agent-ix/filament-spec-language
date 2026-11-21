@@ -876,6 +876,11 @@ fn same_entry(left: Option<&ProgressLedgerEntry>, right: Option<&ProgressLedgerE
 }
 
 impl CarriedAdmission {
+    /// The finite-window trace the last run admitted.
+    pub(super) fn trace_ref(&self) -> Option<&TimestampedTrace> {
+        self.trace.as_ref()
+    }
+
     /// The admission as it is now, for [`Self::restore`].
     pub(crate) fn mark(&self) -> AdmissionMark {
         AdmissionMark {
@@ -1482,6 +1487,7 @@ pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRun
         shape,
         &mut meter,
     );
+    let inactive = observed.inactive;
     let (disposition, refused_at) = match (observed.stopped, observed.result) {
         // A refused condition is the caller's: the source route's code and
         // cause, located at the package node, which has no source span.
@@ -1495,6 +1501,7 @@ pub fn run_package_sampled(request: &PackageSampledRequest<'_>) -> Box<ClauseRun
         (Some(HoldsStop::Failed(failure)), _) => {
             (refusal_disposition(*convert_call_failure(failure)), None)
         }
+        (None, Ok(_)) if inactive => (ClauseDisposition::Temporal(TemporalVerdict::Inactive), None),
         (None, Ok(outcome)) => (ClauseDisposition::Temporal(verdict(outcome)), None),
         (None, Err(TemporalRefusal::Fault(fault))) => {
             (ClauseDisposition::EvaluateFault(fault), None)
@@ -1529,8 +1536,14 @@ pub(crate) fn streamed_sample_report(
         (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
         (stopped, _) => stopped,
     };
+    let inactive = observed.inactive;
     let (disposition, refused_at) =
         observed_disposition(stopped, observed.result, package.graph(), sources);
+    let disposition = if inactive {
+        ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+    } else {
+        disposition
+    };
     let needs_positions = matches!(
         &disposition,
         ClauseDisposition::Temporal(
@@ -1707,7 +1720,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                 || usize::try_from(missing.atom).ok().is_none_or(|atom| {
                     !matches!(
                         clause.formula().nodes().get(atom),
-                        Some(FormulaNode::Holds { .. })
+                        Some(FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. })
                     )
                 })
         }) {
@@ -2062,9 +2075,12 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             .chain(repeat)
             .map(|position| position.stamp.clone())
             .collect();
-        let loop_start = period
-            .as_ref()
-            .map(|period| (u64::try_from(prefix.len()).unwrap_or(u64::MAX), period.clone()));
+        let loop_start = period.as_ref().map(|period| {
+            (
+                u64::try_from(prefix.len()).unwrap_or(u64::MAX),
+                period.clone(),
+            )
+        });
         let timed = fsl_eval::temporal::evaluate_observed_timed(
             run.package,
             node,
@@ -2076,6 +2092,11 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         );
         let (disposition, refused_at) =
             observed_disposition(timed.stopped, timed.result, graph, run.sources);
+        let disposition = if timed.inactive {
+            ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+        } else {
+            disposition
+        };
         let (disposition, counterexample) =
             with_counterexample(node.clause(), trace, disposition, timed.undefined);
         let usage = ClauseRunUsage::from_meter(&meter, admitted);
@@ -2113,11 +2134,15 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         };
     }
 
-    // QSL-2138: only the closed finite route below reads window aggregates.
+    // FR-194: the closed finite event-position route and the timestamped
+    // finite-window route (one-shot and FR-820 carried) read window aggregates; a timed or lasso sample
+    // trace still refuses one.
     if sampled
         && !tape.is_some_and(|tape| tape.open_aggregates)
         && !(matches!(trace, TraceInput::Finite(_))
             && clause.profile() == TemporalProfile::EventPositionFalseExtension)
+        && !(matches!(trace, TraceInput::Timestamped { .. })
+            && clause.profile() == TemporalProfile::TimestampedEventFiniteWindow)
         && clause
             .formula()
             .nodes()
@@ -2400,12 +2425,18 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             &mut meter,
         ),
     };
+    let inactive = observed.inactive;
     let (disposition, refused_at) = observed_disposition(
         observed.stopped,
         observed.result,
         run.package.graph(),
         run.sources,
     );
+    let disposition = if inactive {
+        ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+    } else {
+        disposition
+    };
     let (disposition, counterexample, decisive) = match objects {
         Some((environments, reference)) => {
             let (disposition, counterexample) =

@@ -24,14 +24,34 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::evaluate::reader_source::ReaderNode;
 use super::evaluate::{Machine, World};
-use super::protocol_slot::{resolve, ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply};
-use super::slot_supply::{admit_slot_supply, AdmittedSupply, SlotHost, SourceView};
+use super::protocol_slot::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply, resolve};
+use super::slot_supply::{AdmittedSupply, SlotHost, SourceView, admit_slot_supply};
 use super::{
-    unsupported_projection, ApplicationObservation, ApplicationObservationOptions,
-    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation,
-    QualifiedName, Separation, SuppliedFailure, SuppliedLimits, SuppliedRun,
-    ValueInvariantEvaluation,
+    ApplicationObservation, ApplicationObservationOptions, CheckedPackageEvaluation,
+    ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation, QualifiedName, Separation,
+    SuppliedFailure, SuppliedLimits, SuppliedRun, ValueInvariantEvaluation, unsupported_projection,
 };
+
+/// Evaluate a reader projection over the local frame with the shared
+/// bytes-only package machine.
+pub fn evaluate_bare_expression(
+    world: &BareWorld,
+    expression: &fsl_package::ReaderProtocolProjection,
+    frame: Vec<Option<Value>>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let objects = ObjectEnvironment::default();
+    let reads = BTreeMap::new();
+    Machine::with_world(
+        World::Bytes(world),
+        &objects,
+        None,
+        Some(&reads),
+        meter,
+        &[],
+    )
+    .run_frame(ReaderNode::root(expression), frame)
+}
 
 /// A selection or projection refusal as the call reports it (FR-533
 /// "Refusals and loci of the bare slot call"): a witness refusal at the
@@ -564,6 +584,66 @@ pub(crate) fn post_targets(
     )
 }
 
+/// A reward a package's `reward` node carries, projected once: the clause
+/// function its expression names, and the type of the value it computes
+/// (FR-187, ADR-024 PM-5).
+pub struct ProjectedReward {
+    projection: fsl_package::ReaderProtocolProjection,
+    slots: usize,
+    value_type: filament_exact::ValueType,
+}
+
+impl ProjectedReward {
+    /// The projection of `reward`'s clause function over `package`.
+    ///
+    /// # Errors
+    ///
+    /// The [`BareSelectionFailure`] of the first function, type or equality
+    /// the projection cannot read, or of a node that is no function.
+    pub fn of(
+        package: &BarePackage<'_>,
+        reward: &fsl_semantics::check::ReadReward,
+    ) -> Result<Self, BareSelectionFailure> {
+        let projection = package.project_clause_function(&reward.function)?;
+        let selected = projection.selected_function().ok_or_else(|| {
+            fsl_package::SlotSelectionFailure::MalformedNode(reward.function.clone())
+        })?;
+        let (slots, value_type) = (selected.slots, selected.result_type.clone());
+        Ok(Self {
+            projection,
+            slots,
+            value_type,
+        })
+    }
+
+    /// The type of the value the reward computes.
+    pub fn value_type(&self) -> &filament_exact::ValueType {
+        &self.value_type
+    }
+
+    /// The reward evaluated on `arguments`, one value per parameter of its
+    /// operation in declared order, over the package's `world`. A reward
+    /// reads its operation's parameters alone, so the object environment is
+    /// empty.
+    ///
+    /// # Errors
+    ///
+    /// An internal fault, as the evaluator reports it.
+    pub fn evaluate(
+        &self,
+        world: &BareWorld,
+        arguments: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let objects = ObjectEnvironment::default();
+        Machine::from_bare_package(world, &objects, meter).run(
+            ReaderNode::root(&self.projection),
+            self.slots,
+            arguments,
+        )
+    }
+}
+
 impl super::clause_set::ClauseHost for BarePackage<'_> {
     fn clause_observation(
         &self,
@@ -1029,8 +1109,7 @@ mod tests {
             include_bytes!("../../../../examples/config-version/model.semantic-ir.json");
         let models = fsl_semantics::model::intake::package_input([model_bytes.as_slice()])
             .expect("model document reads");
-        let source_text =
-            "language \"ix:native\" edition \"1-draft\";\n\
+        let source_text = "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n\
              model M = \"example/config-version\";\n\
              function takes using v(a: Sequence<Integer>[0, 3], b: Sequence<Integer>[0, 3]): Integer pure { 1 }\n\

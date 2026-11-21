@@ -27,7 +27,8 @@ mod frames;
 mod input;
 pub use input::{
     BodyReads, ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration,
-    PackageModelInput, PendingClauseForm, PendingPackageForm, StateClauseEntry, TerminalWhen,
+    PackageModelInput, PackageRewards, PendingClauseForm, PendingPackageForm, StateClauseEntry,
+    TerminalWhen,
 };
 mod operation_coverage;
 pub use operation_coverage::{
@@ -819,7 +820,7 @@ impl<'a> ModelSystem<'a> {
     /// FR-106's [`AdmissionFailure`]: `Refused` or `Incomplete`, one record.
     pub fn new(request: ModelSimulationRequest<'a>) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over(request, selections, None)
+        Self::over(request, selections, None, &[])
     }
 
     /// [`Self::new`] over the `model_selections` rows the subject reads: those
@@ -852,7 +853,7 @@ impl<'a> ModelSystem<'a> {
             return Self::new(request);
         }
         let sources = request.input.source_packages;
-        Self::over(request, ModelSelections::new(&read, sources), None)
+        Self::over(request, ModelSelections::new(&read, sources), None, &[])
     }
 
     /// [`Self::new`] with the caller's cancellation shared by qualified
@@ -866,7 +867,7 @@ impl<'a> ModelSystem<'a> {
         cancel: &filament_exact::Cancel,
     ) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over(request, selections, Some(cancel))
+        Self::over(request, selections, Some(cancel), &[])
     }
 
     /// The model system's selected populations in ascending declaration-key
@@ -874,6 +875,32 @@ impl<'a> ModelSystem<'a> {
     /// replay reconstructs an object-parameter binding.
     pub fn populations(&self) -> &[fsl_semantics::model::state::StatePopulation] {
         &self.populations
+    }
+
+    /// The system of trace variable alias `alias` of a hyper clause (FR-173
+    /// "Event-position form": each trace is read over its own model). A unit
+    /// that selects several models gets [`Self::over_model`] the package the
+    /// alias names, so a trace ranges over its own model's executions alone;
+    /// a unit with one model, or a package-route input, gets [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`] and [`Self::over_model`].
+    pub fn for_alias(
+        request: ModelSimulationRequest<'a>,
+        alias: &str,
+    ) -> Result<Self, AdmissionFailure> {
+        let model = match request.source_package() {
+            Some(package) if request.input.model_selections.len() > 1 => package
+                .graph()
+                .model_package_identity(alias)
+                .map(str::to_owned),
+            _ => None,
+        };
+        match model {
+            Some(model) => Self::over_model_of(request, &model, true),
+            None => Self::new(request),
+        }
     }
 
     /// [`Self::new`] over the one domain package `model` names, for a unit
@@ -888,6 +915,18 @@ impl<'a> ModelSystem<'a> {
     pub fn over_model(
         request: ModelSimulationRequest<'a>,
         model: &str,
+    ) -> Result<Self, AdmissionFailure> {
+        Self::over_model_of(request, model, false)
+    }
+
+    /// [`Self::over_model`], skipping each universe of a population that
+    /// another selected model owns when `skip_other_models` (a hyper clause's
+    /// universes name the populations of every model its aliases range over).
+    /// A universe of no selected model's population is refused either way.
+    fn over_model_of(
+        request: ModelSimulationRequest<'a>,
+        model: &str,
+        skip_other_models: bool,
     ) -> Result<Self, AdmissionFailure> {
         let selected: Vec<_> = request
             .input
@@ -904,10 +943,26 @@ impl<'a> ModelSystem<'a> {
             ));
         }
         let sources = request.input.source_packages;
+        let others = if skip_other_models {
+            let every = StateModel::new(
+                request.input.model_inputs(),
+                request.input.types,
+                request.packages,
+                request.normalization,
+            )?;
+            every
+                .populations()
+                .iter()
+                .map(|population| population.key.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
         Self::over(
             request,
             fsl_semantics::model::observation::ModelSelections::new(&selected, sources),
             None,
+            &others,
         )
     }
 
@@ -915,6 +970,7 @@ impl<'a> ModelSystem<'a> {
         request: ModelSimulationRequest<'a>,
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
         cancel: Option<&filament_exact::Cancel>,
+        other_models: &[DeclarationKey],
     ) -> Result<Self, AdmissionFailure> {
         let input = request.input;
         let types = input.types;
@@ -928,6 +984,9 @@ impl<'a> ModelSystem<'a> {
                 .iter()
                 .any(|population| population.key == universe.population)
             {
+                if other_models.contains(&universe.population) {
+                    continue;
+                }
                 return Err(refused(
                     Code::InvalidRuntimeInput,
                     "wrong-role-mapping",
@@ -1182,7 +1241,7 @@ impl<'a> ModelSystem<'a> {
             .as_ref()
             .map_err(|_| fault("terminal-nodes-resolve"))?;
         let clauses = Self::clauses_of(&input.state_clauses)?;
-        let probabilistic = probabilistic::Tables::of(input.probabilistic)?;
+        let probabilistic = probabilistic::Tables::of(input.probabilistic, input.read_rewards)?;
         let system = Self {
             over: match only {
                 [only] => Some(only.identity.clone()),
@@ -2201,6 +2260,17 @@ impl TransitionSystem for ModelRunView<'_, '_> {
             None => self.system.successors(state),
         }
     }
+
+    fn state_findings(
+        &self,
+        state: &Self::State,
+    ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+        self.system.state_findings(state)
+    }
+
+    fn stopped_findings(&self, state: &Self::State, stop: ExpansionStop) -> Vec<Self::Finding> {
+        self.system.stopped_findings(state, stop)
+    }
 }
 
 /// The identity limits `explore_model` and `sample_model` encode under.
@@ -2508,6 +2578,17 @@ fn rebuild_model_trace(
             Expanded::Stopped(stop) => {
                 if index < requested.len() {
                     return Ok(None);
+                }
+                let state_findings = system.findings_at_stop(&current);
+                if !state_findings.is_empty() {
+                    let (_, state_key) = system.state_key(&current).map_err(|refusal| {
+                        ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                    })?;
+                    findings.push(StateFindings {
+                        state: state_key,
+                        depth: index,
+                        findings: state_findings,
+                    });
                 }
                 stopped = Some(StopReason::Stopped(stop.cause));
                 break;

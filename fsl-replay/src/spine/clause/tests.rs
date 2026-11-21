@@ -1207,8 +1207,9 @@ fn boolean_function_claim_round_trips_as_tested() {
     );
     let report = run_clause(request).expect("the claim selection is formed");
 
-    let item = crate::OutcomeItem::from_clause_run(crate::RequestIndex::new(0), "isPositive", &report)
-        .expect("a successful claim is an outcome item");
+    let item =
+        crate::OutcomeItem::from_clause_run(crate::RequestIndex::new(0), "isPositive", &report)
+            .expect("a successful claim is an outcome item");
     assert_eq!(item.result(), crate::ItemLabel::Tested);
     let item = serde_json::to_value(item).expect("the tested item serializes");
     assert!(item.get("diagnostic").is_none());
@@ -3521,6 +3522,38 @@ mod extracted {
         extracted_in("ix:native")
     }
 
+    /// The `no_cycle` fence of a document holding `unit`, extracted.
+    fn extracted_unit(unit: &str) -> fsl_source::ExtractedSource {
+        let text = format!("# Doc\n\n## Invariants\n\n### no_cycle\n```ix:native\n{unit}```\n");
+        let original = Source::read(original_identity(), "rules.md", text.as_bytes(), text.len())
+            .expect("the fixture document reads");
+        let context = fsl_source::clause_context(FILAMENT_PACKAGE, &original)
+            .expect("the clause-only Quire context validates");
+        fsl_source::extract(
+            original,
+            &context,
+            fsl_source::Selection {
+                clause_id: "no_cycle".to_owned(),
+                package: FILAMENT_PACKAGE.to_owned(),
+                body: body_identity(),
+            },
+            fsl_source::Limits::default(),
+        )
+        .expect("the no_cycle fence extracts")
+    }
+
+    /// The healthy `NoCycle` unit plus a second invariant.
+    pub(super) fn two_clause_body() -> fsl_source::ExtractedSource {
+        let (unit, _) = unit_and_packages();
+        extracted_unit(&format!(
+            "{unit}invariant Other using v on M::Node at current {{ true }}\n"
+        ))
+    }
+
+    pub(super) fn syntax_error_body() -> fsl_source::ExtractedSource {
+        extracted_unit("this is not an FSL unit\n")
+    }
+
     /// `fsl_source::extract`'s verified body of the `no_cycle` fence tagged
     /// `language`.
     pub(super) fn extracted_in(language: &str) -> fsl_source::ExtractedSource {
@@ -3623,6 +3656,85 @@ fn run_clause_refuses_an_extracted_fence_that_is_not_ix_native() {
     assert_eq!(report.disposition.category().exit_code(), 20);
 }
 
+/// FR-031-AC-9 (TC-109): an extracted body declaring two clauses refuses at
+/// compile with `extraction-clause-count` and the actual count, on the
+/// single-run route.
+#[cfg(feature = "quire-extraction")]
+#[trace("TC-109", "FR-031-AC-9")]
+#[test]
+fn run_clause_refuses_an_extracted_body_declaring_two_clauses() {
+    let (mut request, _) = no_cycle_request(&[("a", None)]);
+    request.source = ClauseRunSource::Extracted(extracted::two_clause_body());
+    let report = run_clause(request).expect("a well-formed request always reports");
+    assert!(matches!(
+        report.disposition,
+        ClauseDisposition::ExtractionClauseCount { actual: 2 }
+    ));
+    assert_eq!(report.disposition.stage(), ClauseRunStage::Compile);
+    assert_eq!(report.disposition.truth(), None);
+}
+
+/// FR-031-AC-9 (TC-109): the same refusal on the batch route.
+#[cfg(feature = "quire-extraction")]
+#[trace("TC-109", "FR-031-AC-9")]
+#[test]
+fn run_clause_batch_refuses_an_extracted_body_declaring_two_clauses() {
+    let (mut request, _) = no_cycle_request(&[("a", None)]);
+    request.source = ClauseRunSource::Extracted(extracted::two_clause_body());
+    match crate::spine::run_clause_batch(vec![request]).expect("one compilation") {
+        crate::spine::ClauseRunBatchOutcome::CompileRefusal(report) => assert!(matches!(
+            report.disposition,
+            ClauseDisposition::ExtractionClauseCount { actual: 2 }
+        )),
+        crate::spine::ClauseRunBatchOutcome::Reports(_) => {
+            panic!("the batch must refuse at compile")
+        }
+    }
+}
+
+/// FR-031-AC-9 (TC-109): the same refusal on the trace-subject route.
+#[cfg(feature = "quire-extraction")]
+#[trace("TC-109", "FR-031-AC-9")]
+#[test]
+fn run_trace_subject_clause_refuses_an_extracted_body_declaring_two_clauses() {
+    let (_, packages) = unit_and_packages();
+    let report = crate::spine::run_trace_subject_clause(crate::spine::TraceSubjectClauseRequest {
+        source: ClauseRunSource::Extracted(extracted::two_clause_body()),
+        package_name: "fixture".to_owned(),
+        packages,
+        dependencies: DependencyInput::default(),
+        name: "NoCycle".to_owned(),
+        subject: filament_exact::ValueType::Boolean,
+        samples: Vec::new(),
+        limits: SpineLimits::default(),
+        accounting: default_accounting(1_000_000),
+    })
+    .expect("a well-formed request always reports");
+    assert!(matches!(
+        report.disposition,
+        ClauseDisposition::ExtractionClauseCount { actual: 2 }
+    ));
+}
+
+/// FR-031-AC-9 (TC-109): an extracted body with a syntax error refuses at
+/// compile with FR-109's source refusal, not the clause-count refusal.
+#[cfg(feature = "quire-extraction")]
+#[trace("TC-109", "FR-031-AC-9")]
+#[test]
+fn run_clause_refuses_an_extracted_body_with_a_syntax_error_at_the_source() {
+    let (mut request, _) = no_cycle_request(&[("a", None)]);
+    request.source = ClauseRunSource::Extracted(extracted::syntax_error_body());
+    let report = run_clause(request).expect("a well-formed request always reports");
+    let ClauseDisposition::Compile(refusal) = &report.disposition else {
+        panic!("expected a compile refusal, got {:?}", report.disposition);
+    };
+    assert_eq!(
+        refusal.code(),
+        fsl_foundation::diagnostic::Code::InvalidSyntax
+    );
+    assert_eq!(report.disposition.stage(), ClauseRunStage::Compile);
+    assert_eq!(report.disposition.truth(), None);
+}
 // ---------------------------------------------------------------------------
 // FR-105: S4 state-node emission (TC-462, TC-463).
 // ---------------------------------------------------------------------------

@@ -428,6 +428,15 @@ pub(crate) fn package_called(name: &str, body: &str) -> CheckedPackage {
     package_with_internals(name, "", body, None)
 }
 
+/// [`package_called`] with the further `profiles` lines in its header.
+pub(crate) fn package_called_with_profiles(
+    name: &str,
+    profiles: &str,
+    body: &str,
+) -> CheckedPackage {
+    package_with_internals(name, profiles, body, None)
+}
+
 fn package_with_internals(
     name: &str,
     profiles: &str,

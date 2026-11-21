@@ -195,7 +195,7 @@ fn claims_world() -> World {
     let temporal = "temporal TemporalProgress using t over (c: Config::ConfigVersion) \
         clock \"model-steps\" on origin { eventually[0,2] holds(true) }\n";
     let hyper = "hyper HyperProgress using t over behaviours (c: Config::ConfigVersion) \
-        exists trace a of Config { always holds(true) }\n";
+        exists trace a of Config { always [0, 2] holds(true) }\n";
     let hybrid = "hybrid Braking using t {\n\
         mode Moving invariant { v >= 0 and v <= 20 and a >= 1 and a <= 2 }\n\
           flow { v' = -a; a' = 0; t' = 1; }\n\

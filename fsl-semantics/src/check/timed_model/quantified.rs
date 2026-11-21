@@ -27,6 +27,7 @@ use super::{
     self_path, timed, ClockConstraint, ClockId, ClockOp, Clocks, DataLiteral, Dnf, ElementBinding,
     FamilyDraft, Located, PartBudget, ResetDraft, SlotRef,
 };
+use crate::check::check::reserved_slot_cause;
 use crate::check::lowering::{CollectionShape, PlaceStep};
 use crate::check::refusal::{CheckCause, TemporalCause};
 use filament_checked::key::DeclarationKey;
@@ -136,6 +137,9 @@ pub(super) fn read(
         return Ok(None);
     };
     let span = located.span(id);
+    if let Some(cause) = reserved_slot_cause(quantifier.binder, Some(span)) {
+        return Err(cause);
+    }
     let Some(max) = quantifier.shape.max else {
         // The family of the entries indexed by size: the body read once at
         // the template slot, instantiated at each held slot by the reading.
@@ -257,6 +261,9 @@ pub(super) fn invariant_bound(
 ) -> Result<(ElementBinding, ClockConstraint), CheckCause> {
     if form.quantifier != QuantifierKind::Forall {
         return Err(timed(TemporalCause::TimeInvariantShape { span: form.span }));
+    }
+    if let Some(cause) = reserved_slot_cause(&form.binder.name, Some(form.binder.span)) {
+        return Err(cause);
     }
     let collection = Located::of(&form.collection, clocks, context)
         .ok_or_else(|| timed(TemporalCause::TimeInvariantShape { span: form.span }))?;

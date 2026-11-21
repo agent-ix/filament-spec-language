@@ -789,9 +789,6 @@ fn stream(
             break;
         };
         let line = line?;
-        if line.iter().all(u8::is_ascii_whitespace) {
-            continue;
-        }
         read += 1;
         let position = observed.checked_sub(1);
         let record = match read_record(&line, snapshots) {
@@ -926,7 +923,14 @@ fn file_lines(intake: &mut super::Intake<'_>, path: Option<&str>) -> Result<Vec<
         return Ok(Vec::new());
     };
     let bytes = intake.file(path, intake.remaining)?;
-    Ok(bytes
+    // The final newline ends the last record; it does not open another. An
+    // empty file is an empty stream, and a blank line inside it is one
+    // malformed record (FR-644 "Behavior").
+    let body = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(body
         .split(|byte| *byte == b'\n')
         .map(|line| Ok(line.to_vec()))
         .collect())

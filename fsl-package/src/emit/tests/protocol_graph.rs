@@ -10,7 +10,7 @@ use super::protocol_reference::{clause_argument, node_by_id, node_of, not_emitte
 use super::reachability::{lower_package, lower_with, model_node, Lowered};
 use super::*;
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::{CheckRefusal, ProtocolConstruct};
+use fsl_semantics::check::{CheckCause, CheckRefusal, ProtocolAnchorCause, ProtocolConstruct};
 
 pub(super) const PROFILES: &str = "profile p = \"filament.protocol.finite-global/v1\";\n\
                          profile e = \"filament.temporal.timed/v1\";\n";
@@ -746,9 +746,6 @@ fn a_channel_carries_every_type_the_reader_admits() {
             "unordered".to_owned(),
             format!("fifo by (m: {carries}) {{ m }}"),
         ] {
-            if carries == "Quantity<m>" && ordering != "unordered" {
-                continue;
-            }
             let text = carrying_flow(carries, &ordering);
             let lowered = lower_with(model(), PROFILES, &text);
             assert!(
@@ -778,6 +775,7 @@ fn a_channel_carries_every_type_the_reader_admits() {
 const KEYED: &str = "record Plain { x: Integer; }\n\
     record WithQuantity { q: Quantity<m>; }\n\
     record WithBounded { b: Int[0, 5]; }\n\
+    record WithFloat { f: Float64[nearest-even]; }\n\
     record WithDecimal { d: Decimal[-100,100;0,0;nearest-even]; }\n\
     record WithRational { r: Rational[-100, 100; 1, 1]; }\n\
     record WithText { t: Text[0, 8; nfc]; }\n";
@@ -819,54 +817,46 @@ fn a_fifo_key_the_reader_compares_is_admitted() {
     }
 }
 
-/// FR-881 admits FIFO-stable bounded and quantity keys, including their
-/// composite forms; their emitted packages must also read back.
+/// FR-880-AC-10 / FR-881-AC-2, FSpec FR-726: equality-stable model-owned
+/// variant keys and a bounded-integer model value type `PartId` are emitted
+/// and admitted by the reader.
+#[trace("TC-2503", "TC-2504", "FR-880-AC-10", "FR-881-AC-2", "FSpec-FR-726-AC-2")]
 #[test]
-#[trace("FR-881-AC-2", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
-#[ignore = "QSL-1142: checker/IR FIFO-key parity for bounded, quantity and composite keys is pending"]
-fn a_fifo_key_of_a_bounded_or_quantity_type_is_written() {
-    let cases = [
-        ("Quantity<m>", "m"),
-        ("Option<Int[0, 5]>", "m"),
-        ("Option<Quantity<m>>", "m"),
-        ("Sequence<Int[0, 5]>", "m"),
-        ("Sequence<Quantity<m>>", "m"),
-        ("WithQuantity", "m"),
-        ("WithBounded", "m"),
-        ("WithDecimal", "m"),
-        ("WithRational", "m"),
-        ("WithText", "m"),
-        ("WithQuantity", "m.q"),
-        ("WithBounded", "m.b"),
-        ("WithDecimal", "m.d"),
-        ("WithRational", "m.r"),
-        ("WithText", "m.t"),
-    ];
-    for (carries, key) in cases {
-        let text = keyed_flow(carries, key);
-        let lowered = lower_with(model(), PROFILES, &text);
-        assert!(
-            lowered.ir.is_ok(),
-            "{carries} {key}: {:?}",
-            lowered.ir.err()
-        );
-        assert!(lowered.verified, "{carries} {key}");
-    }
-}
-
-/// FR-881 admits FIFO-stable model-owned variant and record keys over the
-/// FR-360 document. Their packages and unordered carried counterparts read back.
-#[test]
-#[trace("FR-881-AC-2", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
-#[ignore = "QSL-1142: checker/IR FIFO-key parity for model-owned stable keys is pending"]
-fn a_model_owned_fifo_key_is_written_and_a_variant_is_carried() {
+fn model_owned_fifo_keys_are_emitted_and_variant_types_are_carried() {
     use super::variant_types::fixture;
     let document = || {
-        crate::emit::tests::wire_bytes(&fixture::with_types(vec![fixture::variant_type(
-            "Odd",
-            &["2x", "Café", "Gold Plus"],
-        )]))
-        .unwrap()
+        let origin = serde_json::json!(fixture::instant()["origin"]);
+        let constraint = |keyword: &str, value: &str| {
+            serde_json::json!({
+                "identity": fixture::id(&format!("PartId/constraints/{keyword}")),
+                "keyword": keyword,
+                "operands": {"value": value},
+                "appliesTo": "ix://filament/native/Integer",
+                "diagnosticCode": format!("bound.{keyword}"),
+                "origin": origin,
+            })
+        };
+        let mut part_id = fixture::instant();
+        part_id["displayName"] = serde_json::json!("PartId");
+        part_id["identity"] = fixture::id("PartId").into();
+        part_id["kind"]["name"] = serde_json::json!("bounded");
+        part_id.as_object_mut().unwrap().remove("target");
+        part_id["scalar"] = serde_json::json!("integer");
+        part_id["constraints"] = serde_json::json!([constraint("min", "0"), constraint("max", "99")]);
+        let mut document = fixture::with_types(vec![
+            fixture::variant_type("Odd", &["2x", "Café", "Gold Plus"]),
+            part_id,
+        ]);
+        let mut bounded_kind = document["constructs"][0].clone();
+        bounded_kind["kind"]["name"] = serde_json::json!("bounded");
+        bounded_kind["construct"] = serde_json::json!({
+            "identity": "none",
+            "shape": "record",
+            "members": {},
+            "meaning": fsl_semantics::model::intake::meaning::VALUE_TYPE,
+        });
+        document["constructs"].as_array_mut().unwrap().push(bounded_kind);
+        crate::emit::tests::wire_bytes(&document).unwrap()
     };
     let package = (fixture::PACKAGE, "1");
     let flow = |carries: &str, ordering: &str| {
@@ -886,6 +876,7 @@ fn a_model_owned_fifo_key_is_written_and_a_variant_is_carried() {
     for (carries, key) in [
         ("M::Tier", "m"),
         ("M::Odd", "m"),
+        ("M::PartId", "m"),
         ("M::Settings", "m"),
         ("M::Settings", "m.tier"),
         ("Sequence<M::Tier>", "m"),
@@ -1866,21 +1857,26 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
     }
 }
 
-/// FR-880-AC-10, FSpec FR-726-AC-2: a FIFO key of any FIFO-key-stable type
-/// (a bounded domain, a quantity, a composite of them) is written.
+/// FR-880-AC-10 / FR-881-AC-2, FSpec FR-726-AC-2: bounded, quantity, and
+/// record keys without float leaves are written and admitted by the reader.
 #[test]
-#[trace("TC-2503", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
-#[ignore = "QSL-1142: checker/IR FIFO-key parity for bounded, quantity and composite keys is pending"]
+#[trace("TC-2503", "TC-2504", "FR-880-AC-10", "FR-881-AC-2", "FSpec-FR-726-AC-2")]
 fn a_fifo_key_stable_key_is_written() {
     for (carries, key) in [
         ("Int[0, 99]", "m"),
         ("Quantity<m>", "m"),
+        ("Option<Quantity<m>>", "m"),
         ("Option<Int[0, 5]>", "m"),
         ("Sequence<Quantity<m>>", "m"),
+        ("Sequence<Int[0, 5]>", "m"),
+        ("WithQuantity", "m"),
         ("WithBounded", "m"),
         ("WithBounded", "m.b"),
         ("WithQuantity", "m.q"),
         ("WithDecimal", "m"),
+        ("WithDecimal", "m.d"),
+        ("WithRational", "m"),
+        ("WithText", "m"),
         ("WithRational", "m.r"),
         ("WithText", "m.t"),
     ] {
@@ -1900,7 +1896,11 @@ fn a_fifo_key_stable_key_is_written() {
 #[test]
 #[trace("TC-2504", "FR-881-AC-1")]
 fn an_unstable_fifo_key_refuses_at_the_key() {
-    for carries in ["Float64[nearest-even]", "Option<Float32[nearest-even]>"] {
+    for carries in [
+        "Float64[nearest-even]",
+        "Option<Float32[nearest-even]>",
+        "WithFloat",
+    ] {
         let text = keyed_flow(carries, "m");
         let refusals = checked(&text, true).expect_err(&text);
         let [refusal] = refusals.as_slice() else {
@@ -1912,6 +1912,47 @@ fn an_unstable_fifo_key_refuses_at_the_key() {
             "{text}"
         );
         assert_eq!(refusal.cause.cause(), Some("operator-ineligible"), "{text}");
+        if carries == "WithFloat" {
+            let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+                panic!("a protocol anchor cause: {refusal:?}");
+            };
+            let ProtocolAnchorCause::KeyEquality {
+                channel,
+                operator,
+                key_text,
+                key_type,
+                span,
+            } = cause.as_ref()
+            else {
+                panic!("a FIFO-key-stable diagnostic: {cause:?}");
+            };
+            assert_eq!(channel, "C");
+            assert_eq!(operator, "=");
+            assert_eq!(key_text, "m");
+            let filament_exact::ValueType::Composite(declaration) = key_type.as_ref() else {
+                panic!("the retained FIFO key type is composite: {key_type:?}");
+            };
+            assert_eq!(declaration.package(), "pkg");
+            assert_eq!(
+                declaration.path(),
+                vec![filament_exact::PathSegment::Text("WithFloat".to_owned())]
+            );
+            assert_eq!(declaration.ordinal(), 0);
+            let checked_unit = format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 profile v = \"filament.model.complete/v1\";\n{PROFILES}\
+                 model M = \"acme/orders\";\n{text}"
+            );
+            let key_start = checked_unit.rfind("{ m }").expect("the FIFO key") + 2;
+            assert_eq!(
+                *span,
+                fsl_foundation::Span {
+                    start: key_start,
+                    end: key_start + 1,
+                }
+            );
+            assert_eq!(&checked_unit[span.start..span.end], "m");
+        }
     }
 }
 

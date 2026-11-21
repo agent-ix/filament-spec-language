@@ -199,6 +199,8 @@ mod state_graph_claim;
 mod state_model;
 mod step_simulation;
 mod sum_case;
+mod synthesis;
+pub use synthesis::{CheckedSynthesis, CheckedSynthesisClaim};
 mod task_set;
 mod temporal_clause;
 mod terminal;
@@ -255,7 +257,7 @@ use crate::model::domain_package::DomainPackageRef;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub use check::FormedUnits;
-use check::{bind_parameters, NamedScope, Typer};
+use check::{bind_parameters, reserved_slot_refusal, NamedScope, Typer};
 // `Signature` is public only under `test-support`: the layer-5 evaluator's
 // tests build the resolved `Signature` `declarations_for` takes as
 // `own_signature`; no shipped caller outside `check` names it.
@@ -341,6 +343,36 @@ pub fn structural_node_key(
     ordinal: u64,
 ) -> Result<filament_exact::NodeKey, filament_exact::InvalidNodeKey> {
     filament_exact::NodeKey::new(package_name.to_owned(), path, ordinal)
+}
+
+/// The structural identity S3 assigns to the `ordinal`th clock-place
+/// template in a package (FSpec FR-322 "Timed-model nodes").
+pub(crate) fn clock_place_node_key(
+    package_name: &str,
+    ordinal: u64,
+) -> Result<filament_exact::NodeKey, filament_exact::InvalidNodeKey> {
+    filament_exact::NodeKey::new(
+        package_name.to_owned(),
+        vec![
+            filament_exact::PathSegment::Text("timed_model".to_owned()),
+            filament_exact::PathSegment::Text("clock_place".to_owned()),
+        ],
+        ordinal,
+    )
+}
+
+/// Kernel identity used by `Reference<Clock>` (FR-1040). The checked IR
+/// represents references by effective identity, so the native clock type
+/// uses its canonical native identity here.
+pub(crate) fn clock_reference_type() -> filament_exact::ValueType {
+    filament_exact::ValueType::Reference(clock_reference_target())
+}
+
+pub(crate) fn clock_reference_target() -> filament_exact::EffectiveId {
+    filament_exact::EffectiveId::new(
+        None,
+        filament_exact::OriginalDeclarationKey::new("filament/native", "Clock"),
+    )
 }
 
 /// Mint a derived node under FSpec FR-322's non-group path rule:
@@ -560,8 +592,8 @@ pub use refusal::{
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
     MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
     ProtocolAnchorCause, ProtocolCheckRefusal, ProtocolConstruct, ProtocolReferenceCause,
-    ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ShadowedDeclaration,
-    SlotKind, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
+    ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ReservedSlotName,
+    ShadowedDeclaration, SlotKind, SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
     TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
@@ -1054,6 +1086,10 @@ pub struct CheckedGraph {
     step_relations: Vec<hyper_clause::CheckedModelRelation>,
     /// FR-165: every checked state-graph claim, in declaration order.
     state_graph_claims: Vec<CheckedStateGraphClaim>,
+    /// FR-1036: source names and declaration spans for emitted synthesis claims.
+    synthesis_claims: Vec<CheckedSynthesisClaim>,
+    /// FR-754: checked synthesis expressions retained for the bounded runner.
+    syntheses: Vec<CheckedSynthesis>,
     /// FR-447: every checked hybrid model, in declaration order.
     hybrid_models: Vec<CheckedHybridModel>,
     /// FR-447: every checked hybrid claim, in declaration order.
@@ -1207,6 +1243,8 @@ impl DebugWith for CheckedGraph {
             hyper_nodes,
             step_relations,
             state_graph_claims,
+            synthesis_claims,
+            syntheses,
             hybrid_models,
             hybrid_claims,
             hybrid_claim_sites,
@@ -1343,6 +1381,8 @@ impl DebugWith for CheckedGraph {
             .field("hyper_nodes", &hyper_nodes)
             .field("step_relations", &Seq(step_relations, table))
             .field("state_graph_claims", &state_graph_claims)
+            .field("synthesis_claims", &synthesis_claims)
+            .field("syntheses", &syntheses)
             .field("hybrid_models", &hybrid_models)
             .field("hybrid_claims", &hybrid_claims)
             .field("hybrid_claim_sites", &hybrid_claim_sites)
@@ -2189,6 +2229,27 @@ fn temporal_declaration_index(origin: &str) -> Option<usize> {
 }
 
 impl PackageDeclarations {
+    fn synthesis_domain_type(&self, name: &str) -> Option<ValueType> {
+        self.aliases
+            .iter()
+            .find_map(|(alias, value_type)| (alias == name).then(|| value_type.clone()))
+            .or_else(|| {
+                self.enums
+                    .iter()
+                    .find(|enumeration| enumeration.name == name)
+                    .map(|enumeration| ValueType::Enum(enumeration.shape()))
+            })
+            .or_else(|| {
+                self.types
+                    .composites()
+                    .find(|composite| composite.name() == name)
+                    .map(|composite| ValueType::Composite(composite.key()))
+            })
+            // The mathematical `Integer` is a builtin no declaration names;
+            // it is the one builtin whose value set has no finite bound.
+            .or_else(|| (name == "Integer").then_some(ValueType::Integer))
+    }
+
     /// Check every function: duplicate names, declared types, typing, static
     /// definedness and termination, in that order. Every refusal is made
     /// before any charge; a reached checking limit is `stage_limit_exceeded`
@@ -2336,6 +2397,21 @@ impl PackageDeclarations {
                 return Err(vec![CheckRefusal {
                     location: root(Origin::Expression),
                     cause: CheckCause::DefinitionCycle { edges },
+                }]);
+            }
+        }
+        for synthesis in &self.synthesis_forms {
+            let Some(domain_type) = self.synthesis_domain_type(&synthesis.domain.name) else {
+                continue;
+            };
+            if let Some(component) = synthesis::first_unbounded_component(&self.types, &domain_type)
+            {
+                return Err(vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::SynthesisUnboundedDomain {
+                        component,
+                        span: synthesis.domain.span,
+                    },
                 }]);
             }
         }
@@ -2647,6 +2723,15 @@ impl PackageDeclarations {
                 return Err(refusals);
             }
         }
+        // The checking stage's work meter, created before the timed reader so
+        // its unfoldings and every later charge draw on the one budget.
+        let contract_meter_limits = filament_exact::ScalarLimits {
+            work_units: limits.work_budget(),
+            integer_bits: limits.rational_bits(),
+            ..family::SCALAR_LIMITS_UNLIMITED
+        };
+        let mut contract_meter =
+            filament_exact::Meter::new(contract_meter_limits).with_cancel(cancel.clone());
         // FR-230: the clocks of each timed model, read out of the state
         // clauses before they are typed.
         let timed_drafts = {
@@ -2673,8 +2758,10 @@ impl PackageDeclarations {
                     rational_bits: limits.rational_bits(),
                     nodes: limits.nodes(),
                     model_spans: &self.declared_type_spans,
+                    locate: &|span| region::region(&self.source, self.embedding.as_deref(), span),
                 },
                 &mut self.state_clauses,
+                &mut contract_meter,
             )
             .map_err(|refusal| vec![refusal])?
         };
@@ -2799,6 +2886,26 @@ impl PackageDeclarations {
                 });
             }
         }
+        // FR-488: a function parameter in the reserved slot form is refused
+        // at the parameter's own identifier.
+        for (index, function) in self.functions.iter().enumerate() {
+            let spans = function.parameter_spans();
+            for (position, (name, _)) in function.parameters.iter().enumerate() {
+                let identifier = spans
+                    .and_then(|spans| spans.get(position))
+                    .and_then(|span| {
+                        Some(fsl_foundation::Span {
+                            start: span.start,
+                            end: span.start.checked_add(name.len())?,
+                        })
+                    });
+                refusals.extend(reserved_slot_refusal(
+                    name,
+                    identifier,
+                    &body_location(index, &function.name),
+                ));
+            }
+        }
         if !refusals.is_empty() {
             return Err(refusals);
         }
@@ -2854,6 +2961,7 @@ impl PackageDeclarations {
         .with_decimal_literal_limits(self.decimal_literal_limits)
         .with_known_populations(refinement::population_names(&self.models))
         .with_clock_places(&self.models)
+        .with_clock_place_keys(&self.models, &self.time_sources, &self.package_name)
         .with_clock_reading(
             self.clock_reading
                 .iter()
@@ -3094,6 +3202,7 @@ impl PackageDeclarations {
             .select_declared_ieee_profile(&signatures, has_ieee_literal)
             .map_err(|refusal| vec![refusal])?;
         let signatures = Signatures::new(signatures);
+        let checked_syntheses = synthesis::check_forms(&self.synthesis_forms, &scope, &signatures)?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {
             if !seen_operations.insert((operation.receiver_type.clone(), operation.member.clone()))
@@ -3451,13 +3560,6 @@ impl PackageDeclarations {
             input_bytes: limits.input_bytes(),
             node_count: limits.nodes(),
         };
-        let contract_meter_limits = filament_exact::ScalarLimits {
-            work_units: limits.work_budget(),
-            integer_bits: limits.rational_bits(),
-            ..family::SCALAR_LIMITS_UNLIMITED
-        };
-        let mut contract_meter =
-            filament_exact::Meter::new(contract_meter_limits).with_cancel(cancel.clone());
         // FR-319: a body's equality over a union is typed against the sealed
         // declaration, so each union is sealed under the node id of its type
         // node before any body is typed. A union's type closure needs no
@@ -6401,7 +6503,12 @@ impl PackageDeclarations {
                 state_nodes: &lowered_clauses,
             }) {
                 Ok(lowered) => lowered_relations.push(lowered),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-105 "Boolean model-field transitions": the derived
@@ -6429,6 +6536,9 @@ impl PackageDeclarations {
                 .collect();
             if let Err(refusal) = lowering.state_transitions(&transition_clauses) {
                 refusals.push(refusal);
+                if cancel.tripped().is_some() {
+                    return Err(refusals);
+                }
             }
         }
         // FR-092: the node of each protocol that holds an `attempt`, now that
@@ -6487,9 +6597,17 @@ impl PackageDeclarations {
                         lowering.protocol_nodes_with_attempts(&inputs, &attempts, &compensations)
                     {
                         refusals.push(refusal);
+                        if cancel.tripped().is_some() {
+                            return Err(refusals);
+                        }
                     }
                 }
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         for index in deferred_protocol_fairness {
@@ -6560,7 +6678,12 @@ impl PackageDeclarations {
                                 if cause.construct()
                                     == Some(ProtocolConstruct::ReferenceToAttemptProtocol)
                         ) => {}
-                Err(refusal) => refusals.push(selected.unkeyed(refusal)),
+                Err(refusal) => {
+                    refusals.push(selected.unkeyed(refusal));
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-488: each emitted hyper clause over `behaviours`, after every
@@ -6602,7 +6725,12 @@ impl PackageDeclarations {
                 subject_roots: &subject_roots,
             }) {
                 Ok(lowered) => lowered_hyper.push(lowered),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-410: each checked state-graph claim, after every function its
@@ -6611,6 +6739,34 @@ impl PackageDeclarations {
         for (index, claim) in checked_state_graph_claims.iter().enumerate() {
             match lowering.state_graph_claim(&lowering::StateGraphClaimInput { index, claim }) {
                 Ok(lowered) => lowered_state_graph.push(lowered),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
+            }
+        }
+        let mut lowered_syntheses = Vec::with_capacity(checked_syntheses.len());
+        for (index, checked) in checked_syntheses.iter().enumerate() {
+            let location = lowering::synthesis_location(index, &checked.form.name.name);
+            let Origin::TypeDeclaration { name } = &location.origin else {
+                continue;
+            };
+            type_spans.insert(name.clone(), checked.form.span);
+            let satisfies = lowering::synthesis_satisfies_location(index, &checked.form.name.name);
+            if let Origin::TypeDeclaration { name } = satisfies.origin {
+                site_spans.insert(name, checked.form.satisfies.spans.clone());
+            }
+            if let Some(objective) = &checked.form.objective {
+                let objective_site =
+                    lowering::synthesis_objective_location(index, &checked.form.name.name);
+                if let Origin::TypeDeclaration { name } = objective_site.origin {
+                    site_spans.insert(name, objective.expression.spans.clone());
+                }
+            }
+            match lowering.synthesis_request(index, checked) {
+                Ok(key) => lowered_syntheses.push(key),
                 Err(refusal) => refusals.push(refusal),
             }
         }
@@ -6620,6 +6776,9 @@ impl PackageDeclarations {
             Ok(keys) => keys,
             Err(refusal) => {
                 refusals.push(refusal);
+                if cancel.tripped().is_some() {
+                    return Err(refusals);
+                }
                 Vec::new()
             }
         };
@@ -6629,6 +6788,9 @@ impl PackageDeclarations {
                 Ok(keys) => Some(keys),
                 Err(refusal) => {
                     refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
                     None
                 }
             };
@@ -6642,7 +6804,12 @@ impl PackageDeclarations {
                 signatures: signatures.as_slice(),
             }) {
                 Ok(lowered) => lowered_hybrids.push(lowered),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         let mut lowered_hybrid_claims = Vec::with_capacity(checked_hybrid_claim_list.len());
@@ -6662,7 +6829,12 @@ impl PackageDeclarations {
                     signatures: signatures.as_slice(),
                 }) {
                     Ok(lowered) => lowered_hybrid_claims.push((index, lowered)),
-                    Err(refusal) => refusals.push(refusal),
+                    Err(refusal) => {
+                        refusals.push(refusal);
+                        if cancel.tripped().is_some() {
+                            return Err(refusals);
+                        }
+                    }
                 }
             }
         }
@@ -6683,7 +6855,7 @@ impl PackageDeclarations {
                     extension::ClauseValue::Form(target) => lowered_extensions[target].is_some(),
                     extension::ClauseValue::Checked(_) => true,
                 });
-                if !ready {
+                if !ready || cancel.tripped().is_some() {
                     return true;
                 }
                 match lowering.extension_form(&lowering::ExtensionFormInput {
@@ -6696,6 +6868,9 @@ impl PackageDeclarations {
                 }
                 false
             });
+            if cancel.tripped().is_some() {
+                return Err(refusals);
+            }
             if pending.len() == before {
                 break;
             }
@@ -6717,7 +6892,12 @@ impl PackageDeclarations {
                 declaration: &checked.declaration,
             }) {
                 Ok(key) => lowered_terminals.push((index, declaration.model.clone(), key)),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-230, FSpec FR-322 "Timed-model nodes": each `urgent when`
@@ -6740,7 +6920,12 @@ impl PackageDeclarations {
                     .collect();
                 match lowering.timed_state(model.clocks(), context.clone(), alternatives, &sites) {
                     Ok(key) => lowered.push((index, key)),
-                    Err(refusal) => refusals.push(refusal),
+                    Err(refusal) => {
+                        refusals.push(refusal);
+                        if cancel.tripped().is_some() {
+                            return Err(refusals);
+                        }
+                    }
                 }
             }
             model.set_urgency_predicate_nodes(lowered);
@@ -6781,7 +6966,12 @@ impl PackageDeclarations {
             };
             match lowering.timed_clauses(&input) {
                 Ok(nodes) => model.set_clause_nodes(nodes),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         for composite in scope.types().composites() {
@@ -6796,7 +6986,12 @@ impl PackageDeclarations {
                         },
                     ));
                 }
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-094: selected model type references root their named units even
@@ -6805,22 +7000,34 @@ impl PackageDeclarations {
             .model_type_unit_nodes(&check::declared_unit_ids(&self.units, &package_unit_ids))
         {
             refusals.push(refusal);
+            if cancel.tripped().is_some() {
+                return Err(refusals);
+            }
         }
         let declared_nominal_nodes: Vec<_> = self.nominal_spans.keys().cloned().collect();
         if let Err(refusal) = lowering.declared_nominal_nodes(&declared_nominal_nodes) {
             refusals.push(refusal);
+            if cancel.tripped().is_some() {
+                return Err(refusals);
+            }
         }
         // FR-092 rule 1: every admitted enum's declaration and member nodes,
         // which enum types and enum literals name by key.
         for enum_binding in scope.enums() {
             if let Err(refusal) = lowering.enum_nodes(enum_binding) {
                 refusals.push(refusal);
+                if cancel.tripped().is_some() {
+                    return Err(refusals);
+                }
             }
         }
         // FR-094 "Dimension equivalence": one node per admitted equivalence,
         // whether or not a quantity type names either dimension.
         if let Err(refusal) = lowering.dimension_equivalence_nodes(&self.dimension_equivalences) {
             refusals.push(refusal);
+            if cancel.tripped().is_some() {
+                return Err(refusals);
+            }
         }
         // FR-375: each class catalog, lowered once its protocol clauses'
         // nodes exist; a node no other declaration located takes its one
@@ -6834,7 +7041,12 @@ impl PackageDeclarations {
             });
             match lowering.class_catalog_keys(catalog, &location) {
                 Ok(keys) => checked.class_catalog_keys = keys,
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         // FR-375: each refinement's rows, keyed once its catalog is, each
@@ -6856,14 +7068,24 @@ impl PackageDeclarations {
             });
             match lowering.refinement_rows(checked, &location) {
                 Ok(rows) => checked.row_keys = Some(rows),
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
             // FR-144: the `Boolean` result bound of the refinement's record.
             match lowering.refinement_result_type(&location) {
                 Ok(boolean) => {
                     refinement_booleans.insert(checked.name().to_owned(), boolean);
                 }
-                Err(refusal) => refusals.push(refusal),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    if cancel.tripped().is_some() {
+                        return Err(refusals);
+                    }
+                }
             }
         }
         if !refusals.is_empty() {
@@ -7216,6 +7438,9 @@ impl PackageDeclarations {
             return Err(unlowered());
         }
         if lowered_state_graph.len() != checked_state_graph_claims.len() {
+            return Err(unlowered());
+        }
+        if lowered_syntheses.len() != checked_syntheses.len() {
             return Err(unlowered());
         }
         let lowered_probabilistic = lowered_probabilistic.ok_or_else(unlowered)?;
@@ -8251,6 +8476,18 @@ impl PackageDeclarations {
             hyper_nodes,
             step_relations: Vec::new(),
             state_graph_claims: state_graph_nodes,
+            synthesis_claims: checked_syntheses
+                .iter()
+                .zip(&lowered_syntheses)
+                .map(|(checked, node)| {
+                    CheckedSynthesisClaim::new(
+                        node.clone(),
+                        checked.form.name.name.clone(),
+                        checked.form.span,
+                    )
+                })
+                .collect(),
+            syntheses: checked_syntheses.clone(),
             hybrid_models: checked_hybrid_models,
             hybrid_claims: checked_hybrid_claim_list,
             hybrid_claim_sites,
@@ -9594,6 +9831,17 @@ impl CheckedGraph {
     /// FR-165: every checked state-graph claim, in declaration order.
     pub fn state_graph_claims(&self) -> &[CheckedStateGraphClaim] {
         &self.state_graph_claims
+    }
+
+    /// FR-1036: each checked synthesis declaration's authored name, whole
+    /// source span and emitted node identity.
+    pub fn synthesis_claims(&self) -> &[CheckedSynthesisClaim] {
+        &self.synthesis_claims
+    }
+
+    /// FR-754: the checked expressions and domain for each synthesis claim.
+    pub fn syntheses(&self) -> &[CheckedSynthesis] {
+        &self.syntheses
     }
 
     /// FR-447: every checked hybrid model, in declaration order.

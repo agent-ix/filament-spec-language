@@ -745,7 +745,7 @@ impl Row {
     pub(super) fn refused(refusal: &ReplayRefusal) -> Self {
         match refusal {
             ReplayRefusal::Fault(_) => Self::failed(),
-            refusal => Self::inconclusive(InconclusiveCause::ReplayRefused(refusal.code())),
+            refusal => Self::inconclusive(InconclusiveCause::from_replay_refusal(refusal)),
         }
     }
 

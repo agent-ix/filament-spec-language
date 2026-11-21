@@ -627,11 +627,6 @@ pub enum AssemblyCause {
     /// and no S3 check reads yet (FR-230): `unsupported_construct`/
     /// `not-yet-implemented`, never compiled unchecked.
     TimedNotChecked(super::refusal::TimedConstruct),
-    /// A synthesis form whose FR-754 lowering is not installed yet.
-    SynthesisNotChecked {
-        /// The synthesis declaration's authored name.
-        name: String,
-    },
 }
 
 impl AssemblyCause {
@@ -710,8 +705,7 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => Code::RuntimeInvariant,
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
-            | Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. } => Code::UnsupportedConstruct,
+            | Self::TimedNotChecked(_) => Code::UnsupportedConstruct,
         }
     }
 
@@ -824,7 +818,7 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_) | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
+            Self::TimedNotChecked(_) => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -1035,6 +1029,8 @@ struct Unit {
     /// Verification plan source forms, kept outside the checked clause graph
     /// and checked at S3 (FR-753).
     verification_plans: Vec<fsl_forms::VerificationPlanForm>,
+    /// Each bounded synthesis declaration, in source order (FR-754).
+    syntheses: Vec<fsl_forms::SynthesisForm>,
 }
 
 impl Unit {
@@ -1095,6 +1091,7 @@ impl Unit {
             task_sets: Vec::new(),
             state_graph_claims: Vec::new(),
             verification_plans: Vec::new(),
+            syntheses: Vec::new(),
         };
         unit.timed.extend(
             std::mem::take(&mut clock_forms.positions)
@@ -1236,7 +1233,7 @@ impl Unit {
                             span,
                         });
                 }
-                DeclarationForm::Synthesis(_) => {}
+                DeclarationForm::Synthesis(synthesis) => unit.syntheses.push(*synthesis),
             }
         }
         // The `Clock` type positions were listed first; FR-230's gate reads
@@ -1857,10 +1854,7 @@ fn model_object_types(
                 // Clock is retained in the admitted domain package as a
                 // model place; it is not an FSL data field in the kernel's
                 // TypeEnvironment.
-                if matches!(
-                    sequence_items(&field.value_type, &records),
-                    ValueTypeRef::Clock
-                ) {
+                if clock_place_type(&field.value_type, &records) {
                     continue;
                 }
                 match model_field(
@@ -2121,12 +2115,7 @@ fn model_object_types(
         effective_fields.sort_by(|left, right| left.key.cmp(&right.key));
         // A record's clock fields are places, not data (FR-230 "Records,
         // tuples and unions"): its declaration lists the data fields only.
-        effective_fields.retain(|field| {
-            !matches!(
-                sequence_items(&field.value_type, &records),
-                ValueTypeRef::Clock
-            )
-        });
+        effective_fields.retain(|field| !clock_place_type(&field.value_type, &records));
         for field in effective_fields {
             match model_field(
                 field,
@@ -2705,6 +2694,7 @@ fn model_value_type(
                         .map_err(|_| Unmapped::Unsupported)?,
                 ),
                 ScalarValueDomain::Text(text) => ValueType::Text(*text),
+                ScalarValueDomain::Decimal(decimal) => ValueType::Decimal(decimal.clone()),
                 ScalarValueDomain::Rational {
                     domain: Some(domain),
                     unit: None,
@@ -2731,6 +2721,11 @@ fn model_value_type(
                 ScalarValueDomain::Native(NativeValueType::Timestamp) => ValueType::Timestamp,
                 ScalarValueDomain::Native(NativeValueType::Bytes) => ValueType::Bytes,
                 ScalarValueDomain::Native(NativeValueType::JsonObject) => ValueType::JsonObject,
+                // A value type bound to native Decimal by `target` carries no
+                // policy, so it has no checked type, as the bare native has none.
+                ScalarValueDomain::Native(NativeValueType::Decimal) => {
+                    return Err(Unmapped::Untyped(String::new()));
+                }
                 ScalarValueDomain::Native(_) => return Err(Unmapped::Unsupported),
             },
             Some(DomainPackageRecord::OptionType(option)) => {
@@ -2837,25 +2832,22 @@ fn model_value_type(
     with_multiplicity(element, multiplicity)
 }
 
-/// The type `value_type` ends at through the package's sequence types and
-/// aliases: `value_type` itself when it names neither, or when the chain
-/// returns to a type it passed.
-fn sequence_items<'r>(
-    value_type: &'r ValueTypeRef,
-    records: &BTreeMap<&DeclarationKey, &'r DomainPackageRecord>,
-) -> &'r ValueTypeRef {
-    unaliased(value_type, |key| records.get(key).copied()).map_or(value_type, |(items, _)| items)
-}
-
 /// A single clock place, read through aliases without crossing a collection.
 fn clock_place_type(
     value_type: &ValueTypeRef,
     records: &BTreeMap<&DeclarationKey, &DomainPackageRecord>,
 ) -> bool {
-    matches!(
-        unaliased(value_type, |key| records.get(key).copied()),
-        Some((ValueTypeRef::Clock, 0))
-    )
+    match unaliased(value_type, |key| records.get(key).copied()) {
+        Some((ValueTypeRef::Clock, _)) => true,
+        Some((ValueTypeRef::Package(key), 0)) => match records.get(key) {
+            Some(DomainPackageRecord::SequenceType(sequence)) => {
+                clock_place_type(&sequence.items, records)
+            }
+            Some(DomainPackageRecord::MapType(map)) => clock_place_type(&map.values, records),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// `element` held by a member of `multiplicity`: itself for `[1, 1]`, else
@@ -3359,6 +3351,13 @@ fn check_names(
             }
             TypeFormHead::Builtin(BuiltinType::Reference) => {
                 for target in &form.arguments {
+                    // `Reference<Clock>` is the checked clock-place handle
+                    // type. Clock is a native temporal value, not an object
+                    // declaration that must resolve through the model's
+                    // package spellings.
+                    if super::type_form::is_clock_type_form(target) {
+                        continue;
+                    }
                     let name = match &target.head {
                         TypeFormHead::Name(name) => name,
                         TypeFormHead::Builtin(_)
@@ -3807,6 +3806,23 @@ fn admit_types(
             // declaration it is and the staged admission below keeps the
             // redefinition for the stage and for `complete`.
             let mut typed = object_types.to_vec();
+            // `Reference<Clock>` is the checker's synthetic clock-place
+            // handle. TypeEnvironment admits references only to an object
+            // declaration, so provide its canonical native target only to
+            // type admission and staging. Checked lowering collapses this
+            // exact target to the `clock_reference` scalar node, and the
+            // typer excludes it from model-object receiver routing.
+            let clock_reference_target = super::clock_reference_target();
+            if !typed
+                .iter()
+                .any(|object_type| object_type.key() == clock_reference_target.clone())
+            {
+                typed.push(ObjectTypeDeclaration::new(
+                    clock_reference_target.clone(),
+                    "ClockReference",
+                    Vec::new(),
+                ));
+            }
             declare_cardinality_narrowing(&mut typed);
             let mut rounds = typed.iter().map(|ty| ty.attributes().len()).sum::<usize>() + 1;
             let types = loop {
@@ -3830,6 +3846,16 @@ fn admit_types(
                 }
             };
             let mut staged = object_types.to_vec();
+            if !staged
+                .iter()
+                .any(|object_type| object_type.key() == clock_reference_target.clone())
+            {
+                staged.push(ObjectTypeDeclaration::new(
+                    clock_reference_target,
+                    "ClockReference",
+                    Vec::new(),
+                ));
+            }
             declare_cardinality_narrowing(&mut staged);
             let pending = if object_types.is_empty() {
                 None
@@ -4318,7 +4344,10 @@ impl PackageDeclarations {
                         | fsl_forms::DeclarationForm::Probabilistic(_)
                 ) {
                     // FR-096: a site of the declaration is located in its own unit.
-                    source_owners.insert(format!("probabilistic {probabilistic_index}"), source.clone());
+                    source_owners.insert(
+                        format!("probabilistic {probabilistic_index}"),
+                        source.clone(),
+                    );
                     probabilistic_index += 1;
                 }
                 if matches!(form.form(), fsl_forms::DeclarationForm::StateClause(_)) {
@@ -4508,24 +4537,7 @@ impl PackageDeclarations {
         let mut model_selection_units = unit.model_selection_units().to_vec();
         let repeated_model_selection_units = unit.repeated_model_selection_units().to_vec();
         let import_selection_units = unit.import_selection_units().to_vec();
-        let mut errors: Vec<AssemblyError> = unit
-            .forms()
-            .iter()
-            .filter_map(|form| {
-                let cause = match form.form() {
-                    fsl_forms::DeclarationForm::Synthesis(synthesis) => {
-                        Some(AssemblyCause::SynthesisNotChecked {
-                            name: synthesis.name.name.clone(),
-                        })
-                    }
-                    _ => None,
-                }?;
-                Some(AssemblyError {
-                    cause,
-                    span: form.span(),
-                })
-            })
-            .collect();
+        let mut errors: Vec<AssemblyError> = Vec::new();
         let (mut selections, forms) = unit.into_parts();
         // The models and the one meter their admission counted on; checking
         // continues that meter into the conformance stage.
@@ -6174,6 +6186,7 @@ impl PackageDeclarations {
         package.clock_reading = unit.clock_reading;
         package.task_set_forms = unit.task_sets;
         package.verification_plans = unit.verification_plans;
+        package.synthesis_forms = unit.syntheses;
         // FR-451: a declaration is located under its own spaced name.
         declared_type_spans.extend(unit.abstractions.iter().map(|abstraction| {
             (

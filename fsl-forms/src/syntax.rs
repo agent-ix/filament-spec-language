@@ -2383,7 +2383,7 @@ impl ExpressionBuilder {
                 None => return Err(TreeRefusal::UnknownChild(*child)),
                 Some(true) => return Err(TreeRefusal::ClaimedTwice(*child)),
                 Some(false) if children[..position].contains(child) => {
-                    return Err(TreeRefusal::ClaimedTwice(*child))
+                    return Err(TreeRefusal::ClaimedTwice(*child));
                 }
                 Some(false) => {}
             }
@@ -5264,14 +5264,47 @@ pub enum DeclarationForm {
     VerificationPlan(Box<VerificationPlanForm>),
 }
 
-/// The S2 source identity of a synthesis declaration while FR-754's detailed
-/// expression and domain forms are built by their owning implementation.
+/// `minimize e` or `maximize e` on a synthesis declaration (FR-754).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SynthesisDirectionForm {
+    /// Choose the least candidate in the domain's cost order.
+    Minimize,
+    /// Choose the greatest candidate in the domain's cost order.
+    Maximize,
+}
+
+/// One explicit optimization objective on a synthesis declaration (FR-754).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SynthesisObjectiveForm {
+    /// Whether the objective chooses the least or greatest value.
+    pub direction: SynthesisDirectionForm,
+    /// The objective expression and all of its source spans.
+    pub expression: ExpressionForm,
+    /// The expression's tokens from first to last joined by one space,
+    /// comments and whitespace dropped (FSpec FR-322 objective `text`).
+    pub text: String,
+    /// The span from the direction word through the expression.
+    pub span: Span,
+}
+
+/// One bounded synthesis declaration (FR-754), with each expression and
+/// source name carried in the S2 form for checking.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SynthesisForm {
     /// The authored declaration name.
     pub name: DeclaredName,
     /// The selected profile alias.
     pub profile: UsingAlias,
+    /// Candidate grammar type, as authored.
+    pub grammar: NameForm,
+    /// Finite candidate domain type, as authored.
+    pub domain: NameForm,
+    /// Optional `minimize` or `maximize` objective.
+    pub objective: Option<SynthesisObjectiveForm>,
+    /// The `satisfies` predicate and each of its source spans.
+    pub satisfies: ExpressionForm,
+    /// The source span of the `satisfies { ... }` block.
+    pub satisfies_span: Span,
     /// The complete source spelling retained for later stages.
     pub source: String,
     /// The declaration's source span.
@@ -5419,9 +5452,11 @@ mod tests {
         let listed = field_read(10);
         let guard = field_read(40);
         assert!(listed.root().same_tree(guard.root()));
-        assert!(!listed
-            .root()
-            .same_tree(Expression::field(Expression::name("got"), "ready").root()));
+        assert!(
+            !listed
+                .root()
+                .same_tree(Expression::field(Expression::name("got"), "ready").root())
+        );
     }
 
     /// A 100,000-deep tree, alternating single-, two- and many-operand

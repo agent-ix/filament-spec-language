@@ -6,7 +6,8 @@ use crate::check::numeric_conversion::{classify, Class};
 use crate::check::refusal::{CheckRefusal, Obligation, OperandText};
 use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{
-    DecimalType, Integer, IntegerInterval, NonZeroInteger, RationalDomain, Value, ValueType,
+    ArithmeticOperator, DecimalType, Integer, IntegerInterval, NonZeroInteger, RationalDomain,
+    RoundingMode, Value, ValueType,
 };
 use filament_semantic_value::declaration::admits_equality_conversion;
 use filament_semantic_value::quantity::{UnitScope, UnitTable};
@@ -62,6 +63,14 @@ impl Definedness<'_> {
             (&literal, node.value_type())
         {
             if target.contains(value) {
+                return Ok(());
+            }
+        }
+        // FR-093 "Explicit numeric narrowing": a decimal operand is proved by
+        // the declared ranges of its typed operands under exact interval
+        // arithmetic, never by the type the sum is written at.
+        if let ValueType::Decimal(target) = node.value_type() {
+            if DecimalBounds::of(operand).is_some_and(|bounds| bounds.within(target)) {
                 return Ok(());
             }
         }
@@ -147,5 +156,197 @@ fn decimal_hull(target: &DecimalType) -> Interval {
             upper: End::Finite(high_a.max(high_b)),
         },
         _ => Interval::unbounded(),
+    }
+}
+
+/// An exact decimal value `numerator / 10^scale`, the endpoint of a
+/// [`DecimalBounds`] interval.
+#[derive(Clone)]
+struct Scaled {
+    numerator: Integer,
+    scale: u32,
+}
+
+impl Scaled {
+    /// This value and `other` over their larger common scale.
+    fn aligned(&self, other: &Self) -> (Integer, Integer, u32) {
+        let scale = self.scale.max(other.scale);
+        let lift = |value: &Self| {
+            value
+                .numerator
+                .mul(&Integer::power_of_ten(u64::from(scale - value.scale)))
+        };
+        (lift(self), lift(other), scale)
+    }
+
+    fn add(&self, other: &Self) -> Self {
+        let (a, b, scale) = self.aligned(other);
+        Self {
+            numerator: a.add(&b),
+            scale,
+        }
+    }
+
+    fn sub(&self, other: &Self) -> Self {
+        let (a, b, scale) = self.aligned(other);
+        Self {
+            numerator: a.sub(&b),
+            scale,
+        }
+    }
+
+    fn mul(&self, other: &Self) -> Self {
+        Self {
+            numerator: self.numerator.mul(&other.numerator),
+            scale: self.scale.saturating_add(other.scale),
+        }
+    }
+
+    fn at_least(&self, other: &Self) -> bool {
+        let (a, b, _) = self.aligned(other);
+        a >= b
+    }
+}
+
+/// The exact value interval of a decimal-typed node: a literal is a point, a
+/// `+`, `-` or `*` combines its operands' intervals exactly, and any other
+/// node spans the values its declared `Decimal[..]` type admits.
+struct DecimalBounds {
+    lower: Scaled,
+    upper: Scaled,
+}
+
+impl DecimalBounds {
+    fn of(node: CheckedNode<'_>) -> Option<Self> {
+        match node.kind() {
+            NodeKind::Literal(CheckedLiteral(Value::Decimal(value))) => {
+                let point = Scaled {
+                    numerator: value.representation().coefficient().clone(),
+                    scale: value.representation().scale(),
+                };
+                Some(Self {
+                    lower: point.clone(),
+                    upper: point,
+                })
+            }
+            NodeKind::Decimal {
+                operator,
+                left,
+                right,
+                ..
+            } => {
+                let (left, right) = (Self::of(node.at(*left))?, Self::of(node.at(*right))?);
+                let bounds = match operator {
+                    ArithmeticOperator::Add => Some(Self {
+                        lower: left.lower.add(&right.lower),
+                        upper: left.upper.add(&right.upper),
+                    }),
+                    ArithmeticOperator::Subtract => Some(Self {
+                        lower: left.lower.sub(&right.upper),
+                        upper: left.upper.sub(&right.lower),
+                    }),
+                    ArithmeticOperator::Multiply => {
+                        let corners = [
+                            left.lower.mul(&right.lower),
+                            left.lower.mul(&right.upper),
+                            left.upper.mul(&right.lower),
+                            left.upper.mul(&right.upper),
+                        ];
+                        let mut lower = corners[0].clone();
+                        let mut upper = corners[0].clone();
+                        for corner in &corners[1..] {
+                            if lower.at_least(corner) {
+                                lower = corner.clone();
+                            }
+                            if corner.at_least(&upper) {
+                                upper = corner.clone();
+                            }
+                        }
+                        Some(Self { lower, upper })
+                    }
+                    // A quotient has no exact decimal interval.
+                    ArithmeticOperator::Divide => None,
+                }?;
+                // A node whose own type rounds stores a grid value at its maximum
+                // scale, which lies between the exact bounds rounded outward onto
+                // that grid.
+                Some(match node.value_type() {
+                    ValueType::Decimal(own) if own.rounding() != RoundingMode::Exact => {
+                        bounds.rounded_outward(own.max_scale())?
+                    }
+                    _ => bounds,
+                })
+            }
+            _ => match node.value_type() {
+                ValueType::Decimal(declared) => Some(Self::declared(declared)),
+                _ => None,
+            },
+        }
+    }
+
+    /// These bounds with the lower rounded down and the upper rounded up onto
+    /// the grid of multiples of `10^-scale`.
+    fn rounded_outward(self, scale: u32) -> Option<Self> {
+        let onto_grid = |value: Scaled, up: bool| -> Option<Scaled> {
+            if value.scale <= scale {
+                return Some(value);
+            }
+            let power = Integer::power_of_ten(u64::from(value.scale - scale));
+            let divisor = NonZeroInteger::try_from(&power).ok()?;
+            let numerator = if up {
+                value.numerator.neg().div_mod_floor(divisor).0.neg()
+            } else {
+                value.numerator.div_mod_floor(divisor).0
+            };
+            Some(Scaled { numerator, scale })
+        };
+        Some(Self {
+            lower: onto_grid(self.lower, false)?,
+            upper: onto_grid(self.upper, true)?,
+        })
+    }
+
+    /// The values a declared `Decimal[..]` type admits: its coefficient
+    /// bounds read at its smallest and its largest scale.
+    fn declared(declared: &DecimalType) -> Self {
+        let at = |coefficient: &Integer, scale: u32| Scaled {
+            numerator: coefficient.clone(),
+            scale,
+        };
+        let (min, max) = (declared.min_scale(), declared.max_scale());
+        let lowers = [at(declared.lower(), min), at(declared.lower(), max)];
+        let uppers = [at(declared.upper(), min), at(declared.upper(), max)];
+        let [lower_a, lower_b] = lowers;
+        let [upper_a, upper_b] = uppers;
+        Self {
+            lower: if lower_a.at_least(&lower_b) {
+                lower_b
+            } else {
+                lower_a
+            },
+            upper: if upper_a.at_least(&upper_b) {
+                upper_a
+            } else {
+                upper_b
+            },
+        }
+    }
+
+    /// Whether every value of this interval is a member of `target` at the
+    /// target's smallest and its largest scale.
+    fn within(&self, target: &DecimalType) -> bool {
+        [target.min_scale(), target.max_scale()]
+            .into_iter()
+            .all(|scale| {
+                let lower = Scaled {
+                    numerator: target.lower().clone(),
+                    scale,
+                };
+                let upper = Scaled {
+                    numerator: target.upper().clone(),
+                    scale,
+                };
+                self.lower.at_least(&lower) && upper.at_least(&self.upper)
+            })
     }
 }

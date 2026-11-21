@@ -639,7 +639,7 @@ fn decimal_arithmetic_rejects_mixed_types_unless_an_operand_is_converted() {
     assert_eq!(refusal.cause, mismatch());
 
     check(
-        "type P = Decimal[0, 1000; 2, 2; exact];\n\
+        "type P = Decimal[0, 10000; 2, 2; exact];\n\
          type R = Decimal[0, 1000; 1, 1; exact];\n\
          function same using v(p: P, q: P): P pure { p + q }\n\
          function converted using v(p: P, r: R): P pure { p + convert<P>(r) }",

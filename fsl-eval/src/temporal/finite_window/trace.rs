@@ -214,13 +214,22 @@ impl TimestampedTrace {
             PastWindow::Positions { .. } => Ok(WindowTrace::positions(
                 u64::try_from(self.len()).unwrap_or(u64::MAX),
             )),
-            PastWindow::Duration { .. } => WindowTrace::timed(
-                self.positions
-                    .iter()
-                    .map(|position| Rational::from_integer(Integer::from(position.stamp)))
-                    .collect(),
-            ),
+            PastWindow::Duration { .. } => self.timed_window_trace(),
         }
+    }
+
+    /// The window trace of this trace's exact clock stamps, one per position
+    /// in canonical order: the trace a duration window is read against
+    /// (FR-194 "Evaluation").
+    pub(crate) fn timed_window_trace(
+        &self,
+    ) -> Result<WindowTrace, crate::temporal::window::WindowRefusal> {
+        WindowTrace::timed(
+            self.positions
+                .iter()
+                .map(|position| Rational::from_integer(Integer::from(position.stamp)))
+                .collect(),
+        )
     }
 
     /// Admit `positions`, given in any order. A trace with no position is

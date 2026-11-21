@@ -235,6 +235,7 @@ fn request_and_dependent_byte_ceilings_are_reached_and_raised() {
         RunLimits {
             request_bytes: request_size,
             dependent_bytes: SOURCE.len(),
+            ..RunLimits::default()
         },
         &RequestOverrides::default(),
     );

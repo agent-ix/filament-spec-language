@@ -5,6 +5,10 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-741
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-1042
+    type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-1043
+    type: verifies
 ---
 # TC-2066: Probability items run from source through analyze
 
@@ -12,7 +16,7 @@ relationships:
 
 Verify every probability item class through a `native-analyze/1` request compiled from source.
 
-Scope: FR-741-AC-1 to FR-741-AC-4.
+Scope: FR-741-AC-1 to FR-741-AC-4, FR-1042-AC-6, FR-1043-AC-4.
 
 ## Test Procedure
 

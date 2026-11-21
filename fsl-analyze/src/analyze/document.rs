@@ -1344,6 +1344,12 @@ const REFINEMENT_KIND: &str = "refinement";
 fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::NodeKey> {
     let graph = package.graph();
     let mut names: BTreeMap<String, filament_exact::NodeKey> = declared_nodes(package).collect();
+    names.extend(graph.hyper_clauses().iter().filter_map(|clause| {
+        Some((
+            clause.name().to_owned(),
+            clause.assembled_occurrence()?.node().clone(),
+        ))
+    }));
     names.extend(
         graph
             .temporal_clauses()
@@ -1445,6 +1451,14 @@ fn claim_occurrence(
     }
     if let Some(record) = records.iter().find(|record| record.node() == node) {
         return Some(record.occurrence().clone());
+    }
+    if let Some(occurrence) = graph
+        .hyper_clauses()
+        .iter()
+        .filter_map(|clause| clause.assembled_occurrence())
+        .find(|occurrence| occurrence.node() == node)
+    {
+        return Some(occurrence.clone());
     }
     if let Some(clause) = graph
         .temporal_clauses()
@@ -1815,7 +1829,15 @@ fn resolve_one(
                 {
                     Capability::ProbabilisticSatisfaction
                 }
-                [] if state_graph.is_some() => Capability::TemporalSatisfaction,
+                [] if state_graph.is_some()
+                    || package
+                        .graph()
+                        .hyper_clauses()
+                        .iter()
+                        .any(|clause| clause.assembled_occurrence() == Some(&claim)) =>
+                {
+                    Capability::TemporalSatisfaction
+                }
                 _ => return invalid_kind(index, Some(name), "absent-kind"),
             }
         }
@@ -4011,6 +4033,7 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value>
     Some(match &found.counterexample {
         super::Counterexample::Assignments(_) => json!({"function": qualified}),
         super::Counterexample::Temporal { .. }
+        | super::Counterexample::Hyper(_)
         | super::Counterexample::Protocol { .. }
         | super::Counterexample::Probabilistic(_)
         | super::Counterexample::Contract(_)

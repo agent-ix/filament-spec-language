@@ -96,6 +96,7 @@
 //! waits for S4 to emit a hyper clause. The core of that replay is
 //! `fsl_replay::replay_hyper_trace_tuple`.
 
+mod closed;
 mod lift;
 mod reductions;
 
@@ -145,8 +146,11 @@ use super::graph::{
 use fsl_route::reductions::Reductions;
 use lift::{through, Lifted};
 
+mod alias;
 mod projected;
 mod single;
+
+pub use alias::{alias_provisions, alias_system};
 
 pub use single::{check_single_existential, SingleExistentialRequest, SingleExistentialRun};
 
@@ -222,6 +226,11 @@ pub enum HyperRefusal {
         "an undefined evaluation on the universal side of an HP-3 clause names no existential path"
     )]
     NoPartnerPath,
+    /// An atom of an event-position clause's body has no value on a tuple of
+    /// closed executions (ADR-023 HV-8): the counterexample shape that names it
+    /// is not built.
+    #[error("an undefined evaluation on a tuple of closed finite executions is not decided")]
+    ClosedUndefined,
     /// A fairness constraint names an operation its variable's subject does
     /// not declare.
     #[error("the fairness constraint on `{name}` names an operation the subject does not declare")]
@@ -266,11 +275,22 @@ pub fn check_hyper(
             stats: Totals::default().stats(),
         });
     }
+    let provisions: Vec<Vec<Option<_>>> = request
+        .subjects
+        .iter()
+        .map(|subject| alias_provisions(&subject.simulation, clause))
+        .collect();
     let systems = request
         .subjects
         .iter()
-        .map(|subject| {
-            ModelSystem::new(subject.simulation.clone())
+        .zip(clause.aliases())
+        .enumerate()
+        .map(|(index, (subject, alias))| {
+            let provision = provisions
+                .get(index)
+                .and_then(|owned| owned.get(index))
+                .and_then(Option::as_ref);
+            alias_system(&subject.simulation, provision, alias.as_str())
                 .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -699,6 +719,11 @@ impl<'a> Run<'_, 'a> {
                 cause: UndecidedCause::NoInstance,
                 stats: totals.stats(),
             });
+        }
+        if self.request.clause.profile()
+            == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+        {
+            return self.decide_closed(instances, totals);
         }
         if let Some(outcome) = self.precheck(&totals)? {
             return Ok(outcome);

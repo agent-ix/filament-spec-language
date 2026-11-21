@@ -581,3 +581,92 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
         assert!(!directory.path().join(output_path).exists());
     }
 }
+
+const GRAPH: &str = "language \"ix:native\" edition \"1-draft\";
+domain \"example/graph\";
+object Node { rank: Int[0, 9]; relationship next: Node [0, 1]; }
+population nodes: Node;
+";
+
+/// `Forward` asks whether `self` reaches the node of rank 2, `Backward`
+/// whether it reaches the node of rank 0.
+const GRAPH_PROGRAM: &str = "language \"ix:native\" edition \"1-draft\";
+profile P = \"filament.model.complete/v1\";
+model M = \"example/graph\";
+invariant Forward using P on M::Node at current { exists(n in M::nodes : n.rank = 2 and reaches(self, n, next)) }
+invariant Backward using P on M::Node at current { exists(n in M::nodes : n.rank = 0 and reaches(self, n, next)) }
+";
+
+/// The `nodes` snapshot of the compiled relationship: `a -> b -> c`, with
+/// ranks 0, 1 and 2.
+fn graph_snapshot() -> Value {
+    let node = |key: &str, rank: &str| {
+        json!({"key": key, "type": "ix://example/graph/Node", "fields": {"rank": {"integer": rank}}})
+    };
+    let end = |key: &str| json!({"population": "ix://example/graph/nodes", "key": key});
+    json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "agent-ix", "identity": "test:graph:current"},
+        "observation": "current",
+        "anchor": {"kind": "handler", "name": "validate"},
+        "model": {"identity": "example/graph"},
+        "populations": [{
+            "population": "ix://example/graph/nodes",
+            "complete": true,
+            "objects": [node("a", "0"), node("b", "1"), node("c", "2")],
+        }],
+        "relationships": [{
+            "relationship": "ix://example/graph/relationship/Node-next-Node",
+            "complete": true,
+            "instances": [
+                {"source": end("a"), "target": end("b")},
+                {"source": end("b"), "target": end("c")},
+            ],
+        }],
+    })
+}
+
+/// Runs the clause `name` over node `key`: whether it holds.
+fn graph_clause_holds(directory: &Path, name: &str, key: &str) -> bool {
+    std::fs::write(directory.join("graph.fsl"), GRAPH).unwrap();
+    std::fs::write(directory.join("program.fsl"), GRAPH_PROGRAM).unwrap();
+    std::fs::create_dir_all(directory.join("data")).unwrap();
+    std::fs::write(
+        directory.join("data/current.json"),
+        serde_json::to_vec(&graph_snapshot()).unwrap(),
+    )
+    .unwrap();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "native-model-unit/1", "source": source("graph.fsl")}],
+        "clause": {
+            "selection": {"clause": {"name": name, "observation": "current",
+                "self": {"population": "ix://example/graph/nodes", "key": key},
+                "anchor": {"kind": "handler", "name": "validate"}}},
+            "observations": {"current": "data/current.json"}},
+        "program": {"source": source("program.fsl")}}});
+    let path = directory.join("graph-run.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (exit, value) = match command::run(&path, &crate::negotiation::Fr290) {
+        Ok(result) => (result.exit_code, result.value.as_value().clone()),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    };
+    let holds = value["disposition"]["outcome"]["value"] == json!({"kind": "boolean", "value": true});
+    assert_eq!(exit, if holds { 0 } else { 10 }, "{name} over {key}: {value}");
+    assert!(
+        holds || value["disposition"]["outcome"]["value"] == json!({"kind": "boolean", "value": false}),
+        "{name} over {key}: {value}"
+    );
+    holds
+}
+
+#[test]
+#[trace("TC-1942", "FR-710-AC-2")]
+fn reaches_checks_and_evaluates_over_a_model_unit_relationship() {
+    let directory = tempfile::tempdir().unwrap();
+    let dir = directory.path();
+    assert!(graph_clause_holds(dir, "Forward", "a"), "a reaches c");
+    assert!(graph_clause_holds(dir, "Forward", "b"), "b reaches c");
+    assert!(!graph_clause_holds(dir, "Forward", "c"), "c reaches nothing");
+    assert!(!graph_clause_holds(dir, "Backward", "c"), "c does not reach a");
+    assert!(!graph_clause_holds(dir, "Backward", "b"), "b does not reach a");
+}

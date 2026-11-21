@@ -257,6 +257,7 @@ pub fn replay_state_clause(
         // argument and checks no frame.
         ClauseDisposition::Compile(_)
         | ClauseDisposition::UnknownLanguage { .. }
+        | ClauseDisposition::ExtractionClauseCount { .. }
         | ClauseDisposition::NotAPredicate { .. }
         | ClauseDisposition::ArgumentRefusal(_)
         | ClauseDisposition::Temporal(_)

@@ -2981,6 +2981,12 @@ impl Disposition {
                         .fields(BTreeMap::from([("language", language.clone())])),
                 );
             }
+            ClauseDisposition::ExtractionClauseCount { actual } => {
+                result.refusal = Some(
+                    RefusalWire::new(Code::ExtractionClauseCount.as_str(), None)
+                        .fields(BTreeMap::from([("actual", actual.to_string())])),
+                );
+            }
             ClauseDisposition::MissingName { name } => {
                 result.refusal = Some(
                     RefusalWire::new(Code::MissingDeclaration.as_str(), Some("missing-name"))
@@ -3430,6 +3436,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
             reason: Reason::IncompleteInput | Reason::MissingHistory | Reason::StraddlesBound,
             ..
         }
+        | TemporalVerdict::Inactive
         | TemporalVerdict::Holds
         | TemporalVerdict::Pending
         | TemporalVerdict::PendingWindow { .. }

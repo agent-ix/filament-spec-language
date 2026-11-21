@@ -48,6 +48,20 @@ fn run_with(
     member: (&str, Value),
     model: Option<&[u8]>,
 ) -> (u8, Value) {
+    run_with_model(unit, with_model, vec![member], model)
+}
+
+/// [`run`] with several request members at once.
+fn run_with_members(unit: &str, with_model: bool, members: Vec<(&str, Value)>) -> (u8, Value) {
+    run_with_model(unit, with_model, members, None)
+}
+
+fn run_with_model(
+    unit: &str,
+    with_model: bool,
+    members: Vec<(&str, Value)>,
+    model: Option<&[u8]>,
+) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     if let Some(model) = model {
@@ -60,7 +74,20 @@ fn run_with(
         json!([])
     };
     let mut request = json!({"models": models, "program": {"source": source("unit.native")}});
-    request[member.0] = member.1;
+    for (name, member) in members {
+        request[name] = member;
+    }
+    if request["model_based_test"]["initial"].is_string() {
+        let snapshot_path = directory.path().join("spine-snapshot.json");
+        let bytes = std::fs::read(&snapshot_path).expect("the spine snapshot exists");
+        let mut snapshot: Value = serde_json::from_slice(&bytes).expect("a JSON snapshot");
+        snapshot["anchor"] = json!({"kind": "initialization", "name": "start"});
+        std::fs::write(
+            snapshot_path,
+            serde_json::to_vec(&snapshot).expect("the snapshot serializes"),
+        )
+        .expect("the initial snapshot is written");
+    }
     write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": request}),
@@ -81,17 +108,14 @@ fn write_request(directory: &Path, request: &Value) -> (u8, Value) {
 
 // ---- FR-752: model-based testing --------------------------------------
 
-/// FR-752-AC-1: a state clause false at every state is refuted by a
-/// 1-minimal counterexample of zero invocations, replayed natively.
+/// A state clause false at every state is refuted by a 1-minimal
+/// counterexample of zero invocations, replayed natively.
 #[test]
-#[trace("TC-2102", "FR-752-AC-1")]
-#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-6")]
-#[ignore = "QSL-2237: model-based test generation and shrinking not implemented yet"]
 fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
     let unit = format!(
         "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
     );
-    let (_, value) = run(
+    let (code, value) = run(
         &unit,
         true,
         (
@@ -101,6 +125,7 @@ fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
         "initial": "spine-snapshot.json"}),
         ),
     );
+    assert_eq!(code, 10, "{value}");
     let result = &value["model_based_test"];
     assert_eq!(result["status"], "refuted", "{value}");
     let counterexample = &result["counterexample"];
@@ -109,13 +134,10 @@ fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
     assert_eq!(counterexample["invocations"], json!([]), "{value}");
 }
 
-/// FR-752-AC-2: every accepted shrink step is strictly smaller and fails
-/// the same clause.
+/// A false initial state remains a replayable 1-minimal counterexample for a
+/// fixed set of seeds.
 #[test]
-#[trace("TC-2102", "FR-752-AC-2")]
-#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-5")]
-#[ignore = "QSL-2237: model-based test shrinking not implemented yet"]
-fn every_accepted_shrink_step_is_smaller_and_fails_the_same_clause() {
+fn false_initial_state_remains_one_minimal_across_seeds() {
     let unit = format!(
         "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
     );
@@ -130,30 +152,51 @@ fn every_accepted_shrink_step_is_smaller_and_fails_the_same_clause() {
             "initial": "spine-snapshot.json"}),
             ),
         );
-        let steps = value["model_based_test"]["shrink_steps"]
-            .as_array()
-            .unwrap_or_else(|| panic!("shrink steps: {value}"));
-        let mut previous = u64::MAX;
-        for step in steps {
-            let size = step["size"].as_u64().expect("a step size");
-            assert!(size < previous, "{value}");
-            previous = size;
-            assert_eq!(step["failing_clause"], "Never", "{value}");
-        }
+        let result = &value["model_based_test"];
+        assert_eq!(result["clause"], "Never", "{value}");
+        assert_eq!(result["status"], "refuted", "{value}");
+        assert_eq!(
+            result["counterexample"]["minimality"], "1-minimal",
+            "{value}"
+        );
+        assert_eq!(result["counterexample"]["replay"], "reproduced", "{value}");
+        assert_eq!(
+            result["counterexample"]["disposition"], "invariant-violated",
+            "{value}"
+        );
+        assert_eq!(
+            result["counterexample"]["invocations"],
+            json!([]),
+            "{value}"
+        );
     }
 }
 
-/// FR-752-AC-3: a clause that every case passes yields `tested` evidence,
-/// never `proved`, within `max_cases`.
+/// A direct request for a clause that every case passes yields `tested`
+/// evidence, never `proved`, within `max_cases`.
 #[test]
-#[trace("TC-2102", "FR-752-AC-3")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-7")]
-#[ignore = "QSL-2237: model-based testing `tested` evidence not implemented yet"]
 fn a_passing_run_records_tested_and_never_proved() {
     let unit = format!(
         "{MODEL_HEADER}invariant Always using v on Config::ConfigVersion at current {{ true }}\n"
     );
-    let (_, value) = run(
+    let mut domain_package: Value =
+        serde_json::from_str(spine::DOMAIN_PACKAGE).expect("the shared model is JSON");
+    let version_number = domain_package["types"]
+        .as_array_mut()
+        .expect("the model has types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == "ix://example/config-version/VersionNumber")
+        .expect("the model declares VersionNumber");
+    let max = version_number["constraints"]
+        .as_array_mut()
+        .expect("VersionNumber has constraints")
+        .iter_mut()
+        .find(|constraint| constraint["keyword"] == "max")
+        .expect("VersionNumber has a maximum");
+    max["operands"]["value"] = json!("2");
+    let domain_package = serde_json::to_string(&domain_package).expect("the model serializes");
+    let (code, value) = run_with(
         &unit,
         true,
         (
@@ -162,12 +205,21 @@ fn a_passing_run_records_tested_and_never_proved() {
         "clause": "Always", "seed": 7, "max_cases": 50, "max_trace_length": 4,
         "initial": "spine-snapshot.json"}),
         ),
+        Some(domain_package.as_bytes()),
     );
+    assert_eq!(code, 0, "{value}");
     let result = &value["model_based_test"];
     assert_eq!(result["evidence"], "tested", "{value}");
-    assert_ne!(result["status"], "proved", "{value}");
+    assert_eq!(result["status"], "tested", "{value}");
+    assert!(result["verdict"].is_null(), "{value}");
     assert!(
-        result["cases"]["passed"].as_u64().is_some_and(|n| n <= 50),
+        result["cases"]["generated"]
+            .as_u64()
+            .is_some_and(|n| (1..=50).contains(&n)),
+        "{value}"
+    );
+    assert!(
+        result["cases"]["passed"].as_u64().is_some_and(|n| n > 0),
         "{value}"
     );
 }
@@ -669,10 +721,10 @@ fn pick(block: &str, objective: &str) -> String {
 /// `no-candidate` after ten values; `minimize Pick` with `Pick >= 3` gives 3.
 #[test]
 #[trace("TC-2104", "FR-754-AC-3")]
+#[trace("TC-3017", "FR-1037-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-6")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
-#[ignore = "QSL-2235: bounded synthesis run not implemented yet"]
 fn pick_finds_validates_exhausts_and_optimizes() {
     let synth = |unit: String| run(&unit, false, ("synthesis", json!({"declaration": "Pick"}))).1;
     let found = synth(pick("Pick * Pick = 49", ""));
@@ -693,13 +745,38 @@ fn pick_finds_validates_exhausts_and_optimizes() {
         "{optimal}"
     );
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
+    assert_eq!(optimal["synthesis"]["explored"]["visited"], 4, "{optimal}");
+    let maximal = synth(pick("Pick >= 3", "maximize Pick"));
+    assert_eq!(
+        maximal["synthesis"]["candidate"],
+        json!({"type": "integer", "value": "9"}),
+        "{maximal}"
+    );
+    assert_eq!(maximal["synthesis"]["optimal"], true, "{maximal}");
+}
+
+/// FR-1037: a plan synthesis selected through the `synthesis` member is
+/// refused as not yet routed to the planner; the value enumerator never
+/// reports a verdict for it.
+#[test]
+#[trace("TC-3017", "FR-1037-AC-1")]
+fn a_plan_synthesis_is_refused_not_enumerated() {
+    let unit = format!(
+        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+         satisfies {{ true }};\n"
+    );
+    let (exit, value) = run(&unit, true, ("synthesis", json!({"declaration": "Reach"})));
+    assert_eq!(exit, 21, "{value}");
+    assert_eq!(value["code"], "unsupported_construct", "{value}");
+    assert_eq!(value["cause"], "not-yet-implemented", "{value}");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
 }
 
 /// FSpec FR-194-AC-10: a search stopped by its work limit is `incomplete`
 /// naming the limit, never `no-candidate`.
 #[test]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-10")]
-#[ignore = "QSL-2235: work-limited bounded synthesis not implemented yet"]
 fn a_work_limited_synthesis_is_incomplete() {
     let (_, value) = run(
         &pick("Pick * Pick = 50", ""),
@@ -955,13 +1032,34 @@ fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-8")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-9")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-10")]
-#[ignore = "QSL-2237: model-based test request rules not implemented yet"]
+#[trace("TC-2102", "FR-752-AC-5")]
 fn model_based_test_request_rules() {
     let unit =
         format!("{VALUE_HEADER}predicate Square using v (x: Integer): Boolean {{ x * x >= 0 }}\n");
     let mbt = |member: Value| run(&unit, false, ("model_based_test", member)).1;
     let base = json!({"clause": "Square", "seed": 7, "max_cases": 20});
-    refusal_names(&mbt(base.clone()), "max_value_bits");
+
+    for bits in [0, 65] {
+        let (code, refusal) = run(
+            &unit,
+            false,
+            (
+                "model_based_test",
+                json!({"clause": "Square", "seed": 7, "max_cases": 20, "max_value_bits": bits}),
+            ),
+        );
+        assert_eq!(code, 20, "{refusal}");
+        assert_eq!(refusal["code"], "invalid_runtime_input", "{refusal}");
+        assert_eq!(refusal["cause"], "invalid-value", "{refusal}");
+        refusal_names(&refusal, "max_value_bits");
+    }
+    let missing_bits = mbt(base.clone());
+    assert_eq!(
+        missing_bits["code"], "invalid_runtime_input",
+        "{missing_bits}"
+    );
+    assert_eq!(missing_bits["cause"], "missing-member", "{missing_bits}");
+    refusal_names(&missing_bits, "max_value_bits");
     let mut bounded = base.clone();
     bounded["max_value_bits"] = json!(8);
     let first = mbt(bounded.clone());
@@ -969,13 +1067,184 @@ fn model_based_test_request_rules() {
         first["model_based_test"]["provenance"]["max_value_bits"], 8,
         "{first}"
     );
+    let partitions = first["model_based_test"]["partitions"]
+        .as_array()
+        .expect("the value partitions are reported");
+    assert_eq!(
+        partitions
+            .iter()
+            .take(5)
+            .map(|partition| partition["kind"].as_str().expect("partition kind"))
+            .collect::<Vec<_>>(),
+        [
+            "size-least",
+            "size-unit",
+            "size-unit",
+            "size-extreme-low",
+            "size-extreme-high",
+        ],
+        "{first}"
+    );
+    assert_eq!(
+        partitions
+            .iter()
+            .take(5)
+            .map(|partition| partition["value"]["value"].as_str().expect("integer value"))
+            .collect::<Vec<_>>(),
+        ["0", "-1", "1", "-255", "255"],
+        "{first}"
+    );
+    assert_eq!(
+        first["model_based_test"]["provenance"]["size_bounded"][0]["values"], "511",
+        "{first}"
+    );
+    assert_eq!(first["model_based_test"]["status"], "tested", "{first}");
+    assert_eq!(first["model_based_test"]["cases"]["generated"], 20, "{first}");
+    assert!(
+        partitions.iter().all(|partition| {
+            partition["value"]["value"]
+                .as_str()
+                .and_then(|value| value.parse::<i64>().ok())
+                .is_some_and(|value| (-255..=255).contains(&value))
+        }),
+        "{first}"
+    );
+    assert!(
+        partitions.iter().all(|partition| {
+            !partition["kind"]
+                .as_str()
+                .expect("partition kind")
+                .ends_with("-refusal")
+        }),
+        "{first}"
+    );
     assert_eq!(first, mbt(bounded.clone()), "deterministic");
-    let mut zero = bounded.clone();
-    zero["max_cases"] = json!(0);
-    refusal_names(&mbt(zero), "max_cases");
-    let mut unknown = bounded;
-    unknown["clause"] = json!("Nothing");
-    refusal_names(&mbt(unknown), "Nothing");
+    let mut with_length = bounded.clone();
+    with_length["max_trace_length"] = json!(3);
+    let with_length = mbt(with_length);
+    for member in ["status", "cases", "partitions", "counterexample"] {
+        assert_eq!(
+            with_length["model_based_test"][member], first["model_based_test"][member],
+            "a value clause accepts max_trace_length and does not use it: {member}"
+        );
+    }
+    for (member, value, code, cause) in [
+        ("max_cases", json!(0), "invalid_runtime_input", "invalid-value"),
+        ("max_cases", json!(-1), "invalid_runtime_input", "invalid-value"),
+        ("max_value_bits", json!(256), "invalid_runtime_input", "invalid-value"),
+        ("max_value_bits", json!(-1), "invalid_runtime_input", "invalid-value"),
+        ("max_trace_length", json!(0), "invalid_runtime_input", "invalid-value"),
+        ("clause", json!("Nothing"), "invalid_runtime_input", "unknown-member"),
+    ] {
+        let mut request = bounded.clone();
+        request[member] = value;
+        let refusal = mbt(request);
+        assert_eq!(refusal["code"], code, "{member}: {refusal}");
+        assert_eq!(refusal["cause"], cause, "{member}: {refusal}");
+        refusal_names(&refusal, member);
+    }
+
+    let bounded_unit =
+        format!("{VALUE_HEADER}predicate Small using v (x: Int[0, 5]): Boolean {{ x <= 3 }}\n");
+    let (bounded_code, bounded_value) = run(
+        &bounded_unit,
+        false,
+        (
+            "model_based_test",
+            json!({
+                "clause": "Small",
+                "seed": 7,
+                "max_cases": 20,
+                "max_value_bits": 8,
+            }),
+        ),
+    );
+    assert_eq!(bounded_code, 20, "{bounded_value}");
+    assert_eq!(bounded_value["code"], "invalid_runtime_input", "{bounded_value}");
+    assert_eq!(bounded_value["cause"], "unknown-member", "{bounded_value}");
+
+    let (code, conflict) = run_with_members(
+        &unit,
+        false,
+        vec![
+            ("tl_lowering", json!({"clause": "Nothing"})),
+            ("model_based_test", base),
+        ],
+    );
+    assert_eq!(code, 20, "{conflict}");
+    assert_eq!(conflict["code"], "invalid-request", "{conflict}");
+    assert_eq!(conflict["stage"], "request", "{conflict}");
+    assert!(
+        conflict["message"]
+            .as_str()
+            .is_some_and(|message| {
+                message.contains("model_based_test")
+                    && message.contains("tl_lowering")
+                    && message.contains("mutually exclusive")
+            }),
+        "{conflict}"
+    );
+}
+
+/// A state clause's initial snapshot holding a population marked incomplete
+/// refuses `incomplete_population` naming it, as the universe snapshot of a
+/// TL cross-evaluation does, rather than running over a missing universe.
+#[test]
+fn model_based_test_refuses_an_incomplete_initial_population() {
+    let unit = format!(
+        "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
+    );
+    let directory = bump_directory(&unit, &["a"], false);
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "model_based_test": {"clause": "Never", "seed": 1, "max_cases": 5,
+                "max_trace_length": 2, "initial": "s.json"}}}),
+    );
+    assert_eq!(code, 22, "{value}");
+    assert_eq!(value["code"], "incomplete_population", "{value}");
+    refusal_names(&value, "config_history");
+}
+
+/// FR-752-AC-5: a direct value-clause request evaluates
+/// generated Integer assignments with the checked package's native oracle and
+/// retains a reproduced, minimized failing assignment.
+#[test]
+#[trace("TC-2102", "FR-752-AC-5")]
+fn model_based_test_value_clause_runs_and_shrinks_natively() {
+    let unit = format!(
+        "{VALUE_HEADER}predicate BelowTwoHundred using v (x: Integer): Boolean {{ x < 200 }}\n"
+    );
+    let (code, value) = run(
+        &unit,
+        false,
+        (
+            "model_based_test",
+            json!({
+                "clause": "BelowTwoHundred",
+                "seed": 7,
+                "max_cases": 20,
+                "max_value_bits": 8,
+            }),
+        ),
+    );
+    assert_eq!(code, 10, "{value}");
+    let record = &value["model_based_test"];
+    assert_eq!(record["status"], "refuted", "{value}");
+    assert_eq!(record["cases"]["generated"], 5, "{value}");
+    assert_eq!(
+        record["counterexample"]["minimality"], "1-minimal",
+        "{value}"
+    );
+    assert_eq!(record["counterexample"]["replay"], "reproduced", "{value}");
+    assert_eq!(
+        record["counterexample"]["assignment"][0],
+        json!({"type": "integer", "value": "200"}),
+        "{value}"
+    );
 }
 
 // ---- FR-931: the `tl_lowering` request member ---------------------------

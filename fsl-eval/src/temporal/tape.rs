@@ -107,6 +107,12 @@ pub enum TapeEntry {
     /// letter (an undefined atom, a refused condition or a failed read), so an
     /// evaluation reads the value again exactly as the batch run does.
     Held(Value),
+    /// A position held by value whose letter is also known: an aggregate clause's
+    /// sample that a later window may still read, though no activation reads
+    /// its own atoms any more (FR-820 "Summarized positions"). The letter
+    /// stands for the position as an anchor; once no window reads the sample,
+    /// the entry becomes [`TapeEntry::Read`] of the letter.
+    Anchored(Value, TapeLetter),
     /// A snapshot position held by value: the object environment its snapshot
     /// admitted, read again as the batch run reads it.
     Object(Box<ObjectEnvironment>),
@@ -139,7 +145,9 @@ impl LetterTape {
     /// Keep the first `len` positions, undoing the advances after them.
     pub fn truncate(&mut self, len: usize) {
         while self.entries.len() > len {
-            if let Some(TapeEntry::Held(_) | TapeEntry::Object(_)) = self.entries.pop() {
+            if let Some(TapeEntry::Held(_) | TapeEntry::Anchored(..) | TapeEntry::Object(_)) =
+                self.entries.pop()
+            {
                 self.held = self.held.saturating_sub(1);
             }
         }

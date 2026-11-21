@@ -352,3 +352,30 @@ pub(crate) fn order_protocol(receive: bool) -> String {
          finish Done as (zz: Boolean) {{ true }};\n}}\n"
     )
 }
+
+/// [`analyze`] under the run's `replay.input_bytes` (FR-255), the
+/// `RunLimits` value FR-940-AC-22 names.
+pub(crate) fn analyze_under_replay_bytes(request: &Path, replay_input_bytes: u64) -> Run {
+    let limits = fsl_command::command::RunLimits {
+        replay_input_bytes,
+        ..fsl_command::command::RunLimits::default()
+    };
+    match fsl_command::command::analyze_with_limits(
+        request,
+        limits,
+        &Fr290,
+        &filament_exact::Cancel::new(),
+    ) {
+        Ok(result) => Run {
+            exit: i32::from(result.exit_code),
+            stdout: result.value.to_string().into_bytes(),
+        },
+        Err(error) => Run {
+            exit: i32::from(error.category().exit_code()),
+            stdout: error
+                .outcome_document(fsl_replay::Operation::Analyze)
+                .to_bytes()
+                .expect("the outcome document serializes"),
+        },
+    }
+}

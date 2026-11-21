@@ -10,12 +10,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::ObjectReference;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_semantics::check::{
     CheckedProbabilisticClaim, ProbForm, ProbScheduler, ReachTarget, StatePredicate, Workload,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use fsl_package::ObligationIdentity;
 
@@ -190,6 +190,66 @@ pub struct DigitalDeadlineKey {
     pub elapsed: u64,
 }
 
+/// One timed clock in a region or boundary-region product key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionClockKey {
+    /// The checked declaring type, field and receiver tuple.
+    pub identity: Value,
+    /// The clock value in refined integer units.
+    pub value: u64,
+    /// The checker-derived saturation cap in refined integer units.
+    pub cap: u64,
+}
+
+/// The deadline clock in a region or boundary-region product key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegionDeadlineKey {
+    /// The deadline bound in refined integer units.
+    pub limit: u64,
+    /// The elapsed deadline value in refined integer units.
+    pub elapsed: u64,
+}
+
+/// Whether a region key names an interior valuation or its boundary corner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegionKeyKind {
+    /// The state is a canonical clock region.
+    Region,
+    /// The state is a corner of the region closure for elapsed-time evidence.
+    BoundaryRegion,
+}
+
+/// The checked semantic components used to encode one region ProductKey.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionProductKeyInput {
+    /// The checked claim's `over` binding, or `None` when there is no binding.
+    pub binding: Option<Value>,
+    /// The complete non-clock simulation-state form.
+    pub discrete: Value,
+    /// FR-196's closed time-unit form.
+    pub unit: Value,
+    /// The unrefined canonical time scale.
+    pub scale: u64,
+    /// The region representative's subdivision count.
+    pub subdivisions: u64,
+    /// Every admitted clock with its checked identity and refined value/cap.
+    pub clocks: Vec<RegionClockKey>,
+    /// The timed deadline clock, when the checked claim has a deadline.
+    pub deadline: Option<RegionDeadlineKey>,
+    /// TS-5 tail control for the state.
+    pub tail: DigitalTail,
+    /// The checked claim's monitor state, or `None` when it has no monitor.
+    pub monitor: Option<Value>,
+    /// The checked claim's exact measure accumulator, if present.
+    pub accumulator: Option<Value>,
+    /// The actual pending draw control, if present.
+    pub pending: Option<Value>,
+    /// Region encoding kind.
+    pub kind: RegionKeyKind,
+    /// The corner coordinates in clock-entry order, including the deadline.
+    pub corner: Option<Vec<String>>,
+}
+
 /// The checked semantic components used to encode one digital ProductKey.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DigitalProductKeyInput {
@@ -294,6 +354,159 @@ pub fn digital_probability_product_key(
     let product = json!([
         "filament.probability-product-key/v1",
         binding,
+        null,
+        null,
+        model,
+        monitor,
+        accumulator,
+        pending
+    ]);
+    canonical_json(&product).map(ProbabilityProductKey)
+}
+
+/// Encode the FR-920 canonical ProductKey for a region or boundary-region state.
+pub fn region_probability_product_key(
+    input: RegionProductKeyInput,
+) -> Result<ProbabilityProductKey, ExactProbabilityGraphError> {
+    let RegionProductKeyInput {
+        binding,
+        discrete,
+        unit,
+        scale,
+        subdivisions,
+        clocks,
+        deadline,
+        tail,
+        monitor,
+        accumulator,
+        pending,
+        kind,
+        corner,
+    } = input;
+    if scale == 0 || subdivisions < 2 {
+        return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+    }
+    let mut keyed_clocks = clocks
+        .into_iter()
+        .map(|clock| {
+            if clock
+                .identity
+                .as_array()
+                .is_none_or(|parts| parts.len() != 3)
+                || clock.value > clock.cap
+            {
+                return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+            }
+            let identity_bytes = canonical_json(&clock.identity)?;
+            Ok((identity_bytes, clock.identity, clock.value, clock.cap))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    keyed_clocks.sort_by(|left, right| left.0.cmp(&right.0));
+    if keyed_clocks.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+    }
+    let clock_count = keyed_clocks.len();
+    let deadline_values = match deadline {
+        Some(deadline)
+            if deadline
+                .limit
+                .checked_add(subdivisions)
+                .is_some_and(|cap| deadline.elapsed <= cap) =>
+        {
+            Some((deadline.limit, deadline.elapsed))
+        }
+        Some(_) => return Err(ExactProbabilityGraphError::InvalidDigitalKey),
+        None => None,
+    };
+    let mut fractions = keyed_clocks
+        .iter()
+        .filter_map(|(_, _, value, cap)| {
+            (*value < *cap)
+                .then_some(*value % subdivisions)
+                .filter(|fraction| *fraction > 0)
+        })
+        .collect::<BTreeSet<_>>();
+    if let Some((limit, elapsed)) = deadline_values {
+        if elapsed < limit.saturating_add(subdivisions) {
+            let fraction = elapsed % subdivisions;
+            if fraction > 0 {
+                fractions.insert(fraction);
+            }
+        }
+    }
+    let fraction_rank = |value: u64, cap: u64| -> String {
+        if value >= cap {
+            return "0".to_owned();
+        }
+        let fraction = value % subdivisions;
+        if fraction == 0 {
+            return "0".to_owned();
+        }
+        fractions
+            .iter()
+            .position(|candidate| *candidate == fraction)
+            .and_then(|position| u64::try_from(position + 1).ok())
+            .map(|rank| rank.to_string())
+            .unwrap_or_else(|| "0".to_owned())
+    };
+    let clocks = keyed_clocks
+        .into_iter()
+        .map(|(_, identity, value, cap)| {
+            json!([
+                identity,
+                if value >= cap {
+                    value.div_ceil(subdivisions)
+                } else {
+                    value / subdivisions
+                }
+                .to_string(),
+                cap.div_ceil(subdivisions).to_string(),
+                fraction_rank(value, cap)
+            ])
+        })
+        .collect::<Vec<_>>();
+    let deadline = match deadline_values {
+        Some((limit, elapsed)) => json!([
+            "deadline",
+            (limit / subdivisions).to_string(),
+            (elapsed / subdivisions).to_string(),
+            fraction_rank(elapsed, limit.saturating_add(subdivisions))
+        ]),
+        None => Value::Null,
+    };
+    let tag = match kind {
+        RegionKeyKind::Region => "region",
+        RegionKeyKind::BoundaryRegion => "boundary-region",
+    };
+    let mut model = vec![
+        Value::String("filament.simulation.state-key/v1".to_owned()),
+        json!([
+            tag,
+            discrete,
+            unit,
+            scale.to_string(),
+            clocks,
+            deadline,
+            tail.tag()
+        ]),
+    ];
+    if kind == RegionKeyKind::BoundaryRegion {
+        let corner = corner.ok_or(ExactProbabilityGraphError::InvalidDigitalKey)?;
+        if corner.len() != clock_count + usize::from(deadline_values.is_some()) {
+            return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+        }
+        model[1]
+            .as_array_mut()
+            .ok_or(ExactProbabilityGraphError::InvalidDigitalKey)?
+            .push(json!(corner));
+    } else if corner.is_some() {
+        return Err(ExactProbabilityGraphError::InvalidDigitalKey);
+    }
+    let product = json!([
+        "filament.probability-product-key/v1",
+        binding,
+        null,
+        null,
         model,
         monitor,
         accumulator,
@@ -948,10 +1161,12 @@ fn workload_distribution(
             Err(ExactProbabilityGraphError::UnsupportedDraw)
         };
     }
-    Ok(vec![steps
-        .into_iter()
-        .map(|step| (step.probability, step.post))
-        .collect()])
+    Ok(vec![
+        steps
+            .into_iter()
+            .map(|step| (step.probability, step.post))
+            .collect(),
+    ])
 }
 
 fn action_distributions(
@@ -1029,7 +1244,14 @@ pub(crate) fn check_model_exact_reachability<P: StatePredicate>(
         &mut |_, _| {},
         &mut |_| {},
     )?;
-    check_exact_reachability(&graph, certificate, objective, bound, cancel)
+    check_exact_reachability(
+        &graph,
+        certificate,
+        objective,
+        bound,
+        GraphCycles::Reject,
+        cancel,
+    )
 }
 
 /// Bind `item` to its checked claim by complete obligation identity, then check the
@@ -1191,47 +1413,201 @@ struct CheckerGraph {
     states: BTreeMap<ProbabilityProductKey, CheckerState>,
 }
 
-/// Check exact reachability values on a checker-owned acyclic graph.
+fn topological_order(
+    graph: &CheckerGraph,
+    cancel: &Cancel,
+) -> Result<Vec<ProbabilityProductKey>, ExactProbabilityGraphError> {
+    let zero = rational(0);
+    let mut indegree = BTreeMap::new();
+    for key in graph.states.keys() {
+        poll_cancel(cancel)?;
+        indegree.insert(key.clone(), 0_usize);
+    }
+    for state in graph.states.values() {
+        for edge in state.choices.iter().flatten() {
+            poll_cancel(cancel)?;
+            if edge.probability == zero {
+                continue;
+            }
+            let Some(count) = indegree.get_mut(&edge.target) else {
+                return Err(ExactProbabilityGraphError::MissingSuccessor);
+            };
+            *count = count
+                .checked_add(1)
+                .ok_or(ExactProbabilityGraphError::TooManyEdges)?;
+        }
+    }
+    let mut ready = BTreeSet::new();
+    for (key, degree) in &indegree {
+        poll_cancel(cancel)?;
+        if *degree == 0 {
+            ready.insert(key.clone());
+        }
+    }
+    let mut order = Vec::with_capacity(graph.states.len());
+    while let Some(key) = ready.pop_first() {
+        poll_cancel(cancel)?;
+        order.push(key.clone());
+        let Some(state) = graph.states.get(&key) else {
+            return Err(ExactProbabilityGraphError::MissingSuccessor);
+        };
+        for edge in state.choices.iter().flatten() {
+            poll_cancel(cancel)?;
+            if edge.probability == zero {
+                continue;
+            }
+            let Some(count) = indegree.get_mut(&edge.target) else {
+                return Err(ExactProbabilityGraphError::MissingSuccessor);
+            };
+            let Some(remaining) = count.checked_sub(1) else {
+                return Err(ExactProbabilityGraphError::MissingSuccessor);
+            };
+            *count = remaining;
+            if *count == 0 {
+                ready.insert(edge.target.clone());
+            }
+        }
+    }
+    if order.len() == graph.states.len() {
+        Ok(order)
+    } else {
+        Err(ExactProbabilityGraphError::Cycle)
+    }
+}
+
+/// How a checked graph's cycles are treated.
+#[derive(Clone, Copy)]
+enum GraphCycles {
+    /// The graph must be acyclic; any cycle is an error.
+    Reject,
+    /// Timed deadline graphs: closed nonprogressive action components are
+    /// collapsed to their best exit.
+    CollapseNonprogressive,
+}
+
+/// Check exact reachability values on a checker-owned graph.
 ///
 /// The graph representation and this evaluator are independent of
-/// `fsl-analyze`; this core performs no policy iteration or linear algebra.
-/// Cyclic graphs are rejected until FR-201's unbounded graph checks are
-/// implemented.
+/// `fsl-analyze`. Under [`GraphCycles::Reject`] a cyclic graph is an error.
+/// Under [`GraphCycles::CollapseNonprogressive`] closed nonprogressive action
+/// components are reconstructed here and checked against their best exit
+/// values before ordinary Bellman equations are checked.
 fn check_exact_reachability(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,
     objective: ProbabilityObjective,
     bound: &Bound,
+    cycles: GraphCycles,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
     poll_cancel(cancel)?;
     let values = match certificate_values(graph, certificate, cancel)? {
         CertificateValues::Complete(values) => values,
         CertificateValues::Rejected(rejection) => {
-            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
-    let order = topological_order(graph, cancel)?;
-
     let zero = rational(0);
     let one = rational(1);
-    let mut computed = BTreeMap::new();
-    for key in order.into_iter().rev() {
+    let components = match cycles {
+        GraphCycles::Reject => {
+            topological_order(graph, cancel)?;
+            Vec::new()
+        }
+        GraphCycles::CollapseNonprogressive => nonprogressive_end_components(graph, cancel, None)?,
+    };
+    let mut component_of = BTreeMap::new();
+    for (component, members) in components.iter().enumerate() {
+        for key in members {
+            component_of.insert(key.clone(), component);
+        }
+    }
+    for members in &components {
         poll_cancel(cancel)?;
-        let Some(state) = graph.states.get(&key) else {
-            return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
-        };
-        let actual = if let Some(target) = state.terminal {
-            if target {
-                one.clone()
-            } else {
-                zero.clone()
+        let member_set = members.iter().cloned().collect::<BTreeSet<_>>();
+        let mut exit_values = Vec::new();
+        for key in members {
+            let Some(state) = graph.states.get(key) else {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
+            };
+            for choice in &state.choices {
+                poll_cancel(cancel)?;
+                let mut mass = zero.clone();
+                let mut internal = zero.clone();
+                let mut outside = zero.clone();
+                for edge in choice {
+                    poll_cancel(cancel)?;
+                    if edge.probability < zero {
+                        return Ok(rejected(
+                            ProbabilityCertificateRule::InequalityFails,
+                            key.clone(),
+                        ));
+                    }
+                    if edge.probability == zero {
+                        continue;
+                    }
+                    let Some(successor) = values.get(&edge.target) else {
+                        return Ok(rejected(
+                            ProbabilityCertificateRule::InequalityFails,
+                            key.clone(),
+                        ));
+                    };
+                    mass = mass.add(&edge.probability);
+                    if member_set.contains(&edge.target) {
+                        internal = internal.add(&edge.probability);
+                    } else {
+                        outside = outside.add(&edge.probability.mul(successor));
+                    }
+                }
+                if mass != one {
+                    return Ok(rejected(
+                        ProbabilityCertificateRule::InequalityFails,
+                        key.clone(),
+                    ));
+                }
+                let denominator = one.sub(&internal);
+                if !denominator.is_zero() {
+                    if let Some(value) = outside.div(&denominator) {
+                        exit_values.push(value);
+                    }
+                }
             }
+        }
+        let actual = match objective {
+            ProbabilityObjective::Minimum => exit_values.into_iter().min(),
+            ProbabilityObjective::Maximum => exit_values.into_iter().max(),
+            ProbabilityObjective::Workload => {
+                return Err(ExactProbabilityGraphError::UnsupportedClaimForm);
+            }
+        }
+        .unwrap_or_else(|| zero.clone());
+        for key in members {
+            if values.get(key) != Some(&actual) {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
+            }
+        }
+    }
+    for (key, state) in &graph.states {
+        poll_cancel(cancel)?;
+        if component_of.contains_key(key) {
+            continue;
+        }
+        let actual = if let Some(target) = state.terminal {
+            if target { one.clone() } else { zero.clone() }
         } else {
             if state.choices.is_empty()
                 || (objective == ProbabilityObjective::Workload && state.choices.len() != 1)
             {
-                return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
             }
             let mut choice_values = Vec::with_capacity(state.choices.len());
             for choice in &state.choices {
@@ -1249,7 +1625,7 @@ fn check_exact_reachability(
                     if edge.probability == zero {
                         continue;
                     }
-                    let Some(successor) = computed.get(&edge.target) else {
+                    let Some(successor) = values.get(&edge.target) else {
                         return Ok(rejected(
                             ProbabilityCertificateRule::InequalityFails,
                             key.clone(),
@@ -1273,16 +1649,18 @@ fn check_exact_reachability(
             }
             .unwrap_or_else(|| zero.clone())
         };
-        let Some(certified) = values.get(&key) else {
-            return Ok(rejected(ProbabilityCertificateRule::Malformed, key));
+        let Some(certified) = values.get(key) else {
+            return Ok(rejected(ProbabilityCertificateRule::Malformed, key.clone()));
         };
         if actual != *certified {
-            return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                key.clone(),
+            ));
         }
-        computed.insert(key, actual);
     }
 
-    let Some(initial) = computed.get(&graph.initial) else {
+    let Some(initial) = values.get(&graph.initial) else {
         return Ok(rejected(
             ProbabilityCertificateRule::InequalityFails,
             graph.initial.clone(),
@@ -1360,66 +1738,266 @@ fn certificate_values(
     Ok(CertificateValues::Complete(values))
 }
 
-fn topological_order(
+/// Independently enumerate the maximal checker-side components whose action
+/// support is closed and does not advance the checked deadline clock.
+fn nonprogressive_end_components(
     graph: &CheckerGraph,
     cancel: &Cancel,
-) -> Result<Vec<ProbabilityProductKey>, ExactProbabilityGraphError> {
+    costs: Option<&BTreeMap<ProbabilityProductKey, Vec<Vec<Rational>>>>,
+) -> Result<Vec<Vec<ProbabilityProductKey>>, ExactProbabilityGraphError> {
+    let keys = graph.states.keys().cloned().collect::<Vec<_>>();
+    let indices = keys
+        .iter()
+        .enumerate()
+        .map(|(index, key)| (key.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+    let mut pending = vec![(0..keys.len()).collect::<BTreeSet<_>>()];
+    let mut result: Vec<Vec<ProbabilityProductKey>> = Vec::new();
     let zero = rational(0);
-    let mut indegree = BTreeMap::new();
-    for key in graph.states.keys() {
-        poll_cancel(cancel)?;
-        indegree.insert(key.clone(), 0_usize);
-    }
-    for state in graph.states.values() {
-        for edge in state.choices.iter().flatten() {
+    while let Some(mut candidate) = pending.pop() {
+        loop {
             poll_cancel(cancel)?;
-            if edge.probability == zero {
-                continue;
+            let mut retained = BTreeSet::new();
+            for state_index in &candidate {
+                let Some(key) = keys.get(*state_index) else {
+                    return Err(ExactProbabilityGraphError::MissingSuccessor);
+                };
+                let Some(state) = graph.states.get(key) else {
+                    return Err(ExactProbabilityGraphError::MissingSuccessor);
+                };
+                let mut has_internal_action = false;
+                for (choice_index, choice) in state.choices.iter().enumerate() {
+                    let choice_costs = costs
+                        .and_then(|costs| costs.get(key))
+                        .and_then(|costs| costs.get(choice_index))
+                        .map(Vec::as_slice);
+                    if internal_nonprogressive_choice(
+                        key,
+                        choice,
+                        choice_costs,
+                        &candidate,
+                        &indices,
+                        &zero,
+                    )? {
+                        has_internal_action = true;
+                        break;
+                    }
+                }
+                if has_internal_action {
+                    retained.insert(*state_index);
+                }
             }
-            let Some(count) = indegree.get_mut(&edge.target) else {
-                return Err(ExactProbabilityGraphError::MissingSuccessor);
-            };
-            *count = count
-                .checked_add(1)
-                .ok_or(ExactProbabilityGraphError::TooManyEdges)?;
+            if retained == candidate {
+                break;
+            }
+            candidate = retained;
+            if candidate.is_empty() {
+                break;
+            }
+        }
+        if candidate.is_empty() {
+            continue;
+        }
+        let mut adjacency = vec![Vec::new(); keys.len()];
+        let mut reverse = vec![Vec::new(); keys.len()];
+        for state_index in &candidate {
+            let key = keys
+                .get(*state_index)
+                .ok_or(ExactProbabilityGraphError::MissingSuccessor)?;
+            let state = graph
+                .states
+                .get(key)
+                .ok_or(ExactProbabilityGraphError::MissingSuccessor)?;
+            for (choice_index, choice) in state.choices.iter().enumerate() {
+                let choice_costs = costs
+                    .and_then(|costs| costs.get(key))
+                    .and_then(|costs| costs.get(choice_index))
+                    .map(Vec::as_slice);
+                if !internal_nonprogressive_choice(
+                    key,
+                    choice,
+                    choice_costs,
+                    &candidate,
+                    &indices,
+                    &zero,
+                )? {
+                    continue;
+                }
+                for edge in choice.iter().filter(|edge| edge.probability > zero) {
+                    let target = *indices
+                        .get(&edge.target)
+                        .ok_or(ExactProbabilityGraphError::MissingSuccessor)?;
+                    adjacency[*state_index].push(target);
+                    reverse[target].push(*state_index);
+                }
+            }
+        }
+        let components = restricted_components(&candidate, &adjacency, &reverse, cancel)?;
+        if components.len() == 1 && components[0] == candidate {
+            result.push(candidate.iter().map(|index| keys[*index].clone()).collect());
+        } else {
+            pending.extend(components);
         }
     }
-    let mut ready = BTreeSet::new();
-    for (key, degree) in &indegree {
-        poll_cancel(cancel)?;
-        if *degree == 0 {
-            ready.insert(key.clone());
+    result.sort_by(|left, right| left.first().cmp(&right.first()));
+    Ok(result)
+}
+
+fn internal_nonprogressive_choice(
+    source: &ProbabilityProductKey,
+    choice: &ProbabilityChoice,
+    costs: Option<&[Rational]>,
+    candidate: &BTreeSet<usize>,
+    indices: &BTreeMap<ProbabilityProductKey, usize>,
+    zero: &Rational,
+) -> Result<bool, ExactProbabilityGraphError> {
+    let mut has_support = false;
+    let clocks = timed_clock_count(source);
+    let has_deadline = timed_has_deadline(source);
+    let mut positive_cost = false;
+    for (edge_index, edge) in choice.iter().enumerate() {
+        if edge.probability <= *zero {
+            continue;
         }
-    }
-    let mut order = Vec::with_capacity(graph.states.len());
-    while let Some(key) = ready.pop_first() {
-        poll_cancel(cancel)?;
-        order.push(key.clone());
-        let Some(state) = graph.states.get(&key) else {
+        has_support = true;
+        let Some(target) = indices.get(&edge.target) else {
             return Err(ExactProbabilityGraphError::MissingSuccessor);
         };
-        for edge in state.choices.iter().flatten() {
+        if !candidate.contains(target) || timed_key_progresses(source, &edge.target) {
+            return Ok(false);
+        }
+        if costs
+            .and_then(|costs| costs.get(edge_index))
+            .is_some_and(|cost| !cost.is_zero())
+        {
+            positive_cost = true;
+        }
+    }
+    Ok(has_support && !(!has_deadline && clocks == Some(0) && positive_cost))
+}
+
+/// Whether a checker-key edge advances time beyond the current region.
+fn timed_key_progresses(from: &ProbabilityProductKey, to: &ProbabilityProductKey) -> bool {
+    fn timed_model(key: &ProbabilityProductKey) -> Option<Value> {
+        let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
+        Some(root.get(4)?.get(1)?.clone())
+    }
+    let (Some(from_model), Some(to_model)) = (timed_model(from), timed_model(to)) else {
+        return false;
+    };
+    if let (Some(from_deadline), Some(to_deadline)) = (
+        from_model.get(5).and_then(Value::as_array),
+        to_model.get(5).and_then(Value::as_array),
+    ) {
+        if from_deadline.first().and_then(Value::as_str) == Some("deadline")
+            && to_deadline.first().and_then(Value::as_str) == Some("deadline")
+        {
+            return from_deadline.get(2) != to_deadline.get(2);
+        }
+    }
+    let (Some(from_clocks), Some(to_clocks)) = (
+        from_model.get(4).and_then(Value::as_array),
+        to_model.get(4).and_then(Value::as_array),
+    ) else {
+        return false;
+    };
+    to_clocks.iter().any(|to_clock| {
+        let Some(identity) = to_clock.get(0) else {
+            return true;
+        };
+        let Some(from_clock) = from_clocks
+            .iter()
+            .find(|from_clock| from_clock.get(0) == Some(identity))
+        else {
+            return false;
+        };
+        let Some(from_value) = from_clock.get(1).and_then(Value::as_str) else {
+            return true;
+        };
+        let Some(to_value) = to_clock.get(1).and_then(Value::as_str) else {
+            return true;
+        };
+        to_value.parse::<u64>().unwrap_or(0) > from_value.parse::<u64>().unwrap_or(0)
+    })
+}
+
+fn timed_clock_count(key: &ProbabilityProductKey) -> Option<usize> {
+    let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
+    root.get(4)?.get(1)?.get(4)?.as_array().map(Vec::len)
+}
+
+fn timed_has_deadline(key: &ProbabilityProductKey) -> bool {
+    let Some(root) = serde_json::from_slice::<Value>(key.as_bytes()).ok() else {
+        return false;
+    };
+    root.get(4)
+        .and_then(|model| model.get(1))
+        .and_then(|timed| timed.get(5))
+        .and_then(Value::as_array)
+        .and_then(|deadline| deadline.first())
+        .and_then(Value::as_str)
+        == Some("deadline")
+}
+
+fn restricted_components(
+    allowed: &BTreeSet<usize>,
+    adjacency: &[Vec<usize>],
+    reverse: &[Vec<usize>],
+    cancel: &Cancel,
+) -> Result<Vec<BTreeSet<usize>>, ExactProbabilityGraphError> {
+    let mut visited = vec![false; adjacency.len()];
+    let mut order = Vec::with_capacity(allowed.len());
+    for root in allowed {
+        poll_cancel(cancel)?;
+        if visited.get(*root).copied().unwrap_or(true) {
+            continue;
+        }
+        if let Some(slot) = visited.get_mut(*root) {
+            *slot = true;
+        }
+        let mut work = vec![(*root, 0_usize)];
+        while let Some((state, cursor)) = work.pop() {
             poll_cancel(cancel)?;
-            if edge.probability == zero {
-                continue;
-            }
-            let Some(count) = indegree.get_mut(&edge.target) else {
-                return Err(ExactProbabilityGraphError::MissingSuccessor);
-            };
-            let Some(remaining) = count.checked_sub(1) else {
-                return Err(ExactProbabilityGraphError::MissingSuccessor);
-            };
-            *count = remaining;
-            if *count == 0 {
-                ready.insert(edge.target.clone());
+            let successors = adjacency
+                .get(state)
+                .ok_or(ExactProbabilityGraphError::MissingSuccessor)?;
+            if let Some(target) = successors.get(cursor).copied() {
+                work.push((state, cursor + 1));
+                if allowed.contains(&target) && !visited[target] {
+                    visited[target] = true;
+                    work.push((target, 0));
+                }
+            } else {
+                order.push(state);
             }
         }
     }
-    if order.len() == graph.states.len() {
-        Ok(order)
-    } else {
-        Err(ExactProbabilityGraphError::Cycle)
+    visited.fill(false);
+    let mut components = Vec::new();
+    for root in order.into_iter().rev() {
+        poll_cancel(cancel)?;
+        if visited[root] {
+            continue;
+        }
+        visited[root] = true;
+        let mut component = BTreeSet::new();
+        let mut work = vec![root];
+        while let Some(state) = work.pop() {
+            poll_cancel(cancel)?;
+            component.insert(state);
+            for predecessor in reverse
+                .get(state)
+                .ok_or(ExactProbabilityGraphError::MissingSuccessor)?
+            {
+                if allowed.contains(predecessor) && !visited[*predecessor] {
+                    visited[*predecessor] = true;
+                    work.push(*predecessor);
+                }
+            }
+        }
+        components.push(component);
     }
+    Ok(components)
 }
 
 fn poll_cancel(cancel: &Cancel) -> Result<(), ExactProbabilityGraphError> {
@@ -1495,6 +2073,227 @@ mod tests {
         CheckerGraph { initial, states }
     }
 
+    fn zero_time_mec_graph() -> CheckerGraph {
+        let initial = key(0);
+        let accepted = key(1);
+        let rejected = key(2);
+        let mut states = BTreeMap::new();
+        states.insert(
+            initial.clone(),
+            CheckerState {
+                terminal: None,
+                choices: vec![
+                    vec![edge(0, 1, 1)],
+                    vec![edge(1, 1, 1)],
+                    vec![edge(2, 1, 1)],
+                ],
+            },
+        );
+        states.insert(
+            accepted,
+            CheckerState {
+                terminal: Some(true),
+                choices: Vec::new(),
+            },
+        );
+        states.insert(
+            rejected,
+            CheckerState {
+                terminal: Some(false),
+                choices: Vec::new(),
+            },
+        );
+        CheckerGraph { initial, states }
+    }
+
+    fn zero_time_mec_certificate(initial: i64) -> ExactProbabilityCertificate {
+        ExactProbabilityCertificate {
+            values: vec![
+                ExactProbabilityValue {
+                    state: key(0),
+                    value: rational(initial),
+                },
+                ExactProbabilityValue {
+                    state: key(1),
+                    value: rational(1),
+                },
+                ExactProbabilityValue {
+                    state: key(2),
+                    value: rational(0),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn checker_reconstructs_action_level_zero_time_mec_best_exit() {
+        let graph = zero_time_mec_graph();
+        let minimum = check_exact_reachability(
+            &graph,
+            &zero_time_mec_certificate(0),
+            ProbabilityObjective::Minimum,
+            &Bound::AtLeast(rational(0)),
+            GraphCycles::CollapseNonprogressive,
+            &Cancel::new(),
+        )
+        .expect("checker evaluates the minimum MEC exit");
+        assert!(matches!(
+            minimum,
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+        let maximum = check_exact_reachability(
+            &graph,
+            &zero_time_mec_certificate(1),
+            ProbabilityObjective::Maximum,
+            &Bound::AtLeast(rational(1)),
+            GraphCycles::CollapseNonprogressive,
+            &Cancel::new(),
+        )
+        .expect("checker evaluates the maximum MEC exit");
+        assert!(matches!(
+            maximum,
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+        let forged = check_exact_reachability(
+            &graph,
+            &zero_time_mec_certificate(1),
+            ProbabilityObjective::Minimum,
+            &Bound::AtLeast(rational(0)),
+            GraphCycles::CollapseNonprogressive,
+            &Cancel::new(),
+        )
+        .expect("a non-optimal MEC value is a typed rejection");
+        assert!(matches!(
+            forged,
+            ExactProbabilityCertificateCheck::Rejected(_)
+        ));
+    }
+
+    #[test]
+    fn checker_does_not_collapse_a_leaky_zero_time_cycle() {
+        let initial = key(0);
+        let target = key(1);
+        let mut states = BTreeMap::new();
+        states.insert(
+            initial.clone(),
+            CheckerState {
+                terminal: None,
+                choices: vec![vec![edge(0, 1, 2), edge(1, 1, 2)]],
+            },
+        );
+        states.insert(
+            target.clone(),
+            CheckerState {
+                terminal: Some(true),
+                choices: Vec::new(),
+            },
+        );
+        let graph = CheckerGraph { initial, states };
+        let certificate = ExactProbabilityCertificate {
+            values: vec![
+                ExactProbabilityValue {
+                    state: key(0),
+                    value: rational(1),
+                },
+                ExactProbabilityValue {
+                    state: target,
+                    value: rational(1),
+                },
+            ],
+        };
+        let checked = check_exact_reachability(
+            &graph,
+            &certificate,
+            ProbabilityObjective::Minimum,
+            &Bound::AtLeast(rational(1)),
+            GraphCycles::CollapseNonprogressive,
+            &Cancel::new(),
+        )
+        .expect("the leaky cycle has an exact checker value");
+        assert!(matches!(
+            checked,
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+    }
+
+    #[test]
+    fn checker_mec_progress_uses_the_checked_deadline_clock() {
+        let key = |elapsed| {
+            digital_probability_product_key(DigitalProductKeyInput {
+                binding: None,
+                discrete: json!([]),
+                unit: json!("second"),
+                scale: 1,
+                clocks: Vec::new(),
+                deadline: Some(DigitalDeadlineKey { limit: 2, elapsed }),
+                tail: DigitalTail::Running,
+                monitor: Some(json!(["deadline", "eventually", "pending"])),
+                accumulator: None,
+                pending: None,
+            })
+            .expect("digital timed keys are valid")
+        };
+        assert!(!timed_key_progresses(&key(0), &key(0)));
+        assert!(timed_key_progresses(&key(0), &key(1)));
+
+        let no_clock = digital_probability_product_key(DigitalProductKeyInput {
+            binding: None,
+            discrete: json!([]),
+            unit: json!("second"),
+            scale: 1,
+            clocks: Vec::new(),
+            deadline: None,
+            tail: DigitalTail::Running,
+            monitor: None,
+            accumulator: None,
+            pending: None,
+        })
+        .expect("clockless timed key is valid");
+        let one_clock = digital_probability_product_key(DigitalProductKeyInput {
+            binding: None,
+            discrete: json!([]),
+            unit: json!("second"),
+            scale: 1,
+            clocks: vec![DigitalClockKey {
+                identity: json!(["Type", "clock", ["u", "object"]]),
+                value: 0,
+                cap: 2,
+            }],
+            deadline: None,
+            tail: DigitalTail::Running,
+            monitor: None,
+            accumulator: None,
+            pending: None,
+        })
+        .expect("clocked timed key is valid");
+        let graph = |state: ProbabilityProductKey| CheckerGraph {
+            initial: state.clone(),
+            states: BTreeMap::from([(
+                state.clone(),
+                CheckerState {
+                    terminal: None,
+                    choices: vec![vec![ProbabilityEdge {
+                        target: state,
+                        probability: rational(1),
+                    }]],
+                },
+            )]),
+        };
+        let positive_cost = BTreeMap::from([(no_clock.clone(), vec![vec![rational(1)]])]);
+        assert!(
+            nonprogressive_end_components(&graph(no_clock), &Cancel::new(), Some(&positive_cost),)
+                .expect("clockless time progress is understood")
+                .is_empty()
+        );
+        let reset_cost = BTreeMap::from([(one_clock.clone(), vec![vec![rational(1)]])]);
+        assert_eq!(
+            nonprogressive_end_components(&graph(one_clock), &Cancel::new(), Some(&reset_cost),)
+                .expect("a positive-cost reset loop remains nonprogressive")
+                .len(),
+            1
+        );
+    }
+
     fn certificate(initial_value: Rational) -> ExactProbabilityCertificate {
         ExactProbabilityCertificate {
             values: vec![
@@ -1512,6 +2311,53 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[trace("FSpec-FR-752-AC-1")]
+    #[test]
+    fn region_key_separates_largest_constant_from_saturated_clock() {
+        let key_at_constant = region_probability_product_key(RegionProductKeyInput {
+            binding: None,
+            discrete: json!("model"),
+            unit: json!("unit"),
+            scale: 1,
+            subdivisions: 3,
+            clocks: vec![RegionClockKey {
+                identity: json!(["type", "clock", "receiver"]),
+                value: 6,
+                cap: 7,
+            }],
+            deadline: None,
+            tail: DigitalTail::Running,
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            kind: RegionKeyKind::Region,
+            corner: None,
+        })
+        .expect("the exact largest constant encodes");
+        let key_saturated = region_probability_product_key(RegionProductKeyInput {
+            binding: None,
+            discrete: json!("model"),
+            unit: json!("unit"),
+            scale: 1,
+            subdivisions: 3,
+            clocks: vec![RegionClockKey {
+                identity: json!(["type", "clock", "receiver"]),
+                value: 7,
+                cap: 7,
+            }],
+            deadline: None,
+            tail: DigitalTail::Running,
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            kind: RegionKeyKind::Region,
+            corner: None,
+        })
+        .expect("the saturated clock encodes");
+
+        assert_ne!(key_at_constant, key_saturated);
     }
 
     #[trace("TC-636")]
@@ -1550,6 +2396,8 @@ mod tests {
             serde_json::json!([
                 "filament.probability-product-key/v1",
                 null,
+                null,
+                null,
                 [
                     "filament.simulation.state-key/v1",
                     serde_json::from_slice::<Value>(model).unwrap()
@@ -1570,6 +2418,7 @@ mod tests {
             &certificate(Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap()),
             ProbabilityObjective::Minimum,
             &Bound::AtLeast(Rational::new(Integer::from(3_i64), Integer::from(4_i64)).unwrap()),
+            GraphCycles::Reject,
             &Cancel::new(),
         )
         .expect("the checker graph is acyclic and closed");
@@ -1590,6 +2439,7 @@ mod tests {
             &certificate(Rational::new(Integer::from(9_i64), Integer::from(10_i64)).unwrap()),
             ProbabilityObjective::Minimum,
             &Bound::AtLeast(Rational::new(Integer::from(3_i64), Integer::from(4_i64)).unwrap()),
+            GraphCycles::Reject,
             &Cancel::new(),
         )
         .expect("the checker graph is acyclic and closed");
@@ -1608,6 +2458,7 @@ mod tests {
             &certificate(Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap()),
             ProbabilityObjective::Minimum,
             &Bound::AtLeast(Rational::new(Integer::from(9_i64), Integer::from(10_i64)).unwrap()),
+            GraphCycles::Reject,
             &Cancel::new(),
         )
         .expect("the checker graph is acyclic and closed");
@@ -1620,16 +2471,78 @@ mod tests {
         let state = cyclic.states.get_mut(&key(2)).unwrap();
         state.terminal = None;
         state.choices = vec![vec![edge(2, 1, 1)]];
-        assert_eq!(
-            check_exact_reachability(
-                &cyclic,
-                &certificate(Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap()),
-                ProbabilityObjective::Workload,
-                &Bound::AtLeast(rational(0)),
-                &Cancel::new(),
-            ),
-            Err(ExactProbabilityGraphError::Cycle)
+        for objective in [
+            ProbabilityObjective::Minimum,
+            ProbabilityObjective::Maximum,
+            ProbabilityObjective::Workload,
+        ] {
+            assert_eq!(
+                check_exact_reachability(
+                    &cyclic,
+                    &certificate(
+                        Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap()
+                    ),
+                    objective,
+                    &Bound::AtLeast(rational(0)),
+                    GraphCycles::Reject,
+                    &Cancel::new(),
+                ),
+                Err(ExactProbabilityGraphError::Cycle)
+            );
+        }
+    }
+
+    #[trace("TC-636", "FR-201")]
+    #[test]
+    fn an_untimed_wait_loop_cannot_certify_a_scheduler_minimum() {
+        // `wait` loops on the start state, `flip` reaches the target: a
+        // scheduler that waits forever never reaches it, so the value 1 is
+        // forged under either optimization.
+        let initial = key(0);
+        let target = key(1);
+        let mut states = BTreeMap::new();
+        states.insert(
+            initial.clone(),
+            CheckerState {
+                terminal: None,
+                choices: vec![vec![edge(0, 1, 1)], vec![edge(1, 1, 1)]],
+            },
         );
+        states.insert(
+            target,
+            CheckerState {
+                terminal: Some(true),
+                choices: Vec::new(),
+            },
+        );
+        let graph = CheckerGraph { initial, states };
+        let forged = ExactProbabilityCertificate {
+            values: vec![
+                ExactProbabilityValue {
+                    state: key(0),
+                    value: rational(1),
+                },
+                ExactProbabilityValue {
+                    state: key(1),
+                    value: rational(1),
+                },
+            ],
+        };
+        for objective in [ProbabilityObjective::Minimum, ProbabilityObjective::Maximum] {
+            assert_eq!(
+                check_exact_reachability(
+                    &graph,
+                    &forged,
+                    objective,
+                    &Bound::AtLeast(
+                        Rational::new(Integer::from(9_i64), Integer::from(10_i64)).unwrap()
+                    ),
+                    GraphCycles::Reject,
+                    &Cancel::new(),
+                ),
+                Err(ExactProbabilityGraphError::Cycle)
+            );
+        }
     }
 
     #[trace("TC-636", "FR-201", "FR-282")]
@@ -1648,6 +2561,7 @@ mod tests {
                 &certificate,
                 ProbabilityObjective::Minimum,
                 &bound,
+                GraphCycles::Reject,
                 cancel,
             )
         };
@@ -1718,7 +2632,7 @@ mod tests {
         .expect("the complete timed key is representable");
         assert_eq!(
             key.as_bytes(),
-            br#"["filament.probability-product-key/v1",null,["filament.simulation.state-key/v1",["digital",["state",{"a":true,"z":1}],["unit","second"],"10",[[["Type","alpha",["u","object-a"]],"0","3"],[["Type","zeta",["u","object-z"]],"1","3"]],["deadline","4","1"],"idle-delayed"]],null,null,null]"#
+            br#"["filament.probability-product-key/v1",null,null,null,["filament.simulation.state-key/v1",["digital",["state",{"a":true,"z":1}],["unit","second"],"10",[[["Type","alpha",["u","object-a"]],"0","3"],[["Type","zeta",["u","object-z"]],"1","3"]],["deadline","4","1"],"idle-delayed"]],null,null,null]"#
         );
     }
 

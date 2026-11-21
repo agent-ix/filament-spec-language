@@ -17,6 +17,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-201
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1043
+    type: references
 ---
 # FR-202: Replay a probabilistic witness
 
@@ -189,7 +191,8 @@ For the unbounded subset this entry SHALL report unsupported for cyclic subjects
 Both subsets SHALL report unsupported for subsystem evidence,
 randomized schedulers, fairness, multiple initial states/instances, timed or
 other claim forms outside this slice. It SHALL NOT project them onto this
-slice. This additional entry does not change the wire facade obligation, the
+slice. `Undefined` evidence has its own checked-subject entry
+("Checked-subject undefined entry" below), for every form. This additional entry does not change the wire facade obligation, the
 broader replay rules, or any public JSON key or witness codec.
 
 #### Acyclic infinite-trace state-predicate path sets
@@ -267,7 +270,8 @@ remains blocked on the closed shared contract prerequisite.
 #### Bounded checked-subject path sets
 
 The same native entry SHALL additionally admit origin-activated untimed
-`eventually[0,h] holds(P)`, with finite nonnegative event-position horizon h,
+`eventually[0,h] holds(P)` and `always[0,h] holds(P)` (FR-201's bounded
+subset), with finite nonnegative event-position horizon h,
 one initial state and at most one admitted binding, for minimum `AtLeast`,
 maximum `AtMost`, and a bound workload with either comparison. Admission SHALL
 retain FR-201's bounded subset's supported Markov successor restrictions and
@@ -346,6 +350,46 @@ needed by this slice. Its facade remains blocked on that shared-owner work;
 this increment specifies native typed overload behavior only and introduces no
 JSON spelling, wire schema or transport capability.
 
+#### Checked-subject undefined entry
+
+Layer 6 SHALL expose a checked-subject entry for `Undefined` evidence beside
+the path-set entries above, taking the `CheckedPackage`, its admitted
+`ModelSystem`, the claim occurrence and binding, the typed evidence, the
+caller's expansion/work/storage limits and `&Cancel`. It decodes no wire and
+recompiles nothing, binds the claim, profile, scheduler or workload,
+fairness set, `over` binding and `on each` instance from the package, and
+issues the same opaque reproduced-witness token on agreement. It admits every
+form EN-5 reads during FR-196's build, under a workload and under every
+scheduler with or without fairness: the bounded event-position forms through
+`fsl-eval`'s qualified bounded monitor (`eventually[0,h]` and `always[0,h]`),
+the unbounded infinite-trace forms through qualified state-predicate
+evaluation, bounded measures through FR-1043's measure and fraction control,
+expected rewards through each step's reward and long-run fractions through
+each position's predicate and weight; a timed subject uses FR-921's own
+timed enumerator.
+
+- Each step SHALL be re-executed as a path-set step is below, with positive
+  exact probability. Under every scheduler each step SHALL take the witness
+  scheduler's choice at its complete product key, and a complete key that
+  repeats on the path SHALL settle `ReplayParity`, since the memoryless
+  scheduler the evidence names is not defined there; a step that departs
+  from the scheduler refuses `invalid_runtime_input`/`invalid-value`. Under a
+  workload no scheduler is involved and a repeated key is admitted.
+- Replay SHALL rebuild the claim's control along the path with those
+  qualified operations, not EN-5's, and SHALL require it to be undecided at
+  every position before the read (for an unbounded form, no target or
+  failure reached): a claim already decided reads no later value, so an
+  undefined value after its decision refutes nothing.
+- At the read, the first undefined evaluation in ADR-018 UE-5's order SHALL
+  be at the evidence's `where` (locus, position and complete pre-read
+  product key) with its cause, and SHALL equal the item's
+  `UndefinedEvaluation` cause; the bound plays no part. Any other outcome
+  SHALL settle `ReplayParity` without a token. Exhaustion and cancellation
+  SHALL remain `incomplete` without a token.
+- The FSpec FR-413 `undefined-path` writer SHALL write the evidence's
+  `UndefinedEvaluation` as the `undefined` member, with
+  `where.product_state.key` the complete pre-read `ProbabilityProductKey`.
+
 #### Wire facade and shared evidence checks
 
 - `replay_probabilistic_witness` SHALL decode `wire` through FR-098's
@@ -365,7 +409,8 @@ JSON spelling, wire schema or transport capability.
   its step probabilities under the workload; evaluate the event with SM-1;
   check that the paths are pairwise prefix-free; and check the sum against
   the bound.
-- For `Undefined` evidence it SHALL re-execute the path as a path of a
+- For `Undefined` evidence it SHALL apply the checks of the
+  checked-subject undefined entry above: re-execute the path as a path of a
   path set, check that every step has positive probability, and evaluate
   the claim's letters along it by ADR-018 UE-5, with no sum against the
   bound. The first undefined evaluation at `where` with an equal cause
@@ -419,13 +464,17 @@ JSON spelling, wire schema or transport capability.
 | FR-202-AC-13 | AC-12 initial and one-failure states share model content but carry different complete formula keys with remaining contexts 2 and 1. Changing a supplied key to a model-only key, null/local-index monitor, another remaining horizon or binding prevents a token. Rebinding to a changed source package, horizon, threshold, claim occurrence, actual S3 over-parameter node or selected instance prevents reuse of the original token/evidence as an accepted refutation of that item. A checked source with two possible object values is restricted to one admitted over binding; replay uses that object's predicate and actual S3 node, never a fabricated binding node. | Test |
 | FR-202-AC-14 | At horizon 0, initially true P gives an empty accepting path of mass 1 refuting AtMost 1/2, while initially false P gives an empty rejecting path refuting AtLeast 1/2; opposite-verdict empty paths yield parity. At horizon 2, a terminal initially false P closes by false extension with mass 1 and no fabricated stutter step, refuting AtLeast 1/2. A live undecided prefix after one failure does not refute; after two failures horizon rejection does, even though another model action is enabled. An initial true P path extended by an operation cannot reproduce. | Test |
 | FR-202-AC-15 | In AC-12 a missing represented path cannot be counted, equal-threshold represented mass yields parity, and a changed action/draw/post-state, duplicated draw-cylinder, overlapping path or inconsistent choice at one full key cannot produce a token. First-hit masses under slow are only 3/4 and cannot refute AtMost 4/5. A policy may choose different enabled actions at the same model content with different remaining horizons; this is a consistent full-product policy. | Test |
-| FR-202-AC-16 | AC-12 replay with pre-cancellation, cancellation at its final acceptance poll, or each configured expansion/work/storage/arithmetic budget exhausted returns its typed incomplete cause with no truth, token or accepted evidence in a refuted record. A refused predicate preserves its typed refusal; FR-197 Bounds and PrecisionBudget, unsupported bounded until/always/reward/timed/fair inputs, subsystem evidence and nonreplayed exact results produce no bounded reproduced token. The native entry needs neither S4 emission nor FSpec FR-413 document transport. | Test |
+| FR-202-AC-16 | AC-12 replay with pre-cancellation, cancellation at its final acceptance poll, or each configured expansion/work/storage/arithmetic budget exhausted returns its typed incomplete cause with no truth, token or accepted evidence in a refuted record. A refused predicate preserves its typed refusal; FR-197 Bounds and PrecisionBudget, unsupported bounded until/reward/timed/fair inputs, subsystem evidence and nonreplayed exact results produce no bounded reproduced token. The native entry needs neither S4 emission nor FSpec FR-413 document transport. | Test |
 | FR-202-AC-17 | Until fixture: initial A-and-not-B has actions a and b reaching B-and-not-A with probabilities 1/4 and 3/4, otherwise neither-A-nor-B followed by terminal B. At threshold 1/2, a's rejecting cylinder of mass 3/4 refutes minimum AtLeast, and b's accepting cylinder of mass 3/4 refutes maximum AtMost. Equal-weight resolved workload has accepting and rejecting mass 1/2 each: its rejecting cylinders refute AtLeast 3/5 and accepting cylinders refute AtMost 2/5. All four produce only their matching reproduced token and retain semantic evidence; repeat replay gives equal outcomes. The failure prefix stops before its later B; the B-and-not-A path accepts. | Test |
 | FR-202-AC-18 | Always fixture: initial nonterminal P has actions a and b reaching terminal P with probabilities 1/4 and 3/4, otherwise not-P followed by terminal P. At threshold 1/2, a's not-P cylinder of mass 3/4 refutes minimum AtLeast and b's terminal-P cylinder of mass 3/4 refutes maximum AtMost. Equal-weight resolved workload refutes AtLeast 3/5 with rejecting mass 1/2 and AtMost 2/5 with accepting mass 1/2. Later P cannot repair the not-P prefix; the initial live P alone cannot be accepted. | Test |
 | FR-202-AC-19 | With admitted threshold 1/2, empty paths of mass 1 refute AtMost for initial B-and-not-A until and initial terminal-P always; empty paths refute AtLeast for initial neither-A-nor-B until, terminal A-and-not-B until, and initial not-P always even with a later terminal P successor. Terminal A-and-not-B has until probability 0 and terminal P has always probability 1 without a fabricated stutter step. Source threshold endpoints remain refused; probabilities 0 and 1 are admitted. | Test |
 | FR-202-AC-20 | In AC-17/18, changed source/package, foreign claim occurrence or S3 binding refuses identity mismatch; a changed formula that changes the represented verdict, changed threshold to equality, changed actual action/draw/post-state/full key, fabricated binding node, missing binding component or a formula-monitor key prevents a token. Formula spelling alone need not fail if the actual bound claim has identical semantics and identity checks pass. A wrong-verdict path, live undecided prefix, path extended beyond first success/failure, duplicate cylinder or prefix overlap yields no reproduced token; insufficient/equal mass yields replay parity. | Test |
 | FR-202-AC-21 | AC-17/18 two evidence paths demanding different actions at one complete choice key fail policy consistency; a policy under a resolved workload fails replay. Distinct supported draws reaching the same post-state contribute their separate exact masses once, while repeating a draw cannot increase mass. A raw reachable cycle beyond initial B for until or initial not-P for always is unsupported despite immediate absorption; acyclic counterparts remain admitted. Fairness, timed/reward/nested/bounded forms, multiple initials/bindings, unresolved workload, subsystem and randomized-policy evidence remain unsupported in this subset. | Test |
 | FR-202-AC-22 | AC-17/18 pre-cancellation, cancellation at final acceptance, or exhaustion of each caller expansion/work/storage/arithmetic limit during original admission or replay preserves its typed incomplete outcome with no truth, token or accepted evidence in a refuted record. Refused predicates preserve refusal. Bounds, PrecisionBudget, certificate acceptance alone and unreplayed exact engine verdicts cannot settle refuted. Native replay needs no emitted package or witness wire codec and imports no analyzer graph types. | Test |
+| FR-202-AC-23 | Over FR-201-AC-56's `Health` chain (value `81/100`), `probability >= 0.9 [always[0,2] holds(ok)]` is refuted by the checked-subject bounded entry with the rejecting cylinders fault after one step (`1/10`) and fault after two steps (`9/100`), mass `19/100 > 1/10`; the cylinder that reaches the accepting decided key after position 2 (`81/100`) refutes `probability <= 0.8 [always[0,2] holds(ok)]`. The rejecting set without its second cylinder (mass `1/10`, equal to `1 − 0.9`) yields replay parity, and a cylinder naming a model-only key yields no reproduced token. | Test |
+| FR-202-AC-24 | The checked-subject undefined entry reproduces FR-202-AC-5's `Coin` evidence (`drop` with `b = 0`, `where` position 1, `absent-key`) for `probability >= T [ always[0,3] holds(c.v = 0) ]` at `T` 0.5 and 0.01 alike, with no emitted package; for `probability >= 0.5 [ always[0,3] holds(c.v = 1) ]`, whose monitor rejects at position 0, a forged undefined path to position 1 settles `ReplayParity` without a token. | Test (TC-3153) |
+| FR-202-AC-25 | `Coin` with a further operation `keep` that never deletes, under every scheduler: AC-24's claim is refuted by the undefined path `drop` with `b = 0` and the scheduler entry `drop` at the initial key, although a scheduler that always takes `keep` keeps `c.v` defined; the same path with the entry `keep` at that key refuses `invalid_runtime_input`/`invalid-value`. | Test (TC-3153) |
+| FR-202-AC-26 | Under the infinite-trace profile `probability >= 0.5 [ eventually holds(c.v = 1) ]` over `Coin` is reproduced by the checked-subject undefined entry with the path `drop` with `b = 0`, `where` position 1 and a pre-read key whose monitor and accumulator are null. Under `Even` the path `drop` with `b = 1` (which returns to the initial complete key) then `drop` with `b = 0`, probability `1/4`, `where` position 2, also replays; under every scheduler over the `keep` variant that path settles `ReplayParity`, because its key repeats. Pre-cancellation, cancellation at the final poll and exhaustion of each expansion, work or storage limit return `incomplete` with no token. | Test (TC-3153) |
 
 ## Dependencies
 

@@ -473,7 +473,7 @@ pub(crate) fn family(value_type: &ValueType) -> Option<Family> {
 }
 
 /// FR-194: a threshold written as an exact fraction `n/d` of two integer
-/// literals, as the form `rational(n, d)` and the point type of its value,
+/// literals or as `rational(n, d)`, as the form `rational(n, d)` and the point type of its value,
 /// reduced and measured against the rational-bits `ceiling` as the quantile
 /// level is (`quantity_magnitude`); `None` for any other threshold.
 fn exact_fraction(
@@ -484,20 +484,24 @@ fn exact_fraction(
     use fsl_forms::{BinaryOperator, ExprNode};
     let expression = &threshold.expression;
     let root = expression.root();
-    let ExprNode::Binary {
-        operator: BinaryOperator::Divide,
-        left,
-        right,
-    } = root.node()
-    else {
-        return Ok(None);
-    };
-    let operand = |id| match expression.get(id).map(fsl_forms::ExprRef::node) {
-        Some(ExprNode::Integer(value)) => Some(value.clone()),
-        _ => None,
-    };
-    let (Some(numerator), Some(denominator)) = (operand(*left), operand(*right)) else {
-        return Ok(None);
+    let (numerator, denominator) = match root.node() {
+        ExprNode::Binary {
+            operator: BinaryOperator::Divide,
+            left,
+            right,
+        } => {
+            let operand = |id| match expression.get(id).map(fsl_forms::ExprRef::node) {
+                Some(ExprNode::Integer(value)) => Some(value.clone()),
+                _ => None,
+            };
+            let (Some(numerator), Some(denominator)) = (operand(*left), operand(*right)) else {
+                return Ok(None);
+            };
+            (numerator, denominator)
+        }
+        // `rational(n, d)` is the same literal written out.
+        ExprNode::Rational(numerator, denominator) => (numerator.clone(), denominator.clone()),
+        _ => return Ok(None),
     };
     let written = fsl_forms::ExactValueForm {
         kind: fsl_forms::ExactValueKind::Rational,

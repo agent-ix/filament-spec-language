@@ -3,8 +3,8 @@
 //! model-based cases.
 
 use fsl_eval::simulation::model::{
-    ModelOperation, ModelOperationCase, ModelOperationCoverageReason, ModelOperationCoverageStatus,
-    ModelOperationCoverageSummaryStatus, model_operation_coverage,
+    model_operation_coverage, ModelOperation, ModelOperationCase, ModelOperationCoverageReason,
+    ModelOperationCoverageStatus, ModelOperationCoverageSummaryStatus,
 };
 use ix_trace_rs::trace;
 

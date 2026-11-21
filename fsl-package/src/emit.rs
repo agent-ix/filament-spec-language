@@ -2494,6 +2494,8 @@ fn application_operator(operator: Operator) -> ApplicationOperator {
         Operator::Present => ApplicationOperator::Present,
         Operator::Value => ApplicationOperator::Value,
         Operator::Deref => ApplicationOperator::Deref,
+        Operator::PlaceRef => ApplicationOperator::PlaceRef,
+        Operator::Slots => ApplicationOperator::Slots,
         Operator::Reaches => ApplicationOperator::Reaches,
         Operator::Temporal => ApplicationOperator::Temporal,
         Operator::TemporalFormula => ApplicationOperator::TemporalFormula,
@@ -8881,6 +8883,18 @@ fn claim_name_rows(
         Ok(())
     };
     let mut named: Vec<(CheckedNodeId, CheckedOccurrence)> = Vec::with_capacity(sites.len());
+    for synthesis in graph.synthesis_claims() {
+        let declaration = emitted_node_ids
+            .get(synthesis.node())
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let occurrence = CheckedOccurrence {
+            role: CheckedOccurrenceRole::Declaration,
+            ordinal: 0,
+        };
+        named.push((declaration.clone(), occurrence.clone()));
+        row(declaration, occurrence, synthesis.name(), synthesis.span())?;
+    }
     for (occurrence, name, span) in &sites {
         let Some(declaration) = emitted_node_ids.get(occurrence.node()).cloned() else {
             continue;

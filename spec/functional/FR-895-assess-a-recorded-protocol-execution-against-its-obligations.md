@@ -73,7 +73,7 @@ that show it, or `pending`.
 | Control, one per `choice`, `repeat`, `join` and `check` | the case taken has its guard true; a repeat runs within its `max`; a join fires only when its policy holds; a `check` holds |
 | Window, one per `await` and compensation | the observed match or attempt falls within its `within` window by the recording's readings of the declaration's clock, the FR-640 configuration naming which clock that is |
 | Compensation, one per registration | registration only after the forward effect and never after the commit; attempts within `attempts n`; each outcome in FR-893's partition |
-| Requirement, one per `requires temporal` clause | the clause holds over the recording read as its trace subject (FR-283) |
+| Requirement, one per `requires temporal` clause | the clause holds over the recording read as its trace subject (FR-283); a guarded clause none of whose guards is true creates no obligation (FSpec FR-093-AC-6), so it is satisfied when the recording is closed and pending when it is open |
 | Identity claim, one per obligation instance of each temporal clause of the package that holds a step identity read (FSpec FR-828) of this protocol | the clause holds over the recording, each observation a position and each read taking the identities the observation's FSpec FR-051 bindings name, each obligation instance bound to one protocol instance by its FSpec FR-287 key (FR-894 "Step identity reads"); `violated` at the first observation where it fails. Every such clause of the package is assessed, requested or not, as every `requires temporal` clause is: declaring a clause that reads this protocol's identities makes it an obligation of the protocol's recordings, so adding one can turn a recording's `proved` into `refuted` |
 | Closure, one per protocol instance | `finish` is observed and the closure record is `closed` with every required premise (FSpec FR-059-AC-5) |
 
@@ -97,6 +97,18 @@ in the recording is `pending` while the closure record is not `closed`, and
 `violated` with cause `missing` once it is `closed`. A recording that stops
 early therefore leaves its undecided obligations `pending`. An obligation is
 never `satisfied` by the absence of a violation.
+
+A requirement obligation whose `requires temporal` clause is inactive over
+the recording, every activation guard false so the clause creates no
+obligation (FSpec FR-093-AC-5, AC-6), SHALL be `satisfied` on a `closed`
+recording and `pending` on an open one, and an item that settles `proved`
+on a `closed` recording stays `proved` with it. This is not satisfaction
+by the absence of a violation: for an inactive clause the `closed` closure
+record is the deciding evidence, because it asserts that the recording is
+complete, so no further observation can make a guard true and no
+activation can occur. An open recording has no such evidence, since a later
+observation could still activate the clause, so the obligation stays
+`pending` there.
 
 **Result.** The item settles with the FR-360 labels:
 
@@ -135,6 +147,7 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-5 | Over the AC-2 protocol, a recording in which `Seller` sends `Note` on `Tell` before any `Got` is observed, a point where the protocol enables no send of `Seller`, gives that observation's enabledness obligation `violated`, cause `unexpected`, and settles `refuted`. | Test (TC-2531) |
 | FR-895-AC-6 | A compensation `within [0, 120]` on clock `c`, whose recorded first attempt has a reading of 130 on `c`, gives the window obligation `violated`. With the reading absent and closure `open`, the obligation is `pending`. Batch and incremental assessment of each recording give equal verdicts. | Test (TC-2531) |
 | FR-895-AC-7 | The closed AC-1 recording with `Got` listed before `Placed` in its `observations` array, its local orders and correlations unchanged (the `Placed` to `Got` correlation being the only relation between the two), has no causal cycle: every obligation is `satisfied`, the item settles `proved`, and the verdicts equal those of the AC-1 recording. | Test (TC-2815) |
+| FR-895-AC-8 | The AC-1 protocol with a `requires temporal` clause activated `on each` under a guard that is false at every observation of AC-1's recording (an `eventually` over an order total above any the recording holds), gives the clause's requirement obligation `satisfied` and the item `proved` when the closure is `closed`; the same recording with closure `open` gives that obligation `pending` and the item `inconclusive`, `open-history`, never `proved`. | Test (TC-2530) |
 
 ## Dependencies
 

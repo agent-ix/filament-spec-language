@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use super::{output, wire, FileCounts, Result, RunCause, RunResult};
+use super::{FileCounts, Result, RunCause, RunResult, output, wire};
 
 /// The FR-517 files a `{directory}` selection reads.
 const PACKAGE_FILE: &str = "checked-package.json";
@@ -153,9 +153,15 @@ pub(super) fn prepare(
             "source_package is only selected with package export",
         ));
     }
+    if request.clause.is_some() && package.file.is_some() {
+        return Err(RunCause::RequiresDirectory {
+            member: "clause".to_owned(),
+        });
+    }
     for (present, member) in [
         (request.items.is_some(), "items"),
         (request.verification_plan.is_some(), "verification_plan"),
+        (request.model_based_test.is_some(), "model_based_test"),
     ] {
         if present {
             return Err(invalid(
@@ -399,12 +405,6 @@ pub(super) fn validate_request(request: &wire::Request) -> Result<()> {
         return Err(invalid(
             "program",
             "a program cannot be selected beside a package",
-        ));
-    }
-    if request.synthesis.is_some() {
-        return Err(invalid(
-            "synthesis",
-            "package synthesis requires the S1-S3 lowering from QSL-2235",
         ));
     }
     if !request.libraries.is_empty() {

@@ -12,13 +12,13 @@ use filament_exact::{Cancel, Identifier, Integer, ObjectReference, Rational, Val
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, Monitor, PropertyAutomaton};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{
-    same_rewards, Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading,
-    ScheduledIdentity, Unsteppable,
-};
-use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::{
+    Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading, ScheduledIdentity,
+    Unsteppable, same_rewards,
+};
+use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::ModelCheckLimit;
@@ -275,7 +275,7 @@ fn automaton_refusal(error: AutomatonError) -> ProductRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{plan_refusal, PlanFault, ProductRefusal};
+    use super::{PlanFault, ProductRefusal, plan_refusal};
 
     /// FR-204-AC-4 (TC-639): the exact planner keeps the timed form refusal's source span.
     #[ix_trace_rs::trace("TC-639", "FR-204-AC-4")]
@@ -456,6 +456,7 @@ impl Builder<'_, '_, '_, '_> {
                             monitor,
                             accumulator,
                             pending: None,
+                            certificate_state: None,
                         };
                         return Err(self.undefined(None, None, None, at, key, hit));
                     }
@@ -655,6 +656,7 @@ impl Builder<'_, '_, '_, '_> {
             monitor,
             accumulator,
             pending,
+            certificate_state: None,
         })
     }
 
@@ -860,6 +862,7 @@ impl Builder<'_, '_, '_, '_> {
                 draw: edge.draw,
                 to: ProbStateId(to),
                 probability: edge.probability,
+                elapsed: Rational::from_integer(Integer::from(0_i64)),
                 rewards: edge.rewards,
             });
         }

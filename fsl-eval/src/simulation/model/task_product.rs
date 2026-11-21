@@ -699,6 +699,7 @@ impl<'s, 'a> TaskProductSystem<'s, 'a> {
                     high_allowance: job.allowance_phase == AllowancePhase::Hi,
                     ready: job.ready,
                     running: state.running == Some((job.task_index, job.slot)),
+                    started: None,
                     release: &job.release,
                 })
                 .collect(),

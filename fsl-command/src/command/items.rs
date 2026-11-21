@@ -402,7 +402,8 @@ pub(super) fn run_bytes(
                 }
                 super::PreparedRun::Function(_)
                 | super::PreparedRun::TlLowering(_)
-                | super::PreparedRun::Package(_) => {
+                | super::PreparedRun::Package(_)
+                | super::PreparedRun::ModelBasedTest(_) => {
                     return Err(refused(
                         "value_invariants",
                         "expected a clause-run preparation",
@@ -458,6 +459,12 @@ pub(super) fn run_bytes(
                     return Err(refused(
                         "items.selections",
                         "this package item selection has no checked-package execution route",
+                    ));
+                }
+                Ok(super::PreparedRun::ModelBasedTest(_)) => {
+                    return Err(refused(
+                        "model_based_test",
+                        "model_based_test is not an item selection",
                     ));
                 }
                 Err(cause) => return Err(cause),

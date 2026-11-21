@@ -913,6 +913,7 @@ fn construct(
             failures: Vec::new(),
             reward: reward.map(|reward| reward.objective),
             optimization: objective,
+            timed: None,
             values: offered,
             ranking,
         },

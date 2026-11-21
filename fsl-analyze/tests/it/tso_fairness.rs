@@ -14,7 +14,9 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
-use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
+use fsl_analyze::model_check::{
+    check_protocol, check_protocol_constrained, ModelCheckRefusal, ProtocolCheckRequest,
+};
 use fsl_eval::fairness::{check_loop, EdgeLabel, Identity, LassoFairness, LoopStep};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
@@ -32,14 +34,15 @@ use fsl_replay::{
     settle_protocol_check, CertificateRule, ClosureRefusal, ComponentCertificate,
     CounterexampleKind, Lasso, MemoryBound, MemoryBoundMember, MemoryCause, ModelCheckItem,
     ModelCheckLimits, ModelCheckOutcome, ModelStep, ModelTraceRefusal, ModelTraceSubject,
-    ProofCertificate, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits,
-    ReplayRefusal, TemporalCertificateCheck, TemporalCounterexample,
+    ProofCertificate, ProtocolCertificateRequest, ProtocolTraceSubject, ReductionCause,
+    ReplayLimits, ReplayRefusal, TemporalCertificateCheck, TemporalCounterexample,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
 use crate::litmus::{
-    attempt, contracts, core, document, field, package, protocol, sb_run, unit_text, Documents,
+    attempt, contracts, core, document, field, package, protocol, protocol_with, sb_run, unit_text,
+    Documents,
 };
 use crate::model_settle::{envelope_at, request};
 use crate::weak_memory::select;
@@ -142,6 +145,32 @@ impl Unit {
         max_store_buffer: Option<u64>,
     ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
         self.check_with_ignored_memory(selection, max_store_buffer, false)
+    }
+
+    /// The run under the state constraint `constraint` and the channel bound
+    /// `max_messages` (FR-158, FR-225).
+    fn check_constrained(
+        &self,
+        selection: &[MemorySelection],
+        constraint: Option<&str>,
+        max_store_buffer: Option<u64>,
+        max_messages: Option<u64>,
+    ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+        check_protocol_constrained(
+            ProtocolCheckRequest {
+                temporal_clock_selections: &[],
+                subject: self.subject(selection),
+                item: self.item(),
+                max_depth: None,
+                max_store_buffer,
+                max_messages,
+                max_live_instances: None,
+                limits: ModelCheckLimits::default(),
+                ignore_memory_constraints: false,
+            },
+            constraint,
+            &Cancel::new(),
+        )
     }
 
     fn check_with_ignored_memory(
@@ -1081,4 +1110,323 @@ fn a_protocol_clauses_undefined_evaluation_replays() {
             "an altered undefined evaluation is a disagreement"
         );
     }
+}
+
+/// `eventually holds(k.r1 = 1)` is true of the program `Sx; Lx` (one thread
+/// stores 1 to `x`, then loads it), a constraint `Quiet` (`k.r1 >= 2`, the registers start at 3)
+/// is false at the state after `Lx`.
+fn store_then_load() -> String {
+    format!(
+        "sequence Main {{ {} {} }}",
+        attempt("Sx", "w", "Cell::set", "", "IsX, StoreOne"),
+        attempt("Lx", "c", "Core::read1", "", "ReadsX1, Read1"),
+    )
+}
+
+/// `Sx` and `Lx` on two threads.
+fn store_beside_load() -> String {
+    format!(
+        "parallel Both {{ branch w sequence W {{ {} }} branch r sequence R {{ {} }} }} \
+         join all [w, r];",
+        attempt("Sx", "w", "Cell::set", "relaxed", "IsX, StoreOne"),
+        attempt("Lx", "c", "Core::read1", "relaxed", "ReadsX1, Read1"),
+    )
+}
+
+const QUIET: &str = "constraint Quiet using v on M::Core at current { self.r1 >= 2 }\n";
+
+fn boundary_states(outcome: &ModelCheckOutcome<ProtocolTransition>) -> Option<u64> {
+    match outcome {
+        ModelCheckOutcome::Reduction {
+            cause: ReductionCause::ConstraintReached { boundary_states },
+            ..
+        } => Some(*boundary_states),
+        _ => None,
+    }
+}
+
+/// FR-158-AC-2 over a protocol subject: `eventually holds(k.r1 = 1)` holds
+/// of `Sx; Lx`, and under `Quiet` the only state with `r1 = 1` is a boundary
+/// state, which is stored but never expanded, so the run settles
+/// `ConstraintReached{1}` in place of `Holds`, under `sc`.
+#[trace("TC-580", "FR-158-AC-2")]
+#[test]
+fn a_protocol_liveness_claim_cut_at_a_constraint_boundary_never_holds() {
+    let unit = Unit::new(&store_then_load(), &(QUIET.to_owned() + SETTLES), &IS_ONE);
+    let free = unit
+        .check_constrained(&[], None, None, None)
+        .expect("the subject checks");
+    assert!(matches!(free, ModelCheckOutcome::Holds { .. }), "{free:?}");
+    let cut = unit
+        .check_constrained(&[], Some("Quiet"), None, None)
+        .expect("the subject checks");
+    assert_eq!(boundary_states(&cut), Some(1), "{cut:?}");
+}
+
+/// FR-158-AC-3 over a protocol subject: a constraint false at the initial
+/// state makes it a boundary state with no stutter lasso, so the false claim
+/// settles `ConstraintReached{1}` after storing one state.
+#[trace("TC-581", "FR-158-AC-3")]
+#[test]
+fn an_initially_false_constraint_stores_one_boundary_state_with_no_lasso() {
+    let body = "constraint Started using v on M::Core at current { self.r1 <= 2 }\n";
+    let unit = Unit::new(&store_beside_load(), &(body.to_owned() + SETTLES), &IS_ONE);
+    let free = unit
+        .check_constrained(&[], None, None, None)
+        .expect("the subject checks");
+    assert!(
+        matches!(free, ModelCheckOutcome::Violated { .. }),
+        "{free:?}"
+    );
+    let cut = unit
+        .check_constrained(&[], Some("Started"), None, None)
+        .expect("the subject checks");
+    assert_eq!(boundary_states(&cut), Some(1), "{cut:?}");
+    let ModelCheckOutcome::Reduction { stats, .. } = cut else {
+        unreachable!();
+    };
+    assert_eq!(stats.product_states, 1);
+}
+
+/// A violation that lies before the boundary still refutes: `Sx` beside
+/// `Lx` has a run whose load reads 1 and ends at a terminal stutter loop with
+/// `r1 = 1`, which is no boundary state of `NotZero`, though the other
+/// interleaving (the load first, `r1 = 0`) reaches a boundary state.
+#[trace("TC-580", "FR-158-AC-2")]
+#[test]
+fn a_protocol_liveness_violation_before_the_boundary_still_refutes() {
+    static IS_ZERO: R1 = R1(|value| value == 0);
+    let claim = SETTLES.replace("= 1", "= 0")
+        + "constraint NotZero using v on M::Core at current { not (self.r1 = 0) }\n";
+    let unit = Unit::new(&store_beside_load(), &claim, &IS_ZERO);
+    let cut = unit
+        .check_constrained(&[], Some("NotZero"), None, None)
+        .expect("the subject checks");
+    assert!(matches!(cut, ModelCheckOutcome::Violated { .. }), "{cut:?}");
+}
+
+/// FR-158-AC-3 over a protocol subject: a constraint undefined at a reached
+/// state (`6 mod (1 - r1)` at `r1 = 1`) refutes with `UndefinedEvaluation`
+/// at the constraint.
+#[trace("TC-581", "FR-158-AC-3")]
+#[test]
+fn an_undefined_constraint_refutes_a_protocol_liveness_claim() {
+    use fsl_replay::UndefinedLocus;
+    let body = "function odd_value using v(n: Int[0, 3]): Boolean pure { 6 mod (1 - n) >= 0 }\n\
+                constraint Odd using v on M::Core at current { odd_value(self.r1) }\n";
+    let text = contracts() + &protocol("SB", &store_then_load()) + body + SETTLES;
+    let unit = Unit {
+        checked: crate::litmus::package_kernel(&text),
+        documents: Documents::new(),
+        body: text,
+        letters: &IS_ONE,
+    };
+    let outcome = unit
+        .check_constrained(&[], Some("Odd"), None, None)
+        .expect("the subject checks");
+    let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {
+        panic!("{outcome:?}");
+    };
+    let CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind else {
+        panic!("{counterexample:?}");
+    };
+    assert_eq!(
+        evaluation.site.locus,
+        UndefinedLocus::Constraint("Odd".to_owned())
+    );
+}
+
+/// FR-158 "Resolution" over a protocol liveness claim: a constraint the
+/// package does not declare refuses, naming it.
+#[trace("TC-581", "FR-158-AC-3")]
+#[test]
+fn an_absent_constraint_refuses_a_protocol_liveness_claim() {
+    let unit = Unit::new(&store_then_load(), &(QUIET.to_owned() + SETTLES), &IS_ONE);
+    let refusal = unit
+        .check_constrained(&[], Some("Missing"), None, None)
+        .expect_err("an absent constraint refuses");
+    assert!(
+        matches!(refusal, ModelCheckRefusal::UnknownConstraint { ref name } if name == "Missing"),
+        "{refusal:?}"
+    );
+}
+
+/// FR-158 with FR-225-AC-6 and ADR-025 MB-4: `w` stores to `x` and loads it (so
+/// `eventually holds(k.r1 = 1)` holds) while `s` sends twice on a channel. Under `max_messages` 1 the second send is cut and the
+/// run settles `ChannelBoundReached`; under the constraint `Zero` the store
+/// is a boundary state and `ConstraintReached` settles first, before the
+/// channel bound.
+#[trace("TC-670", "FR-225-AC-5")]
+#[test]
+fn constraint_reached_settles_before_a_channel_bound() {
+    let run = format!(
+        "parallel Both {{ branch w sequence W {{ {} {} }} \
+         branch s sequence S {{ send A via ch as (a: Boolean) {{ a }}; \
+         send B via ch as (b: Boolean) {{ b }}; }} }} join all [w, s];",
+        attempt("Sx", "w", "Cell::set", "relaxed", "IsX, StoreOne"),
+        attempt("Lx", "c", "Core::read1", "relaxed", "ReadsX1, Read1"),
+    );
+    let channel = "channel ch from w to c carries Boolean ordering unordered delivery unknown \
+                   capacity 3 overflow reject;";
+    let claim =
+        SETTLES.to_owned() + "constraint Zero using v on M::Cell at current { self.v <= 0 }\n";
+    let body = contracts() + &protocol_with("SB", channel, &run) + &claim;
+    let unit = Unit {
+        checked: package(&body),
+        documents: Documents::new(),
+        body,
+        letters: &IS_ONE,
+    };
+    let cut = unit
+        .check_constrained(&[], None, None, Some(1))
+        .expect("the subject checks");
+    assert!(
+        matches!(
+            cut,
+            ModelCheckOutcome::Memory {
+                cause: MemoryCause::ChannelBoundReached { .. },
+                ..
+            }
+        ),
+        "{cut:?}"
+    );
+    let constrained = unit
+        .check_constrained(&[], Some("Zero"), None, Some(1))
+        .expect("the subject checks");
+    assert!(
+        boundary_states(&constrained).is_some_and(|n| n > 0),
+        "{constrained:?}"
+    );
+}
+
+/// `s` sends twice on a channel while `r` loads in a loop that never ends.
+fn sender_beside_spinner() -> String {
+    format!(
+        "parallel Both {{ branch s sequence S {{ send A via ch as (a: Boolean) {{ a }}; \
+         send B via ch as (b: Boolean) {{ b }}; }} \
+         branch r repeat Spin by c visible () while {{ true }} sequence R {{ {} }} }} \
+         join all [s, r];",
+        attempt("Lx", "c", "Core::read1", "", "ReadsX1, Read1"),
+    )
+}
+
+const CHANNEL: &str = "channel ch from w to c carries Boolean ordering unordered delivery \
+                       exactly-once-premise capacity 3 overflow reject;";
+
+fn channel_unit(run: &str, claim: &str, letters: &'static dyn ModelLetters) -> Unit {
+    let body = contracts() + &protocol_with("SB", CHANNEL, run) + claim;
+    Unit {
+        checked: package(&body),
+        documents: Documents::new(),
+        body,
+        letters,
+    }
+}
+
+/// ADR-025 MF-4 with FR-225: a send the channel bound cut is enabled to
+/// fairness, so the loop of `r` that starves `s` after its first send is
+/// unfair and the run settles `ChannelBoundReached`, never `Violated`; with
+/// room in the channel `s` finishes and the loop of `r` alone is a genuine
+/// fair violation.
+#[trace("TC-2986", "FR-225-AC-6")]
+#[test]
+fn a_loop_that_starves_a_send_cut_by_the_channel_bound_is_unfair() {
+    static IS_TWO: R1 = R1(|value| value == 2);
+    let claim = SETTLES.replace("= 1", "= 2");
+    let unit = channel_unit(&sender_beside_spinner(), &claim, &IS_TWO);
+    let cut = unit
+        .check_constrained(&[], None, None, Some(1))
+        .expect("the subject checks");
+    assert!(
+        matches!(
+            cut,
+            ModelCheckOutcome::Memory {
+                cause: MemoryCause::ChannelBoundReached { .. },
+                ..
+            }
+        ),
+        "{cut:?}"
+    );
+    let found = unit
+        .check_constrained(&[], None, None, None)
+        .expect("the subject checks");
+    assert!(
+        matches!(found, ModelCheckOutcome::Violated { .. }),
+        "{found:?}"
+    );
+}
+
+/// A send cut met only by the model-only pass of a claim that holds at the
+/// initial state settles `ChannelBoundReached`, never `Holds`.
+#[trace("TC-2986", "FR-225-AC-6")]
+#[test]
+fn a_send_cut_met_only_by_the_model_only_pass_settles_channel_bound_reached() {
+    static ANY: R1 = R1(|value| value <= 3);
+    let claim = SETTLES.replace("k.r1 = 1", "k.r1 <= 3");
+    let unit = channel_unit(&sender_beside_spinner(), &claim, &ANY);
+    let cut = unit
+        .check_constrained(&[], None, None, Some(1))
+        .expect("the subject checks");
+    assert!(
+        matches!(
+            cut,
+            ModelCheckOutcome::Memory {
+                cause: MemoryCause::ChannelBoundReached { .. },
+                ..
+            }
+        ),
+        "{cut:?}"
+    );
+}
+
+/// FR-158 "Protocol subjects": the constraint reads memory values under
+/// `tso`, so a store still in the buffer is not a boundary state; `Sx`
+/// beside `Lx` under `Zero` (`v <= 0`) reaches its boundary only after the
+/// flush, so the `tso` run stores more states than the `sc` run (both settle
+/// `ConstraintReached`).
+#[trace("TC-581", "FR-158-AC-5")]
+#[test]
+fn a_buffered_store_is_not_a_constraint_boundary_under_tso() {
+    static AT_MOST_ONE_LOADED: R1 = R1(|value| value <= 1);
+    let run = store_beside_load();
+    let claim = SETTLES.replace("k.r1 = 1", "k.r1 <= 1")
+        + "constraint Zero using v on M::Cell at current { self.v <= 0 }\n";
+    let unit = Unit::new(&run, &claim, &AT_MOST_ONE_LOADED);
+    let sc = unit
+        .check_constrained(&[], Some("Zero"), None, None)
+        .expect("the subject checks");
+    let tso = unit
+        .check_constrained(&unit.tso(), Some("Zero"), None, None)
+        .expect("the subject checks");
+    let (
+        ModelCheckOutcome::Reduction { stats: on_sc, .. },
+        ModelCheckOutcome::Reduction { stats: on_tso, .. },
+    ) = (&sc, &tso)
+    else {
+        panic!("{sc:?} {tso:?}");
+    };
+    assert!(boundary_states(&sc).is_some() && boundary_states(&tso).is_some());
+    assert!(on_tso.product_states > on_sc.product_states);
+}
+
+/// ADR-025 MF-4: a store the buffer bound cut is enabled to fairness, so the
+/// loop of `r` that never lets `w` store is unfair and the run settles
+/// `MemoryBoundReached` in place of `Violated`.
+#[trace("TC-673")]
+#[test]
+fn a_loop_that_starves_a_store_cut_by_the_buffer_bound_is_unfair() {
+    let unit = Unit::new(&spin_run(), SETTLES, &IS_ONE);
+    let cut = unit
+        .check_constrained(&unit.tso(), None, Some(0), None)
+        .expect("the subject checks");
+    assert!(
+        matches!(
+            cut,
+            ModelCheckOutcome::Memory {
+                cause: MemoryCause::BoundReached { .. },
+                ..
+            }
+        ),
+        "{cut:?}"
+    );
 }

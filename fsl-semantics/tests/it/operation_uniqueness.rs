@@ -55,7 +55,8 @@ fn assert_refusal(
         ModelRefusalCause::ConflictingBinding {
             key,
             member: Some(path),
-        } => {
+        }
+        | ModelRefusalCause::AmbiguousName { key, member: path } => {
             assert_eq!(key.node, node);
             assert_eq!(path.to_string(), member);
         }
@@ -98,7 +99,6 @@ fn duplicate_operation_identity_refuses_at_the_second_operation() {
 }
 
 #[trace("TC-1307", "FR-512-AC-5")]
-#[ignore = "QSL-2696: enforce operation and parameter namespaces before frame resolution"]
 #[test]
 fn equal_operation_names_with_distinct_identities_refuse_at_the_second_name() {
     let first = query("advance", json!([]));
@@ -162,7 +162,6 @@ fn duplicate_parameter_names_preserve_the_readers_exact_repeated_name() {
 }
 
 #[trace("TC-1307", "FR-512-AC-9", "FR-512-AC-15")]
-#[ignore = "QSL-2696: enforce operation and parameter namespaces before frame resolution"]
 #[test]
 fn mismatched_parameter_name_preempts_frame_resolution() {
     let mut parameter = operation_parameter("advance", "amount", INTEGER);
@@ -179,7 +178,6 @@ fn mismatched_parameter_name_preempts_frame_resolution() {
 }
 
 #[trace("TC-1307", "FR-512-AC-10", "FR-512-AC-11", "FR-512-AC-15")]
-#[ignore = "QSL-2696: enforce operation and parameter namespaces before frame resolution"]
 #[test]
 fn result_parameter_is_reserved_with_and_without_a_return_type() {
     for returns in [Some(INTEGER), None] {
@@ -201,10 +199,32 @@ fn result_parameter_is_reserved_with_and_without_a_return_type() {
 }
 
 #[trace("TC-1307", "FR-512-AC-12")]
-#[ignore = "QSL-2697: deduplicate repeated frame grants at intake"]
 #[test]
 fn repeated_frame_entries_deduplicate_without_losing_distinct_entries() {
     assert_deduplicated_frame("modifies");
+    let first = key("versionNumber");
+    let second = key("parent");
+    let mut op = query("advance", json!([]));
+    op["frame"]["modifies"] = json!([first, second, first, second]);
+    let models = admit(&input(vec![op])).expect("repeated and distinct grants admit");
+    let effect = models[0]
+        .view
+        .domain_package()
+        .records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::OperationMember(op) if op.key.node == key("advance") => {
+                Some(op.effect.clone())
+            }
+            _ => None,
+        })
+        .expect("the declared operation survives intake");
+    let nodes: Vec<_> = effect
+        .modifies
+        .iter()
+        .map(|key| key.node.as_str())
+        .collect();
+    assert_eq!(nodes, [first.as_str(), second.as_str()]);
 }
 
 fn assert_deduplicated_frame(member: &str) {
@@ -259,14 +279,12 @@ fn receiver_frame_duplicates_deduplicate() {
 }
 
 #[trace("TC-1307", "FR-512-AC-13")]
-#[ignore = "QSL-2697: deduplicate repeated frame grants at intake"]
 #[test]
 fn creation_frame_duplicates_deduplicate() {
     assert_deduplicated_frame("creates");
 }
 
 #[trace("TC-1307", "FR-512-AC-13")]
-#[ignore = "QSL-2697: deduplicate repeated frame grants at intake"]
 #[test]
 fn deletion_frame_duplicates_deduplicate() {
     assert_deduplicated_frame("deletes");
@@ -376,7 +394,6 @@ fn an_explicit_redefinition_keeps_its_own_operation_identity() {
 }
 
 #[trace("TC-1307", "FR-512-AC-5", "FR-512-AC-16")]
-#[ignore = "QSL-2696: enforce operation and parameter namespaces before frame resolution"]
 #[test]
 fn repeated_operation_name_preempts_the_second_operations_reserved_parameter() {
     let first = query("advance", json!([]));
@@ -583,7 +600,6 @@ fn unrelated_objects_can_declare_the_same_operation_name() {
 }
 
 #[trace("TC-1307", "FR-512-AC-11", "FR-512-AC-15")]
-#[ignore = "QSL-2696: reserve the result parameter name before frame resolution"]
 #[test]
 fn result_parameter_without_a_return_type_refuses_before_frame_resolution() {
     let mut op = operation(
@@ -786,7 +802,6 @@ fn unrelated_record_order_keeps_owner_refusals_ahead_of_operation_name_collision
 }
 
 #[trace("TC-1307", "FR-512-AC-5", "FR-512-AC-16", "FR-512-AC-17")]
-#[ignore = "QSL-2696: operation namespace and precedence refusal must survive record reordering"]
 #[test]
 fn unrelated_record_order_keeps_both_equal_name_collision_participants() {
     for reserved_parameter in [false, true] {
@@ -812,7 +827,6 @@ fn unrelated_record_order_keeps_both_equal_name_collision_participants() {
 }
 
 #[trace("TC-1307", "FR-512-AC-9", "FR-512-AC-15", "FR-512-AC-17")]
-#[ignore = "QSL-2696: parameter name validation must precede frame resolution after record reordering"]
 #[test]
 fn unrelated_record_order_keeps_mismatched_parameter_name_and_precedence_loci() {
     for bad_frame in [false, true] {
@@ -841,7 +855,6 @@ fn unrelated_record_order_keeps_mismatched_parameter_name_and_precedence_loci() 
     "FR-512-AC-15",
     "FR-512-AC-17"
 )]
-#[ignore = "QSL-2696: reserved result-name and precedence refusal must survive record reordering"]
 #[test]
 fn unrelated_record_order_keeps_reserved_result_name_and_precedence_loci() {
     for returns in [None, Some(INTEGER)] {
@@ -864,6 +877,153 @@ fn unrelated_record_order_keeps_reserved_result_name_and_precedence_loci() {
                     "TypeDefinition.operations[0].params[0].name",
                 );
             }
+        }
+    }
+}
+
+/// A document whose `Parcel` owner of `kind` declares `operations`; the
+/// owner is otherwise well formed.
+fn operation_owner(kind: &str, operations: Vec<Value>) -> Vec<u8> {
+    use super::model_operations::{wire_construct, wire_field, wire_type};
+    use fsl_semantics::model::intake::meaning;
+    let owner = format!("ix://{PACKAGE_IDENTITY}/Parcel");
+    let id = format!("{owner}/id");
+    let id_field = wire_field(&id, "id", "ix://filament/native/Boolean", "required", 1);
+    let step = format!("{owner}/receive");
+    let states: Vec<Value> = ["Draft", "Placed"]
+        .iter()
+        .map(|name| {
+            let identity = format!("{owner}/{name}");
+            json!({"identity": identity, "name": name, "origin": {"generated": {
+                "generatorIdentity": identity,
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [identity],
+            }}})
+        })
+        .collect();
+    let (meaning, members, extra) = match kind {
+        "state_machine" => (
+            meaning::STATE_MACHINE,
+            json!({"states": "required", "transitions": "required"}),
+            json!({
+                "fields": [],
+                "states": states,
+                "transitions": [{
+                    "identity": format!("{owner}/advance_transition"),
+                    "from": format!("{owner}/Draft"),
+                    "to": format!("{owner}/Placed"),
+                    "trigger": format!("{owner}/advance"),
+                    "emits": [],
+                    "origin": {"generated": {
+                        "generatorIdentity": owner,
+                        "generatorVersion": "1.0.0",
+                        "inputIdentities": [owner],
+                    }},
+                }],
+            }),
+        ),
+        "process" => (
+            meaning::PROCESS,
+            json!({"identityFields": "required", "steps": "required"}),
+            json!({"identityFields": [id], "fields": [id_field], "steps": [{
+                "identity": step, "name": "receive", "stepKind": "command",
+                "consumes": [], "emits": [],
+                "origin": {"generated": {
+                    "generatorIdentity": step,
+                    "generatorVersion": "1.0.0",
+                    "inputIdentities": [step],
+                }},
+            }]}),
+        ),
+        "persistence_interface" => (
+            meaning::PERSISTENCE_INTERFACE,
+            json!({"persists": "required"}),
+            json!({"fields": [], "persists": [format!("ix://{PACKAGE_IDENTITY}/ConfigVersion")]}),
+        ),
+        other => panic!("no operation owner of kind {other}"),
+    };
+    let mut document: Value = serde_json::from_slice(&input(vec![])).expect("original model");
+    document["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(wire_construct(kind, meaning, members));
+    let mut node = wire_type(&owner, kind, extra);
+    node["operations"] = json!(operations);
+    document["types"].as_array_mut().expect("types").push(node);
+    serde_json::to_vec(&document).expect("model JSON")
+}
+
+fn parcel_operation(name: &str, identity_tail: &str, parameters: Value) -> Value {
+    let mut op = query(name, parameters);
+    op["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/{identity_tail}"));
+    op
+}
+
+#[trace("TC-1307", "FR-512-AC-5")]
+#[test]
+fn equal_operation_names_refuse_for_every_admitted_owner_kind() {
+    for kind in ["state_machine", "process", "persistence_interface"] {
+        let first = parcel_operation("advance", "advance", json!([]));
+        let second = parcel_operation("advance", "other", json!([]));
+        admit(&operation_owner(kind, vec![first.clone()]))
+            .unwrap_or_else(|refused| panic!("{kind} with one operation admits: {refused:?}"));
+        let refused = admit(&operation_owner(kind, vec![first, second]))
+            .expect_err("equal names of distinct identities must refuse");
+        let UnitIntakeCause::Refused(found) = refused.cause else {
+            panic!("{kind}: {refused:?}");
+        };
+        assert_eq!(found.len(), 1, "{kind}: {found:?}");
+        assert_refusal(
+            &found[0],
+            "ambiguous_declaration",
+            "ambiguous-name",
+            &format!("ix://{PACKAGE_IDENTITY}/Parcel/other"),
+            "TypeDefinition.operations[1].name",
+        );
+    }
+}
+
+#[trace("TC-1307", "FR-512-AC-2", "FR-512-AC-3", "FR-512-AC-16")]
+#[test]
+fn record_and_event_owner_refusals_precede_parameter_name_refusals() {
+    use fsl_semantics::model::intake::meaning;
+    let parameter = |name: &str| {
+        let mut parameter = operation_parameter("advance", name, INTEGER);
+        parameter["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/advance/{name}"));
+        parameter
+    };
+    let mut mismatched = parameter("amount");
+    mismatched["name"] = json!("distance");
+    let reserved = parameter("result");
+    for (kind, owner_meaning, code, cause) in [
+        (
+            "event_type",
+            meaning::EVENT_TYPE,
+            "invalid_model_binding",
+            "malformed-declaration",
+        ),
+        (
+            "record_value_type",
+            meaning::RECORD_VALUE_TYPE,
+            "unsupported_construct",
+            "declaration-form",
+        ),
+    ] {
+        for parameter in [mismatched.clone(), reserved.clone()] {
+            let operation = parcel_operation("advance", "advance", json!([parameter]));
+            let refused = admit(&extra_owner(kind, owner_meaning, vec![operation]))
+                .expect_err("the owner rule refuses the operation");
+            let UnitIntakeCause::Refused(found) = refused.cause else {
+                panic!("{kind}: {refused:?}");
+            };
+            assert_eq!(found.len(), 1, "{kind}: owner refusal only: {found:?}");
+            assert_refusal(
+                &found[0],
+                code,
+                cause,
+                &format!("ix://{PACKAGE_IDENTITY}/Parcel/advance"),
+                "TypeDefinition.operations[0]",
+            );
         }
     }
 }

@@ -40,6 +40,10 @@ pub enum StepLabel<'a> {
     Operation(&'a ModelTransition),
     /// The stutter step of a terminal component (ADR-018 SM-4).
     Stutter,
+    /// No step: the component's closed finite trace (FR-173 "Event-position
+    /// form") has ended before this joint step. A `match` conjunct that reads
+    /// such a component is not evaluated there.
+    Ended,
 }
 
 /// Reads the `holds` atoms of a hyper clause's body at a joint position

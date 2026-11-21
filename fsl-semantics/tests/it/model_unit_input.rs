@@ -298,7 +298,7 @@ fn package_input_from_sources_keeps_source_labels_and_compiled_document_conflict
 fn a_model_unit_compiles_its_relationship_and_population() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/graph";
-object Node { relationship next: Node [0, 1]; }
+object Node { rank: Int[0, 9]; relationship next: Node [0, 1]; }
 population nodes: Node;
 "#;
     let parsed = fsl_cst::parse(
@@ -320,14 +320,78 @@ population nodes: Node;
         document["types"][0]["relationships"][0]["targetEnd"]["multiplicity"]["lower"],
         0
     );
+    let relationship = &document["types"][0]["relationships"][0];
+    assert_eq!(relationship["sourceEnd"]["role"], "next");
+    assert!(relationship["targetEnd"].get("role").is_none());
+    assert_eq!(relationship["sourceEnd"]["multiplicity"]["lower"], 0);
+    assert!(relationship["sourceEnd"]["multiplicity"].get("upper").is_none());
     assert_eq!(document["populations"][0]["extent"], "closed");
     let packages = package_input([source.as_bytes()]).expect("model unit becomes package input");
-    admit(
+    let (_, admitted) = admit(
         "example/graph",
         &packages,
         ModelNormalizationLimits::default().intake,
     )
     .expect("FR-154 admits the compiled relationship document");
+    read_records("example/graph", &admitted).expect("the relationship records are read");
+}
+
+#[trace("FR-710-AC-2", "TC-1942")]
+#[test]
+fn a_relationship_inverse_names_and_bounds_the_source_end() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/graph";
+object Node { relationship next: Node [0, 1] inverse prev [0, 2]; }
+population nodes: Node;
+"#;
+    let packages = package_input([source.as_bytes()]).expect("model unit becomes package input");
+    let document: serde_json::Value =
+        serde_json::from_slice(&packages["example/graph"]).expect("compiled document is JSON");
+    let relationship = &document["types"][0]["relationships"][0];
+    assert_eq!(relationship["sourceEnd"]["role"], "next");
+    assert_eq!(relationship["targetEnd"]["role"], "prev");
+    assert_eq!(relationship["targetEnd"]["multiplicity"]["upper"], 1);
+    assert_eq!(relationship["sourceEnd"]["multiplicity"]["lower"], 0);
+    assert_eq!(relationship["sourceEnd"]["multiplicity"]["upper"], 2);
+    admit(
+        "example/graph",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the inverse end");
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_names_every_native_type() {
+    let natives = [
+        "Boolean", "Integer", "Timestamp", "UUID", "String", "Bytes", "Duration", "JsonObject",
+        "Decimal[0, 2; 10, 2; exact]",
+    ];
+    let fields = natives
+        .iter()
+        .enumerate()
+        .map(|(position, native)| format!("  f{position}: {native};\n"))
+        .collect::<String>();
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\ndomain \"example/natives\";\nobject Holder {{\n{fields}}}\n"
+    );
+    let packages = package_input([source.as_bytes()]).expect("native type names resolve");
+    let document: serde_json::Value =
+        serde_json::from_slice(&packages["example/natives"]).expect("compiled document is JSON");
+    for (position, native) in natives.iter().enumerate() {
+        let name = native.split('[').next().unwrap();
+        assert_eq!(
+            document["types"][0]["fields"][position]["typeRef"],
+            format!("ix://filament/native/{name}")
+        );
+    }
+    admit(
+        "example/natives",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the native types");
 }
 
 #[trace("FR-710-AC-4", "TC-1943")]
@@ -605,7 +669,7 @@ unit m: Length = rational(1, 1);
 fn a_model_unit_compiles_and_admits_an_event_type() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/events";
-event Placed { timestamp: Integer; occurs timestamp; }
+event Placed { timestamp: Timestamp; occurs timestamp; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("event model compiles");
     let (_, document) = admit(
@@ -628,7 +692,7 @@ event Placed { timestamp: Integer; occurs timestamp; }
 fn a_model_unit_compiles_and_admits_a_namespace() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/namespaces";
-object Node { value: Integer; }
+object Node { amount: Integer; }
 namespace Terms { members Node; term node_term = "a node"; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("namespace model compiles");
@@ -716,7 +780,7 @@ allocate Alloc from pump to pump;
 fn a_model_unit_compiles_and_admits_a_state_machine() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/machines";
-event Placed { timestamp: Integer; occurs timestamp; }
+event Placed { timestamp: Timestamp; occurs timestamp; }
 machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("state machine model compiles");
@@ -740,7 +804,7 @@ machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transit
 fn a_model_unit_compiles_and_admits_a_process() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/processes";
-event Placed { timestamp: Integer; occurs timestamp; }
+event Placed { timestamp: Timestamp; occurs timestamp; }
 process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
 "#;
     let packages = package_input([source.as_bytes()]).expect("process model compiles");
@@ -764,8 +828,8 @@ process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
 fn a_model_unit_compiles_and_admits_a_persistence_interface() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/stores";
-object Node { value: Integer; }
-store Nodes persists Node { operation write_record(record: Reference<Node>); }
+object Node { amount: Integer; }
+store Nodes persists Node { operation write_record(entry: Reference<Node>); }
 "#;
     let packages = package_input([source.as_bytes()]).expect("store model compiles");
     let (_, document) = admit(
@@ -857,7 +921,7 @@ dimension Length;
 unit m: Length = rational(1, 1);
 object Node identity (id) {
   id: Int[0, 9];
-  note: Option<Text>;
+  note: Option<Integer>;
   tags: Integer [0, *] ordered unique;
   relationship next: Node [0, 1] inverse prev [0, 1];
   operation bump(): Boolean modifies self.id {
@@ -866,10 +930,10 @@ object Node identity (id) {
   }
   invariant Bounded { self.id >= 0 };
 }
-event Placed { timestamp: Integer; occurs timestamp; }
+event Placed { timestamp: Timestamp; occurs timestamp; }
 machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
 process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
-store Nodes persists Node { operation write_record(record: Reference<Node>); }
+store Nodes persists Node { operation write_record(entry: Reference<Node>); }
 namespace Terms { members Node, Gate; term node_term = "a node"; }
 population nodes: Node;
 open symmetric population peers: Node;

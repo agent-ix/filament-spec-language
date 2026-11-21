@@ -76,7 +76,7 @@ fn until_and_always_check_exact_direct_minimum_maximum_and_workload_values() {
                 let full = key(&row["state"]);
                 assert!(!full[1].is_null(), "actual S3 binding is retained");
                 assert_eq!(
-                    &full.as_array().unwrap()[3..],
+                    &full.as_array().unwrap()[5..],
                     &[Value::Null, Value::Null, Value::Null]
                 );
             }
@@ -162,7 +162,7 @@ fn altered_objective_binding_keys_values_ranks_and_threshold_do_not_prove() {
             doc["values"].as_array_mut().unwrap().pop();
         }),
         mutate(&request, |doc| {
-            alter_keys(doc, |key| key[3] = json!(["foreign-monitor"]))
+            alter_keys(doc, |key| key[5] = json!(["foreign-monitor"]))
         }),
         mutate(&request, |doc| {
             doc["objective"]["failures"] = doc["objective"]["targets"].clone()
@@ -181,7 +181,7 @@ fn altered_objective_binding_keys_values_ranks_and_threshold_do_not_prove() {
             alter_keys(doc, |key| key[1]["identity"] = json!("foreign"))
         }),
         mutate(&request, |doc| {
-            alter_keys(doc, |key| key[2] = json!(["foreign"]))
+            alter_keys(doc, |key| key[4] = json!(["foreign"]))
         }),
         mutate(&request, |doc| {
             doc["values"][0]["value"] = json!({"numerator":"1","denominator":"1"})

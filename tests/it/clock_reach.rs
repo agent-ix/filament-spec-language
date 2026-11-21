@@ -129,7 +129,6 @@ fn responses() -> Value {
 
 #[test]
 #[trace("TC-2387", "FR-194-AC-13")]
-#[ignore = "QSL-2138: refused invalid_runtime_input/unsupported-window-aggregate at Admit; evaluation of a window aggregate over a timestamped sample trace is not implemented"]
 fn a_quantile_aggregate_reaches_a_verdict_through_run() {
     let directory = tempfile::tempdir().unwrap();
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
@@ -188,13 +187,12 @@ fn model_subject_aggregate_refusal() -> fsl_semantics::check::TemporalCause {
     cause
 }
 
-/// FR-194-AC-1, AC-2 over source: each window aggregate kind, parsed from
+/// FR-194-AC-1 over source: each window aggregate kind, parsed from
 /// source under the timestamped-event profile, runs through `command::run`
 /// over AC-1's 20 latencies to the verdict its window values give. At the
 /// last tick the window holds 20 responses: 18 of 1 ms, then 6 ms and 7 ms.
 #[test]
-#[trace("TC-629", "FR-194-AC-1", "FR-194-AC-2")]
-#[ignore = "QSL-2138: refused invalid_runtime_input/unsupported-window-aggregate at Admit; evaluation of a window aggregate over a timestamped sample trace is not implemented"]
+#[trace("TC-629", "FR-194-AC-1")]
 fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
     let directory = tempfile::tempdir().unwrap();
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
@@ -232,14 +230,19 @@ fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
             "violated",
         ),
         (
-            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= rational(9, 10)",
+            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= 9/10",
             0,
             "holds",
         ),
         (
-            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= rational(19, 20)",
+            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= 19/20",
             10,
             "violated",
+        ),
+        (
+            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= rational(9, 10)",
+            0,
+            "holds",
         ),
         (
             "quantile 0.9 of r.latency over past[0 ms, 300 s] <= 5 ms",
@@ -248,6 +251,16 @@ fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
         ),
         (
             "quantile 0.95 of r.latency over past[0 ms, 300 s] <= 5 ms",
+            10,
+            "violated",
+        ),
+        (
+            "quantile 0.9 of r.latency over past[0 ms, 300 s] <= 0.005 s",
+            0,
+            "holds",
+        ),
+        (
+            "quantile 0.95 of r.latency over past[0 ms, 300 s] <= 0.005 s",
             10,
             "violated",
         ),
@@ -263,6 +276,62 @@ fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
         assert_eq!(
             document["disposition"]["temporal"]["kind"], verdict,
             "{atom}: {document}"
+        );
+    }
+}
+
+/// FR-501 "Verdicts", FR-194: an aggregate is an atom, so its valuation absent
+/// from the admitted observation of an eligible position is
+/// `MissingValuation` (both possibilities) as an absent `holds` valuation is:
+/// the request admits and the verdict is `indeterminate` (exit 11) with reason
+/// `missing-valuation` at the absent position 19. The clause's formula is the
+/// aggregate atom (node 1) under `always` (node 0), so node 0 and any node
+/// past the formula name no atom: a typed `invalid-value` refusal (exit 20).
+#[test]
+#[trace("TC-2387", "FR-501-AC-4", "FR-194-AC-1")]
+fn an_absent_aggregate_valuation_is_a_missing_valuation() {
+    let directory = tempfile::tempdir().unwrap();
+    let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    let unit = aggregate_unit("count over past[0 ms, 300 s] <= 20");
+    let (exit, document) = run(directory.path(), &unit, clocks.clone(), "P", responses());
+    assert_eq!(exit, 0, "{document}");
+    let with_missing = |atom: u64| {
+        let mut trace = responses();
+        trace["timestamped"]["missing"] = json!([{"position": 19, "atom": atom}]);
+        trace
+    };
+    let (exit, document) = run(
+        directory.path(),
+        &unit,
+        clocks.clone(),
+        "P",
+        with_missing(1),
+    );
+    assert_eq!(exit, 11, "{document}");
+    assert_eq!(
+        document["disposition"]["temporal"]["kind"], "indeterminate",
+        "{document}"
+    );
+    assert_eq!(
+        document["disposition"]["temporal"]["reason"]["kind"], "missing-valuation",
+        "{document}"
+    );
+    assert_eq!(
+        document["disposition"]["temporal"]["reason"]["position"], 19,
+        "{document}"
+    );
+    for atom in [0, 2] {
+        let (exit, document) = run(
+            directory.path(),
+            &unit,
+            clocks.clone(),
+            "P",
+            with_missing(atom),
+        );
+        assert_eq!(exit, 20, "atom {atom}: {document}");
+        assert_eq!(
+            document["disposition"]["refusal"]["cause"], "invalid-value",
+            "atom {atom}: {document}"
         );
     }
 }

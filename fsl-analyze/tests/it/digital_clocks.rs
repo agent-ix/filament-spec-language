@@ -181,7 +181,6 @@ fn deadline_extrema_over_every_scheduler() {
 /// zero-delay cycle, and an `always` event has no digital reading.
 #[trace("TC-639", "FR-204-AC-4")]
 #[test]
-#[ignore = "QSL-2156: zero-delay cycles and `always` windows settle verdicts, not yet implemented"]
 fn zero_delay_cycle_and_form_shape_settle_verdicts() {
     // Without a guard or a reset `send` loops at the initial state with zero
     // delay; time must diverge, so the cycle's end component is transient.
@@ -268,7 +267,6 @@ fn timed_form_shape_names_the_selected_elapsed_claim_among_equal_names() {
 /// decided with time divergence: each builds a product with no monitor.
 #[trace("TC-639", "FR-204-AC-4")]
 #[test]
-#[ignore = "QSL-2156: time-divergent decision of zero-delay cycles not implemented yet"]
 fn unbounded_digital_cycles_settle_with_monitorless_state_identity() {
     let world = retx(
         "",
@@ -294,7 +292,6 @@ fn unbounded_digital_cycles_settle_with_monitorless_state_identity() {
 /// FR-204-AC-2 (TC-639 step 2): a strict guard is decided over clock regions.
 #[trace("TC-639", "FR-204-AC-2")]
 #[test]
-#[ignore = "QSL-2156: the region MDP for strict clock constraints not implemented yet"]
 fn a_strict_guard_is_decided_over_regions() {
     let world = every(" and self.x > 1 ms", true);
     let built = product(&world, "Deadline");
@@ -491,23 +488,23 @@ fn claim_over(name: &str, scheduler: &str, bound: &str, event: &str) -> String {
 /// The digital clocks and the deadline clock a product key carries, scaled
 /// back to model units: `(clock values, deadline clock)`.
 fn digital_clocks_of(key: &fsl_analyze::exact_probabilistic::ProbKey) -> (Vec<u64>, Option<u64>) {
-    let bytes = &key.model;
-    let word = |at: usize| {
-        let eight: [u8; 8] = bytes[at..at + 8].try_into().expect("a word");
-        u64::from_be_bytes(eight)
+    let product: serde_json::Value = serde_json::from_slice(&key.model).expect("a product key");
+    let digital = &product[4][1];
+    assert_eq!(digital[0], "digital");
+    let count = |value: &serde_json::Value| -> u64 {
+        value
+            .as_str()
+            .and_then(|text| text.parse().ok())
+            .expect("a decimal count")
     };
-    let prefix = b"filament.simulation.state-key/v1/digital\n".len();
-    let model = usize::try_from(word(prefix)).expect("a length");
-    let mut at = prefix + 8 + model;
-    let scale = word(at);
-    let count = usize::try_from(word(at + 8)).expect("a count");
-    at += 16;
-    let mut clocks = Vec::new();
-    for _ in 0..count {
-        clocks.push(word(at) / scale);
-        at += 16;
-    }
-    let deadline = (bytes[at] == 1).then(|| word(at + 1) / scale);
+    let scale = count(&digital[3]);
+    let clocks = digital[4]
+        .as_array()
+        .expect("clock rows")
+        .iter()
+        .map(|clock| count(&clock[1]) / scale)
+        .collect();
+    let deadline = digital[5].as_array().map(|row| count(&row[2]) / scale);
     (clocks, deadline)
 }
 
@@ -723,7 +720,6 @@ fn an_until_deadline_has_the_same_extrema() {
 /// but its only delay, 5 ms, lies outside its window.
 #[trace("TC-639", "FR-204")]
 #[test]
-#[ignore = "QSL-2156: time-locked digital states not read as terminal yet"]
 fn a_bounded_state_where_nothing_races_is_a_time_lock() {
     let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
     assert!(matches!(build(&world, "Under"), Ok(ProbBuild::Built(_))));
@@ -1043,7 +1039,6 @@ fn exact_initial(product: &ProbProduct, bound: Bound) -> Option<Rational> {
 /// FR-204-AC-13 (TC-2172): a strict guard is decided over the region MDP.
 #[trace("TC-2172", "FR-204-AC-13")]
 #[test]
-#[ignore = "QSL-2156: the region MDP for strict clock constraints not implemented yet"]
 fn strict_clock_constraint_is_decided_over_regions() {
     let world = every(" and self.x > 1 ms", true);
     let built = product(&world, "Deadline");
@@ -1075,7 +1070,6 @@ fn always_window_is_decided_as_a_complement() {
 #[trace("TC-2174", "FR-204-AC-15")]
 #[trace("TC-639", "FR-204-AC-3")]
 #[test]
-#[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
 fn discrete_delay_applies_over_every_scheduler() {
     let world = retx(
         GUARD,
@@ -1090,7 +1084,6 @@ fn discrete_delay_applies_over_every_scheduler() {
 /// divergence instead of refused.
 #[trace("TC-2175", "FR-204-AC-16")]
 #[test]
-#[ignore = "QSL-2156: time-divergent decision of zero-delay cycles not implemented yet"]
 fn zero_delay_cycle_is_decided_with_time_divergence() {
     let world = every("", false);
     let built = product(&world, "Deadline");
@@ -1105,7 +1098,6 @@ fn zero_delay_cycle_is_decided_with_time_divergence() {
 /// FR-204-AC-17 (TC-2176): a time-locked state is terminal.
 #[trace("TC-2176", "FR-204-AC-17")]
 #[test]
-#[ignore = "QSL-2156: time-locked digital states not read as terminal yet"]
 fn time_locked_state_is_terminal() {
     let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
     assert!(matches!(build(&world, "Under"), Ok(ProbBuild::Built(_))));
@@ -1296,8 +1288,8 @@ fn formula_root(world: &World, claim: &str) -> filament_exact::NodeKey {
 #[trace("FR-498-AC-8", "TC-1288")]
 #[test]
 fn a_timed_form_shape_cause_carries_the_claim_member_path() {
-    let claims = "probabilistic Mean using ev on M over (c: M::Call) under every scheduler \
-                  on origin { expected elapsed until holds(c.late) <= 3 ms }\n\
+    let claims = "probabilistic LongRun using ev on M over (c: M::Call) under every scheduler \
+                  on origin { long_run_fraction holds(c.late) <= 0.5 }\n\
                   probabilistic Elapsed using ev on M over (c: M::Call) under every scheduler \
                   on origin { quantile 0.5 of (elapsed from holds(not c.late) until \
                   holds(c.late) within 4 ms) <= 1 ms }\n";
@@ -1312,8 +1304,8 @@ fn a_timed_form_shape_cause_carries_the_claim_member_path() {
             .expect("the claim has a package identity")
     };
 
-    let (claim, member) = timed_form_shape(&world, "Mean");
-    assert_eq!(claim, Some(identity("Mean")));
+    let (claim, member) = timed_form_shape(&world, "LongRun");
+    assert_eq!(claim, Some(identity("LongRun")));
     let member = member.expect("a member path");
     assert_eq!(member.body, ["form"]);
     assert!(member.formulas.is_empty());

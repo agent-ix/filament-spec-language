@@ -192,7 +192,7 @@ fn an_absent_extracted_selection_and_a_formal_fence_never_become_native_truth() 
 }
 
 #[test]
-#[ignore = "QSL-2725: extracted-body clause-count admission is unimplemented; FR-031-AC-9 remains uncounted"]
+#[trace("FR-031-AC-9", "TC-109")]
 fn an_extracted_body_with_two_clauses_refuses_its_actual_count() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -221,10 +221,28 @@ fn an_extracted_body_with_two_clauses_refuses_its_actual_count() {
         "extraction-clause-count"
     );
     assert_eq!(
-        document["disposition"]["refusal"]["details"],
-        json!({"actual": 2})
+        document["disposition"]["refusal"]["fields"],
+        json!({"actual": "2"})
     );
     assert!(document["disposition"]["truth"].is_null());
+}
+
+#[test]
+#[trace("FR-031-AC-9", "TC-109")]
+fn an_extracted_body_with_a_syntax_error_refuses_at_the_source() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let body = "this is not an FSL unit\n".to_owned();
+    std::fs::write(directory.path().join("spec.md"), markdown(&body, "\n")).unwrap();
+    let result = run(&write(directory.path(), &request()));
+    let document = result.value.as_value();
+    assert_eq!(result.exit_code, 20, "{document}");
+    assert_eq!(document["disposition"]["stage"], "compile", "{document}");
+    assert_eq!(
+        document["disposition"]["refusal"]["code"], "invalid_syntax",
+        "{document}"
+    );
+    assert!(document["disposition"]["truth"].is_null(), "{document}");
 }
 
 #[test]
@@ -246,6 +264,7 @@ fn native_run_intake_accepts_exact_byte_limits_and_returns_incomplete_above_them
     let exact = RunLimits {
         request_bytes: bytes.len(),
         dependent_bytes: text.len(),
+        ..RunLimits::default()
     };
     let result = command::run_with_limits(&path, exact, &crate::negotiation::Fr290).unwrap();
     assert_eq!(result.exit_code, 0, "{}", result.value);

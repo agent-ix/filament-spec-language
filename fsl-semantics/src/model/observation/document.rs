@@ -1732,23 +1732,27 @@ fn admit_native(
             rational_in_domain(domain, value).map(Value::Rational)
         }
         (NativeKind::Decimal, filament_exact::ValueType::Decimal(domain)) => {
-            let value =
-                filament_exact::Decimal::from_representation(decimal_representation(native)?);
-            if !domain.contains(&value) {
-                return Err(
-                    admission_record(Code::InvalidRuntimeInput, "invalid-value").with(
-                        "expected",
-                        format!(
-                            "Decimal[{}, {}; {}, {}]",
-                            domain.lower(),
-                            domain.upper(),
-                            domain.min_scale(),
-                            domain.max_scale()
-                        ),
-                    ),
-                );
+            let value = filament_exact::Decimal::from_representation(
+                decimal_representation(native)?,
+            );
+            if domain.contains(&value) {
+                return Ok(Value::Decimal(value));
             }
-            Ok(Value::Decimal(value))
+            let representation = value.representation();
+            Err(admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                .with(
+                    "expected",
+                    format!(
+                        "Decimal[{}, {}; {}, {}; {}]",
+                        domain.lower(),
+                        domain.upper(),
+                        domain.min_scale(),
+                        domain.max_scale(),
+                        domain.rounding().as_str()
+                    ),
+                )
+                .with("coefficient", representation.coefficient().to_string())
+                .with("scale", representation.scale().to_string()))
         }
         // FR-505-AC-5, the unit sentence: a Quantity of the carried unit whose
         // magnitude is a Rational admits as that quantity when the normalized

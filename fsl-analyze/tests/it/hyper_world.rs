@@ -16,12 +16,13 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Cancel, Meter, Value};
+use filament_exact::{Cancel, Meter, ScalarLimits, Value};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::model_check::{
-    check_hyper, check_single_existential, retain, HyperCheckRequest, ModelCheckRefusal,
-    RetainedGraph, SingleExistentialRequest, SingleExistentialRun,
+    alias_provisions, alias_system, check_hyper, check_single_existential, retain,
+    HyperCheckRequest, ModelCheckRefusal, RetainedGraph, SingleExistentialRequest,
+    SingleExistentialRun,
 };
 use fsl_eval::fairness::{analyze, EdgeLabel, Graph, Identity, Outcome as FairnessOutcome, Vertex};
 use fsl_eval::hyper::{
@@ -455,6 +456,9 @@ pub(crate) struct World {
     /// The keys of the universe of the second model's `vaults`, when it has
     /// one.
     pub(crate) other_universe: Option<Vec<String>>,
+    /// Each alias's snapshots, reduced to its own model's populations.
+    provisions:
+        std::cell::OnceCell<Vec<Option<fsl_semantics::model::observation::DocumentProvision>>>,
 }
 
 /// A hyper declaration whose divisor cannot be proved nonzero is refused by
@@ -760,6 +764,7 @@ impl World {
             universe,
             bounded: true,
             other_universe: None,
+            provisions: std::cell::OnceCell::new(),
         }
     }
 
@@ -795,10 +800,25 @@ impl World {
 
     /// The letters and the `match` of this world's clause.
     pub(crate) fn seams(&self) -> Seams<'_> {
+        let provisions = self
+            .provisions
+            .get_or_init(|| alias_provisions(&self.subject().simulation, &self.clause));
         Seams {
             world: self,
-            system: ModelSystem::new(self.subject().simulation)
-                .expect("the world's subject admits"),
+            systems: self
+                .clause
+                .aliases()
+                .iter()
+                .enumerate()
+                .map(|(index, alias)| {
+                    alias_system(
+                        &self.subject().simulation,
+                        provisions.get(index).and_then(Option::as_ref),
+                        alias.as_str(),
+                    )
+                    .expect("the world's subject admits")
+                })
+                .collect(),
         }
     }
 
@@ -843,6 +863,17 @@ impl World {
         seed: Option<u64>,
         cancel: &Cancel,
     ) -> Result<SingleExistentialRun, ModelCheckRefusal> {
+        self.run_single_metered(limits, seed, UNLIMITED, cancel)
+    }
+
+    /// [`Self::run_single`] with the evaluation meter `meter`.
+    pub(crate) fn run_single_metered(
+        &self,
+        limits: ModelCheckLimits,
+        seed: Option<u64>,
+        meter: ScalarLimits,
+        cancel: &Cancel,
+    ) -> Result<SingleExistentialRun, ModelCheckRefusal> {
         let seams = self.seams();
         check_single_existential(
             SingleExistentialRequest {
@@ -852,7 +883,7 @@ impl World {
                 limits,
                 max_depth: self.max_depth,
                 seed,
-                meter: UNLIMITED,
+                meter,
             },
             cancel,
         )
@@ -896,7 +927,35 @@ impl World {
 /// world's package (FR-487).
 pub(crate) struct Seams<'w> {
     world: &'w World,
-    system: ModelSystem<'w>,
+    /// One system per alias of the clause: a trace ranges over its own model.
+    systems: Vec<ModelSystem<'w>>,
+}
+
+impl<'w> Seams<'w> {
+    /// The system of each trace variable, in quantifier order.
+    pub(crate) fn per_trace(&self) -> Vec<&ModelSystem<'w>> {
+        per_trace(&self.world.clause, &self.systems)
+    }
+}
+
+/// The system of each trace variable of `clause`, in quantifier order, out of
+/// one system per alias.
+pub(crate) fn per_trace<'s, 'w>(
+    clause: &CheckedHyperClause,
+    systems: &'s [ModelSystem<'w>],
+) -> Vec<&'s ModelSystem<'w>> {
+    clause
+        .quantifiers()
+        .iter()
+        .map(|quantifier| {
+            let slot = clause
+                .aliases()
+                .iter()
+                .position(|alias| alias.as_str() == quantifier.alias.as_str())
+                .expect("a quantifier names an alias of the clause");
+            &systems[slot]
+        })
+        .collect()
 }
 
 impl HyperLetters for Seams<'_> {
@@ -907,8 +966,7 @@ impl HyperLetters for Seams<'_> {
         states: &[&ModelSimState],
         meter: &mut Meter,
     ) -> Result<AtomReading, AtomStop> {
-        let systems = vec![&self.system; self.world.clause.quantifiers().len()];
-        CheckedHyperLetters::new(&self.world.package, &self.world.clause, systems)
+        CheckedHyperLetters::new(&self.world.package, &self.world.clause, self.per_trace())
             .map_err(|_| AtomStop::Fault(InternalFault::new("hyper-world", "letters-admit")))?
             .atom(atom, instance, states, meter)
     }
@@ -1036,17 +1094,35 @@ impl World {
         matcher: &dyn StepMatch,
         max_witness_set: u64,
     ) -> Result<ModelTraceSettlement, ReplayRefusal> {
-        let system = ModelSystem::new(self.subject().simulation).expect("the subject admits");
-        let instance = instance();
+        let seams_systems = self.seams();
+        // One binding per object parameter, each to the vault of its alias.
+        let instance: Vec<ParameterBinding> = self
+            .clause
+            .parameters()
+            .iter()
+            .map(|parameter| ParameterBinding {
+                parameter: parameter.name.clone(),
+                instance: ModelInstance {
+                    population: if parameter.alias.as_str() == OTHER_ALIAS {
+                        other_key("vaults")
+                    } else {
+                        key("vaults")
+                    },
+                    key: KEY.to_owned(),
+                },
+            })
+            .collect();
         replay_hyper_trace_tuple(
             &HyperReplay {
                 clause: &self.clause,
-                systems: vec![&system; self.clause.quantifiers().len()],
+                systems: seams_systems.per_trace(),
                 instance: &instance,
                 letters,
                 matcher,
                 meter: UNLIMITED,
                 max_witness_set,
+                max_states: u64::try_from(ModelCheckLimits::default().limits.max_states)
+                    .unwrap_or(u64::MAX),
                 cancel: &Cancel::new(),
             },
             counterexample,

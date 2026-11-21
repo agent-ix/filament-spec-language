@@ -590,7 +590,7 @@ pub(crate) fn temporal_config_world() -> World {
     let temporal = "temporal TemporalProgress using t over (c: Config::ConfigVersion) \
                     clock \"model-steps\" on origin { eventually[0,2] holds(true) }\n";
     let hyper = "hyper HyperProgress using t over behaviours (c: Config::ConfigVersion) \
-                 exists trace a of Config { always holds(true) }\n";
+                 exists trace a of Config { always [0, 2] holds(true) }\n";
     let body = format!("{CONFIG_CONTRACT}{REACHES_TWO}{temporal}{hyper}");
     let objects: [Object<'_>; 1] = [("a", &[("versionNumber", 0)])];
     World::with_profiles(config_version(), profile, &body, &[&objects])

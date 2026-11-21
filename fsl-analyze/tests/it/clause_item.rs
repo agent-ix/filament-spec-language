@@ -686,3 +686,47 @@ fn a_pending_package_clause_fact_is_refused_typed_naming_it() {
         });
     }
 }
+
+/// FR-940-AC-22 (QSL-2698): a failed emission of an admitted package at the
+/// replay settles the replaying item `failed`, the internal fault
+/// `analyze`/`package-emission`, never a replay refusal. The run's
+/// `emit.output_bytes` is the test-only emitter: the checker admitted the
+/// package, and the replay's own emission is held below its length. The
+/// record shows an internal fault as `runtime_invariant`; the cause name
+/// `package-emission` stays on the `ReplayRefusal::Fault` and is not on the record.
+#[trace("TC-2958", "FR-940-AC-22")]
+#[test]
+fn a_failed_replay_emission_settles_failed_with_the_package_emission_fault() {
+    let world = world();
+    let node = &world.package.graph().temporal_clauses()[0];
+    let key = OccurrenceKey::new(node.identity(), node.claim().clone());
+    let limits = AnalyzeLimits {
+        emit: fsl_package::EmitLimits::new(1),
+        ..AnalyzeLimits::unbounded()
+    };
+    let subject = ClauseSubject::new(
+        &fsl_analyze::analyze::RunInput::source(&world.package),
+        world.binding(&["c"]),
+        limits,
+        &world.provision,
+        &key,
+        ClauseLimits::default(),
+    )
+    .expect("the package holds the clause");
+    let mut engines = Engines::default();
+    engines
+        .with(Engine::model_check().expect("EN-1's own manifest is admitted"))
+        .expect("one engine");
+    let records = analyze_items(
+        &engines,
+        vec![subject.item(RequestIndex::new(0))],
+        &Cancel::new(),
+    );
+    let terminal = records[0].terminal().expect("a terminal record");
+    assert_eq!(terminal.value(), &TerminalValue::Failed, "{terminal:?}");
+    assert_eq!(
+        terminal.diagnostic().map(|code| (code.code(), code.cause())),
+        Some(("runtime_invariant", "established-invariant-broken")),
+        "{terminal:?}"
+    );
+}

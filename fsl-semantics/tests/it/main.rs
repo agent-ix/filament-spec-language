@@ -13,6 +13,9 @@
 pub(crate) mod published_fspec;
 #[path = "../support/reward_evaluator.rs"]
 mod reward_evaluator;
+#[cfg(feature = "test-support")]
+#[path = "../../../tests/support/ring_queue.rs"]
+pub(crate) mod ring_queue;
 
 // Integration units declare this source package name explicitly. Imported model
 // identities in individual fixtures remain independent of the source package.

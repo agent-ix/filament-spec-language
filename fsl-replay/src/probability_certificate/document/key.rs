@@ -81,6 +81,10 @@ impl Encode for Product<'_> {
             Some(binding) => fsl_eval::simulation::model::encode_reference(binding, writer)?,
             None => writer.null()?,
         }
+        // The `on each` instance and its activation phase: null for the
+        // `on origin` claims these profiles admit.
+        writer.null()?;
+        writer.null()?;
         writer.begin_array()?;
         writer.string("filament.simulation.state-key/v1")?;
         self.model.encode_into(writer)?;
@@ -247,24 +251,120 @@ fn read<'a>(
 // This is only the owner-defined outer model envelope. Typed state content and
 // actual state membership are independently rederived from ModelSystem.
 fn model_form(node: NodeRef<'_>) -> bool {
-    let Node::Object(members) = node.node() else {
+    match node.node() {
+        Node::Object(members) => {
+            let fields = [
+                "semantic",
+                "control",
+                "queues",
+                "roles",
+                "observations",
+                "bounds",
+                "memory",
+            ];
+            members.len() == fields.len() + 1
+                && matches!(
+                    node.get("type").map(|kind| kind.node()),
+                    Some(Node::String("simulation-state"))
+                )
+                && fields.into_iter().all(|field| node.get(field).is_some())
+        }
+        Node::Array(parts) => timed_model_form(parts.collect()),
+        _ => false,
+    }
+}
+
+fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
+    let boundary = matches!(
+        parts.first().map(|part| part.node()),
+        Some(Node::String("boundary-region"))
+    );
+    if parts.len() != if boundary { 8 } else { 7 }
+        || !matches!(
+            parts[0].node(),
+            Node::String("digital" | "region" | "boundary-region")
+        )
+        || !matches!(parts[1].node(), Node::Object(_))
+        || !model_form(parts[1])
+    {
+        return false;
+    }
+    let region = !matches!(parts[0].node(), Node::String("digital"));
+    let Node::Array(unit) = parts[2].node() else {
         return false;
     };
-    let fields = [
-        "semantic",
-        "control",
-        "queues",
-        "roles",
-        "observations",
-        "bounds",
-        "memory",
-    ];
-    members.len() == fields.len() + 1
-        && matches!(
-            node.get("type").map(|kind| kind.node()),
-            Some(Node::String("simulation-state"))
-        )
-        && fields.into_iter().all(|field| node.get(field).is_some())
+    let unit = unit.collect::<Vec<_>>();
+    if unit.len() != 2
+        || !matches!(unit[0].node(), Node::String("declared"))
+        || canonical_count(parts[3]).is_none_or(|scale| scale == 0)
+    {
+        return false;
+    }
+    let Node::Array(clocks) = parts[4].node() else {
+        return false;
+    };
+    let clocks = clocks.collect::<Vec<_>>();
+    for clock in &clocks {
+        let Node::Array(clock) = clock.node() else {
+            return false;
+        };
+        let clock = clock.collect::<Vec<_>>();
+        if clock.len() != if region { 4 } else { 3 }
+            || !matches!(clock[0].node(), Node::Array(identity) if identity.len() == 3)
+        {
+            return false;
+        }
+        let Some(value) = canonical_count(clock[1]) else {
+            return false;
+        };
+        let Some(cap) = canonical_count(clock[2]) else {
+            return false;
+        };
+        if value > cap || region && canonical_count(clock[3]).is_none() {
+            return false;
+        }
+    }
+    let has_deadline = match parts[5].node() {
+        Node::Null => false,
+        Node::Array(deadline) => {
+            let deadline = deadline.collect::<Vec<_>>();
+            if deadline.len() != if region { 4 } else { 3 }
+                || !matches!(deadline[0].node(), Node::String("deadline"))
+                || canonical_count(deadline[1]).is_none()
+                || canonical_count(deadline[2]).is_none()
+                || region && canonical_count(deadline[3]).is_none()
+            {
+                return false;
+            }
+            true
+        }
+        _ => return false,
+    };
+    if boundary {
+        let Node::Array(corner) = parts[7].node() else {
+            return false;
+        };
+        let corner = corner.collect::<Vec<_>>();
+        if corner.len() != clocks.len() + usize::from(has_deadline)
+            || corner
+                .iter()
+                .any(|coordinate| canonical_count(*coordinate).is_none())
+        {
+            return false;
+        }
+    }
+    matches!(
+        parts[6].node(),
+        Node::String("running" | "idle-ready" | "idle-delayed")
+    )
+}
+
+fn canonical_count(node: NodeRef<'_>) -> Option<u64> {
+    let Node::String(text) = node.node() else {
+        return None;
+    };
+    let value = text.parse::<u64>().ok()?;
+    (value.to_string() == text).then_some(value)
 }
 
 fn automaton_key(node: NodeRef<'_>) -> bool {
@@ -284,7 +384,10 @@ fn automaton_key(node: NodeRef<'_>) -> bool {
 }
 
 pub(super) fn admit_parts(parts: &[NodeRef<'_>]) -> Result<(), ProbabilityDocumentError> {
-    let Node::Array(mut model) = parts[2].node() else {
+    if !matches!(parts[2].node(), Node::Null) || !matches!(parts[3].node(), Node::Null) {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let Node::Array(mut model) = parts[4].node() else {
         return Err(ProbabilityDocumentError::Malformed);
     };
     if model.len() != 2
@@ -296,7 +399,7 @@ pub(super) fn admit_parts(parts: &[NodeRef<'_>]) -> Result<(), ProbabilityDocume
     {
         return Err(ProbabilityDocumentError::Malformed);
     }
-    match parts[3].node() {
+    match parts[5].node() {
         Node::Null => {}
         Node::Array(mut monitor) if monitor.len() == 2 => {
             if !matches!(
@@ -307,9 +410,23 @@ pub(super) fn admit_parts(parts: &[NodeRef<'_>]) -> Result<(), ProbabilityDocume
                 return Err(ProbabilityDocumentError::Malformed);
             }
         }
+        Node::Array(mut monitor) if monitor.len() == 3 => {
+            if !matches!(
+                monitor.next().map(|part| part.node()),
+                Some(Node::String("deadline"))
+            ) || !matches!(
+                monitor.next().map(|part| part.node()),
+                Some(Node::String("eventually" | "always" | "until"))
+            ) || !matches!(
+                monitor.next().map(|part| part.node()),
+                Some(Node::String("pending" | "accept" | "reject"))
+            ) {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+        }
         _ => return Err(ProbabilityDocumentError::Unsupported),
     }
-    if parts[4..]
+    if parts[6..]
         .iter()
         .any(|part| !matches!(part.node(), Node::Null))
     {
@@ -402,7 +519,7 @@ mod tests {
         let expected = make(ProbabilityDocumentIoLimits::default()).unwrap();
         let parsed: Value = serde_json::from_slice(expected.as_bytes()).unwrap();
         assert_eq!(
-            parsed[2],
+            parsed[4],
             json!([
                 "filament.simulation.state-key/v1",
                 serde_json::from_slice::<Value>(model).unwrap()

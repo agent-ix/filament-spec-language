@@ -35,7 +35,7 @@ use fsl_eval::simulation::model::same_rewards;
 
 use super::finite_horizon::rational_fits;
 use super::rows::{
-    free_delays_choice, free_delays_distribution, scheduler_distribution, DistributionFault,
+    DistributionFault, free_delays_choice, free_delays_distribution, scheduler_distribution,
 };
 use super::unbounded::same_action;
 use super::{
@@ -72,6 +72,8 @@ pub struct ProducedStep {
     /// The step's exact probability, merged over the action's rows on a
     /// `FreeDelays` step.
     pub probability: Rational,
+    /// Exact time elapsed on this edge in the subject's declared time unit.
+    pub elapsed: Rational,
     /// The post-state.
     pub to: ProbStateId,
     /// The step's rewards, in ascending name order.
@@ -321,15 +323,18 @@ pub fn action_steps(
                     if matches!(body.as_slice(), [only] if only == row))
             }) {
                 offered = true;
-                let merged = steps
-                    .iter_mut()
-                    .find(|step| step.to == edge.to && same_rewards(&step.rewards, &edge.rewards));
+                let merged = steps.iter_mut().find(|step| {
+                    step.to == edge.to
+                        && step.elapsed == edge.elapsed
+                        && same_rewards(&step.rewards, &edge.rewards)
+                });
                 match merged {
                     Some(step) => step.probability = step.probability.add(&edge.probability),
                     None => steps.push(ProducedStep {
                         action: action.clone(),
                         draw: None,
                         probability: edge.probability.clone(),
+                        elapsed: edge.elapsed.clone(),
                         to: edge.to,
                         rewards: edge.rewards.clone(),
                     }),
@@ -349,6 +354,7 @@ pub fn action_steps(
                     action: edge.choice.clone(),
                     draw: edge.draw.clone(),
                     probability: edge.probability.clone(),
+                    elapsed: edge.elapsed.clone(),
                     to: edge.to,
                     rewards: edge.rewards.clone(),
                 }),
@@ -542,6 +548,7 @@ fn native_steps(
             action: edge.choice.clone(),
             draw: edge.draw.clone(),
             probability: edge.probability.clone(),
+            elapsed: edge.elapsed.clone(),
             to: edge.to,
             rewards: edge.rewards.clone(),
         });
@@ -917,6 +924,7 @@ mod tests {
                 monitor: None,
                 accumulator: None,
                 pending: None,
+                certificate_state: None,
             }],
             kind: ProductKind::Dtmc,
             edges: vec![ProbEdge {
@@ -926,6 +934,7 @@ mod tests {
                 draw: None,
                 to: state,
                 probability: rational(1),
+                elapsed: Rational::from_integer(0_i64.into()),
                 rewards: Vec::new(),
             }],
             initial: vec![(0, None, state)],
@@ -1065,27 +1074,31 @@ mod tests {
     #[test]
     fn mathematical_insufficiency_is_distinct_from_a_producer_stop() {
         let product = terminal_product();
-        assert!(produce_witness(
-            &product,
-            &[Some(0)],
-            WitnessScope::EveryScheduler,
-            ProbStateId(0),
-            &[false],
-            &rational(0),
-            &ExactProbLimits::default()
-        )
-        .expect("the chain is well formed and no budget is exhausted")
-        .is_none());
-        assert!(produce_witness(
-            &product,
-            &[Some(0)],
-            WitnessScope::EveryScheduler,
-            ProbStateId(0),
-            &[true],
-            &rational(0),
-            &ExactProbLimits::default()
-        )
-        .expect("the initial target has unit mass")
-        .is_some());
+        assert!(
+            produce_witness(
+                &product,
+                &[Some(0)],
+                WitnessScope::EveryScheduler,
+                ProbStateId(0),
+                &[false],
+                &rational(0),
+                &ExactProbLimits::default()
+            )
+            .expect("the chain is well formed and no budget is exhausted")
+            .is_none()
+        );
+        assert!(
+            produce_witness(
+                &product,
+                &[Some(0)],
+                WitnessScope::EveryScheduler,
+                ProbStateId(0),
+                &[true],
+                &rational(0),
+                &ExactProbLimits::default()
+            )
+            .expect("the initial target has unit mass")
+            .is_some()
+        );
     }
 }
