@@ -183,8 +183,8 @@ checked-package identity from the producer to the carrier and to those causes.
   without exactly one corresponding row and checked claim, nor carry a row or
   checked claim without exactly one corresponding node and occurrence. No
   protocol-location row is substituted for a claim row.
-- An exact timed verdict (FR-204) SHALL be reported against, and the
-  `TimedFormShape` cause SHALL carry, the claim's FR-331 locus `{node, occurrence}` (`node` the claim's declaration `NodeRef`). A claim with no identity (one checked outside an assembled package) SHALL keep the
+- The exact plan (FR-204) SHALL report each exact timed verdict against, and
+  each `TimedFormShape` cause it raises SHALL carry, the claim's FR-331 locus `{node, occurrence}` (`node` the claim's declaration `NodeRef`). A claim with no identity (one checked outside an assembled package) SHALL keep the
   refusal that carries the claim's `span` as its locus (FR-186) and SHALL NOT
   report a package locus built from the span.
 - The `TimedFormShape` cause of a claim with an
