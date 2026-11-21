@@ -80,7 +80,10 @@ impl OperationDeclaration {
     /// Whether the data parameter at `index` may be omitted or explicitly
     /// absent at invocation admission.
     pub fn parameter_is_optional(&self, index: usize) -> bool {
-        self.optional_parameters.get(index).copied().unwrap_or(false)
+        self.optional_parameters
+            .get(index)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// This operation with the `Clock` parameters `clock_parameters`, each

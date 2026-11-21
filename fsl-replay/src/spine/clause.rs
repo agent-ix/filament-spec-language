@@ -16,16 +16,16 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Identifier, Meter, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
-use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::Source;
 use fsl_foundation::source_map::NativeLanguage;
+use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{CheckedGraph, CheckedStateClause};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
+    admit_current_snapshot, admit_frame_invocation, admit_observations, population_universe_for,
     AdmissionFailure, AdmissionRecord, AdmittedInvocation, AdmittedObservations, ClauseFacts,
     ClauseSelection, ClauseSelectionInput, DocumentRef, FrameFacts, FrameWitness,
-    ObservationLimits, OperationFacts, Provisions, admit_current_snapshot, admit_frame_invocation,
-    admit_observations, population_universe_for,
+    ObservationLimits, OperationFacts, Provisions,
 };
 
 mod clause_state;
@@ -39,19 +39,20 @@ mod temporal;
 mod trace_refusal;
 mod trace_subject;
 pub use clause_state::{
-    AdmittedPosition, AdmittedValue, Advance, CLAUSE_STATE_FORMAT, ClauseLimits, ClauseMark,
-    ClauseOpen, ClauseRefusal, ClauseState, ClauseTraceKind, assertion_json, assertion_of,
-    incomplete_json, incomplete_of, pending_report,
+    assertion_json, assertion_of, incomplete_json, incomplete_of, pending_report, AdmittedPosition,
+    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseState,
+    ClauseTraceKind, CLAUSE_STATE_FORMAT,
 };
 pub(crate) use correction::run_correction;
 pub use correction::{
-    CorrectionRecord, CorrectionRefusal, EVIDENCE_LEDGER_FORMAT, EvidenceLedgerFile,
-    EvidenceLedgerReadError, RunRelation, read_evidence_ledger, settle_correction,
-    settle_run_correction,
+    read_evidence_ledger, settle_correction, settle_run_correction, CorrectionRecord,
+    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, RunRelation,
+    EVIDENCE_LEDGER_FORMAT,
 };
-pub use ledger_wire::{LedgerReadError, read_ledger, write_ledger};
+pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
+pub use model_trace::{run_package_behaviours, PackageBehaviours};
 pub use package_authentication::{
-    AuthenticationFailure, PackageAuthentication, PackagesStage, authenticate_emission,
+    authenticate_emission, AuthenticationFailure, PackageAuthentication, PackagesStage,
 };
 pub use progress::{
     ContradictedDimension, LedgerBinding, ObservedPosition, ProgressAssertion, ProgressClosure,
@@ -59,30 +60,29 @@ pub use progress::{
     ProgressLimitReached, ProgressLowerBoundary, ProgressValue,
 };
 use temporal::TemporalRun;
-pub use temporal::{
-    AdmittedLate, DEFAULT_MODEL_MAX_CANDIDATES, FiniteWindowAssessment, FiniteWindowPremises,
-    FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs, OverObject,
-    PackageSampledRequest, PackageTemporalRequest, ProgressRefusal, TemporalAuthentication,
-    TimestampedCover, TimedObservation, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow,
-    TraceBinding, TraceInput, admit_progress, authenticate_package_trace, clause_trace_binding,
-    name_clause_atom, run_package_sampled, run_package_valuation, disposition_report, run_package_temporal, run_package_temporal_bounded,
-    sample_position,
-};
-pub use model_trace::{run_package_behaviours, PackageBehaviours};
-pub use trace_refusal::profile_reads;
 pub use temporal::SAMPLE_AUTHORITY;
+pub use temporal::{
+    admit_progress, authenticate_package_trace, clause_trace_binding, disposition_report,
+    name_clause_atom, run_package_sampled, run_package_temporal, run_package_temporal_bounded,
+    run_package_valuation, sample_position, AdmittedLate, FiniteWindowAssessment,
+    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
+    OverObject, PackageSampledRequest, PackageTemporalRequest, ProgressRefusal,
+    TemporalAuthentication, TimedObservation, TimestampedCover, TimestampedMissingValuation,
+    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    DEFAULT_MODEL_MAX_CANDIDATES,
+};
 pub(crate) use temporal::{trace_refusal, verdict};
-pub use trace_refusal::{REASONS as TRACE_REFUSAL_REASONS, TraceRefusal};
+pub use trace_refusal::profile_reads;
+pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
 pub use trace_subject::{
-    PackageTraceSubjectRequest, TraceSubjectClauseRequest, run_package_trace_subject,
-    run_trace_subject_clause,
+    run_package_trace_subject, run_trace_subject_clause, PackageTraceSubjectRequest,
+    TraceSubjectClauseRequest,
 };
 
-pub use super::call::{CallOutcome, CallValue, RunRefusal};
 use super::call::{
-    CallSources, convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select,
+    convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select, CallSources,
 };
+pub use super::call::{CallOutcome, CallValue, RunRefusal};
 use super::lifecycle as front_end;
 use super::{CompileRefusal, DependencyInput, RequestClocks, SpineLimits};
 use crate::proof_result::SettlementBasis;
@@ -615,7 +615,6 @@ fn canonical_condition_record_fields(
             let _ = node.kind().map_ref(
                 |child| {
                     children.push(*child);
-                    ()
                 },
                 Clone::clone,
             );
@@ -696,7 +695,6 @@ fn canonical_condition_functions(
             let _ = node.kind().map_ref(
                 |child| {
                     children.push(*child);
-                    ()
                 },
                 Clone::clone,
             );
@@ -777,7 +775,6 @@ fn canonical_condition_declarations(
             let _ = node.kind().map_ref(
                 |child| {
                     children.push(*child);
-                    ()
                 },
                 Clone::clone,
             );
@@ -2067,13 +2064,13 @@ pub enum ProgramBatchSelection {
     /// FR-100's value call.
     Call {
         /// The call to execute.
-        call: super::Call,
+        call: Box<super::Call>,
         /// Whether FR-395 call requirement members must be returned for
         /// settlement by the command layer.
         include_requirements: bool,
     },
     /// FR-652's no-clause value-invariant selection.
-    ValueInvariants(ValueInvariantsBatchRequest),
+    ValueInvariants(Box<ValueInvariantsBatchRequest>),
 }
 
 /// FR-652 inputs needed to admit and evaluate one value-invariant selection
@@ -2330,7 +2327,7 @@ fn run_program_batch_with_compile(
             }
             ProgramBatchSelection::ValueInvariants(request) => {
                 ProgramBatchItemResult::ValueInvariants(run_compiled_value_invariants(
-                    &compiled, request,
+                    &compiled, *request,
                 ))
             }
         })

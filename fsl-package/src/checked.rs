@@ -867,11 +867,11 @@ impl EmittedPackage {
 #[cfg(test)]
 #[cfg(feature = "std")]
 pub(crate) fn dependency_chain(length: usize) -> CheckedPackage {
+    use filament_exact::{NodeKey, PathSegment, Presence, ValueType};
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use filament_semantic_value::declaration::{
         CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
     };
-    use filament_exact::{NodeKey, PathSegment, Presence, ValueType};
     use fsl_semantics::check::PackageDeclarations;
     static GRAPH: OnceLock<Arc<CheckedGraph>> = OnceLock::new();
     let graph = Arc::clone(GRAPH.get_or_init(|| {

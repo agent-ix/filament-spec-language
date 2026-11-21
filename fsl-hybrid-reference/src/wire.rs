@@ -58,7 +58,10 @@ fn step_value(model: &CheckedHybridModel, step: &Step) -> Value {
     members.insert("apriori".into(), box_value(model, &step.ap));
     members.insert("step".into(), rational(&step.h));
     if let Some((dwell, transition)) = step.from {
-        members.insert("from".into(), json!({"dwell": dwell, "transition": transition}));
+        members.insert(
+            "from".into(),
+            json!({"dwell": dwell, "transition": transition}),
+        );
     }
     Value::Object(members)
 }

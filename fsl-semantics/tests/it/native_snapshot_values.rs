@@ -1221,7 +1221,10 @@ fn a_witness_post_snapshot_still_refuses_a_noncanonical_payload() {
     ] {
         let post = with(base_fields(), field, value);
         assert_eq!(
-            at_field(refusal_of(replay.invoke_with_post("touch", &post, witness)), field),
+            at_field(
+                refusal_of(replay.invoke_with_post("touch", &post, witness)),
+                field
+            ),
             expect("invalid-value", field, &[], Some(member), kernel),
             "{field}"
         );

@@ -10,7 +10,7 @@ use num_traits::Zero as _;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    Graph, UnboundedError, UnboundedObjective, maximal_end_components_from, policy_iteration,
+    maximal_end_components_from, policy_iteration, Graph, UnboundedError, UnboundedObjective,
 };
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
@@ -174,6 +174,10 @@ pub fn backward_induction(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "backward induction carries independent rational, precision, and policy iteration bounds"
+)]
 fn backward_induction_with_policy_limit(
     product: &ProbProduct,
     terminal: &[Option<Rational>],
@@ -236,13 +240,15 @@ fn backward_induction_with_policy_limit(
 /// Every component state has the same value: the optimal exact expectation of
 /// an exit action after the scheduler uses internal zero-time actions to reach
 /// its chosen exit. A component without an exit is a terminal time-lock.
+type ComponentPolicy = (Vec<Rational>, Vec<Option<usize>>);
+
 fn collapse_zero_time_components(
     product: &ProbProduct,
     terminal: &[Option<Rational>],
     objective: FhObjective,
     max_rational_bits: u64,
     max_policy_iterations: u64,
-) -> Result<Option<(Vec<Rational>, Vec<Option<usize>>)>, FhError> {
+) -> Result<Option<ComponentPolicy>, FhError> {
     let graph = Graph::with_terminals(product, terminal).map_err(|error| match error {
         UnboundedError::InvalidState => FhError::InvalidState,
         UnboundedError::MissingAction => FhError::MissingAction,

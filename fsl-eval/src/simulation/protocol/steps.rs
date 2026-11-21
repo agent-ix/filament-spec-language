@@ -876,6 +876,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
 
     /// Whether every checked relationship premise holds for this candidate
     /// event binding in the same observed state as its constraint (FR-731).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the relatedness check reads the protocol's distinct step inputs"
+    )]
     pub(super) fn related_admits(
         &self,
         instance: &Instance,

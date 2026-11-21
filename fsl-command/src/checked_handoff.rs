@@ -53,8 +53,8 @@ mod tree;
 use std::path::Path;
 
 use filament_contract_model::{
-    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageReadLimits,
-    CheckedPackageRefusal, CheckedPackageV2, read_checked_package,
+    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
+    CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
 };
 
 use crate::emit_checked_v2::{self, Compiled};
@@ -544,7 +544,9 @@ pub fn verify(directory: &Path) -> Result<Box<CheckedPackageV2>, Error> {
     let compiled = emit_checked_v2::compile_inputs(inputs)?;
     let evidence = read_evidence(&compiled)?;
     let admitted = admit(read_checked_package(&bytes, READ_LIMITS, &evidence))?;
-    selection.check(&admitted).map_err(Error::SelectionMismatch)?;
+    selection
+        .check(&admitted)
+        .map_err(Error::SelectionMismatch)?;
     Ok(admitted)
 }
 

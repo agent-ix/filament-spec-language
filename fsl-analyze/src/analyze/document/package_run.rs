@@ -27,7 +27,7 @@ use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
-use serde_json::{Map, json};
+use serde_json::{json, Map};
 
 use super::super::request::ProtocolBinding;
 use super::super::{
@@ -36,10 +36,10 @@ use super::super::{
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
 use super::{
-    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
-    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
-    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
-    write_run,
+    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
+    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
+    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
+    SubjectSelection,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
@@ -1864,8 +1864,8 @@ fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
         };
         claims.push((at, name, kinds));
     }
-    claims.sort_by(|(left, ..), (right, ..)| left.cmp(right));
-    schedulability.sort_by(|(left, _), (right, _)| left.cmp(right));
+    claims.sort_by_key(|(left, ..)| *left);
+    schedulability.sort_by_key(|(left, _)| *left);
     let item = |name: String, kind: Option<Capability>| ItemSelection {
         claim: Some(name),
         kind: kind.map(|kind| kind.to_wire().to_owned()),

@@ -18,12 +18,13 @@
 
 use filament_exact::Identifier;
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::model_subject::{ModelLetters, ModelSubject, ProtocolSubject};
-use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PackageModelInput,
 };
 use fsl_eval::simulation::protocol::{PackageProtocolProgram, ProtocolTransition};
+use fsl_eval::simulation::Limits;
 use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
@@ -195,10 +196,16 @@ impl<'a> ClauseSubject<'a> {
             Mode::Bounded,
             en1::BACKEND_ID,
             move |cancel| {
+                let stutter_closure = subject
+                    .temporal
+                    .as_ref()
+                    .is_some_and(|temporal| temporal.stutter_closure == Some(true));
                 if let Some(temporal) = &subject.temporal {
                     if temporal.item_kind != fsl_route::request::ItemKind::Formula
                         || temporal.abstract_subject.is_some()
-                        || temporal.stutter_closure.is_some()
+                        || (stutter_closure
+                            && subject.node.clause().property_form()
+                                != Some(PropertyForm::Liveness))
                         || temporal.fairness != subject.node.clause().fairness()
                     {
                         return EngineReport::Refused(Refusal::Unsupported(super::items::NOT_YET));
@@ -236,6 +243,7 @@ impl<'a> ClauseSubject<'a> {
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
                         },
+                        stutter_closure,
                         certificate: CertificateRequest {
                             temporal_clock_selections: &subject.selections,
                             subject: subject.model_subject(),
@@ -452,9 +460,9 @@ pub(super) fn replay_over(
 /// other failure the internal fault `fallback`.
 fn envelope_refusal(error: fsl_replay::WitnessRefusal, fallback: ReplayRefusal) -> ReplayRefusal {
     match error {
-        fsl_replay::WitnessRefusal::BoundExceeded(bound) => ReplayRefusal::Request(
-            fsl_replay::ReplayRequestRefusal::BoundExceeded(bound),
-        ),
+        fsl_replay::WitnessRefusal::BoundExceeded(bound) => {
+            ReplayRefusal::Request(fsl_replay::ReplayRequestRefusal::BoundExceeded(bound))
+        }
         _ => fallback,
     }
 }
@@ -519,10 +527,7 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
         inputs.limits.emit,
     )
     .map_err(|_| fault("package-emission"))?;
-    let package = read_package(
-        emission.package().bytes(),
-        inputs.limits,
-    )?;
+    let package = read_package(emission.package().bytes(), inputs.limits)?;
     request_and_envelope(
         WireParts {
             package,
@@ -661,17 +666,13 @@ pub(crate) fn replay_protocol_over(
         occurrence,
         transcript: text,
     } = shape;
-    let emission =
-        fsl_package::emit_checked_with_temporal_selections(
-            inputs.package,
-            &model_selections(inputs.package),
-            inputs.limits.emit,
-        )
-        .map_err(|_| fault("package-emission"))?;
-    let package = read_package(
-        emission.package().bytes(),
-        inputs.limits,
-    )?;
+    let emission = fsl_package::emit_checked_with_temporal_selections(
+        inputs.package,
+        &model_selections(inputs.package),
+        inputs.limits.emit,
+    )
+    .map_err(|_| fault("package-emission"))?;
+    let package = read_package(emission.package().bytes(), inputs.limits)?;
     let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
     let wire = ReplayRequestWire {
         certificate: None,
@@ -898,6 +899,7 @@ impl<'a> PackageClauseSubject<'a> {
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
                         },
+                        stutter_closure: false,
                         certificate: CertificateRequest {
                             temporal_clock_selections: &[],
                             subject: subject.model_subject(),

@@ -105,18 +105,21 @@ fn without_node(certificate: &Certificate, removed: usize) -> Certificate {
     tampered.admitted.as_mut().unwrap().start =
         renumber(certificate.admitted.as_ref().unwrap().start);
     tampered.admitted.as_mut().unwrap().path = certificate
-        .admitted.as_ref().unwrap()
+        .admitted
+        .as_ref()
+        .unwrap()
         .path
         .iter()
         .map(|&e| edge_of(e))
         .collect();
-    tampered.admitted.as_mut().unwrap().target = match &certificate.admitted.as_ref().unwrap().target {
-        DivergentTarget::Quiescent(n) => DivergentTarget::Quiescent(renumber(*n)),
-        DivergentTarget::Terminal(n) => DivergentTarget::Terminal(renumber(*n)),
-        DivergentTarget::Cycle(cycle) => {
-            DivergentTarget::Cycle(cycle.iter().map(|&e| edge_of(e)).collect())
-        }
-    };
+    tampered.admitted.as_mut().unwrap().target =
+        match &certificate.admitted.as_ref().unwrap().target {
+            DivergentTarget::Quiescent(n) => DivergentTarget::Quiescent(renumber(*n)),
+            DivergentTarget::Terminal(n) => DivergentTarget::Terminal(renumber(*n)),
+            DivergentTarget::Cycle(cycle) => {
+                DivergentTarget::Cycle(cycle.iter().map(|&e| edge_of(e)).collect())
+            }
+        };
     tampered
 }
 
@@ -155,7 +158,10 @@ fn each_tampering_is_rejected_at_its_rule_and_locus() {
     let (world, certificate) = no_late_reply();
     let last = certificate.nodes.len() - 1;
     assert!(!certificate.initials.contains(&last));
-    assert_eq!(certificate.admitted.as_ref().unwrap().target, DivergentTarget::Quiescent(0));
+    assert_eq!(
+        certificate.admitted.as_ref().unwrap().target,
+        DivergentTarget::Quiescent(0)
+    );
     let removed = without_node(&certificate, last);
     assert_eq!(
         verdict(&world, &removed),

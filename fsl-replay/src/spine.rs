@@ -238,10 +238,11 @@ pub use run_value::ArgumentDefect;
 pub(crate) mod clause;
 pub use clause::{
     admit_progress, assertion_json, assertion_of, authenticate_emission,
-    authenticate_package_trace, clause_trace_binding, incomplete_json, incomplete_of,
-    name_clause_atom, pending_report, profile_reads, read_evidence_ledger, read_ledger, run_clause,
-    run_clause_batch, run_clause_with_temporal_selections, disposition_report, run_package_behaviours, run_package_sampled, run_package_valuation,
-    run_package_temporal, run_package_temporal_bounded, run_package_trace_subject,
+    authenticate_package_trace, clause_trace_binding, disposition_report, incomplete_json,
+    incomplete_of, name_clause_atom, pending_report, profile_reads, read_evidence_ledger,
+    read_ledger, run_clause, run_clause_batch, run_clause_with_temporal_selections,
+    run_package_behaviours, run_package_sampled, run_package_temporal,
+    run_package_temporal_bounded, run_package_trace_subject, run_package_valuation,
     run_program_batch, run_temporal_behaviours, run_temporal_valuation, run_trace_subject_clause,
     sample_position, settle_correction, settle_run_correction, temporal_batch_exit_code,
     temporal_batch_outcome, write_ledger, AdmittedLate, AdmittedPosition, AdmittedValue, Advance,
@@ -253,12 +254,12 @@ pub use clause::{
     ContradictedDimension, CorrectionRecord, CorrectionRefusal, EvidenceLedgerFile,
     EvidenceLedgerReadError, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
     FiniteWindowSupport, LateEntry, LateInputs, LedgerBinding, LedgerReadError, ObservedPosition,
-    OperationName, OverObject, PackageAuthentication, PackageBehaviours, PackageSampledRequest, PackageTemporalRequest,
-    PackageTraceSubjectRequest, PackagesStage, ProgramBatchCallOutcome, ProgramBatchItemResult,
-    ProgramBatchOutcome, ProgramBatchRefusal, ProgramBatchSelection, ProgramCompilationRequest,
-    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
-    ProgressLedger, ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary,
-    ProgressRefusal, ProgressValue, RunRelation, TemporalAuthentication,
+    OperationName, OverObject, PackageAuthentication, PackageBehaviours, PackageSampledRequest,
+    PackageTemporalRequest, PackageTraceSubjectRequest, PackagesStage, ProgramBatchCallOutcome,
+    ProgramBatchItemResult, ProgramBatchOutcome, ProgramBatchRefusal, ProgramBatchSelection,
+    ProgramCompilationRequest, ProgressAssertion, ProgressClosure, ProgressCompleteness,
+    ProgressContradiction, ProgressLedger, ProgressLedgerEntry, ProgressLimitReached,
+    ProgressLowerBoundary, ProgressRefusal, ProgressValue, RunRelation, TemporalAuthentication,
     TemporalIndeterminateReason, TemporalPositionRefusal, TemporalTraceRefusal,
     TemporalUndefinedCause, TemporalValuation, TemporalVerdict, TemporalWindowRefusal,
     TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
@@ -580,6 +581,11 @@ impl CompileRefusal {
             Self::UnitList(_) => SpineStage::Intake,
             Self::Source(_) | Self::SourceDiagnostics { .. } => SpineStage::Source,
             Self::Forms { .. } => SpineStage::Forms,
+            Self::Intake { refusal, .. }
+                if refusal.cause.cause() == Some(MISSING_SELECTION_CAUSE) =>
+            {
+                SpineStage::Compile
+            }
             Self::Intake { .. }
             | Self::OperationClause { .. }
             | Self::TypeInvariant { .. }
@@ -915,6 +921,9 @@ impl UnitListRefusal {
     }
 }
 
+/// The catalogued cause of a model whose package the request omits.
+const MISSING_SELECTION_CAUSE: &str = "missing-selection";
+
 /// The spine stage a [`CompileRefusal`] comes from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpineStage {
@@ -924,6 +933,8 @@ pub enum SpineStage {
     Forms,
     /// I1: `model::intake::admit_unit`.
     Intake,
+    /// A model the unit selects whose package the request does not supply.
+    Compile,
     /// The FR-091 assembler.
     Assembly,
     /// S3: `PackageDeclarations::check`.
@@ -939,6 +950,7 @@ impl SpineStage {
             Self::Source => "source",
             Self::Forms => "forms",
             Self::Intake => "intake",
+            Self::Compile => "compile",
             Self::Assembly => "assembly",
             Self::Check => "check",
             Self::Emit => "emit",

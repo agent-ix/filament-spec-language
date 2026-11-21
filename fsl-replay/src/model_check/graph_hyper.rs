@@ -432,6 +432,8 @@ fn replay_product_trap(
         meter: accounting,
         cancel,
         copy_swap: None,
+        key_generators: Vec::new(),
+        constraint: None,
     });
     let mut product = match built {
         Ok(product) => product,
@@ -782,7 +784,11 @@ fn product_halt_result(
         Halt::AutomatonKey(error) => {
             return Err(refused(ModelTraceRefusal::Automaton(error)));
         }
-        Halt::Encoding(_) | Halt::Fault(_) | Halt::Atom(_) | Halt::WitnessSet(_) => {
+        Halt::Encoding(_)
+        | Halt::Fault(_)
+        | Halt::Atom(_)
+        | Halt::WitnessSet(_)
+        | Halt::ConstraintUndefined(_) => {
             return Err(fault("the-HP-5-product-stop-is-recoverable"));
         }
     };

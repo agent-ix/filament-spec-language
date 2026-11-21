@@ -28,10 +28,11 @@ use fsl_eval::temporal::{
 };
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    check_components, CertificateRequest, ComponentCertificate, ComponentWitness,
-    CounterexampleKind, IncompleteCause, Lasso, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ProofCertificate, ReachedLimit, SmtEncodingLimits, TemporalCertificateCheck,
-    TemporalCounterexample, UndefinedLocus,
+    check_components, check_components_over_stutter_closure, CertificateRequest,
+    ComponentCertificate, ComponentWitness, CounterexampleKind, IncompleteCause, Lasso,
+    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ProofCertificate,
+    ReachedLimit, SmtEncodingLimits, TemporalCertificateCheck, TemporalCounterexample,
+    UndefinedLocus,
 };
 use fsl_semantics::check::CheckedTemporalClause;
 use fsl_semantics::check::FormulaNodeId;
@@ -400,6 +401,30 @@ fn a_run_with_no_fair_accepting_component_holds_with_a_component_certificate() {
             .into_iter()
             .chain([(1, &ComponentWitness::MissingAcceptance { set: 0 })])
             .collect::<Vec<_>>()
+    );
+}
+
+/// FSpec FR-380: the component certificate of the plain graph, accepted by
+/// the core there, is not accepted over the stutter closure. At values 0 to 2
+/// the closure adds a self-loop, which the plain certificate's `Trivial`
+/// witnesses ("no edge to itself") deny, so a proof the core did not check
+/// over the closure is never reported as one it did.
+#[test]
+fn a_certificate_valid_only_over_the_plain_graph_is_rejected_over_the_stutter_closure() {
+    let fixture = counter(document(false), "", "always eventually holds(c.value = 3)");
+    let (certificate, _) = fixture.certified(is_three);
+    let letters = fixture.letters(is_three);
+    let request = fixture.certificate_request(&letters, UNLIMITED);
+    let over_closure = check_components_over_stutter_closure(
+        &request,
+        &certificate,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the request is checked");
+    assert!(
+        matches!(over_closure, TemporalCertificateCheck::Rejected(_)),
+        "{over_closure:?}"
     );
 }
 

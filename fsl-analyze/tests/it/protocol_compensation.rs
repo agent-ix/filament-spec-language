@@ -15,8 +15,8 @@ use filament_contract_model::ClockConfiguration;
 use filament_exact::{Cancel, FieldValue, Value};
 use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
 use fsl_eval::simulation::protocol::{
-    protocol_domains, visible, AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolSystem,
-    ProtocolState, ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath,
+    protocol_domains, visible, AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolState,
+    ProtocolSystem, ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath,
     WaitCause,
 };
 use fsl_eval::simulation::{independent, Footprint, Location, SubjectSystem};

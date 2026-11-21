@@ -609,9 +609,10 @@ pub fn read_task_temporal_document(
             "transition" => {
                 TaskProductTransition::Source(source_transition(transition, &transition_pointer)?)
             }
-            "task-transition" => {
-                TaskProductTransition::Task(task_transition(transition, &transition_pointer)?)
-            }
+            "task-transition" => TaskProductTransition::Task(Box::new(task_transition(
+                transition,
+                &transition_pointer,
+            )?)),
             "terminal-stutter" => TaskProductTransition::TerminalStutter,
             _ => {
                 return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
@@ -799,149 +800,6 @@ pub fn read_task_temporal_counterexample(
     document: &Json,
 ) -> Result<TemporalCounterexample<TaskProductTransition>, TemporalCounterexampleReadRefusal> {
     read_task_temporal_document(document).map(|read| read.counterexample)
-}
-
-fn json_pointer<'a>(document: &'a Json, pointer: &str) -> Option<&'a Json> {
-    let mut value = document;
-    for member in pointer.strip_prefix('/')?.split('/') {
-        let member = member.replace("~1", "/").replace("~0", "~");
-        value = match value {
-            Json::Object(object) => object.get(&member)?,
-            Json::Array(array) => array.get(member.parse::<usize>().ok()?)?,
-            _ => return None,
-        };
-    }
-    Some(value)
-}
-
-fn first_wire_shape_difference(
-    supplied: &Json,
-    expected: &Json,
-    pointer: &str,
-) -> Option<(&'static str, String)> {
-    match (supplied, expected) {
-        (Json::Object(supplied), Json::Object(expected)) => {
-            for member in expected.keys() {
-                if !supplied.contains_key(member) {
-                    return Some(("missing-member", format!("{pointer}/{member}")));
-                }
-            }
-            for member in supplied.keys() {
-                if !expected.contains_key(member) {
-                    let cause = if member == "budget_delta" {
-                        "budget-delta-presence"
-                    } else {
-                        "unknown-member"
-                    };
-                    return Some((cause, format!("{pointer}/{member}")));
-                }
-            }
-            for (member, expected_value) in expected {
-                let child = format!("{pointer}/{member}");
-                if let Some(difference) =
-                    first_wire_shape_difference(&supplied[member], expected_value, &child)
-                {
-                    return Some(difference);
-                }
-            }
-            None
-        }
-        (Json::Array(supplied), Json::Array(expected)) => {
-            if supplied.len() != expected.len() {
-                let index = supplied.len().min(expected.len());
-                let cause = if supplied.len() < expected.len() {
-                    "missing-member"
-                } else {
-                    "unknown-member"
-                };
-                return Some((cause, format!("{pointer}/{index}")));
-            }
-            supplied
-                .iter()
-                .zip(expected)
-                .enumerate()
-                .find_map(|(index, (supplied, expected))| {
-                    first_wire_shape_difference(supplied, expected, &format!("{pointer}/{index}"))
-                })
-        }
-        _ => None,
-    }
-}
-
-fn first_wire_difference(
-    supplied: &Json,
-    expected: &Json,
-    pointer: &str,
-) -> Option<(&'static str, String)> {
-    match (supplied, expected) {
-        (Json::Object(supplied), Json::Object(expected)) => {
-            // FR-364 checks object shape before transition alphabets or values.
-            for member in expected.keys() {
-                if !supplied.contains_key(member) {
-                    return Some(("missing-member", format!("{pointer}/{member}")));
-                }
-            }
-            for member in supplied.keys() {
-                if !expected.contains_key(member) {
-                    let cause = if member == "budget_delta" {
-                        "budget-delta-presence"
-                    } else {
-                        "unknown-member"
-                    };
-                    return Some((cause, format!("{pointer}/{member}")));
-                }
-            }
-            for (member, expected_value) in expected {
-                let supplied_value = &supplied[member];
-                let child = format!("{pointer}/{member}");
-                if let Some(difference) =
-                    first_wire_difference(supplied_value, expected_value, &child)
-                {
-                    return Some(difference);
-                }
-            }
-            None
-        }
-        (Json::Array(supplied), Json::Array(expected)) => {
-            if supplied.len() < expected.len() {
-                return Some(("missing-member", format!("{pointer}/{}", supplied.len())));
-            }
-            if supplied.len() > expected.len() {
-                return Some(("unknown-member", format!("{pointer}/{}", expected.len())));
-            }
-            supplied
-                .iter()
-                .zip(expected)
-                .enumerate()
-                .find_map(|(index, (supplied, expected))| {
-                    first_wire_difference(supplied, expected, &format!("{pointer}/{index}"))
-                })
-        }
-        (supplied, expected) if supplied == expected => None,
-        (supplied, expected) => {
-            let cause = if wire_kind(supplied) != wire_kind(expected) {
-                "wrong-value-kind"
-            } else if pointer.ends_with("/transition/type") {
-                "trace-alphabet"
-            } else if pointer.ends_with("/transition/action") {
-                "unknown-variant"
-            } else {
-                "invalid-value"
-            };
-            Some((cause, pointer.to_owned()))
-        }
-    }
-}
-
-fn wire_kind(value: &Json) -> &'static str {
-    match value {
-        Json::Null => "null",
-        Json::Bool(_) => "boolean",
-        Json::Number(_) => "number",
-        Json::String(_) => "string",
-        Json::Array(_) => "array",
-        Json::Object(_) => "object",
-    }
 }
 
 fn rational(value: &Rational) -> Json {
@@ -1618,11 +1476,11 @@ fn valid_queue_growth_envelope(witness: &Json) -> bool {
         || object
             .get("clock_order")
             .and_then(Json::as_array)
-            .map_or(true, Vec::is_empty)
+            .is_none_or(Vec::is_empty)
         || object
             .get("cycle")
             .and_then(Json::as_array)
-            .map_or(true, Vec::is_empty)
+            .is_none_or(Vec::is_empty)
         || object
             .get("identity_map")
             .and_then(Json::as_array)
@@ -2255,6 +2113,30 @@ pub fn graph_evidence_wire(
     Ok(written)
 }
 
+/// FSpec FR-331's `TransitionIdentity` spelling of one task-derived
+/// transition: a source `transition`, a `task-transition` or the
+/// `terminal-stutter` marker.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] when the identity has no canonical spelling.
+pub fn task_product_transition_wire(
+    transition: &TaskProductTransition,
+) -> Result<Json, CounterexampleWireError> {
+    Spelling::transition(transition)
+}
+
+/// FSpec FR-331's `State` locus `{key}` of a state key.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] when the key has no wire spelling.
+pub fn state_key_wire(
+    key: &fsl_eval::simulation::StateKey,
+) -> Result<Json, CounterexampleWireError> {
+    state(key)
+}
+
 #[cfg(test)]
 mod tests {
     use filament_exact::{Integer, Origin, Role, Undefined};
@@ -2384,7 +2266,7 @@ mod tests {
         let task_counterexample = TemporalCounterexample {
             initial_state: 0,
             prefix: vec![ModelStep {
-                transition: TaskProductTransition::Task(missed_job.clone()),
+                transition: TaskProductTransition::Task(Box::new(missed_job.clone())),
                 post_state: key(1),
                 delay: Some(rational(1, 1)),
             }],
@@ -2403,7 +2285,7 @@ mod tests {
             initial_state: 0,
             prefix: vec![
                 ModelStep {
-                    transition: TaskProductTransition::Task(activation),
+                    transition: TaskProductTransition::Task(Box::new(activation)),
                     post_state: key(0),
                     delay: Some(rational(0, 1)),
                 },
@@ -2983,28 +2865,4 @@ mod tests {
             );
         }
     }
-}
-
-/// FSpec FR-331's `TransitionIdentity` spelling of one task-derived
-/// transition: a source `transition`, a `task-transition` or the
-/// `terminal-stutter` marker.
-///
-/// # Errors
-///
-/// [`CounterexampleWireError`] when the identity has no canonical spelling.
-pub fn task_product_transition_wire(
-    transition: &TaskProductTransition,
-) -> Result<Json, CounterexampleWireError> {
-    Spelling::transition(transition)
-}
-
-/// FSpec FR-331's `State` locus `{key}` of a state key.
-///
-/// # Errors
-///
-/// [`CounterexampleWireError`] when the key has no wire spelling.
-pub fn state_key_wire(
-    key: &fsl_eval::simulation::StateKey,
-) -> Result<Json, CounterexampleWireError> {
-    state(key)
 }

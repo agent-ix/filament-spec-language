@@ -545,7 +545,7 @@ fn model_based_test(
             "initial",
         ));
     }
-    let consumes = |steps: &[String]| steps.iter().any(|step| *step == node.name);
+    let consumes = |steps: &[String]| steps.contains(&node.name);
     let subject = if state_subject {
         let binding = inputs
             .bindings
@@ -1078,6 +1078,16 @@ fn types_consume_value_bits(
     Ok(false)
 }
 
+/// The catalog cause of an analyze refusal of a step's item.
+const fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static str {
+    match refusal {
+        crate::analyze::AnalyzeRefusal::Provision(_) => "missing-member",
+        crate::analyze::AnalyzeRefusal::Binding(_) | crate::analyze::AnalyzeRefusal::Package(_) => {
+            "invalid-value"
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1204,16 +1214,6 @@ mod tests {
                     PlanStatus::Blocked
                 }
             );
-        }
-    }
-}
-
-/// The catalog cause of an analyze refusal of a step's item.
-const fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static str {
-    match refusal {
-        crate::analyze::AnalyzeRefusal::Provision(_) => "missing-member",
-        crate::analyze::AnalyzeRefusal::Binding(_) | crate::analyze::AnalyzeRefusal::Package(_) => {
-            "invalid-value"
         }
     }
 }

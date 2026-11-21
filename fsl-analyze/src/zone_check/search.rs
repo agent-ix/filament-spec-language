@@ -448,9 +448,7 @@ pub fn explore_timed_state_graph(
         });
     }
     edges.dedup_by(|right, left| {
-        right.from == left.from
-            && right.to == left.to
-            && right.transition == left.transition
+        right.from == left.from && right.to == left.to && right.transition == left.transition
     });
     Ok(TimedStateGraph {
         nodes,

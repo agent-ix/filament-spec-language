@@ -17,8 +17,8 @@ pub(crate) use expression::reference_occurrences;
 pub(crate) use expression::evaluate_clause_set_with_cancel;
 pub(crate) use expression::evaluate_hyper_holds_with_component_bindings;
 pub use expression::{
-    ModelRelationEvaluation, S6aRewardEvaluator, evaluate_model_relation,
-    evaluate_model_relation_transitions,
+    evaluate_model_relation, evaluate_model_relation_transitions, ModelRelationEvaluation,
+    S6aRewardEvaluator,
 };
 
 /// FSpec FR-144 canonical key order of two map keys. Float keys use their
@@ -80,35 +80,35 @@ pub(crate) use expression::evaluate_state_predicate_with_reference_bindings;
 pub use expression::object_environment_refusal;
 pub use expression::post_targets::{PostTarget, PostTargets};
 pub use expression::{
-    AdmittedEvaluationViewEvaluation, ApplicationObservation, ApplicationObservationOptions,
-    BINDER_ACCOUNTING_VERSION, BinderCharges, ChargeAmounts, CheckedPackageEvaluation,
-    ClauseEvaluation, ClauseRead, ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome,
-    ComparisonReport, FrameEvaluation, HoldsAtom, HoldsBinders, InvalidQualifiedName,
-    InvocationBinding, ObservationIdentity, OperationCharge, OperationLedger, PackageClosure,
-    PackageTask, ProtocolReferenceOccurrence, ProtocolSlot, ProtocolSlotEvaluation,
+    admit_arguments, call_checked_package_with_session_limits, evaluate_activation_guard,
+    evaluate_activation_guard_at_absent_key, evaluate_capture, evaluate_closed_with_frame,
+    evaluate_history_update, evaluate_join_predicate, evaluate_operation_contract,
+    evaluate_protocol_slot, evaluate_refinement_row, evaluate_reward, evaluate_state_predicate,
+    evaluate_state_predicate_at_absent_key, evaluate_state_predicate_with,
+    evaluate_terminal_predicate, input_refusal_code, refusal_record, supplied_stop_cause,
+    supplied_stop_code, undefined_contract_code, AdmittedEvaluationViewEvaluation,
+    ApplicationObservation, ApplicationObservationOptions, BinderCharges, ChargeAmounts,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseRead, ClauseSetEntry, ClauseSetEvaluation,
+    ClauseSetOutcome, ComparisonReport, FrameEvaluation, HoldsAtom, HoldsBinders,
+    InvalidQualifiedName, InvocationBinding, ObservationIdentity, OperationCharge, OperationLedger,
+    PackageClosure, PackageTask, ProtocolReferenceOccurrence, ProtocolSlot, ProtocolSlotEvaluation,
     ProtocolSuppliedValue, ProtocolSupply, QualifiedName, RuntimeValuePath, Separation,
     SeparationStep, StopReport, SuppliedValue, TruncatedOperationLedger, ValueInvariantEvaluation,
     ValueInvariantOutcome, ValueInvariantResult, ValuePathStep, ValuePathSubject, WitnessClaim,
-    admit_arguments, call_checked_package_with_session_limits, evaluate_activation_guard,
-    evaluate_activation_guard_at_absent_key,
-    evaluate_capture, evaluate_closed_with_frame, evaluate_history_update, evaluate_join_predicate,
-    evaluate_operation_contract, evaluate_protocol_slot, evaluate_refinement_row, evaluate_reward,
-    evaluate_state_predicate, evaluate_state_predicate_at_absent_key,
-    evaluate_state_predicate_with, evaluate_terminal_predicate, input_refusal_code, refusal_record,
-    supplied_stop_cause, supplied_stop_code, undefined_contract_code,
+    BINDER_ACCOUNTING_VERSION,
 };
-pub use expression::{PackageOperations, ProjectedReward, bare_evaluate_frame};
-pub(crate) use expression::{
-    ProjectedClause, StateGraphOver, bare_post_targets, evaluate_bare_state_graph_predicate,
-    evaluate_bare_terminal_predicate, package_constraint_reads, package_guard_reads,
-    package_operation_footprint, package_term_reads, source_post_targets,
-};
+pub use expression::{bare_evaluate_frame, PackageOperations, ProjectedReward};
 pub use expression::{bare_evaluate_selected_protocol_slot, evaluate_bare_expression};
+pub(crate) use expression::{
+    bare_post_targets, evaluate_bare_state_graph_predicate, evaluate_bare_terminal_predicate,
+    package_constraint_reads, package_guard_reads, package_operation_footprint, package_term_reads,
+    source_post_targets, ProjectedClause, StateGraphOver,
+};
 
 #[cfg(test)]
 mod map_order_tests {
     use super::{map_entry, ordered_map_entries};
-    use filament_exact::{Integer, MapType, Value, ValueType, from_admitted_map};
+    use filament_exact::{from_admitted_map, Integer, MapType, Value, ValueType};
     use ix_trace_rs::trace;
 
     fn integer(value: i64) -> Value {

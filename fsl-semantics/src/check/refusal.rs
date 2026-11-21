@@ -3231,7 +3231,7 @@ pub enum CheckCause {
         /// The type name as written, including its source span.
         name: fsl_forms::NameForm,
         /// The kind the name resolved to.
-        actual: ValueType,
+        actual: Box<ValueType>,
     },
     /// FR-480: an empty key cannot identify an object. The source locus is
     /// the string token.
@@ -4156,6 +4156,55 @@ impl CheckRefusal {
 mod tests {
     use super::{CheckCause, CheckingLimitKind, CheckingStage, KeyFault, Setting, StageLimitCause};
     use fsl_foundation::diagnostic::Code;
+
+    /// The reference-literal refusal keeps the public diagnostic and payload
+    /// semantics when its resolved type is stored indirectly.
+    #[ix_trace_rs::trace("FR-1000-AC-2", "FSpec-FR-480-AC-2")]
+    #[test]
+    fn reference_literal_refusal_preserves_display_equality_and_payload() {
+        use filament_exact::ValueType;
+        use filament_semantic_value::location::ExpressionLocation;
+        use filament_semantic_value::location::ExpressionOwner as Origin;
+        use fsl_forms::NameForm;
+        use fsl_foundation::Span;
+        use std::hash::{DefaultHasher, Hash, Hasher};
+
+        let name = NameForm::new("Boolean", Span { start: 3, end: 10 });
+        let actual = ValueType::Boolean;
+        let cause = CheckCause::ReferenceLiteralTypeMismatch {
+            name: name.clone(),
+            actual: Box::new(actual.clone()),
+        };
+        let location = ExpressionLocation::at(Origin::Expression, &[2, 4]);
+        let refusal = super::CheckRefusal { location, cause };
+        assert_eq!(refusal.cause.code(), Code::IllTyped);
+        assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
+        assert_eq!(
+            refusal.to_string(),
+            format!(
+                "ill_typed/type-mismatch at {:?}: ReferenceLiteralTypeMismatch {{ name: {name:?}, actual: {actual:?} }}",
+                refusal.location
+            )
+        );
+        let equivalent = super::CheckRefusal {
+            location: refusal.location.clone(),
+            cause: CheckCause::ReferenceLiteralTypeMismatch {
+                name,
+                actual: Box::new(ValueType::Boolean),
+            },
+        };
+        assert_eq!(refusal, equivalent);
+        let CheckCause::ReferenceLiteralTypeMismatch { actual: stored, .. } = &refusal.cause else {
+            unreachable!("the reference-literal cause")
+        };
+        assert_eq!(stored.as_ref(), &actual);
+        fn hash(value: &impl Hash) -> u64 {
+            let mut state = DefaultHasher::new();
+            value.hash(&mut state);
+            state.finish()
+        }
+        assert_eq!(hash(stored), hash(&actual));
+    }
 
     /// Every `CheckingLimitKind` reports `stage_limit_exceeded`
     /// with its own `<kind>-exceeded` cause, and carries the bound and

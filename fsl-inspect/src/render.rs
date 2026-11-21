@@ -2417,17 +2417,13 @@ mod tests {
             "{text}"
         );
 
-        let unhinted = OutcomeDocument::new(
-            fsl_replay::Operation::Check,
-            None,
-            Category::Refusal,
-        )
-        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
-            None,
-            "invalid-request",
-            None,
-            "invalid request",
-        )]);
+        let unhinted = OutcomeDocument::new(fsl_replay::Operation::Check, None, Category::Refusal)
+            .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+                None,
+                "invalid-request",
+                None,
+                "invalid request",
+            )]);
         let text = text_of(&unhinted, &RenderSources::from_sources([]));
         assert!(
             !text.lines().any(|line| line.starts_with("  hint:")),

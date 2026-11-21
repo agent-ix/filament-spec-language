@@ -29,25 +29,25 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
-use fsl_eval::simulation::ExpansionLimit;
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState};
+use fsl_eval::simulation::ExpansionLimit;
 use fsl_replay::{
-    AbstractClass, CandidateFairState, CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso,
-    ModelCheckLimit, ReachedLimit, RefinementFailure, Taken, TemporalCounterexample, Undetermined,
-    abstract_classes, candidate_lasso_has_fair_run, check_step,
+    abstract_classes, candidate_lasso_has_fair_run, check_step, AbstractClass, CandidateFairState,
+    CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso, ModelCheckLimit, ReachedLimit,
+    RefinementFailure, Taken, TemporalCounterexample, Undetermined,
 };
 use num_bigint::BigInt;
 
 use super::{
     Judgement, Product, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
 };
-use crate::model_check::fair_walk::{FairModel, fairness_constraints};
-use crate::zone_check::concretise::{Stage, Target, concretise};
-use crate::zone_check::liveness::{Cells, Sign, next_cell};
+use crate::model_check::fair_walk::{fairness_constraints, FairModel};
+use crate::zone_check::concretise::{concretise, Stage, Target};
+use crate::zone_check::liveness::{next_cell, Cells, Sign};
 use crate::zone_check::search::{
-    Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided, constrain_at, scaled, widen, zone_bytes,
+    constrain_at, scaled, widen, zone_bytes, Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided,
 };
 use crate::zone_check::{Bound, Dbm};
 
@@ -1064,7 +1064,7 @@ impl Product<'_, '_> {
         &self,
         run: &mut Run<'_, '_, '_>,
         live: &mut Live,
-        class: &AbstractClass,
+        _class: &AbstractClass,
         named: usize,
         entry: usize,
         cycle: &[usize],

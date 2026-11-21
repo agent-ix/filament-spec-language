@@ -4,8 +4,8 @@
 use filament_exact::{Meter, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::hyper::{
-    evaluate_finite_hyper, FinitePopulationError, FiniteHyperOutcome, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,
-    FiniteTracePopulation, FiniteTupleOutcome,
+    evaluate_finite_hyper, FiniteHyperOutcome, FinitePopulationError, FiniteQuantifier,
+    FiniteTrace, FiniteTraceClosure, FiniteTracePopulation, FiniteTupleOutcome,
 };
 use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -252,9 +252,11 @@ pub(super) fn item<'a>(
                 FiniteHyperOutcome::Inconclusive => {
                     EngineReport::FiniteHyper(Box::new(FiniteHyperReport {
                         terminal: match meter_stop {
-                            Some(cause) => {
-                                fsl_replay::TerminalRecord::incomplete(request_index, backend, cause)
-                            }
+                            Some(cause) => fsl_replay::TerminalRecord::incomplete(
+                                request_index,
+                                backend,
+                                cause,
+                            ),
                             None => fsl_replay::TerminalRecord::inconclusive(
                                 request_index,
                                 backend,

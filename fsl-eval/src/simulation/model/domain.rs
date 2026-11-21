@@ -4,9 +4,9 @@
 //! product of domains one element at a time.
 
 use filament_exact::{
-    CollectionKind, CollectionType, EnumMember, FieldValue, Integer, NodeKey, ObjectReference,
-    OptionValue, Presence, TextType, UnionMember, UnionValue, Value, ValueType, from_admitted,
-    from_admitted_slots,
+    from_admitted, from_admitted_slots, CollectionKind, CollectionType, EnumMember, FieldValue,
+    Integer, NodeKey, ObjectReference, OptionValue, Presence, TextType, UnionMember, UnionValue,
+    Value, ValueType,
 };
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
@@ -1382,7 +1382,7 @@ fn composed_suffix_counts(
 }
 
 pub(super) fn admitted_text_value(text_type: &TextType, text: &str) -> Option<Value> {
-    use filament_exact::{Meter, Outcome, TextPayload, admit_text};
+    use filament_exact::{admit_text, Meter, Outcome, TextPayload};
     let payload = TextPayload::from_utf8(text.as_bytes()).ok()?;
     let unlimited = filament_exact::ScalarLimits {
         integer_bits: u64::MAX,
@@ -1618,9 +1618,7 @@ mod tests {
             .collect();
         assert_eq!(
             values,
-            [
-                "0", "-1", "1", "-3", "-2", "2", "3", "-7", "-6", "-5", "-4", "4", "5", "6", "7"
-            ]
+            ["0", "-1", "1", "-3", "-2", "2", "3", "-7", "-6", "-5", "-4", "4", "5", "6", "7"]
         );
         assert_eq!(domain.len(), 15);
         assert!(domain.nth(15).is_none());

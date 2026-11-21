@@ -136,7 +136,9 @@ impl HybridTraceDisagreement {
     /// The complete provider counterexample that replay did not agree with.
     pub fn counterexample(&self) -> &HybridCounterexample {
         match self {
-            Self::NotReproduced { counterexample } | Self::NotExact { counterexample } => counterexample,
+            Self::NotReproduced { counterexample } | Self::NotExact { counterexample } => {
+                counterexample
+            }
         }
     }
 

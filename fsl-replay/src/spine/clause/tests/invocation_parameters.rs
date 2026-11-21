@@ -87,7 +87,12 @@ fn bump_request(selection: ClauseRunSelection) -> ClauseRunRequest {
 
 fn optional_bump_request(selection: ClauseRunSelection) -> ClauseRunRequest {
     let (unit, packages) = optional_bump_unit_and_packages();
-    config_version_request_for(unit, packages, "optional-invocation-parameters.native", selection)
+    config_version_request_for(
+        unit,
+        packages,
+        "optional-invocation-parameters.native",
+        selection,
+    )
 }
 
 /// The documents of one `bump` invocation: `child` at 1 before and 2 after,
@@ -236,17 +241,29 @@ fn optional_operation_parameters_admit_present_absent_and_omitted_values() {
         document["parameters"] = json!({"expectedVersion": {"integer": "1"}});
     }));
     let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &bare.disposition else {
-        panic!("expected a wrong-kind admission refusal, got {:?}", bare.disposition);
+        panic!(
+            "expected a wrong-kind admission refusal, got {:?}",
+            bare.disposition
+        );
     };
     assert_eq!(record.catalog.cause(), "wrong-value-kind");
 
-    let required = run_bump(bump_invocation(2, |document| {
-        document["parameters"] = json!({});
-    }), |invocation| {
-        ClauseRunSelection::Clause(config_version_invocation_selection("PreMatches", invocation))
-    });
+    let required = run_bump(
+        bump_invocation(2, |document| {
+            document["parameters"] = json!({});
+        }),
+        |invocation| {
+            ClauseRunSelection::Clause(config_version_invocation_selection(
+                "PreMatches",
+                invocation,
+            ))
+        },
+    );
     let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &required.disposition else {
-        panic!("expected a missing-member refusal, got {:?}", required.disposition);
+        panic!(
+            "expected a missing-member refusal, got {:?}",
+            required.disposition
+        );
     };
     assert_eq!(record.catalog.cause(), "missing-member");
 }

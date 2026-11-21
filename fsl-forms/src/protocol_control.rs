@@ -20,8 +20,8 @@ use super::syntax::{
 };
 use super::temporal_clause::{expression_form, interval_form, parameter_form};
 use super::value::{
-    Item, declared_name, has_token, items, name_form, nodes_of, only, text, tokens_of, type_form,
-    unexpected,
+    declared_name, has_token, items, name_form, nodes_of, only, text, tokens_of, type_form,
+    unexpected, Item,
 };
 
 /// How a channel orders its messages.

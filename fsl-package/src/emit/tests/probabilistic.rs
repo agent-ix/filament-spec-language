@@ -1220,7 +1220,7 @@ fn claim_under(name: &str, scheduler: &str, body: &str) -> String {
 }
 
 /// The claim nodes of `wire` by declared name.
-fn claim_nodes<'w>(wire: &'w Value) -> Vec<(&'w str, &'w Value)> {
+fn claim_nodes(wire: &Value) -> Vec<(&str, &Value)> {
     super::owners::node_where(wire, "claim", "probabilistic_claim")
         .into_iter()
         .map(|node| (node["node_id"]["path"][2].as_str().expect("a name"), node))
@@ -1329,7 +1329,10 @@ fn a_claim_binds_the_workload_it_is_stated_under() {
     for (name, workload) in [("A", Some("Steady")), ("B", Some("Bursty")), ("C", None)] {
         let claim = claim_named(&wire, name);
         let body = &claim["body"];
-        assert_eq!(&targets(binding(body, "subject"))[..], [root.clone()]);
+        assert_eq!(
+            &targets(binding(body, "subject"))[..],
+            std::slice::from_ref(root)
+        );
         let scheduler = targets(binding(body, "scheduler"));
         let path = claim["node_id"]["path"].to_string();
         match workload {
@@ -1422,11 +1425,9 @@ fn a_claim_binds_every_random_parameter_of_its_subject() {
             randoms,
             "{name}"
         );
-        assert!(
-            node["node_id"]["path"]
-                .to_string()
-                .contains("\"distributions\"")
-        );
+        assert!(node["node_id"]["path"]
+            .to_string()
+            .contains("\"distributions\""));
     }
     for support in ["3: 1, 1: 2", "3: 1, 2: 3"] {
         let changed = random_claims_wire(support, &claims);
@@ -2899,13 +2900,9 @@ fn refusal_summary(read: Read) -> (String, String, String) {
     )
 }
 
-/// The ConfigVersion unit over a dense `ms` time source with `declarations`
-/// appended, unchecked: the timed claims of FSpec FR-640 rule 7.3.
-fn timed_claims_source(declarations: &[&str]) -> (Vec<u8>, Vec<u8>) {
-    timed_claims_source_in("time Config dense unit ms;", declarations)
-}
-
-/// [`timed_claims_source`] with the model's `time` declaration `time_clause`.
+/// The ConfigVersion unit over a time source with `declarations` appended,
+/// unchecked: the timed claims of FSpec FR-640 rule 7.3, under the model's
+/// `time` declaration `time_clause`.
 fn timed_claims_source_in(time_clause: &str, declarations: &[&str]) -> (Vec<u8>, Vec<u8>) {
     let document = super::timed_source::package_units_document();
     let unit = format!(

@@ -4,7 +4,7 @@
 use fsl_foundation::diagnostic::LimitKind;
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::source::{
-    BLANK_LABEL_TAG, EMPTY_PATH_TAG, SourceLabel, SourceReadCause, SourceReadRefusal,
+    SourceLabel, SourceReadCause, SourceReadRefusal, BLANK_LABEL_TAG, EMPTY_PATH_TAG,
 };
 use fsl_foundation::{Phase, Source, SourceIdentity, SyntaxLimit};
 
@@ -421,7 +421,7 @@ pub fn resource_exhausted(
 
 #[cfg(test)]
 mod tests {
-    use super::{CompleteCause, CompleteCode, HostCause, resource_exhausted};
+    use super::{resource_exhausted, CompleteCause, CompleteCode, HostCause};
     use fsl_foundation::diagnostic::LimitKind;
     use fsl_foundation::{Phase, Source, SourceIdentity, Span, SyntaxLimit};
 

@@ -28,7 +28,7 @@ document and settles no item.
 
 | Refusal | Stage | Code / cause | Locus | Exit |
 | --- | --- | --- | --- | --- |
-| `refinement_transfer` together with any of `call`, `clause`, `items`, `synthesis`, `export` or `export_evidence` | `request` | `invalid-request` | names every selection member present | 20 |
+| `refinement_transfer` together with any of `call`, `clause`, `items`, `synthesis`, `export`, `export_evidence`, `tl_lowering`, `model_based_test`, `verification_plan` or `package` | `request` | `invalid-request` | names every selection member present | 20 |
 | An unknown, duplicate or missing member of `refinement_transfer`, `abstract` or `concrete`; an empty `clauses` or `initial`; a clause named twice; an `initial` key or premise clause key that `observations` or `clauses` does not hold | `request` | `invalid-request` | the member's RFC 6901 pointer, e.g. `/refinement_transfer/clauses/1` | 20 |
 | A `model` alias the unit selects but whose package no `models` entry supplies | `compile` | `missing_import` / `missing-selection` | the selection (FR-109-AC-2) | 20 |
 | A `model` alias the unit does not select; a `refinement` naming no refinement declaration; a clause naming no declaration | `select` | `missing_declaration` / `missing-name` | `/refinement_transfer/abstract/model`, `/refinement_transfer/concrete/model`, `/refinement_transfer/refinement` or `/refinement_transfer/clauses/<i>` | 20 |

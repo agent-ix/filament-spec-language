@@ -1304,6 +1304,10 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     /// # Errors
     ///
     /// [`FootprintRefusal`] as the derivation reports it.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the footprint derivation takes the operation, its receiver identities, arguments, literals and selector"
+    )]
     fn selected_footprint(
         &self,
         model: &StateModel,
@@ -1321,6 +1325,10 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     /// # Errors
     ///
     /// [`FootprintRefusal`] as the derivation reports it.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the footprint derivation takes the operation, its receiver identities, arguments, literals and selector"
+    )]
     fn attempt_footprint_fallback(
         &self,
         model: &StateModel,
@@ -2437,6 +2445,10 @@ fn projected_clause(
 /// FR-155 "Derivation" over the package route: the footprint of `operation`
 /// from the state clauses the package names for it, `select` admitting each
 /// by its node key, by the derivation the source route runs.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the footprint derivation takes the operation, its receiver identities, arguments, literals and selector"
+)]
 fn package_footprint(
     package: &BarePackage<'_>,
     model: &StateModel,

@@ -4401,6 +4401,10 @@ fn checked_dispatch_tables(
 
 /// Combine the independently retained producer decision families into the
 /// one FR-322 checked-term carrier.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one internal combinator of the independently retained producer decision families"
+)]
 fn checked_term_data(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,

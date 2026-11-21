@@ -144,11 +144,9 @@ fn a_mode_switch_is_checked_in_source_order_and_requires_a_release_to_back_a_cla
         .find(|claim| claim.task_set == "Ctl")
         .and_then(|claim| claim.occurrence())
         .expect("a keyed schedulability claim");
-    assert!(
-        !unbacked.requirements()[&claim]
-            .requirements()
-            .task_product()
-    );
+    assert!(!unbacked.requirements()[&claim]
+        .requirements()
+        .task_product());
 }
 
 #[trace("TC-704", "FR-249-AC-7")]
@@ -165,11 +163,9 @@ fn only_a_task_set_with_a_checked_release_requires_a_task_product() {
         .find(|claim| claim.task_set == "Ctl")
         .and_then(|claim| claim.occurrence())
         .expect("a keyed schedulability claim");
-    assert!(
-        released.requirements()[&claim]
-            .requirements()
-            .task_product()
-    );
+    assert!(released.requirements()[&claim]
+        .requirements()
+        .task_product());
 
     let unreleased = checked("schedulable CtlFp on Ctl under fixed_priority;");
     let claim = unreleased
@@ -179,11 +175,9 @@ fn only_a_task_set_with_a_checked_release_requires_a_task_product() {
         .find(|claim| claim.task_set == "Ctl")
         .and_then(|claim| claim.occurrence())
         .expect("a keyed schedulability claim");
-    assert!(
-        !unreleased.requirements()[&claim]
-            .requirements()
-            .task_product()
-    );
+    assert!(!unreleased.requirements()[&claim]
+        .requirements()
+        .task_product());
 }
 
 #[trace("TC-704", "FR-249-AC-6")]

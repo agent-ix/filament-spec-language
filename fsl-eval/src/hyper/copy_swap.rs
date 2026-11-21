@@ -73,8 +73,8 @@ pub struct CopySwapInputs<'r> {
 
 /// The copy group a product canonicalises under.
 pub(super) struct CopySwap {
-    variables: Vec<String>,
-    generators: Vec<CopyGenerator>,
+    pub(super) variables: Vec<String>,
+    pub(super) generators: Vec<CopyGenerator>,
 }
 
 impl CopySwap {
@@ -88,52 +88,78 @@ impl CopySwap {
 
 /// A member of an orbit: the state, its key, and where its components came
 /// from. Component `k` of the state is component `positions[k]` of the first
-/// member.
+/// member, and its keys are the first member's renamed by `renaming`.
 struct OrbitMember {
     state: HyperState,
     key: Vec<u8>,
     positions: Vec<usize>,
+    renaming: Permutation,
 }
 
 impl OrbitMember {
     /// This member after `generator` exchanges its two variables.
-    fn after(&self, generator: &CopyGenerator, state: HyperState, key: Vec<u8>) -> Self {
+    fn after_exchange(&self, generator: &CopyGenerator, state: HyperState, key: Vec<u8>) -> Self {
         let mut positions = self.positions.clone();
         positions.swap(generator.first, generator.second);
         Self {
             state,
             key,
             positions,
+            renaming: self.renaming.clone(),
+        }
+    }
+
+    /// This member after `generator` renames the keys of every component.
+    fn after_renaming(&self, generator: &Permutation, state: HyperState, key: Vec<u8>) -> Self {
+        Self {
+            state,
+            key,
+            positions: self.positions.clone(),
+            renaming: generator.compose(&self.renaming),
         }
     }
 }
 
 impl HyperProduct<'_, '_> {
-    /// The canonical form of `state` under the copy group `group` names, and
-    /// the permutation of `group` that maps `state` to it (FR-174
-    /// "Canonicalisation"): the member of the orbit with the least key.
+    /// The canonical form of `state` under the product of the copy group and
+    /// the key symmetry the product was built with, and the permutation that
+    /// maps `state` to it (FR-174 "Canonicalisation"): the member of the
+    /// orbit with the least key. The permutation moves the trace variables
+    /// of [`copy_population`] by the copy swap and the keys of each
+    /// population by the diagonal action.
     ///
     /// # Errors
     ///
     /// The stop the exploration engine takes; [`Self::take_halt`] says why.
     pub(super) fn canonicalise(
         &self,
-        swap: &CopySwap,
         state: &HyperState,
     ) -> Result<(HyperState, Permutation), ExpansionStop> {
         let mut orbit = vec![OrbitMember {
             key: self.key_bytes(state)?,
             state: state.clone(),
             positions: (0..state.components.len()).collect(),
+            renaming: Permutation::identity(),
         }];
         let mut seen: BTreeSet<Vec<u8>> = BTreeSet::from([orbit[0].key.clone()]);
         let mut next = 0;
         while let Some(member) = orbit.get(next) {
             let mut found = Vec::new();
-            for (index, generator) in swap.generators.iter().enumerate() {
+            for (index, generator) in self
+                .copy_swap
+                .iter()
+                .flat_map(|swap| swap.generators.iter())
+                .enumerate()
+            {
                 let exchanged = self.exchange(member, index, generator)?;
                 if seen.insert(exchanged.key.clone()) {
                     found.push(exchanged);
+                }
+            }
+            for generator in &self.key_generators {
+                let renamed = self.rename(member, generator)?;
+                if seen.insert(renamed.key.clone()) {
+                    found.push(renamed);
                 }
             }
             orbit.extend(found);
@@ -143,13 +169,36 @@ impl HyperProduct<'_, '_> {
             .iter()
             .min_by(|left, right| left.key.cmp(&right.key))
             .ok_or_else(|| self.fault("an-orbit-has-a-member"))?;
-        let moved = least
-            .positions
+        let swapped = match &self.copy_swap {
+            Some(swap) => Permutation::of(
+                &copy_population(),
+                least.positions.iter().enumerate().map(|(slot, from)| {
+                    (swap.variables[*from].clone(), swap.variables[slot].clone())
+                }),
+            ),
+            None => Permutation::identity(),
+        };
+        Ok((least.state.clone(), swapped.compose(&least.renaming)))
+    }
+
+    /// `member` with `generator` applied to the keys of every component.
+    fn rename(
+        &self,
+        member: &OrbitMember,
+        generator: &Permutation,
+    ) -> Result<OrbitMember, ExpansionStop> {
+        let components = self
+            .joint
+            .systems
             .iter()
-            .enumerate()
-            .map(|(slot, from)| (swap.variables[*from].clone(), swap.variables[slot].clone()));
-        let permutation = Permutation::of(&copy_population(), moved);
-        Ok((least.state.clone(), permutation))
+            .zip(&member.state.components)
+            .map(|(system, component)| system.permute(component, generator))
+            .collect::<Result<Vec<_>, _>>()?;
+        let property_key = self.property_key(&member.state.property);
+        let state = HyperState::new(components, member.state.property.clone())
+            .with_property_key(property_key);
+        let key = self.key_bytes(&state)?;
+        Ok(member.after_renaming(generator, state, key))
     }
 
     /// `member` with generator `index` applied: the two variables'
@@ -184,7 +233,7 @@ impl HyperProduct<'_, '_> {
         let property_key = self.property_key(&property);
         let state = HyperState::new(components, property).with_property_key(property_key);
         let key = self.key_bytes(&state)?;
-        Ok(member.after(generator, state, key))
+        Ok(member.after_exchange(generator, state, key))
     }
 
     /// The atom `generator` takes `atom` to.

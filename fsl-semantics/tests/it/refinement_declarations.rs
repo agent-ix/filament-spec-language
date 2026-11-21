@@ -1310,6 +1310,38 @@ fn every_concrete_operation_has_a_checked_step_row() {
     assert!(take_binds);
 }
 
+/// FR-1020-AC-2 (TC-2870): only an operation-to-operation model step map is
+/// step-for-step. A single stutter row, an `any` row, or dense concrete time
+/// removes that property without exploring the selected model.
+#[trace("TC-2870", "FR-1020-AC-2")]
+#[trace("FSpec-TC-1042", "FSpec-FR-380-AC-9")]
+#[test]
+fn a_step_for_step_refinement_is_decided_from_its_step_rows_and_time_kind() {
+    let step_for_step =
+        cas_refines_counter().replace(" -> stutter;", " -> Spec::Counter::inc(self);");
+    let graph = checked_counter(&step_for_step);
+    assert!(only_refinement(&graph).is_step_for_step(false));
+
+    let stuttering = mutated(
+        &step_for_step,
+        "step Impl::Counter::beginA -> Spec::Counter::inc(self);",
+        "step Impl::Counter::beginA -> stutter;",
+    );
+    let graph = checked_counter(&stuttering);
+    assert!(!only_refinement(&graph).is_step_for_step(false));
+
+    let arbitrary = mutated(
+        &step_for_step,
+        "step Impl::Counter::beginA -> Spec::Counter::inc(self);",
+        "step Impl::Counter::beginA -> any;",
+    );
+    let graph = checked_counter(&arbitrary);
+    assert!(!only_refinement(&graph).is_step_for_step(false));
+
+    let graph = checked_counter(&step_for_step);
+    assert!(!only_refinement(&graph).is_step_for_step(true));
+}
+
 /// ADR-020 §8's `RingIsQueue` over the two populations and `put` and `take`
 /// rows `put` and `take`.
 fn ring_refinement(put: &str, take: &str) -> String {

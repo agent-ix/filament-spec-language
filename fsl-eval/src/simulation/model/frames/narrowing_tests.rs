@@ -12,7 +12,7 @@ use filament_exact::{Integer, Value};
 use filament_semantic_value::model_transition::ModelTransition;
 use ix_trace_rs::trace;
 use serde_json::json;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::super::application::{Applications, OperationRef};
 use super::super::walk::{rows_of, Budget};
@@ -403,7 +403,7 @@ fn assert_partial_assignment(solved: World, general: World) {
     assert_eq!(fast_charge, 101);
     assert_eq!(full_charge, 10_001);
     assert_eq!(fast.successors.len(), 100);
-    let bs: BTreeSet<_> = fast
+    let mut bs: Vec<_> = fast
         .successors
         .iter()
         .map(|applied| {
@@ -415,7 +415,9 @@ fn assert_partial_assignment(solved: World, general: World) {
             b
         })
         .collect();
-    assert_eq!(bs, (0_i64..100).map(Integer::from).collect());
+    bs.sort();
+    bs.dedup();
+    assert_eq!(bs, (0_i64..100).map(Integer::from).collect::<Vec<_>>());
     assert_eq!(
         keyed_applications(&solved_system, &fast),
         keyed_applications(&general_system, &full)

@@ -1512,7 +1512,7 @@ impl ProtocolReplay<'_> {
         // A step that the resolved models do not reproduce refuses before a
         // fairness set that differs, which a change of memory model changes
         // too (FR-227-AC-1).
-        let replayed = match replay_prefix_with_mismatch_explanation(
+        let replayed = replay_prefix_with_mismatch_explanation(
             system,
             payload,
             &PROTOCOL_STEPS,
@@ -1525,10 +1525,7 @@ impl ProtocolReplay<'_> {
                         relationship,
                     })
             },
-        ) {
-            Ok(replayed) => replayed,
-            Err(refusal) => return Err(refusal),
-        };
+        )?;
         if self.clause.is_some() && payload.fairness != fairness {
             return Err(refused(ModelTraceRefusal::ProtocolFairnessSet {
                 payload: payload.fairness.clone(),

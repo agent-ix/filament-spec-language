@@ -963,12 +963,10 @@ fn recording_item_references_require_a_provisioned_recording_document() {
         let document = run.document();
         assert_eq!(document["category"], "refusal");
         assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
-        assert!(
-            document["diagnostics"][0]["message"]
-                .as_str()
-                .expect("diagnostic message")
-                .contains("/items/0/recording")
-        );
+        assert!(document["diagnostics"][0]["message"]
+            .as_str()
+            .expect("diagnostic message")
+            .contains("/items/0/recording"));
     };
 
     let missing_ws = Workspace::new("cli-recording-reference-missing");

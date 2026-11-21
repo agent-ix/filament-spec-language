@@ -740,7 +740,7 @@ fn a_model_bearing_request_refuses_at_the_owning_stage() {
         (
             program.clone(),
             None,
-            "intake",
+            "compile",
             "missing_import",
             declaration.to_owned(),
         ),

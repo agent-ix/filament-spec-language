@@ -98,7 +98,8 @@ pub struct Settings {
 }
 
 fn integer(text: &str) -> filament_exact::Integer {
-    text.parse().unwrap_or_else(|_| filament_exact::Integer::zero())
+    text.parse()
+        .unwrap_or_else(|_| filament_exact::Integer::zero())
 }
 
 fn rational_of(text: &str) -> filament_exact::Rational {
@@ -112,8 +113,7 @@ fn rational_of(text: &str) -> filament_exact::Rational {
     } else {
         (integer(text), Integer::one())
     };
-    Rational::new(numerator, denominator)
-        .unwrap_or_else(|_| Rational::from_integer(Integer::one()))
+    Rational::new(numerator, denominator).unwrap_or_else(|_| Rational::from_integer(Integer::one()))
 }
 
 impl Settings {

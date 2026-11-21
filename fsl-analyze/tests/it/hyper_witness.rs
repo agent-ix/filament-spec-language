@@ -1009,14 +1009,6 @@ fn the_safety_automaton_stops_at_max_automaton_states() {
     assert_eq!(count, None);
 }
 
-/// The leaky `step`, with a precondition that has no value in the state
-/// `(0, 1)`, which `a` never reaches under the `match` below but a partner
-/// does.
-pub(crate) const GUARDED: Vault = Vault::Custom(
-    "pre Guard using v on V::Vault::step { 1 div (1 - self.l + self.h) >= 0 }\n\
-     post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
-);
-
 /// The guarded vault with its division inside a Kernel-checked call.
 pub(crate) const KERNEL_GUARDED: Vault = Vault::Custom(
     "pre Guard using v on V::Vault::step { q(1 - self.l + self.h) >= 0 }\n\
@@ -1029,7 +1021,7 @@ pub(crate) const KERNEL_DIV_FUNCTION: &str =
 pub(crate) const KERNEL_MOD_FUNCTION: &str =
     "function q using v(x: Integer): Integer pure { 1 mod x }\n";
 
-/// `Opaque` over [`GUARDED`] with a `match` that confines `a` to `step(0)`.
+/// `Opaque` over [`KERNEL_GUARDED`] with a `match` that confines `a` to `step(0)`.
 pub(crate) const GUARDED_CLAUSE: &str = "hyper Opaque using inf over behaviours (v: V::Vault) \
      forall trace a of V exists trace b of V \
      match { (if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 \

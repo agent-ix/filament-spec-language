@@ -66,8 +66,14 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
     fsl_foundation::diagnostic::CatalogCode::new("invalid_model_binding", "wrong-model-selection"),
     fsl_foundation::diagnostic::CatalogCode::new("invalid_model_binding", "conflicting-binding"),
     fsl_foundation::diagnostic::CatalogCode::new("cancelled", "caller-cancelled"),
-    fsl_foundation::diagnostic::CatalogCode::new("invalid_projection_correspondence", "correspondence-loss"),
-    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "invalid_projection_correspondence",
+        "correspondence-loss",
+    ),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "runtime_invariant",
+        "established-invariant-broken",
+    ),
     fsl_foundation::diagnostic::CatalogCode::new("invalid_identifier", "selection-identity"),
     fsl_foundation::diagnostic::CatalogCode::new("invalid_source_identity", "blank-label"),
     fsl_foundation::diagnostic::CatalogCode::new("invalid_source_identity", "empty-path"),
@@ -80,10 +86,19 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
     fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "token-count-exceeded"),
     fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "node-count-exceeded"),
     fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "edge-count-exceeded"),
-    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "occurrence-count-exceeded"),
-    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "diagnostic-count-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "stage_limit_exceeded",
+        "occurrence-count-exceeded",
+    ),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "stage_limit_exceeded",
+        "diagnostic-count-exceeded",
+    ),
     fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "work-budget-exceeded"),
-    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "logical-storage-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "stage_limit_exceeded",
+        "logical-storage-exceeded",
+    ),
     fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "rational-bits-exceeded"),
     fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "input-bytes-exceeded"),
 ];

@@ -42,10 +42,10 @@ use filament_checked::key::DeclarationKey;
 use fsl_semantics::model::object_environment::PlacePresences;
 use fsl_semantics::model::state::ModelState;
 
-use super::BROKEN;
 use super::encode::declaration_text;
 use super::state_predicate::PredicateReading;
 use super::walk::{expand_enabled, stop};
+use super::BROKEN;
 use super::{ModelSimState, ModelSystem};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::reduction::Permutation;
@@ -56,9 +56,9 @@ mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
 mod race;
 pub use race::{
-    TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
-    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, replay_timed_sample, sample_timed,
-    sample_timed_race,
+    replay_timed_sample, sample_timed, sample_timed_race, TimedRace, TimedRaceDraw, TimedRaceStep,
+    TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop,
+    TimedSchedulerChoice,
 };
 
 /// One clock of the subject: a clock field of one object of its universe.
@@ -3155,7 +3155,7 @@ pub enum BehaviourReading {
     /// of each position's state.
     Untimed(crate::temporal::TemporalTrace),
     /// The time-stamped positions a claim under the timed profile reads.
-    Timed(crate::temporal::TimedTrace),
+    Timed(Box<crate::temporal::TimedTrace>),
 }
 
 impl TimedBehaviour {
@@ -3184,7 +3184,7 @@ impl TimedBehaviour {
         }
         let timed = self.timed_trace(system, true)?;
         if profile == fsl_semantics::check::TemporalProfile::Timed {
-            return Ok(BehaviourReading::Timed(timed));
+            return Ok(BehaviourReading::Timed(Box::new(timed)));
         }
         Ok(BehaviourReading::Untimed(
             crate::temporal::TemporalTrace::Lasso {

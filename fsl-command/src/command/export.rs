@@ -137,6 +137,18 @@ pub(super) fn run_bytes(
     let Some(member) = body.remove("export") else {
         return Ok(None);
     };
+    // FR-1031: an export beside a transfer is a selection conflict.
+    if body.contains_key("refinement_transfer") {
+        let present: Vec<&str> = std::iter::once("export")
+            .chain(
+                super::TRANSFER_EXCLUSIVE
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .filter(|name| body.contains_key(*name)),
+            )
+            .collect();
+        return Err(super::transfer_conflict(&present));
+    }
     let package_selection = body.get("package").cloned();
     let given = overrides
         .limits
@@ -389,7 +401,11 @@ fn compile_and_map(
         });
     }
     let counts = FileCounts {
-        programs: compile.libraries.as_ref().map_or(0, Vec::len).saturating_add(1),
+        programs: compile
+            .libraries
+            .as_ref()
+            .map_or(0, Vec::len)
+            .saturating_add(1),
         models: compile.models.as_ref().map_or(0, Vec::len),
         observations: usize::from(request.initial.is_some()),
         extensions: compile.extensions.len(),

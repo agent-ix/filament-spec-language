@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use super::{FileCounts, Result, RunCause, RunResult, output, wire};
+use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 
 /// The FR-517 files a `{directory}` selection reads.
 const PACKAGE_FILE: &str = "checked-package.json";

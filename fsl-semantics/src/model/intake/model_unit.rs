@@ -4,7 +4,7 @@
 use fsl_forms::cst::{self, CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
 use fsl_foundation::diagnostic::{Code, Diagnostic};
 use fsl_foundation::{Phase, Source, SourceIdentity, Span};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::model::accounting::ModelNormalizationLimits;
 
@@ -223,6 +223,8 @@ pub fn compile_model_unit_with_causes(
     let mut declaration_names = std::collections::BTreeSet::new();
     let mut population_names = std::collections::BTreeSet::new();
     let mut references = Vec::new();
+    let mut supertype_references = Vec::new();
+    let mut object_links = Vec::new();
     let mut has_object_type = false;
     let mut has_record_type = false;
     let mut has_tuple_type = false;
@@ -244,6 +246,7 @@ pub fn compile_model_unit_with_causes(
         if tokens[index].text == "abstract" {
             index += 1;
         }
+        validate_declaration_inheritance_syntax(&tokens, index, parsed)?;
         match tokens.get(index).map(|token| token.text.as_str()) {
             Some("object") => {
                 let Some((object, next)) = read_object(&tokens, index, &identity, parsed) else {
@@ -267,7 +270,11 @@ pub fn compile_model_unit_with_causes(
                     )]);
                 }
                 references.extend(object.relationship_targets.iter().cloned());
+                supertype_references.extend(object.links.supertypes.iter().cloned());
                 types.extend(object.additional_types);
+                let mut links = object.links;
+                links.type_index = types.len();
+                object_links.push(links);
                 types.push(object.wire);
                 has_object_type = true;
                 index = next;
@@ -358,11 +365,7 @@ pub fn compile_model_unit_with_causes(
                         "invalid event type declaration",
                     )]);
                 };
-                let event_name = event["identity"]
-                    .as_str()
-                    .and_then(|identity| identity.rsplit('/').next())
-                    .unwrap_or_default()
-                    .to_owned();
+                let event_name = event.name.clone();
                 if !declaration_names.insert(event_name.clone()) {
                     return Err(vec![diagnostic(
                         parsed,
@@ -372,7 +375,12 @@ pub fn compile_model_unit_with_causes(
                         format!("declaration {event_name} is declared more than once"),
                     )]);
                 }
-                types.push(event);
+                push_model_type(
+                    event,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                );
                 has_event_type = true;
                 index = next;
             }
@@ -413,11 +421,7 @@ pub fn compile_model_unit_with_causes(
                         "invalid systems interface declaration",
                     )]);
                 };
-                let interface_name = interface["identity"]
-                    .as_str()
-                    .and_then(|identity| identity.rsplit('/').next())
-                    .unwrap_or_default()
-                    .to_owned();
+                let interface_name = interface.name.clone();
                 if !declaration_names.insert(interface_name.clone()) {
                     return Err(vec![diagnostic(
                         parsed,
@@ -427,7 +431,12 @@ pub fn compile_model_unit_with_causes(
                         format!("declaration {interface_name} is declared more than once"),
                     )]);
                 }
-                types.push(interface);
+                push_model_type(
+                    interface,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                );
                 has_systems_interface = true;
                 index = next;
             }
@@ -530,8 +539,7 @@ pub fn compile_model_unit_with_causes(
                 index = next;
             }
             Some("machine") => {
-                let Some((node, name, next)) =
-                    read_state_machine(&tokens, index, &identity, parsed)
+                let Some((machine, next)) = read_state_machine(&tokens, index, &identity, parsed)
                 else {
                     return Err(vec![diagnostic(
                         parsed,
@@ -541,22 +549,26 @@ pub fn compile_model_unit_with_causes(
                         "invalid state machine declaration",
                     )]);
                 };
-                if !declaration_names.insert(name.clone()) {
+                if !declaration_names.insert(machine.name.clone()) {
                     return Err(vec![diagnostic(
                         parsed,
                         CompleteCode::AmbiguousDeclaration,
                         CompleteCause::AmbiguousName,
                         tokens[declaration_start + 1].span,
-                        format!("declaration {name} is declared more than once"),
+                        format!("declaration {} is declared more than once", machine.name),
                     )]);
                 }
-                types.push(node);
+                supertype_references.extend(machine.links.supertypes.iter().cloned());
+                types.extend(machine.additional_types);
+                let mut links = machine.links;
+                links.type_index = types.len();
+                object_links.push(links);
+                types.push(machine.wire);
                 has_state_machine = true;
                 index = next;
             }
             Some("process") => {
-                let Some((node, name, next)) = read_process(&tokens, index, &identity, parsed)
-                else {
+                let Some((process, next)) = read_process(&tokens, index, &identity, parsed) else {
                     return Err(vec![diagnostic(
                         parsed,
                         CompleteCode::InvalidSyntax,
@@ -565,21 +577,26 @@ pub fn compile_model_unit_with_causes(
                         "invalid process declaration",
                     )]);
                 };
-                if !declaration_names.insert(name.clone()) {
+                if !declaration_names.insert(process.name.clone()) {
                     return Err(vec![diagnostic(
                         parsed,
                         CompleteCode::AmbiguousDeclaration,
                         CompleteCause::AmbiguousName,
                         tokens[declaration_start + 1].span,
-                        format!("declaration {name} is declared more than once"),
+                        format!("declaration {} is declared more than once", process.name),
                     )]);
                 }
-                types.push(node);
+                supertype_references.extend(process.links.supertypes.iter().cloned());
+                types.extend(process.additional_types);
+                let mut links = process.links;
+                links.type_index = types.len();
+                object_links.push(links);
+                types.push(process.wire);
                 has_process = true;
                 index = next;
             }
             Some("store") => {
-                let Some((node, name, next)) = read_store(&tokens, index, &identity, parsed) else {
+                let Some((store, next)) = read_store(&tokens, index, &identity, parsed) else {
                     return Err(vec![diagnostic(
                         parsed,
                         CompleteCode::InvalidSyntax,
@@ -588,16 +605,21 @@ pub fn compile_model_unit_with_causes(
                         "invalid persistence interface declaration",
                     )]);
                 };
-                if !declaration_names.insert(name.clone()) {
+                if !declaration_names.insert(store.name.clone()) {
                     return Err(vec![diagnostic(
                         parsed,
                         CompleteCode::AmbiguousDeclaration,
                         CompleteCause::AmbiguousName,
                         tokens[declaration_start + 1].span,
-                        format!("declaration {name} is declared more than once"),
+                        format!("declaration {} is declared more than once", store.name),
                     )]);
                 }
-                types.push(node);
+                push_model_type(
+                    store,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                );
                 has_persistence_interface = true;
                 index = next;
             }
@@ -736,8 +758,12 @@ pub fn compile_model_unit_with_causes(
                 if let Some(object) = record.wire.as_object_mut() {
                     object.remove("operations");
                 }
-                types.extend(record.additional_types);
-                types.push(record.wire);
+                push_model_type(
+                    record,
+                    &mut types,
+                    &mut object_links,
+                    &mut supertype_references,
+                );
                 has_record_type = true;
                 index = next;
             }
@@ -768,6 +794,18 @@ pub fn compile_model_unit_with_causes(
             )]);
         }
     }
+    for (supertype, span) in supertype_references {
+        if !declaration_names.contains(&supertype) {
+            return Err(vec![diagnostic(
+                parsed,
+                CompleteCode::MissingDeclaration,
+                CompleteCause::MissingDeclaration,
+                span,
+                format!("supertype {supertype:?} names no declaration"),
+            )]);
+        }
+    }
+    link_inheritance(&mut types, &object_links, &identity, parsed)?;
     for population in &populations {
         if let Some(members) = population["members"].as_array() {
             for member in members {
@@ -920,7 +958,11 @@ pub fn compile_model_unit_with_causes(
         let empty = wire["identityFields"]
             .as_array()
             .is_some_and(|fields| fields.is_empty());
-        if empty {
+        let inherited_process = wire["kind"]["name"] == "process"
+            && wire["supertypes"]
+                .as_array()
+                .is_some_and(|types| !types.is_empty());
+        if empty && !inherited_process {
             if let Some(object) = wire.as_object_mut() {
                 object.remove("identityFields");
             }
@@ -944,6 +986,7 @@ pub fn compile_model_unit_with_causes(
             format!("model-unit document serialization failed: {error}"),
         )]
     })?;
+    validate_nonobject_links(&document, &encoded, &object_links, parsed, limits)?;
     let tree = quire_canonical::read(&encoded, limits.intake.input_bytes).map_err(|error| {
         vec![diagnostic(
             parsed,
@@ -984,7 +1027,11 @@ fn record_operation_span(tokens: &[Token], mut index: usize) -> Option<Span> {
                     return None;
                 }
             }
-            "operation" if depth == 1 => return Some(token.span),
+            "operation"
+                if depth == 1 && tokens.get(index + 1).is_some_and(|next| next.text != ":") =>
+            {
+                return Some(token.span);
+            }
             _ => {}
         }
         index += 1;
@@ -1017,12 +1064,382 @@ fn read_identity(tokens: &[Token], cursor: &mut usize) -> Option<String> {
     Some(identity)
 }
 
+/// Keep the generic member reader within FR-710's per-declaration grammar.
+fn validate_declaration_inheritance_syntax(
+    tokens: &[Token],
+    index: usize,
+    parsed: &ParsedSource,
+) -> Result<(), Vec<CompleteDiagnostic>> {
+    let Some(kind) = tokens.get(index).map(|token| token.text.as_str()) else {
+        return Ok(());
+    };
+    if !["record", "event", "interface", "store"].contains(&kind) {
+        return Ok(());
+    }
+    let unexpected = |token: &Token| {
+        vec![diagnostic(
+            parsed,
+            CompleteCode::InvalidSyntax,
+            CompleteCause::UnexpectedToken,
+            token.span,
+            format!("{} is not admitted in a {kind} declaration", token.text),
+        )]
+    };
+    if let Some(token) = tokens[index..]
+        .iter()
+        .take_while(|token| token.text != "{")
+        .find(|token| token.text == "extends")
+    {
+        return Err(unexpected(token));
+    }
+    if ["record", "event", "interface"].contains(&kind) {
+        if let Some(token) = tokens.get(index + 2).filter(|token| token.text != "{") {
+            return Err(unexpected(token));
+        }
+    }
+    let Some(body) = tokens[index..]
+        .iter()
+        .position(|token| token.text == "{")
+        .map(|offset| index + offset)
+    else {
+        return Ok(());
+    };
+    let mut depth = 1;
+    let mut statement = body + 1;
+    for at in body + 1..tokens.len() {
+        let token = &tokens[at];
+        if depth == 1 && token.text != "}" {
+            let operation = tokens
+                .get(statement)
+                .is_some_and(|first| first.text == "operation")
+                && tokens
+                    .get(statement + 1)
+                    .is_some_and(|next| next.text != ":");
+            if (kind == "event" && operation)
+                || (kind == "store" && !operation)
+                || (kind == "record"
+                    && !operation
+                    && at > statement + 2
+                    && ["subsets", "redefines"].contains(&token.text.as_str()))
+            {
+                return Err(unexpected(token));
+            }
+        }
+        match token.text.as_str() {
+            "{" => depth += 1,
+            "}" => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+                if depth == 1 {
+                    statement = at + 1;
+                }
+            }
+            ";" if depth == 1 => statement = at + 1,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn push_model_type(
+    model: ObjectRead,
+    types: &mut Vec<Value>,
+    links: &mut Vec<ObjectLinks>,
+    references: &mut Vec<(String, Span)>,
+) {
+    references.extend(model.links.supertypes.iter().cloned());
+    types.extend(model.additional_types);
+    let mut model_links = model.links;
+    model_links.type_index = types.len();
+    links.push(model_links);
+    types.push(model.wire);
+}
+
+/// FR-710 projects shared FR-154 refusals of the newly linked non-object
+/// clauses back to their authored declaration, before publishing a document.
+fn validate_nonobject_links(
+    tree: &Value,
+    encoded: &[u8],
+    objects: &[ObjectLinks],
+    parsed: &ParsedSource,
+    limits: ModelNormalizationLimits,
+) -> Result<(), Vec<CompleteDiagnostic>> {
+    let changed: Vec<_> = objects
+        .iter()
+        .filter_map(|object| {
+            let wire = tree.get("types")?.as_array()?.get(object.type_index)?;
+            let kind = wire.get("kind")?.get("name")?.as_str()?;
+            let links = object
+                .fields
+                .iter()
+                .any(|field| field.subsets.is_some() || field.redefines.is_some())
+                || object
+                    .operations
+                    .iter()
+                    .any(|operation| operation.redefines.is_some());
+            (["record_value_type", "event_type", "interface", "store"].contains(&kind) && links)
+                .then(|| (object, wire.get("identity").and_then(Value::as_str)))
+        })
+        .collect();
+    if changed.is_empty() {
+        return Ok(());
+    }
+    let document = super::PackageDocument::parse(encoded, limits.intake)
+        .map_err(|refusal| vec![project_link_refusal(parsed, changed[0].0.span, &refusal)])?;
+    let refusals = super::validate_with_semantic_ir(&document)
+        .err()
+        .unwrap_or_default();
+    let diagnostics: Vec<_> = refusals
+        .iter()
+        .filter_map(|refusal| {
+            let node = super::refusal_node(refusal)?;
+            let (object, _) = changed.iter().find(|(_, identity)| {
+                identity.is_some_and(|identity| {
+                    node == identity
+                        || node
+                            .strip_prefix(identity)
+                            .is_some_and(|rest| rest.starts_with('/'))
+                })
+            })?;
+            Some(project_link_refusal(parsed, object.span, refusal))
+        })
+        .collect();
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
+    }
+}
+
+fn project_link_refusal(
+    parsed: &ParsedSource,
+    span: Span,
+    refusal: &super::ModelRefusal,
+) -> CompleteDiagnostic {
+    if let super::ModelRefusalCause::IntakeLimitExceeded { bound, .. } = refusal.cause {
+        if let Ok(bound) = usize::try_from(bound) {
+            let mut reported = *cst::resource_exhausted(
+                parsed.source(),
+                Phase::Parse,
+                span,
+                fsl_foundation::SyntaxLimit::SourceBytes { bound },
+            );
+            reported.code = refusal.code;
+            reported.message = refusal.detail.clone();
+            return reported;
+        }
+    }
+    let cause = [
+        CompleteCause::MalformedDeclaration,
+        CompleteCause::MissingDeclaration,
+        CompleteCause::DeclarationForm,
+        CompleteCause::ConflictingBinding,
+    ]
+    .into_iter()
+    .find(|cause| cause.as_str() == refusal.cause.as_str());
+    match cause {
+        Some(cause) => diagnostic(parsed, refusal.code, cause, span, refusal.detail.clone()),
+        None => diagnostic(
+            parsed,
+            CompleteCode::RuntimeInvariant,
+            CompleteCause::EstablishedInvariantBroken,
+            span,
+            format!(
+                "the model-unit diagnostic API cannot retain shared refusal {}/{}: {}",
+                refusal.code.as_str(),
+                refusal.cause.as_str(),
+                refusal.detail
+            ),
+        ),
+    }
+}
+
+/// Writes each `subsets` and `redefines` of the unit's objects into its wire
+/// as the identity of the member it names, found on the object that declares
+/// it (FR-081): a field `subsets` name is looked up on its owner and supertypes, a
+/// `redefines Owner::member` on `Owner` and its supertypes. A name that finds
+/// no member is `missing_declaration` at the name; whether `Owner` is a
+/// supertype of the redefining object is the model checker's decision (FR-082).
+fn link_inheritance(
+    types: &mut [Value],
+    objects: &[ObjectLinks],
+    package: &str,
+    parsed: &ParsedSource,
+) -> Result<(), Vec<CompleteDiagnostic>> {
+    let by_name: std::collections::BTreeMap<&str, &ObjectLinks> = objects
+        .iter()
+        .map(|object| (object.name.as_str(), object))
+        .collect();
+    let missing = |span: Span, what: &str, name: &str| {
+        vec![diagnostic(
+            parsed,
+            CompleteCode::MissingDeclaration,
+            CompleteCause::MissingDeclaration,
+            span,
+            format!("{what} {name:?} names no member"),
+        )]
+    };
+    for object in objects {
+        for (parent, _) in &object.supertypes {
+            let same_meaning = by_name.get(parent.as_str()).is_some_and(|parent| {
+                types[object.type_index]["kind"] == types[parent.type_index]["kind"]
+            });
+            if !same_meaning {
+                return Err(vec![diagnostic(
+                    parsed,
+                    CompleteCode::InvalidModelBinding,
+                    CompleteCause::MalformedDeclaration,
+                    object.span,
+                    "a supertype must have the meaning of the declaration that specializes it",
+                )]);
+            }
+        }
+        for (position, field) in object.fields.iter().enumerate() {
+            let wire = &mut types[object.type_index]["fields"][position];
+            if let Some((name, span)) = &field.subsets {
+                let mut subsets = Vec::new();
+                match declaring(&by_name, &object.name, name, MemberKind::Field) {
+                    Some(owner) => subsets.push(format!("ix://{package}/{owner}/{name}")),
+                    None => return Err(missing(*span, "subsetted field", name)),
+                }
+                wire["subsets"] = json!(subsets);
+            }
+            if let Some(target) = &field.redefines {
+                wire["redefines"] = json!(redefined(
+                    &by_name,
+                    target,
+                    MemberKind::Field,
+                    package,
+                    &missing
+                )?);
+            }
+        }
+        for (position, operation) in object.operations.iter().enumerate() {
+            let mut receiver_fields = Vec::new();
+            for (name, span) in &operation.receiver_fields {
+                let Some(owner) = declaring(&by_name, &object.name, name, MemberKind::Field) else {
+                    return Err(missing(*span, "modified field", name));
+                };
+                receiver_fields.push(format!("ix://{package}/{owner}/{name}"));
+            }
+            types[object.type_index]["operations"][position]["frame"]["modifies_receiver"] =
+                json!(receiver_fields);
+            if let Some(target) = &operation.redefines {
+                types[object.type_index]["operations"][position]["redefines"] = json!(redefined(
+                    &by_name,
+                    target,
+                    MemberKind::Operation,
+                    package,
+                    &missing
+                )?);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum MemberKind {
+    Field,
+    Operation,
+}
+
+fn redefined(
+    by_name: &std::collections::BTreeMap<&str, &ObjectLinks>,
+    target: &MemberTarget,
+    kind: MemberKind,
+    package: &str,
+    missing: &dyn Fn(Span, &str, &str) -> Vec<CompleteDiagnostic>,
+) -> Result<String, Vec<CompleteDiagnostic>> {
+    if !by_name.contains_key(target.owner.as_str()) {
+        return Err(missing(target.owner_span, "redefined type", &target.owner));
+    }
+    match declaring(by_name, &target.owner, &target.member, kind) {
+        Some(owner) => Ok(format!("ix://{package}/{owner}/{}", target.member)),
+        None => Err(missing(
+            target.member_span,
+            "redefined member",
+            &target.member,
+        )),
+    }
+}
+
+/// The nearest object, searching `start` and then its supertypes breadth
+/// first, that declares `member`. Each object is visited once, so a
+/// supertype cycle ends the search (the model checker refuses the cycle).
+fn declaring<'a>(
+    by_name: &std::collections::BTreeMap<&'a str, &'a ObjectLinks>,
+    start: &str,
+    member: &str,
+    kind: MemberKind,
+) -> Option<&'a str> {
+    let mut queue = std::collections::VecDeque::from([start]);
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(name) = queue.pop_front() {
+        let Some(object) = by_name.get(name) else {
+            continue;
+        };
+        if !seen.insert(name) {
+            continue;
+        }
+        let declares = match kind {
+            MemberKind::Field => object.fields.iter().any(|field| field.name == member),
+            MemberKind::Operation => object
+                .operations
+                .iter()
+                .any(|operation| operation.name == member),
+        };
+        if declares {
+            return Some(object.name.as_str());
+        }
+        queue.extend(object.supertypes.iter().map(|(name, _)| name.as_str()));
+    }
+    None
+}
+
 struct ObjectRead {
     name: String,
     name_span: Span,
     wire: Value,
     additional_types: Vec<Value>,
     relationship_targets: Vec<(String, Span)>,
+    links: ObjectLinks,
+}
+
+/// The inheritance edges an object declaration writes, by name, resolved once
+/// every object of the unit is read (FR-081, FR-082).
+struct ObjectLinks {
+    name: String,
+    span: Span,
+    /// Where the object's wire sits in the document's `types`.
+    type_index: usize,
+    supertypes: Vec<(String, Span)>,
+    /// Every field in declaration order, as the wire lists them.
+    fields: Vec<FieldLink>,
+    /// Every operation in declaration order, as the wire lists them.
+    operations: Vec<OperationLink>,
+}
+
+struct FieldLink {
+    name: String,
+    subsets: Option<(String, Span)>,
+    redefines: Option<MemberTarget>,
+}
+
+struct OperationLink {
+    name: String,
+    redefines: Option<MemberTarget>,
+    receiver_fields: Vec<(String, Span)>,
+}
+
+/// `Owner :: member` of a `redefines` clause.
+struct MemberTarget {
+    owner: String,
+    owner_span: Span,
+    member: String,
+    member_span: Span,
 }
 
 fn read_object(
@@ -1036,6 +1453,23 @@ fn read_object(
     let name_span = tokens.get(index)?.span;
     let name = tokens.get(index)?.text.clone();
     index += 1;
+    let mut supertypes = Vec::new();
+    if tokens
+        .get(index)
+        .is_some_and(|token| token.text == "extends")
+    {
+        index += 1;
+        loop {
+            let supertype = tokens.get(index)?;
+            supertypes.push((supertype.text.clone(), supertype.span));
+            index += 1;
+            if tokens.get(index).is_some_and(|token| token.text == ",") {
+                index += 1;
+            } else {
+                break;
+            }
+        }
+    }
     let mut identity_fields = Vec::new();
     if tokens
         .get(index)
@@ -1064,6 +1498,8 @@ fn read_object(
     let mut clauses = Vec::new();
     let mut additional_types = Vec::new();
     let mut relationship_targets = Vec::new();
+    let mut field_links = Vec::new();
+    let mut operation_links = Vec::new();
     while tokens.get(index)?.text != "}" {
         let member_start = tokens.get(index)?.span.start;
         match tokens.get(index)?.text.as_str() {
@@ -1120,8 +1556,10 @@ fn read_object(
                     "origin": source_origin(parsed, Span { start: tokens[start].span.start, end }),
                 }));
             }
-            "operation" => {
-                let (operation, next) = read_operation(tokens, index, &name, package, parsed)?;
+            "operation" if tokens.get(index + 1).is_some_and(|next| next.text != ":") => {
+                let (operation, links, next) =
+                    read_operation(tokens, index, &name, package, parsed)?;
+                operation_links.push(links);
                 operations.push(operation);
                 index = next;
             }
@@ -1223,10 +1661,25 @@ fn read_object(
                     unique = field_unique;
                     index = next;
                 }
+                let mut subsets = None;
+                if tokens
+                    .get(index)
+                    .is_some_and(|token| token.text == "subsets")
+                {
+                    let target = tokens.get(index + 1)?;
+                    subsets = Some((target.text.clone(), target.span));
+                    index += 2;
+                }
+                let redefines = read_member_target(tokens, &mut index)?;
                 if tokens.get(index)?.text != ";" {
                     return None;
                 }
                 index += 1;
+                field_links.push(FieldLink {
+                    name: field_name.clone(),
+                    subsets,
+                    redefines,
+                });
                 let field_identity = format!("ix://{package}/{name}/{field_name}");
                 fields.push(json!({
                     "identity": field_identity,
@@ -1251,12 +1704,21 @@ fn read_object(
         "roles": [],
         "origin": source_origin(parsed, Span { start, end }),
         "constraints": [], "extensions": [], "unknownPolicy": "reject",
-        "supertypes": [], "fields": fields, "operations": operations, "relationships": relationships,
+        "supertypes": supertypes.iter().map(|(supertype, _)| format!("ix://{package}/{supertype}")).collect::<Vec<_>>(),
+        "fields": fields, "operations": operations, "relationships": relationships,
         "identityFields": identity_fields.iter().map(|field| format!("ix://{package}/{name}/{field}")).collect::<Vec<_>>(),
         "clauses": clauses,
     });
     Some((
         ObjectRead {
+            links: ObjectLinks {
+                name: name.clone(),
+                span: Span { start, end },
+                type_index: 0,
+                supertypes,
+                fields: field_links,
+                operations: operation_links,
+            },
             name,
             name_span,
             wire,
@@ -1533,7 +1995,7 @@ fn read_event_type(
     index: usize,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, usize)> {
+) -> Option<(ObjectRead, usize)> {
     let occurs_index = (index..tokens.len()).find(|candidate| {
         tokens[*candidate].text == "occurs"
             && tokens[index..=*candidate]
@@ -1549,7 +2011,7 @@ fn read_event_type(
     if let Some(object) = event.wire.as_object_mut() {
         object.remove("relationships");
     }
-    Some((event.wire, next))
+    Some((event, next))
 }
 
 fn read_namespace(
@@ -1629,7 +2091,7 @@ fn read_systems_interface(
     index: usize,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, usize)> {
+) -> Option<(ObjectRead, usize)> {
     let (mut interface, next) = read_object(tokens, index, package, parsed)?;
     interface.wire["kind"]["name"] = json!("interface");
     if let Some(fields) = interface.wire["fields"].as_array_mut() {
@@ -1667,7 +2129,7 @@ fn read_systems_interface(
         })
         .collect::<Vec<_>>();
     interface.wire["featureOrder"] = json!(feature_order);
-    Some((interface.wire, next))
+    Some((interface, next))
 }
 
 fn read_systems_part(
@@ -1883,7 +2345,7 @@ fn read_state_machine(
     index: usize,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, String, usize)> {
+) -> Option<(ObjectRead, usize)> {
     let (mut machine, next) = read_object(tokens, index, package, parsed)?;
     let name = machine.name.clone();
     let states_index = (index..next).find(|candidate| tokens[*candidate].text == "states")?;
@@ -1954,10 +2416,9 @@ fn read_state_machine(
     }
     machine.wire["kind"]["name"] = json!("machine");
     machine.wire["identityFields"] = json!([]);
-    machine.wire["supertypes"] = json!([]);
     machine.wire["states"] = json!(states);
     machine.wire["transitions"] = json!(transitions);
-    Some((machine.wire, name, next))
+    Some((machine, next))
 }
 
 fn read_process(
@@ -1965,7 +2426,7 @@ fn read_process(
     index: usize,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, String, usize)> {
+) -> Option<(ObjectRead, usize)> {
     let (mut process, next) = read_object(tokens, index, package, parsed)?;
     let name = process.name.clone();
     let mut steps = Vec::new();
@@ -2023,17 +2484,18 @@ fn read_process(
         cursor += 1;
     }
     process.wire["kind"]["name"] = json!("process");
-    process.wire["identityFields"] = json!(
-        process.wire["fields"]
+    process.wire["identityFields"] = if process.links.supertypes.is_empty() {
+        json!(process.wire["fields"]
             .as_array()?
             .iter()
             .filter_map(|field| field.get("identity").and_then(Value::as_str))
             .map(str::to_owned)
-            .collect::<Vec<_>>()
-    );
-    process.wire["supertypes"] = json!([]);
+            .collect::<Vec<_>>())
+    } else {
+        json!([])
+    };
     process.wire["steps"] = json!(steps);
-    Some((process.wire, name, next))
+    Some((process, next))
 }
 
 fn read_store(
@@ -2041,9 +2503,8 @@ fn read_store(
     index: usize,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, String, usize)> {
+) -> Option<(ObjectRead, usize)> {
     let (mut store, next) = read_object(tokens, index, package, parsed)?;
-    let name = store.name.clone();
     let mut cursor = index + 2;
     if tokens.get(cursor)?.text != "persists" {
         return None;
@@ -2062,7 +2523,7 @@ fn read_store(
     store.wire["fields"] = json!([]);
     store.wire["relationships"] = json!([]);
     store.wire["persists"] = json!(persists);
-    Some((store.wire, name, next))
+    Some((store, next))
 }
 
 fn read_dimension(
@@ -2271,7 +2732,7 @@ fn read_operation(
     owner: &str,
     package: &str,
     parsed: &ParsedSource,
-) -> Option<(Value, usize)> {
+) -> Option<(Value, OperationLink, usize)> {
     let start = tokens.get(index)?.span.start;
     index += 1;
     let name = tokens.get(index)?.text.clone();
@@ -2329,7 +2790,9 @@ fn read_operation(
     } else {
         None
     };
+    let redefines = read_member_target(tokens, &mut index)?;
     let mut modifies_receiver = Vec::new();
+    let mut receiver_fields = Vec::new();
     let mut creates = Vec::new();
     let mut deletes = Vec::new();
     while tokens.get(index)?.text != ";" && tokens.get(index)?.text != "{" {
@@ -2345,6 +2808,7 @@ fn read_operation(
                         && tokens.get(index + 1).is_some_and(|token| token.text == ".")
                     {
                         if let Some(field) = tokens.get(index + 2) {
+                            receiver_fields.push((field.text.clone(), field.span));
                             modifies_receiver
                                 .push(format!("ix://{package}/{owner}/{}", field.text));
                         }
@@ -2406,7 +2870,38 @@ fn read_operation(
     if let Some(returns) = returns {
         operation["returns"] = returns;
     }
-    Some((operation, index))
+    Some((
+        operation,
+        OperationLink {
+            name,
+            redefines,
+            receiver_fields,
+        },
+        index,
+    ))
+}
+
+/// An optional `redefines Owner :: member` at `index`, which it advances past.
+/// `None` is a malformed target, `Some(None)` an absent one.
+fn read_member_target(tokens: &[Token], index: &mut usize) -> Option<Option<MemberTarget>> {
+    if tokens
+        .get(*index)
+        .is_none_or(|token| token.text != "redefines")
+    {
+        return Some(None);
+    }
+    let owner = tokens.get(*index + 1)?;
+    if tokens.get(*index + 2)?.text != "::" {
+        return None;
+    }
+    let member = tokens.get(*index + 3)?;
+    *index += 4;
+    Some(Some(MemberTarget {
+        owner: owner.text.clone(),
+        owner_span: owner.span,
+        member: member.text.clone(),
+        member_span: member.span,
+    }))
 }
 
 fn read_clause_declaration(
@@ -2584,9 +3079,8 @@ fn source_span(parsed: &ParsedSource, span: Span) -> Value {
     let (line, column) = position.map_or((1, 1), |position| {
         (position.start.line, position.start.column)
     });
-    let (end_line, end_column) = position.map_or((1, 1), |position| {
-        (position.end.line, position.end.column)
-    });
+    let (end_line, end_column) =
+        position.map_or((1, 1), |position| (position.end.line, position.end.column));
     json!({
         "sourceIdentity": format!("ix://{}/{}", source.identity().authority, source.identity().identity),
         "path": source.path(), "startLine": line, "startColumn": column,

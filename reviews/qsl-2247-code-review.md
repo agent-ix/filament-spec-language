@@ -1,0 +1,131 @@
+---
+id: SR-202611210022442313144108501
+title: "Code review — PR #3269 QSL-2247 refinement transfer of previous (with rust-review lane)"
+type: SpecReview
+analysis: code-review
+scope: "agent-ix/filament-spec-language; git diff ed3f278e4e3ece4f49f6520019d5cc3f14c18d68...eec1d1c35dc06eb49d9ebe5853a29850e2c982b5 (33 files): fsl-command/src/command.rs, fsl-command/src/command/{transfer,wire,items,output}.rs, fsl-replay/src/planner/{transfer,transfer_tests,request}.rs, fsl-replay/src/planner.rs, fsl-replay/src/model_check/settle.rs, fsl-replay/src/{spine,outcome}.rs, fsl-replay/src/spine/lifecycle/tests.rs, fsl-analyze/src/analyze/{clause_item,items,derived_item,invariant_item}.rs, fsl-analyze/src/model_check/{check,liveness,product,mod}.rs, fsl-analyze/src/model_check/liveness/component.rs, fsl-analyze/tests/it/{closure_certificate,graph_core,model_settle}.rs, fsl-semantics/src/check/{refinement,temporal_clause}.rs, fsl-semantics/src/check/temporal_clause/tests.rs, fsl-semantics/tests/it/refinement_declarations.rs, tests/it/{plan_export_surface,compile_command}.rs, spec FR-1030, TC-2920"
+review_set: subset
+---
+
+## Summary
+
+Ticket: QSL-2247, PR agent-ix/filament-spec-language#3269 (stacked on #2957).
+Frozen head `eec1d1c35dc06eb49d9ebe5853a29850e2c982b5`, exact parent base
+`ed3f278e4e3ece4f49f6520019d5cc3f14c18d68`; scope is the three-dot diff of those
+SHAs only (scoped exception recorded: not reviewed against `origin/main`, so
+parent #2957 is not attributed here). Code review with the rust-review and
+rust-style lane folded in. The refinement-transfer route, step-for-step decision,
+stutter-closure liveness and planner transfer settlement are present, but the
+change carries a global, unratified settlement change, a certification overclaim
+for stutter-closure proofs, a mis-classified stutter-invariant fragment, and
+several FR-1031 refusals the code cannot produce (two of which the PR's own test
+asserts).
+
+## Verdict
+
+**FAIL** — six `high` findings (FND-001 to FND-006). Not mergeable on review
+grounds. Gates: no cargo was run by this reviewer (brief forbids it); `cargo fmt
+--check`, `clippy -D warnings`, `cargo deny` and the five focused TEST-RUN
+binaries are not evidenced here. Coder report records `cargo check -p <crate>
+--tests` exit 0 for fsl-semantics, fsl-replay, fsl-analyze, fsl-command and
+filament-spec-language; Draco TEST-RUN results are pending, and compile success
+is not a runtime pass. Clean units examined: the spine `Compile` stage for
+`missing-selection` (FR-109-AC-2, ruling ef6f2f49 item 1) and its
+`compile_command.rs` / lifecycle test updates; `CheckedRefinement::is_step_for_step`
+(row classes and dense flag match FR-1020 Behavior); the FR-820 rule order in
+`settle_transfer` (budget, fragment, fairness, premise form, premises, proved);
+`fairness_implies` against FSpec FR-380 "Fairness implication"; the planner
+certification order (trusted > uncertified > certified, FSpec FR-354); the
+refinement premise settled once and shared (FR-1030 Behavior); `read_from_bytes`
+capping supplied `certified` to `uncertified` (FR-1030-AC-3); the
+`ProductTransition::StutterClosure` additions to every exhaustive match; the
+package-form clause path still refusing any `stutter_closure` (sound). No
+vendoring or file-tracking ceremony found.
+
+## Findings
+
+| ID      | Severity | Summary | Refs |
+| ------- | -------- | ------- | ---- |
+| FND-001 | high | Global settlement change: `Row::of_check` now settles every EN-1 `Holds{Exhaustive}` whose closure check refuses `TranslationRefusal::NotTranslated(_)` as `Proved{Exhaustive, Uncertified}`, `closed-scope`. FR-127 "Proof certificates" requires the core checker before `Proved{Exhaustive, ..}` and has no row for this input; ADR-018 RU-6 states an unconstrained EN-1 Exhaustive proof "settles only `certified`" and V-1 settles only once PC-3/PC-4 accept. The arm is not scoped to transfers: `SafetyTranslation::reachable_invariant` returns `NotTranslated` for every infinite-trace safety clause other than `always holds(A)` (key.rs:513-525), so every analyze/clause route's TP-3 past/interval proof (PrevSafe, SoonTwo and any user clause) changes `failed` to `proved`. It also swallows `NotTranslated` caused by a context/profile mismatch (key.rs:519-522) or the operand-path bound (key.rs:771-775), which are internal inconsistencies or limits, not "no checker". Arch ruling ef6f2f49 contains no ruling on this; no spec row, no direct test. | fsl-replay/src/model_check/settle.rs:803-811 |
+| FND-002 | high | A liveness item checked over the stutter closure is certified by a checker that never sees the closure. `settle_model_item` runs EN-1 with `stutter_closure` but passes the unchanged `CertificateRequest` (closure.rs:180-192 has no closure member) to `settle_model_check`; PC-4 recomputes edges over the plain model, where e.g. a `Trivial` witness ("no edge to itself") holds for a non-terminal state that has a closure self-loop. An accepted check therefore labels `Certified` a proof the core did not check for the claimed (closure) property, contrary to ADR-018 PC-1. FR-1030-AC-4's EventuallyTwo premise and every analyze request carrying `stutter_closure: true` are affected. | fsl-analyze/src/analyze/items.rs:205-226; fsl-analyze/src/analyze/clause_item.rs:189-236 |
+| FND-003 | high | `position_counting_operator` treats every `once` and `historically` as position-counting (`previous` is `matches!` on `Once` or `Historically` regardless of interval). FSpec FR-380 "Stuttering-invariant fragment" puts unbounded `once` and `historically` in the fragment; previous is `once[1,1]`, already caught by the interval arm. Scenario: `always (holds(c.value = 2) implies once holds(c.value = 1))` through `CasRefinesCounter` settles `inconclusive`, `transfer-not-preserving{fragment, operator: "once"}` instead of transferring `proved`. No test covers an unbounded past operator. | fsl-semantics/src/check/temporal_clause.rs:854-857 |
+| FND-004 | high | FR-1031-AC-3 refusals cannot be produced. (a) Clause lookup searches only `graph.temporal_clauses()`, so a state clause (`CanInc`) refuses `missing-name`/`missing_declaration`, not `type-mismatch`/`ill_typed`. (b) There is no subject-match check that the clause's `over` parameter is typed in the refinement's abstract model, so `OverThird` (`over (c: Third::Counter)`) is not refused `invalid-value` at `/refinement_transfer/clauses/0` and proceeds to analysis over the abstract subject. (c) No protocol-clause check. The PR's own `a_refinement_transfer_request_is_refused_by_stage` asserts (a) and (b), so it is expected to fail at runtime. | fsl-command/src/command/transfer.rs:161-182; tests/it/plan_export_surface.rs:1857-1874 |
+| FND-005 | high | Admission refusals have the wrong stage/code and arrive after settlement. FR-1031 rows 8-9 require stage `admit` with FR-106's code (snapshot) or `invalid_runtime_input` with FR-820's cause (supplied premise), and "before any premise or transfer is settled… settles no item". The code maps both through `invalid()` → `RunCause::ClauseRequest` (stage `request`, `invalid-request`), and admits supplied claim premises only after `check_refinement` (lines 319-362) and `analyze_document` (430-447) have run, at 468-481. FR-1031-AC-4 is untagged and unimplemented. | fsl-command/src/command/transfer.rs:222-231, 307-363, 430-481, 701-756 |
+| FND-006 | high | Duplication (P0). (a) The refinement premise re-implements `fsl-analyze/src/analyze/refinement_item.rs:110-163` (check_refinement → SimulationCertificateRequest → settle_refinement) with a degraded replay and refusal map instead of reusing the FR-144 item. (b) The certification fold re-implements `planner::settle::fold_certification` (settle.rs:422-436). (c) `TerminalValue` → result-label mapping is written twice, `fsl-replay/src/planner/transfer.rs:221-235` and `fsl-command/src/command/transfer.rs:657-671`, plus a third string→`ItemLabel` table at planner transfer.rs:308-318. A fix to one copy silently misses the others. | fsl-command/src/command/transfer.rs:307-363, 657-699; fsl-replay/src/planner/transfer.rs:221-235, 308-340 |
+| FND-007 | medium | The in-process refinement premise always faults its counterexample replay (`ReplayRefusal::Fault("counterexample-replay-unavailable")`), so a refinement that does not hold settles `failed` (FR-127 InternalFault row) rather than `refuted`, and every `check_refinement` refusal collapses to `Other("failed")`, losing unsupported/limit causes. A transfer through a broken refinement then reports `premise-unproved{premise: 0, result: failed}`. The concrete simulation also uses `default_accounting(u64::MAX)` (no work-unit meter) although FR-1030 Inputs says in-run premises use their engines' published default limits. | fsl-command/src/command/transfer.rs:292-296, 319-362 |
+| FND-008 | medium | Selection exclusivity is incomplete and out of table order. `export` is stripped and routed by `export::run_bytes` (export.rs:137) before `prepare_run_bytes_with_sources`, and a `package` member returns at command.rs:3877 into `package_run::prepare`, whose refusal list (package_run.rs:149-160) omits `refinement_transfer`; both silently drop the transfer (FR-1031 row 1 names `export`). `validate_transfer_member` also runs before the exclusivity check, so a row-2 defect pre-empts row 1 (FR-1031 "first refusal in table order"). | fsl-command/src/command.rs:3877-3884, 3917-3940; fsl-command/src/command/export.rs:137-150 |
+| FND-009 | medium | `step_for_step_fact` never writes FSpec FR-820's `{"time": "dense"}` reason. A dense concrete subject whose rows are all operation steps writes `{"holds": false}` with no reason; a dense subject with a `stutter` row reports the row, while FR-820 reports time "before any row". FR-820-AC-2's dense case is unimplemented and untested. | fsl-command/src/command/transfer.rs:616-642 |
+| FND-010 | medium | A supplied liveness claim premise checked without `stutter_closure` is refused, not settled. `supplied_premise` compares the full key including `stutter_closure` with the in-process identity (always `true` for liveness), and `from_settled_facts(&facts, liveness, …)` hard-codes the premise form. FR-820 keys slot 1 "without `stutter_closure`, which the planner reads from the result", and FR-1031 lists "a missing stutter closure" as an outcome, never a refusal; `premise_form: maximal` and `transfer-not-preserving{stutter-closure}` are unreachable in the product route. | fsl-command/src/command/transfer.rs:468-481, 516-523, 720-725 |
+| FND-011 | medium | Closure-stutter edges are dropped when a lasso is lifted (`let ProductTransition::Model(..) else continue`). A violating loop made only of closure stutters at a non-terminal state lifts to an empty loop with `terminal_stutter: false`, which CX-1 (non-empty loop) and replay reject, so a liveness premise refuted over the closure settles `inconclusive`/ReplayRefused instead of `refuted`. No test exercises a refuted stutter-closure premise. | fsl-analyze/src/model_check/liveness.rs:1297-1300, 2534-2549, 2689-2730 |
+| FND-012 | medium | `read_transfer_settlement_request`, the FR-820 wire reader, is `pub` and re-exported with no caller and no test; it reads `stutter_closure` from the slot-1 identity rather than the result (FR-820), and none of FR-820-AC-3's admission refusals is exercised. FR-1030 Behavior also says the item settles "through `planner::settle`", which the parallel `settle_transfer` entry bypasses. | fsl-replay/src/planner/transfer.rs:107-210; fsl-replay/src/planner.rs:73-76 |
+| FND-013 | medium | The model-mismatch refusal writes no `details {"declared": D, "given": G}` (FR-1031 row 5); `RunCause::TransferSelection` maps to `types::Details::None`, and `declared` survives only inside the human message the test greps. | fsl-command/src/command/output.rs:262-264; fsl-command/src/command/transfer.rs:767-774 |
+| FND-014 | low | Rust-style: `refinement_transfer.expect("validated transfer member")` on a production path right after an `ok_or_else` on the same `Option` (pattern-match once instead); redundant `is_some()` then `let Some … else Err` at planner transfer.rs:256-259; undocumented magic `budget.max_work < 2`; stringly `TransferPremiseValue::Other(&'static str)` with a catch-all `_ => Err(KeyWireError)` instead of carrying `ItemLabel`; a ~420-line `check_sources` closure; formatting drift (items.rs:96 over 100 columns, opposite import reorders in command.rs:25-32 and plan_export_surface.rs:9-11, unsorted `use` at clause_item.rs:34). `cargo fmt --check` and clippy not run here. | fsl-command/src/command/transfer.rs:50-86; fsl-replay/src/planner/transfer.rs:248-259; fsl-analyze/src/analyze/items.rs:96 |
+
+## Dispositions
+
+Round 1 — fix commit c410fe3190700371f7a5dc2c5da261e90c7ea938 on eec1d1c35d, base ed3f278e4e3ece4f49f6520019d5cc3f14c18d68. Checked against the source; the coder's report was not taken as evidence. No runtime result exists for c410 yet: every `fixed` below is a source disposition, and the Draco TEST-RUN is still pending.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The `NotTranslated` arm and its imports are removed from `Row::of_check` (settle.rs:791-831). Refused checks settle `failed` again, as arch ruling A requires. In-process TP-3 past/interval premises now settle a non-proved slot 1. Runtime confirmation of the empty-certificate test is pending. |
+| FND-002 | fixed | `settle_model_item` routes a closure item to `settle_model_check_over_stutter_closure` (items.rs:213-227), and that uses `check_components_over_stutter_closure` (settle.rs:283-307). The checker adds `liveness_stutter` at every state with steps when `stutter_closure && !(cut.memory || cut.instances)` (closure.rs:1017-1030). This matches EN-1's `has_model_successors && stutter_closure` edge (liveness.rs:1297-1300), and `ModelSystem` never sets a cut. A `Trivial` witness at a non-terminal state now meets a self-loop and is rejected. No negative test exists: see new gap FND-008. |
+| FND-003 | fixed | `position_counting_operator` names only intervals other than `[0,*]` (temporal_clause.rs:850-885). Unbounded `once` and `historically` return `None` (unit test temporal_clause/tests.rs:161-172; integration `PastTwo` is `stutter-invariant`). |
+| FND-004 | fixed | `declaration_kind` (transfer.rs:905-927) maps a state, protocol or hyper clause to `type-mismatch`; `CanInc` is a `pre`, which `state_clauses` holds. The `over` subject is compared with the refinement's abstract package (transfer.rs:447-466) and refuses `invalid-value`. Profile is checked at transfer.rs:437-444. The missing bounded-profile test is tracked in gap FND-002. |
+| FND-005 | fixed | Snapshots are admitted through `ModelSystem::new` at stage `admit` with FR-106's code and cause (transfer.rs:529-576). Supplied premises are admitted with FR-272 codes (transfer.rs:821-882) at transfer.rs:222-252, after resolution and before any `analyze` call (257, 274). FR-1031-AC-4 is now tagged. |
+| FND-006 | fixed | The refinement premise is the FR-144 analyze item, with real replay (transfer.rs:208-214, 254-264, 580-602). The fold is shared through `fold_certifications` (planner/settle.rs:422-448). Labels go through `ItemLabel::of`, `label_str` and serde, and the string tables are gone. The fairness-implication copy, which the review pass missed, is new FND-015. |
+| FND-007 | fixed | Replaced by the FR-144 analyze item: the analyze route's real replay and refusal map, under `AnalyzeLimits::unbounded()` (published defaults, unbounded deadline) with the request's observation limits (transfer.rs:180-183). |
+| FND-008 | fixed | `refuse_transfer_selection_conflict` runs straight after deserialization and before the package route and every member check (command.rs:3879-3880, 4014-4050), and lists `package`. `export::run_bytes` refuses a transfer beside `export` (export.rs:140-143). Residual naming defect is new FND-017. Unknown members inside `refinement_transfer` still refuse at serde time, before the conflict; that edge is unchanged. |
+| FND-009 | fixed | `step_for_step_fact` returns `{"holds": false, "time": "dense"}` before reading any row (transfer.rs:744-752). Untested at the command level: see gap FND-004. |
+| FND-010 | fixed | The slot key compares with `stutter_closure` cleared, and the flag is read from the supplied item (transfer.rs:839-855). It reaches `from_settled_facts` (313-347). The test `a_supplied_maximal_liveness_premise_is_not_preserving` asserts `transfer-not-preserving{stutter-closure}` and `premise_form: maximal`. |
+| FND-011 | still-open | A loop made only of closure stutters now refuses typed `unsupported` (`LivenessRefusal::ClosureStutterLoop`, liveness.rs:2705-2713; items.rs:1108). That is sound, but the claim is still not `refuted`, so the transfer reports `premise-unproved{unsupported}`. Arch ruling A does not cover this (it covers TP-3 certification and closure certification only). Either add a closure-stutter lasso shape to CX-1/replay, or obtain an explicit ruling recording it as QSL-2247 remaining scope. |
+| FND-012 | fixed | `read_transfer_settlement_request`, `read_budget` and `premise_value` are removed, and the re-export narrowed (planner.rs:73). FSpec FR-820 lets an in-process tool pass its own records, so `settle_transfer` is acceptable. |
+| FND-013 | fixed | `TransferSelection.details` carries `declared`/`given` (transfer.rs:940-952), written as `Details::Object` (output.rs:262-269). Asserted at plan_export_surface.rs:1974-1980. |
+| FND-014 | still-open | The `expect`, the magic constant (`TRANSFER_WORK` with a documented unit), the string labels and the long closure (split into `Transfer` methods) are fixed. Formatting is not: `rustfmt --check --edition 2021` still reports hunks this PR wrote at fsl-replay/src/lib.rs:341-345, fsl-semantics/src/check/temporal_clause.rs:857 and tests/it/plan_export_surface.rs:1701, 1760, 1800. |
+
+## New findings (disposition pass 1)
+
+| ID      | Severity | Summary | Refs |
+| ------- | -------- | ------- | ---- |
+| FND-015 | high | Duplication (P0, missed by the review pass). `fairness_implies` in fsl-command re-implements FSpec FR-380 "Fairness implication", which `fsl_replay::planner::declaration::strength_implies` already implements and `EnvSupplies::implies` and `compose.rs` reuse (strong implies weak or strong; equal granularity or `whole` from `each`). A fix to either copy silently misses the other. Expose and reuse `strength_implies`. | fsl-command/src/command/transfer.rs:777-788; fsl-replay/src/planner/declaration.rs:306-322 |
+| FND-016 | low | A test comment states the defect the fix removed. "The closure checker never sees the stutter closure, so the premise is never certified" sits directly above `assert_eq!(…["certification"], "certified")`, so it contradicts the assertion. | tests/it/plan_export_surface.rs:1835-1837 |
+| FND-017 | low | The export-route conflict names only `export`: `transfer_conflict(&["export"])`. FR-1031 row 1 requires naming every selection member present, so `export` + `call` + `refinement_transfer` omits `call`. | fsl-command/src/command/export.rs:140-143 |
+
+## Dispositions (round 2)
+
+Round 2: final head d4aeb3439e7b741b0ba8ce1828f385e667d32ae2, three commits on merged main bd669ebc46820921e04413e124f51605798c5b6c. `git range-diff` maps ed3f278e4e..dcc4e6769f onto bd669ebc46..d4aeb3439e as `=` for all three commits, so there were no integration edits. Outcomes rest on source evidence. Runtime for d4aeb is pending.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-011 | accepted-no-change | Arch CR011 ruling (QSL-2247 comments 383735f6/a0a8e5ac, lead steering): accepted for this PR. A loop made only of closure stutters settles typed `unsupported` (`ClosureStutterLoop`), which is sound and incomplete. FR-1030 Behavior (FR-1030:133-141) now states the current result and cause name and cites the rulings. An empty loop no longer counts as one (liveness.rs:2705-2709). Closure-only lasso witness and replay remain open scope on QSL-2247. |
+| FND-014 | still-open | The import churn is reverted (command.rs:25-32, plan_export_surface.rs:9-11) and the fix-1 hunks are formatted. Fix 2 adds one more unformatted line: fsl-replay/src/lib.rs:165 is 149 columns (`check_protocol_closure, … ProductStateRef,`), and rustfmt rewraps it under either style edition. |
+| FND-015 | fixed | `strength_implies` is now `pub` and re-exported (planner/declaration.rs:311, planner.rs:49-51). The command keeps only the operation match and calls it, so there is no second copy of the kind/granularity rule. |
+| FND-016 | fixed | The comment now matches the `certified` assertion (plan_export_surface.rs:1851). |
+| FND-017 | fixed | The export conflict names `export` plus every member of `TRANSFER_EXCLUSIVE` present in the body (export.rs:142-149). |
+
+## New findings (disposition pass 2)
+
+| ID      | Severity | Summary | Refs |
+| ------- | -------- | ------- | ---- |
+| FND-018 | high | Duplication (P0): FR-1031 row 1's exclusive member set is now stated twice in one file. `TRANSFER_EXCLUSIVE` (command.rs:4016-4026, 9 names) feeds the export route; a separate `(name, is_present)` array (command.rs:4034-4043, 8 names) feeds `refuse_transfer_selection_conflict`. They already differ: `export_evidence` is in the first only. A member added to one list silently misses the other route. Derive one list from the other. | fsl-command/src/command.rs:4016-4043 |
+| FND-019 | medium | Recorded from c410 runtime evidence: the round-1 admission fix (FND-005) did not hold. `ModelSystem::new` admits over every selected model, so a Third snapshot given as `abstract.initial` passed and the transfer settled exit 22 instead of 20 (plan_export_surface.rs:2043). It is already addressed in d4aeb: `ModelSystem::over_model(request, <subject model identity>)` (transfer.rs:561), main's existing FR-106 entry, runs before any analyze call. | fsl-command/src/command/transfer.rs:529-586 |
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-019 | fixed | Each subject is admitted by main's shared `ModelSystem::over_model` over the refinement's own model selection (transfer.rs:531-545, 561). That refuses a universe of another model's population at stage `admit` before any engine runs. No copied validator. Runtime confirmation of `/refinement_transfer/abstract/initial/0` is pending. |
+
+## Dispositions (round 3)
+
+Round 3: head 9ae17da354abebc355818a6fd9ffd55c2d422da6, one arch-authorized mechanical commit on d4aeb3439e; base bd669ebc46820921e04413e124f51605798c5b6c. Scope is CR018 and CR014 only. Runtime for 9ae17da is pending.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-014 | fixed | The `pub use certificate::closure::{…}` list is rewrapped; every line is now at most 96 columns (fsl-replay/src/lib.rs:163-168). rustfmt would still refill it to three lines, but the repository has no rustfmt config and main's own lib.rs reports 10 rustfmt diffs, so no fmt gate exists to fail. |
+| FND-018 | still-open | The duplicate `(name, is_present)` array is gone, and both routes now iterate `TRANSFER_EXCLUSIVE`, which includes `export_evidence`. The member set is still written twice: in the const (command.rs:4016-4026, 9 names) and in `transfer_member_present`'s match arms (command.rs:4044-4058, 8 names plus `_ => false`). The wildcard makes a miss silent. Smallest failure: add a new typed selection member to `TRANSFER_EXCLUSIVE` without a match arm, and `refinement_transfer` plus that member is refused on the export route but runs without refusal on the typed route. That is the divergence FND-018 named. Fix: one table, `[(&str, fn(&wire::Request) -> bool); N]`, with `export_evidence`'s `|_| false` on its own documented row; the export route reads `.0`; no wildcard. |
+
+## Dispositions (round 4)
+
+Round 4: head e859e681ce37b0b9192771411909073b0055aa9e, one commit on 9ae17da354; base bd669ebc46820921e04413e124f51605798c5b6c. Scope is CR018 only. Runtime for e859 is queued; d4aeb measured 66 pass, 0 fail, 1 authorized TP-3 ignore.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-018 | fixed | `TRANSFER_EXCLUSIVE` is now one table, `[(&str, fn(&wire::Request) -> bool); 9]`, holding each name with its typed presence; `export_evidence` is an explicit documented `|_| false` row (command.rs:4014-4028). The typed route filters by the row predicate (command.rs:4036-4039). The export route reads the row names against the body keys (export.rs:142-150). `transfer_member_present`, its string match and the wildcard are removed, and no other name list remains (grep: the table's only users are command.rs:4036 and export.rs:144). A new member now means one row. Not compile-checked by the coder; the e859 batch will compile it. |

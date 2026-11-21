@@ -19,9 +19,9 @@ use fsl_foundation::{BackendId, RequestIndex};
 use filament_exact::{Cancel, Value, ValueType};
 
 use crate::certificate::closure::{
-    CertificateRejection, CertificateRequest, ClosureRefusal, ProtocolCertificateRequest,
-    TemporalCertificateCheck, check_closure, check_components, check_protocol_closure,
-    check_protocol_components,
+    check_closure, check_components, check_components_over_stutter_closure, check_protocol_closure,
+    check_protocol_components, CertificateRejection, CertificateRequest, ClosureRefusal,
+    ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 use crate::certificate::scc::ProofCertificate;
 use crate::execute::ReplayRefusal;
@@ -275,6 +275,32 @@ pub fn settle_model_check(
             }
             ProofCertificate::Component(components) => {
                 check_components(certificate, components, limits, cancel)
+            }
+        },
+        replay,
+    )
+}
+
+/// [`settle_model_check`] for an outcome of EN-1's run over the item's
+/// stutter closure (FSpec FR-380): a liveness proof's component certificate is
+/// checked over the same closure the run explored, so a `certified` proof is
+/// one the core checked for the claimed property.
+pub fn settle_model_check_over_stutter_closure(
+    outcome: &ModelCheckOutcome,
+    limits: &ModelCheckLimits,
+    certificate: &CertificateRequest<'_>,
+    cancel: &Cancel,
+    replay: impl FnOnce(&TemporalCounterexample) -> Result<ModelTraceReplayResult, ReplayRefusal>,
+) -> ModelCheckRecord {
+    settle(
+        outcome,
+        limits,
+        |proof| match proof {
+            ProofCertificate::Closure(closure) => {
+                check_closure(certificate, closure, limits, cancel)
+            }
+            ProofCertificate::Component(components) => {
+                check_components_over_stutter_closure(certificate, components, limits, cancel)
             }
         },
         replay,

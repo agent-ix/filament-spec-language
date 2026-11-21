@@ -328,7 +328,8 @@ impl<'a> Run<'a, '_> {
         coverage: &HybridProofCoverage,
     ) -> Option<fsl_replay::HybridProbeOutcome> {
         let certificate =
-            read_hybrid_certificate(self.req.model, HybridCertificateExpect::Bounded, value).ok()?;
+            read_hybrid_certificate(self.req.model, HybridCertificateExpect::Bounded, value)
+                .ok()?;
         let mut meter = HybridReplayMeter::new(WORK_UNITS);
         fsl_replay::probe_hybrid_flowpipe_claim(
             self.req.graph,
@@ -392,9 +393,7 @@ impl<'a> Run<'a, '_> {
                 let Some((h, ap)) = self.step_for(p.mode, &bx)? else {
                     return Err(Halt::Give);
                 };
-                let time = stored
-                    .take()
-                    .unwrap_or_else(|| (s.0.clone(), s.1.add(&h)));
+                let time = stored.take().unwrap_or_else(|| (s.0.clone(), s.1.add(&h)));
                 let next = self.reader.next_box(p.mode, &bx, &ap, &h)?;
                 steps.push(Step {
                     mode: p.mode,
@@ -458,7 +457,8 @@ impl<'a> Run<'a, '_> {
                         high = None;
                     } else {
                         high = high.map(|h0| h0.max(covered_end.clone()));
-                        if matches!(cap, Cap::Steps(_)) && fire_upper.as_ref().is_none_or(|u| covered_end > *u)
+                        if matches!(cap, Cap::Steps(_))
+                            && fire_upper.as_ref().is_none_or(|u| covered_end > *u)
                         {
                             fire_upper = Some(covered_end);
                         }
@@ -472,7 +472,10 @@ impl<'a> Run<'a, '_> {
                     // later instant: no finite horizon shows the jumps.
                     return Err(Halt::Give);
                 }
-                let hull = box_round(&posts.iter().fold(seed, |acc, post| box_hull(&acc, post)), bits);
+                let hull = box_round(
+                    &posts.iter().fold(seed, |acc, post| box_hull(&acc, post)),
+                    bits,
+                );
                 let narrowed = self
                     .reader
                     .narrowed_time(p.mode, t, &p.bx, &p.starts, &window)?;

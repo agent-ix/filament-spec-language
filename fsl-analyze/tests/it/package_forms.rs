@@ -12,13 +12,13 @@ use fsl_package::{BarePackage, BareSupply, ReadEqualityRows, ReadIdentityRows};
 use fsl_semantics::check::{FormulaNode, FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{DocumentRef, ObservationLimits, admit_trace_snapshot};
+use fsl_semantics::model::observation::{admit_trace_snapshot, DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
 
 use crate::analyze_cli_support::{
-    HANDOFF, Workspace, counter_request_with, counter_snapshot, package_selection, request_members,
+    counter_request_with, counter_snapshot, package_selection, request_members, Workspace, HANDOFF,
 };
-use crate::counter::{CONTRACT, document, package_with_mode};
+use crate::counter::{document, package_with_mode, CONTRACT};
 use filament_semantic_value::checking::CheckMode;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -402,7 +402,7 @@ fn document_ref(label: &str) -> DocumentRef {
 fn package_frame_equals_source_frame() {
     use filament_exact::Identifier;
     use fsl_semantics::model::observation::{
-        FrameFacts, OperationFacts, Provisions, admit_frame_invocation,
+        admit_frame_invocation, FrameFacts, OperationFacts, Provisions,
     };
 
     let (_ws, handoff, mut budget) = handoff("package-forms-frame");
@@ -753,7 +753,7 @@ fn admit_clause(
     input: fsl_semantics::model::observation::ClauseSelectionInput,
 ) -> fsl_semantics::model::observation::AdmittedObservations {
     use fsl_semantics::model::observation::{
-        ClauseFacts, ClauseSelection, OperationFacts, Provisions, admit_observations,
+        admit_observations, ClauseFacts, ClauseSelection, OperationFacts, Provisions,
     };
     let graph = handoff.compiled.checked().graph();
     let clause = graph.state_clause(name).expect("the clause");

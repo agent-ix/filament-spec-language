@@ -230,7 +230,6 @@ fn binomial_tail(
         weight = weight.multiplied_by_ratio(&numerator, &denominator)?;
         add(index - 1, &weight);
     }
-    drop(add);
 
     if total.lower <= BigInt::zero() {
         return Err(BINOMIAL_SCALE);

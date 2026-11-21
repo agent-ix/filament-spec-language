@@ -409,17 +409,13 @@ impl<'m> DeclaredReward<'m> {
         model: &'m CheckedProbabilisticModel,
         read: Option<&'m PackageRewards>,
     ) -> Vec<RewardSlot> {
-        let mut slots: Vec<RewardSlot> = (0..model.rewards().len())
-            .map(RewardSlot::Source)
-            .collect();
+        let mut slots: Vec<RewardSlot> =
+            (0..model.rewards().len()).map(RewardSlot::Source).collect();
         if read.is_some() {
             slots.extend((0..model.read_rewards().len()).map(RewardSlot::Read));
         }
         slots.sort_by(|left, right| {
-            let (left, right) = (
-                Self::at(*left, model, read),
-                Self::at(*right, model, read),
-            );
+            let (left, right) = (Self::at(*left, model, read), Self::at(*right, model, read));
             match (left, right) {
                 (Some(left), Some(right)) => (left.operation().key(), left.name())
                     .cmp(&(right.operation().key(), right.name())),

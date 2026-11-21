@@ -6,9 +6,9 @@
 use std::sync::Mutex;
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Fr290, Workspace, counter_request, label};
+use crate::analyze_cli_support::{counter_request, label, Fr290, Workspace};
 
 const AT_MOST_THREE: &str =
     "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n";
@@ -335,21 +335,18 @@ impl fsl_analyze::provider::ExternalProvider for Answering {
     }
 }
 
-fn contract_provider(
-    verdict: fsl_analyze::provider::ProviderVerdict,
-) -> (
+type ContractTarget = (
+    fsl_replay::contract_check::ContractForm,
+    fsl_foundation::source::provenance::OccurrenceKey,
+    fsl_replay::contract_check::ContractSubject,
+);
+type ContractProvider = (
     fsl_analyze::analyze::Engine,
     std::sync::Arc<Mutex<Vec<Value>>>,
-    std::sync::Arc<
-        Mutex<
-            Vec<(
-                fsl_replay::contract_check::ContractForm,
-                fsl_foundation::source::provenance::OccurrenceKey,
-                fsl_replay::contract_check::ContractSubject,
-            )>,
-        >,
-    >,
-) {
+    std::sync::Arc<Mutex<Vec<ContractTarget>>>,
+);
+
+fn contract_provider(verdict: fsl_analyze::provider::ProviderVerdict) -> ContractProvider {
     use fsl_semantics::check::Capability::OperationContract;
     let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
     let targets = std::sync::Arc::new(Mutex::new(Vec::new()));
@@ -563,7 +560,10 @@ fn a_provider_contract_assignments_counterexample_settles_replay_parity() {
     let document = analyze_recording(&request, vec![provider]).0;
     let item = &document["items"][0];
     assert_eq!(label(item), "inconclusive", "{item}");
-    assert!(item["record"].to_string().contains("replay-parity"), "{item}");
+    assert!(
+        item["record"].to_string().contains("replay-parity"),
+        "{item}"
+    );
     assert!(
         document["counterexamples"]
             .as_array()

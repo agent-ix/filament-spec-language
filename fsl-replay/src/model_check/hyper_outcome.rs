@@ -14,11 +14,12 @@ use fsl_semantics::check::HyperForm;
 use crate::model_check::hyper_counterexample::HyperCounterexample;
 use crate::model_check::limits::ReachedLimit;
 use crate::model_check::outcome::{RunStats, UndecidedCause};
-use crate::proof_result::{AppliedReduction, IncompleteCause};
+use crate::proof_result::{AppliedReduction, IncompleteCause, SymmetryBrokenCause};
+use filament_checked::key::DeclarationKey;
 use fsl_foundation::ReductionKind;
 
-/// Why a request's reduction was settled before any state was expanded
-/// (FR-174 "Preservation rows").
+/// Why a request's reduction settled the item (FR-174 "Preservation rows",
+/// "Key symmetry and state constraints").
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HyperReductionCause {
     /// ADR-023 §5's row for the item's form reads "no" for the reduction
@@ -34,6 +35,23 @@ pub enum HyperReductionCause {
     Unsupported {
         /// The first selected reduction not offered.
         reduction: ReductionKind,
+    },
+    /// The initial states are not closed under a selected symmetry
+    /// declaration's group (V-6 `SymmetryBroken`); settled before any state
+    /// is expanded.
+    SymmetryBroken {
+        /// The declaration's population.
+        population: DeclarationKey,
+        /// Why.
+        cause: SymmetryBrokenCause,
+    },
+    /// The run completed with no counterexample and stored boundary states of
+    /// its state constraint (V-6 `ConstraintReached`): a cut state may hide a
+    /// violation.
+    ConstraintReached {
+        /// The product states a successor was cut at, summed over the item's
+        /// instances.
+        boundary_states: u64,
     },
 }
 
@@ -64,11 +82,12 @@ pub enum HyperOutcome {
         /// The run's counts.
         stats: RunStats,
     },
-    /// Every reachable state of the product reduced by the copy group was
-    /// examined and no violation exists (V-1 under ADR-023 CS-5). It carries
-    /// no certificate, as [`Self::Holds`] does not.
+    /// Every reachable state of the product reduced by the copy group, and by
+    /// the selected key symmetry, was examined and no violation exists (V-1
+    /// under ADR-023 CS-5). It carries no certificate, as [`Self::Holds`]
+    /// does not.
     HoldsReduced {
-        /// The applied reductions: the copy group's swap.
+        /// The applied reductions: a key symmetry, then the copy group's swap.
         reductions: Vec<AppliedReduction>,
         /// The run's counts.
         stats: RunStats,
@@ -81,8 +100,7 @@ pub enum HyperOutcome {
         /// The run's counts.
         stats: RunStats,
     },
-    /// The request's reductions were settled before any state was expanded
-    /// (V-6, V-8).
+    /// The request's reductions settled the item (V-6, V-8).
     Reduction {
         /// Why.
         cause: HyperReductionCause,
