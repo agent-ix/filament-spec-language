@@ -7712,16 +7712,18 @@ fn is_map(content: &NodeContent) -> bool {
 /// semantic_form, ...operands]`, each operand a string or an operand node's
 /// key). A `reference`, `option` or collection type names its target; a
 /// compound unit names each `(unit, exponent)` term. A value, expression,
-/// temporal, hybrid or bounded-domain node names, in first-occurrence order
-/// and without repeats (a decimal range keeps a repeated text, so equal bounds repeat), what its body walks: binding names, a literal's type
-/// node and text, referenced nodes, an application's operation identity, a
+/// temporal, hybrid or bounded-domain node names what its body walks: binding
+/// names, a literal's type node and text, referenced nodes, an application's operation identity, a
 /// fairness member's declaration and name, its laws' definition identities,
 /// its operator and result type, and last the node's semantic type. Every
 /// other derived node has no operands: equal content is one node, and a
-/// repeat of its path takes the next producer ordinal. An expression node
-/// keeps every walked operand, repeats included, so expressions that read
-/// the same operands in different positions take different paths and their
-/// identities do not depend on the order they are minted in.
+/// repeat of its path takes the next producer ordinal. Expression and temporal
+/// computation nodes keep every walked operand, repeats included: operand
+/// positions distinguish their content, so dropping a repeated position would
+/// give different computations one path and source-order ordinals. Value,
+/// hybrid and bounded-domain nodes retain their compact first-occurrence
+/// spelling; this computation-key rule does not revise their encodings. A
+/// decimal range retains repeated text, so equal bounds repeat.
 fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     if content.node_tag == NodeTag::State {
@@ -8033,7 +8035,7 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
         /// `scale_max` of FSpec's `dec_cents`), so only a repeated node is
         /// dropped.
         keep_text_repeats: bool,
-        /// Whether every repeated operand is kept (an expression node).
+        /// Whether every operand position is kept (a computation node).
         keep_repeats: bool,
     }
     impl Walk {
@@ -8120,7 +8122,7 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
         seen: HashSet::new(),
         operands: Vec::new(),
         keep_text_repeats: is_decimal_range(content),
-        keep_repeats: content.node_tag == NodeTag::Expression,
+        keep_repeats: matches!(content.node_tag, NodeTag::Expression | NodeTag::Temporal),
     };
     match &content.body {
         BodyTerm::Leaf(leaf) => walk.leaf(leaf),

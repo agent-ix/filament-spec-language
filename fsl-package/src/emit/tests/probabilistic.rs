@@ -370,10 +370,10 @@ fn probabilistic_claim_identity_survives_reordering() {
     assert_eq!((rows.len(), nodes.len()), (2, 2));
 }
 
-/// FR-498-AC-1/AC-2: same-path expression nodes retain repeated operand
+/// FR-498-AC-1: same-path expression nodes retain repeated operand
 /// positions, so changing declaration order cannot swap their ordinals or
 /// alter the claims' checked identities.
-#[trace("TC-1288", "FR-498-AC-1", "FR-498-AC-2")]
+#[trace("TC-1288", "FR-498-AC-1")]
 #[test]
 fn probabilistic_claims_with_repeated_expression_operands_keep_identity_when_reordered() {
     let claims = [
@@ -406,6 +406,10 @@ fn probabilistic_claims_with_repeated_expression_operands_keep_identity_when_reo
 
     let (forward, forward_rows) = emit(&[0, 1]);
     let (reversed, reversed_rows) = emit(&[1, 0]);
+    assert_ne!(
+        forward[0].1, forward[1].1,
+        "the two claims retain distinct identities"
+    );
     assert_eq!(forward, reversed, "each claim keeps its checked identity");
     assert_eq!(
         forward_rows, reversed_rows,
@@ -1418,9 +1422,11 @@ fn a_claim_binds_every_random_parameter_of_its_subject() {
             randoms,
             "{name}"
         );
-        assert!(node["node_id"]["path"]
-            .to_string()
-            .contains("\"distributions\""));
+        assert!(
+            node["node_id"]["path"]
+                .to_string()
+                .contains("\"distributions\"")
+        );
     }
     for support in ["3: 1, 1: 2", "3: 1, 2: 3"] {
         let changed = random_claims_wire(support, &claims);
@@ -1465,7 +1471,10 @@ fn reward_forms() -> [(&'static str, String, bool); 5] {
         ),
         (
             "Avail",
-            on("Avail", "{ probability >= 0.5 [ always[0,2] holds(true) ] }"),
+            on(
+                "Avail",
+                "{ probability >= 0.5 [ always[0,2] holds(true) ] }",
+            ),
             false,
         ),
         (
