@@ -249,7 +249,11 @@ impl<'a, 'p> Context<'a, 'p> {
                     .package
                     .project_holds(self.key, index)
                     .map_err(|_| self.attribution(index, OccurrenceSourceRefusal::UnknownNode))?;
-                match term.projection().source_at_location(self.package, location) {
+                match term.projection().source_at_location_within(
+                    self.package,
+                    location,
+                    &self.declaration,
+                ) {
                     Ok(Some(region)) => {
                         if selected.as_ref().is_some_and(|held| held != &region) {
                             return Err(

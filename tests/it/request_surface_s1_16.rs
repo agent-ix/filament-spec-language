@@ -3678,6 +3678,9 @@ fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes()
                     profile,
                 )
                 .replace("eventually[0,7] holds(p.ok)", body);
+            let duplicate = unit[unit.find("temporal StampedPulse").unwrap()..]
+                .replace("temporal StampedPulse", "temporal OtherPulse");
+            let unit = format!("{unit}\n{duplicate}");
             let clocks = if progressed {
                 json!({"sensor": {"kind":"event_position", "sequence_authority":"pulse-sequence"}})
             } else {
@@ -3747,8 +3750,9 @@ fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes()
                 .map(|entry| entry.regions.len())
                 .sum();
             assert_eq!(
-                expression_regions, candidates,
-                "{body}: the admitted shared node's actual source rows"
+                expression_regions,
+                candidates * 2,
+                "{body}: both claims share the actual node and retain their own source rows"
             );
             std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
             let mut caller = source("unit.native");
@@ -3884,6 +3888,25 @@ fn package_window_adapter_controls(
         [_, _, ..] => declaration.clone(),
         _ => panic!("the genuine atom has caller regions"),
     };
+    let first_atom = clause
+        .formula()
+        .nodes()
+        .iter()
+        .position(|node| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+        .unwrap();
+    let projected = bare.project_holds(&key, first_atom).unwrap();
+    let projection = projected.projection();
+    let location = projection.location(projection.root()).unwrap();
+    assert!(
+        projection.source_at_location(&bare, location).is_err(),
+        "global sharing does not identify the selected claim's occurrence"
+    );
+    let scoped = projection
+        .source_at_location_within(&bare, location, &declaration)
+        .unwrap()
+        .unwrap();
+    assert_eq!(scoped.source(), declaration.source());
+    assert!(scoped.start() >= declaration.start() && scoped.end() <= declaration.end());
     let positions = [true, false, true]
         .map(|ok| replay::sample_position(&json!({"ok":{"boolean":ok}}).to_string()));
     let progress = replay::ProgressAssertion {

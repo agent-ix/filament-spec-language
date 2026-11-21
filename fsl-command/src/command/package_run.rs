@@ -350,15 +350,15 @@ fn prepare_clause(
             let runs = match trace {
                 TraceInput::Finite(positions) => !positions.is_empty(),
                 TraceInput::Lasso { repeat, .. } => !repeat.is_empty(),
+                TraceInput::Model { .. } => false,
                 TraceInput::Progressed { .. }
                 | TraceInput::Timestamped { .. }
-                | TraceInput::Model { .. } => false,
-                TraceInput::Timed { .. } => true,
+                | TraceInput::Timed { .. } => true,
             };
-            if !runs || ledger.is_some() {
+            if !runs {
                 return Err(not_read("clause.selection.trace"));
             }
-            (name, trace, None, None)
+            (name, trace, None, ledger.clone())
         }
         ClauseRunSelection::Temporal {
             name,

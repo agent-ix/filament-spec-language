@@ -113,6 +113,32 @@ impl ReaderProtocolProjection {
         Option<fsl_foundation::source::provenance::SourceRegion>,
         crate::occurrence_source::OccurrenceSourceRefusal,
     > {
+        self.resolve_source_at_location(package, location, None)
+    }
+
+    /// Resolve root expression regions only within the selected declaration.
+    /// Captured function-body rows retain their own admitted source identity.
+    pub fn source_at_location_within(
+        &self,
+        package: &crate::BarePackage<'_>,
+        location: &Location,
+        declaration: &fsl_foundation::source::provenance::SourceRegion,
+    ) -> Result<
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        self.resolve_source_at_location(package, location, Some(declaration))
+    }
+
+    fn resolve_source_at_location(
+        &self,
+        package: &crate::BarePackage<'_>,
+        location: &Location,
+        declaration: Option<&fsl_foundation::source::provenance::SourceRegion>,
+    ) -> Result<
+        Option<fsl_foundation::source::provenance::SourceRegion>,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
         let mut selected = None;
         for node in self
             .nodes
@@ -122,10 +148,6 @@ impl ReaderProtocolProjection {
             let Some(application) = &node.term else {
                 continue;
             };
-            let occurrence = node
-                .occurrence
-                .as_ref()
-                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence)?;
             let owner = if application.package.as_ref() == package.package().name() {
                 package
             } else {
@@ -142,6 +164,43 @@ impl ReaderProtocolProjection {
                 .iter()
                 .find(|candidate| candidate.node_id == *application)
                 .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownNode)?;
+            if let Some(declaration) = declaration.filter(|_| !node.captured_body) {
+                let mut found = false;
+                for row in owner.package().source_map().iter().filter(|row| {
+                    row.node_id == *application
+                        && row.role == filament_contract_model::CheckedOccurrenceRole::Expression
+                }) {
+                    for region in &row.regions {
+                        let region = crate::checked_v2::source_region(region).map_err(|_| {
+                            crate::occurrence_source::OccurrenceSourceRefusal::MissingRegion
+                        })?;
+                        if region.source() != declaration.source()
+                            || region.start() < declaration.start()
+                            || region.end() > declaration.end()
+                        {
+                            continue;
+                        }
+                        found = true;
+                        if selected
+                            .as_ref()
+                            .is_some_and(|previous| previous != &region)
+                        {
+                            return Err(
+                                crate::occurrence_source::OccurrenceSourceRefusal::AmbiguousRegion,
+                            );
+                        }
+                        selected = Some(region);
+                    }
+                }
+                if !found {
+                    return Err(crate::occurrence_source::OccurrenceSourceRefusal::MissingRegion);
+                }
+                continue;
+            }
+            let occurrence = node
+                .occurrence
+                .as_ref()
+                .ok_or(crate::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence)?;
             let admitted_occurrence = admitted
                 .occurrences
                 .iter()
@@ -287,6 +346,7 @@ impl ReaderProtocolProjection {
             if let Some(node) = self.nodes.get_mut(position) {
                 node.location = Some(location);
                 node.occurrence = Some(occurrence);
+                node.captured_body = true;
             }
         }
         // A `let`, conditional or `case` is no term and has no row (FSpec
@@ -2372,6 +2432,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             absorbed: None,
             type_argument,
             occurrence: self.sole_expression_occurrence(id, node),
+            captured_body: false,
             key: Some(self.index.key(id)?),
         }))
     }
@@ -4478,6 +4539,7 @@ struct ReaderProjectedNode {
     children: Vec<usize>,
     /// The admitted occurrence bound to this particular walk position.
     occurrence: Option<fsl_foundation::source::provenance::OccurrenceKey>,
+    captured_body: bool,
     /// The shared key already rebuilt by the owning admitted index. A row
     /// can bind a repeated occurrence without rebuilding this structural key.
     key: Option<NodeKey>,
@@ -4502,6 +4564,7 @@ impl ReaderProjectedNode {
             absorbed: None,
             type_argument: None,
             occurrence: None,
+            captured_body: false,
             key: None,
         }
     }
