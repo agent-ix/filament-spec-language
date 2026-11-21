@@ -3252,6 +3252,21 @@ fn package_clause_selections_violations_match_source_decisive_locations() {
     );
 }
 
+/// The decisive walk follows the taken `if` arm and authored connective to
+/// the quantifier which supplied the actual false element.
+#[test]
+#[trace("TC-840", "FR-330-AC-12")]
+fn package_clause_decisive_walk_reaches_the_quantifier_through_branches() {
+    let unit = bump_low().replace(LOW_BODY,
+        "holds(if c.versionNumber >= 0 then (true and forall(n in sequence[3, c.versionNumber, 5]: n > 0)) else true)");
+    package_clause_selection_outcomes(
+        &unit,
+        &[(json!({"finite": ["s0", "s1"]}), 10)],
+        false,
+        SelectionObjects::Present,
+    );
+}
+
 /// FR-1039 Outputs: timed record samples share the snapshot timed evaluator,
 /// with a selected role clock and exact endpoint inclusion.
 #[test]
