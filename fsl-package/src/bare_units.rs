@@ -26,6 +26,33 @@ pub(crate) struct UnitDefinitions {
     dimensions: Vec<(DimensionPreimage, NodeKey)>,
     units: Vec<(UnitPreimage, NodeKey)>,
     owners: Vec<NodeOwner>,
+    admitted: UnitTable,
+}
+
+impl UnitDefinitions {
+    /// Read clock metadata from the table admitted with these definitions.
+    pub(crate) fn time_unit_scale(&self, unit: &str) -> Option<Rational> {
+        use filament_semantic_value::quantity::QuantityUnit;
+        use filament_semantic_value::unit::NominalUnitForm;
+        let named = |segments: &[String], name: &str| {
+            segments.last().is_some_and(|last| last == name) || segments.join("::") == name
+        };
+        self.admitted.ids().find_map(|id| {
+            let QuantityUnit::Declared(declared) = self.admitted.get(id)? else {
+                return None;
+            };
+            let node = self.admitted.nominal_node(&declared.key())?;
+            if !matches!(node.form, NominalUnitForm::Unit { .. })
+                || !named(&node.declaration.qualified_declaration, unit)
+                || declared.is_affine()
+            {
+                return None;
+            }
+            let dimension = self.admitted.nominal_node(&declared.dimension_node())?;
+            named(&dimension.declaration.qualified_declaration, "Time")
+                .then(|| declared.canonical().scale().clone())
+        })
+    }
 }
 
 /// Why the selected source-unit rows are no unit table.
@@ -176,7 +203,7 @@ pub(crate) fn read_unit_table(
             ))
         })
         .collect();
-    admit(
+    let admitted = admit(
         dimensions.clone(),
         units.clone(),
         &OwnerSelection::new(owners.clone()),
@@ -185,6 +212,7 @@ pub(crate) fn read_unit_table(
         dimensions,
         units,
         owners,
+        admitted,
     })
 }
 
@@ -425,6 +453,40 @@ mod tests {
             panic!("the actual emitted declarations must admit");
         };
         (emission, admitted)
+    }
+
+    #[trace("FR-944-AC-10", "FR-944-AC-13", "FR-533-AC-19")]
+    #[test]
+    fn admitted_time_unit_scales_keep_exact_factors_and_reject_other_dimensions() {
+        let (emission, package) = admitted_units(
+            "clock-units",
+            "dimension Time; unit s : Time = rational(1, 1);\n\
+             unit ms : Time = rational(1, 1000) * s;\n\
+             dimension Money; unit U : Money = rational(1, 1);",
+        );
+        let mut budget = crate::V2ReadLimits::fixture().native_join_budget();
+        let identities = emission.identity_rows(&package, &mut budget).unwrap();
+        let equality = emission.equality_witness(&package, &mut budget).unwrap();
+        let bare = crate::BarePackage::new(&package)
+            .with_supply(
+                crate::BareSupply {
+                    identities: &identities,
+                    equality: Some(&equality),
+                },
+                &mut budget,
+            )
+            .expect("the actual admitted units join");
+        assert_eq!(
+            bare.time_unit_scale("s"),
+            Some(Rational::from_integer(Integer::one()))
+        );
+        assert_eq!(
+            bare.time_unit_scale("ms"),
+            Some(Rational::new(Integer::one(), Integer::from(1000_i64)).unwrap())
+        );
+        assert!(bare.declares_unit("U"));
+        assert_eq!(bare.time_unit_scale("U"), None);
+        assert_eq!(bare.time_unit_scale("missing"), None);
     }
 
     /// FR-533-AC-23: an equivalence's package operand reads the exact admitted
