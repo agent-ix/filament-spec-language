@@ -43,6 +43,8 @@ FAIL for the focused assurance slice: FR-921-AC-4 lacks active fresh-process evi
 | FND | Outcome | Reason |
 | --- | --- | --- |
 | FND-001 | deferred | The arch scope freeze parks owed-test work. Record this evidence as parked; no follow-up ticket is being created or deferred. |
+| FND-002 | fixed | At 785bc280a0, `every_scheduler_discrete_delay_is_certified` carries `#[trace("TC-2492")]` only; the computed matrix (quoin 0.36.8) now reports FR-923-AC-1 `tagged-by-ignored-test` via `every_scheduler_discrete_delay_refutes`, and the PR body lists the refutation gap. |
+| FND-003 | fixed | `exact_certificate_rejects_threshold_miss_and_cycles` asserts `Err(Cycle)` for Minimum, Maximum and Workload under `GraphCycles::Reject`, and `an_untimed_wait_loop_cannot_certify_a_scheduler_minimum` (TC-636, FR-201) asserts `Err(Cycle)` for a forged {A:1,T:1} wait loop under Minimum and Maximum. |
 
 ## Disposition pass summary
 
@@ -67,3 +69,7 @@ Planless, PR-scoped, at head `b42bed4b90`. Plan completion: not assessed. Matrix
 ## Disposition pass 2 summary
 
 At head `b42bed4b90`, prior FND-001 (FR-921-AC-4) stays `tagged-by-ignored-test`. Its latest outcome is `deferred`, so no new row is due. FND-002 and FND-003 are new and have no outcome yet.
+
+## Disposition pass 3 summary
+
+Head `785bc280a0`, matrix `quoin matrix --repo . --json` (quoin 0.36.8, `spec-artifacts-process@v0.36.0`, exit 0). FND-002 and FND-003 fixed. FND-001 (FR-921-AC-4) stays deferred and is now listed in the PR body's remaining work. Remaining `tagged-by-ignored-test` criteria (FR-877-AC-1..4, FR-921-AC-4, FR-923-AC-1, FR-923-AC-3, FR-924-AC-3, FR-924-AC-5, FR-924-AC-6) are all listed as remaining QSL-2156 scope; no new gap finding.

@@ -48,6 +48,10 @@ CONDITIONAL. One medium implementation finding remains; focused checks are pendi
 | FND | Outcome | Reason |
 | --- | --- | --- |
 | FND-001 | fixed | At 2b16a60f, the pending region state is inserted with `terminal: choices.is_empty().then_some(false)`, so a quiescent state with no enabled delay or action becomes a nonaccepting terminal instead of returning Unsupported. |
+| FND-002 | fixed | At 785bc280a0, `check_exact_reachability` takes `GraphCycles`; the untimed `check_model_exact_reachability` passes `GraphCycles::Reject` (topological order, any cycle `Err(Cycle)`); only `document/timed.rs` passes `CollapseNonprogressive`. New test `an_untimed_wait_loop_cannot_certify_a_scheduler_minimum` fails if Reject skipped the topological pass (forged {A:1,T:1} would be Accepted). |
+| FND-003 | fixed | `run_timed` maps `Err(FhError::Cycle)` to `not_yet()` (`fsl-analyze/src/analyze/exact.rs:318-323`); other errors stay `broken()`. |
+| FND-004 | fixed | Both `Graph::with_terminals` error maps in `collapse_zero_time_components` map `UnboundedError::MissingAction => FhError::MissingAction` (`finite_horizon.rs:248`, `:277`). |
+| FND-005 | fixed | `digital.rs` key splits return `fault("digital-route-clock-key-is-digital")` etc. through `collect::<Result<_,_>>()?` / `.transpose()?`; `timed.rs` Workload arms return `ProbabilityDocumentError::Unsupported`. The PR diff adds no `unreachable!`; `mdp.rs:1166` predates the PR and is out of its scope. |
 
 ## Disposition pass summary
 
@@ -89,3 +93,19 @@ Fix: apply end-component collapse only to timed (deadline) graphs. One option is
 ## Disposition pass 2 summary
 
 At head `b42bed4b90`, FND-001's fix still holds: the region checker (`enumerate_region_deadline`, `timed.rs:1803`; digital counterpart at `:1557`) inserts a pending state with no delay or action as a nonaccepting terminal. Its latest outcome is `fixed`, so no new row is due. FND-002 to FND-005 are new and have no outcome yet; they go back to the coder. FND-002 blocks merge: it is a soundness regression on a public checker API that `main` handled correctly.
+
+## New findings (disposition pass 3)
+
+Head `785bc280a0` (rebased on main `d84ed5685b`). Static review; run evidence is the lead's `/tmp/qsl2156-focused-4.log` (exit 0; fsl-replay `probability_certificate` 32 passed; fsl-analyze timed/probabilistic filters 96 passed, 0 failed, 10 ignored). No cargo run in this pass.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | low | `collapse_zero_time_components` maps `UnboundedError::MaxPolicyIterations` (a budget stop), `Singular`, `MissingReward` and `ZeroWeightComponent` to `FhError::Cycle`, and `run_timed` now reports `FhError::Cycle` as `not_yet()`; a zero-time collapse that exhausts `max_policy_iterations` settles as not-yet-implemented instead of a budget stop. | fsl-analyze/src/exact_probabilistic/finite_horizon.rs:302-307; fsl-analyze/src/analyze/exact.rs:320 |
+
+**FND-006 (low).** The FND-003 fix is correct for the reset-loop cycle, but `FhError::Cycle` also carries the policy-iteration budget. A caller who raises `max_policy_iterations` could get a verdict; the refusal tells them the shape is unsupported. Map `MaxPolicyIterations` to the existing limit stop (or a distinct `FhError` variant) before the `Cycle` arm.
+
+Note (no finding): the untimed `Reject` wiring is tested at the function level only; a regression that passed `CollapseNonprogressive` from `check_model_exact_reachability` would not fail `an_untimed_wait_loop_cannot_certify_a_scheduler_minimum`. The one-argument call site was inspected.
+
+## Disposition pass 3 summary
+
+At head `785bc280a0`, FND-002 through FND-005 are fixed. FND-001 stays fixed (latest row). FND-006 is a new low finding and does not block a partial merge.
