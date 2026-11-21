@@ -2589,11 +2589,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
             Some("filament.op.collection.seq") => {
                 // FR-322 `seq`: two bounds outside the binder, the body inside.
-                let [
-                    low_term,
-                    high_term,
-                    CheckedTerm::Binding { name, value, .. },
-                ] = arguments
+                let [low_term, high_term, CheckedTerm::Binding { name, value, .. }] = arguments
                 else {
                     return Err(fault("reader-seq-has-two-bounds-and-binder").into());
                 };
