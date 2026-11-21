@@ -4889,7 +4889,7 @@ mod order_tests {
                     checked.graph().source().clone(),
                     temporal.clause().span(),
                     filament_contract_model::ClockConfiguration::EventPosition {
-                        sequence_authority: "population-sequence".to_owned(),
+                        sequence_authority: "population-sequence".into(),
                     },
                 )
             })
@@ -4973,7 +4973,7 @@ mod order_tests {
             "identity": {"authority": selected.authority, "identity": selected.identity},
             "observation": "current",
             "model": {"identity": "acme/orders"},
-            "populations": [],
+            "populations": [{"population": "ix://acme/orders/widgets", "complete": true, "objects": []}],
         }))
         .unwrap();
         let provision = BTreeMap::from([(selected.clone(), snapshot.clone())]);
@@ -4991,6 +4991,7 @@ mod order_tests {
             objects.population_completeness(),
             legacy_objects.population_completeness()
         );
+        assert!(objects.population_complete("ix://acme/orders/widgets"));
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].model_selection().identity, "acme/orders");
         let ValueType::Reference(expected) =
