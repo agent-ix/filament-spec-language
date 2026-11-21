@@ -870,6 +870,24 @@ fn duplicate_and_unreachable_selected_identities_refuse_at_the_manifest_row() {
         outcome.to_string().contains("dependencies.json"),
         "{outcome}"
     );
+    let extra_package = extra.join("checked-package.json");
+    let mut cyclic: Value =
+        serde_json::from_slice(&std::fs::read(&extra_package).unwrap()).unwrap();
+    cyclic["lock"]["dependency_selections"] = json!([{"identity": "test/zz"}]);
+    std::fs::write(extra_package, serde_json::to_vec(&cyclic).unwrap()).unwrap();
+    let (exit, outcome) = run(directory.path(), json!({"directory": "handoff"}));
+    assert_eq!(exit, 20, "{outcome}");
+    assert_eq!(outcome["cause"], "definition-cycle", "{outcome}");
+    assert_eq!(
+        outcome["details"]["path"], "/lock/dependency_selections/0",
+        "{outcome}"
+    );
+    assert!(
+        outcome
+            .to_string()
+            .contains("dependencies/2/checked-package.json"),
+        "{outcome}"
+    );
     std::fs::write(manifest_file, original).unwrap();
     let (exit, outcome) = run(directory.path(), json!({"directory": "handoff"}));
     assert_eq!(

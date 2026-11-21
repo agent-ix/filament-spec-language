@@ -261,24 +261,41 @@ pub(super) fn admit(
     // to the selected root, before the ready queue performs admission.
     let mut active = BTreeSet::new();
     let mut path = Vec::new();
-    if let Some(name) = root_name {
-        active.insert(name.clone());
-        path.push(name);
-    }
     let mut visited = BTreeSet::new();
-    let mut stack: Vec<_> = root_edges
+    // Root-selected edges take precedence. Remaining manifest rows are then
+    // traversed in their canonical order, so even an unreachable cycle keeps
+    // its actual importing artifact and back-edge rather than a queue error.
+    let mut stack: Vec<_> = pending
         .iter()
-        .enumerate()
         .rev()
-        .map(|(index, identity)| {
+        .map(|(identity, package)| {
             (
                 identity.clone(),
                 false,
-                "checked-package.json".to_owned(),
-                index,
+                format!("{}/checked-package.json", package.directory),
+                0,
             )
         })
         .collect();
+    if let Some(name) = root_name {
+        active.insert(name.clone());
+        path.push(name.clone());
+        stack.push((name, true, "checked-package.json".to_owned(), 0));
+    }
+    stack.extend(
+        root_edges
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, identity)| {
+                (
+                    identity.clone(),
+                    false,
+                    "checked-package.json".to_owned(),
+                    index,
+                )
+            }),
+    );
     while let Some((identity, expanded, file, edge)) = stack.pop() {
         if expanded {
             active.remove(&identity);
