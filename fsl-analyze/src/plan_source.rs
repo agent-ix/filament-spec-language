@@ -660,6 +660,23 @@ impl<'a> SourcePlan<'a> {
         }
     }
 
+    fn policy_charge(&self, charge: filament_exact::Charge) -> Result<(), RuleStop> {
+        let mut meter = self.system.evaluation_meter();
+        if let Some(cause) = meter.cancel().and_then(filament_exact::Cancel::cause) {
+            return Err(RuleStop::Cancelled(cause));
+        }
+        meter.charge(charge).map_err(|incomplete| {
+            match meter.cancel().and_then(filament_exact::Cancel::cause) {
+                Some(cause) => RuleStop::Cancelled(cause),
+                None => self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit),
+            }
+        })?;
+        if let Some(cause) = meter.cancel().and_then(filament_exact::Cancel::cause) {
+            return Err(RuleStop::Cancelled(cause));
+        }
+        Ok(())
+    }
+
     fn policy_capacity<T>(&self, values: &mut Vec<T>, extra: usize) -> Result<(), RuleStop> {
         use filament_exact::{Charge, ChargePoint};
         let needed = values
@@ -670,29 +687,13 @@ impl<'a> SourcePlan<'a> {
             let bytes = needed
                 .checked_mul(std::mem::size_of::<T>())
                 .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
-            let mut meter = self.system.evaluation_meter();
-            if let Some(cause) = meter.cancel().and_then(filament_exact::Cancel::cause) {
-                return Err(RuleStop::Cancelled(cause));
-            }
-            meter
-                .charge(
-                    Charge::new(ChargePoint::ModelCandidate)
-                        .work(Integer::zero())
-                        .results(u64::try_from(bytes).map_err(|_| {
-                            RuleStop::Cancelled(filament_exact::CancelCause::Requested)
-                        })?),
-                )
-                .map_err(|incomplete| {
-                    match meter.cancel().and_then(filament_exact::Cancel::cause) {
-                        Some(cause) => RuleStop::Cancelled(cause),
-                        None => {
-                            self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit)
-                        }
-                    }
-                })?;
-            if let Some(cause) = meter.cancel().and_then(filament_exact::Cancel::cause) {
-                return Err(RuleStop::Cancelled(cause));
-            }
+            self.policy_charge(
+                Charge::new(ChargePoint::ModelCandidate)
+                    .work(Integer::zero())
+                    .results(u64::try_from(bytes).map_err(|_| {
+                        RuleStop::Cancelled(filament_exact::CancelCause::Requested)
+                    })?),
+            )?;
             values
                 .try_reserve_exact(needed - values.len())
                 .map_err(|_| RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
@@ -1176,6 +1177,10 @@ impl PlanRules for SourcePlan<'_> {
 
     fn push_policy_index(&mut self, bucket: &mut Vec<usize>, node: usize) -> Result<(), RuleStop> {
         if self.positive_policies && !self.policies.is_empty() {
+            self.policy_charge(
+                filament_exact::Charge::new(filament_exact::ChargePoint::ModelCandidate)
+                    .work(Integer::from(1)),
+            )?;
             self.policy_capacity(bucket, 1)?;
         }
         bucket.push(node);

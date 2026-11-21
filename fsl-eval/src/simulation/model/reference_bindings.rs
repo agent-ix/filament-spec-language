@@ -42,13 +42,34 @@ pub(crate) enum ReferenceBinding {
 }
 
 /// One immutable subject's reference-literal decisions.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct ReferenceBindings {
     base: std::sync::Arc<BTreeMap<ReferenceLiteralKey, ReferenceBinding>>,
     additional: Vec<(ReferenceLiteralKey, ReferenceBinding)>,
 }
 
+impl PartialEq for ReferenceBindings {
+    fn eq(&self, other: &Self) -> bool {
+        self.base
+            .keys()
+            .chain(self.additional.iter().map(|(key, _)| key))
+            .chain(other.base.keys())
+            .chain(other.additional.iter().map(|(key, _)| key))
+            .all(|key| self.borrowed(key) == other.borrowed(key))
+    }
+}
+impl Eq for ReferenceBindings {}
+
 impl ReferenceBindings {
+    fn borrowed(&self, key: &ReferenceLiteralKey) -> Option<&ReferenceBinding> {
+        self.additional
+            .iter()
+            .rev()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value)
+            .or_else(|| self.base.get(key))
+    }
+
     fn of_map(base: BTreeMap<ReferenceLiteralKey, ReferenceBinding>) -> Self {
         Self {
             base: std::sync::Arc::new(base),

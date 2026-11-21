@@ -815,7 +815,7 @@ pub enum PlanSearchError {
 }
 
 /// A search node's identity (FSpec FR-801 "Search nodes").
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NodeKey {
     pub(crate) state: Vec<u8>,
     pub(crate) monitors: Vec<Vec<u8>>,

@@ -2481,16 +2481,34 @@ impl<'a> ModelSystem<'a> {
         for (_, population) in &admitting {
             budget.work(1)?;
             if self.universe_with_budget(population, &budget)?.is_none() {
-                let node = fsl_semantics::model::key::population_node_key(population)
-                    .map_err(|_| PolicyStateError::Invalid)?;
                 budget.growth(&mut unbounded, 1)?;
-                unbounded.push((node, ValueType::Population(None)));
+                unbounded.push(*population);
             }
         }
-        let mut roots = Vec::new();
-        budget.growth(&mut roots, unbounded.len())?;
-        roots.extend(unbounded.iter().map(|(node, root)| (node.clone(), root)));
-        crate::simulation::not_simulated::check_requires_bound(&roots, self.types, u64::MAX)?;
+        let extent = fsl_semantics::family::classify_unbounded_populations_with(
+            &unbounded,
+            &mut |units| {
+                budget.work(usize::try_from(units).map_err(|_| PolicyStateError::Invalid)?)
+            },
+            &mut |bytes| budget.reserve(bytes),
+        )
+        .map_err(|error| match error {
+            filament_exact::NodeKeyConstructionError::Policy(error) => error,
+            filament_exact::NodeKeyConstructionError::Construction(
+                filament_exact::InvalidNodeKey::Allocation { requested },
+            ) => PolicyStateError::Encoding(quire_canonical::Error::Allocation { requested }),
+            filament_exact::NodeKeyConstructionError::Construction(_) => PolicyStateError::Invalid,
+        })?;
+        if let fsl_semantics::family::ClaimExtent::Unbounded(domains) = extent {
+            return Err(crate::simulation::NotSimulated::RequiresBound(
+                crate::simulation::RequiresBound {
+                    domains: Some(domains),
+                    capacities: Vec::new(),
+                    clock_references: Vec::new(),
+                },
+            )
+            .into());
+        }
         // Insertion sort keeps the byte-comparison schedule caller-controlled:
         // every inspected pair is admitted before comparison and movement.
         for position in 1..admitting.len() {
