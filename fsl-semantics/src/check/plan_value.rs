@@ -33,7 +33,7 @@ use crate::value::enumeration::{
 use crate::value::semantic_node::{NodeOwner, OwnerSelection, OwnerSubject};
 
 /// The package component of every node key of the plan value's types.
-const PLAN_PACKAGE: &str = "filament.plan-value";
+pub(crate) const PLAN_PACKAGE: &str = "filament.plan-value";
 
 /// One operation a plan step may invoke.
 #[derive(Clone, Debug)]
@@ -86,13 +86,14 @@ pub struct PlanShape {
     pub operations: Vec<PlanOperation>,
     /// The `Alias::Op` enum: one case per operation name.
     pub operation_enum: EnumBinding,
+    argument_fields: Vec<(String, ValueType)>,
 }
 
 impl PlanShape {
     /// The record fields of `arguments` and the type each carries: the
     /// parameters of every operation that name one type everywhere.
-    pub fn argument_fields(&self) -> Vec<(String, ValueType)> {
-        argument_fields(&self.operations)
+    pub fn argument_fields(&self) -> &[(String, ValueType)] {
+        &self.argument_fields
     }
 }
 
@@ -140,10 +141,7 @@ fn key(path: &[&str]) -> Option<NodeKey> {
 /// `value_type`: a value a step's canonical argument text reads back to
 /// without an object environment.
 fn carried(value_type: &ValueType) -> bool {
-    matches!(
-        value_type,
-        ValueType::Boolean | ValueType::Integer | ValueType::Int(_)
-    )
+    matches!(value_type, ValueType::Boolean | ValueType::Int(_))
 }
 
 fn argument_fields(operations: &[PlanOperation]) -> Vec<(String, ValueType)> {
@@ -290,40 +288,82 @@ pub(crate) fn declare(
         CompositeShape::Record(state_fields),
     ));
 
-    // The operations, in declaration order of the object types' key order.
+    // The selected model's original operation declaration order is also the
+    // planner's canonical step order; unrelated selected models contribute none.
     let mut operations = Vec::new();
-    for object in types.object_types() {
-        for operation in scope.operations().declared_by(object.key()) {
-            operations.push(PlanOperation {
-                declaring: object.key(),
-                name: operation.name().to_owned(),
-                parameters: operation.parameters().to_vec(),
+    let mut cases = Vec::new();
+    let mut arguments_seen = BTreeMap::new();
+    for (model, declaring, name) in &named.plan_operations {
+        if Some(model.as_str()) != alias.as_deref() {
+            continue;
+        }
+        let operation = scope
+            .operations()
+            .declared_by(declaring.clone())
+            .iter()
+            .find(|operation| operation.name() == name)
+            .ok_or_else(|| unsupported(location))?;
+        for (parameter, value_type) in operation.parameters() {
+            let reason = if !carried(value_type) {
+                Some(format!(
+                    "operation {name} parameter {parameter} of type {value_type:?}; source planning currently carries only Boolean and finite Int parameters"
+                ))
+            } else if arguments_seen
+                .get(parameter)
+                .is_some_and(|first| first != value_type)
+            {
+                Some(format!(
+                    "operation parameter {parameter} has conflicting types across operations"
+                ))
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                return Err(CheckRefusal {
+                    location: location.clone(),
+                    cause: CheckCause::PlanUnsupported {
+                        form: reason,
+                        span: form.grammar.span,
+                    },
+                });
+            }
+            arguments_seen.insert(parameter.clone(), value_type.clone());
+        }
+        if !operation.effect().creates.is_empty() {
+            return Err(CheckRefusal {
+                location: location.clone(),
+                cause: CheckCause::PlanUnsupported {
+                    form: format!(
+                        "object creation by operation {name} needs a finite planning key universe"
+                    ),
+                    span: form.grammar.span,
+                },
             });
         }
+        if !cases.contains(name) {
+            cases.push(name.clone());
+        }
+        operations.push(PlanOperation {
+            declaring: declaring.clone(),
+            name: name.clone(),
+            parameters: operation.parameters().to_vec(),
+        });
     }
-    let cases: BTreeSet<String> = operations
-        .iter()
-        .map(|operation| operation.name.clone())
-        .collect();
     let enum_name = match &alias {
         Some(alias) => format!("{alias}::Op"),
         None => "Op".to_owned(),
     };
-    let operation_enum = operation_enum(
-        &enum_name,
-        synthesis,
-        cases.into_iter().collect(),
-        source,
-        package_name,
-    )
-    .ok_or_else(|| unsupported(location))?;
+    let operation_enum = operation_enum(&enum_name, synthesis, cases, source, package_name)
+        .ok_or_else(|| unsupported(location))?;
 
+    let argument_fields = argument_fields(&operations);
     let arguments = key(&[synthesis, "arguments"]).ok_or_else(|| unsupported(location))?;
     composites.push(CompositeDeclaration::new(
         arguments.clone(),
         "arguments",
         CompositeShape::Record(
-            argument_fields(&operations)
+            argument_fields
+                .clone()
                 .into_iter()
                 .map(|(name, value_type)| {
                     FieldDeclaration::new(name, value_type, Presence::Optional)
@@ -402,6 +442,7 @@ pub(crate) fn declare(
             populations,
             operations,
             operation_enum,
+            argument_fields,
         },
         scope,
     })

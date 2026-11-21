@@ -816,7 +816,8 @@ impl Run<'_, '_, '_> {
     /// enumeration's.
     fn narrowing(&self) -> Result<Option<Narrowing>, ExpansionStop> {
         let effect = self.effect();
-        if self.postconditions.is_empty()
+        if self.walk.system.shares_evaluation_meter()
+            || self.postconditions.is_empty()
             || !effect.creates.is_empty()
             || !effect.deletes.is_empty()
             || effect.deletes_receiver
@@ -861,7 +862,7 @@ impl Run<'_, '_, '_> {
             let found = self.walk.system.evaluator().evaluate_post_targets(
                 &info.qualified,
                 &observations,
-                &mut || self.walk.meter(),
+                &mut || filament_exact::Meter::new(self.walk.system.meter),
             );
             let Ok(found) = found else {
                 return Ok(None);

@@ -139,11 +139,13 @@ pub(super) struct Walk<'s, 'a> {
 pub(super) type PostPresence<'s> = &'s dyn Fn(&ModelState) -> PlacePresences;
 
 impl Walk<'_, '_> {
-    pub(super) fn meter(&self) -> filament_exact::Meter {
-        let meter = filament_exact::Meter::new(self.system.meter);
-        match &self.cancel {
-            Some(cancel) => meter.with_cancel(cancel.clone()),
-            None => meter,
+    pub(super) fn meter(&self) -> super::EvaluationMeter<'_> {
+        let meter = self.system.evaluation_meter();
+        match (meter, &self.cancel) {
+            (super::EvaluationMeter::Local(meter), Some(cancel)) => {
+                super::EvaluationMeter::Local(meter.with_cancel(cancel.clone()))
+            }
+            (meter, _) => meter,
         }
     }
     /// The references of every object of the state, in row order.
@@ -308,13 +310,18 @@ pub(super) fn expand_state(
     state: &ModelSimState,
     enforcement: Option<&Enforcement<'_>>,
 ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
+    let cancel = system
+        .request_cancel
+        .lock()
+        .expect("request cancellation lock")
+        .clone();
     expand(
         system,
         state,
         enforcement,
         None,
         ExpansionSelection::default(),
-        None,
+        cancel.as_ref(),
         None,
     )
 }
@@ -519,7 +526,11 @@ pub(super) fn identities_of(
     let mut budget = Budget {
         used: 0,
         max: system.limits.max_candidates,
-        cancel: None,
+        cancel: system
+            .request_cancel
+            .lock()
+            .expect("request cancellation lock")
+            .clone(),
     };
     let mut found = Vec::new();
     for row in &walk.rows {

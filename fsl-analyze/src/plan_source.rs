@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 use filament_checked::node::{NodeKind, Visit};
 use filament_exact::{
-    CollectionKind, CollectionType, EnumMember, FieldValue, Integer, Meter, Outcome, Rational,
+    CollectionKind, CollectionType, EnumMember, FieldValue, Integer, Outcome, Rational,
     ScalarLimits, Value, ValueType, from_admitted, from_admitted_slots,
 };
 use filament_semantic_value::declaration::CompositeShape;
@@ -30,9 +30,45 @@ use fsl_semantics::model::state::StateObject;
 
 use crate::plan_search::{Direction, MonitorStep, ObjectiveKind, PlanRules, PlanView, RuleStop};
 
+/// A numeric objective family whose planning ordering and certificate
+/// implementation is not available in this source adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnsupportedObjectiveFamily {
+    /// IEEE floating-point objectives, including NaNs.
+    Float,
+    /// Unit-bearing quantity objectives.
+    Quantity,
+}
+
+impl std::fmt::Display for UnsupportedObjectiveFamily {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Float => "Float",
+            Self::Quantity => "Quantity",
+        })
+    }
+}
+
 /// Why a checked synthesis cannot be judged as a plan.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum PlanSourceError {
+    /// The expression is well typed, but its numeric ordering and
+    /// certificate family is not implemented by the source planner.
+    #[error("plan objectives of numeric family {family} are not yet implemented")]
+    UnsupportedObjective {
+        /// The unsupported numeric family.
+        family: UnsupportedObjectiveFamily,
+        /// The checked objective expression's exact source location.
+        location: filament_semantic_value::location::ExpressionLocation,
+    },
+    /// An admitted source form whose plan adapter is not implemented yet.
+    #[error("source planning of {form} is not yet implemented")]
+    UnsupportedForm {
+        /// The specific unsupported form.
+        form: String,
+        /// The authored expression that selects it.
+        location: filament_semantic_value::location::ExpressionLocation,
+    },
     /// The declaration's grammar is not a model object type.
     #[error("the synthesis `{0}` is not a plan synthesis")]
     NotAPlan(String),
@@ -49,8 +85,8 @@ pub enum ArgumentKey {
     Boolean(bool),
     /// An integer argument.
     Integer(Integer),
-    /// Any other argument, by its canonical text.
-    Text(String),
+    /// An invalid producer argument; building/rendering the step fails closed.
+    Invalid,
 }
 
 impl ArgumentKey {
@@ -58,7 +94,7 @@ impl ArgumentKey {
         match argument_value(text) {
             Some(Value::Boolean(value)) => Self::Boolean(value),
             Some(Value::Integer(value)) => Self::Integer(value),
-            _ => Self::Text(text.to_owned()),
+            _ => Self::Invalid,
         }
     }
 }
@@ -91,7 +127,6 @@ pub struct SourcePlan<'a> {
     plan: &'a CheckedPlan,
     system: &'a ModelSystem<'a>,
     limits: ScalarLimits,
-    meter: Meter,
     /// The index in the plan value's operation list of each operation text a
     /// transition carries.
     operations: BTreeMap<String, usize>,
@@ -104,7 +139,8 @@ pub struct SourcePlan<'a> {
     /// (FSpec FR-803).
     policies: Vec<&'a TemporalClauseNode>,
     /// The states of each policy monitor's prefix, by monitor id: a policy
-    /// monitor's canonical state is the id of the prefix it has read.
+    /// monitor id is used only for zero-length closed source-policy reads.
+    /// Positive-length source policies refuse until canonical monitors exist.
     traces: Vec<Vec<ModelSimState>>,
     trace_ids: BTreeMap<(usize, Vec<Vec<u8>>), usize>,
     fault: Option<String>,
@@ -126,6 +162,22 @@ impl<'a> SourcePlan<'a> {
         let plan = synthesis
             .plan()
             .ok_or_else(|| PlanSourceError::NotAPlan(synthesis.name().to_owned()))?;
+        if let Some(body) = synthesis.objective() {
+            let family = match body.root().value_type() {
+                ValueType::Float(_) => Some(UnsupportedObjectiveFamily::Float),
+                ValueType::Quantity(_)
+                | ValueType::BoundedQuantity(_)
+                | ValueType::CarriedQuantity(_) => Some(UnsupportedObjectiveFamily::Quantity),
+                _ => None,
+            };
+            if let Some(family) = family {
+                return Err(PlanSourceError::UnsupportedObjective {
+                    family,
+                    location: body.root().location().clone(),
+                });
+            }
+        }
+        system.share_evaluation_meter(limits);
         let shape = plan.shape();
         let mut operations = BTreeMap::new();
         for (declaring, name, text) in system.operations() {
@@ -141,9 +193,6 @@ impl<'a> SourcePlan<'a> {
             _ => Direction::Minimize,
         };
         let plan_key = shape.plan.clone();
-        let reads = |body: &CheckedBody, record: &filament_exact::NodeKey, field: &str| {
-            reads_field(body, record, field)
-        };
         let kind = match synthesis.objective() {
             None => ObjectiveKind::StepSum,
             Some(body) if is_step_sum(body, &plan_key) => ObjectiveKind::StepSum,
@@ -151,26 +200,71 @@ impl<'a> SourcePlan<'a> {
         };
         // FSpec FR-801: prefixes with equal nodes merge unless the goal, or
         // an objective that is no per-step sum, reads `steps`.
-        let merges = !reads(synthesis.satisfies(), &plan_key, "steps")
+        let merges = !reads_field(synthesis.satisfies(), &plan_key, "steps")
             && (kind == ObjectiveKind::StepSum
                 || synthesis
                     .objective()
-                    .is_none_or(|body| !reads(body, &plan_key, "steps")));
+                    .is_none_or(|body| !reads_field(body, &plan_key, "steps")));
         let attributes = |body: &CheckedBody| {
             shape
                 .inline
                 .iter()
-                .any(|name| reads(body, &shape.state, name))
+                .any(|name| reads_field(body, &shape.state, name))
         };
         let goal_reads_final_attributes = attributes(synthesis.satisfies());
         let objective_reads_final_attributes = synthesis.objective().is_some_and(attributes);
+        if goal_reads_final_attributes || objective_reads_final_attributes {
+            use fsl_eval::simulation::TransitionSystem;
+            let unique = system.initial().iter().all(|state| {
+                state
+                    .state()
+                    .populations
+                    .values()
+                    .flat_map(|objects| objects.values())
+                    .filter(|object| {
+                        system
+                            .type_identity(&object.type_identity)
+                            .is_some_and(|identity| {
+                                plan.scope()
+                                    .types()
+                                    .conforms(identity, shape.grammar.clone())
+                            })
+                    })
+                    .count()
+                    == 1
+            });
+            let deletes = shape.operations.iter().any(|operation| {
+                plan.scope()
+                    .operations()
+                    .declared_by(operation.declaring.clone())
+                    .iter()
+                    .find(|declaration| declaration.name() == operation.name)
+                    .is_some_and(|declaration| {
+                        let effect = declaration.effect();
+                        !effect.deletes.is_empty()
+                            || effect.deletes_receiver
+                            || !effect.deletes_arguments.is_empty()
+                    })
+            });
+            if !unique || deletes {
+                let body = if goal_reads_final_attributes {
+                    synthesis.satisfies()
+                } else {
+                    synthesis.objective().expect("objective attribute read")
+                };
+                return Err(PlanSourceError::UnsupportedForm {
+                    form: "ambiguous grammar-object state-field projection (requires exactly one stable grammar object)".to_owned(),
+                    location: body.root().location().clone(),
+                });
+            }
+        }
+
         Ok(Self {
             package,
             synthesis,
             plan,
             system,
             limits,
-            meter: Meter::new(limits),
             operations,
             direction,
             kind,
@@ -198,9 +292,9 @@ impl<'a> SourcePlan<'a> {
     }
 
     /// The name of the operation `step` invokes.
-    pub fn operation_name(&self, step: &ModelTransition) -> &str {
+    pub fn operation_name(&self, step: &ModelTransition) -> Option<&str> {
         self.operation(step)
-            .map_or("", |operation| operation.name.as_str())
+            .map(|operation| operation.name.as_str())
     }
 
     /// The plan value of `view`, its steps numbered from `first`.
@@ -391,7 +485,7 @@ impl<'a> SourcePlan<'a> {
             self.plan.scope(),
             body,
             vec![Some(plan)],
-            &mut self.meter,
+            &mut self.system.evaluation_meter(),
         );
         match evaluation {
             Ok(evaluation) => match evaluation.outcome {
@@ -404,17 +498,31 @@ impl<'a> SourcePlan<'a> {
                         value: incomplete.limit,
                     })
                 }
-                _ => Ok(Evaluated::Undefined),
+                filament_eval::FamilyOutcome::Evaluated(Outcome::Undefined(_)) => {
+                    Ok(Evaluated::Undefined)
+                }
+                filament_eval::FamilyOutcome::Evaluated(Outcome::Refused(_)) => {
+                    self.fault.get_or_insert_with(|| {
+                        "a checked plan expression refused evaluation".to_owned()
+                    });
+                    Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested))
+                }
+                filament_eval::FamilyOutcome::FamilyEvaluated(_) => {
+                    self.fault.get_or_insert_with(|| "a checked plan expression returned a family-owned result unsupported by this adapter".to_owned());
+                    Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested))
+                }
             },
-            Err(fault) => {
-                self.fault.get_or_insert_with(|| format!("{fault:?}"));
-                Ok(Evaluated::Undefined)
+            Err(_fault) => {
+                self.fault.get_or_insert_with(|| {
+                    "a checked plan expression violated its evaluation contract".to_owned()
+                });
+                Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested))
             }
         }
     }
 
     /// The states a policy monitor has read.
-    fn prefix(&self, monitor: &[u8]) -> Vec<ModelSimState> {
+    fn prefix(&mut self, monitor: &[u8]) -> Result<Vec<ModelSimState>, RuleStop> {
         <[u8; 8]>::try_from(monitor)
             .ok()
             .and_then(|id| {
@@ -422,7 +530,11 @@ impl<'a> SourcePlan<'a> {
                     .get(usize::try_from(u64::from_le_bytes(id)).ok()?)
             })
             .cloned()
-            .unwrap_or_default()
+            .ok_or_else(|| {
+                self.fault
+                    .get_or_insert_with(|| "a policy monitor id is unknown".to_owned());
+                RuleStop::Cancelled(filament_exact::CancelCause::Requested)
+            })
     }
 
     /// Policy `policy` after reading `state` following `prefix`: rejected
@@ -438,7 +550,13 @@ impl<'a> SourcePlan<'a> {
         let Some(&node) = self.policies.get(policy) else {
             return Ok(MonitorStep::Reject);
         };
-        match read_clause(self.system, node, &prefix, false, &mut self.meter) {
+        match read_clause(
+            self.system,
+            node,
+            &prefix,
+            false,
+            &mut self.system.evaluation_meter(),
+        ) {
             Ok(ClauseReading::Violated) => return Ok(MonitorStep::Reject),
             Ok(ClauseReading::Incomplete { counter, value }) => {
                 return Err(RuleStop::Accounting { counter, value });
@@ -608,7 +726,7 @@ impl PlanRules for SourcePlan<'_> {
         monitor: &[u8],
         state: &ModelSimState,
     ) -> Result<MonitorStep, RuleStop> {
-        let prefix = self.prefix(monitor);
+        let prefix = self.prefix(monitor)?;
         self.advance(policy, prefix, state)
     }
 
@@ -618,12 +736,18 @@ impl PlanRules for SourcePlan<'_> {
         monitor: &[u8],
         _last: &ModelSimState,
     ) -> Result<bool, RuleStop> {
-        let states = self.prefix(monitor);
+        let states = self.prefix(monitor)?;
         let Some(&node) = self.policies.get(policy) else {
             return Ok(false);
         };
         Ok(
-            match read_clause(self.system, node, &states, true, &mut self.meter) {
+            match read_clause(
+                self.system,
+                node,
+                &states,
+                true,
+                &mut self.system.evaluation_meter(),
+            ) {
                 Ok(ClauseReading::Holds) => true,
                 Ok(ClauseReading::Incomplete { counter, value }) => {
                     return Err(RuleStop::Accounting { counter, value });
@@ -697,6 +821,6 @@ impl PlanRules for SourcePlan<'_> {
     }
 
     fn begin_replay(&mut self) {
-        self.meter = Meter::new(self.limits);
+        self.system.share_evaluation_meter(self.limits);
     }
 }

@@ -2607,6 +2607,7 @@ pub(crate) struct NamedScope {
     /// Every model alias of the unit: a two-segment name under one that
     /// names no population is missing at its second segment.
     pub(crate) aliases: Vec<String>,
+    pub(crate) plan_operations: Vec<(String, EffectiveId, String)>,
 }
 
 /// One population a population position may name (FR-391).
@@ -2634,6 +2635,7 @@ impl NamedScope {
         let mut populations = Vec::new();
         let mut ambiguous = Vec::new();
         let mut aliases = Vec::new();
+        let mut plan_operations = Vec::new();
         for model in models {
             let Some(alias) = model.alias() else {
                 continue;
@@ -2643,6 +2645,12 @@ impl NamedScope {
                 continue;
             }
             aliases.push(alias.to_owned());
+            plan_operations.extend(
+                model
+                    .plan_operation_order()
+                    .into_iter()
+                    .map(|(owner, name)| (alias.to_owned(), owner, name)),
+            );
             if scope.names_enum(alias) {
                 ambiguous.push(alias.to_owned());
             }
@@ -2662,6 +2670,7 @@ impl NamedScope {
             populations,
             ambiguous,
             aliases,
+            plan_operations,
         }
     }
 
@@ -3226,7 +3235,10 @@ impl<'a> Typer<'a> {
     /// node, never as its checked interval.
     fn equality_operand_lowers_as_integer(&self, operand: &TypedOperand) -> bool {
         operand.conversion_target.is_none()
-            && matches!(operand.node.value_type, ValueType::Int(_) | ValueType::Integer)
+            && matches!(
+                operand.node.value_type,
+                ValueType::Int(_) | ValueType::Integer
+            )
             && self.lowers_as_integer(&operand.node)
     }
 
@@ -5699,8 +5711,12 @@ impl<'a> Typer<'a> {
             .ok_or_else(|| {
                 refuse(
                     location,
-                    if key.package() == "filament.plan-value" {
-                        CheckCause::MissingName(field.into())
+                    if key.package() == super::plan_value::PLAN_PACKAGE {
+                        CheckCause::PlanUnknownField {
+                            owner: declaration.name().into(),
+                            field: field.into(),
+                            span: member_span,
+                        }
                     } else {
                         CheckCause::UnknownField {
                             owner: declaration.name().into(),

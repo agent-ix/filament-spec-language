@@ -20,18 +20,18 @@ use filament_exact::{
 };
 
 use super::{
-    generated_location, identifiers, refuse, require_admitted, type_declaration, Lowering,
-    NodeContent,
+    Lowering, NodeContent, generated_location, identifiers, refuse, require_admitted,
+    type_declaration,
 };
 use crate::check::assemble::DimensionEquivalence;
 use crate::check::family::OccurrenceRole;
 
+use crate::check::VariantTypeDeclaration;
 use crate::check::node_key::{
     Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LeafTerm, MemberTerm, ModelOwner,
     NodeRef, NodeTag, Owner,
 };
 use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
-use crate::check::VariantTypeDeclaration;
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, NativeValueType, PopulationRecord,
     ValueTypeRef,
@@ -582,7 +582,7 @@ impl AdmittedModel {
     pub(crate) fn admitted_connection_ends(&self, key: &DeclarationKey) -> Option<[ValueType; 2]> {
         use crate::model::accounting::Meter;
         use crate::model::systems::{
-            check_connection, ConnectionCheckOutcome, ConnectionOutcome, Kind,
+            ConnectionCheckOutcome, ConnectionOutcome, Kind, check_connection,
         };
 
         let DomainPackageRecord::Relationship(relationship) = self.records.get(key)? else {
@@ -1472,6 +1472,22 @@ impl AdmittedModel {
             && self.types == other.types
     }
 
+    /// Direct operations in the admitted domain document's declaration order.
+    pub(crate) fn plan_operation_order(&self) -> Vec<(EffectiveId, String)> {
+        self.index
+            .package()
+            .records
+            .iter()
+            .filter_map(|record| {
+                let DomainPackageRecord::OperationMember(operation) = record else {
+                    return None;
+                };
+                self.object_type_id(&operation.owner)?;
+                self.operation_anchor_declaration(&operation.key)
+            })
+            .collect()
+    }
+
     /// Every object type of this package: its declaration key and its
     /// effective identity.
     pub(crate) fn object_types(&self) -> impl Iterator<Item = (&DeclarationKey, EffectiveId)> {
@@ -1824,11 +1840,11 @@ impl AdmittedModel {
             match named {
                 ValueTypeRef::Clock => break "ix://filament/native/Clock".to_owned(),
                 ValueTypeRef::Native(native) => {
-                    break format!("ix://filament/native/{}", native.as_str())
+                    break format!("ix://filament/native/{}", native.as_str());
                 }
                 ValueTypeRef::Unit(name) => break name.clone(),
                 ValueTypeRef::Resolved(value_type) => {
-                    break self.resolved_identity(value_type).unwrap_or_default()
+                    break self.resolved_identity(value_type).unwrap_or_default();
                 }
                 ValueTypeRef::Package(key) => match self.records.get(key) {
                     Some(DomainPackageRecord::AliasType(alias)) if steps <= self.records.len() => {
@@ -3311,7 +3327,7 @@ impl<'a> Lowering<'a> {
                         .map(|(root, exponent)| (root.clone(), exponent.clone()))
                         .collect(),
                     Some(QuantityUnit::Declared(_)) | None => {
-                        return Err(fault(location, KeyFault::UnheldUnit(unit)))
+                        return Err(fault(location, KeyFault::UnheldUnit(unit)));
                     }
                 };
                 let mut members = Vec::with_capacity(terms.len());

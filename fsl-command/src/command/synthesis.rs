@@ -656,12 +656,24 @@ impl Requested {
             member,
             started,
         };
-        // A member without `initial` is a value synthesis's: its refusals
-        // come before the package is read. A plan request always names its
-        // initial snapshot.
-        if !requested.has_initial() {
-            requested.value()?;
+        // Validate the closed union of request members before source intake.
+        // The checked declaration, never the presence of a file member,
+        // determines whether the request selects value or plan synthesis.
+        let mut early = requested.member.clone();
+        if let Some(limits) = early.get_mut("limits").and_then(Value::as_object_mut) {
+            if limits.contains_key("max_candidates") {
+                read_limit(limits, "max_candidates", DEFAULT_MAX_CANDIDATES)?;
+                limits.remove("max_candidates");
+            }
         }
+        super::plan_request::PlanRequest::read(&early, "/request/synthesis").map_err(
+            |refusal| RunCause::SynthesisRequest {
+                reason: refusal.to_string(),
+                path: refusal.pointer,
+                code: Code::InvalidRuntimeInput,
+                cause: refusal.cause.name(),
+            },
+        )?;
         Ok(requested)
     }
 
@@ -1391,9 +1403,9 @@ fn exclusive_member(request: &super::wire::Request) -> super::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ascending, run_value_synthesis, search_integer_domain, select_claim_rows,
         CandidateEvaluator, Direction, Halt, ObjectiveSpec, SearchDisposition, SearchLimits,
-        SearchResult, StopCause, SynthesisOutcomeDocument, ValueRun,
+        SearchResult, StopCause, SynthesisOutcomeDocument, ValueRun, ascending,
+        run_value_synthesis, search_integer_domain, select_claim_rows,
     };
     use filament_exact::{Integer, IntegerInterval};
     use ix_trace_rs::trace;
@@ -1733,7 +1745,7 @@ mod tests {
     /// last candidate still leaves it `validated`.
     #[test]
     #[trace("TC-2104", "FR-754-AC-3")]
-    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-5")]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
     fn the_check_is_not_charged_to_the_search_work_limit() {
         let mut evaluator = pick(|c| c == 7, |c| c, None);
         let (outcome, exit) = run_pick(

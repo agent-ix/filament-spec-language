@@ -324,7 +324,11 @@ population nodes: Node;
     assert_eq!(relationship["sourceEnd"]["role"], "next");
     assert!(relationship["targetEnd"].get("role").is_none());
     assert_eq!(relationship["sourceEnd"]["multiplicity"]["lower"], 0);
-    assert!(relationship["sourceEnd"]["multiplicity"].get("upper").is_none());
+    assert!(
+        relationship["sourceEnd"]["multiplicity"]
+            .get("upper")
+            .is_none()
+    );
     assert_eq!(document["populations"][0]["extent"], "closed");
     let packages = package_input([source.as_bytes()]).expect("model unit becomes package input");
     let (_, admitted) = admit(
@@ -365,7 +369,14 @@ population nodes: Node;
 #[test]
 fn a_model_unit_names_every_native_type() {
     let natives = [
-        "Boolean", "Integer", "Timestamp", "UUID", "String", "Bytes", "Duration", "JsonObject",
+        "Boolean",
+        "Integer",
+        "Timestamp",
+        "UUID",
+        "String",
+        "Bytes",
+        "Duration",
+        "JsonObject",
         "Decimal[0, 2; 10, 2; exact]",
     ];
     let fields = natives
@@ -1050,19 +1061,31 @@ population orders: Order;
     let _checked_document = checked_domain_package("example/shop", &packages);
     let mut declarations = selected_unit_declarations("example/shop", &packages)
         .expect("the named type's compiled document passes strict intake");
-    declarations.link_dispatch(ModelNormalizationLimits::default()).expect("dispatch links");
-    let graph = declarations.check(
-        CheckMode::Linked, CheckingLimits::default(),
-        &crate::reward_evaluator::ZeroRewardEvaluator,
-    ).expect("the invariant over the named bounded field checks");
+    declarations
+        .link_dispatch(ModelNormalizationLimits::default())
+        .expect("dispatch links");
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect("the invariant over the named bounded field checks");
     let types = graph.scope().types();
-    let order = types.object_types().find(|object| object.name() == "Order")
-        .expect("the model declares Order");
+    let order = types
+        .object_types()
+        .find(|object| object.name() == "M::Order")
+        .expect("the selected model declares M::Order");
     let attributes = types.attributes(order.key()).expect("Order has attributes");
-    let total = attributes.iter().find(|attribute| attribute.field().name() == "total")
+    let total = attributes
+        .iter()
+        .find(|attribute| attribute.field().name() == "total")
         .expect("Order declares total");
     let filament_exact::ValueType::Int(bounds) = total.field().value_type() else {
-        panic!("the named field retains its integer range: {:?}", total.field().value_type());
+        panic!(
+            "the named field retains its integer range: {:?}",
+            total.field().value_type()
+        );
     };
     assert_eq!(bounds.lower().to_string(), "0");
     assert_eq!(bounds.upper().to_string(), "3");

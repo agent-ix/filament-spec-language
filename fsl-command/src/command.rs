@@ -6,8 +6,8 @@ mod clause;
 mod export;
 mod flow;
 mod items;
-pub mod monitor;
 mod model_based_test;
+pub mod monitor;
 mod output;
 mod output_file;
 mod package_run;
@@ -812,6 +812,20 @@ pub enum RunCause {
         /// Why the member is refused.
         reason: String,
     },
+    /// A well-typed source objective whose numeric planning family is unavailable.
+    #[error("{}", .diagnostic.message)]
+    SynthesisUnsupported {
+        /// The refusal at the authored objective expression.
+        diagnostic: Box<Diagnostic>,
+    },
+    /// The original typed admission defect of the authored initial snapshot.
+    #[error("initial snapshot {file} refused: {}/{}", .record.catalog.code(), .record.catalog.cause())]
+    SynthesisSnapshot {
+        /// The supplied file.
+        file: String,
+        /// Unchanged catalog, named fields, kernel cause and typed path.
+        record: Box<fsl_semantics::model::observation::AdmissionRecord>,
+    },
     /// FR-752: a typed model-based-test request refusal with its catalog code
     /// and cause.
     #[error("invalid model_based_test request member {path}: {cause}")]
@@ -1169,6 +1183,7 @@ impl RunCause {
             Self::Limit(_) => Code::ResourceExhausted,
             Self::Identifier { .. } => Code::InvalidIdentifier,
             Self::Native(error) => error.code,
+            Self::SynthesisUnsupported { .. } => Code::UnsupportedConstruct,
             Self::Source(error) => error.diagnostic.code,
             Self::ModelUnit(error) => {
                 Code::from_code(error.diagnostic.code.as_str()).unwrap_or(Code::InvalidModelBinding)
@@ -1197,7 +1212,7 @@ impl RunCause {
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
             Self::TlCorrespondence { .. } | Self::IntegerDivisionLaw { .. } => Code::UnknownProfile,
             Self::TlClause { .. } => Code::MissingDeclaration,
-            Self::TlSubject(record) => {
+            Self::SynthesisSnapshot { record, .. } | Self::TlSubject(record) => {
                 Code::from_code(record.catalog.code()).unwrap_or(Code::InvalidRuntimeInput)
             }
             Self::TlFault(_) => Code::RuntimeInvariant,
@@ -1290,7 +1305,8 @@ impl RunError {
         &self,
         operation: fsl_replay::Operation,
     ) -> fsl_replay::OutcomeDocument {
-        self.refusal_document(operation).with_empty_analyze_members()
+        self.refusal_document(operation)
+            .with_empty_analyze_members()
     }
 
     fn refusal_document(&self, operation: fsl_replay::Operation) -> fsl_replay::OutcomeDocument {
@@ -1331,6 +1347,33 @@ impl RunError {
                 None,
                 refusal.detail.clone(),
             )]),
+            RunCause::SynthesisSnapshot { file, record } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        Some(record.catalog.cause()),
+                        record.catalog.code(),
+                        Some(OutcomeLocus::Input {
+                            operand: file.clone(),
+                            member: None,
+                            pointer: Some("/request/synthesis/initial".to_owned()),
+                        }),
+                        self.to_string(),
+                    ),
+                ])
+            }
+            RunCause::SynthesisUnsupported { diagnostic, .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        Some("not-yet-implemented"),
+                        Code::UnsupportedConstruct.as_str(),
+                        Some(OutcomeLocus::Located {
+                            file: diagnostic.path.clone(),
+                            span: diagnostic.span,
+                        }),
+                        diagnostic.message.clone(),
+                    ),
+                ])
+            }
             RunCause::Native(diagnostic) => {
                 let projected = if let Some(cause) = diagnostic.identity_cause() {
                     let source = fsl_cst::diagnostic::source_refusal(
@@ -2195,10 +2238,9 @@ fn inspect_handoff_position(
                 .and_then(|locus| locus.path.as_ref())
                 .map(ToString::to_string),
         ),
-        Error::ReaderIncomplete(_) | Error::ReaderCatalogUnavailable(_) => (
-            Some("checked-package.json".to_owned()),
-            None,
-        ),
+        Error::ReaderIncomplete(_) | Error::ReaderCatalogUnavailable(_) => {
+            (Some("checked-package.json".to_owned()), None)
+        }
         Error::Read { path, .. } => {
             let path = Path::new(path);
             if path == directory {
@@ -2211,9 +2253,10 @@ fn inspect_handoff_position(
             (member, None)
         }
         Error::Label { label } => (Some(label.clone()), None),
-        Error::Sidecar(SelectionReadError::Format(_)) => {
-            (Some("selection.json".to_owned()), Some("/format".to_owned()))
-        }
+        Error::Sidecar(SelectionReadError::Format(_)) => (
+            Some("selection.json".to_owned()),
+            Some("/format".to_owned()),
+        ),
         Error::Sidecar(SelectionReadError::Malformed(_)) => {
             (Some("selection.json".to_owned()), None)
         }
@@ -4100,7 +4143,11 @@ fn prepare_complete_run(
             sources,
         })));
     }
-    if request.models.iter().any(|model| !is_model_input_format(model)) {
+    if request
+        .models
+        .iter()
+        .any(|model| !is_model_input_format(model))
+    {
         return Err(RunCause::CompleteRunSelection(
             CompleteRunSelection::NativeModel,
         ));

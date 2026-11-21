@@ -8,12 +8,11 @@
 //! through FR-107 in ascending reference-key order under a fresh meter, as
 //! an invariant is (FR-120 "Invariants").
 
-use super::contracts::{invariant_observations, verdict, Verdict};
+use super::contracts::{Verdict, invariant_observations, verdict};
 use super::walk::{exhausted, stop, walk_of};
-use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::reduction::ConstraintValue;
-use filament_exact::Meter;
 
 impl ModelSystem<'_> {
     /// Whether the package declares a checked `at current` state clause
@@ -65,7 +64,7 @@ impl ModelSystem<'_> {
                 .evaluate_clause(
                     &clause.qualified,
                     &observations,
-                    &mut Meter::new(self.meter),
+                    &mut self.evaluation_meter(),
                 )
                 .map_err(|_| stop(BROKEN))?;
             match verdict(&evaluation.evaluation.outcome) {

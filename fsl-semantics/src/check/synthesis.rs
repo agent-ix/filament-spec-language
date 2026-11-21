@@ -90,6 +90,15 @@ impl CheckedSynthesis {
         &self.domain
     }
 
+    /// The authored model alias selecting a plan grammar.
+    pub fn grammar_model(&self) -> Option<&str> {
+        self.form
+            .grammar
+            .name
+            .rsplit_once("::")
+            .map(|(alias, _)| alias)
+    }
+
     /// The checked grammar type.
     pub fn grammar(&self) -> &ValueType {
         &self.grammar
@@ -171,6 +180,15 @@ pub(crate) fn check_forms(
         // plan lengths, never negative.
         let plan = match &grammar {
             ValueType::Reference(object) => {
+                if let Some(component) = first_unbounded_component(scope.types(), &domain) {
+                    return Err(vec![CheckRefusal {
+                        location: location.clone(),
+                        cause: CheckCause::SynthesisUnboundedDomain {
+                            component,
+                            span: form.domain.span,
+                        },
+                    }]);
+                }
                 let lengths =
                     matches!(&domain, ValueType::Int(lengths) if !lengths.lower().is_negative());
                 if !lengths {
@@ -258,6 +276,9 @@ fn is_numeric(value_type: &ValueType) -> bool {
             | ValueType::Rational(_)
             | ValueType::Decimal(_)
             | ValueType::Float(_)
+            | ValueType::Quantity(_)
+            | ValueType::BoundedQuantity(_)
+            | ValueType::CarriedQuantity(_)
     )
 }
 

@@ -39,16 +39,15 @@ pub use operation_coverage::{
 };
 mod model_based_test;
 pub use model_based_test::{
-    ClauseReading, read_clause,
-    ModelBasedCaseProvenance, ModelBasedCounterexample, ModelBasedCoverage,
+    ClauseReading, ModelBasedCaseProvenance, ModelBasedCounterexample, ModelBasedCoverage,
     ModelBasedPartitionCoverage, ModelBasedProvenance, ModelBasedRunLimits,
     ModelBasedSizeBoundedRoot, ModelBasedTestCause, ModelBasedTestChecks, ModelBasedTestCounts,
     ModelBasedTestDefect, ModelBasedTestDiscardCount, ModelBasedTestDiscardReason,
     ModelBasedTestError, ModelBasedTestEvidence, ModelBasedTestRecord, ModelBasedTestRefusal,
     ModelBasedTestRequest, ModelBasedTestResult, ModelBasedTestSubject, ModelBasedValueBoundCut,
-    ModelBasedValueBoundCuts, NativeAdmission, RootAdmission, run_model_based_state_invariant,
-    run_model_based_state_invariant_with_value_bits, run_model_based_test,
-    run_model_based_test_with_system, run_model_based_test_with_value_bits,
+    ModelBasedValueBoundCuts, NativeAdmission, RootAdmission, read_clause,
+    run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
+    run_model_based_test, run_model_based_test_with_system, run_model_based_test_with_value_bits,
 };
 mod key_budget;
 mod letters;
@@ -134,12 +133,11 @@ pub use probabilistic::{
 pub use refine::{RowReading, StateObservation};
 pub use state_predicate::PredicateReading;
 pub(crate) use symbolic::{ParameterValues, ResultValues, SymbolicOperation, SymbolicSubject};
-pub use terminal::{TerminalClass, TerminalModel};
 pub use task_automaton::{
     AutomatonClock, AutomatonDiagonal, BoundedSubtraction, CertificationRefusal, ClockAtom,
-    ClockCarry, ClockReset, ClockRole, EdgeKind, Guard, JobPhase, LiveJob, LiveJobKey, LocationInfo,
-    LocationKey, Overflow, Successors, TaskAutomaton, TaskAutomatonRefusal, TaskControl, TaskEdge,
-    TaskLocation, TaskTemplate, delay_valuation,
+    ClockCarry, ClockReset, ClockRole, EdgeKind, Guard, JobPhase, LiveJob, LiveJobKey,
+    LocationInfo, LocationKey, Overflow, Successors, TaskAutomaton, TaskAutomatonRefusal,
+    TaskControl, TaskEdge, TaskLocation, TaskTemplate, delay_valuation,
 };
 pub use task_key::{
     TaskKeyControl, TaskKeyIdentityRefusal, TaskKeyJob, TaskKeyPending, write_task_control,
@@ -147,18 +145,20 @@ pub use task_key::{
 pub use task_product::{
     AllowancePhase, CriticalityMode, TaskProductClock, TaskProductClockKind,
     TaskProductDerivedStep, TaskProductJob, TaskProductModeSwitch, TaskProductMoveRefusal,
-    TaskProductPlan, TaskProductPlanRefusal, TaskProductRelease,
-    TaskProductReplayRefusal, TaskProductSourceStep, TaskProductState, TaskProductStateKeyRefusal,
-    TaskProductSystem, TaskProductTask, TaskProductTrace, TaskProductTraceStep,
-    TaskProductTransition, TaskTransitionAction, TaskTransitionIdentity,
+    TaskProductPlan, TaskProductPlanRefusal, TaskProductRelease, TaskProductReplayRefusal,
+    TaskProductSourceStep, TaskProductState, TaskProductStateKeyRefusal, TaskProductSystem,
+    TaskProductTask, TaskProductTrace, TaskProductTraceStep, TaskProductTransition,
+    TaskTransitionAction, TaskTransitionIdentity,
 };
+pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::{
-    replay_timed_sample, sample_timed, sample_timed_race, BehaviourLetters, BehaviourReading,
-    ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS, DelayInterval, GuardedStep, MoveRefusal,
-    PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding, TaskTimingRow, TimeLock,
-    TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample,
-    TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite,
-    TimedState, TimedStop, TimedSubjectRefusal, TimedSystem, TimedTerminalClass,
+    BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS,
+    DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,
+    TaskReleaseBinding, TaskTimingRow, TimeLock, TimedBehaviour, TimedPosition, TimedRace,
+    TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
+    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, replay_timed_sample, sample_timed,
+    sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
 
@@ -650,6 +650,9 @@ pub struct ModelSystem<'a> {
     populations: Vec<fsl_semantics::model::state::StatePopulation>,
     limits: ExpansionLimits,
     meter: ScalarLimits,
+    shared_meter: std::sync::Mutex<filament_exact::Meter>,
+    shared_accounting: std::sync::atomic::AtomicBool,
+    request_cancel: std::sync::Mutex<Option<filament_exact::Cancel>>,
     footprints: footprints::FootprintCache,
     /// [`Self::universe_declaring`] per field, computed once.
     declaring: std::sync::Mutex<BTreeMap<DeclarationKey, Option<Vec<ObjectReference>>>>,
@@ -687,6 +690,83 @@ pub struct ModelSystem<'a> {
     /// Whether FR-120's bound check admits the system ([`Self::bounded`]),
     /// found once.
     bounded: std::sync::OnceLock<bool>,
+}
+
+/// An expression meter, shared across a source-plan request when enabled.
+pub enum EvaluationMeter<'a> {
+    /// The existing independent evaluation contract outside source planning.
+    Local(filament_exact::Meter),
+    /// The request's serialized accounting session.
+    Shared(std::sync::MutexGuard<'a, filament_exact::Meter>),
+}
+impl EvaluationMeter<'_> {
+    /// Preserve consumed counters while attaching the caller's cancellation.
+    pub fn with_cancel(mut self, cancel: filament_exact::Cancel) -> Self {
+        *std::ops::DerefMut::deref_mut(&mut self) =
+            std::ops::Deref::deref(&self).clone().with_cancel(cancel);
+        self
+    }
+}
+impl std::ops::Deref for EvaluationMeter<'_> {
+    type Target = filament_exact::Meter;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Local(meter) => meter,
+            Self::Shared(meter) => meter,
+        }
+    }
+}
+impl std::ops::DerefMut for EvaluationMeter<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Local(meter) => meter,
+            Self::Shared(meter) => meter,
+        }
+    }
+}
+impl ModelSystem<'_> {
+    /// The candidate materialization ceiling for one model expansion.
+    pub fn expansion_candidate_limit(&self) -> u64 {
+        self.limits.max_candidates
+    }
+    /// Start the source adapter's single request evaluation session.
+    pub fn share_evaluation_meter(&self, limits: ScalarLimits) {
+        let meter = filament_exact::Meter::new(limits);
+        let meter = match self
+            .request_cancel
+            .lock()
+            .expect("request cancellation lock")
+            .clone()
+        {
+            Some(cancel) => meter.with_cancel(cancel),
+            None => meter,
+        };
+        *self.shared_meter.lock().expect("evaluation meter lock") = meter;
+        self.shared_accounting
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    /// Whether optional fresh-meter optimizations must defer to enumeration.
+    pub fn shares_evaluation_meter(&self) -> bool {
+        self.shared_accounting
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+    /// Share cancellation with expansion and every evaluation charge.
+    pub fn cancel_plan_with(&self, cancel: &filament_exact::Cancel) {
+        *self
+            .request_cancel
+            .lock()
+            .expect("request cancellation lock") = Some(cancel.clone());
+        let mut meter = self.shared_meter.lock().expect("evaluation meter lock");
+        *meter = meter.clone().with_cancel(cancel.clone());
+    }
+    /// Acquire the evaluation meter for one non-nested expression evaluation.
+    pub fn evaluation_meter(&self) -> EvaluationMeter<'_> {
+        if self.shares_evaluation_meter() {
+            EvaluationMeter::Shared(self.shared_meter.lock().expect("evaluation meter lock"))
+        } else {
+            EvaluationMeter::Local(filament_exact::Meter::new(self.meter))
+        }
+    }
 }
 
 /// One element-count member of a pure-clock collection: the object type
@@ -1267,6 +1347,9 @@ impl<'a> ModelSystem<'a> {
             populations,
             limits: request.expansion,
             meter: request.meter,
+            shared_meter: std::sync::Mutex::new(filament_exact::Meter::new(request.meter)),
+            shared_accounting: std::sync::atomic::AtomicBool::new(false),
+            request_cancel: std::sync::Mutex::new(None),
             footprints: footprints::FootprintCache::default(),
             declaring: std::sync::Mutex::default(),
             applied: application::AppliedMemo::default(),

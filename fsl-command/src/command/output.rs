@@ -292,6 +292,41 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             types::Stage::Request,
             types::Details::Identifier(diagnostic),
         ),
+        RunCause::SynthesisSnapshot { file, record } => {
+            let path = record
+                .path
+                .iter()
+                .map(|step| match step {
+                    fsl_semantics::model::observation::PathStep::Field(name) => {
+                        serde_json::json!({"field": name})
+                    }
+                    fsl_semantics::model::observation::PathStep::Index(index) => {
+                        serde_json::json!({"index": index})
+                    }
+                    fsl_semantics::model::observation::PathStep::OptionValue => {
+                        serde_json::json!({"option": true})
+                    }
+                })
+                .collect::<Vec<_>>();
+            (
+                types::Stage::Request,
+                types::Details::Object(serde_json::Map::from_iter([
+                    ("file".to_owned(), serde_json::json!(file)),
+                    ("document_path".to_owned(), serde_json::json!(path)),
+                    (
+                        "pointer".to_owned(),
+                        serde_json::json!("/request/synthesis/initial"),
+                    ),
+                    ("fields".to_owned(), serde_json::json!(record.fields)),
+                ])),
+            )
+        }
+        RunCause::SynthesisUnsupported {
+            diagnostic: native, ..
+        } => (
+            types::Stage::Native(native.phase),
+            types::Details::Native(diagnostic(native)),
+        ),
         RunCause::Native(error) => (
             types::Stage::Native(error.phase),
             types::Details::Native(diagnostic(error)),
@@ -435,6 +470,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             | RunCause::PlanRequest { cause, .. }
             | RunCause::SynthesisRequest { cause, .. }
             | RunCause::ModelBasedTestRequest { cause, .. } => Some(*cause),
+            RunCause::SynthesisUnsupported { .. } => Some("not-yet-implemented"),
             RunCause::ExportOutput { .. } => Some("output-failure"),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
             RunCause::ModelPackageInput(refusal) => Some(refusal.cause.as_str()),
@@ -442,7 +478,9 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 Some("unsupported-selection")
             }
             RunCause::TlClause { .. } => Some("missing-name"),
-            RunCause::TlSubject(record) => Some(record.catalog.cause()),
+            RunCause::SynthesisSnapshot { record, .. } | RunCause::TlSubject(record) => {
+                Some(record.catalog.cause())
+            }
             RunCause::UnknownExtensionCapability(_) => Some("unknown-feature"),
             _ => None,
         },

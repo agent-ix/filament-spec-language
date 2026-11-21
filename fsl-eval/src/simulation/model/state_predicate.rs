@@ -11,15 +11,15 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{Meter, ObjectReference};
+use filament_exact::ObjectReference;
 use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole, StatePredicate};
 use fsl_semantics::model::object_environment::PlacePresences;
 
-use super::contracts::{verdict, Verdict};
+use super::contracts::{Verdict, verdict};
 use super::walk::{exhausted, stop, walk_of};
-use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::temporal::UndefinedCause;
 use crate::value::evaluate_state_predicate_with_reference_bindings;
@@ -126,7 +126,7 @@ impl ModelSystem<'_> {
                     Some(row.reference.clone())
                 }
             };
-            let mut meter = Meter::new(self.meter);
+            let mut meter = self.evaluation_meter();
             let evaluation = match (self.source_package(), claim.occurrence()) {
                 (Some(package), _) => {
                     let (from, target) = claim.node_predicates();
@@ -222,7 +222,7 @@ impl ModelSystem<'_> {
                     Some(row.reference.clone())
                 }
             };
-            let mut meter = Meter::new(self.meter);
+            let mut meter = self.evaluation_meter();
             if let Some(cancel) = cancel {
                 meter = meter.with_cancel(cancel.clone());
             }

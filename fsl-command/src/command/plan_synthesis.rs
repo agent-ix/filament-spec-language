@@ -17,7 +17,7 @@ use fsl_analyze::analyze::document::{DocumentSelection, SubjectSelection};
 use fsl_analyze::plan_search::{
     Direction, PlanLengths, PlanResult, PlanSearchError, PlanSearchRequest, search,
 };
-use fsl_analyze::plan_source::SourcePlan;
+use fsl_analyze::plan_source::{PlanSourceError, SourcePlan};
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimState, ModelSimulationRequest, ModelSystem,
     declaration_identity_text, typed_value_json,
@@ -82,7 +82,7 @@ fn lengths(checked: &CheckedSynthesis) -> Result<PlanLengths, RunCause> {
         ));
     };
     let bound = |value: &Integer| {
-        value.to_string().parse::<u64>().map_err(|_| {
+        value.to_u64().ok_or_else(|| {
             refusal(
                 "/request/synthesis/declaration",
                 "invalid-value",
@@ -177,27 +177,90 @@ pub(super) fn run(
     };
     let binding = subject.binding(packages, &documents);
     let limits = scalar_limits(&request, accounting);
-    let system = ModelSystem::new(ModelSimulationRequest {
-        input: ModelCheckInput::source(package),
-        packages: binding.packages,
-        normalization: ModelNormalizationLimits::default(),
-        snapshots: binding.snapshots,
-        initial: binding.initial.clone(),
-        universes: binding.universes.clone(),
-        observation: ObservationLimits::default(),
-        expansion: ExpansionLimits {
-            max_candidates: u64::MAX,
+    let model_alias = checked
+        .grammar_model()
+        .ok_or_else(|| method_failure("the checked plan grammar has no model alias"))?;
+    let model_identity = package
+        .graph()
+        .model_package_identity(model_alias)
+        .ok_or_else(|| method_failure("the checked plan grammar has no admitted model"))?;
+    let system = ModelSystem::over_model(
+        ModelSimulationRequest {
+            input: ModelCheckInput::source(package),
+            packages: binding.packages,
+            normalization: ModelNormalizationLimits::default(),
+            snapshots: binding.snapshots,
+            initial: binding.initial.clone(),
+            universes: binding.universes.clone(),
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: request
+                    .limits
+                    .get(fsl_analyze::plan_search::PlanLimit::MaxWork),
+            },
+            meter: limits,
+            emit: fsl_package::EmitLimits::new(intake.remaining),
         },
-        meter: accounting,
-        emit: fsl_package::EmitLimits::new(u64::MAX),
-    })
-    .map_err(|failure| {
-        refusal(
-            &format!("{NATIVE_RUN_POINTER}/initial"),
-            "invalid-value",
-            format!("the initial snapshot is not a state of the model: {failure:?}"),
-        )
+        model_identity,
+    )
+    .map_err(|failure| match failure {
+        fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+        | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
+            RunCause::SynthesisSnapshot {
+                file: initial.to_owned(),
+                record,
+            }
+        }
+        fsl_semantics::model::observation::AdmissionFailure::Fault(_) => {
+            method_failure("initial snapshot admission violated its invariant")
+        }
     })?;
+    // Source bounds are part of snapshot admission even when no expression
+    // happens to call allInstances and observe the population's cardinality.
+    use fsl_eval::simulation::TransitionSystem;
+    for bound in package
+        .graph()
+        .population_bounds()
+        .iter()
+        .filter(|bound| bound.model == model_alias)
+    {
+        let shape = checked
+            .plan()
+            .ok_or_else(|| method_failure("plan shape missing"))?
+            .shape();
+        let population = shape
+            .populations
+            .iter()
+            .find(|population| population.field == bound.population.as_str())
+            .ok_or_else(|| {
+                method_failure("the checked population bound has no admitted plan population")
+            })?;
+        for state in system.initial() {
+            let count = state
+                .state()
+                .populations
+                .get(&population.key)
+                .map_or(0, |objects| objects.len());
+            if u64::try_from(count).unwrap_or(u64::MAX) > bound.maximum {
+                return Err(RunCause::SynthesisSnapshot {
+                    file: initial.to_owned(),
+                    record: Box::new(fsl_semantics::model::observation::AdmissionRecord {
+                        catalog: filament_semantic_value::catalog::CatalogCode::new(
+                            "cardinality_out_of_bound",
+                            "above-maximum",
+                        ),
+                        fields: std::collections::BTreeMap::from([
+                            ("population", population.field.clone()),
+                            ("count", count.to_string()),
+                            ("maximum", bound.maximum.to_string()),
+                        ]),
+                        path: Vec::new(),
+                        kernel: None,
+                    }),
+                });
+            }
+        }
+    }
 
     let mut policies = Vec::with_capacity(request.policy.len());
     for (position, name) in request.policy.iter().enumerate() {
@@ -212,25 +275,37 @@ pub(super) fn run(
                 cause: "missing-name",
                 reason: format!("no temporal clause is named `{name}`"),
             })?;
-        if node.clause().over().1 != *checked.grammar() {
+        let same_model = match (node.clause().over().1.clone(), checked.grammar()) {
+            (ValueType::Reference(over), ValueType::Reference(grammar)) => {
+                let graph = package.graph();
+                graph
+                    .object_type_key(over)
+                    .zip(graph.object_type_key(grammar.clone()))
+                    .is_some_and(|(over, grammar)| over.package == grammar.package)
+            }
+            _ => false,
+        };
+        if !same_model {
             return Err(RunCause::SynthesisRequest {
                 path: format!("{NATIVE_RUN_POINTER}/policy/{position}"),
                 code: Code::IllTyped,
                 cause: "type-mismatch",
-                reason: format!("the clause `{name}` is not over the grammar type of the plan"),
+                reason: format!(
+                    "the clause `{name}` is not over an object of the plan grammar's model"
+                ),
             });
         }
         policies.push(node);
     }
-    let mut rules =
-        SourcePlan::new(package, checked, &system, policies, limits).map_err(|error| {
-            refusal(
-                "/request/synthesis/declaration",
-                "invalid-value",
-                error.to_string(),
-            )
-        })?;
+    if !policies.is_empty() && lengths.max() > 0 {
+        return Err(RunCause::SynthesisRequest { path: format!("{NATIVE_RUN_POINTER}/policy"),
+            code: Code::UnsupportedConstruct, cause: "not-yet-implemented",
+            reason: "positive-length temporal policy planning needs canonical monitor states; only zero-length closed policy reads are currently supported".to_owned() });
+    }
+    let mut rules = SourcePlan::new(package, checked, &system, policies, limits)
+        .map_err(|error| source_failure(error, package, intake))?;
     let cancel = Cancel::new();
+    system.cancel_plan_with(&cancel);
     let deadline = request
         .deadline_ms
         .map(|milliseconds| Duration::from_millis(milliseconds).saturating_sub(started.elapsed()));
@@ -257,7 +332,7 @@ pub(super) fn run(
     let result = result.map_err(plan_failure)?;
 
     let objective = objective(checked);
-    let rendered = render(package, &system, &rules, &result);
+    let rendered = render(package, &system, &rules, &result)?;
     let header = OutcomeHeader {
         package: package_name,
         declaration,
@@ -279,6 +354,51 @@ fn scalar_limits(
         limits.set_bound(*setting, bound.get());
     }
     limits.0
+}
+
+/// Preserve a capability refusal at the checked objective's authored source
+/// location; every other source-plan error retains its request refusal.
+fn source_failure(
+    error: PlanSourceError,
+    package: &CheckedPackage,
+    intake: &Intake<'_>,
+) -> RunCause {
+    let location = match &error {
+        PlanSourceError::UnsupportedObjective { location, .. }
+        | PlanSourceError::UnsupportedForm { location, .. } => location,
+        PlanSourceError::NotAPlan(_) | PlanSourceError::UnknownOperation(_) => {
+            return method_failure(&error.to_string());
+        }
+    };
+    let broken = || RunCause::SynthesisRequest {
+        path: "/request/synthesis/declaration".to_owned(),
+        code: Code::RuntimeInvariant,
+        cause: "evaluation-fault",
+        reason: "the checked objective has no admitted source locus".to_owned(),
+    };
+    let Some(region) = package.graph().region(location) else {
+        return broken();
+    };
+    let Some(source) = intake
+        .sources
+        .iter()
+        .find(|source| source.reference() == region.source())
+    else {
+        return broken();
+    };
+    let Some(span) = source.render(&region) else {
+        return broken();
+    };
+    RunCause::SynthesisUnsupported {
+        diagnostic: fsl_foundation::diagnostic::error(
+            source,
+            Code::UnsupportedConstruct,
+            fsl_foundation::Phase::Evaluate,
+            span.start.byte,
+            span.end.byte,
+            error.to_string(),
+        ),
+    }
 }
 
 /// A plan search that could not produce a result: a replay that fails is a
@@ -328,40 +448,59 @@ fn render(
     system: &ModelSystem<'_>,
     rules: &SourcePlan<'_>,
     result: &PlanResult,
-) -> Option<RenderedPlan> {
-    let reported = result.plan.as_ref()?;
+) -> Result<Option<RenderedPlan>, RunCause> {
+    let Some(reported) = result.plan.as_ref() else {
+        return Ok(None);
+    };
     let scope = package.graph().scope();
     let steps = reported
         .steps
         .iter()
         .map(|step| {
-            let operation = rules.operation(step);
+            let operation = rules
+                .operation(step)
+                .ok_or_else(|| method_failure("a reported step has no admitted operation"))?;
+            if operation.name.is_empty() || operation.parameters.len() != step.arguments().len() {
+                return Err(method_failure(
+                    "a reported step violates its admitted operation signature",
+                ));
+            }
             let arguments = operation
-                .map(|operation| {
-                    operation
-                        .parameters
-                        .iter()
-                        .zip(step.arguments())
-                        .map(|((name, _), text)| {
-                            let value = serde_json::from_str(text).unwrap_or(Json::Null);
-                            (name.clone(), value)
-                        })
-                        .collect()
+                .parameters
+                .iter()
+                .zip(step.arguments())
+                .map(|((name, _), text)| {
+                    let value = serde_json::from_str(text).map_err(|_| {
+                        method_failure("a reported argument is not canonical typed JSON")
+                    })?;
+                    Ok((name.clone(), value))
                 })
-                .unwrap_or_default();
-            RenderedStep {
-                operation: rules.operation_name(step).to_owned(),
+                .collect::<Result<_, RunCause>>()?;
+            Ok(RenderedStep {
+                operation: operation.name.clone(),
                 arguments,
                 delay: None,
-            }
+            })
         })
-        .collect();
+        .collect::<Result<_, RunCause>>()?;
     let states = reported
         .states
         .iter()
-        .map(|state| state_document(system, scope, state))
-        .collect::<Option<Vec<_>>>()?;
-    Some(RenderedPlan { steps, states })
+        .map(|state| {
+            state_document(system, scope, state)
+                .ok_or_else(|| method_failure("a reported plan state cannot be rendered"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(RenderedPlan { steps, states }))
+}
+
+fn method_failure(reason: &str) -> RunCause {
+    RunCause::SynthesisRequest {
+        path: "/request/synthesis".to_owned(),
+        code: Code::RuntimeInvariant,
+        cause: "evaluation-fault",
+        reason: reason.to_owned(),
+    }
 }
 
 /// A state as a `filament.state.snapshot/v1` object world, its values in

@@ -1313,6 +1313,11 @@ fn expansion_stop(stop: ExpansionStop, system: &ModelSystem<'_>) -> Stop {
                 setting: format!("accounting.{counter}"),
             })
         }
-        Some(ExpansionLimit::MaxCandidates) | None => Stop::Error(PlanSearchError::Expansion(stop)),
+        Some(ExpansionLimit::MaxCandidates) => Stop::Cause(PlanStopCause::LimitReached {
+            limit: "max_work",
+            value: system.expansion_candidate_limit(),
+            setting: "synthesis.max_work".to_owned(),
+        }),
+        None => Stop::Error(PlanSearchError::Expansion(stop)),
     }
 }
