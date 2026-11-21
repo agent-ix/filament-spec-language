@@ -170,7 +170,8 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
     let actual_bytes = emission.package().bytes().len();
     assert!(u64::try_from(actual_bytes).unwrap() <= limits.bytes);
     eprintln!("EMITTED family={family:?} bytes={actual_bytes}");
-    let mut budget = NativeJoinBudget::new(limits.read_work, limits.storage);
+    let mut budget = NativeJoinBudget::new(limits.read_work, limits.storage)
+        .with_read_storage_limit(limits.storage);
     let read_limits = CheckedPackageReadLimits {
         bytes: limits.bytes,
         nodes: limits.shape * 32 + 4096,
@@ -204,7 +205,9 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         }
     };
     let charged = budget.consumed();
+    let read_storage = budget.read_storage_consumed();
     assert!(charged.work <= limits.read_work && charged.storage <= limits.storage);
+    assert!(read_storage <= limits.storage);
     let rows = &admitted.checked_term_data().unwrap().body_locations;
     assert_eq!(rows.len(), count);
     let entries: usize = rows.iter().map(|row| 1 + row.location.down.len()).sum();
@@ -286,7 +289,7 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
     assert!(cursor.next_location().unwrap().is_none());
     let location_work = cursor.work_consumed();
     assert!(location_work <= limits.locations);
-    eprintln!("MEASURED family={family:?} count={count} bytes={actual_bytes} rows={} relative_entries={entries} strict_work={} strict_storage={} location_work={location_work}", rows.len(), charged.work, charged.storage);
+    eprintln!("MEASURED family={family:?} count={count} bytes={actual_bytes} rows={} relative_entries={entries} strict_work={} strict_read_storage={read_storage} logical_storage={} location_work={location_work}", rows.len(), charged.work, charged.storage);
     drop(cursor);
     drop(admitted);
     drop(emission);
@@ -358,7 +361,7 @@ fn row_preflight_names_the_first_unpaid_byte_and_legacy_whole_path_refuses() {
         &bytes,
         CheckedPackageReadLimits::bounded(),
         emitted.evidence(),
-        &mut NativeJoinBudget::new(100_000_000, 100_000_000),
+        &mut NativeJoinBudget::new(100_000_000, 100_000_000).with_read_storage_limit(100_000_000),
     );
     let CheckedPackageV2BudgetedReadResult::Refused(refusal) = result else {
         panic!("legacy whole path must refuse")
