@@ -4,6 +4,7 @@
 mod formula;
 
 pub(super) use self::formula::tla_clause;
+pub(super) use self::formula::{Operator, Window};
 use super::temporal::ClauseRead;
 use super::{
     bullets, defer_at, define, mangle, operation_anchor, parameters, refusal, rename_param, str_of,

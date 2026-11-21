@@ -677,6 +677,39 @@ mod dense_time {
         assert!(text.contains("[](tick \\/ <>(~tick /\\ "), "{text}");
     }
 
+    #[trace("FSpec-FR-813-AC-19", "FSpec-FR-813-AC-27", "FSpec-TC-1972")]
+    #[test]
+    fn an_origin_window_reads_positions_after_idle_and_never_after_tick() {
+        for (body, premise, lo, hi) in [
+            (
+                "eventually[0 ms, 5 ms] holds(not l.on)",
+                "[]<>accept_T(o_l)",
+                0,
+                5,
+            ),
+            ("always[2 ms, 3 ms] holds(l.on)", "[]accept_T(o_l)", 2, 3),
+        ] {
+            let (exit, tla) = lamp(body, Target::Tla, lo == 0);
+            assert_eq!(exit, 0, "{tla}");
+            let text = tla["export"]["target_text"].as_str().unwrap();
+            assert!(
+                text.contains(&format!("({lo} <= now' /\\ now' <= {hi})")),
+                "{text}"
+            );
+            assert!(text.contains("Next_T == ((Next \\/ \\E d \\in Real : Idle(d)) /\\ Mon_T) \\/ (\\E d \\in Real : Tick(d) /\\ UNCHANGED <<m_T>>)"), "{text}");
+            assert!(text.contains("NZ /\\ []<>~tick"), "{text}");
+            assert!(text.contains(premise), "{text}");
+            let (exit, lean) = lamp(body, Target::Lean, lo == 0);
+            assert_eq!(exit, 0, "{lean}");
+            let text = lean["export"]["target_text"].as_str().unwrap();
+            assert!(
+                text.contains(&format!("Q_le (Q.mk {lo} 1) (Q_sub (b.ts")),
+                "{text}"
+            );
+            assert!(text.contains(&format!("(Q.mk {hi} 1)")), "{text}");
+        }
+    }
+
     #[trace("FSpec-FR-813-AC-24", "FSpec-TC-1972")]
     #[test]
     fn a_repeated_timed_window_keeps_its_typed_refusal() {
