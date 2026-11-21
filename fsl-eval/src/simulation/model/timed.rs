@@ -44,7 +44,7 @@ use fsl_semantics::model::state::ModelState;
 
 use super::encode::declaration_text;
 use super::state_predicate::PredicateReading;
-use super::walk::{expand_enabled, stop};
+use super::walk::{expand_enabled_with_clock_selectors, stop};
 use super::BROKEN;
 use super::{ModelSimState, ModelSystem};
 use crate::simulation::expansion::ExpansionStop;
@@ -578,6 +578,63 @@ fn held_slots(constraint: &ClockConstraint) -> Option<Vec<u64>> {
 /// `model_check.max_clocks`.
 pub const DEFAULT_MAX_CLOCKS: std::num::NonZeroU64 = std::num::NonZeroU64::MIN.saturating_add(1023);
 
+/// The potential selector maxima under the timed subject's live-clock bound.
+/// This is the same per-element layout used for concrete clock placements.
+pub(super) fn clock_selector_maxima(
+    timed: &TimedModel,
+    max_clocks: std::num::NonZeroU64,
+) -> Result<super::domain::ClockSelectorMaxima, TimedSubjectRefusal> {
+    let mut per_element: std::collections::BTreeMap<(EffectiveId, Vec<PlaceStep>), u64> =
+        std::collections::BTreeMap::new();
+    for (_, field) in timed.clock_fields() {
+        let path = field.path();
+        let mut open = path
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| matches!(step, PlaceStep::Slot(shape) if shape.max.is_none()));
+        let Some((at, _)) = open.next() else {
+            continue;
+        };
+        if open.next().is_some() {
+            return Err(TimedSubjectRefusal::NestedUnboundedCollection {
+                clock: field.name().to_owned(),
+            });
+        }
+        let below = path[at + 1..]
+            .iter()
+            .filter_map(|step| match step {
+                PlaceStep::Slot(shape) => Some(shape.min),
+                PlaceStep::Field(_) | PlaceStep::Union(_) => None,
+            })
+            .fold(1_u64, u64::saturating_mul);
+        let held = per_element
+            .entry((field.owner(), path[..=at].to_vec()))
+            .or_insert(0);
+        *held = held.saturating_add(below);
+    }
+    Ok(timed
+        .clocks()
+        .iter()
+        .zip(timed.place_nodes())
+        .map(|(field, template)| {
+            let open = field
+                .path()
+                .iter()
+                .position(|step| matches!(step, PlaceStep::Slot(shape) if shape.max.is_none()));
+            let listed = open
+                .and_then(|at| per_element.get(&(field.owner(), field.path()[..=at].to_vec())))
+                .map_or(0, |held| max_clocks.get() / (*held).max(1));
+            (
+                template.clone(),
+                field
+                    .slots()
+                    .map(|shape| shape.max.unwrap_or(listed))
+                    .collect(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>())
+}
+
 /// FR-231's timed subject over one model system.
 pub struct TimedSystem<'s, 'a> {
     system: &'s ModelSystem<'a>,
@@ -587,6 +644,7 @@ pub struct TimedSystem<'s, 'a> {
     /// nonnegative delay between its discrete steps (FSpec FR-900-AC-5).
     free_delay: bool,
     places: Vec<ClockPlace>,
+    clock_selectors: super::domain::ClockSelectorMaxima,
     /// The object references each predicate's `self` type ranges over.
     objects: std::collections::BTreeMap<EffectiveId, Vec<ObjectReference>>,
     /// The declaration identity text of each `urgent O` operation.
@@ -634,7 +692,6 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         model: &str,
         max_clocks: std::num::NonZeroU64,
     ) -> Result<Self, TimedSubjectRefusal> {
-        super::check_model_bounds(system, crate::simulation::BOUND_POSITIONS)?;
         let input = system.input();
         let missing = || TimedSubjectRefusal::NoTimedModel {
             model: model.to_owned(),
@@ -698,54 +755,18 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             held.insert(owner, pairs.clone());
             Ok(pairs)
         };
-        // The fewest clocks one element of each collection with no declared
-        // maximum holds, by owner and the path through that collection's
-        // slot: each clock below it times the declared minima of the
-        // collections between. Listing `max_clocks` over it slots, every
-        // state within `max_clocks` has a place for each live clock.
-        let mut per_element: std::collections::BTreeMap<(EffectiveId, Vec<PlaceStep>), u64> =
-            std::collections::BTreeMap::new();
-        for (_, field) in timed.clock_fields() {
-            let path = field.path();
-            let mut open = path
-                .iter()
-                .enumerate()
-                .filter(|(_, step)| matches!(step, PlaceStep::Slot(shape) if shape.max.is_none()));
-            let Some((at, _)) = open.next() else {
-                continue;
-            };
-            if open.next().is_some() {
-                return Err(TimedSubjectRefusal::NestedUnboundedCollection {
-                    clock: field.name().to_owned(),
-                });
-            }
-            let below = path[at + 1..]
-                .iter()
-                .filter_map(|step| match step {
-                    PlaceStep::Slot(shape) => Some(shape.min),
-                    PlaceStep::Field(_) | PlaceStep::Union(_) => None,
-                })
-                .fold(1_u64, u64::saturating_mul);
-            let held = per_element
-                .entry((field.owner(), path[..=at].to_vec()))
-                .or_insert(0);
-            *held = held.saturating_add(below);
-        }
+        let clock_selectors = clock_selector_maxima(timed, max_clocks)?;
+        super::check_model_bounds_with_clock_selectors(
+            system,
+            crate::simulation::BOUND_POSITIONS,
+            Some(&clock_selectors),
+        )?;
         let mut places = Vec::new();
         let mut holders = Vec::new();
-        for (clock, field) in timed.clock_fields() {
-            // An undeclared slot lists as many elements as fit within
-            // `max_clocks`: a state holding more exceeds the bound.
-            let open = field
-                .path()
+        for ((clock, field), template) in timed.clock_fields().zip(timed.place_nodes()) {
+            let maxima: Vec<usize> = clock_selectors[template]
                 .iter()
-                .position(|step| matches!(step, PlaceStep::Slot(shape) if shape.max.is_none()));
-            let listed = open
-                .and_then(|at| per_element.get(&(field.owner(), field.path()[..=at].to_vec())))
-                .map_or(0, |held| max_clocks.get() / (*held).max(1));
-            let maxima: Vec<usize> = field
-                .slots()
-                .map(|shape| usize::try_from(shape.max.unwrap_or(listed)).unwrap_or(usize::MAX))
+                .map(|maximum| usize::try_from(*maximum).unwrap_or(usize::MAX))
                 .collect();
             let slots = slot_vectors(&maxima);
             for (instance, object) in instances_of(field.owner(), field.name())? {
@@ -797,6 +818,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             source: Some(source),
             free_delay: false,
             places,
+            clock_selectors,
             objects,
             urgent_operations,
             tick,
@@ -853,6 +875,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             source: None,
             free_delay: true,
             places: Vec::new(),
+            clock_selectors: super::domain::ClockSelectorMaxima::new(),
             objects: std::collections::BTreeMap::new(),
             urgent_operations: Vec::new(),
             tick: None,
@@ -1790,7 +1813,12 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         // A postcondition's `present(self.v)` reads the candidate's presence
         // bits (FSpec FR-322 `CW-05`).
         let post_presence = |candidate: &ModelState| self.place_presences(candidate);
-        let (expansion, enabled) = expand_enabled(self.system, state, Some(&post_presence))?;
+        let (expansion, enabled) = expand_enabled_with_clock_selectors(
+            self.system,
+            state,
+            Some(&post_presence),
+            Some(&self.clock_selectors),
+        )?;
         let mut steps = Vec::new();
         for vector in enabled {
             // Each binding of the operation's `Clock` parameters to places
@@ -2029,7 +2057,12 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// Data-enabled steps of an untimed subject: no concrete clock guards,
     /// resets, carries or placements.
     fn free_delay_steps(&self, state: &ModelSimState) -> Result<Vec<GuardedStep>, TimedStop> {
-        let (expansion, enabled) = expand_enabled(self.system, state, None)?;
+        let (expansion, enabled) = expand_enabled_with_clock_selectors(
+            self.system,
+            state,
+            None,
+            Some(&self.clock_selectors),
+        )?;
         let mut steps = Vec::new();
         for vector in enabled {
             for position in vector.successors.clone() {

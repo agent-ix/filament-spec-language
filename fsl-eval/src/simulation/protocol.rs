@@ -847,8 +847,9 @@ fn check_attempt_types(
     match ClaimExtent::from_domains(domains) {
         ClaimExtent::Bounded => Ok(()),
         ClaimExtent::Unbounded(domains) => Err(NotSimulated::RequiresBound(RequiresBound {
-            domains,
+            domains: Some(domains),
             capacities: Vec::new(),
+            clock_references: Vec::new(),
         })),
     }
 }
