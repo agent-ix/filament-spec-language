@@ -146,15 +146,15 @@ fn check_dependent_bytes_excludes_source_and_counts_selected_library() {
         function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
     std::fs::write(&library_path, library).unwrap();
     let library_bytes = std::fs::metadata(&library_path).unwrap().len() as usize;
-    let mut importing_source = format!(
+    let importing_source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          import \"test/geometry\" as g;\n\
          function Eligible using v(n: Int[0, 12]): Boolean pure {{ n >= 3 }}\n"
     );
-    if importing_source.len() <= library_bytes {
-        importing_source.push_str(&" ".repeat(library_bytes + 1 - importing_source.len()));
-    }
+    // Trailing whitespace pads the checked source past the library size, so
+    // only the selected library can be what `dependent_bytes` counts.
+    let importing_source = format!("{importing_source}{}", " ".repeat(library_bytes + 1));
     std::fs::write(&source_path, &importing_source).unwrap();
     assert!(importing_source.len() > library_bytes);
     let selected_library = || CheckInputs {
@@ -185,5 +185,35 @@ fn check_dependent_bytes_excludes_source_and_counts_selected_library() {
         "{below}"
     );
     assert!(message.contains("--dependent-bytes"), "{below}");
-    assert_ne!(below["category"], "success", "{below}");
+}
+
+/// FR-866 / FR-869 / QSL-2657: a check source over `s1.input_bytes` refuses at
+/// S1 with `stage_limit_exceeded` (the shape compile gives the same source),
+/// independent of `dependent_bytes`; at the ceiling it succeeds.
+#[test]
+#[trace("TC-2457", "FR-866")]
+fn check_source_over_s1_input_bytes_refuses_at_s1_like_compile() {
+    let text = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        function Eligible using v(n: Int[0, 12]): Boolean pure { n >= 3 }\n";
+    let (_directory, path) = source(text);
+    let mut inputs = CheckInputs {
+        dependent_bytes: 0,
+        ..CheckInputs::default()
+    };
+    inputs.limits.source.source_bytes = text.len() - 1;
+    let over = document(&command::check_outcome(&path, &inputs));
+    assert_eq!(over["category"], "incomplete", "{over}");
+    assert_eq!(over["last_stage"], "S1", "{over}");
+    assert_eq!(over["diagnostics"].as_array().unwrap().len(), 1, "{over}");
+    assert_eq!(
+        over["diagnostics"][0]["code"], "stage_limit_exceeded",
+        "{over}"
+    );
+    assert!(over.to_string().contains("s1.input_bytes"), "{over}");
+
+    inputs.limits.source.source_bytes = text.len();
+    let fits = document(&command::check_outcome(&path, &inputs));
+    assert_eq!(fits["category"], "success", "{fits}");
+    assert_eq!(fits["last_stage"], "S4", "{fits}");
 }

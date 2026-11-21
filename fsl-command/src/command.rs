@@ -227,7 +227,8 @@ pub struct CheckInputs {
     pub integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// Check-stage limits.
     pub limits: fsl_replay::spine::SpineLimits,
-    /// Aggregate ceiling for the selected model and library files.
+    /// Aggregate ceiling for the selected model, library and extension definition
+    /// files; the checked source is bounded by `s1.input_bytes`, not this.
     pub dependent_bytes: usize,
 }
 
@@ -279,7 +280,9 @@ impl CheckOutcome {
 }
 
 /// Check one source against the model and library files it selects (FR-866).
-/// All selected files pass through the same bounded admission used by compile.
+/// Dependent documents (models, libraries, extensions) are charged to
+/// `dependent_bytes`; the checked source is read under the fixed intake ceiling
+/// and bounded by `s1.input_bytes` at parse, as in compile.
 pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
     let result = check_outcome_inner(source_path, inputs);
     match result {
@@ -338,10 +341,9 @@ fn check_outcome_inner(
         validate_extension_entries(&extensions)?;
 
         let source_identity = source_path.to_string_lossy();
-        let source = intake.source_unmetered(
+        let source = intake.source_outside_budget(
             &check_source_file(source_path, "filament", &source_identity, "CheckSource"),
             "source",
-            inputs.limits.source.source_bytes,
         )?;
         if fsl_semantics::model::intake::is_model_unit_source(source.source().text().as_bytes()) {
             compile_formal_model_unit(&source)?;
@@ -1630,45 +1632,31 @@ impl Intake<'_> {
         selected: &wire::SourceFile,
         request_member: &str,
     ) -> Result<FormalSource> {
+        let identity = selected.identity.bind(request_member)?;
         let bytes = self.file(&selected.file, self.remaining)?;
-        self.admit_source(selected, request_member, bytes, self.maximum)
+        self.admit_source(selected, identity, bytes, self.maximum)
     }
 
-    fn source_unmetered(
+    /// Reads a source under the fixed intake ceiling without charging the
+    /// intake's budget (check's `dependent_bytes`, FR-866); the stage-1
+    /// `s1.input_bytes` ceiling is then enforced by the parse, as in compile.
+    fn source_outside_budget(
         &mut self,
         selected: &wire::SourceFile,
         request_member: &str,
-        byte_limit: usize,
     ) -> Result<FormalSource> {
-        let path = self.directory.join(&selected.file);
-        let mut file = File::open(&path).map_err(|error| RunCause::Io {
-            path: path.clone(),
-            error,
-        })?;
-        let read_limit =
-            u64::try_from(byte_limit.saturating_add(1)).map_err(|error| RunCause::Io {
-                path: path.clone(),
-                error: io::Error::other(error),
-            })?;
-        let mut bytes = Vec::new();
-        file.by_ref()
-            .take(read_limit)
-            .read_to_end(&mut bytes)
-            .map_err(|error| RunCause::Io {
-                path: path.clone(),
-                error,
-            })?;
-        self.admit_source(selected, request_member, bytes, byte_limit)
+        let identity = selected.identity.bind(request_member)?;
+        let bytes = read_file(&self.directory.join(&selected.file), TOTAL_BYTES)?;
+        self.admit_source(selected, identity, bytes, TOTAL_BYTES)
     }
 
     fn admit_source(
         &mut self,
         selected: &wire::SourceFile,
-        request_member: &str,
+        identity: crate::formal_source::SourceIdentities,
         bytes: Vec<u8>,
         byte_limit: usize,
     ) -> Result<FormalSource> {
-        let identity = selected.identity.bind(request_member)?;
         let source = Source::read_typed(identity.native, &selected.file, &bytes, byte_limit)
             .map_err(|refusal| {
                 RunCause::Source(Box::new(SourceFailure {
