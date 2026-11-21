@@ -3031,14 +3031,34 @@ fn a_model_alias_type_argument_carries_the_model_key_and_a_model_scalar_none() {
 
 /// Run supplied clauses through both selectors after removing the source file.
 fn package_clause_selection_parity(unit: &str, traces: &[(Value, u8)]) {
-    package_clause_selection_outcomes(unit, traces, false);
+    package_clause_selection_outcomes(unit, traces, false, SelectionObjects::Present);
 }
 
-fn package_clause_selection_outcomes(unit: &str, traces: &[(Value, u8)], refused_violation: bool) {
+#[derive(Clone, Copy)]
+enum SelectionObjects {
+    Present,
+    MissingSecond,
+    UniverseOnly,
+}
+
+fn package_clause_selection_outcomes(
+    unit: &str,
+    traces: &[(Value, u8)],
+    refused_violation: bool,
+    objects: SelectionObjects,
+) {
     let directory = bump_directory(unit, &["a"], true);
     let mut second = snapshot_of(directory.path(), &["a"], true);
     second["identity"]["identity"] = json!("selection-second");
     second["populations"][0]["objects"][0]["fields"]["versionNumber"] = json!({"integer": "1"});
+    match objects {
+        SelectionObjects::Present => {}
+        SelectionObjects::MissingSecond => second["populations"][0]["objects"] = json!([]),
+        SelectionObjects::UniverseOnly => {
+            second["populations"][0]["objects"][0]["key"] = json!("b")
+        }
+    }
+
     std::fs::write(
         directory.path().join("second.json"),
         serde_json::to_vec(&second).unwrap(),
@@ -3085,19 +3105,26 @@ fn package_clause_selection_outcomes(unit: &str, traces: &[(Value, u8)], refused
 #[test]
 #[trace("TC-3019", "FR-1039")]
 fn package_clause_selections_snapshot_results_match_source() {
-    for (body, expected) in [
-        ("holds(c.versionNumber <= 2)", 0),
-        ("holds(3 mod c.versionNumber >= 0)", 10),
+    for (objects, expected) in [
+        (SelectionObjects::Present, 0),
+        (SelectionObjects::MissingSecond, 10),
     ] {
-        let unit = bump_low().replace(LOW_BODY, body);
-        package_clause_selection_parity(&unit, &[(json!({"finite": ["s0", "s1"]}), expected)]);
+        let unit = bump_low().replace(LOW_BODY, "always[0,1] holds(c.versionNumber <= 2)");
+        package_clause_selection_outcomes(
+            &unit,
+            &[(json!({"finite": ["s0", "s1"]}), expected)],
+            false,
+            objects,
+        );
         let unit = unit.replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1");
-        package_clause_selection_parity(
+        package_clause_selection_outcomes(
             &unit,
             &[(
                 json!({"lasso": {"prefix": ["s0"], "loop": ["s1"]}}),
                 expected,
             )],
+            false,
+            objects,
         );
     }
 }
@@ -3107,9 +3134,13 @@ fn package_clause_selections_snapshot_results_match_source() {
 #[test]
 #[trace("TC-3019", "FR-1039")]
 fn package_clause_selections_model_results_match_source() {
-    for (body, expected) in [
-        ("holds(c.versionNumber <= 2)", 0),
-        ("holds(3 mod c.versionNumber >= 0)", 10),
+    for (body, objects, expected) in [
+        ("holds(c.versionNumber <= 2)", SelectionObjects::Present, 0),
+        (
+            "holds(deref(Config::ConfigVersion#\"b\").versionNumber >= 0)",
+            SelectionObjects::UniverseOnly,
+            10,
+        ),
     ] {
         let unit = bump_low()
             .replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1")
@@ -3118,9 +3149,9 @@ fn package_clause_selections_model_results_match_source() {
                 "false",
             )
             .replace(LOW_BODY, body);
-        let trace = json!({"model": {"initial": "s0", "universes": ["s0"], "prefix": [],
+        let trace = json!({"model": {"initial": "s0", "universes": ["s0", "s1"], "prefix": [],
             "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}});
-        package_clause_selection_parity(&unit, &[(trace, expected)]);
+        package_clause_selection_outcomes(&unit, &[(trace, expected)], false, objects);
     }
 }
 
@@ -3129,13 +3160,13 @@ fn package_clause_selections_model_results_match_source() {
 #[test]
 #[trace("TC-3019", "FR-1039")]
 fn package_clause_selections_timed_results_match_source() {
-    for (body, expected) in [
-        ("holds(c.versionNumber <= 2)", 0),
-        ("holds(3 mod c.versionNumber >= 0)", 10),
+    for (objects, expected) in [
+        (SelectionObjects::Present, 0),
+        (SelectionObjects::MissingSecond, 10),
     ] {
-        let unit = timed_low().replace("holds(c.versionNumber <= 2)", body);
-        let prefix = json!([{"position": "s0", "stamp": "0"}]);
-        package_clause_selection_parity(
+        let unit = timed_low();
+        let prefix = json!([{"position": "s0", "stamp": "0"}, {"position": "s1", "stamp": "2"}]);
+        package_clause_selection_outcomes(
             &unit,
             &[
                 (
@@ -3143,10 +3174,12 @@ fn package_clause_selections_timed_results_match_source() {
                     expected,
                 ),
                 (
-                    json!({"timed": {"prefix": prefix, "loop": [{"position": "s1", "stamp": "2"}], "period": "3"}}),
+                    json!({"timed": {"prefix": [{"position": "s0", "stamp": "0"}], "loop": [{"position": "s1", "stamp": "2"}], "period": "3"}}),
                     expected,
                 ),
             ],
+            false,
+            objects,
         );
     }
 }
@@ -3157,22 +3190,46 @@ fn package_clause_selections_timed_results_match_source() {
 #[trace("TC-3019", "FR-1039")]
 fn package_clause_selections_violations_refuse_missing_decisive_locations() {
     let unit = bump_low().replace(LOW_BODY, "holds(c.versionNumber > 2)");
-    package_clause_selection_outcomes(&unit, &[(json!({"finite": ["s0", "s1"]}), 10)], true);
+    package_clause_selection_outcomes(
+        &unit,
+        &[(json!({"finite": ["s0", "s1"]}), 10)],
+        true,
+        SelectionObjects::Present,
+    );
     let unit = unit
         .replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1")
         .replace(
             "pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1",
             "false",
         );
-    package_clause_selection_outcomes(
-        &unit,
-        &[(
-            json!({"model": {"initial": "s0", "universes": ["s0"], "prefix": [],
-        "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}}),
-            10,
-        )],
-        true,
+    let directory = bump_directory(&unit, &["a"], true);
+    let snapshot = snapshot_of(directory.path(), &["a"], true);
+    let clause = json!({"selection": {"temporal": {"name": "Low", "over": {"reference": {
+        "population": snapshot["populations"][0]["population"], "key": "a"}},
+        "trace": {"model": {"initial": "s0", "universes": ["s0"], "prefix": [],
+        "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}}}},
+        "observations": {"s0": "s.json"}});
+    let path = directory.path().join("source-reference.json");
+    std::fs::write(&path, serde_json::to_vec(&json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")}, "clause": clause}})).unwrap()).unwrap();
+    let source_request = fsl_command::command::read_clause_run_request(&path).unwrap();
+    let report = fsl_replay::spine::run_clause(source_request).unwrap();
+    assert_eq!(
+        report.disposition.exit_code(),
+        10,
+        "{:?}",
+        report.disposition
     );
+    let models = compile_handoff(directory.path(), &unit);
+    let actual = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+        "models": models, "package": {"directory": "handoff"}, "clause": clause}}),
+    );
+    assert_eq!(actual.0, 20, "{}", actual.1);
+    assert_eq!(actual.1["code"], "invalid-request", "{}", actual.1);
+    refusal_names(&actual.1, "clause.selection");
 }
 
 /// FR-1039 Outputs: timed record samples share the snapshot timed evaluator,

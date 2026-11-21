@@ -86,7 +86,28 @@ impl BarePackage<'_> {
     /// rows describe holds no field, population or effect frame
     /// ([`BarePackage::source_model`]), so no input that steps it is built.
     pub fn first_unread_model_form(&self) -> Option<(UnreadModelForm, &CheckedNodeId)> {
-        let found = self.first_unread_node_form();
+        self.first_unread_observation_form(false)
+    }
+
+    /// Unread forms for a supplied timed trace, whose stamps replace timed-model stepping.
+    pub fn first_unread_timed_trace_form(&self) -> Option<(UnreadModelForm, &CheckedNodeId)> {
+        self.first_unread_observation_form(true)
+    }
+
+    fn first_unread_observation_form(
+        &self,
+        timed_trace: bool,
+    ) -> Option<(UnreadModelForm, &CheckedNodeId)> {
+        let found = self
+            .package()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find_map(|node| {
+                unread(node)
+                    .filter(|form| !(timed_trace && *form == UnreadModelForm::TimedModel))
+                    .map(|form| (form, &node.node_id))
+            });
         if found.is_some() {
             return found;
         }

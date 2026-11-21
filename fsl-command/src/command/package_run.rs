@@ -388,8 +388,12 @@ fn execute_clause(
     work: ClauseWork,
 ) -> Result<RunResult> {
     let not_read = |reason: String| invalid("clause.selection", reason);
-    let model = fsl_eval::simulation::model::PackageModelInput::of(bare, packages, model_limits)
-        .map_err(|refusal| not_read(refusal.to_string()))?;
+    let model = if matches!(work.trace, TraceInput::Timed { .. }) {
+        fsl_eval::simulation::model::PackageModelInput::of_timed_trace(bare, packages, model_limits)
+    } else {
+        fsl_eval::simulation::model::PackageModelInput::of(bare, packages, model_limits)
+    }
+    .map_err(|refusal| not_read(refusal.to_string()))?;
     let package = bare.package();
     let named = package
         .temporal_clause_names()

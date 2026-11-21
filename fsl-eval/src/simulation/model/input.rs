@@ -541,7 +541,35 @@ impl<'p> PackageModelInput<'p> {
         packages: &fsl_semantics::model::intake::PackageInput,
         normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
     ) -> Result<Self, PendingPackageForm> {
-        if let Some((form, node)) = package.first_unread_model_form() {
+        Self::of_trace_input(package, packages, normalization, false)
+    }
+
+    /// Build the model world for supplied timed observations, without simulating time.
+    /// Timed roots remain read through their admitted model-time joins by trace authentication.
+    ///
+    /// # Errors
+    ///
+    /// Refuses the same unsupported forms as [`Self::of`], except timed model roots.
+    pub fn of_timed_trace(
+        package: &'p BarePackage<'p>,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    ) -> Result<Self, PendingPackageForm> {
+        Self::of_trace_input(package, packages, normalization, true)
+    }
+
+    fn of_trace_input(
+        package: &'p BarePackage<'p>,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        timed_trace: bool,
+    ) -> Result<Self, PendingPackageForm> {
+        let unread = if timed_trace {
+            package.first_unread_timed_trace_form()
+        } else {
+            package.first_unread_model_form()
+        };
+        if let Some((form, node)) = unread {
             return Err(PendingPackageForm::Form {
                 form,
                 node: node.clone(),
