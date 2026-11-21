@@ -668,7 +668,7 @@ fn a_forged_decided_target_is_neither_counted_nor_reported() {
         .as_ref()
         .expect("the genuine paths still refute");
     assert_eq!(reproduced.mass(), honest_witness.mass());
-    assert!(reproduced.evidence().paths.len() < paths);
+    assert!(reproduced.evidence().paths.len() < paths, "{} vs {paths}; lens {:?}", reproduced.evidence().paths.len(), honest_witness.evidence().paths.iter().map(|p| p.steps.len()).collect::<Vec<_>>());
 }
 
 /// FR-923-AC-3: a witness that takes the tie's NON-failing ordering does not
