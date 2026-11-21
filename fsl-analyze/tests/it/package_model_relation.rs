@@ -463,7 +463,7 @@ fn ordered_handoff(
     ws: &Workspace,
     separate_models: bool,
 ) -> (Value, Vec<u8>, fsl_semantics::model::intake::PackageInput) {
-    let declarations = "relation Ordered using v over (y: N::Vault::step, x: V::Vault::step) { pre(x.self.h) = pre(x.self.h) and pre(y.self.h) = pre(y.self.h) and x.self.l = x.i and y.self.l = y.i }\ninvariant Sibling using v on V::Vault at current { true }";
+    let declarations = "post OtherStep using v on N::Vault::step { self.l = i }\nrelation Ordered using v over (y: N::Vault::step, x: V::Vault::step) { pre(x.self.h) = pre(x.self.h) and pre(y.self.h) = pre(y.self.h) and x.self.l = x.i and y.self.l = y.i }\ninvariant Sibling using v on V::Vault at current { true }";
     let (unit, model, other, snapshots, extra) = if separate_models {
         let (unit, model, other, snapshot) =
             hyper_world::two_model_request_files((0, 0), declarations);
@@ -689,25 +689,38 @@ fn hp1_package_bad_order_evidence_refuses_but_legacy_absence_is_item_local() {
     }
     // The consumer must retain the strict reader's first refusal at the
     // whole-request boundary, including integrity checks that precede joins.
-    let binders = original["semantic_graph"]["nodes"][position]["body"]["members"][1]["value"]
-        ["members"][0]["value"]["members"][2]["value"]["members"]
-        .as_array()
-        .expect("execution binders");
-    let parameter_positions: Vec<_> = binders
-        .iter()
-        .map(|binding| {
-            nodes
-                .iter()
-                .position(|node| node["node_id"] == binding["target"])
-                .expect("execution parameter node")
-        })
-        .collect();
-    assert!(
-        parameter_positions.len() >= 2,
-        "receiver and actual argument"
+    let execution =
+        &original["semantic_graph"]["nodes"][position]["body"]["members"][1]["value"]["members"][1];
+    assert_eq!(execution["name"], "x");
+    assert_eq!(
+        execution["value"]["members"][2]["value"]["members"]
+            .as_array()
+            .expect("execution binders")
+            .len(),
+        2
     );
-    let receiver = parameter_positions[0];
-    let argument = parameter_positions[1];
+    // In this two-execution fixture x follows y, so its receiver and
+    // argument have global levels 2 and 3. Select their unique literal
+    // bodies: operand-bearing wire key spellings are not an ID oracle.
+    let parameter_position = |name: &str, level: &str| {
+        let positions: Vec<_> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| {
+                node["node_tag"] == "value"
+                    && node["semantic_form"] == "parameter"
+                    && node["body"]["members"][0]["value"]["value"] == name
+                    && node["body"]["members"][1]["value"]["value"] == level
+            })
+            .map(|(position, _)| position)
+            .collect();
+        let [position] = positions.as_slice() else {
+            panic!("exactly one {name} parameter at level {level}: {positions:?}");
+        };
+        *position
+    };
+    let receiver = parameter_position("self", "2");
+    let argument = parameter_position("i", "3");
     forget_source(&ws);
     for defect in 0..4 {
         let mut altered = original.clone();
