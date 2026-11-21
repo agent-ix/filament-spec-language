@@ -313,7 +313,7 @@ fn a_variant_type_is_admitted_as_one_enum_and_one_variant_per_case() {
 
 /// TC-994 step 2: listing the cases in the other order changes no key,
 /// export or ordering.
-#[trace("TC-994", "FR-056-AC-24")]
+#[trace("TC-994", "FR-056-AC-24", "FR-531-AC-48")]
 #[test]
 fn reordering_the_cases_changes_no_key_export_or_ordering() {
     let gold_first = admitted(&tiers(&["Gold", "Standard"]));

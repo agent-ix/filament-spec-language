@@ -1328,7 +1328,7 @@ fn budgeted_converted_model_enum_shapes_are_joined_by_the_native_monitor_closure
 /// The public final-emission union rows (case ranks, authored positions, the
 /// Clock and data payload facts) are the real producer rows the native monitor
 /// closure joins for an admitted model payload union.
-#[trace("TC-1331", "FR-531-AC-30")]
+#[trace("FR-531-AC-45", "FR-531-AC-46")]
 #[test]
 fn emission_model_union_rows_are_joined_by_the_native_monitor_closure() {
     reach_model_type(ReachedModelType::Union);
@@ -1336,26 +1336,10 @@ fn emission_model_union_rows_are_joined_by_the_native_monitor_closure() {
 
 /// The same reached union with no row supplied is refused, so the accepted
 /// join above depends on the emission's rows.
-#[trace("TC-1331", "FR-531-AC-30")]
+#[trace("FR-531-AC-46")]
 #[test]
 fn a_reached_model_union_without_its_row_is_refused_by_the_native_monitor_closure() {
     reach_model_type(ReachedModelType::UnionWithoutRows);
-}
-
-/// A payload that is an alias of `Clock` resolves to `Clock` and is joined as
-/// the Clock case, as the plain Clock payload is.
-#[trace("TC-1331", "FR-531-AC-30")]
-#[test]
-fn a_clock_alias_union_payload_is_joined_as_a_clock_case() {
-    reach_model_type(ReachedModelType::UnionClockAlias);
-}
-
-/// A sequence of `Clock` has no model-union payload form: the writer
-/// refuses it with a typed fault rather than emit a Clock row for it.
-#[trace("TC-1331", "FR-531-AC-30")]
-#[test]
-fn a_clock_collection_union_payload_is_a_writer_fault_not_a_clock_row() {
-    reach_model_type(ReachedModelType::UnionClockSequence);
 }
 
 /// Which authored model type the monitor's typed input reaches and, for the
@@ -1369,11 +1353,6 @@ enum ReachedModelType {
     Union,
     /// The same union joined with no union rows.
     UnionWithoutRows,
-    /// The union whose `Armed` payload is an alias of `Clock`.
-    UnionClockAlias,
-    /// The union whose `Armed` payload is a sequence of `Clock`, which has no
-    /// model-union payload form.
-    UnionClockSequence,
 }
 
 /// Emits a monitor plan whose typed input reaches one model-owned type, then
@@ -1388,52 +1367,17 @@ fn reach_model_type(reached: ReachedModelType) {
     } else {
         ("Tier", "tier")
     };
-    let domain = Domain::config_version();
-    let clock_payload = match reached {
-        ReachedModelType::UnionClockAlias => format!("ix://{}/Stopwatch", domain.package),
-        ReachedModelType::UnionClockSequence => format!("ix://{}/Ticks", domain.package),
-        _ => "ix://filament/native/Clock".to_owned(),
-    };
-    let cases: Vec<(&str, Option<String>)> = if union {
-        vec![
+    let cases: &[(&str, Option<&str>)] = if union {
+        &[
             ("Idle", None),
-            ("Circle", Some("ix://filament/native/Integer".to_owned())),
-            ("Armed", Some(clock_payload)),
+            ("Circle", Some("ix://filament/native/Integer")),
+            ("Armed", Some("ix://filament/native/Clock")),
         ]
     } else {
-        vec![("Gold", None), ("Standard", None)]
+        &[("Gold", None), ("Standard", None)]
     };
+    let domain = Domain::config_version();
     let mut document: serde_json::Value = serde_json::from_slice(&domain.document).unwrap();
-    // An alias of, and a sequence over, `Clock`: each a type the union payload can name.
-    let carriers: Vec<(&str, &str, serde_json::Value)> = if union {
-        vec![
-            (
-                "Stopwatch",
-                "alias",
-                json!({"target": "ix://filament/native/Clock"}),
-            ),
-            (
-                "Ticks",
-                "sequence",
-                json!({"items": "ix://filament/native/Clock"}),
-            ),
-        ]
-    } else {
-        Vec::new()
-    };
-    for (name, kind, member) in carriers {
-        let mut carrier = document["types"][0].clone();
-        carrier["identity"] = json!(format!("ix://{}/{name}", domain.package));
-        carrier["displayName"] = json!(name);
-        carrier["kind"] = json!(kind);
-        carrier.as_object_mut().unwrap().remove("scalar");
-        carrier["constraints"] = json!([]);
-        carrier
-            .as_object_mut()
-            .unwrap()
-            .extend(member.as_object().unwrap().clone());
-        document["types"].as_array_mut().unwrap().push(carrier);
-    }
     let tier = format!("ix://{}/{type_name}", domain.package);
     document["constructs"].as_array_mut().unwrap().push(json!({
         "kind": {"module": domain.package, "name": "tier"},
@@ -1490,7 +1434,7 @@ fn reach_model_type(reached: ReachedModelType) {
     let unit = unit_source(&formula, &function, true, "on origin");
     let source = SourceIdentity::new("agent-ix", "monitor-root");
     let name = LibraryName::new("fixture").unwrap();
-    let rooted = emit_plan_root(
+    let root = emit_plan_root(
         &PlanRootRequest {
             source: &source,
             path: "monitor.native",
@@ -1503,16 +1447,8 @@ fn reach_model_type(reached: ReachedModelType) {
             settings: &TimingObligationSettings::default(),
         },
         &Cancel::new(),
-    );
-    if matches!(reached, ReachedModelType::UnionClockSequence) {
-        let refusal = rooted.expect_err("a Clock sequence payload has no model-union form");
-        assert!(
-            format!("{refusal:?}").contains("UnsupportedUnionPayload"),
-            "{refusal:?}"
-        );
-        return;
-    }
-    let root = rooted.expect("authored model monitor emits");
+    )
+    .expect("authored model-enum monitor emits");
     // A Boolean-input monitor does not reach the atom's model type. Author
     // genuine typed snapshot entries through the existing ClauseSource path.
     // The Boolean atom keeps this type-closure control independent of cross-
@@ -1679,12 +1615,8 @@ fn reach_model_type(reached: ReachedModelType) {
     )
     .expect("a claim row with both admitted values");
     let union_rows: &[filament_contract_model::SelectedModelUnionRow] = match reached {
-        ReachedModelType::Union | ReachedModelType::UnionClockAlias => {
-            emission.selected_model_union_rows()
-        }
-        ReachedModelType::Enum
-        | ReachedModelType::UnionWithoutRows
-        | ReachedModelType::UnionClockSequence => &[],
+        ReachedModelType::Union => emission.selected_model_union_rows(),
+        ReachedModelType::Enum | ReachedModelType::UnionWithoutRows => &[],
     };
     let closure = plan.project_selected_type_closure(
         SelectedMonitorClosureRows {

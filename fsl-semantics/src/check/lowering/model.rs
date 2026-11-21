@@ -2955,28 +2955,18 @@ impl<'a> Lowering<'a> {
             let record = variants.get(case).copied().ok_or_else(|| {
                 fault(location, KeyFault::MissingUnionVariant(declaration.clone()))
             })?;
-            // A payload is a Clock place only when its alias-resolved type is
-            // `Clock` itself; a collection over Clock has no IR payload form.
-            let payload = match (&record.payload_type, member.positions()) {
-                (None, []) => SelectedModelUnionPayload::None,
-                (Some(payload_type), []) => {
-                    match crate::model::domain_package::unaliased(payload_type, |key| {
-                        model.records.get(key)
-                    }) {
-                        Some((ValueTypeRef::Clock, 0)) => SelectedModelUnionPayload::Clock,
-                        _ => {
-                            return Err(fault(
-                                location,
-                                KeyFault::UnsupportedUnionPayload(record.key.clone()),
-                            ))
-                        }
-                    }
-                }
-                (Some(_), [original_type]) => SelectedModelUnionPayload::Data {
+            let payload = match union_payload_form(
+                record.payload_type.as_ref(),
+                member.positions(),
+                &model.records,
+            ) {
+                Some(UnionPayloadForm::None) => SelectedModelUnionPayload::None,
+                Some(UnionPayloadForm::Clock) => SelectedModelUnionPayload::Clock,
+                Some(UnionPayloadForm::Data(original_type)) => SelectedModelUnionPayload::Data {
                     node: self.type_node(original_type, &site)?,
                     original_type: original_type.clone(),
                 },
-                (_, _) => {
+                None => {
                     return Err(fault(
                         location,
                         KeyFault::UnsupportedUnionPayload(record.key.clone()),
@@ -3964,3 +3954,39 @@ fn mismatch(location: &Location) -> CheckRefusal {
 
 #[cfg(test)]
 mod tests;
+
+/// How a selected model union case carries its payload, before any node is
+/// lowered.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum UnionPayloadForm<'p> {
+    /// A nullary case.
+    None,
+    /// The alias-resolved payload type is `Clock` itself.
+    Clock,
+    /// One checked data position.
+    Data(&'p ValueType),
+}
+
+/// The payload form of a union case from its authored payload type and its
+/// checked data positions, or `None` when the case has no model-union payload
+/// form. A payload is a Clock place only when its alias-resolved type is
+/// `Clock`; a collection over `Clock`, or a payload with several data
+/// positions, has no form, and is never read as a Clock because it has no
+/// data position.
+pub(super) fn union_payload_form<'p>(
+    payload: Option<&ValueTypeRef>,
+    positions: &'p [ValueType],
+    records: &BTreeMap<DeclarationKey, DomainPackageRecord>,
+) -> Option<UnionPayloadForm<'p>> {
+    match (payload, positions) {
+        (None, []) => Some(UnionPayloadForm::None),
+        (Some(payload), []) => {
+            match crate::model::domain_package::unaliased(payload, |key| records.get(key)) {
+                Some((ValueTypeRef::Clock, 0)) => Some(UnionPayloadForm::Clock),
+                _ => None,
+            }
+        }
+        (Some(_), [original]) => Some(UnionPayloadForm::Data(original)),
+        _ => None,
+    }
+}

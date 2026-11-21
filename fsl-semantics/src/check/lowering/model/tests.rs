@@ -2159,3 +2159,81 @@ fn record_value_type_declaration_keys_as_a_model_node() {
     );
     assert_eq!(form, (NodeTag::Model, "record_value_type".to_owned()));
 }
+
+/// Synthetic normalized-contract provenance: public model intake admits only
+/// `Clock` and value types as union payloads, so an alias or collection
+/// payload reaches the classifier only from a hand-built record. A payload is
+/// a Clock place only when its alias-resolved type is `Clock`; a collection
+/// over `Clock` has no data position and no model-union payload form, so it is
+/// never read as a Clock.
+#[trace("FR-531-AC-47")]
+#[test]
+fn a_union_payload_is_a_clock_only_when_its_resolved_type_is_clock() {
+    use crate::model::domain_package::{AliasTypeRecord, MapTypeRecord, SequenceTypeRecord};
+
+    let records: BTreeMap<DeclarationKey, DomainPackageRecord> = BTreeMap::from([
+        (
+            key("Stopwatch"),
+            DomainPackageRecord::AliasType(AliasTypeRecord {
+                key: key("Stopwatch"),
+                target: ValueTypeRef::Clock,
+            }),
+        ),
+        (
+            key("Ticks"),
+            DomainPackageRecord::SequenceType(SequenceTypeRecord {
+                key: key("Ticks"),
+                items: ValueTypeRef::Clock,
+            }),
+        ),
+        (
+            key("TickMap"),
+            DomainPackageRecord::MapType(MapTypeRecord {
+                key: key("TickMap"),
+                keys: ValueTypeRef::Native(crate::model::domain_package::NativeValueType::String),
+                values: ValueTypeRef::Clock,
+                lower: 0,
+                upper: None,
+            }),
+        ),
+    ]);
+    let package = |name: &str| Some(ValueTypeRef::Package(key(name)));
+    let one = [int(0, 9)];
+    let form = |payload: Option<ValueTypeRef>, positions: &[ValueType]| {
+        union_payload_form(payload.as_ref(), positions, &records)
+    };
+    assert_eq!(form(None, &[]), Some(UnionPayloadForm::None));
+    assert_eq!(
+        form(Some(ValueTypeRef::Clock), &[]),
+        Some(UnionPayloadForm::Clock)
+    );
+    assert_eq!(
+        form(package("Stopwatch"), &[]),
+        Some(UnionPayloadForm::Clock)
+    );
+    assert_eq!(
+        form(package("Ticks"), &[]),
+        None,
+        "a sequence over Clock is not a Clock"
+    );
+    assert_eq!(
+        form(package("TickMap"), &[]),
+        None,
+        "a map over Clock is not a Clock"
+    );
+    assert_eq!(
+        form(
+            Some(ValueTypeRef::Native(
+                crate::model::domain_package::NativeValueType::String
+            )),
+            &one
+        ),
+        Some(UnionPayloadForm::Data(&one[0]))
+    );
+    assert_eq!(form(None, &one), None, "a data position needs a payload");
+    assert_eq!(
+        form(Some(ValueTypeRef::Clock), &[int(0, 1), int(0, 2)]),
+        None,
+        "several data positions have no payload form"
+    );
+}
