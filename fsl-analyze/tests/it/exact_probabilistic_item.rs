@@ -12,6 +12,7 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::{Limits, TransitionSystem};
 use fsl_foundation::RequestIndex;
 use fsl_replay::InconclusiveCause;
+use fsl_replay::ProbabilityCertificateDocument;
 use fsl_replay::{
     claim_binding, Certification, ExactOrBounds, ExactProbabilityCertificateCheck,
     ExactProbabilityGraphError, Extremum, IncompleteCause, ModelCheckLimit, ModelCheckLimits,
