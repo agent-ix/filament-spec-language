@@ -179,9 +179,12 @@ impl<'a> Text<'a> {
             .bytes
             .saturating_sub(writer.produced())
             .saturating_sub(2);
-        self.text_reserved();
-        fsl_foundation::scalar_wire::integer(integer, remaining, None, writer).map_err(|error| {
-            match error {
+        fsl_foundation::scalar_wire::integer_text(integer, remaining, None)
+            .and_then(|rendered| {
+                self.text_reserved();
+                writer.string(&rendered)
+            })
+            .map_err(|error| match error {
                 Error::Limit(limit) => Error::Limit(quire_canonical::LimitExceeded {
                     kind: limit.kind,
                     bound: self.limits.bytes,
@@ -191,8 +194,7 @@ impl<'a> Text<'a> {
                         .saturating_add(2),
                 }),
                 other => other,
-            }
-        })
+            })
     }
     pub(super) fn unit<S: Sink + ?Sized>(
         &self,
@@ -575,6 +577,43 @@ mod tests {
                 ));
             }
         }
+    }
+
+    #[trace("FR-201-AC-9", "FR-255-AC-1")]
+    #[test]
+    fn decimal_transport_retention_is_observed_before_sink_refusal() {
+        struct RefusingSink<'a>(&'a std::cell::Cell<usize>);
+        impl Sink for RefusingSink<'_> {
+            fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Error> {
+                self.0.set(self.0.get() + 1);
+                Err(Error::ReservationDenied {
+                    requested: bytes.len(),
+                })
+            }
+        }
+        let cancel = Cancel::new();
+        let limits = super::super::tests::limits();
+        let integer = Integer::from(42_u64);
+        let text = Text::new(limits, &cancel);
+        let mut output = Vec::new();
+        let mut writer = Writer::new(&mut output, quire_canonical::Limits::new(limits.bytes));
+        text.integer(&integer, &mut writer).unwrap();
+        assert_eq!(text.texts.get(), 1, "admitted decimal text was retained");
+        assert_eq!(output, br#""42""#);
+
+        let text = Text::new(limits, &cancel);
+        let calls = std::cell::Cell::new(0);
+        let mut sink = RefusingSink(&calls);
+        let mut writer = Writer::new(&mut sink, quire_canonical::Limits::new(limits.bytes));
+        assert!(
+            matches!(text.integer(&integer, &mut writer), Err(Error::ReservationDenied { requested }) if requested > 0)
+        );
+        assert_eq!(calls.get(), 1, "the actual sink refused its first write");
+        assert_eq!(
+            text.texts.get(),
+            1,
+            "decimal text existed before sink refusal"
+        );
     }
 
     #[trace("FR-201-AC-9", "FR-255-AC-1")]

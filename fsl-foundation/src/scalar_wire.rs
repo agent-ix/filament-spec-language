@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Canonical decimal integers and structural unit descriptors shared by keys and proofs.
 
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use filament_exact::{
     Integer, IntegerDecimalBudget, IntegerDecimalBudgetError, IntegerDecimalError, UnitId,
 };
@@ -17,8 +17,20 @@ pub fn integer<S: Sink + ?Sized>(
     budget: Option<&mut dyn IntegerDecimalBudget>,
     writer: &mut Writer<'_, S>,
 ) -> Result<(), Error> {
+    writer.string(&integer_text(value, max_bytes, budget)?)
+}
+
+/// Materialize canonical decimal text within the caller's admitted capacity.
+///
+/// # Errors
+/// The same decimal budget, byte bound and allocation refusals as [`integer`].
+pub fn integer_text(
+    value: &Integer,
+    max_bytes: u64,
+    budget: Option<&mut dyn IntegerDecimalBudget>,
+) -> Result<String, Error> {
     let limit = usize::try_from(max_bytes).unwrap_or(usize::MAX);
-    let rendered = match budget {
+    match budget {
         Some(budget) => value.try_to_decimal_string_with_budget(limit, budget),
         None => value
             .try_to_decimal_string(limit)
@@ -41,8 +53,7 @@ pub fn integer<S: Sink + ?Sized>(
                 requested: usize::MAX,
             }
         }
-    })?;
-    writer.string(&rendered)
+    })
 }
 
 /// Write a declared or compound unit; the caller owns integer charging and cancellation.
