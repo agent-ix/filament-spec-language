@@ -1840,6 +1840,15 @@ fn resolve_one(
     {
         return resolved;
     }
+    if selection
+        .temporal
+        .as_ref()
+        .and_then(|temporal| temporal.item_kind)
+        .is_some_and(|kind| !matches!(kind.kind(), ItemKind::Formula | ItemKind::Refinement))
+    {
+        return resolve_derived(package, subject, index, selection, registry, binding, name)
+            .unwrap_or_else(|| unknown_claim(index, name));
+    }
     let Some(node) = declarations(package).get(name).cloned() else {
         return resolve_derived(package, subject, index, selection, registry, binding, name)
             .unwrap_or_else(|| unknown_claim(index, name));

@@ -727,6 +727,26 @@ fn a_derived_item_over_a_name_that_is_no_model_alias_is_an_unknown_claim() {
     );
 }
 
+/// FR-626-AC-1: an authored temporal declaration is not a model anchor for
+/// a derived deadlock item, even when it is the subject's only clause.
+#[trace("TC-1586", "FR-626-AC-1")]
+#[test]
+fn a_derived_item_over_a_temporal_clause_is_an_unknown_claim() {
+    let ws = Workspace::new("cli-deadlock-clause-anchor");
+    let run = analyze(&counter_request(
+        &ws,
+        &bounded(),
+        json!([{"claim": "Bounded", "kind": "temporal-satisfaction",
+            "temporal": {"item_kind": "deadlock-freedom"}}]),
+    ));
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["cause"],
+        "unknown-claim"
+    );
+    assert!(run.item(0)["replay"].is_null(), "{}", run.item(0));
+    assert_eq!(run.exit, 20);
+}
+
 /// FR-896-AC-1, AC-2 (TC-2532): a `global-conformance` item with no
 /// recording is decided over every behaviour of the protocol and its bound
 /// role implementations: the order protocol conforms, and without its

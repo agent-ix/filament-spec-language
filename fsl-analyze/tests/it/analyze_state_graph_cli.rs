@@ -7,7 +7,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, counter_request, label, staying_counter_request, Workspace,
+    analyze, counter_request, label, resetting_counter_request, staying_counter_request, Workspace,
 };
 
 const CLAIMS: &str = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
@@ -43,6 +43,24 @@ fn a_possible_claim_proves_with_a_replayed_witness_path_and_refutes() {
     assert_eq!(label(&refuted), "refuted");
     assert_eq!(refuted["counterexample"]["arm"], "trap");
     assert_eq!(refuted["replay"]["reproduced"], true);
+    assert_eq!(run.exit, 10);
+}
+
+/// FSpec FR-391-AC-2: a closed cyclic component with no target refutes
+/// `possible`, including under the request's explicit two-second deadline.
+#[trace("TC-1588", "FR-628-AC-1", "FSpec-FR-391-AC-2")]
+#[test]
+fn a_possible_claim_refutes_a_closed_cyclic_trap_under_its_deadline() {
+    let run = analyze(&resetting_counter_request(
+        &Workspace::new("sg-possible-cyclic-trap"),
+        "possible NeverAbove using v over (c: M::Counter) { c.value > 3 }\n",
+        json!([{"claim": "NeverAbove"}]),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["counterexample"]["arm"], "trap", "{item}");
+    assert_eq!(item["record"]["scope"], "closed-scope", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
     assert_eq!(run.exit, 10);
 }
 
