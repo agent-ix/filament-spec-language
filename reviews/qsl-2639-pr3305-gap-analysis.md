@@ -209,3 +209,46 @@ scope:
 Matrix limitation: quoin matrix --repo <frozen-worktree> --json and quire coverage --scope <frozen-worktree> --json remained CPU-active with zero JSON output after more than six minutes each; reviewer terminated those two owned processes (child exit 143). This is an unavailable bounded engine result, not a verified CLI bug. A static quire matrix fallback was also attempted with a 45-second timeout; its result is recorded separately. The provisional tracked-file index (provisional-index.json) found 6047 criterion rows, 4927 direct Rust tags and 1120 rows without a direct Rust tag across 2150 Rust files; these are NOT engine matrix statuses and do not account for qualified records, inherited tags, ignored tests or non-Rust source. All FR-450-AC-1 through AC-20 have direct tags; AC-14 through AC-20 were individually inspected against their actual behavioral assertions. No unrelated provisional absence is filed as a PR defect. Engine evidence freshness, stale-tag diagnostics and whole-repository matrix completeness remain unverified; no engine-backed gap PASS is claimed.
 
 Static fallback result: `timeout 45s quire matrix --scope <frozen-worktree> --format json` exited 124 with no JSON output. Coverage diagnostics emitted duplicate-archetype/inverse-edge warnings, retained in the tool record; there is no computed matrix result to interpret.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1: bounded sparse-degree matrix and 4097-bit endpoint tests call the production functions with real meters and assert denied first-admission consumption; the shared prepaid/rational_step closure observers establish denial before operation entry. Three mutation runs fail their intended assertions. |
+
+### Round 1 verification
+
+Frozen disposition head: 399d4e40c8c6b3fd715aa4a15740fedb2625f8ed. Original findings and review-pass verdicts above are historical and remain unchanged. All findings checked in this round have outcome fixed; no new findings or still-open outcomes.
+
+Current code-review verdict: PASS for the scoped implementation review. Current gap-analysis status: CONDITIONAL because the previously documented engine matrix/coverage unavailability remains; the scoped evidence finding is fixed. This is mergeable on the requested scoped review, with no claim of an engine-backed repository gap PASS.
+
+Inspection confirmed the saturating matrix weight is computed before dense allocation and determinant minors use the same pre-admission helper. Rational charges include actual endpoint bit lengths and occur before subtraction, division, addition and cross-multiplying comparisons. The new helper invokes the operation only after HybridReplayMeter::charge_by returns success; a denial preserves typed ResourceExhausted. Numerical semantics and projection families were not altered by the fix.
+
+The degree-32 matrix fixture has 63 squared cells but only sparse input terms; its fixed budget rejects the quadratic admission while the restored linear precharge admits it. The 4097-bit endpoint fixture distinguishes the first 85-unit width admission from later work, and tests all three bounded/unbounded sector shapes. Operation-entry observers exercise the same production admission helpers and real meter; no test-only bypass exists.
+
+Inspected final restored-source logs: tmp/fix1-kernel-final.log: 15 passed, 0 failed, exit 0; tmp/fix1-quantifier-final.log: 24 passed, 0 failed, exit 0, W=775194. Existing W/W-1 and both provider settlement paths still assert typed incomplete, accounting.work_units and no counterexample; actual trace undefinedness tests still pass. Mutation logs tmp/fix1-mutant-linear-matrix.log, tmp/fix1-mutant-unpaid-width.log and tmp/fix1-mutant-late-admission.log each exit 101 at the intended new assertion (wrong admission result, nonzero consumed work before width admission, and entered operation on denial respectively). They demonstrate that each named correction is observed by a failing oracle.
+
+Scoped Clippy tmp/fix1-clippy-final.log exits 101 with the same four unchanged diagnostics at certificate/product.rs:1047,1054,1062 and model_check/refinement_replay.rs:1664. No CAD warning or suppression. Reviewer git diff --check passes; current source worktree is clean. No Cargo run, broad gate or timed-out matrix/coverage command was repeated; existing logs and direct code inspection were sufficient. Plan completion: not assessed.
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: fixed
+    after_excerpt: >2-
+              let mut meter = HybridReplayMeter::new(100);
+              let result = principal_subresultant_matrix(&a, &b, 1, 0, &mut meter);
+              assert!(matches!(
+                  result,
+                  Err(HybridReplayRefusal::ResourceExhausted { .. })
+              ));
+              assert_eq!(
+                  meter.consumed(),
+                  0,
+                  "the first admission must cover every dense cell"
+              );
+    reason: "Round 1: bounded sparse-degree matrix and 4097-bit endpoint tests call
+      the production functions with real meters and assert denied
+      first-admission consumption; the shared prepaid/rational_step closure
+      observers establish denial before operation entry. Three mutation runs
+      fail their intended assertions."
+```
