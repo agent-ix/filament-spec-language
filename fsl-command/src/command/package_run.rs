@@ -436,7 +436,7 @@ fn execute_clause(
                     filament_semantic_value::checking::CheckingLimits::default().nodes(),
                 )
                 .map_err(|refusal| not_read(refusal.to_string()))?;
-            Ok((clause, key))
+            Ok::<_, RunCause>((clause, key))
         })
         .transpose()?;
     let report = match &work.over {
