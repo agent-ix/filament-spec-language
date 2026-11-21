@@ -403,10 +403,70 @@ The Counter fixture is FR-620's.
 | FR-850-AC-10 | AC-1's Counter package holds the integer `=` application of the `Inc` postcondition (`self.value - pre(self.value) = 1`) in `checked_term_data.equality_decisions`. With `equality.json` removed from its handoff directory, the request with the item `{"claim": "Bounded"}` refuses the whole request at the request stage, `invalid_package`, cause `missing-file`, naming `equality.json`, exit 20, `items` empty and no engine run. With `equality.json` present, the same request settles `Bounded` `proved` with the record the source request gives. The handoff directory of the Counter unit whose `Inc` postcondition is written `self.value > pre(self.value)` holds no equality application (`checked_term_data` absent or `equality_decisions` empty); with its `equality.json` removed, the same request settles `Bounded` with the record the source request over that unit gives, exit 0. | Test (TC-3025) |
 | FR-850-AC-11 | FR-1033-AC-1's `SB` unit is compiled by a `native-compile/1` request carrying the `handoff` member into its handoff directory, and FR-1033-AC-2's racing variant into its own. A `package` request over each directory, with `models` the `test/litmus` domain package document the package selects (FR-850 "Inputs") and the same `subject.protocol`, `memory` `[{"parallel": "SB::Both", "model": "tso"}]` and items as the source request, gives item records equal to the source route's: `NoBothZero` `refuted` with the same counterexample (both pending stores), replay target and `replay.reproduced` `true`, and over the variant the item `{"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}` `refuted` with the same `Race` counterexample naming both writes, each echoing the same `temporal.subject` and effective model; with no `memory`, `NoBothZero` settles `proved` on both routes. No package-route record is `unsupported` and no request refuses for carrying `memory`. | Test (TC-3050) |
 | FR-850-AC-12 | A compiled root calls `test/z::answer`, which calls `test/a::answer` returning Integer `42`. Running the root function from source and from its FR-517 directory returns `42` on both routes. Its Counter temporal claim `always holds(c.value <= z::answer() - 40)` is analyzed with the same models/documents/items on both routes and gives equal item records, counterexamples and reproduced replays except the request selection. Deleting all unit/library source files and the handoff's `sources/` before the package run and analyze/replay changes neither result. Removing `dependencies.json` refuses `invalid_package`/`missing-file` even for an import-free unit; no compile fallback occurs. | Test |
-| FR-850-AC-13 | FR-517-AC-28's diamond is admitted once per unique library and settles the source route's result. A missing transitive artifact refuses before an item runs; a manifest entry for a foreign or conflicting library refuses `conflicting-definition`; an unreachable row, a duplicate identity, reversed rows, an unknown row member, a nonindexed path, `../escape`, an absolute path and a selected symlink/non-regular file each refuse by the dependency admission table at their own file or pointer. A lock cycle refuses `definition-cycle`; none reaches source or an engine. | Test |
+| FR-850-AC-13 | FR-517-AC-28's diamond is admitted once per unique library and settles the source route's result. A missing transitive artifact refuses before an item runs; a manifest entry for a foreign or conflicting library refuses `conflicting-definition`; an unreachable row, a duplicate identity, reversed rows, an unknown row member, a nonindexed path, `../escape`, an absolute path and a selected symlink/non-regular file each refuse by the dependency admission table at their own file or pointer. A lock cycle refuses `definition-cycle`. The malformed-manifest and omitted-selection mutations in the supplemental AC-13 table give exactly its code, cause and location; none reaches source or an engine. | Test |
 | FR-850-AC-14 | For AC-12's transitive handoff, removal of either dependency's `identities.json` or `equality.json` refuses `missing-file` naming that indexed file even when the equality lists would be empty. Swapping non-empty witness files between distinct admitted libraries refuses their original identity/equality join error at the foreign file, before any item runs; no dependency receives the root's witness. The unchanged handoff completes. | Test |
-| FR-850-AC-15 | For AC-12's handoff, compute `B` as the bytes of exactly the root, manifest, unique dependency package/witness files and selected model/runtime files read. At `dependent_bytes = B` intake completes; at `B - 1` it settles `incomplete`, `resource_exhausted`, exit `22`, naming `dependent_bytes` and its configured bound. A handoff whose manifest expands the selected-file total from 64 to 65 stops at the same phase naming the shared file limit before opening file 65. A diamond charges its shared triple once. For strict-read/native-join work and storage, an allowance equal to the completed closure pass succeeds and one below its next charge refuses under the original `i2.work_units` or `i2.native_join_storage` setting without restarting an allowance at a dependency boundary. | Test |
+| FR-850-AC-15 | For AC-12's handoff, compute `B` as the bytes of exactly the root, manifest, unique dependency package/witness files and selected model/runtime files read. At `dependent_bytes = B` intake completes; at `B - 1` it settles `incomplete`, `resource_exhausted`, exit `22`, naming `dependent_bytes` and its configured bound. A handoff whose manifest expands the selected-file total from 64 to 65 stops at the same phase naming the shared file limit before opening file 65. A diamond charges its shared triple once. For strict-read/native-join work and storage, an allowance equal to the completed closure pass succeeds and one below its next charge refuses under the original `i2.work_units` or `i2.native_join_storage` setting without restarting an allowance at a dependency boundary. The transitive replay in supplemental AC-15 tests `replay.input_bytes` at a root-only bound and the exact consumed-artifact total, with item-local refusal and unaffected siblings. | Test |
 | FR-850-AC-16 | A library in AC-12's closure selects domain document `test/library-domain`, which the root does not select, and the request supplies both that document and the root's domain documents. Admission binds each document to the selecting package and completes without an extraneous-model refusal. Removing the library-only document refuses `missing_import`/`missing-selection` naming its identity; replacing it by content the library selection refuses preserves that reader refusal at the dependency package. No witness from the root is substituted. | Test |
+
+### FR-850-AC-13
+
+Starting from FR-517-AC-28's admitted diamond, mutate only the named input in
+each row below. Raw JSON edits SHALL preserve repeated members rather than
+collapsing them through an object map. For manifest mutations, the refusal's
+file is `dependencies.json`; the empty pointer `""` names its root. Each row
+refuses the whole request before any item runs, with `items` `[]`,
+`last_stage` `null` and exit `20`. Every unmodified control is admitted.
+
+| Mutation | Code | Cause | Exact retained location |
+| --- | --- | --- | --- |
+| Replace the manifest bytes by `not json` | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `""` |
+| Remove `format`, or repeat it with the original value | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/format` |
+| Remove `dependencies`, or repeat that member with the original array | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/dependencies` |
+| Add top-level member `extra` | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/extra` |
+| Remove or repeat `identity` in row 0 | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/dependencies/0/identity` |
+| Remove or repeat `directory` in row 0 | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/dependencies/0/directory` |
+| Add row-0 member `extra` | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/dependencies/0/extra` |
+| Set `format` to integer `7` | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/format` |
+| Set `dependencies` to `{}` | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/dependencies` |
+| Replace dependency row 0 by `null` | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/dependencies/0` |
+| Set row-0 `identity` or `directory` to integer `7`, in separate variants | `invalid_package` | `malformed-file` | `dependencies.json`, pointer `/dependencies/0/identity` or `/dependencies/0/directory`, respectively |
+| Set `format` to `filament.checked-handoff.dependencies/2` | `invalid_package` | `unknown-format` | `dependencies.json`, pointer `/format`, retaining that supplied string |
+| Omit the reachable `test/shared` row (row 2), leaving the two canonical remaining rows and all physical artifact files intact | `missing_import` | `missing-selection` | importing file `dependencies/0/checked-package.json` (`test/left`), pointer `/lock/dependency_selections/0`, identity `test/shared`; `test/left` and `test/right` each have only that one direct dependency |
+| Keep the complete manifest but remove `dependencies/2/checked-package.json` | `invalid_package` | `missing-file` | exact relative path `dependencies/2/checked-package.json` |
+
+The omitted selection SHALL NOT be repaired by discovering the unlisted
+`dependencies/2` directory. Its `missing-selection` is distinct from the
+`missing-file` of a listed artifact whose file is absent.
+
+### FR-850-AC-15
+
+Use AC-12's `test/z` → `test/a` transitive call in the Counter claim, alongside
+Counter's independent `Bounded` claim (`always holds(c.value <= 3)`). Keep all
+intake, I2 and exploration bounds large enough for initial admission and search.
+Let `P` be the exact byte length of the root `checked-package.json`; let `R`
+be the exact total package artifact bytes consumed by the successful replay:
+the root plus the `test/z` and `test/a` checked-package bytes, each unique
+package counted once for that replay. Thus `R > P` and the transitive function
+actually consumes both dependencies, rather than importing unused libraries.
+The directory request retains AC-12's witness supply with no source available;
+run its source control before deleting source files.
+
+Run source and directory requests with the same two items and with
+`replay.input_bytes = P`, so the root alone fits but the consumed closure does
+not. The library-dependent item SHALL settle `inconclusive` with cause
+`replay_refused`, carrying the original `stage_limit_exceeded` /
+`input-bytes-exceeded` refusal naming setting `replay.input_bytes`, bound `P`
+and its attempted byte count. It SHALL NOT settle `refuted` with an unverified
+counterexample, `failed`, or a whole-request admission refusal. `Bounded` SHALL
+still settle `proved` with its unlimited-run record. The outcome retains both
+items, with category and exit determined by FR-621; source and package item
+records agree, and their outcomes differ only in the request selection echo.
+
+At `replay.input_bytes = R`, the same library-dependent item SHALL settle
+`refuted` with the original counterexample and `replay.reproduced` `true`, and
+`Bounded` SHALL remain unchanged. A replay implementation that charges only the
+root bytes would incorrectly pass at `P`, so the negative case can detect an
+omitted dependency charge.
 
 ## Dependencies
 
