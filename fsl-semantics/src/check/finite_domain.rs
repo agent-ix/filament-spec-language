@@ -153,7 +153,7 @@ pub(crate) fn first_unbounded_component(
 mod tests {
     use super::{first_unbounded_component, DomainContext};
     use filament_exact::{
-        Integer, IntegerInterval, NodeKey, PathSegment, RationalDomain, ValueType,
+        EffectiveId, Integer, IntegerInterval, OriginalDeclarationKey, RationalDomain, ValueType,
     };
     use filament_semantic_value::declaration::TypeEnvironment;
     use ix_trace_rs::trace;
@@ -177,9 +177,10 @@ mod tests {
             first_unbounded_component(&types, &rational, DomainContext::ValueSynthesis),
             Some("domain.Rational".to_owned())
         );
-        let reference = ValueType::option(ValueType::Reference(
-            NodeKey::new("test", vec![PathSegment::Text("Object".to_owned())], 0).unwrap(),
-        ));
+        let reference = ValueType::option(ValueType::Reference(EffectiveId::new(
+            None,
+            OriginalDeclarationKey::new("test", "ix://test/Object"),
+        )));
         assert_eq!(
             first_unbounded_component(&types, &reference, DomainContext::PlanParameter),
             None
