@@ -335,3 +335,82 @@ fn an_absent_aggregate_valuation_is_a_missing_valuation() {
         );
     }
 }
+
+/// `responses()` with its progress replaced: `watermark`, completeness
+/// through `through`, scope and execution open.
+fn responses_with_progress(watermark: u64, through: u64) -> Value {
+    let mut trace = responses();
+    trace["timestamped"]["progress"] = json!({"watermark": watermark,
+        "completeness": {"complete": {"through": through}},
+        "scope": "open", "execution": "open"});
+    trace
+}
+
+/// FR-194-AC-16 through `command::run`: a window not asserted complete is
+/// never a final violation. AC-13's p95 unit over AC-1's 20 latencies, with
+/// watermark 19 and completeness through 9, is `pending-window` with deadline
+/// 300000; with completeness through 19 it is `violated`, exit 10.
+#[test]
+#[trace("TC-629", "FR-194-AC-16")]
+fn a_window_not_asserted_complete_is_pending_until_it_is_covered() {
+    let directory = tempfile::tempdir().unwrap();
+    let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    let unit = quantile_unit("0.95");
+    let (exit, pending) = run(
+        directory.path(),
+        &unit,
+        clocks.clone(),
+        "P",
+        responses_with_progress(19, 9),
+    );
+    assert_eq!(exit, 0, "{pending}");
+    let temporal = &pending["disposition"]["temporal"];
+    assert_eq!(temporal["kind"], "pending-window", "{pending}");
+    assert_eq!(temporal["deadline"], 300_000, "{pending}");
+    let (exit, covered) = run(
+        directory.path(),
+        &unit,
+        clocks,
+        "P",
+        responses_with_progress(19, 19),
+    );
+    assert_eq!(exit, 10, "{covered}");
+    assert_eq!(
+        covered["disposition"]["temporal"]["kind"], "violated",
+        "{covered}"
+    );
+}
+
+/// FR-194-AC-17 through `command::run`: AC-1's trace with the response
+/// stamped 18 ms holding no valuation of the aggregate (the request names it by position and atom node), complete through 300000, is
+/// `indeterminate` (exit 11) with reason `missing-valuation`, never
+/// `invalid-value` and never a quantile over the other 19 values.
+#[test]
+#[trace("TC-629", "FR-194-AC-17")]
+fn a_window_member_without_a_valuation_is_a_missing_valuation() {
+    let directory = tempfile::tempdir().unwrap();
+    let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    let mut trace = responses();
+    // The aggregate atom is node 1 (as in `an_absent_aggregate_valuation_is_a_missing_valuation`);
+    // the observation at position 18 holds no valuation for it, so every
+    // window that reads position 18 is a missing valuation.
+    trace["timestamped"]["missing"] = json!([{"position": 18, "atom": 1}]);
+    for quantile in ["0.95", "0.9"] {
+        let (exit, document) = run(
+            directory.path(),
+            &quantile_unit(quantile),
+            clocks.clone(),
+            "P",
+            trace.clone(),
+        );
+        assert_eq!(exit, 11, "{quantile}: {document}");
+        assert_eq!(
+            document["disposition"]["temporal"]["kind"], "indeterminate",
+            "{quantile}: {document}"
+        );
+        assert_eq!(
+            document["disposition"]["temporal"]["reason"]["kind"], "missing-valuation",
+            "{quantile}: {document}"
+        );
+    }
+}
