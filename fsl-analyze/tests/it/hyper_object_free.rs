@@ -56,7 +56,7 @@ fn admitted(bytes: &[u8], wire: &Value) -> bool {
 #[trace("TC-3010", "FR-488-AC-28")]
 #[trace("FSpec-TC-2034", "FSpec-FR-402-AC-11")]
 #[test]
-#[ignore = "QSL-2464: the test's hyper source does not parse at S1 (invalid_syntax: expected identifier)"]
+#[ignore = "QSL-2464 completed; current blocker has no assigned owner: the test's hyper source does not parse at S1 (invalid_syntax: expected identifier)"]
 fn an_object_free_hyper_wrapper_ranges_over_the_model_root() {
     let world = World::new(
         Vault::Secure,
@@ -87,7 +87,7 @@ fn an_object_free_hyper_wrapper_ranges_over_the_model_root() {
 #[trace("TC-3010", "FR-488-AC-28")]
 #[trace("FSpec-TC-2034", "FSpec-FR-402-AC-11")]
 #[test]
-#[ignore = "QSL-2464: the checked package has no hyperproperty node for this source (hyper_object_free.rs:39)"]
+#[ignore = "QSL-2464 completed; current blocker has no assigned owner: the checked package has no hyperproperty node for this source"]
 fn a_model_root_over_on_a_wrapper_that_reads_a_slot_is_refused() {
     let world = World::new(Vault::Secure, false, &STARTS, &non_interference(""));
     let (_, mut wire) = emitted(&world);

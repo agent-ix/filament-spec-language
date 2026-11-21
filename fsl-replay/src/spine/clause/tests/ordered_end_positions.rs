@@ -200,7 +200,7 @@ fn run_order(positions: [Option<serde_json::Value>; 3]) -> ClauseDisposition {
 #[trace("TC-1902", "FR-364-AC-15")]
 #[trace("FSpec-TC-1400", "FSpec-FR-152-AC-13")]
 #[test]
-#[ignore = "QSL-2179: snapshot admission refuses the ordered-end `positions` member as invalid_runtime_input/unknown-member, so ordered navigation is not reached"]
+#[ignore = "QSL-2179 completed; current blocker has no assigned owner: snapshot admission refuses the ordered-end `positions` member as invalid_runtime_input/unknown-member, so ordered navigation is not reached"]
 fn an_ordered_end_navigates_in_ascending_position() {
     let disposition = run_order([target(7), target(2), target(5)]);
     assert!(
@@ -221,7 +221,7 @@ fn an_ordered_end_navigates_in_ascending_position() {
 #[trace("TC-1902", "FR-364-AC-15")]
 #[trace("FSpec-TC-1400", "FSpec-FR-152-AC-13")]
 #[test]
-#[ignore = "QSL-2179: snapshot admission refuses the ordered-end `positions` member as unknown-member before the malformed-position refusals can be observed"]
+#[ignore = "QSL-2179 completed; current blocker has no assigned owner: snapshot admission refuses the ordered-end `positions` member as unknown-member before the malformed-position refusals can be observed"]
 fn malformed_positions_refuse_at_admission() {
     for positions in [
         [target(7), None, target(5)],

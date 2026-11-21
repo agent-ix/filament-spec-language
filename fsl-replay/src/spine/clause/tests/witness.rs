@@ -628,7 +628,7 @@ fn assert_snapshot_refusal(
 /// pointer for snapshot defects; a valid snapshot has no admission item.
 #[trace("TC-465", "FR-106-AC-3")]
 #[test]
-#[ignore = "QSL-2173: the missing-member snapshot refusal for the ConfigVersion fixture is not produced as the test expects; admission refuses with invalid_runtime_input/missing-member at a different member and path (witness.rs:417)"]
+#[ignore = "QSL-2173 completed; current blocker has no assigned owner: the missing-member snapshot refusal for the ConfigVersion fixture is not produced as the test expects; admission refuses with invalid_runtime_input/missing-member at a different member and path"]
 fn snapshot_admission_refusal_witnesses_name_object_member_and_path() {
     assert_snapshot_refusal(
         "missing-member",
@@ -1462,7 +1462,7 @@ fn tc_740_a_refuted_forall_derives_its_record_and_visits_nothing_after_the_stop(
 /// `closed-scope`.
 #[trace("TC-740", "FR-265-AC-2")]
 #[test]
-#[ignore = "QSL-2173: the float-ordering ConfigVersion clause derives a DecisiveCounterexample record where the test expects a ClosedScope derivation with no record (witness.rs:1346)"]
+#[ignore = "QSL-2173 completed; current blocker has no assigned owner: the float-ordering ConfigVersion clause derives a DecisiveCounterexample record where the test expects a ClosedScope derivation with no record"]
 fn tc_740_a_satisfied_exists_or_negated_forall_derives_a_decisive_witness() {
     let unit = witness_unit();
     assert_eq!(
@@ -1578,7 +1578,7 @@ fn tc_740_a_float_ordering_as_an_implies_consequent_ends_the_path_at_closed_scop
 /// and `or`.
 #[trace("TC-740", "FR-265-AC-3")]
 #[test]
-#[ignore = "QSL-2173: the ConfigVersion clause derives a DecisiveCounterexample record where the test expects a ClosedScope derivation with no record (witness.rs:1457)"]
+#[ignore = "QSL-2173 completed; current blocker has no assigned owner: the ConfigVersion clause derives a DecisiveCounterexample record where the test expects a ClosedScope derivation with no record"]
 fn tc_740_the_decision_path_reaches_the_decisive_quantifier() {
     let unit = witness_unit();
     let Some(Derived {
@@ -3563,7 +3563,7 @@ fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
 /// unit table holds round-trips; the declared unit resolves by lookup.
 #[trace("TC-744", "FR-269-AC-3")]
 #[test]
-#[ignore = "QSL-2173: the unit-table fixture package checks as an EmptyPackage refusal, so no unit quantity is built (witness.rs:2994)"]
+#[ignore = "QSL-2173 completed; current blocker has no assigned owner: the unit-table fixture package checks as an EmptyPackage refusal, so no unit quantity is built"]
 fn tc_744_a_declared_unit_quantity_round_trips() {
     let unit = witness_unit();
     let (package, metre) = metre_package();

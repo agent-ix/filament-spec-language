@@ -4714,7 +4714,7 @@ fn a_clock_tuple_position_and_union_case_are_clock_places() {
 /// typed by it is a clock place and its `max` constraint bounds that place.
 #[trace("TC-3031", "FR-056-AC-64")]
 #[test]
-#[ignore = "QSL-2176: model intake refuses the by-target Clock alias (InvalidModelBinding, malformed `target` member of the type definition) before the check"]
+#[ignore = "QSL-2176 completed; current blocker has no assigned owner: model intake refuses the by-target Clock alias (InvalidModelBinding, malformed `target` member of the type definition) before the check"]
 fn a_value_type_bound_to_clock_by_target_types_a_clock_place() {
     let document = timer_document(|document: &mut Value| {
         let watch = package("Watch");

@@ -319,7 +319,7 @@ fn a_replay_request_file_replays_as_the_in_process_request_does() {
 /// dependency clock selection removed refuses `missing-clock-selection`.
 #[test]
 #[trace("TC-2443", "FR-862-AC-2")]
-#[ignore = "QSL-2274: the library-clock program is refused invalid_syntax (unexpected-token) at compile, so the package replay cannot start"]
+#[ignore = "QSL-2274 completed; current blocker has no assigned owner: the library-clock program is refused invalid_syntax (unexpected-token) at compile, so the package replay cannot start"]
 fn a_replay_request_file_replays_a_library_clock_from_the_package() {
     let fixture = Fixture::compile(
         PROGRAM,

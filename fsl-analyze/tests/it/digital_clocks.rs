@@ -1000,7 +1000,7 @@ fn reordering_two_delays_changes_no_delay_node() {
 /// orders it after `send` with no probability lost to the order draw.
 #[trace("FSpec-TC-1561", "FSpec-FR-420-AC-8")]
 #[test]
-#[ignore = "QSL-1991: exact-probabilistic-digital still fails with an internal fault (invariant workload-weights-sum) on a weight-0 tie (digital_clocks.rs:122)"]
+#[ignore = "QSL-1991 completed; current blocker has no assigned owner: exact-probabilistic-digital still fails with an internal fault (invariant workload-weights-sum) on a weight-0 tie"]
 fn a_weight_zero_operation_takes_its_turn_last_in_a_tie() {
     let world = retx_with(
         &[("send", &["late", "x"]), ("tick", &["retried"])],

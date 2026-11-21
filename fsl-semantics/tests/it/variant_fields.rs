@@ -1051,7 +1051,7 @@ fn undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_m
 /// model variant case; a qualifier that names no type stays `missing-name`.
 #[trace("TC-3051", "FR-317-AC-6")]
 #[test]
-#[ignore = "QSL-2170: an unknown qualified member `Status::Pending` is still refused MissingQualifiedName, not type-mismatch (variant_fields.rs:1075)"]
+#[ignore = "QSL-2170 completed; current blocker has no assigned owner: an unknown qualified member `Status::Pending` is still refused MissingQualifiedName, not type-mismatch"]
 fn an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant_case() {
     let refusals = check_refusals(
         "enum Status { Open, Closed }\n\

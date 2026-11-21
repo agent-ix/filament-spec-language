@@ -544,7 +544,7 @@ fn reversed_prefix_hyper_clauses_emit_their_own_trace_rows() {
 /// FR-488-AC-26: the two clauses' `body` references one wrapper.
 #[trace("TC-3000", "FR-488-AC-26", "FSpec-TC-2027", "FSpec-FR-322-AC-463")]
 #[test]
-#[ignore = "QSL-2400: the unit is refused missing_declaration at compile; the slots of reversed prefixes also sit at different levels, so the two clauses get two body wrappers, not one"]
+#[ignore = "QSL-2400 completed; current blocker has no assigned owner: the unit is refused missing_declaration at compile; the slots of reversed prefixes also sit at different levels, so the two clauses get two body wrappers, not one"]
 fn reversed_prefix_hyper_clauses_share_one_body_wrapper() {
     let package = reversed_prefix_package();
     let nodes = hyper_nodes(&package);
@@ -560,7 +560,7 @@ fn reversed_prefix_hyper_clauses_share_one_body_wrapper() {
 /// `temporal_profile` selection.
 #[trace("TC-3001", "FR-898-AC-7", "FSpec-TC-2028", "FSpec-FR-322-AC-464")]
 #[test]
-#[ignore = "QSL-2400: the finite-domain hyper unit is refused invalid_syntax (unexpected-token) at compile, so no clock row per trace on role `t` is emitted"]
+#[ignore = "QSL-2400 completed; current blocker has no assigned owner: the finite-domain hyper unit is refused invalid_syntax (unexpected-token) at compile, so no clock row per trace on role `t` is emitted"]
 fn a_finite_domain_hyper_clause_emits_one_row_per_trace_on_its_domain_binder() {
     let directory = tempfile::tempdir().unwrap();
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
