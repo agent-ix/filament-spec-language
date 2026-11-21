@@ -6,6 +6,8 @@
 
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
+#[path = "../../../tests/support/ring_queue.rs"]
+pub(crate) mod ring_queue;
 pub(crate) mod support;
 
 /// The package name test fixtures assemble under.
@@ -89,6 +91,7 @@ mod quantity_negation;
 mod quantity_power;
 mod reference_adapter;
 mod refinement_populations;
+mod refinement_row_clock_places;
 mod relationship_navigation;
 mod relationship_reachability;
 mod removal_filter_decrease;

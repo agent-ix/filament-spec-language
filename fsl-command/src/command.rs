@@ -17,6 +17,7 @@ pub mod plan_request;
 mod replay;
 mod requirements;
 mod settle;
+mod synthesis;
 mod tl;
 mod wire;
 
@@ -797,6 +798,19 @@ pub enum RunCause {
         /// Why the member is refused.
         reason: String,
     },
+    /// FR-1037: a `synthesis` member the request reader refuses, with the
+    /// FSpec FR-823 catalog code and FR-805 cause apart from the message.
+    #[error("invalid synthesis request member {path}: {cause}: {reason}")]
+    SynthesisRequest {
+        /// The JSON pointer of the member at fault.
+        path: String,
+        /// The catalog code of the refusal.
+        code: Code,
+        /// The FR-805 cause.
+        cause: &'static str,
+        /// Why the member is refused.
+        reason: String,
+    },
     /// FR-752: a typed model-based-test request refusal with its catalog code
     /// and cause.
     #[error("invalid model_based_test request member {path}: {cause}")]
@@ -1144,7 +1158,9 @@ impl RunCause {
             | Self::ExportProtocolRequest { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
             Self::ExportRequest { .. } => Code::InvalidRuntimeInput,
-            Self::PlanRequest { code, .. } | Self::ModelBasedTestRequest { code, .. } => *code,
+            Self::PlanRequest { code, .. }
+            | Self::SynthesisRequest { code, .. }
+            | Self::ModelBasedTestRequest { code, .. } => *code,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
@@ -1356,6 +1372,7 @@ impl RunError {
             )]),
             RunCause::ExportRequest { path, cause, .. }
             | RunCause::PlanRequest { path, cause, .. }
+            | RunCause::SynthesisRequest { path, cause, .. }
             | RunCause::ModelBasedTestRequest { path, cause, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
@@ -1879,6 +1896,9 @@ fn run_configured(
             if let Some(result) = version_argv(bytes)? {
                 Ok(Some(result))
             } else if let Some(result) = check_argv(directory, bytes)? {
+                Ok(Some(result))
+            } else if let Some(result) = synthesis::run_bytes(directory, bytes, limits, overrides)?
+            {
                 Ok(Some(result))
             } else {
                 if let Some(result) =

@@ -677,12 +677,100 @@ mod dense_time {
         assert!(text.contains("[](tick \\/ <>(~tick /\\ "), "{text}");
     }
 
+    #[trace("FSpec-FR-813-AC-19", "FSpec-FR-813-AC-27", "FSpec-TC-1972")]
+    #[test]
+    fn an_origin_window_reads_positions_after_idle_and_never_after_tick() {
+        for (body, premise, lo, hi) in [
+            (
+                "eventually[0 ms, 5 ms] holds(not l.on)",
+                "[]<>accept_T(o_l)",
+                0,
+                5,
+            ),
+            ("always[2 ms, 3 ms] holds(l.on)", "[]accept_T(o_l)", 2, 3),
+        ] {
+            let (exit, tla) = lamp(body, Target::Tla, lo == 0);
+            assert_eq!(exit, 0, "{tla}");
+            let text = tla["export"]["target_text"].as_str().unwrap();
+            assert!(
+                text.contains(&format!("({lo} <= now' /\\ now' <= {hi})")),
+                "{text}"
+            );
+            assert!(text.contains("Next_T == ((Next \\/ \\E d \\in Real : Idle(d)) /\\ Mon_T) \\/ (\\E d \\in Real : Tick(d) /\\ UNCHANGED <<m_T>>)"), "{text}");
+            let theorem = format!(
+                r"THEOREM Th_T == Spec_T => ((NZ /\ []<>~tick) => \A o_l \in Ids_Lamp : [](ok_T(o_l)) /\ {premise})"
+            );
+            assert!(text.lines().any(|line| line == theorem), "{text}");
+            let (exit, lean) = lamp(body, Target::Lean, lo == 0);
+            assert_eq!(exit, 0, "{lean}");
+            let text = lean["export"]["target_text"].as_str().unwrap();
+            assert!(
+                text.contains(&format!("Q_le (Q.mk {lo} 1) (Q_sub (b.ts")),
+                "{text}"
+            );
+            assert!(text.contains(&format!("(Q.mk {hi} 1)")), "{text}");
+        }
+    }
+
+    #[trace("FSpec-FR-813", "FSpec-TC-1972")]
+    #[test]
+    fn a_window_under_always_tracks_each_open_start() {
+        for (body, reject) in [
+            (
+                "always eventually[0 ms, 5 ms] holds(not l.on)",
+                "now' - s > 5",
+            ),
+            (
+                "always always[2 ms, 3 ms] holds(l.on)",
+                "(2 <= now' - s /\\ now' - s <= 3)",
+            ),
+        ] {
+            let (exit, tla) = lamp(body, Target::Tla, true);
+            assert_eq!(exit, 0, "{tla}");
+            let text = tla["export"]["target_text"].as_str().unwrap();
+            for expected in [
+                "m_T_s0 \\in [Ids_Lamp -> SUBSET Real]",
+                "m_T_s0[o_l] \\cup {now'}",
+                "m_T_r0[o_l] \\/",
+                reject,
+                "Tick(d) /\\ UNCHANGED <<m_T_s0, m_T_r0>>",
+                "[]accept_T(o_l)",
+            ] {
+                assert!(text.contains(expected), "missing {expected}: {text}");
+            }
+            let (exit, lean) = lamp(body, Target::Lean, true);
+            assert_eq!(exit, 0, "{lean}");
+            let text = lean["export"]["target_text"].as_str().unwrap();
+            assert!(text.contains("forall d1 : Int"), "{text}");
+            assert!(
+                text.contains(
+                    "Q_sub (b.ts (Int.toNat ((i + d1) + d2))) (b.ts (Int.toNat (i + d1)))"
+                ),
+                "{text}"
+            );
+        }
+    }
+
     #[trace("FSpec-FR-813-AC-24", "FSpec-TC-1972")]
     #[test]
-    fn a_repeated_timed_window_keeps_its_typed_refusal() {
-        let body = "always eventually[0 ms, 5 ms] holds(not l.on)";
+    fn a_timed_window_under_eventually_keeps_its_typed_refusal() {
+        let body = "eventually always[0 ms, 5 ms] holds(l.on)";
         for target in [Target::Tla, Target::Lean] {
-            assert_operator_refusal(body, target, "filament.op.temporal.eventually");
+            assert_operator_refusal(body, target, "filament.op.temporal.always");
+        }
+    }
+
+    #[trace("FSpec-FR-813-AC-24", "FSpec-FR-814", "FSpec-TC-1972")]
+    #[test]
+    fn dense_tla_refuses_the_second_timed_window_at_its_checked_node() {
+        for body in [
+            "always[0 ms, 5 ms] holds(l.on) and eventually[1 ms, 4 ms] holds(not l.on)",
+            "always (always[0 ms, 5 ms] holds(l.on) and eventually[1 ms, 4 ms] holds(not l.on))",
+        ] {
+            assert_operator_refusal(body, Target::Tla, "filament.op.temporal.eventually");
+            let (exit, lean) = lamp(body, Target::Lean, true);
+            assert_eq!(exit, 0, "{lean}");
+            assert_eq!(lean["export"]["records"][0]["disposition"], "preserved");
         }
     }
 }

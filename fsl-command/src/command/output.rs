@@ -5,8 +5,8 @@ mod types;
 
 use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
-use fsl_foundation::source::SourceReadCause;
 use fsl_foundation::Diagnostic;
+use fsl_foundation::source::SourceReadCause;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
@@ -120,6 +120,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// FR-1037's bounded synthesis outcome.
+    pub(super) fn synthesis_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// The FR-190 result record of a direct model-based test request.
     pub(super) fn model_based_test_document(record: Value) -> Self {
         Self(serde_json::json!({
@@ -227,6 +232,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         ),
         RunCause::ExportRequest { path, .. }
         | RunCause::PlanRequest { path, .. }
+        | RunCause::SynthesisRequest { path, .. }
         | RunCause::ModelBasedTestRequest { path, .. } => (
             types::Stage::Request,
             types::Details::Object(serde_json::Map::from_iter([(
@@ -427,6 +433,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             },
             RunCause::ExportRequest { cause, .. }
             | RunCause::PlanRequest { cause, .. }
+            | RunCause::SynthesisRequest { cause, .. }
             | RunCause::ModelBasedTestRequest { cause, .. } => Some(*cause),
             RunCause::ExportOutput { .. } => Some("output-failure"),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
@@ -673,10 +680,10 @@ fn spine_origin(origin: &filament_semantic_value::location::ExpressionOwner) -> 
 
 #[cfg(all(test, feature = "quire-extraction"))]
 mod extraction_tests {
-    use super::{extraction_regions_for_locus, RunCause};
+    use super::{RunCause, extraction_regions_for_locus};
     use crate::command::ExtractionFailureStage;
     use fsl_foundation::{Source, SourceIdentity};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     fn verified_map() -> fsl_foundation::source_map::SourceMap {
         let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";

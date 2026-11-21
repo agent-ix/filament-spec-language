@@ -1284,9 +1284,6 @@ fn assembly_error_message(cause: &AssemblyCause) -> String {
         AssemblyCause::TimedNotChecked(construct) => {
             format!("{} builds but is not checked yet", construct.description())
         }
-        AssemblyCause::SynthesisNotChecked { name } => {
-            format!("synthesis `{name}` builds but is not checked yet")
-        }
     }
 }
 

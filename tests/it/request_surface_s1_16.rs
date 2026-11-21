@@ -721,10 +721,10 @@ fn pick(block: &str, objective: &str) -> String {
 /// `no-candidate` after ten values; `minimize Pick` with `Pick >= 3` gives 3.
 #[test]
 #[trace("TC-2104", "FR-754-AC-3")]
+#[trace("TC-3017", "FR-1037-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-6")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
-#[ignore = "QSL-2235: bounded synthesis run not implemented yet"]
 fn pick_finds_validates_exhausts_and_optimizes() {
     let synth = |unit: String| run(&unit, false, ("synthesis", json!({"declaration": "Pick"}))).1;
     let found = synth(pick("Pick * Pick = 49", ""));
@@ -745,13 +745,38 @@ fn pick_finds_validates_exhausts_and_optimizes() {
         "{optimal}"
     );
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
+    assert_eq!(optimal["synthesis"]["explored"]["visited"], 4, "{optimal}");
+    let maximal = synth(pick("Pick >= 3", "maximize Pick"));
+    assert_eq!(
+        maximal["synthesis"]["candidate"],
+        json!({"type": "integer", "value": "9"}),
+        "{maximal}"
+    );
+    assert_eq!(maximal["synthesis"]["optimal"], true, "{maximal}");
+}
+
+/// FR-1037: a plan synthesis selected through the `synthesis` member is
+/// refused as not yet routed to the planner; the value enumerator never
+/// reports a verdict for it.
+#[test]
+#[trace("TC-3017", "FR-1037-AC-1")]
+fn a_plan_synthesis_is_refused_not_enumerated() {
+    let unit = format!(
+        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+         satisfies {{ true }};\n"
+    );
+    let (exit, value) = run(&unit, true, ("synthesis", json!({"declaration": "Reach"})));
+    assert_eq!(exit, 21, "{value}");
+    assert_eq!(value["code"], "unsupported_construct", "{value}");
+    assert_eq!(value["cause"], "not-yet-implemented", "{value}");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
 }
 
 /// FSpec FR-194-AC-10: a search stopped by its work limit is `incomplete`
 /// naming the limit, never `no-candidate`.
 #[test]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-10")]
-#[ignore = "QSL-2235: work-limited bounded synthesis not implemented yet"]
 fn a_work_limited_synthesis_is_incomplete() {
     let (_, value) = run(
         &pick("Pick * Pick = 50", ""),

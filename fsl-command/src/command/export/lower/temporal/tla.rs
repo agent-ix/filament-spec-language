@@ -54,7 +54,7 @@ fn normalize(tf: &Tf) -> Tf {
     let go = |inner: &Tf| Box::new(normalize(inner));
     let not = |inner: Tf| Tf::Not(Box::new(inner));
     match tf {
-        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) => tf.clone(),
+        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) | Tf::Timed(_) => tf.clone(),
         Tf::Not(inner) => Tf::Not(go(inner)),
         Tf::And(left, right) => Tf::And(go(left), go(right)),
         Tf::Or(left, right) => Tf::Or(go(left), go(right)),
@@ -157,7 +157,7 @@ fn extract(tf: &Tf, histories: &mut Vec<History>, ordinal: &mut u64) -> Lower<Tf
         extract(inner, histories, ordinal).map(Box::new)
     }
     Ok(match tf {
-        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) => tf.clone(),
+        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) | Tf::Timed(_) => tf.clone(),
         Tf::Not(inner) => Tf::Not(go(inner, histories, ordinal)?),
         Tf::And(left, right) => Tf::And(
             go(left, histories, ordinal)?,
@@ -880,7 +880,7 @@ pub(in crate::command::export::lower) fn tla(
                 ),
                 Some(clause.name.as_str()),
             ));
-            super::super::dense::tla_clause(
+            let variables = super::super::dense::tla_clause(
                 clause,
                 &ctx.names.ids,
                 &ctx.names.ok,
@@ -888,6 +888,10 @@ pub(in crate::command::export::lower) fn tla(
                 out,
             )
             .map_err(attribute)?;
+            extra
+                .variables
+                .extend(variables.iter().map(|(name, _)| name.clone()));
+            extra.dense_names.extend(variables);
         } else {
             tla_clause(ctx, out, &mut extra).map_err(attribute)?;
         }

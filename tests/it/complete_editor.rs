@@ -182,6 +182,12 @@ fn incremental_and_full_reparse_publish_identical_language_outputs() {
         .completions
         .iter()
         .any(|item| item.spelling == "Complete"));
+    for word in ["machine", "step", "population", "occurs"] {
+        assert!(
+            snapshot.completions.iter().any(|item| item.spelling == word),
+            "{word} is offered as a contextual keyword"
+        );
+    }
 }
 
 #[trace("FSpec-TC-223", "FSpec-FR-303-AC-2")]
