@@ -250,6 +250,7 @@ fn malformed_receipt_causes_and_pointers_are_preserved_before_matching() {
     ));
     let mut version = fixture.receipt.clone();
     version["contract_version"] = json!("filament.effect-decision/v2");
+    version["decision"]["node"] = json!("not-emitted");
     cases.push((
         canonical_json::encode(&version).unwrap(),
         "invalid-value",
@@ -263,6 +264,13 @@ fn malformed_receipt_causes_and_pointers_are_preserved_before_matching() {
         .unwrap()
         .replace("\"lineage\":{}", "\"lineage\":{},\"lineage\":{}");
     cases.push((text.into_bytes(), "duplicate-member", "/lineage"));
+    let mut domain = fixture.receipt.clone();
+    domain["authority_grant"]["unsafe_integer"] = json!(9_007_199_254_740_992_u64);
+    cases.push((
+        serde_json::to_vec(&domain).unwrap(),
+        "invalid-value",
+        "/authority_grant/unsafe_integer",
+    ));
     for (bytes, cause, pointer) in cases {
         fixture.case.write("first.json", &bytes);
         let outcome = fixture.run();
@@ -518,6 +526,14 @@ fn a_bounded_item_without_trace_keeps_its_engine_outcome() {
 #[trace("FR-1046-AC-2")]
 fn checked_package_receipts_match_the_same_actual_recommendation() {
     let mut fixture = Fixture::new();
+    fixture.request["request"]["items"][0]["kind"] = json!("temporal-satisfaction");
+    let source = fixture.run();
+    assert_eq!(
+        source.exit, 10,
+        "same supported Source selector: {}",
+        source.document
+    );
+    assert_eq!(source.document["items"][0]["replay"]["reproduced"], true);
     let compile = json!({"format": "native-compile/1", "request": {
         "program": fixture.request["request"]["program"], "models": fixture.request["request"]["models"],
         "handoff": {"directory": "handoff", "package_name": "receipt-proof", "native_join": {

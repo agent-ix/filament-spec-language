@@ -13,6 +13,18 @@ use serde_json::{Map, Value};
 
 use super::{DocumentSelection, ItemSelection, SettledRun};
 
+/// Recognize the existing receipt document family when assembling formal
+/// premises. Admission still validates the complete selected bytes separately.
+pub(crate) fn is_receipt(bytes: &[u8]) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Version<'a> {
+        #[serde(borrow)]
+        contract_version: &'a str,
+    }
+    serde_json::from_slice::<Version<'_>>(bytes)
+        .is_ok_and(|document| document.contract_version == "filament.effect-decision/v1")
+}
+
 /// Existing FR-272 causes admitted by the receipt reader.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReceiptCause {
@@ -238,8 +250,15 @@ fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptRefusal> {
     if value["contract_version"] != "filament.effect-decision/v1" {
         return Err(malformed(ReceiptCause::InvalidValue, "/contract_version"));
     }
-    let canonical =
-        canonical_json::encode(&value).map_err(|_| malformed(ReceiptCause::InvalidValue, ""))?;
+    let canonical = canonical_json::encode(&value).map_err(|error| match error {
+        canonical_json::CanonicalJsonError::UnsafeInteger { pointer, .. } => {
+            malformed(ReceiptCause::InvalidValue, &pointer)
+        }
+        canonical_json::CanonicalJsonError::Serialize(_)
+        | canonical_json::CanonicalJsonError::Encode(_) => {
+            malformed(ReceiptCause::InvalidValue, "")
+        }
+    })?;
     if canonical != bytes {
         return Err(malformed(ReceiptCause::InvalidValue, ""));
     }
