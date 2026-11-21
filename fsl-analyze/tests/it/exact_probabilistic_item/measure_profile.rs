@@ -1216,3 +1216,171 @@ fn weighted_fraction_keeps_exact_sums_and_checks_its_mean_independently() {
     );
     refuted(&world, "No");
 }
+
+#[trace("FR-1043-AC-8", "FR-1043-AC-9", "FR-202-AC-28")]
+#[test]
+fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_choices() {
+    let claims = claim(
+        "Min",
+        "every scheduler",
+        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+    ) + &claim(
+        "Max",
+        "every scheduler",
+        "mean of fraction holds(m.delivered) over [0,2] <= rational(1,3)",
+    );
+    let world = World::new(&retry(&claims));
+    let minimum = settle(&world, "Min", ModelCheckLimits::default());
+    let maximum = settle(&world, "Max", ModelCheckLimits::default());
+    let minimum = minimum
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap()
+        .evidence();
+    let maximum = maximum
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap()
+        .evidence();
+    let document = mean_bound(minimum, false, true);
+    let mut bad_hint = document.clone();
+    let opposite = mean_bound(maximum, true, true);
+    let root = URL_SAFE_NO_PAD.encode(minimum.initial_key.as_bytes());
+    let opposite = opposite["policy"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["state"] == root)
+        .unwrap();
+    let row = bad_hint["policy"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["state"] == root)
+        .unwrap();
+    assert_ne!(
+        row["choice"], opposite["choice"],
+        "a genuinely different enabled action"
+    );
+    row["choice"] = opposite["choice"].clone();
+    let rejected = replay_mean_document(&world, minimum, &bad_hint);
+    assert!(
+        matches!(
+            rejected,
+            Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    ..
+                }
+            ))
+        ),
+        "a bad supplied hint must not fall back: {rejected:?}"
+    );
+    let mut no_hint = document;
+    no_hint["policy"] = json!([]);
+    let mut offered = minimum.clone();
+    offered.scheduler.clear();
+    let accepted = replay_mean_document(&world, &offered, &no_hint);
+    let Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(token)) = accepted else {
+        panic!("{accepted:?}");
+    };
+    assert!(
+        token
+            .evidence()
+            .scheduler
+            .iter()
+            .any(|(_, action)| matches!(action, fsl_replay::ProductAction::TerminalStutter)),
+        "terminal-only choices must be inferred"
+    );
+
+    let mut model = retry(&claims);
+    model.body = model.body.replace("self.delivered = (lost = 1)", "true");
+    let world = World::new(&model);
+    let record = settle(&world, "Min", ModelCheckLimits::default());
+    assert_eq!(
+        record.terminal().unwrap().value(),
+        &TerminalValue::Refuted,
+        "{:?}",
+        record.settlement
+    );
+    let mut offered = record
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap()
+        .evidence()
+        .clone();
+    let mut document = mean_bound(&offered, false, true);
+    document["policy"] = json!([]);
+    offered.scheduler.clear();
+    let accepted = replay_mean_document(&world, &offered, &document);
+    let Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(token)) = accepted else {
+        panic!("{accepted:?}");
+    };
+    assert!(
+        token
+            .evidence()
+            .scheduler
+            .iter()
+            .any(|(_, action)| matches!(action, fsl_replay::ProductAction::PostState(_))),
+        "genuine residual post-state choices must be inferred"
+    );
+    // Both residual outcomes contribute zero when the final departing source
+    // is false. Their target keys define the canonical action tie break.
+    let mut checked_tie = false;
+    for (source, action) in &token.evidence().scheduler {
+        let source: Value = serde_json::from_slice(source.as_bytes()).unwrap();
+        if source[7].is_null() || source[5][1] != "1" || source[6][1] != "0" {
+            continue;
+        }
+        let fsl_replay::ProductAction::PostState(target) = action else {
+            continue;
+        };
+        let target_json: Value = serde_json::from_slice(target.as_bytes()).unwrap();
+        let expected = document["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| {
+                let other = key(row);
+                other[7].is_null() && other[5] == target_json[5] && other[6] == target_json[6]
+            })
+            .map(|row| {
+                URL_SAFE_NO_PAD
+                    .decode(row["state"].as_str().unwrap())
+                    .unwrap()
+            })
+            .min()
+            .unwrap();
+        assert_eq!(target.as_bytes(), expected);
+        checked_tie = true;
+    }
+    assert!(
+        checked_tie,
+        "the fixture must exercise a real satisfying-action tie"
+    );
+    // This pending state's accumulated true contribution makes every
+    // residual action strictly positive. Zero has no satisfying action.
+    let pending = document["values"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| {
+            let state = key(row);
+            !state[7].is_null() && row["value"]["numerator"] != "0"
+        })
+        .expect("a genuine positive residual choice");
+    pending["value"] = json!({"numerator":"0","denominator":"1"});
+    let rejected = replay_mean_document(&world, &offered, &document);
+    assert!(
+        matches!(
+            rejected,
+            Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    ..
+                }
+            ))
+        ),
+        "{rejected:?}"
+    );
+}

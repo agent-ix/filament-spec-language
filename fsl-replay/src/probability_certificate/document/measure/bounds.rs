@@ -165,8 +165,12 @@ fn policy_action(
             schedule.as_bytes(),
             limits.bytes,
             &mut writer::Reserve(&admission),
-        )
-        .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
+        );
+        *storage = admission.borrow().used();
+        if let Some(error) = admission.borrow_mut().take_stop() {
+            return Err(error);
+        }
+        let parsed = parsed.map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
         let Node::Array(parts) = parsed.root().node() else {
             return Err(ProbabilityDocumentError::MalformedMember("policy"));
         };
@@ -342,6 +346,7 @@ pub(super) fn check(
         policy.insert(key, index);
     }
     let zero = super::super::rational(0);
+    let mut selected_policy = Vec::new();
     for (key, value) in &values {
         poll(cancel)?;
         let state = graph
@@ -370,21 +375,37 @@ pub(super) fn check(
             }
             continue;
         }
-        let selected_choice = if needs_policy {
-            if let Some(index) = policy.get(key) {
-                Some(*index)
-            } else if state.choices.len() == 1 {
-                Some(0)
-            } else {
-                return Err(ProbabilityDocumentError::MalformedMember("policy"));
-            }
-        } else {
-            None
-        };
-        for (index, choice) in state.choices.iter().enumerate() {
-            if selected_choice.is_some_and(|selected| selected != index) {
+        charge(
+            &mut storage,
+            limits.storage_bytes,
+            u64::try_from(state.actions.len().saturating_mul(std::mem::size_of::<(
+                &str,
+                &[u8],
+                usize,
+            )>()))
+            .unwrap_or(u64::MAX),
+        )?;
+        let mut choices = Vec::new();
+        for (index, action) in state.actions.iter().enumerate() {
+            let (tag, bytes): (&str, &[u8]) = match action {
+                None => ("", &[]),
+                Some(crate::ProductAction::Identity(schedule)) => ("identity", schedule.as_bytes()),
+                Some(crate::ProductAction::PostState(target)) => ("post-state", target.as_bytes()),
+                Some(crate::ProductAction::TerminalStutter) => ("terminal-stutter", &[]),
+                Some(_) => return Err(ProbabilityDocumentError::Unsupported),
+            };
+            choices.push((tag, bytes, index));
+        }
+        choices.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        let mut satisfying = None;
+        for (_, _, index) in choices {
+            if policy.get(key).is_some_and(|hint| *hint != index) {
                 continue;
             }
+            let choice = state
+                .choices
+                .get(index)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
             let mut sum = super::super::rational(0);
             for edge in choice {
                 let target = values.get(&edge.target).unwrap_or(&zero);
@@ -399,12 +420,51 @@ pub(super) fn check(
                     cancel,
                 )?;
             }
-            if (lower && value > &sum) || (!lower && &sum > value) {
+            let holds = if lower { value <= &sum } else { &sum <= value };
+            if !holds && (!needs_policy || policy.contains_key(key)) {
                 return Ok(rejection(
                     ProbabilityCertificateRule::InequalityFails,
                     key.clone(),
                 ));
             }
+            if holds && needs_policy {
+                satisfying = Some(index);
+                break;
+            }
+        }
+        if needs_policy {
+            let Some(index) = satisfying else {
+                return Ok(rejection(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
+            };
+            let action = state
+                .actions
+                .get(index)
+                .and_then(Option::as_ref)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            let action_bytes = match action {
+                crate::ProductAction::Identity(schedule) => schedule.as_bytes().len(),
+                crate::ProductAction::PostState(target) => target.as_bytes().len(),
+                crate::ProductAction::TerminalStutter => 0,
+                _ => return Err(ProbabilityDocumentError::Unsupported),
+            };
+            charge(
+                &mut storage,
+                limits.storage_bytes,
+                u64::try_from(
+                    key.as_bytes()
+                        .len()
+                        .saturating_add(action_bytes)
+                        .saturating_add(std::mem::size_of::<(
+                            ProbabilityProductKey,
+                            crate::ProductAction,
+                        )>()),
+                )
+                .unwrap_or(u64::MAX),
+            )?;
+            selected_policy.push((key.clone(), action.clone()));
         }
     }
     // The witness and certificate must describe the same scheduler wherever
@@ -414,20 +474,10 @@ pub(super) fn check(
             return Ok(MeanRefutationCheck::PolicyParity);
         }
     } else {
-        let offered = scheduler
+        let resolved = selected_policy
             .iter()
             .map(|(key, action)| (key, action))
             .collect::<BTreeMap<_, _>>();
-        for (key, index) in &policy {
-            let action = graph
-                .states
-                .get(key)
-                .and_then(|state| state.actions.get(*index))
-                .and_then(Option::as_ref);
-            if offered.get(key).copied() != action {
-                return Ok(MeanRefutationCheck::PolicyParity);
-            }
-        }
         for (key, action) in scheduler {
             let Some(state) = graph.states.get(key) else {
                 return Ok(MeanRefutationCheck::PolicyParity);
@@ -439,7 +489,10 @@ pub(super) fn check(
             {
                 return Ok(MeanRefutationCheck::PolicyParity);
             }
-            if values.contains_key(key) && state.choices.len() > 1 && !policy.contains_key(key) {
+            if resolved
+                .get(key)
+                .is_some_and(|selected| *selected != action)
+            {
                 return Ok(MeanRefutationCheck::PolicyParity);
             }
         }
@@ -457,5 +510,5 @@ pub(super) fn check(
         ));
     }
     poll(cancel)?;
-    Ok(MeanRefutationCheck::Accepted)
+    Ok(MeanRefutationCheck::AcceptedBounds(selected_policy))
 }

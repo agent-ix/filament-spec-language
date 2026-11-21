@@ -386,6 +386,11 @@ pub fn measure_probability_product_key(
     result.map_err(|error| admission.refusal(error))
 }
 
+type Resolution = (
+    Vec<ModelSimState>,
+    Vec<(filament_exact::Identifier, filament_exact::Value)>,
+);
+
 enum Successor {
     Position(
         Rational,
@@ -500,7 +505,7 @@ fn enumerate(
         control,
         accumulator,
         truths,
-        None,
+        None::<Resolution>,
     )]);
     let mut seen = BTreeSet::from([root.clone()]);
     let mut states = BTreeMap::new();
@@ -2110,6 +2115,7 @@ fn key_parse_error(
 /// Internal role result; it cannot be used as a proof acceptance token.
 pub(in crate::probability_certificate) enum MeanRefutationCheck {
     Accepted,
+    AcceptedBounds(Vec<(ProbabilityProductKey, crate::ProductAction)>),
     Rejected(ProbabilityCertificateRejection),
     PolicyParity,
 }

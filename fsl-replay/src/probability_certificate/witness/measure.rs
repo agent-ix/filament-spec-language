@@ -773,11 +773,18 @@ pub(super) fn replay_subsystem(
         other => bounded::document_error(other),
     })?;
     match checked {
-        super::super::document::measure::MeanRefutationCheck::Accepted => {
+        super::super::document::measure::MeanRefutationCheck::Accepted
+        | super::super::document::measure::MeanRefutationCheck::AcceptedBounds(_) => {
+            let mut evidence = witness.clone();
+            if let super::super::document::measure::MeanRefutationCheck::AcceptedBounds(policy) =
+                checked
+            {
+                evidence.scheduler = policy;
+            }
             poll_cancel(cancel)?;
             Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
                 ReproducedProbabilityWitness {
-                    evidence: witness.clone(),
+                    evidence,
                     mass: rational(1),
                     undefined: None,
                 },
