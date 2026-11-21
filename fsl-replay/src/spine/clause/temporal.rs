@@ -1104,7 +1104,10 @@ fn admitted_model_time_binding(
         return Ok(None);
     };
     let declaration = package
-        .node(binding.unit())
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| &node.node_id == binding.unit())
         .and_then(|node| node.declaration.as_ref())
         .ok_or_else(invalid)?;
     let unit = declaration
