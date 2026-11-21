@@ -291,6 +291,7 @@ fn run_package(
         dependencies,
     } = admitted;
     let package = fsl_package::BarePackage::new(&admitted)
+        .with_canonical_bytes(&package_bytes)
         .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
             package.with_supply(
