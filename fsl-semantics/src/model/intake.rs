@@ -2946,19 +2946,95 @@ fn read_type_identity(
     Ok(("", declaration_key(package, identity)))
 }
 
+/// Whether an owner's operation names are validated at intake.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum OperationNames {
+    /// Operation and parameter names are validated while the owner is read.
+    Validated,
+    /// The owner admits no operations; normalization refuses each operation
+    /// with the owner refusal, which precedes any name refusal.
+    OwnerRefuses,
+}
+
+/// The name an operation's contract clauses give its result; no parameter
+/// takes it.
+const RESULT_PARAMETER: &str = "result";
+
+/// Refuses the second of two operations of one owner that share a `name`
+/// under distinct identities (a repeated identity is refused before the
+/// reader runs), naming both. Runs before any operation is read so the
+/// name refusal precedes every refusal inside the later operation.
+fn refuse_repeated_operation_name(
+    package: &str,
+    operations: &[Value],
+    operations_at: &str,
+) -> Result<(), ModelRefusal> {
+    let mut seen: Vec<(&str, &str)> = Vec::with_capacity(operations.len());
+    for (position, operation) in operations.iter().enumerate() {
+        let (Some(name), Some(identity)) = (
+            operation.get("name").and_then(Value::as_str),
+            operation.get("identity").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if let Some((_, first)) = seen
+            .iter()
+            .find(|(seen_name, seen_identity)| *seen_name == name && *seen_identity != identity)
+        {
+            let at = format!("{operations_at}[{position}]");
+            return Err(ModelRefusal {
+                code: Code::AmbiguousDeclaration,
+                cause: ModelRefusalCause::AmbiguousName {
+                    key: declaration_key(package, identity),
+                    member: MemberPath::from_document_location(&at).child("name"),
+                },
+                detail: format!(
+                    "{at}: operation name {name:?} is declared by {first} and {identity}"
+                ),
+            });
+        }
+        seen.push((name, identity));
+    }
+    Ok(())
+}
+
 fn read_operation_parameter(
     package: &str,
     owner_identity: &str,
     param: &Value,
     at: &str,
+    names: OperationNames,
 ) -> Result<OperationParameterRecord, ModelRefusal> {
     let ctx = NodeCtx::new(param, at);
     let node = ctx.str_field("identity")?;
-    if member_identity_name(owner_identity, node).is_none() {
+    let Some(tail) = member_identity_name(owner_identity, node) else {
         return Err(ctx.malformed_in(
             "identity",
             format!("{node:?} is not {owner_identity}/<name>"),
         ));
+    };
+    let declared_name = ctx
+        .opt_str_field("name")
+        .filter(|_| names == OperationNames::Validated);
+    if let Some(name) = declared_name {
+        if name != tail {
+            return Err(ctx.malformed_in(
+                "name",
+                format!("{name:?} is not the final segment {tail:?} of the identity {node:?}"),
+            ));
+        }
+        if name == RESULT_PARAMETER {
+            return Err(ModelRefusal {
+                code: Code::AmbiguousDeclaration,
+                cause: ModelRefusalCause::AmbiguousName {
+                    key: declaration_key(package, node),
+                    member: MemberPath::from_document_location(at).child("name"),
+                },
+                detail: format!(
+                    "{at}: {RESULT_PARAMETER:?} names the operation's result, so no parameter of {owner_identity} takes it"
+                ),
+            });
+        }
     }
     let type_ref = ctx.str_field("typeRef")?;
     // A `Clock` parameter is a place (FR-230 "Operation parameters").
@@ -3103,6 +3179,7 @@ pub(super) fn read_operation_member(
     operation: &Value,
     at: &str,
     receiver: OperationReceiver,
+    names: OperationNames,
     pending: &mut Vec<PendingFrame>,
 ) -> Result<OperationMemberRecord, ModelRefusal> {
     let ctx = NodeCtx::new(operation, at);
@@ -3119,7 +3196,13 @@ pub(super) fn read_operation_member(
         .iter()
         .enumerate()
         .map(|(position, param)| {
-            read_operation_parameter(package, node, param, &format!("{params_at}[{position}]"))
+            read_operation_parameter(
+                package,
+                node,
+                param,
+                &format!("{params_at}[{position}]"),
+                names,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let result = match operation.get("returns") {
@@ -3344,6 +3427,7 @@ pub(super) fn read_persistence_interface(
             "a persistence interface declares one or more operations",
         ));
     }
+    refuse_repeated_operation_name(package, operations, &format!("{}.operations", ctx.at))?;
     for (position, operation) in operations.iter().enumerate() {
         let operation_at = format!("{}.operations[{position}]", ctx.at);
         if let Some(pre) = operation.get("pre").and_then(Value::as_array) {
@@ -3362,6 +3446,7 @@ pub(super) fn read_persistence_interface(
             operation,
             &operation_at,
             OperationReceiver::NoObject,
+            OperationNames::Validated,
             pending,
         )?));
     }
@@ -3966,13 +4051,16 @@ pub(super) fn read_object_type(
         )?));
     }
     let operations_at = format!("{at}.operations");
-    for (position, operation) in ctx.array_field("operations")?.iter().enumerate() {
+    let operations = ctx.array_field("operations")?;
+    refuse_repeated_operation_name(package, operations, &operations_at)?;
+    for (position, operation) in operations.iter().enumerate() {
         records.push(DomainPackageRecord::OperationMember(read_operation_member(
             package,
             node,
             operation,
             &format!("{operations_at}[{position}]"),
             receiver,
+            OperationNames::Validated,
             pending,
         )?));
     }
@@ -4020,6 +4108,7 @@ pub(super) fn read_record_value_type(
     at: &str,
     type_meanings: &HashMap<&str, &str>,
     records: &mut Vec<DomainPackageRecord>,
+    names: OperationNames,
     pending: &mut Vec<PendingFrame>,
 ) -> Result<(), ModelRefusal> {
     let ctx = NodeCtx::new(type_value, at);
@@ -4069,13 +4158,18 @@ pub(super) fn read_record_value_type(
         )?));
     }
     let operations_at = format!("{at}.operations");
-    for (position, operation) in ctx.array_field("operations")?.iter().enumerate() {
+    let operations = ctx.array_field("operations")?;
+    if names == OperationNames::Validated {
+        refuse_repeated_operation_name(package, operations, &operations_at)?;
+    }
+    for (position, operation) in operations.iter().enumerate() {
         records.push(DomainPackageRecord::OperationMember(read_operation_member(
             package,
             node,
             operation,
             &format!("{operations_at}[{position}]"),
             OperationReceiver::NoObject,
+            names,
             pending,
         )?));
     }
@@ -6230,7 +6324,12 @@ fn resolve_frame_array(
                     at,
                 ))
             }
-            Some(kind) if expected.contains(kind) => keys.push(declaration_key(package, entry)),
+            Some(kind) if expected.contains(kind) => {
+                let key = declaration_key(package, entry);
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
             Some(_) => {
                 return Err(malformed_frame_entry(
                     frame.node.clone(),
@@ -6827,7 +6926,8 @@ pub(crate) fn refusal_node(refusal: &ModelRefusal) -> Option<&str> {
         | ModelRefusalCause::UnpreservedModelMeaning { node, .. }
         | ModelRefusalCause::IntakeMissingDeclaration { node, .. }
         | ModelRefusalCause::UnsupportedDeclarationForm { node, .. } => Some(node),
-        ModelRefusalCause::ConflictingBinding { key, .. } => Some(&key.node),
+        ModelRefusalCause::ConflictingBinding { key, .. }
+        | ModelRefusalCause::AmbiguousName { key, .. } => Some(&key.node),
         _ => None,
     }
 }
@@ -8184,6 +8284,7 @@ mod tests {
                 &operation,
                 "$.types[0].operations[0]",
                 OperationReceiver::Object,
+                OperationNames::Validated,
                 &mut pending,
             )
             .expect_err("a malformed frame member refuses");
@@ -9764,6 +9865,7 @@ mod tests {
                 ("ix://acme/orders/Placed", meaning::PERSISTENCE_INTERFACE),
             ]),
             &mut records,
+            OperationNames::OwnerRefuses,
             &mut Vec::new(),
         )
         .map(|()| records)

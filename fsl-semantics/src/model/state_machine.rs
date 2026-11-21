@@ -8,7 +8,7 @@
 use crate::model::domain_package::{
     DomainPackageRecord, StateMachineRecord, StateMachineStateRecord, StateMachineTransitionRecord,
 };
-use crate::model::intake::{member_identity_name, read_record_value_type, NodeCtx};
+use crate::model::intake::{member_identity_name, read_record_value_type, NodeCtx, OperationNames};
 use crate::model::normalize::ModelRefusal;
 use filament_checked::key::DeclarationKey;
 use serde_json::Value;
@@ -181,6 +181,7 @@ pub(super) fn bind(context: &mut MeaningBindingContext<'_, '_>) -> Result<(), Mo
         context.at,
         context.meanings_by_node,
         context.records,
+        OperationNames::Validated,
         context.pending,
     )?;
     let type_key = key(context.package, context.node);

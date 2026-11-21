@@ -665,6 +665,15 @@ pub enum ModelRefusalCause {
         /// or `None` for a declaration key declared twice at package level.
         member: Option<MemberPath>,
     },
+    /// A name that must be unique within its scope is taken twice, or is
+    /// reserved (`ambiguous_declaration`/`ambiguous-name`): the second of two
+    /// operations of one owner sharing a name, or a parameter named `result`.
+    AmbiguousName {
+        /// The declaration whose `name` is refused.
+        key: DeclarationKey,
+        /// The refused `name` member (`TypeDefinition.operations[1].name`).
+        member: MemberPath,
+    },
     /// A systems relationship names an endpoint absent from the domain package.
     UnknownRelationship {
         /// The absent relationship.
@@ -1305,6 +1314,7 @@ impl ModelRefusalCause {
             | Self::DeclaredCreateDeleteOverlap { .. }
             | Self::DeclaredDeltaMismatch { .. }
             | Self::UnresolvedName { .. }
+            | Self::AmbiguousName { .. }
             | Self::ForeignAlias { .. } => None,
         }
     }
@@ -1356,6 +1366,7 @@ impl ModelRefusalCause {
             Self::UnresolvedName { .. } => "missing-name",
             Self::ForeignAlias { .. } => "foreign-model-selection",
             Self::ConflictingBinding { .. } => "conflicting-binding",
+            Self::AmbiguousName { .. } => "ambiguous-name",
             Self::UnknownRelationship { .. } => "unknown-relationship",
             Self::UnknownSourcePort { .. } => "unknown-source-port",
             Self::UnknownTargetPort { .. } => "unknown-target-port",
@@ -1452,6 +1463,7 @@ impl ModelRefusalCause {
             | Self::IncompleteScope { .. }
             | Self::UnclosedSubtypes { .. } => "incomplete_population",
             Self::NoApplicable | Self::MultipleUndominated => "ambiguous_dispatch",
+            Self::AmbiguousName { .. } => "ambiguous_declaration",
             Self::VarianceResult
             | Self::MultiplicityNarrowing { .. }
             | Self::SubsettingType { .. }
@@ -1713,6 +1725,10 @@ pub mod fixtures {
         ConflictingBinding => ModelRefusalCause::ConflictingBinding {
             key: key("p"),
             member: None,
+        },
+        AmbiguousName => ModelRefusalCause::AmbiguousName {
+            key: key("p"),
+            member: MemberPath::type_definition(),
         },
         UnknownRelationship => ModelRefusalCause::UnknownRelationship {
             relationship: key("p"),
@@ -1991,6 +2007,7 @@ pub(crate) mod tests {
             ModelRefusalCause::UnresolvedName { .. } => "missing-name",
             ModelRefusalCause::ForeignAlias { .. } => "foreign-model-selection",
             ModelRefusalCause::ConflictingBinding { .. } => "conflicting-binding",
+            ModelRefusalCause::AmbiguousName { .. } => "ambiguous-name",
             ModelRefusalCause::UnknownRelationship { .. } => "unknown-relationship",
             ModelRefusalCause::UnknownSourcePort { .. } => "unknown-source-port",
             ModelRefusalCause::UnknownTargetPort { .. } => "unknown-target-port",
@@ -2090,6 +2107,7 @@ pub(crate) mod tests {
             ModelRefusalCause::IncompleteScope { .. } => "incomplete_population",
             ModelRefusalCause::UnclosedSubtypes { .. } => "incomplete_population",
             ModelRefusalCause::NoApplicable => "ambiguous_dispatch",
+            ModelRefusalCause::AmbiguousName { .. } => "ambiguous_declaration",
             ModelRefusalCause::MultipleUndominated => "ambiguous_dispatch",
             ModelRefusalCause::VarianceResult => "ill_typed",
             ModelRefusalCause::MultiplicityNarrowing { .. } => "ill_typed",
