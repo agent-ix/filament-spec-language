@@ -555,5 +555,15 @@ fn bare_class_products_and_noncanonical_powers_refuse_before_kernel_charges() {
             ),
             "an unrelated ordinary power is unchanged: {evaluation:?}"
         );
+        let mut meter = Meter::new(filament_exact::ScalarLimits {
+            integer_bits: 0,
+            ..UNLIMITED
+        });
+        let limited = call(bare, "ordinary_power", &mut meter);
+        let FamilyOutcome::Evaluated(Outcome::Incomplete(record)) = &limited.outcome else {
+            panic!("an ordinary power still obeys the caller's integer-bit limit: {limited:?}");
+        };
+        assert_eq!(record.limit_kind, LimitKind::IntegerBits);
+        assert_eq!(record.charge_point, ChargePoint::UnitIdentityRead);
     });
 }

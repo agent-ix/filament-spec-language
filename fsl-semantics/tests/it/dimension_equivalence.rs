@@ -1343,8 +1343,8 @@ fn convert_across_a_dimension_equivalence_class_checks() {
 
 /// FR-093 "Dimension equivalence": a conversion between units of two
 /// dimension nodes no equivalence relates still refuses
-/// `ill_typed`/`type-mismatch`.
-#[trace("FR-093")]
+/// `ill_typed`/`type-mismatch` (FSpec FR-142-AC-2's incompatible dimensions).
+#[trace("FSpec-FR-142-AC-2", "FSpec-TC-187")]
 #[test]
 fn convert_between_unrelated_dimensions_refuses_type_mismatch() {
     use filament_exact::IllTypedCause;
