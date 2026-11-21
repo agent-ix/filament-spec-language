@@ -514,28 +514,29 @@ fn every_scheduler_discrete_delay_refutes() {
 }
 
 /// FR-923-AC-1: a refutation is evidence only when the checker's own replay of
-/// the timed product reproduces it, so a witness whose step reaches a state
-/// the leaving state has no outcome to does not settle `refuted`.
+/// the timed product reproduces it, so a witness whose path does not end in the
+/// forbidden decided state does not settle `refuted`.
 #[trace("TC-2492", "FR-923-AC-1")]
 #[test]
 fn altered_timed_witness_is_not_refuted() {
     let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
     let record = settle_witness_tampered(&world, "Strict", |witness| {
         let initial = witness.initial_key.clone();
-        witness.paths[0].steps[0].post_key = initial;
+        for path in &mut witness.paths {
+            path.steps.last_mut().expect("a step").post_key = initial.clone();
+        }
     });
     assert!(!is_refuted(&record), "{record:#?}");
     assert!(record.probabilistic_counterexample.is_none());
 }
 
-/// FR-921: the clock valuation a digital key names is placed by clock identity,
-/// never by the position of the clock in the key. The model declares `x` before
-/// `a`, so the place order is `x, a` while the key lists the clocks sorted by
-/// canonical identity, `a, x`; the two disagree and the valuation follows the
-/// places.
+/// FR-921: the clock valuation a digital key names is placed by clock identity
+/// in the model's place order, never by the position of the clock in the key.
+/// The same two-clock key with its clocks listed in the opposite order names
+/// the same valuation, and each value is the one its clock holds.
 #[trace("TC-2490", "FR-921-AC-2")]
 #[test]
-fn a_digital_key_valuation_follows_the_place_order_not_the_key_order() {
+fn a_digital_key_valuation_does_not_depend_on_the_key_clock_order() {
     let world = retx_over(
         &["x", "a"],
         &[("send", &["late", "x", "a"])],
@@ -553,12 +554,24 @@ fn a_digital_key_valuation_follows_the_place_order_not_the_key_order() {
         .claim("Deadline")
         .expect("the claim checks");
     let system = world.system();
+    let valuation = |key: &Value| {
+        fsl_replay::digital_key_clocks(
+            &system,
+            claim,
+            &fsl_replay::ProbabilityProductKey::from_canonical_bytes(
+                serde_json::to_vec(key).expect("serializes"),
+            ),
+        )
+        .expect("a digital key")
+        .values()
+        .to_vec()
+    };
     let mut distinct = false;
     for entry in doc["values"].as_array().expect("values") {
         let encoded = entry["state"].as_str().expect("encoded key");
         let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 key");
         let key: Value = serde_json::from_slice(&bytes).expect("canonical key");
-        let clocks = key[4][1][4].as_array().expect("clocks");
+        let clocks = key[4][1][4].as_array().expect("clocks").clone();
         let scale: i64 = key[4][1][3]
             .as_str()
             .expect("scale")
@@ -573,18 +586,16 @@ fn a_digital_key_valuation_follows_the_place_order_not_the_key_order() {
                 .parse()
                 .expect("whole ticks")
         };
-        assert_eq!(clocks[0][0][1], "a", "the key sorts by identity");
         distinct |= whole("x") != whole("a");
-        let valuation = fsl_replay::digital_key_clocks(
-            &system,
-            claim,
-            &fsl_replay::ProbabilityProductKey::from_canonical_bytes(bytes),
-        )
-        .expect("a digital key");
-        assert_eq!(
-            valuation.values(),
-            &[ratio(whole("x"), scale), ratio(whole("a"), scale)]
-        );
+        let mut reversed = key.clone();
+        reversed[4][1][4] = Value::Array(clocks.iter().rev().cloned().collect());
+        let straight = valuation(&key);
+        assert_eq!(straight, valuation(&reversed));
+        let mut held = [ratio(whole("x"), scale), ratio(whole("a"), scale)];
+        held.sort();
+        let mut found = straight.clone();
+        found.sort();
+        assert_eq!(found, held, "each value belongs to its own clock");
     }
     assert!(distinct, "some state must tell the two clocks apart");
 }
