@@ -43,7 +43,7 @@ Scope: FR-531-AC-36, FR-531-AC-37, FR-531-AC-38, FR-531-AC-39, FR-531-AC-40, FR-
    search the bytes for `ix://source/`, then evaluate the clause function at
    `size`'s pre-state on both routes, once to completion and once under every
    `work_units` limit below its spend.
-9. Emit FR-531-AC-41's 100,000-term sum and 100,000 nested `let`s on a small stack under the default `emit.output_bytes`, compare their rows with FSpec's BL-D1 and BL-D2, admit both packages and read each row's typed path; admit one row rewritten with a whole `path`.
+9. Emit FR-531-AC-41's two separate programs (100,000 `+` applications and 100,000 genuinely incrementing nested `let`s) on a 512 KiB stack under finite explicit caller ceilings and linear bounds chosen from the checked input before emission, record each complete canonical byte length, relative entry count and charged native strict-read and lending-cursor work, compare the rows with FSpec's BL-D1 and BL-D2, admit both packages and compare each lent typed path with the checker's path without retaining all expanded paths; repeat emission with only `emit.output_bytes` changed to its published default, and admit one row rewritten with a whole `path`.
 
 Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
 `an_ordering_over_square_roots_charges_the_same_on_both_routes` (steps 1 to 3),
@@ -78,4 +78,4 @@ Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
   `ix://source/`; two inexact `IeeeFlags` losses at `Body { function: F,
   index: k }` paths `[0]` and `[1]` on both routes, the same `F` and `k`;
   equal `Evaluation.location` at every limit.
-- Step 9: both bodies emit with no `OutputLimit`, their rows equal BL-D1's and BL-D2's, both packages are admitted with the checker's paths, and the whole-`path` row is `malformed_wire` at its `location`.
+- Step 9: both complete packages emit under the predeclared explicit ceilings, with independently recorded byte, relative-entry and native-work totals within their declared linear bounds, their rows equal BL-D1's and BL-D2's, both strict reads admit and the lent typed paths equal the checker's paths; each default-limit emission instead refuses `OutputLimit` with `emit.output_bytes` bound 16,777,216 and first unpaid byte 16,777,217, with no partial package, and the whole-`path` row is `malformed_wire` at its `location`.
