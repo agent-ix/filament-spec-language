@@ -425,6 +425,7 @@ enum Successor {
 }
 struct State {
     terminal: Option<Rational>,
+    activation_terminal: Option<Rational>,
     rank: u64,
     choices: Vec<Vec<ProbabilityEdge>>,
     actions: Vec<Option<crate::ProductAction>>,
@@ -643,10 +644,6 @@ fn enumerate(
                   accumulator: &Accumulator,
                   meter: &mut filament_exact::Meter,
                   storage: &mut u64| {
-        eprintln!(
-            "QSL2158-DIAG raw model-key begin thread={:?} storage={storage}",
-            std::thread::current().name()
-        );
         let raw = {
             let mut admission =
                 ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
@@ -659,10 +656,6 @@ fn enumerate(
                 )
                 .map_err(|error| admission.refusal(error))?
         };
-        eprintln!(
-            "QSL2158-DIAG full product-key begin thread={:?} storage={storage}",
-            std::thread::current().name()
-        );
         measure_probability_product_key(
             binding,
             &raw,
@@ -775,6 +768,7 @@ fn enumerate(
                 key,
                 State {
                     terminal: None,
+                    activation_terminal: None,
                     rank: 0,
                     choices: Vec::new(),
                     actions: Vec::new(),
@@ -787,6 +781,23 @@ fn enumerate(
             .payoff
             .terminal(control, &accumulator, meter)
             .map_err(ProbabilityDocumentError::from)?;
+        let activation_terminal = if terminal.is_some()
+            && matches!(
+                plan.payoff,
+                MeasurePayoff::Satisfied(_, _) | MeasurePayoff::Activated
+            ) {
+            let value = MeasurePayoff::Activated
+                .terminal(control, &accumulator, meter)
+                .map_err(ProbabilityDocumentError::from)?;
+            charge(
+                storage,
+                limits.storage_bytes,
+                u64::try_from(std::mem::size_of::<Rational>() + 2).unwrap_or(u64::MAX),
+            )?;
+            value
+        } else {
+            None
+        };
         let rank = if control.is_decided() {
             0
         } else {
@@ -811,10 +822,6 @@ fn enumerate(
         let mut action_labels = Vec::new();
         let resolving = resolution.is_some();
         if terminal.is_none() {
-            eprintln!(
-                "QSL2158-DIAG semantic expansion begin thread={:?} storage={storage}",
-                std::thread::current().name()
-            );
             let mut admission =
                 ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
             let distributions = if let Some((posts, rewards)) = resolution {
@@ -908,10 +915,6 @@ fn enumerate(
                 }
             };
             drop(admission);
-            eprintln!(
-                "QSL2158-DIAG semantic expansion end thread={:?} storage={storage}",
-                std::thread::current().name()
-            );
             for distribution in distributions {
                 let mut choice = Vec::new();
                 for successor in distribution {
@@ -1086,6 +1089,7 @@ fn enumerate(
             key,
             State {
                 terminal,
+                activation_terminal,
                 rank,
                 choices,
                 actions: action_labels,
@@ -1295,15 +1299,8 @@ fn read_wire(
         ));
     }
     let mut values = Vec::new();
-    eprintln!(
-        "QSL2158-DIAG measure depth={depth} values begin rows={} storage={storage}",
-        wire.values.len()
-    );
-    for (index, row) in wire.values.into_iter().enumerate() {
-        let state = decode_state(&row.state, limits, cancel, storage).map_err(|error| {
-            eprintln!("QSL2158-DIAG values row={index} storage={storage}: {error:?}");
-            error
-        })?;
+    for row in wire.values {
+        let state = decode_state(&row.state, limits, cancel, storage)?;
         let value = parse_rational(row.value, meter)?;
         if values
             .last()
@@ -1321,16 +1318,9 @@ fn read_wire(
         )?;
         values.push(ExactProbabilityValue { state, value });
     }
-    eprintln!(
-        "QSL2158-DIAG measure depth={depth} values end storage={storage}; ranking begin rows={}",
-        wire.ranking.len()
-    );
     let mut ranking = Vec::new();
-    for (index, row) in wire.ranking.into_iter().enumerate() {
-        let state = decode_state(&row.state, limits, cancel, storage).map_err(|error| {
-            eprintln!("QSL2158-DIAG ranking row={index} storage={storage}: {error:?}");
-            error
-        })?;
+    for row in wire.ranking {
+        let state = decode_state(&row.state, limits, cancel, storage)?;
         if row.rank > MAX_COUNT
             || ranking
                 .last()
@@ -1418,14 +1408,8 @@ fn decode_measure_probability_certificate(
     )?;
     let wire: WireDocument =
         serde_json::from_slice(bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
-    eprintln!(
-        "QSL2158-DIAG measure decode read_wire begin bytes={} storage={storage}",
-        bytes.len()
-    );
     let document = read_wire(wire, limits, cancel, meter, storage, 0)?;
-    eprintln!("QSL2158-DIAG measure decode canonical begin storage={storage}");
     let canonical = encode_with_storage(&document, limits, cancel, storage)?;
-    eprintln!("QSL2158-DIAG measure decode end storage={storage}");
     if canonical != bytes {
         return Err(ProbabilityDocumentError::Noncanonical);
     }
@@ -2096,15 +2080,12 @@ pub(super) fn check(
         {
             return Err(ProbabilityDocumentError::MalformedMember("conditional"));
         }
+        let mut graph = None;
         let mut checked_parts = Vec::new();
         for (part, part_name) in [
             (numerator, ProbabilityCertificatePart::Numerator),
             (denominator, ProbabilityCertificatePart::Denominator),
         ] {
-            eprintln!(
-                "QSL2158-DIAG ratio part={part_name:?} begin thread={:?} storage={storage}",
-                std::thread::current().name()
-            );
             let part_plan = plan_for_part(
                 system,
                 claim,
@@ -2117,18 +2098,35 @@ pub(super) fn check(
             if let Err(error) = validate_ranges(part, limits, cancel, &mut meter) {
                 return document_admission_error(error);
             }
-            let graph_part = enumerate(
-                system,
-                claim,
-                &part_plan,
-                limits,
-                cancel,
-                &mut meter,
-                &mut storage,
-                None,
-            )?;
-            eprintln!("QSL2158-DIAG ratio part graph end thread={:?} part={part_name:?} states={} storage={storage}", std::thread::current().name(), graph_part.states.len());
-            let values = match checked_values(part, &graph_part, limits, cancel, &mut meter)? {
+            if graph.is_none() {
+                graph = Some(enumerate(
+                    system,
+                    claim,
+                    &part_plan,
+                    limits,
+                    cancel,
+                    &mut meter,
+                    &mut storage,
+                    None,
+                )?);
+            } else {
+                // Both independently checked objectives name the same measure and
+                // therefore the same stopped control, transitions and complete keys.
+                // The denominator uses the shared evaluator's retained activation payoff.
+                let existing = graph.as_mut().ok_or(ProbabilityDocumentError::Malformed)?;
+                for state in existing.states.values_mut() {
+                    poll(cancel)?;
+                    meter
+                        .charge(
+                            filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                                .work(Integer::one()),
+                        )
+                        .map_err(|error| ProbabilityDocumentError::Accounting(Box::new(error)))?;
+                    state.terminal = state.activation_terminal.take();
+                }
+            }
+            let graph = graph.as_ref().ok_or(ProbabilityDocumentError::Malformed)?;
+            let values = match checked_values(part, graph, limits, cancel, &mut meter)? {
                 Ok(values) => values,
                 Err(mut rejection) => {
                     if let ExactProbabilityCertificateCheck::Rejected(failure) = &mut rejection {
@@ -2142,16 +2140,12 @@ pub(super) fn check(
                     return Ok(rejection);
                 }
             };
-            checked_parts.push((graph_part, values));
+            checked_parts.push(values);
         }
-        let [(numerator_graph, numerator_values), (denominator_graph, denominator_values)] =
-            checked_parts.as_slice()
-        else {
+        let [numerator_values, denominator_values] = checked_parts.as_slice() else {
             return Err(ProbabilityDocumentError::Malformed);
         };
-        if numerator_graph.initials != denominator_graph.initials {
-            return Err(ProbabilityDocumentError::Malformed);
-        }
+        let denominator_graph = graph.as_ref().ok_or(ProbabilityDocumentError::Malformed)?;
         let threshold = match &plan.bound {
             Bound::AtLeast(value) | Bound::AtMost(value) => value,
         };
@@ -2370,7 +2364,6 @@ fn charge(storage: &mut u64, bound: u64, bytes: u64) -> Result<(), ProbabilityDo
         .checked_add(bytes)
         .ok_or(ProbabilityDocumentError::KeySizeOverflow)?;
     if actual > bound {
-        eprintln!("QSL2158-DIAG measure storage denied used={storage} next={bytes} bound={bound} actual={actual}");
         return Err(exceeded(
             ProbabilityDocumentLimit::StorageBytes,
             bound,

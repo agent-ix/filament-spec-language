@@ -1061,13 +1061,47 @@ pub(crate) fn pending_bytes(
     scope
         .work(u64::try_from(scheduled.operation.len()).map_err(|_| ModelKeyError::SizeOverflow)?)?;
     scope.admit(scheduled.operation.len())?;
-    let operation = fsl_foundation::node_wire::node_key_from_text(&scheduled.operation)
-        .map_err(|_| ModelKeyError::Unsupported("scheduled operation node"))?;
+    let parsed = quire_canonical::read_with_reservation(
+        scheduled.operation.as_bytes(),
+        identity.input_bytes,
+        &mut Provision(&scope),
+    );
+    scope.poll()?;
+    if let Some(error) = scope.refused.borrow_mut().take() {
+        return Err(error);
+    }
+    let parsed =
+        parsed.map_err(|_| ModelKeyError::Unsupported("scheduled operation declaration"))?;
+    let quire_canonical::Node::Object(members) = parsed.root().node() else {
+        return Err(ModelKeyError::Unsupported(
+            "scheduled operation declaration",
+        ));
+    };
+    if members.len() != 2 {
+        return Err(ModelKeyError::Unsupported(
+            "scheduled operation declaration",
+        ));
+    }
+    let field = |name| match parsed.root().get(name).map(|node| node.node()) {
+        Some(quire_canonical::Node::String(value)) => Ok(value),
+        _ => Err(ModelKeyError::Unsupported(
+            "scheduled operation declaration",
+        )),
+    };
+    let operation = super::DeclarationRecord {
+        package: field("package")?,
+        node: field("node")?,
+    };
+    if scope.canonical(|writer| operation.encode_into(writer))? != scheduled.operation.as_bytes() {
+        return Err(ModelKeyError::Unsupported(
+            "scheduled operation declaration",
+        ));
+    }
     let mut sink = Bounded::new(&scope);
     ValueSink::begin_array(&mut sink, ArrayOrder::Retained)?;
     StructuralSink::text(&mut sink, "drawn")?;
     ValueSink::begin_array(&mut sink, ArrayOrder::Retained)?;
-    StructuralSink::node(&mut sink, &operation)?;
+    projection::project_declaration(&mut sink, operation)?;
     projection::project_reference(&mut sink, &scheduled.receiver)?;
     ValueSink::begin_array(&mut sink, ArrayOrder::Retained)?;
     for value in &scheduled.arguments {

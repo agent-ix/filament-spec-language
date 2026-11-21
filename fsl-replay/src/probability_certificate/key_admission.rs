@@ -104,7 +104,6 @@ impl Reservation for ProbabilityKeyAdmission<'_> {
             return Err(self.deny(ProbabilityDocumentError::KeySizeOverflow));
         };
         if actual > self.storage_bound {
-            eprintln!("QSL2158-DIAG KeyAdmission storage denied thread={:?} used={} next={bytes} bound={} actual={actual}", std::thread::current().name(), self.storage, self.storage_bound);
             return Err(self.deny(ProbabilityDocumentError::Limit {
                 limit: super::ProbabilityDocumentLimit::StorageBytes,
                 bound: self.storage_bound,
