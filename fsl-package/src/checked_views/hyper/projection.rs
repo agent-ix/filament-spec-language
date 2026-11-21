@@ -51,6 +51,15 @@ impl BarePackage<'_> {
         let node = self
             .node_by_key(claim.node())?
             .ok_or_else(|| malformed(claim))?;
+        let hyper =
+            crate::resolve_hyper_root(self.package(), claim).map_err(|_| malformed(claim))?;
+        let wrapper = self
+            .node_by_key(hyper.body().ok_or_else(|| malformed(claim))?)?
+            .ok_or_else(|| malformed(claim))?;
+        let filament_contract_model::CheckedTerm::Application { arguments, .. } = &wrapper.body
+        else {
+            return Err(malformed(claim));
+        };
         let graph = crate::checked_v2::wire_graph(self.package()).map_err(|_| malformed(claim))?;
         let nodes: BTreeMap<_, _> = self
             .package()
@@ -70,7 +79,8 @@ impl BarePackage<'_> {
             })
             .collect::<Result<_, _>>()?;
         pending.push(
-            group_member(&node.body, "over")
+            arguments
+                .first()
                 .and_then(reference)
                 .ok_or_else(|| malformed(claim))?,
         );
