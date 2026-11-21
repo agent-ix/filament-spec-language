@@ -163,9 +163,28 @@ impl<'p> BarePackage<'p> {
     /// `AdmittedPackageRead::canonical_bytes`). FR-531-AC-2 forbids a
     /// `BarePackage` signature that names `AdmittedPackageRead`, so this
     /// takes the slice, not the read.
+    ///
+    /// The bytes are not trusted blindly: they attach only when their own
+    /// `name` and `contract_version` members are this package's. The package
+    /// holds no content digest to compare, so that is the whole check; bytes
+    /// that name another package stay unattached and the owner call refuses
+    /// for want of package bytes.
     #[must_use]
     pub fn with_canonical_bytes(mut self, bytes: &'p [u8]) -> Self {
-        self.canonical_bytes = Some(bytes);
+        #[derive(serde::Deserialize)]
+        struct Head<'a> {
+            #[serde(borrow, default)]
+            name: Option<&'a str>,
+            #[serde(borrow, default)]
+            contract_version: Option<&'a str>,
+        }
+        let names_this_package = serde_json::from_slice::<Head<'_>>(bytes).is_ok_and(|head| {
+            head.name == Some(self.package.name())
+                && head.contract_version == Some(crate::CHECKED_PACKAGE_V2)
+        });
+        if names_this_package {
+            self.canonical_bytes = Some(bytes);
+        }
         self
     }
 
