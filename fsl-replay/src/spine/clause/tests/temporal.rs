@@ -4147,10 +4147,13 @@ fn a_finite_window_undefined_on_each_guard_retains_its_cause_and_locus() {
         );
         assert_eq!(window.disposition.exit_code(), 10);
         assert_eq!(window.disposition.truth(), None);
-        let counterexample = window
+        let crate::ClauseRunCounterexample::Observed(counterexample) = window
             .counterexample
             .as_ref()
-            .expect("undefined guard evidence");
+            .expect("undefined guard evidence")
+        else {
+            panic!("an observed counterexample");
+        };
         assert_eq!(counterexample.trace_position.index(), 0);
         assert_eq!(counterexample.prefix.len(), 1);
         assert_eq!(

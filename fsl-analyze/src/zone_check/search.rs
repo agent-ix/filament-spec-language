@@ -315,6 +315,9 @@ pub(super) struct SymbolicEdge {
     /// index into the run's pieces; `None` with no automaton, under a tick
     /// source, and past the formula's horizon.
     pub piece: Option<usize>,
+    /// Whether this is a refinement product's death by time: the edge takes
+    /// no step and its dying candidates are the product's own record.
+    pub death: bool,
 }
 
 /// How a new node is reached: an edge from a stored node, with its step
@@ -324,6 +327,8 @@ pub(super) struct Arrival {
     pub(super) from: usize,
     pub(super) step: Option<(usize, usize)>,
     pub(super) piece: Option<usize>,
+    /// A refinement product's death by time (`step` is then `None`).
+    pub(super) death: bool,
 }
 
 impl SymbolicEdge {
@@ -578,12 +583,16 @@ pub enum ZoneCheckRefusal {
     /// collection-valued write yet.
     #[error("the refinement checker does not map carried clock places")]
     CarriedClocks,
-    /// The abstract side has timed clocks and the hidden candidates of one
-    /// product position disagree on the abstract clock guard, carries or
-    /// resets of a step: the product keeps one abstract clock valuation per
-    /// position, so it cannot follow both candidates.
-    #[error("the refinement checker does not decide a timed abstract side whose hidden candidates differ in clock behaviour")]
-    HiddenFieldTimedAbstract,
+    /// The alive hidden candidates of one product step apply different
+    /// clock carries or resets, which needs one clock block per candidate;
+    /// the product keeps one abstract clock block per position.
+    #[error("the refinement checker does not decide a timed abstract side whose alive hidden candidates apply different clock carries or resets at one step")]
+    HiddenCandidateClockBlocks,
+    /// The liveness half of a timed abstract side whose hidden candidates
+    /// disagree on clock behaviour: its product would need one clock
+    /// valuation per candidate (the safety half is decided).
+    #[error("the refinement checker does not decide the liveness half of a timed abstract side whose hidden candidates differ in clock behaviour")]
+    HiddenCandidateLiveness,
     /// The liveness half of a timed abstract side under a concrete tick
     /// source: abstract class enabledness is read over the instants between
     /// positions, which a tick source does not have.
@@ -1150,6 +1159,18 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn include_auxiliary_timed(&mut self, auxiliary: &'r TimedSystem<'s, 'a>) {
         let (auxiliary_scale, auxiliary_lower, auxiliary_upper) =
             scaled_bounds(auxiliary, None, &[]);
+        // An abstract time invariant is an upper bound, but the death and
+        // `AbstractTimeInvariant` splits test its negation, a lower-bound
+        // comparison: each abstract clock keeps `L = U = max(L, U)`, so
+        // coverage never hides a delay past the invariant.
+        let (auxiliary_lower, auxiliary_upper): (Vec<_>, Vec<_>) = auxiliary_lower
+            .into_iter()
+            .zip(auxiliary_upper)
+            .map(|(low, high)| {
+                let most = low.max(high);
+                (most.clone(), most)
+            })
+            .unzip();
         let common_scale = scale_constants(&[
             Rational::from_integer(Integer::from_big(self.scale.clone())),
             Rational::from_integer(Integer::from_big(auxiliary_scale.clone())),
@@ -1533,6 +1554,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                             covering: true,
                             step: arrival.step,
                             piece: arrival.piece,
+                            death: arrival.death,
                         })?;
                     }
                     return Ok(Inserted::Covered(candidate));
@@ -1561,6 +1583,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     covering: false,
                     step: arrival.step,
                     piece: arrival.piece,
+                    death: arrival.death,
                 })?;
                 Some(self.edges.len() - 1)
             }
@@ -1721,6 +1744,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     from: node,
                     step: Some((successor.step, successor.part)),
                     piece: None,
+                    death: false,
                 };
                 if let Some(new) =
                     self.insert(successor.state, q, successor.zone, None, Some(arrival))?
@@ -1769,6 +1793,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     from: node,
                     step: Some((successor.step, successor.part)),
                     piece: period.is_none().then_some(piece),
+                    death: false,
                 };
                 if let Some(new) =
                     self.insert(successor.state.clone(), read, at, None, Some(arrival))?
@@ -1802,6 +1827,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     from: node,
                     step: None,
                     piece: period.is_none().then_some(piece),
+                    death: false,
                 };
                 if let Some(new) = self.insert(state.clone(), read, at, None, Some(arrival))? {
                     created.push(new);

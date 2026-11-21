@@ -44,8 +44,11 @@
 #![forbid(unsafe_code)]
 
 mod admitted;
+mod reference_budget;
+pub use reference_budget::NormalizationReferenceBudget;
 mod reference_codec;
-pub use reference_codec::{ReferenceCodec, ReferenceCodecError, ReferenceFailure};
+pub use reference_codec::admit_native_value_bytes;
+pub use reference_codec::{ReferenceCodec, ReferenceCodecError, ReferenceFailure, ReferenceScope};
 mod application;
 mod axes;
 pub mod backends;
@@ -195,9 +198,9 @@ pub use certificate::task_product::{
     same_source_transition, TaskArrivalKind, TaskArrivalPhase, TaskClockCeiling,
     TaskClosureEvidence, TaskClosureMethod, TaskDiagonalConstraint, TaskDiagonalOperator,
     TaskJobPhase, TaskLiveJob, TaskPendingBudgetChange, TaskProductCertificate, TaskProductKey,
-    TaskProductKeyRefusal, TaskProductShapeReason, TaskProductShapeRefusal, TaskProductWireError,
-    TaskQueueBound, TaskSchedulerControl, TaskSubtraction, TaskTimeProgress,
-    TaskTransitionTemplate,
+    TaskProductKeyRefusal, TaskProductReferenceError, TaskProductShapeReason,
+    TaskProductShapeRefusal, TaskProductWireError, TaskQueueBound, TaskSchedulerControl,
+    TaskSubtraction, TaskTimeProgress, TaskTransitionTemplate,
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
@@ -207,8 +210,8 @@ pub use certificate::zone_certificate::{
     FairnessMember, ItemIdentity, NonZeno, ProductMark, QuotientEdge, QuotientIdentity,
     QuotientInitial, QuotientStop, QuotientVertex, RefinementIdentity, RefinementPart, SilentMove,
     StateGraphCertificateForm, StateGraphPart, TaskProductQuotient, ZoneCertificate,
-    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
-    ZoneCertificateWireError,
+    ZoneCertificateReferenceError, ZoneCertificateRefusal, ZoneCertificateRequest,
+    ZoneCertificateVerdict, ZoneCertificateWireError,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -402,10 +405,10 @@ pub use refinement::{
     open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,
     step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
-    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, CandidateLivenessError, ConcreteStep,
-    EvalFailure, HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure,
-    MappingRowRef, MappingUndetermined, ObjectKey, ObservationField, ObservationLabel,
-    PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,
+    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
+    CandidateLivenessError, ConcreteStep, EvalFailure, HiddenSlot, HistoryValues, LivenessHalf,
+    MappedState, MappingFailure, MappingRowRef, MappingUndetermined, ObjectKey, ObservationField,
+    ObservationLabel, PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,
     ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError,
     ProtocolStateRelation, ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal,
     ProtocolTrace, RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems,

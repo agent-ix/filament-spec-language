@@ -58,6 +58,23 @@ pub struct BodyReads {
     pub literals: Vec<(EffectiveId, Vec<u8>)>,
 }
 
+/// Why the admitted constraint of a protocol node has no read footprint.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ProtocolNodeReadError {
+    /// The original selection or projection refusal, including its locus.
+    #[error("protocol constraint projection failed: {0:?}")]
+    Selection(Box<fsl_package::BareSelectionFailure>),
+    /// A projected expression has no footprint rule.
+    #[error(transparent)]
+    Footprint(#[from] FootprintRefusal),
+}
+
+impl From<fsl_package::BareSelectionFailure> for ProtocolNodeReadError {
+    fn from(failure: fsl_package::BareSelectionFailure) -> Self {
+        Self::Selection(Box::new(failure))
+    }
+}
+
 /// One state clause as a model check reads it: its name, node, context,
 /// operation and observation (FR-107, FR-120 "Contract clauses").
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1328,6 +1345,26 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         None
     }
 
+    /// MA-1 reads of an admitted protocol constraint, retaining its compact
+    /// binder frame and the identity of the actual `over` receiver.
+    ///
+    /// # Errors
+    /// The original package projection or footprint refusal.
+    fn package_protocol_node_reads(
+        &self,
+        _model: &StateModel,
+        _name: &str,
+        _slot: &ProtocolSlot,
+        _over: &NodeKey,
+    ) -> Result<BodyReads, ProtocolNodeReadError> {
+        Err(
+            fsl_package::BareSelectionFailure::Slot(fsl_package::SlotSelectionFailure::Fault(
+                PACKAGE_FORM,
+            ))
+            .into(),
+        )
+    }
+
     /// FR-531: the exact identity row for one admitted package node.
     fn package_node_key(&self, _node: &CheckedNodeId) -> Option<NodeKey> {
         None
@@ -2418,6 +2455,42 @@ impl ModelEvaluator for BarePackage<'_> {
                 .map(|source| source.binder().clone())
                 .collect(),
         )
+    }
+
+    fn package_protocol_node_reads(
+        &self,
+        model: &StateModel,
+        name: &str,
+        slot: &ProtocolSlot,
+        over: &NodeKey,
+    ) -> Result<BodyReads, ProtocolNodeReadError> {
+        let selected = self.select_protocol_slot(&fsl_package::ProtocolSlotDescriptor::new(
+            slot.node.clone(),
+            slot.member.clone(),
+            slot.index,
+        ))?;
+        let projection = self.project_protocol_slot(&selected)?;
+        let parameters = selected
+            .sources()
+            .iter()
+            .map(|source| (source.name().to_owned(), source.value_type().clone()))
+            .collect::<Vec<_>>();
+        let receivers = selected
+            .sources()
+            .iter()
+            .filter(|source| source.binder() == over)
+            .map(fsl_package::BareSource::index)
+            .collect::<Vec<_>>();
+        let world = self.world()?;
+        crate::value::package_node_reads(
+            &projection,
+            world.types(),
+            model,
+            name,
+            &parameters,
+            &receivers,
+        )
+        .map_err(ProtocolNodeReadError::Footprint)
     }
 
     fn package_node_key(&self, node: &CheckedNodeId) -> Option<NodeKey> {

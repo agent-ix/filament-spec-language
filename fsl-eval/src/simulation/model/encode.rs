@@ -1180,6 +1180,83 @@ pub fn typed_value_json(
     canonical_json(&typed_value_enc(value, types, variants))
 }
 
+/// Write a borrowed run value through the shared typed projection, admitting
+/// every visit, identity copy, decimal conversion and buffer reservation
+/// before work. No retained encoding tree is constructed first.
+///
+/// # Errors
+/// The original caller work/storage/cancellation refusal, a physical
+/// allocation failure, or an unencodable admitted value.
+pub fn run_value_bytes(
+    value: &Value,
+    types: &TypeEnvironment,
+    enums: &[EnumBinding],
+    variants: &[VariantTypeDeclaration],
+    identity: fsl_foundation::IdentityLimits,
+    budget: &mut dyn RunValueBudget,
+    cancel: &filament_exact::Cancel,
+) -> Result<Vec<u8>, super::ModelKeyError> {
+    bounded::value_bytes(
+        value,
+        Typing::with_variants(types, variants).with_enums(enums),
+        identity,
+        budget,
+        cancel,
+    )
+}
+
+/// Resource ownership for a borrowed typed result. A reference's owning
+/// declaration is selected before its identity is inspected or copied.
+pub trait RunValueBudget: super::ModelKeyBudget {
+    /// Enter the actual reference declaration's resource owner.
+    fn begin_reference(&mut self, reference: &ObjectReference) -> Result<(), super::ModelKeyError>;
+    /// Restore the prior owner after success or failure; this performs no work.
+    fn end_reference(&mut self);
+}
+
+/// A result whose existing caller budget already owns every reference.
+pub struct SingleOwnerRunBudget<'a>(&'a mut dyn super::ModelKeyBudget);
+
+impl<'a> SingleOwnerRunBudget<'a> {
+    /// Borrow the genuine caller budget without creating an allowance.
+    pub fn new(budget: &'a mut dyn super::ModelKeyBudget) -> Self {
+        Self(budget)
+    }
+}
+
+impl filament_exact::Reservation for SingleOwnerRunBudget<'_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), filament_exact::ReservationDenied> {
+        self.0.reserve(bytes)
+    }
+}
+impl filament_exact::IntegerDecimalBudget for SingleOwnerRunBudget<'_> {
+    fn work(&mut self, units: u64) -> Result<(), filament_exact::ReservationDenied> {
+        self.0.work(units)
+    }
+}
+impl super::ModelKeyBudget for SingleOwnerRunBudget<'_> {
+    fn integer(
+        &mut self,
+        value: &filament_exact::Integer,
+    ) -> Result<(), filament_exact::ReservationDenied> {
+        self.0.integer(value)
+    }
+}
+impl RunValueBudget for SingleOwnerRunBudget<'_> {
+    fn begin_reference(&mut self, _: &ObjectReference) -> Result<(), super::ModelKeyError> {
+        // The caller's established single owner remains selected.
+        Ok(())
+    }
+    fn end_reference(&mut self) {}
+}
+
+/// The canonical declaration name of an admitted run type's structural key.
+pub fn run_declaration_name(key: &NodeKey) -> Option<String> {
+    DeclarationRecord::of_node(key)?
+        .text(Limits::new(u64::MAX))
+        .ok()
+}
+
 /// `value` through the one canonical writer, read back as JSON.
 ///
 /// `None` when the value is unencodable.

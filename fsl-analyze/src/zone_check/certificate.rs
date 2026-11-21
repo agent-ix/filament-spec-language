@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::Integer;
 use fsl_replay::{
     CertEdge, CertNode, CertificateItem, Components, DivergenceWitness, DivergentTarget, LuBounds,
-    NonZeno, StateGraphCertificateForm, StateGraphPart, Zone, ZoneCertificate,
+    NonZeno, SilentMove, StateGraphCertificateForm, StateGraphPart, Zone, ZoneCertificate,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use num_bigint::BigInt;
@@ -205,6 +205,7 @@ impl Run<'_, '_, '_> {
                 to,
                 step,
                 piece,
+                death,
                 ..
             } = self.edges[edge].clone();
             let (transition, part) = match step {
@@ -217,7 +218,7 @@ impl Run<'_, '_, '_> {
                         .clone();
                     (Some(transition), Some(part))
                 }
-                None => (None, None),
+                None => (None, death.then_some(0)),
             };
             let horizon = match piece {
                 Some(piece) => Some(
@@ -236,7 +237,10 @@ impl Run<'_, '_, '_> {
                 part,
                 horizon,
                 to,
-                silent: None,
+                // The product fills in the dying candidates of a death edge.
+                silent: death.then(|| SilentMove::Dies {
+                    candidates: Vec::new(),
+                }),
             });
         }
         let witnessed = admitted(&edges, &steps, root, witness)
@@ -349,8 +353,10 @@ fn admitted(
 
 /// The first sequence of certificate edges from `at` that takes `moves`'
 /// model steps in order, depth first over the edges each step has, with
-/// the node it ends at. The search is iterative, and a `(node, move)` pair
-/// from which the rest cannot be taken is tried once.
+/// the node it ends at. A refinement product's death edge (FR-899 "Timed
+/// subjects") takes no step and may be followed wherever it leads on. The
+/// search is iterative, and a `(node, moves taken)` pair from which the rest
+/// cannot be taken is tried once.
 fn follow(
     edges: &[CertEdge],
     steps: &[Option<(usize, usize)>],
@@ -364,14 +370,13 @@ fn follow(
         leaving.entry(edge.from).or_default().push(index);
     }
     let mut dead: BTreeSet<(usize, usize)> = BTreeSet::new();
-    // Each frame: the node, the move taken next, and the next candidate
+    // Each frame: the node, the moves taken so far, and the next candidate
     // edge to try.
     let mut taken: Vec<usize> = Vec::new();
-    let mut frames: Vec<(usize, usize)> = vec![(at, 0)];
+    let mut frames: Vec<(usize, usize, usize)> = vec![(at, 0, 0)];
     loop {
-        let depth = frames.len() - 1;
-        let (node, next) = *frames.last()?;
-        if depth == moves.len() {
+        let (node, done, next) = *frames.last()?;
+        if done == moves.len() {
             return Some((node, taken));
         }
         let candidates = leaving.get(&node).map_or(&[][..], Vec::as_slice);
@@ -380,19 +385,28 @@ fn follow(
             .enumerate()
             .skip(next)
             .find(|(_, &edge)| {
-                steps[edge] == Some(moves[depth]) && !dead.contains(&(edges[edge].to, depth + 1))
+                if edges[edge].silent.is_some() {
+                    !dead.contains(&(edges[edge].to, done))
+                } else {
+                    steps[edge] == Some(moves[done]) && !dead.contains(&(edges[edge].to, done + 1))
+                }
             })
             .map(|(index, &edge)| (index, edge));
         match found {
             Some((index, edge)) => {
                 if let Some(frame) = frames.last_mut() {
-                    frame.1 = index + 1;
+                    frame.2 = index + 1;
                 }
                 taken.push(edge);
-                frames.push((edges[edge].to, 0));
+                let after = if edges[edge].silent.is_some() {
+                    done
+                } else {
+                    done + 1
+                };
+                frames.push((edges[edge].to, after, 0));
             }
             None => {
-                dead.insert((node, depth));
+                dead.insert((node, done));
                 frames.pop();
                 taken.pop();
                 if frames.is_empty() {

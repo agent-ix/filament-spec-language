@@ -28,7 +28,7 @@ mod input;
 pub use input::{
     BodyReads, ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration,
     PackageModelInput, PackageRewards, PendingClauseForm, PendingPackageForm, ProtocolDefinition,
-    StateClauseEntry, TerminalWhen,
+    ProtocolNodeReadError, StateClauseEntry, TerminalWhen,
 };
 mod operation_coverage;
 pub use operation_coverage::{
@@ -118,7 +118,8 @@ pub(crate) use contracts::{verdict, Verdict};
 use encode::declaration_text;
 pub use encode::{
     canonical_json, declaration_identity_text, encode_reference, reference_canonical_text,
-    typed_value_json, value_json, ModelKey,
+    run_declaration_name, run_value_bytes, typed_value_json, value_json, ModelKey, RunValueBudget,
+    SingleOwnerRunBudget,
 };
 pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{

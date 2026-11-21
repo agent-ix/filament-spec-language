@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The package-bound boundary between native and backend reference identities.
 
-use filament_exact::{Cancel, EffectiveId, ObjectReference};
+use filament_exact::{
+    Cancel, EffectiveId, IdentityCopyError, IntegerDecimalBudget, ObjectId, ObjectReference,
+};
 use filament_semantic_value::model_transition::{InvalidModelTransition, ModelTransition};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{ModelKeyError, ModelRestoreBudget, ModelSystem};
-use fsl_package::{ReferenceCatalog, ReferenceDeclaration};
+use fsl_eval::simulation::model::{ModelKeyError, ModelSystem};
+use fsl_package::{CheckedPackage, CheckedPackageV2, ReferenceCatalog, ReferenceDeclaration};
+use fsl_semantics::model::intake::SelectedModels;
+use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::PopulationBinding;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
@@ -42,6 +46,46 @@ pub enum ReferenceFailure {
 /// A typed boundary refusal with an RFC 6901 locus; resource causes are retained.
 #[derive(Debug, thiserror::Error)]
 pub enum ReferenceCodecError {
+    /// An existing carrier adapter refused its non-reference metadata.
+    #[error("carrier output refused at {pointer}: {cause}")]
+    Carrier {
+        /// Original carrier failure.
+        cause: crate::CounterexampleWireError,
+        /// Carrier member being written.
+        pointer: String,
+    },
+    /// The exact integer owner refused charged decimal output.
+    #[error("integer output refused at {pointer}: {cause}")]
+    Decimal {
+        /// Original exact integer refusal.
+        cause: filament_exact::IntegerDecimalBudgetError,
+        /// Scalar being written.
+        pointer: String,
+    },
+    /// The actual normalized declaration owner's cumulative work stopped.
+    #[error("reference normalization stopped at {pointer}: {cause:?}")]
+    Normalization {
+        /// Original normalization work denial and real charge point.
+        cause: fsl_semantics::model::accounting::NormalizationIncomplete,
+        /// The reference being encoded.
+        pointer: String,
+    },
+    /// A complete native identity copy stopped under the actual caller budget.
+    #[error("reference identity copy stopped at {pointer}: {cause:?}")]
+    IdentityCopy {
+        /// Original typed copy/caller cause, without display-text branching.
+        cause: IdentityCopyError<ModelKeyError>,
+        /// The reference being constructed.
+        pointer: String,
+    },
+    /// The normalized model universe could not construct its native identity.
+    #[error("reference universe construction stopped at {pointer}: {cause:?}")]
+    Universe {
+        /// The actual model-owned universe refusal.
+        cause: fsl_semantics::model::normalize::UniverseIdentityError,
+        /// The reference being constructed.
+        pointer: String,
+    },
     /// The actual model owner's reference admission refused construction.
     #[error("native reference admission refused at {pointer}: {cause:?}")]
     Native {
@@ -79,17 +123,452 @@ pub enum ReferenceCodecError {
 /// A codec borrowing the catalog and its actual admitted runtime owner.
 pub struct ReferenceCodec<'c, 'm, 'r> {
     catalog: &'c ReferenceCatalog<'m>,
-    system: &'c ModelSystem<'r>,
+    runtime: ReferenceRuntime<'c, 'r>,
 }
 
-struct Scope<'a> {
-    budget: &'a mut dyn ModelRestoreBudget,
+/// One carrier conversion borrowing the authentic codec and caller's resources.
+/// Nested carrier writers share this budget rather than creating fresh limits.
+pub struct ReferenceScope<'s, 'c, 'm, 'r> {
+    codec: &'s ReferenceCodec<'c, 'm, 'r>,
+    scope: Scope<'s, 'm>,
+    limits: quire_canonical::Limits,
+}
+
+impl ReferenceScope<'_, '_, '_, '_> {
+    pub(crate) fn put(
+        &mut self,
+        object: &mut Value,
+        name: &str,
+        value: Value,
+    ) -> Result<(), ReferenceCodecError> {
+        let map = object
+            .as_object_mut()
+            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))?;
+        self.scope.put(map, name, value)
+    }
+
+    pub(crate) fn display(
+        &mut self,
+        value: &impl std::fmt::Display,
+    ) -> Result<Value, ReferenceCodecError> {
+        self.display_text(value).map(Value::String)
+    }
+
+    pub(crate) fn display_text(
+        &mut self,
+        value: &impl std::fmt::Display,
+    ) -> Result<String, ReferenceCodecError> {
+        struct Text<'a, 'b, 'n> {
+            scope: &'a mut Scope<'b, 'n>,
+            text: String,
+            failure: Option<ReferenceCodecError>,
+        }
+        impl std::fmt::Write for Text<'_, '_, '_> {
+            fn write_str(&mut self, text: &str) -> std::fmt::Result {
+                let result = self
+                    .scope
+                    .work(text.len())
+                    .and_then(|()| self.scope.reserve(text.len()))
+                    .and_then(|()| {
+                        self.text
+                            .try_reserve_exact(text.len())
+                            .map_err(|_| self.scope.allocation(text.len()))
+                    });
+                match result {
+                    Ok(()) => {
+                        self.text.push_str(text);
+                        Ok(())
+                    }
+                    Err(error) => {
+                        self.failure = Some(error);
+                        Err(std::fmt::Error)
+                    }
+                }
+            }
+        }
+        let mut writer = Text {
+            scope: &mut self.scope,
+            text: String::new(),
+            failure: None,
+        };
+        let result = std::fmt::write(&mut writer, format_args!("{value}"));
+        if let Some(error) = writer.failure {
+            return Err(error);
+        }
+        if result.is_err() {
+            return Err(writer.scope.fail(ReferenceFailure::MalformedWire));
+        }
+        Ok(writer.text)
+    }
+
+    pub(crate) fn opaque_key(
+        &mut self,
+        key: &fsl_eval::simulation::StateKey,
+    ) -> Result<Value, ReferenceCodecError> {
+        // Retain the existing authoritative base64url state adapter. Admit
+        // its temporary string plus serde's owned string before either exists.
+        let encoded = key
+            .as_bytes()
+            .len()
+            .checked_add(2)
+            .and_then(|n| n.checked_div(3))
+            .and_then(|n| n.checked_mul(4))
+            .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
+        self.scope.work(key.as_bytes().len())?;
+        self.scope.work(encoded)?;
+        let storage = encoded
+            .checked_mul(2)
+            .and_then(|n| n.checked_add(size_of::<(String, Value)>() * 4))
+            .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
+        self.scope.reserve(storage)?;
+        let mut wire =
+            crate::state_key_wire(key).map_err(|cause| ReferenceCodecError::Carrier {
+                cause,
+                pointer: std::mem::take(&mut self.scope.path),
+            })?;
+        wire.as_object_mut()
+            .and_then(|map| map.remove("key"))
+            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))
+    }
+
+    pub(crate) fn text(&mut self, value: &str) -> Result<Value, ReferenceCodecError> {
+        self.scope.text(value).map(Value::String)
+    }
+
+    pub(crate) fn record<const N: usize>(
+        &mut self,
+        fields: [(&str, Value); N],
+    ) -> Result<Value, ReferenceCodecError> {
+        self.scope.work(N)?;
+        let mut map = Map::new();
+        for (key, value) in fields {
+            self.scope.put(&mut map, key, value)?;
+        }
+        Ok(Value::Object(map))
+    }
+
+    pub(crate) fn array(&mut self, len: usize) -> Result<Vec<Value>, ReferenceCodecError> {
+        self.scope.work(len)?;
+        self.scope.array(len)
+    }
+
+    pub(crate) fn integer(
+        &mut self,
+        value: &filament_exact::Integer,
+    ) -> Result<Value, ReferenceCodecError> {
+        let admission = Admission::new(
+            &mut *self.scope.budget,
+            self.scope.cancel,
+            self.scope.normalization_owner,
+        );
+        let result =
+            value.try_to_decimal_string_with_budget(usize::MAX, &mut DecimalAdmission(&admission));
+        let failure = admission.failure.borrow_mut().take();
+        drop(admission);
+        if let Some(failure) = failure {
+            return Err(self.scope.stopped(failure));
+        }
+        result
+            .map(Value::String)
+            .map_err(|cause| ReferenceCodecError::Decimal {
+                cause,
+                pointer: std::mem::take(&mut self.scope.path),
+            })
+    }
+
+    pub(crate) fn rational(
+        &mut self,
+        value: &filament_exact::Rational,
+    ) -> Result<Value, ReferenceCodecError> {
+        let denominator = self.at_pointer("/denominator", |s| s.integer(value.denominator()))?;
+        let numerator = self.at_pointer("/numerator", |s| s.integer(value.numerator()))?;
+        self.record([("denominator", denominator), ("numerator", numerator)])
+    }
+
+    pub(crate) fn node(
+        &mut self,
+        value: &filament_exact::NodeKey,
+    ) -> Result<Value, ReferenceCodecError> {
+        let admission = Admission::new(
+            &mut *self.scope.budget,
+            self.scope.cancel,
+            self.scope.normalization_owner,
+        );
+        let result = admission.node_json(value);
+        admission
+            .finish(result)
+            .map_err(|error| self.scope.stopped(error))
+    }
+
+    /// Convert a reference through this carrier's retained runtime and budget.
+    ///
+    /// # Errors
+    /// Retains identity, resource, cancellation and pointer failures.
+    pub fn encode_reference(
+        &mut self,
+        value: &ObjectReference,
+    ) -> Result<Value, ReferenceCodecError> {
+        self.codec.encode_reference_in(value, &mut self.scope)
+    }
+
+    pub(crate) fn at_pointer<T, E: From<ReferenceCodecError>>(
+        &mut self,
+        pointer: &str,
+        action: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E> {
+        // Carrier pointers are relative to their enclosing carrier. Preserve
+        // the outer task_product/edge prefix through nested restoration.
+        let before = self.scope.path.len();
+        self.scope.work(pointer.len())?;
+        self.scope.reserve(pointer.len())?;
+        self.scope
+            .path
+            .try_reserve_exact(pointer.len())
+            .map_err(|_| self.scope.allocation(pointer.len()))?;
+        self.scope.path.push_str(pointer);
+        let result = action(self);
+        self.scope.path.truncate(before);
+        result
+    }
+
+    /// Encode both source-transition arms of a task template with one catalog.
+    /// State keys and native template identities are never changed.
+    ///
+    /// # Errors
+    /// Retains reference failures, resource denial and cancellation.
+    pub fn encode_task_template(
+        &mut self,
+        template: &crate::TaskTransitionTemplate,
+    ) -> Result<Value, ReferenceCodecError> {
+        let mut out = Map::new();
+        for (name, text) in [
+            ("type", "task-transition-template"),
+            (
+                "action",
+                crate::certificate::task_product::action_name(template.action),
+            ),
+            ("taskset", template.task_set.as_str()),
+            ("task", template.task.as_str()),
+        ] {
+            let value = Value::String(self.scope.member(name, |s| s.text(text))?);
+            self.scope.put(&mut out, name, value)?;
+        }
+        for (name, number) in [("job_rank", template.job_rank), ("slot", template.slot)] {
+            self.scope.member(name, |s| s.count(number))?;
+            self.scope.put(&mut out, name, Value::from(number))?;
+        }
+        if let Some(priority) = template.priority {
+            self.scope.member("priority", |s| s.count(priority))?;
+            self.scope
+                .put(&mut out, "priority", Value::from(priority))?;
+        }
+        let release = self.task_transition_at("release", &template.release)?;
+        self.scope.put(&mut out, "release", release)?;
+        let source = match &template.source_transition {
+            Some(source) => self.task_transition_at("source_transition", source)?,
+            None => Value::Null,
+        };
+        self.scope.put(&mut out, "source_transition", source)?;
+        Ok(Value::Object(out))
+    }
+
+    fn task_transition_at(
+        &mut self,
+        name: &str,
+        transition: &ModelTransition,
+    ) -> Result<Value, ReferenceCodecError> {
+        self.scope.member(name, |scope| {
+            let mut wire = self.codec.encode_transition_in(transition, scope)?;
+            let operation = wire
+                .get_mut("operation")
+                .ok_or_else(|| scope.fail(ReferenceFailure::MalformedWire))?;
+            let spelling = crate::outcome::task_source_operation(operation, transition.operation());
+            let text = scope.member("operation", |s| s.text(spelling))?;
+            *operation = Value::String(text);
+            Ok(wire)
+        })
+    }
+
+    /// Restore both task source arms before constructing the native template.
+    /// This checks wire identity, not task membership or enabledness.
+    ///
+    /// # Errors
+    /// Refuses malformed metadata and retains all reference/resource failures.
+    pub fn restore_task_template(
+        &mut self,
+        value: &Value,
+    ) -> Result<crate::TaskTransitionTemplate, ReferenceCodecError> {
+        let fields: &[&str] = if value.get("priority").is_some() {
+            &[
+                "type",
+                "action",
+                "taskset",
+                "task",
+                "job_rank",
+                "slot",
+                "release",
+                "source_transition",
+                "priority",
+            ]
+        } else {
+            &[
+                "type",
+                "action",
+                "taskset",
+                "task",
+                "job_rank",
+                "slot",
+                "release",
+                "source_transition",
+            ]
+        };
+        let map = self.scope.closed(value, fields)?;
+        self.scope.member("type", |s| {
+            let tag = s.string(&map["type"])?;
+            if s.equal_text(tag, "task-transition-template")? {
+                Ok(())
+            } else {
+                Err(s.fail(ReferenceFailure::MalformedWire))
+            }
+        })?;
+        let action = self.scope.member("action", |s| {
+            let text = s.string(&map["action"])?;
+            for (name, action) in crate::certificate::task_product::ACTIONS {
+                if s.equal_text(text, name)? {
+                    return Ok(action);
+                }
+            }
+            Err(s.fail(ReferenceFailure::MalformedWire))
+        })?;
+        let task_set = self.scope.member("taskset", |s| {
+            let text = s.string(&map["taskset"])?;
+            s.text(text)
+        })?;
+        let task = self.scope.member("task", |s| {
+            let text = s.string(&map["task"])?;
+            s.text(text)
+        })?;
+        let job_rank = self
+            .scope
+            .member("job_rank", |s| s.read_count(&map["job_rank"]))?;
+        let slot = self.scope.member("slot", |s| s.read_count(&map["slot"]))?;
+        let priority = map
+            .get("priority")
+            .map(|value| self.scope.member("priority", |s| s.read_count(value)))
+            .transpose()?;
+        let release = self.restore_task_at("release", &map["release"])?;
+        let source_transition = if map["source_transition"].is_null() {
+            None
+        } else {
+            Some(self.restore_task_at("source_transition", &map["source_transition"])?)
+        };
+        Ok(crate::TaskTransitionTemplate {
+            action,
+            task_set,
+            task,
+            job_rank,
+            slot,
+            release,
+            source_transition,
+            priority,
+        })
+    }
+
+    fn restore_task_at(
+        &mut self,
+        name: &str,
+        value: &Value,
+    ) -> Result<ModelTransition, ReferenceCodecError> {
+        self.scope.member(name, |scope| {
+            scope.member("operation", |s| s.string(&value["operation"]).map(drop))?;
+            self.codec.restore_transition_in(value, scope, self.limits)
+        })
+    }
+
+    /// Encode a native transition with the generic operation identity intact.
+    ///
+    /// # Errors
+    /// Retains the codec's typed identity, resource and cancellation failures.
+    pub fn encode_transition(
+        &mut self,
+        value: &ModelTransition,
+    ) -> Result<Value, ReferenceCodecError> {
+        self.codec.encode_transition_in(value, &mut self.scope)
+    }
+
+    /// Restore native canonical values before transition construction.
+    ///
+    /// # Errors
+    /// Refuses malformed identities and retains resource/cancellation failures.
+    pub fn restore_transition(
+        &mut self,
+        value: &Value,
+    ) -> Result<ModelTransition, ReferenceCodecError> {
+        self.codec
+            .restore_transition_in(value, &mut self.scope, self.limits)
+    }
+
+    /// Encode the task-source arm using its existing operation-string adapter.
+    ///
+    /// # Errors
+    /// Retains reference and caller resource/cancellation failures.
+    pub fn encode_task_transition(
+        &mut self,
+        value: &ModelTransition,
+    ) -> Result<Value, ReferenceCodecError> {
+        let mut wire = self.encode_transition(value)?;
+        let operation = wire
+            .get_mut("operation")
+            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))?;
+        let spelling = crate::outcome::task_source_operation(operation, value.operation());
+        let text = self.scope.member("operation", |s| s.text(spelling))?;
+        *operation = Value::String(text);
+        Ok(wire)
+    }
+
+    /// Restore a task-source arm; its operation must be a string.
+    ///
+    /// # Errors
+    /// Refuses other operation arms and retains all reference refusals.
+    pub fn restore_task_transition(
+        &mut self,
+        value: &Value,
+    ) -> Result<ModelTransition, ReferenceCodecError> {
+        self.scope
+            .member("operation", |s| s.string(&value["operation"]).map(drop))?;
+        self.restore_transition(value)
+    }
+}
+
+enum ReferenceRuntime<'c, 'r> {
+    Model(&'c ModelSystem<'r>),
+    Call(&'c ObjectEnvironment),
+}
+
+struct Scope<'a, 'n> {
+    budget: &'a mut dyn IntegerDecimalBudget,
     cancel: &'a Cancel,
     path: String,
     max_depth: usize,
+    normalization_owner: Option<&'n fsl_semantics::model::intake::NormalizedModel>,
 }
 
-impl Scope<'_> {
+impl Scope<'_, '_> {
+    fn count(&mut self, number: u64) -> Result<(), ReferenceCodecError> {
+        self.work(1)?;
+        if number > 9_007_199_254_740_991 {
+            return Err(self.fail(ReferenceFailure::MalformedWire));
+        }
+        Ok(())
+    }
+
+    fn read_count(&mut self, value: &Value) -> Result<u64, ReferenceCodecError> {
+        let number = value
+            .as_u64()
+            .ok_or_else(|| self.fail(ReferenceFailure::MalformedWire))?;
+        self.count(number)?;
+        Ok(number)
+    }
     fn json(&mut self, value: &Value, depth: usize) -> Result<Value, ReferenceCodecError> {
         self.work(1)?;
         if depth > self.max_depth.min(64) {
@@ -194,18 +673,58 @@ impl Scope<'_> {
     fn work(&mut self, units: usize) -> Result<(), ReferenceCodecError> {
         self.poll()?;
         let units = u64::try_from(units).map_err(|_| self.stopped(ModelKeyError::SizeOverflow))?;
-        self.budget
-            .work(units)
-            .map_err(|_| self.stopped(ModelKeyError::Denied))?;
+        if let Some(owner) = self.normalization_owner {
+            owner
+                .charge_reference_work(
+                    fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                    units,
+                )
+                .map_err(|cause| ReferenceCodecError::Normalization {
+                    cause,
+                    pointer: std::mem::take(&mut self.path),
+                })?;
+        } else {
+            self.budget
+                .work(units)
+                .map_err(|_| self.stopped(ModelKeyError::Denied))?;
+        }
         self.poll()
     }
 
+    fn with_admission<T>(
+        &mut self,
+        action: impl FnOnce(&Admission<'_>) -> Result<T, ModelKeyError>,
+    ) -> Result<T, ReferenceCodecError> {
+        let admission = Admission::new(&mut *self.budget, self.cancel, self.normalization_owner);
+        let result = action(&admission);
+        let normalization = admission.normalization_failure.borrow_mut().take();
+        let result = admission.finish(result);
+        if let Some(cause) = normalization {
+            return Err(ReferenceCodecError::Normalization {
+                cause,
+                pointer: std::mem::take(&mut self.path),
+            });
+        }
+        result.map_err(|error| self.stopped(error))
+    }
+
     fn reserve(&mut self, bytes: usize) -> Result<(), ReferenceCodecError> {
-        self.poll()?;
+        self.reserve_key(bytes).map_err(|error| self.stopped(error))
+    }
+
+    fn reserve_key(&mut self, bytes: usize) -> Result<(), ModelKeyError> {
+        self.cancel.poll();
+        if let Some(cause) = self.cancel.tripped() {
+            return Err(ModelKeyError::Cancelled(cause));
+        }
         self.budget
             .reserve(bytes)
-            .map_err(|_| self.stopped(ModelKeyError::Denied))?;
-        self.poll()
+            .map_err(|_| ModelKeyError::Denied)?;
+        self.cancel.poll();
+        match self.cancel.tripped() {
+            Some(cause) => Err(ModelKeyError::Cancelled(cause)),
+            None => Ok(()),
+        }
     }
 
     fn text(&mut self, text: &str) -> Result<String, ReferenceCodecError> {
@@ -462,34 +981,59 @@ impl Scope<'_> {
 }
 
 impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
+    /// Borrow one shared resource scope for a nested external carrier.
+    pub fn scope<'s>(
+        &'s self,
+        budget: &'s mut dyn IntegerDecimalBudget,
+        cancel: &'s Cancel,
+        max_depth: usize,
+        limits: quire_canonical::Limits,
+    ) -> ReferenceScope<'s, 'c, 'm, 'r> {
+        ReferenceScope {
+            codec: self,
+            scope: Scope {
+                budget,
+                cancel,
+                normalization_owner: None,
+                path: String::new(),
+                max_depth,
+            },
+            limits,
+        }
+    }
     fn native_reference(
         &self,
         declaration: &ReferenceDeclaration<'_>,
         object: &str,
-        scope: &mut Scope<'_>,
+        scope: &mut Scope<'_, '_>,
     ) -> Result<ObjectReference, ReferenceCodecError> {
         // Account the model-owned declaring/type lookup and its subsequent
         // reference construction before invoking the allocating owner method.
-        self.system
-            .reference_model()
-            .reference_components_with_work(declaration.key(), &mut |units| {
-                let units = usize::try_from(units)
-                    .ok()
-                    .and_then(|n| n.checked_mul(2))
-                    .ok_or_else(|| scope.stopped(ModelKeyError::SizeOverflow))?;
-                scope.work(units)
-            })?
-            .ok_or_else(|| scope.fail(ReferenceFailure::UnknownDeclaration))?;
+        if let ReferenceRuntime::Model(system) = &self.runtime {
+            system
+                .reference_model()
+                .reference_components_with_work(declaration.key(), &mut |units| {
+                    let units = usize::try_from(units)
+                        .ok()
+                        .and_then(|n| n.checked_mul(2))
+                        .ok_or_else(|| scope.stopped(ModelKeyError::SizeOverflow))?;
+                    scope.work(units)
+                })?
+                .ok_or_else(|| scope.fail(ReferenceFailure::UnknownDeclaration))?;
+        }
         let owner_storage = size_of::<ObjectReference>()
             .checked_mul(16)
             .ok_or_else(|| scope.stopped(ModelKeyError::SizeOverflow))?;
         scope.reserve(owner_storage)?;
+        let model_runtime = matches!(&self.runtime, ReferenceRuntime::Model(_));
         for original in declaration.effective().owner_chain() {
             scope.work(original.package().len())?;
             scope.work(original.node().len())?;
-            scope.reserve(size_of::<filament_exact::OriginalDeclarationKey>())?;
-            scope.reserve(original.package().len())?;
-            scope.reserve(original.node().len())?;
+            if model_runtime {
+                scope.reserve(size_of::<filament_exact::OriginalDeclarationKey>())?;
+                scope.reserve(original.package().len())?;
+                scope.reserve(original.node().len())?;
+            }
         }
         let root = declaration
             .universe()
@@ -501,15 +1045,36 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         scope.work(root.node().len())?;
         scope.reserve(root.package().len())?;
         scope.reserve(root.node().len())?;
-        scope.work(object.len())?;
-        scope.reserve(object.len())?;
-        let result = self
-            .system
-            .object_reference(declaration.key(), object)
-            .map_err(|cause| ReferenceCodecError::Native {
+        if model_runtime {
+            scope.work(object.len())?;
+            scope.reserve(object.len())?;
+        }
+        let result = match &self.runtime {
+            ReferenceRuntime::Model(system) => system
+                .object_reference(declaration.key(), object)
+                .map_err(|cause| ReferenceCodecError::Native {
                 cause,
                 pointer: std::mem::take(&mut scope.path),
-            })?;
+            })?,
+            ReferenceRuntime::Call(_) => {
+                let effective = declaration
+                    .effective()
+                    .try_clone_with(&mut |bytes| scope.reserve_key(bytes))
+                    .map_err(|cause| ReferenceCodecError::IdentityCopy {
+                        cause,
+                        pointer: std::mem::take(&mut scope.path),
+                    })?;
+                let universe = declaration.universe().identity().map_err(|cause| {
+                    ReferenceCodecError::Universe {
+                        cause,
+                        pointer: std::mem::take(&mut scope.path),
+                    }
+                })?;
+                let object = ObjectId::new(scope.text(object)?)
+                    .map_err(|_| scope.fail(ReferenceFailure::InvalidIdentity))?;
+                ObjectReference::new(universe, effective, object)
+            }
+        };
         scope.poll()?;
         Ok(result)
     }
@@ -518,7 +1083,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         value: &Value,
         restore: bool,
         depth: usize,
-        scope: &mut Scope<'_>,
+        scope: &mut Scope<'_, 'm>,
     ) -> Result<Value, ReferenceCodecError> {
         scope.work(1)?;
         // Match the existing certificate typed-value ceiling and respect a
@@ -656,38 +1221,127 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             Some(source) => input
                 .source_package()
                 .is_some_and(|actual| std::ptr::eq(actual, source)),
-            None => input
-                .admitted_package()
-                .is_some_and(|actual| std::ptr::eq(actual, catalog.package())),
+            None => input.admitted_package().is_some_and(|actual| {
+                catalog
+                    .package()
+                    .is_some_and(|package| std::ptr::eq(actual, package))
+            }),
         };
-        if !package_matches || !std::ptr::eq(catalog.model(), system.reference_model()) {
+        if !package_matches
+            || !catalog
+                .model()
+                .is_some_and(|model| std::ptr::eq(model, system.reference_model()))
+        {
             return Err(ReferenceCodecError::Refused {
                 reason: ReferenceFailure::ForeignCatalog,
                 pointer: String::new(),
             });
         }
-        Ok(Self { catalog, system })
+        Ok(Self {
+            catalog,
+            runtime: ReferenceRuntime::Model(system),
+        })
+    }
+
+    /// Use the original checked function-call package, model admission and
+    /// object environment. No simulator or caller-supplied universe map is
+    /// accepted as a substitute for the normalized admission owner.
+    ///
+    /// # Errors
+    /// Refuses a catalog from another package or model-admission operation.
+    pub fn for_checked_call(
+        catalog: &'c ReferenceCatalog<'m>,
+        source: &CheckedPackage,
+        models: &SelectedModels,
+        objects: &'c ObjectEnvironment,
+    ) -> Result<Self, ReferenceCodecError> {
+        let matches = catalog
+            .source()
+            .is_some_and(|actual| std::ptr::eq(actual, source))
+            && catalog.package().is_none()
+            && catalog
+                .selected_models()
+                .is_some_and(|actual| std::ptr::eq(actual, models));
+        Self::call_context(catalog, objects, matches)
+    }
+
+    /// Use a strictly admitted function-call package and its actual model
+    /// admission with the same shared recursive converter.
+    ///
+    /// # Errors
+    /// Refuses a catalog from another package or model-admission operation.
+    pub fn for_admitted_call(
+        catalog: &'c ReferenceCatalog<'m>,
+        package: &CheckedPackageV2,
+        models: &[fsl_semantics::model::intake::NormalizedModel],
+        objects: &'c ObjectEnvironment,
+    ) -> Result<Self, ReferenceCodecError> {
+        let matches = catalog.source().is_none()
+            && catalog
+                .package()
+                .is_some_and(|actual| std::ptr::eq(actual, package))
+            && catalog
+                .snapshot_models()
+                .is_some_and(|actual| std::ptr::eq(actual, models));
+        Self::call_context(catalog, objects, matches)
+    }
+
+    fn call_context(
+        catalog: &'c ReferenceCatalog<'m>,
+        objects: &'c ObjectEnvironment,
+        matches: bool,
+    ) -> Result<Self, ReferenceCodecError> {
+        if !matches || catalog.model().is_some() {
+            return Err(ReferenceCodecError::Refused {
+                reason: ReferenceFailure::ForeignCatalog,
+                pointer: String::new(),
+            });
+        }
+        Ok(Self {
+            catalog,
+            runtime: ReferenceRuntime::Call(objects),
+        })
     }
 
     fn reference(
         &self,
         value: &Value,
         restore: bool,
-        scope: &mut Scope<'_>,
+        scope: &mut Scope<'_, 'm>,
+    ) -> Result<Value, ReferenceCodecError> {
+        let owner = scope.normalization_owner;
+        let result = self.reference_in(value, restore, scope);
+        scope.normalization_owner = owner;
+        result
+    }
+
+    fn reference_in(
+        &self,
+        value: &Value,
+        restore: bool,
+        scope: &mut Scope<'_, 'm>,
     ) -> Result<Value, ReferenceCodecError> {
         let map = scope.closed(value, &["type", "universe", "object_type", "identity"])?;
         if map["type"].as_str() != Some("reference") {
             return Err(scope.fail(ReferenceFailure::MalformedWire));
         }
-        let universe = scope.member("universe", |s| s.node(&map["universe"], 0))?;
         let declaration = scope.member("object_type", |s| {
             let wire_node = if restore {
                 Some(s.node(&map["object_type"], 0)?)
             } else {
-                s.validate_effective(&map["object_type"])?;
+                if self.catalog.snapshot_models().is_none() {
+                    s.validate_effective(&map["object_type"])?;
+                }
                 None
             };
             for declaration in self.catalog.declarations() {
+                let previous = s.normalization_owner;
+                if !restore {
+                    if let Some(owner) = declaration.normalization_owner() {
+                        s.normalization_owner = Some(owner);
+                        s.validate_effective(&map["object_type"])?;
+                    }
+                }
                 s.work(1)?;
                 let matches = if let Some(wire) = &wire_node {
                     let candidate = s.declaration_json(declaration)?;
@@ -700,9 +1354,11 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
                 if matches {
                     return Ok(declaration);
                 }
+                s.normalization_owner = previous;
             }
             Err(s.fail(ReferenceFailure::UnknownDeclaration))
         })?;
+        let universe = scope.member("universe", |s| s.node(&map["universe"], 0))?;
         let object = scope.member("identity", |s| {
             let text = s.string(&map["identity"])?;
             if restore {
@@ -720,11 +1376,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let expected = native.universe().root_type();
         // Shared NodeId codec receives a shape already bounded and charged by
         // `node`; budget the encoded temporary before the owner codec allocates.
-        let admission = Admission::new(&mut *scope.budget, scope.cancel);
-        let expected_json = admission.node_json(expected);
-        let expected_json = admission
-            .finish(expected_json)
-            .map_err(|error| scope.stopped(error))?;
+        let expected_json = scope.with_admission(|admission| admission.node_json(expected))?;
         if !scope.same_json(&universe, &expected_json)? {
             return scope.member("universe", |s| {
                 Err(s.fail(ReferenceFailure::IncompatibleUniverse))
@@ -757,7 +1409,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn encode_value(
         &self,
         value: &Value,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<Value, ReferenceCodecError> {
@@ -768,10 +1420,36 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             &mut Scope {
                 budget,
                 cancel,
+                normalization_owner: None,
                 path: String::new(),
                 max_depth,
             },
         )
+    }
+
+    /// Admit the borrowed writer's native typed bytes before converting its
+    /// references under the original caller budget.
+    ///
+    /// # Errors
+    /// Original typed wire, authority, normalization and caller failures.
+    pub fn encode_value_bytes(
+        &self,
+        written: &[u8],
+        budget: &mut dyn IntegerDecimalBudget,
+        cancel: &Cancel,
+        max_depth: usize,
+    ) -> Result<Value, ReferenceCodecError> {
+        let mut scope = Scope {
+            budget,
+            cancel,
+            normalization_owner: None,
+            path: String::new(),
+            max_depth,
+        };
+        let text = std::str::from_utf8(written)
+            .map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
+        let value = parse_text(text, &mut scope)?;
+        self.value(&value, false, 0, &mut scope)
     }
 
     /// Restore a closed backend typed value to its exact native representation.
@@ -781,7 +1459,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn restore_value(
         &self,
         value: &Value,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<Value, ReferenceCodecError> {
@@ -792,6 +1470,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             &mut Scope {
                 budget,
                 cancel,
+                normalization_owner: None,
                 path: String::new(),
                 max_depth,
             },
@@ -805,27 +1484,50 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn encode_reference(
         &self,
         reference: &ObjectReference,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<Value, ReferenceCodecError> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
-        let admission = Admission::new(&mut *scope.budget, cancel);
-        let native = admission.encoded(quire_canonical::Limits::new(u64::MAX), |writer| {
-            fsl_eval::simulation::model::encode_reference(reference, writer)
-        });
-        let native = admission
-            .finish(native)
-            .map_err(|error| scope.stopped(error))?;
-        let text = std::str::from_utf8(&native)
-            .map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
-        let value = parse_text(text, &mut scope)?;
-        self.reference(&value, false, &mut scope)
+        self.encode_reference_in(reference, &mut scope)
+    }
+
+    fn encode_reference_in(
+        &self,
+        reference: &ObjectReference,
+        scope: &mut Scope<'_, 'm>,
+    ) -> Result<Value, ReferenceCodecError> {
+        let previous_owner = scope.normalization_owner;
+        let result = (|| {
+            if self.catalog.snapshot_models().is_some() {
+                scope.normalization_owner = Some(
+                    self.catalog
+                        .normalization_owner_for(reference)
+                        .map_err(|cause| ReferenceCodecError::Normalization {
+                            cause,
+                            pointer: String::new(),
+                        })?
+                        .ok_or_else(|| scope.fail(ReferenceFailure::UnknownDeclaration))?,
+                );
+            }
+            let native = scope.with_admission(|admission| {
+                admission.encoded(quire_canonical::Limits::new(u64::MAX), |writer| {
+                    fsl_eval::simulation::model::encode_reference(reference, writer)
+                })
+            })?;
+            let text = std::str::from_utf8(&native)
+                .map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
+            let value = parse_text(text, scope)?;
+            self.reference(&value, false, scope)
+        })();
+        scope.normalization_owner = previous_owner;
+        result
     }
 
     /// Restore a backend reference using the catalog's actual native model.
@@ -835,13 +1537,14 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn restore_reference(
         &self,
         value: &Value,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<ObjectReference, ReferenceCodecError> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
@@ -863,7 +1566,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn restore_transition(
         &self,
         value: &Value,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
         limits: quire_canonical::Limits,
@@ -871,9 +1574,19 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
+        self.restore_transition_in(value, &mut scope, limits)
+    }
+
+    fn restore_transition_in(
+        &self,
+        value: &Value,
+        scope: &mut Scope<'_, 'm>,
+        limits: quire_canonical::Limits,
+    ) -> Result<ModelTransition, ReferenceCodecError> {
         let map = scope.closed(value, &["type", "operation", "receiver", "arguments"])?;
         if map["type"].as_str() != Some("transition") {
             return Err(scope.fail(ReferenceFailure::MalformedWire));
@@ -943,16 +1656,25 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn encode_transition(
         &self,
         transition: &ModelTransition,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<Value, ReferenceCodecError> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
+        self.encode_transition_in(transition, &mut scope)
+    }
+
+    fn encode_transition_in(
+        &self,
+        transition: &ModelTransition,
+        scope: &mut Scope<'_, 'm>,
+    ) -> Result<Value, ReferenceCodecError> {
         let operation = scope.member("operation", |s| parse_text(transition.operation(), s))?;
         if !matches!(operation, Value::String(_) | Value::Object(_)) {
             return scope.member(
@@ -999,17 +1721,35 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         value: &Value,
         selected: Option<&ModelInstance>,
         binding: &PopulationBinding,
-        budget: &mut dyn ModelRestoreBudget,
+        budget: &mut dyn IntegerDecimalBudget,
         cancel: &Cancel,
         max_depth: usize,
     ) -> Result<ModelInstance, ReferenceCodecError> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
         let selected = selected.ok_or_else(|| scope.fail(ReferenceFailure::MissingPopulation))?;
+        if let ReferenceRuntime::Call(objects) = &self.runtime {
+            let mut bindings = objects.population_bindings();
+            let mut owned = false;
+            loop {
+                scope.work(1)?;
+                let Some(actual) = bindings.next() else {
+                    break;
+                };
+                if std::ptr::eq(actual, binding) {
+                    owned = true;
+                    break;
+                }
+            }
+            if !owned {
+                return Err(scope.fail(ReferenceFailure::WrongPopulation));
+            }
+        }
         if !scope.equal_text(
             &selected.population.package,
             &binding.population_key().package,
@@ -1035,9 +1775,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
                 continue;
             }
             let expected = binding.universe().root_type();
-            let admission = Admission::new(&mut *scope.budget, cancel);
-            let expected = admission.node_json(expected);
-            let expected = admission.finish(expected).map_err(|e| scope.stopped(e))?;
+            let expected = scope.with_admission(|admission| admission.node_json(expected))?;
             if !scope.same_json(&native["universe"], &expected)? {
                 return Err(scope.fail(ReferenceFailure::WrongPopulation));
             }
@@ -1061,7 +1799,30 @@ fn integer_text(text: &str) -> bool {
         && text != "-0"
 }
 
-fn parse_text(text: &str, scope: &mut Scope<'_>) -> Result<Value, ReferenceCodecError> {
+/// Read native typed-value bytes using the caller's existing work and
+/// physical-reservation policy. Reference authentication remains the codec's.
+///
+/// # Errors
+/// The original caller/cancellation refusal or malformed typed JSON.
+pub fn admit_native_value_bytes(
+    written: &[u8],
+    budget: &mut dyn IntegerDecimalBudget,
+    cancel: &Cancel,
+    max_depth: usize,
+) -> Result<Value, ReferenceCodecError> {
+    let mut scope = Scope {
+        budget,
+        cancel,
+        normalization_owner: None,
+        path: String::new(),
+        max_depth,
+    };
+    let text =
+        std::str::from_utf8(written).map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
+    parse_text(text, &mut scope)
+}
+
+fn parse_text(text: &str, scope: &mut Scope<'_, '_>) -> Result<Value, ReferenceCodecError> {
     scope.work(text.len())?;
     let bytes = text
         .len()
@@ -1074,12 +1835,10 @@ fn parse_text(text: &str, scope: &mut Scope<'_>) -> Result<Value, ReferenceCodec
 
 fn canonical_text(
     value: &Value,
-    scope: &mut Scope<'_>,
+    scope: &mut Scope<'_, '_>,
     limits: quire_canonical::Limits,
 ) -> Result<String, ReferenceCodecError> {
-    let admission = Admission::new(&mut *scope.budget, scope.cancel);
-    let result = admission.canonical(value, limits);
-    let bytes = admission.finish(result).map_err(|e| scope.stopped(e))?;
+    let bytes = scope.with_admission(|admission| admission.canonical(value, limits))?;
     String::from_utf8(bytes).map_err(|_| scope.fail(ReferenceFailure::MalformedWire))
 }
 
@@ -1087,7 +1846,7 @@ fn sort_values(
     values: &mut Vec<Value>,
     map: bool,
     unique: bool,
-    scope: &mut Scope<'_>,
+    scope: &mut Scope<'_, '_>,
 ) -> Result<(), ReferenceCodecError> {
     let capacity = values
         .len()
@@ -1136,17 +1895,49 @@ fn sort_values(
 /// Canonical writer admission shares the caller's budget and cancellation. Both
 /// writer scratch and sink output allocations are charged before reservation.
 struct Admission<'a> {
-    budget: RefCell<&'a mut dyn ModelRestoreBudget>,
+    budget: RefCell<&'a mut dyn IntegerDecimalBudget>,
     cancel: &'a Cancel,
     failure: RefCell<Option<ModelKeyError>>,
+    normalization_owner: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
+    normalization_failure:
+        RefCell<Option<fsl_semantics::model::accounting::NormalizationIncomplete>>,
+}
+
+struct DecimalAdmission<'a, 'b>(&'a Admission<'b>);
+
+impl filament_exact::Reservation for DecimalAdmission<'_, '_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), filament_exact::ReservationDenied> {
+        self.0.reserve(bytes).map_err(|error| {
+            *self.0.failure.borrow_mut() = Some(error);
+            filament_exact::ReservationDenied
+        })
+    }
+}
+
+impl IntegerDecimalBudget for DecimalAdmission<'_, '_> {
+    fn work(&mut self, units: u64) -> Result<(), filament_exact::ReservationDenied> {
+        let result = usize::try_from(units)
+            .map_err(|_| ModelKeyError::SizeOverflow)
+            .and_then(|units| self.0.work(units));
+        result.map_err(|error| {
+            *self.0.failure.borrow_mut() = Some(error);
+            filament_exact::ReservationDenied
+        })
+    }
 }
 
 impl<'a> Admission<'a> {
-    fn new(budget: &'a mut dyn ModelRestoreBudget, cancel: &'a Cancel) -> Self {
+    fn new(
+        budget: &'a mut dyn IntegerDecimalBudget,
+        cancel: &'a Cancel,
+        normalization_owner: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
+    ) -> Self {
         Self {
             budget: RefCell::new(budget),
             cancel,
             failure: RefCell::new(None),
+            normalization_owner,
+            normalization_failure: RefCell::new(None),
         }
     }
 
@@ -1161,10 +1952,24 @@ impl<'a> Admission<'a> {
     fn work(&self, units: usize) -> Result<(), ModelKeyError> {
         self.poll()?;
         let units = u64::try_from(units).map_err(|_| ModelKeyError::SizeOverflow)?;
-        self.budget
-            .borrow_mut()
-            .work(units)
-            .map_err(|_| ModelKeyError::Denied)?;
+        if let Some(owner) = self.normalization_owner {
+            owner
+                .charge_reference_work(
+                    fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                    units,
+                )
+                .map_err(|cause| {
+                    if self.normalization_failure.borrow().is_none() {
+                        *self.normalization_failure.borrow_mut() = Some(cause);
+                    }
+                    ModelKeyError::Denied
+                })?;
+        } else {
+            self.budget
+                .borrow_mut()
+                .work(units)
+                .map_err(|_| ModelKeyError::Denied)?;
+        }
         self.poll()
     }
 
@@ -1374,6 +2179,7 @@ mod tests {
         let mut scope = Scope {
             budget: &mut budget,
             cancel: &cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth: 64,
         };
@@ -1392,6 +2198,7 @@ mod tests {
             let mut scope = Scope {
                 budget: &mut budget,
                 cancel: &cancel,
+                normalization_owner: None,
                 path: "/identity".to_owned(),
                 max_depth: 64,
             };
@@ -1411,6 +2218,7 @@ mod tests {
             let mut scope = Scope {
                 budget: &mut budget,
                 cancel: &cancel,
+                normalization_owner: None,
                 path: "/identity".to_owned(),
                 max_depth: 64,
             };
@@ -1432,6 +2240,7 @@ mod tests {
         let mut scope = Scope {
             budget: &mut budget,
             cancel: &cancel,
+            normalization_owner: None,
             path: "/argument".to_owned(),
             max_depth: 64,
         };
@@ -1440,6 +2249,306 @@ mod tests {
         );
         assert_eq!(budget.work_left, 0);
         assert_eq!(budget.storage_used, 0);
+    }
+
+    /// Trace: FSpec-FR-181, FSpec-FR-418-AC-11
+    #[test]
+    fn call_reference_adapter_uses_checked_admission_and_environment() {
+        use super::{reference_fixture, ReferenceCodec};
+        use filament_contract_model::NativeJoinBudget;
+        use filament_semantic_value::model_transition::ModelTransition;
+        use fsl_eval::execution::{PrepareLimits, SuppliedBackends};
+        use fsl_package::ReferenceCatalog;
+        use fsl_semantics::model::intake::{package_input, SelectedModels};
+        use fsl_semantics::model::observation::{
+            admit_current_snapshot, DocumentRef, ObservationLimits,
+        };
+        use serde_json::json;
+        use std::collections::BTreeMap;
+
+        let packages = package_input([reference_fixture::DOMAIN_PACKAGE.as_bytes()]).unwrap();
+        let source = fsl_foundation::SourceIdentity::new("test", "checked-call-reference");
+        let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n", reference_fixture::PACKAGE_IDENTITY);
+        let limits = crate::spine::SpineLimits::default();
+        let compiled = crate::spine::compose(
+            source,
+            "checked-call.native",
+            text.as_bytes(),
+            &packages,
+            &crate::spine::DependencyInput::default(),
+            limits,
+        )
+        .expect("actual function checking and model admission");
+        let checked = &compiled.package;
+        let models = compiled.models.selected_models();
+        let population = "ix://example/config-version/config_history";
+        let selected = DocumentRef {
+            authority: "test".to_owned(),
+            identity: "checked-call-current".to_owned(),
+        };
+        let snapshot = json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": selected.authority, "identity": selected.identity},
+            "observation": "current", "anchor": {"kind": "handler", "name": "read"},
+            "model": {"identity": reference_fixture::PACKAGE_IDENTITY},
+            "populations": [{"population": population, "complete": true, "objects": [{
+                "key": "雪call", "type": "ix://example/config-version/ConfigVersion",
+                "fields": {"versionNumber": {"integer": "2"}, "parent": {"absent": {}}}
+            }]}]
+        });
+        let provisions =
+            BTreeMap::from([(selected.clone(), serde_json::to_vec(&snapshot).unwrap())]);
+        let (objects, _) = admit_current_snapshot(
+            checked.graph().model_inputs(),
+            checked.graph().scope().types(),
+            &packages,
+            limits.model,
+            &provisions,
+            &selected,
+            ObservationLimits::default(),
+        )
+        .expect("actual call object environment");
+        let [native] = objects.references() else {
+            panic!("one admitted reference");
+        };
+        let call = crate::spine::Call::new(
+            "keep".to_owned(),
+            vec![crate::spine::CallArgument {
+                parameter: "x".to_owned(),
+                value: filament_exact::Value::Reference(native.clone()),
+            }],
+            crate::spine::default_accounting(1_000_000),
+            filament_semantic_value::supplied_stop::SuppliedLimits::default(),
+        );
+        let cancel = Cancel::new();
+        let outcome = crate::spine::run_compiled(
+            &compiled.checked,
+            &compiled.models,
+            crate::spine::CallSources {
+                package_name: checked.graph().package_name(),
+                packages: &packages,
+                model_limits: limits.model,
+            },
+            &call,
+            &objects,
+            &SuppliedBackends::default(),
+            &PrepareLimits::default(),
+            &cancel,
+        )
+        .expect("direct checked function execution");
+        let crate::spine::CallOutcome::Completed(crate::spine::CallValue::Reference(result)) =
+            outcome
+        else {
+            panic!("a reference-valued completed call");
+        };
+        assert_eq!(&result, native);
+        let mut join_budget = Budget::new(1_000_000, 1_000_000);
+        let catalog = ReferenceCatalog::from_checked_call(checked, models, &mut join_budget)
+            .expect("genuine checked call catalog");
+        assert!(catalog.package().is_none());
+        assert!(catalog.model().is_none());
+        let codec = ReferenceCodec::for_checked_call(&catalog, checked, models, &objects).unwrap();
+        let mut storage = Budget::new(1_000_000, 1_000_000);
+        // An erased core work/storage budget cannot be downcast to a model
+        // simulation/restoration budget. This is the actual call adapter API.
+        let budget: &mut dyn IntegerDecimalBudget = &mut storage;
+        let wire = codec
+            .encode_reference(&result, budget, &cancel, 64)
+            .unwrap();
+        assert_eq!(wire["identity"], "e99baa63616c6c");
+        assert_eq!(
+            codec.restore_reference(&wire, budget, &cancel, 64).unwrap(),
+            result
+        );
+        // A genuine call-admitted reference also crosses both task-template
+        // transition arms. This exercises the shared operation adapter and
+        // nested refusal pointer rather than constructing catalog evidence.
+        let native_text = serde_json::to_string(
+            &fsl_eval::simulation::model::value_json(&filament_exact::Value::Reference(
+                result.clone(),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let transition = ModelTransition::new(
+            r#"{"name":"keep"}"#.to_owned(),
+            Some(native_text.clone()),
+            vec![native_text],
+            quire_canonical::Limits::new(100000),
+        )
+        .unwrap();
+        let template = crate::TaskTransitionTemplate {
+            action: crate::TaskTransitionAction::Release,
+            task_set: "tasks".to_owned(),
+            task: "task".to_owned(),
+            job_rank: 0,
+            slot: 0,
+            release: transition.clone(),
+            source_transition: Some(transition),
+            priority: Some(1),
+        };
+        let mut carrier_budget = Budget::new(10_000_000, 10_000_000);
+        let mut carrier = codec.scope(
+            &mut carrier_budget,
+            &cancel,
+            64,
+            quire_canonical::Limits::new(100000),
+        );
+        let mut task_wire = carrier.encode_task_template(&template).unwrap();
+        assert_eq!(task_wire["release"]["operation"], "keep");
+        assert_eq!(task_wire["release"]["receiver"], wire);
+        assert_eq!(task_wire["source_transition"]["arguments"][0], wire);
+        let restored = carrier.restore_task_template(&task_wire).unwrap();
+        assert!(template.same_identity(&restored));
+        assert_eq!(
+            template.to_wire().unwrap_err(),
+            crate::TaskProductWireError::ReferenceContextRequired
+        );
+        assert_eq!(
+            crate::TaskTransitionTemplate::from_wire(&task_wire)
+                .unwrap_err()
+                .reason,
+            crate::TaskProductShapeReason::ReferenceContextRequired
+        );
+        task_wire["source_transition"]["arguments"][0]["identity"] = json!("FF");
+        assert!(
+            matches!(carrier.restore_task_template(&task_wire), Err(ReferenceCodecError::Refused { reason: ReferenceFailure::InvalidIdentity, pointer }) if pointer == "/source_transition/arguments/0/identity")
+        );
+        // The certificate codec transports this opaque key; this is a carrier
+        // roundtrip, not a claim that its graph proves an obligation.
+        let key = fsl_eval::simulation::StateKey::from_canonical_bytes(b"null".to_vec());
+        let certificate = crate::ZoneCertificate {
+            obligation: (),
+            scale: filament_exact::Integer::from(1_i64),
+            lu_bounds: crate::LuBounds {
+                lower: Vec::new(),
+                upper: Vec::new(),
+            },
+            nodes: vec![crate::CertNode {
+                state_key: key.clone(),
+                automaton_state: 0,
+                zone: crate::Zone::zero(1),
+                locked: false,
+                product: None,
+            }],
+            edges: vec![
+                crate::CertEdge {
+                    from: 0,
+                    to: 0,
+                    transition: Some(template.release.clone()),
+                    task_transition: None,
+                    part: None,
+                    horizon: None,
+                    silent: None,
+                },
+                crate::CertEdge {
+                    from: 0,
+                    to: 0,
+                    transition: None,
+                    task_transition: Some(template),
+                    part: None,
+                    horizon: None,
+                    silent: None,
+                },
+            ],
+            initials: vec![0],
+            components: None,
+            non_zeno: None,
+            divergence: None,
+            admitted: None,
+            state_graph: None,
+            refinement: None,
+            task_product: None,
+        };
+        let certificate_wire = certificate
+            .to_wire_with_references(json!({}), None, &mut carrier)
+            .unwrap();
+        assert_eq!(certificate_wire["edges"][0]["transition"]["receiver"], wire);
+        assert_eq!(
+            certificate_wire["edges"][1]["transition"]["release"]["receiver"],
+            wire
+        );
+        let (restored_certificate, identity) = crate::ZoneCertificate::from_wire_with_references(
+            &certificate_wire,
+            (),
+            None,
+            &mut carrier,
+        )
+        .unwrap();
+        assert_eq!(
+            restored_certificate.nodes[0].state_key.as_bytes(),
+            key.as_bytes()
+        );
+        assert_eq!(
+            restored_certificate
+                .to_wire_with_references(identity, None, &mut carrier)
+                .unwrap(),
+            certificate_wire
+        );
+        let mut malformed_certificate = certificate_wire;
+        malformed_certificate["edges"][1]["transition"]["release"]["receiver"]["identity"] =
+            json!("FF");
+        assert!(
+            matches!(crate::ZoneCertificate::from_wire_with_references(&malformed_certificate, (), None, &mut carrier), Err(crate::ZoneCertificateReferenceError::Reference(ReferenceCodecError::Refused { reason: ReferenceFailure::InvalidIdentity, pointer })) if pointer == "/edges/1/transition/release/receiver/identity")
+        );
+        let graph = crate::model_check::state_graph::GraphEvidence::Trap {
+            stem: crate::model_check::state_graph::ModelPath {
+                initial: 0,
+                steps: vec![crate::model_check::counterexample::ModelStep {
+                    transition: certificate.edges[0].transition.clone().unwrap(),
+                    post_state: key.clone(),
+                    delay: Some(filament_exact::Rational::from_integer(
+                        filament_exact::Integer::from(2_i64),
+                    )),
+                }],
+            },
+            closure: crate::model_check::state_graph::TrapClosure::StateGraph,
+            over: None,
+        };
+        let graph_wire = carrier
+            .graph_evidence_wire(
+                &graph,
+                crate::StateGraphPropertyForm::Possible,
+                Some("x"),
+                Some(&result),
+                &[],
+                None,
+            )
+            .unwrap();
+        assert_eq!(graph_wire["instance"]["key"], wire);
+        assert_eq!(
+            graph_wire["stem"]["steps"][0]["transition"]["receiver"],
+            wire
+        );
+        assert_eq!(
+            graph_wire["stem"]["steps"][0]["transition"]["arguments"][0],
+            wire
+        );
+        assert_eq!(
+            graph_wire["stem"]["steps"][0]["post_state"],
+            crate::state_key_wire(&key).unwrap()["key"]
+        );
+        assert_eq!(
+            graph_wire["stem"]["steps"][0]["delay"],
+            json!({"numerator":"2","denominator":"1"})
+        );
+        let foreign: SelectedModels = models.clone();
+        assert!(matches!(
+            ReferenceCodec::for_checked_call(&catalog, checked, &foreign, &objects),
+            Err(ReferenceCodecError::Refused {
+                reason: ReferenceFailure::ForeignCatalog,
+                ..
+            })
+        ));
+        let mut denied = Budget::new(0, 1_000_000);
+        assert!(matches!(
+            codec.encode_reference(native, &mut denied, &cancel, 64),
+            Err(ReferenceCodecError::Key {
+                source: ModelKeyError::Denied,
+                ..
+            })
+        ));
+        assert_eq!(denied.storage_used, 0);
     }
 
     /// Trace: FSpec-FR-181
