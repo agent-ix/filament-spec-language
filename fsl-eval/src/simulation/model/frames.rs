@@ -265,7 +265,7 @@ fn apply_argument(
     }
     match verdict {
         Conjunction::True => {}
-        Conjunction::False(_) => continue,
+        Conjunction::False(_) => return Ok(()),
         Conjunction::Undecided(undecided) => {
             for (clause, evaluation) in undecided {
                 if walk.candidate_visitor.is_some() {

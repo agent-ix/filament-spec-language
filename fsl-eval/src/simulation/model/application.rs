@@ -17,8 +17,8 @@ use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use super::walk::{Applied, Budget, Row, Walk, rows_of, sorted_contract_findings, stop, walk_of};
-use super::{Application, BROKEN, ModelFinding, ModelSimState, ModelSystem, contracts, frames};
+use super::walk::{rows_of, sorted_contract_findings, stop, walk_of, Applied, Budget, Row, Walk};
+use super::{contracts, frames, Application, ModelFinding, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::ExpansionStop;
 
 /// The operation an attempt applies (FR-114): the type that declares it, its
@@ -575,6 +575,9 @@ impl<'a> ModelSystem<'a> {
                 rows: rows_of(self, &observed.state().state)?,
                 enforcement: None,
                 post_presence: None,
+                candidate_visitor: None,
+                visitor_stopped: std::cell::Cell::new(false),
+                retained_occurrences: std::cell::RefCell::new(filament_exact::Integer::one()),
             }),
             None => walk_of(self, observed.state(), None),
         }
@@ -808,10 +811,10 @@ mod tests {
     use ix_trace_rs::trace;
     use serde_json::json;
 
-    use super::super::walk::{Budget, rows_of};
+    use super::super::walk::{rows_of, Budget};
     use super::{Applications, OperationRef};
     use crate::simulation::expansion::ExpansionLimit;
-    use crate::simulation::sampled::world::{Model, Operation, World, initial};
+    use crate::simulation::sampled::world::{initial, Model, Operation, World};
 
     /// One cell `c` whose `v: Int[0, 3]` is 0, and `set(n: Int[0, 3])`,
     /// whose postcondition `Put` makes `v` the argument.

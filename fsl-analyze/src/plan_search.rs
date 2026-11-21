@@ -555,7 +555,7 @@ pub enum PlanSearchError {
     #[error("a transition key could not be encoded")]
     TransitionKey,
     /// Native expansion broke an invariant of the model system.
-    #[error("native model expansion failed: {0:?}")]
+    #[error("native model expansion failed: {}/{}", .0.cause.code(), .0.cause.cause())]
     Expansion(ExpansionStop),
     /// A reported plan failed native replay: a method failure naming the
     /// first failing step (FSpec FR-650, exit 30).
@@ -881,7 +881,10 @@ impl<R: PlanRules> Search<'_, '_, R> {
     /// violation: the state is not expanded, the first such prune is
     /// recorded, and the run can then only settle `incomplete`.
     fn admissible(&mut self, state: &ModelSimState) -> Result<bool, Stop> {
-        match admission(self.system, state).map_err(|stop| expansion_stop(stop, self.system))? {
+        match admission(self.system, state).map_err(|stop| match self.request.cancel.cause() {
+            Some(cause) => Stop::Cause(PlanStopCause::Cancelled(cause)),
+            None => expansion_stop(stop, self.system),
+        })? {
             Admission::Admitted => Ok(true),
             Admission::Violated => Ok(false),
             Admission::Undetermined(invariant) => {
@@ -1421,21 +1424,7 @@ fn expansion_stop(stop: ExpansionStop, system: &ModelSystem<'_>) -> Stop {
     match stop.limit {
         Some(ExpansionLimit::EvaluationMeter(kind)) => {
             let counter = kind.as_str();
-            let limits = system.meter_limits();
-            let value = match kind {
-                LimitKind::IntegerBits => limits.integer_bits,
-                LimitKind::DecimalDigits => limits.decimal_digits,
-                LimitKind::ScaleExpansion => limits.scale_expansion,
-                LimitKind::TextInputBytes => limits.text_input_bytes,
-                LimitKind::TextScalars => limits.text_scalars,
-                LimitKind::NormalizedScalars => limits.normalized_scalars,
-                LimitKind::UnitEdges => limits.unit_edges,
-                LimitKind::ValueOccurrences => limits.value_occurrences,
-                LimitKind::WorkUnits => limits.work_units,
-                LimitKind::ResultUnits => limits.result_units,
-                // A session high-water limit with no request setting.
-                LimitKind::LiveOccurrences => u64::MAX,
-            };
+            let value = accounting_limit(system, kind);
             Stop::Cause(PlanStopCause::LimitReached {
                 limit: counter,
                 value,
@@ -1446,5 +1435,25 @@ fn expansion_stop(stop: ExpansionStop, system: &ModelSystem<'_>) -> Stop {
         // Source search/replay/checking use the gated cursor instead.
         Some(ExpansionLimit::MaxCandidates) => Stop::Error(PlanSearchError::Expansion(stop)),
         None => Stop::Error(PlanSearchError::Expansion(stop)),
+    }
+}
+
+/// The actual request-session bound, including overrides installed after
+/// the native system was admitted.
+pub(crate) fn accounting_limit(system: &ModelSystem<'_>, kind: LimitKind) -> u64 {
+    let limits = system.meter_limits();
+    match kind {
+        LimitKind::IntegerBits => limits.integer_bits,
+        LimitKind::DecimalDigits => limits.decimal_digits,
+        LimitKind::ScaleExpansion => limits.scale_expansion,
+        LimitKind::TextInputBytes => limits.text_input_bytes,
+        LimitKind::TextScalars => limits.text_scalars,
+        LimitKind::NormalizedScalars => limits.normalized_scalars,
+        LimitKind::UnitEdges => limits.unit_edges,
+        LimitKind::ValueOccurrences => limits.value_occurrences,
+        LimitKind::WorkUnits => limits.work_units,
+        LimitKind::ResultUnits => limits.result_units,
+        // A session high-water limit with no request setting.
+        LimitKind::LiveOccurrences => u64::MAX,
     }
 }

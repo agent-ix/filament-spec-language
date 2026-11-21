@@ -88,12 +88,14 @@ pub fn replay<R: PlanRules>(
         if !reached {
             return Err(PlanSearchError::ReplayFailed {
                 step: index,
-                operation: operation_name(system, step).unwrap_or_default().to_owned(),
+                operation: operation_name(system, step)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| step.operation().to_owned()),
             });
         }
     }
     for state in &plan.states {
-        match super::admission(system, state).map_err(PlanSearchError::Expansion)? {
+        match super::admission(system, state).map_err(|stop| native_failure(system, stop))? {
             super::Admission::Admitted => {}
             super::Admission::Violated => {
                 return Err(PlanSearchError::ReplayRejected(
@@ -239,11 +241,28 @@ fn selected_outcome(
                 }
             },
         })
-        .map_err(PlanSearchError::Expansion)?;
+        .map_err(|stop| native_failure(system, stop))?;
     if let Some(error) = failure {
         return Err(error);
     }
     Ok(selected)
+}
+
+fn native_failure(
+    system: &ModelSystem<'_>,
+    stop: fsl_eval::simulation::ExpansionStop,
+) -> PlanSearchError {
+    match stop.limit {
+        Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(kind)) => {
+            PlanSearchError::RuleStopped(super::RuleStop::Accounting {
+                counter: kind.as_str(),
+                value: super::accounting_limit(system, kind),
+            })
+        }
+        Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates) | None => {
+            PlanSearchError::Expansion(stop)
+        }
+    }
 }
 
 fn rejected() -> PlanSearchError {

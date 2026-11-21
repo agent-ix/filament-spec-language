@@ -508,6 +508,13 @@ impl<'a> SourcePlan<'a> {
         object.fields.get(&field.key).cloned()
     }
 
+    fn evaluation_stop(&self, counter: &'static str, value: u64) -> RuleStop {
+        match self.system.plan_cancel_cause() {
+            Some(cause) => RuleStop::Cancelled(cause),
+            None => RuleStop::Accounting { counter, value },
+        }
+    }
+
     fn evaluate(&mut self, body: &CheckedBody, plan: Value) -> Result<Evaluated, RuleStop> {
         let evaluation = fsl_eval::value::evaluate_plan_body(
             self.package,
@@ -522,10 +529,7 @@ impl<'a> SourcePlan<'a> {
                     Ok(Evaluated::Value(value))
                 }
                 filament_eval::FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
-                    Err(RuleStop::Accounting {
-                        counter: incomplete.limit_kind.as_str(),
-                        value: incomplete.limit,
-                    })
+                    Err(self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit))
                 }
                 filament_eval::FamilyOutcome::Evaluated(Outcome::Undefined(_)) => {
                     Ok(Evaluated::Undefined)
@@ -593,9 +597,9 @@ impl<'a> SourcePlan<'a> {
         ) {
             Ok(ClauseReading::Violated) => return Ok(MonitorStep::Reject),
             Ok(ClauseReading::Incomplete { counter, value }) => {
-                return Err(RuleStop::Accounting { counter, value });
+                return Err(self.evaluation_stop(counter, value));
             }
-            Ok(_) => {}
+            Ok(ClauseReading::Holds | ClauseReading::Undecided) => {}
             Err(error) => {
                 self.fault.get_or_insert_with(|| error.to_string());
                 return Ok(MonitorStep::Reject);
@@ -795,7 +799,7 @@ impl PlanRules for SourcePlan<'_> {
             ) {
                 Ok(ClauseReading::Holds) => true,
                 Ok(ClauseReading::Incomplete { counter, value }) => {
-                    return Err(RuleStop::Accounting { counter, value });
+                    return Err(self.evaluation_stop(counter, value));
                 }
                 Ok(ClauseReading::Violated | ClauseReading::Undecided) => false,
                 Err(error) => {

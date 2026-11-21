@@ -2779,3 +2779,59 @@ fn source_step_expansion_preserves_the_canonical_work_prefix() {
         }
     }
 }
+
+/// The retained native outcome sequence has its own per-value size bound;
+/// it is denied before a partial invocation can admit search nodes.
+#[test]
+#[trace("FR-1011-AC-2", "FSpec-FR-801-AC-2")]
+fn a_native_outcome_collection_stop_names_its_evaluation_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    crate::support::plan_model::write(directory.path());
+    let model = r#"language "ix:native" edition "1-draft";
+domain "example/config-version";
+object ConfigVersion {
+  versionNumber: Int[0,1];
+  operation choose(): Boolean modifies self.versionNumber;
+}
+population config_history: ConfigVersion;
+"#;
+    std::fs::write(
+        directory
+            .path()
+            .join("retained-outcomes-model.semantic-ir.json"),
+        crate::support::plan_model::compile(model),
+    )
+    .unwrap();
+    let path = directory.path().join("planning-initial.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let objects = snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .unwrap();
+    objects.truncate(1);
+    objects[0]["fields"] = json!({"versionNumber":{"integer":"0"}});
+    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    let unit = r#"language "ix:native" edition "1-draft";
+profile v = "filament.temporal.infinite-trace/v1";
+model Config = "example/config-version";
+type Lengths = Int[1,1];
+synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies { true };
+"#;
+    let (exit, value) = plan_in(
+        directory.path(),
+        unit,
+        "retained-outcomes-model.semantic-ir.json",
+        "planning-initial.json",
+        json!({"accounting":{"value_occurrences":6}}),
+    );
+    assert_eq!(exit, 22, "{value}");
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "incomplete", "{value}");
+    assert_eq!(
+        outcome["cause"],
+        json!({"kind":"limit-reached", "limit":"value_occurrences", "value":6, "setting":"accounting.value_occurrences"}),
+        "{value}"
+    );
+    assert_eq!(outcome["explored"]["states"], 1, "{value}");
+    assert_eq!(outcome["explored"]["work"], 1, "{value}");
+    assert!(outcome["plan"].is_null(), "{value}");
+}

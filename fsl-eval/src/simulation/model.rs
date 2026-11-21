@@ -699,6 +699,7 @@ pub struct ModelSystem<'a> {
     meter: ScalarLimits,
     shared_meter: std::sync::Arc<std::sync::Mutex<filament_exact::Meter>>,
     shared_accounting: std::sync::atomic::AtomicBool,
+    shared_limits: std::sync::Mutex<ScalarLimits>,
     request_cancel: std::sync::Mutex<Option<filament_exact::Cancel>>,
     footprints: footprints::FootprintCache,
     /// [`Self::universe_declaring`] per field, computed once.
@@ -827,6 +828,7 @@ impl ModelSystem<'_> {
             None => meter,
         };
         *self.shared_meter.lock().expect("evaluation meter lock") = meter;
+        *self.shared_limits.lock().expect("evaluation limits lock") = limits;
         self.shared_accounting
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -844,6 +846,15 @@ impl ModelSystem<'_> {
         self.shared_accounting
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+    /// The cancellation reason of the active source request, when any.
+    pub fn plan_cancel_cause(&self) -> Option<filament_exact::CancelCause> {
+        self.request_cancel
+            .lock()
+            .expect("request cancellation lock")
+            .as_ref()
+            .and_then(filament_exact::Cancel::cause)
+    }
+
     /// Share cancellation with expansion and every evaluation charge.
     pub fn cancel_plan_with(&self, cancel: &filament_exact::Cancel) {
         *self
@@ -1445,6 +1456,7 @@ impl<'a> ModelSystem<'a> {
                 request.meter,
             ))),
             shared_accounting: std::sync::atomic::AtomicBool::new(false),
+            shared_limits: std::sync::Mutex::new(request.meter),
             request_cancel: std::sync::Mutex::new(None),
             footprints: footprints::FootprintCache::default(),
             declaring: std::sync::Mutex::default(),
@@ -1528,7 +1540,11 @@ impl<'a> ModelSystem<'a> {
 
     /// The evaluation meter limits each reading of the system starts from.
     pub fn meter_limits(&self) -> ScalarLimits {
-        self.meter
+        if self.shares_evaluation_meter() {
+            *self.shared_limits.lock().expect("evaluation limits lock")
+        } else {
+            self.meter
+        }
     }
 
     /// FR-101's canonical bytes of `transition`, which order successors.
