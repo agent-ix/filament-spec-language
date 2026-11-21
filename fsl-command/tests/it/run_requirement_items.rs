@@ -998,3 +998,84 @@ fn a_published_option_reaches_the_provider_and_an_unpublished_one_settles() {
         "the call's value is unchanged"
     );
 }
+
+/// The claim a result wrote for the first item of `sq`, which FSL FR-621
+/// writes in the document-held form (operands as `{"node": i}` segments).
+fn held_first_claim(directory: &Path) -> Value {
+    let result = command::run(&sq(directory, Some(json!({}))), &Fr290).expect("the run completes");
+    let claim = entries(&documents(&result).0)[0]["request"]["claim"].clone();
+    assert!(
+        claim["node"]["path"]
+            .as_array()
+            .is_some_and(|path| path.iter().any(|segment| segment.get("node").is_some())),
+        "the claim is held: {claim}"
+    );
+    claim
+}
+
+/// FR-960 "Inputs", FSL FR-621 "Node ids in an item": a claim a result wrote
+/// names its item when supplied back, and settles it on the named backend.
+#[trace("TC-2700", "FR-960-AC-2")]
+#[test]
+fn a_claim_written_by_a_result_names_its_item_when_supplied_back() {
+    let directory = tempfile::tempdir().unwrap();
+    let claim = held_first_claim(directory.path());
+    let rerun = command::run(
+        &sq(
+            directory.path(),
+            Some(json!({"backend": "fsl.absent", "items": [{"claim": claim, "backend": "value-checker"}]})),
+        ),
+        &Fr290,
+    )
+    .unwrap();
+    let items = entries(&documents(&rerun).0);
+    assert_eq!(items[0]["record"]["backend"], "value-checker", "{}", items[0]);
+    assert_eq!(items[0]["record"]["result"], "proved", "{}", items[0]);
+}
+
+/// A held claim whose index segment the package graph does not have refuses
+/// `invalid_package` (the FSpec FR-322 reader's `malformed_wire`) with no
+/// cause, at the segment's `node` member.
+#[trace("TC-2700", "FR-960-AC-3")]
+#[test]
+fn a_held_claim_with_an_index_outside_the_graph_refuses_at_its_node_member() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut claim = held_first_claim(directory.path());
+    let path = claim["node"]["path"].as_array_mut().unwrap();
+    let position = path.iter().position(|s| s.get("node").is_some()).unwrap();
+    path[position] = json!({"node": 999_999});
+    let error = command::run(
+        &sq(directory.path(), Some(json!({"items": [{"claim": claim}]}))),
+        &Fr290,
+    )
+    .expect_err("an index outside the graph refuses");
+    let envelope = error.value().expect("refusal envelope");
+    let text = envelope.to_string();
+    assert!(text.contains("invalid_package"), "{envelope}");
+    assert!(!text.contains("\"cause\""), "{envelope}");
+    assert!(
+        text.contains(&format!(
+            "/call/requirements/items/0/claim/node/path/{position}/node"
+        )),
+        "{envelope}"
+    );
+    assert_eq!(error.category().exit_code(), 20);
+}
+
+/// A held claim that resolves but names no item of the call stays
+/// `missing_declaration` at stage `call`.
+#[trace("TC-2700", "FR-960-AC-3")]
+#[test]
+fn a_held_claim_naming_no_item_of_the_call_is_an_unknown_claim() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut claim = held_first_claim(directory.path());
+    claim["occurrence"]["ordinal"] = json!(99);
+    let error = command::run(
+        &sq(directory.path(), Some(json!({"items": [{"claim": claim}]}))),
+        &Fr290,
+    )
+    .expect_err("a claim of no item refuses");
+    let envelope = error.value().expect("refusal envelope");
+    assert_eq!(envelope["stage"], "call", "{envelope}");
+    assert!(envelope.to_string().contains("missing_declaration"), "{envelope}");
+}
