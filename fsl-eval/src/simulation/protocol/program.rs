@@ -1291,6 +1291,12 @@ impl<'a> Program<'a> {
             .controls
             .values()
             .filter_map(|control| control.constraint.as_ref().map(|slot| (control.id, slot)))
+            .chain(
+                package
+                    .choices
+                    .iter()
+                    .flat_map(|(choice, cases)| cases.iter().map(move |(_, slot)| (*choice, slot))),
+            )
             .chain(package.finish.as_ref().map(|slot| (finish_node, slot)))
         {
             for binder in package
