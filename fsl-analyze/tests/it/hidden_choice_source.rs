@@ -54,13 +54,8 @@ fn hidden_choice_source_refutes_with_a_counterexample() {
         item["counterexample"].is_object(),
         "a refutation carries its counterexample: {document}"
     );
-    let entry = &item["counterexample"];
-    assert_eq!(entry["request_index"], 0);
-    assert_eq!(
-        entry["backend"],
-        fsl_analyze::protocol_analysis::manifest::BACKEND_ID
-    );
-    let body = &entry["counterexample"];
+    assert_eq!(item["request_index"], 0);
+    let body = &item["counterexample"];
     assert_eq!(
         body["type"], "protocol-analysis-counterexample",
         "{document}"

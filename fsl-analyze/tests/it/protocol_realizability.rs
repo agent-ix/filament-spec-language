@@ -1646,10 +1646,7 @@ fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
         let ProtocolAnalysisCounterexample::Realizability(native) = typed.as_ref() else {
             panic!("a realizability counterexample");
         };
-        let entry = found.wire.as_ref().unwrap();
-        assert_eq!(entry["request_index"], at);
-        assert_eq!(entry["backend"], protocol_analysis::manifest::BACKEND_ID);
-        let body = &entry["counterexample"];
+        let body = found.wire.as_ref().unwrap();
         assert_eq!(body["type"], "protocol-analysis-counterexample");
         assert_eq!(&body["key"], key);
         assert_eq!(&body["separating_witness"], witness);
