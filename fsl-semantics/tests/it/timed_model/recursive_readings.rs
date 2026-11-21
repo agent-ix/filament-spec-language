@@ -98,8 +98,7 @@ fn a_measured_recursive_place_expression_unfolds() {
 }
 
 /// Each form of constant FR-230 evaluates unfolds: `mod`, `div` and `rem`
-/// of non-negative operands, a name a `let` binds to a constant, and a
-/// `case` over a union value.
+/// of non-negative operands and a `case` over a union value.
 #[trace("FR-230-AC-68")]
 #[test]
 fn constants_over_every_form_unfold() {
@@ -107,7 +106,6 @@ fn constants_over_every_form_unfold() {
         "loop(self.x, 7 mod 4)",
         "loop(self.x, 7 div 2)",
         "loop(self.x, 8 rem 5)",
-        "let k = 2 + 1 in loop(self.x, k)",
     ] {
         assert_eq!(constraints_of(LOOP, call), [x_at_most_3()], "{call}");
     }

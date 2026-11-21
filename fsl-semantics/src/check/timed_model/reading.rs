@@ -865,39 +865,6 @@ fn divide(operator: BinaryOperator, dividend: &Integer, divisor: &Integer) -> Op
     }))
 }
 
-/// The value of the `let` that binds the name at `name`, when one above it
-/// does and no binder in between rebinds it.
-fn let_value(expression: &Expression, name: ExprId) -> Option<ExprId> {
-    let ExprNode::Name(written) = expression.get(name)?.node() else {
-        return None;
-    };
-    let mut parent: BTreeMap<ExprId, ExprId> = BTreeMap::new();
-    for node in expression.iter() {
-        for child in node.node().children() {
-            parent.insert(child, node.id());
-        }
-    }
-    let mut child = name;
-    while let Some(&up) = parent.get(&child) {
-        let node = expression.get(up)?.node();
-        if let ExprNode::Let {
-            name: bound,
-            value,
-            body,
-            ..
-        } = node
-        {
-            if *bound == written.name && *body == child {
-                return Some(*value);
-            }
-        } else if node.binders().contains(&written.name.as_str()) {
-            return None;
-        }
-        child = up;
-    }
-    None
-}
-
 /// The frame a reading is in: the one it started in, or one a tail call
 /// entered.
 #[derive(Clone)]
@@ -1376,8 +1343,7 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
         })
     }
 
-    /// The constant call-site node `id` evaluates to; a name is a constant
-    /// when the `let` that binds it has a constant value.
+    /// The constant call-site node `id` evaluates to.
     ///
     /// # Errors
     ///
@@ -1385,25 +1351,11 @@ impl<'e, 'f, 'c> Expansion<'e, 'f, 'c> {
     fn site_known(&self, id: ExprId, budget: &PartBudget) -> Result<Option<Known>, CheckCause> {
         fold(
             &self.located.form.expression,
-            &|name| self.site_let(name),
+            &|_| None,
             id,
             self.clocks.rational_bits,
         )
         .map_err(|bits| budget.too_wide(self.clocks.rational_bits, bits, self.located.span(id)))
-    }
-
-    /// The constant the `let` binding the call-site name `name` gives it.
-    fn site_let(&self, name: ExprId) -> Option<Known> {
-        let expression = &self.located.form.expression;
-        let value = let_value(expression, name)?;
-        fold(
-            expression,
-            &|inner| self.site_let(inner),
-            value,
-            self.clocks.rational_bits,
-        )
-        .ok()
-        .flatten()
     }
 
     /// The data term of constant `known`, located at the outermost call.
