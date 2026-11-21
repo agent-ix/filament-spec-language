@@ -234,7 +234,7 @@ impl Run<'_, '_> {
             let incoming = position
                 .checked_sub(1)
                 .and_then(|index| execution.steps.get(index))
-                .map(|step| {
+                .map(|step| -> Result<_, ModelCheckRefusal> {
                     let transition = system
                         .permute_transition(&step.transition, permutation)
                         .map_err(|_| fault("a-closed-key-permutation-preserves-step-encoding"))?;
