@@ -220,3 +220,106 @@ fn a_widened_pass_through_argument_is_still_an_equal_measure_element() {
         function g using v(): Integer pure { f(3, 3) }";
     assert_eq!(evaluate(declarations), Integer::from(0_i64));
 }
+
+/// `walk` recurses on `argument` under `guard`; `g` calls it on `[1, 2, 3]`.
+fn walk(kind: &str, literal: &str, bound: &str, guard: &str, argument: &str) -> String {
+    format!(
+        "function walk using v(s: {kind}<Int[0, 9]>{bound}, e: Int[0, 9]): Integer pure \
+         decreases(size(s)) {{ if {guard} then 1 + walk({argument}, e) else 0 }}\n\
+         function g using v(): Integer pure {{ walk({literal}[1, 2, 3], 2) }}"
+    )
+}
+
+/// The one-occurrence removal and tail clauses of FSpec FR-146-AC-16 over
+/// the collection kinds each admits, then its refusals.
+#[trace("FSpec-TC-191", "FSpec-FR-146-AC-16")]
+#[test]
+fn a_one_occurrence_removal_or_tail_decreases_a_cardinality_measure() {
+    // `removeOne(s, e)` under `contains(s, e)`: every collection kind.
+    for (kind, literal) in [
+        ("Sequence", "sequence"),
+        ("Set", "set"),
+        ("Bag", "bag"),
+        ("OrderedSet", "orderedSet"),
+    ] {
+        assert_eq!(
+            evaluate(&walk(kind, literal, "", "contains(s, e)", "removeOne(s, e)")),
+            Integer::from(1_i64),
+            "{kind} removeOne"
+        );
+        let converted = format!("convert<{kind}<Int[0, 9]>>(removeOne(s, e))");
+        assert_eq!(
+            evaluate(&walk(kind, literal, "", "contains(s, e)", &converted)),
+            Integer::from(1_i64),
+            "{kind} convert removeOne"
+        );
+    }
+    // `dropFirst(s)` under each fact form that proves `size(s) >= 1`.
+    for (kind, literal) in [("Sequence", "sequence"), ("OrderedSet", "orderedSet")] {
+        for guard in ["size(s) > 0", "size(s) >= 1", "1 <= size(s)", "contains(s, e)"] {
+            assert_eq!(
+                evaluate(&walk(kind, literal, "", guard, "dropFirst(s)")),
+                Integer::from(if guard == "contains(s, e)" { 1_i64 } else { 3 }),
+                "{kind} dropFirst under {guard}"
+            );
+        }
+        let converted = format!("convert<{kind}<Int[0, 9]>>(dropFirst(s))");
+        assert_eq!(
+            evaluate(&walk(kind, literal, "", "size(s) > 0", &converted)),
+            Integer::from(3_i64),
+            "{kind} convert dropFirst"
+        );
+    }
+    // A declared minimum of at least 1 is the size fact, with no guard.
+    assert_eq!(
+        evaluate(
+            "function walk using v(s: Sequence<Int[0, 9]>[1, 5]): Integer pure decreases(size(s)) \
+             { if size(s) > 1 then 1 + walk(dropFirst(s)) else 0 }\n\
+             function g using v(): Integer pure { walk(sequence[1, 2, 3]) }"
+        ),
+        Integer::from(2_i64)
+    );
+    assert_eq!(
+        evaluate(
+            "function walk using v(s: Sequence<Int[1, 9]>[1, 5]): Integer pure decreases(size(s)) \
+             { if true then 0 else walk(dropFirst(s)) }\n\
+             function g using v(): Integer pure { walk(sequence[1, 2, 3]) }"
+        ),
+        Integer::from(0_i64)
+    );
+
+    for (kind, literal, guard, argument) in [
+        // `dropFirst` without the size fact.
+        ("Sequence", "sequence", "true", "dropFirst(s)"),
+        // A fact that does not exclude zero.
+        ("Sequence", "sequence", "size(s) >= 0", "dropFirst(s)"),
+        ("Sequence", "sequence", "size(s) < 5", "dropFirst(s)"),
+        ("OrderedSet", "orderedSet", "true", "dropFirst(s)"),
+        // `removeOne` without the membership fact.
+        ("Sequence", "sequence", "size(s) > 0", "removeOne(s, e)"),
+        ("Bag", "bag", "true", "removeOne(s, e)"),
+        // `removeOne` of a non-stable `e`.
+        ("Bag", "bag", "contains(s, e)", "removeOne(s, e + 1)"),
+        // The membership fact is about another element.
+        ("Set", "set", "contains(s, 3)", "removeOne(s, e)"),
+        // The same collection.
+        ("Sequence", "sequence", "size(s) > 0", "s"),
+        // A collection that can grow.
+        ("Sequence", "sequence", "size(s) > 0", "append(dropFirst(s), e)"),
+        ("Sequence", "sequence", "size(s) > 0", "append(s, e)"),
+    ] {
+        assert_eq!(
+            refused(&walk(kind, literal, "", guard, argument)),
+            MeasureObligation::Decrease,
+            "{kind} {guard} / {argument}"
+        );
+    }
+    // The size fact of a different collection does not discharge it.
+    assert_eq!(
+        refused(
+            "function walk using v(s: Sequence<Int[0, 9]>, t: Sequence<Int[0, 9]>): Integer \
+             pure decreases(size(s)) { if size(t) > 0 then 1 + walk(dropFirst(s), t) else 0 }"
+        ),
+        MeasureObligation::Decrease
+    );
+}
