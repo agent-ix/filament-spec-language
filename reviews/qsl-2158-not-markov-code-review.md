@@ -30,7 +30,7 @@ No applicable AssuranceProfile is declared under this repository's spec tree (se
 
 ## Verdict
 
-CONDITIONAL for the scoped method. One low documentation mismatch requires disposition.
+PASS after disposition round 1 at 691ad71d9915f9fd7a977d5feb9d313a01ba07a0. FND-001 is fixed; no new finding. The initial review at c084d6 was CONDITIONAL for this documentation omission.
 
 ## Findings
 
@@ -514,3 +514,23 @@ scope:
     an FSpec FR-413 `undefined-path` `counterexample` whose `replay` is present and
     reproduced, at either threshold.
 ```
+
+## Dispositions
+
+Round 1, reviewed at 691ad71d9915f9fd7a977d5feb9d313a01ba07a0. Checked the actual documentation amendment against `fsl-eval/src/simulation/model/probabilistic.rs:82` and its pre-enumeration identity propagation. No new findings.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-187's existing Draw declaration now includes transition: ModelTransition and documents every argument in declared order and retention even with no successor. |
+
+After excerpt (verbatim, FR-187 Outputs):
+
+```rust
+    pub transition: ModelTransition,            // complete operation identity, including all arguments in declared order, retained even with no successor
+```
+
+Executable source, tests, Cargo files and pins are byte-identical to tested c084d6: `git diff --exit-code c084d6..HEAD -- . ':!spec' ':!reviews'` exits 0. Only this specification line and review custody changed; existing final c084d6 compile/lint/three-test receipts retain their actual source attribution. No Cargo rerun was needed or executed. Changed-spec Quire validation and diff whitespace checks pass.
+
+Review custody verified: the five initial SR560-SR564 scratch artifacts were copied verbatim into their intended committed paths. Older accepted SR508/SR509 artifacts at the generic code-review/gap-analysis paths are byte-identical to c084d6. This updated artifact is for `reviews/qsl-2158-not-markov-code-review.md`; the reviewer does not commit it.
+
+No code edits, push, merge, GitHub findings, relay or external model calls. This is disposition round 1 of the maximum two rounds.
