@@ -49,6 +49,7 @@ fn replay(
             initial: world.initial.clone(),
             universes: world.unlimited().simulation.universes,
             expansion: world.unlimited().simulation.expansion,
+            stutter_closure: false,
         },
         &envelope_at(payload, clause_node, occurrence),
         &letters,

@@ -209,6 +209,10 @@ pub enum CounterexampleKind {
 /// prefix is the state at position `entry`. A loop that is the terminal
 /// stutter step (ADR-018 SM-4) has no model step: `entry` is the prefix's
 /// length, the position of the terminal state, and the marker is set.
+///
+/// A loop that is the one closure stutter (FSpec FR-364 "Closure stutter")
+/// likewise has no model step: `entry` is the prefix's length and
+/// [`TemporalCounterexample::closure_stutters`] lists the step.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lasso {
     /// The position the loop re-enters, in `0..=prefix.len()`.
@@ -218,6 +222,49 @@ pub struct Lasso {
     /// The positive delay of a terminal-stutter loop, when present. A
     /// non-terminal loop leaves this absent.
     pub terminal_stutter_delay: Option<Rational>,
+}
+
+/// Where a closure-stutter step stands on FSpec FR-364's wire: the index
+/// among the steps of the `prefix` or of the `loop`, closure steps counted.
+/// The index is the step's JSON pointer segment, so a refusal names it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StepSite {
+    /// `/prefix/<index>`.
+    Prefix(usize),
+    /// `/loop/<index>`.
+    Loop(usize),
+}
+
+impl StepSite {
+    /// The step's JSON pointer.
+    pub fn pointer(self) -> String {
+        match self {
+            Self::Prefix(index) => format!("/prefix/{index}"),
+            Self::Loop(index) => format!("/loop/{index}"),
+        }
+    }
+}
+
+/// FSpec FR-364's `closure-stutter` step: the stutter step the stutter
+/// closure adds at a state with model successors. It is a synthetic step of
+/// the product, not a model operation, so it is not a
+/// [`ModelStep`] and a counterexample lists it apart from
+/// [`TemporalCounterexample::prefix`], which holds the model steps only.
+///
+/// The one form a replay executes is the sole loop step of a formula lasso,
+/// [`TemporalCounterexample::closure_loop`]: its lasso's `entry` is the
+/// prefix's length, so the loop's state is the prefix's last state. Any other
+/// listed step is refused before replay, by its site.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClosureStutter {
+    /// Where the step stands on the wire.
+    pub site: StepSite,
+    /// The step's recorded post-state key, which replay compares with the
+    /// loop entry's.
+    pub post_state: StateKey,
+    /// A `delay` member the step carries. The step has none, so replay
+    /// refuses its presence, zero included.
+    pub delay: Option<Rational>,
 }
 
 /// A counterexample over a model subject, or over a protocol subject with
@@ -251,6 +298,10 @@ pub struct TemporalCounterexample<T: SubjectTransition = ModelTransition> {
     /// the delay after the last step that reaches the time-locked state;
     /// `None` on every other kind.
     pub final_delay: Option<Rational>,
+    /// The `closure-stutter` steps of the behaviour, in wire order (FSpec
+    /// FR-364 "Closure stutter"); empty unless the item selects
+    /// `stutter_closure`.
+    pub closure_stutters: Vec<ClosureStutter>,
 }
 
 /// ADR-018 UE-6 and ADR-027 TS-4: the first finding of an expansion that
@@ -275,15 +326,68 @@ pub fn undefined_finding(
 }
 
 impl<T: SubjectTransition> TemporalCounterexample<T> {
+    /// The position of the lasso written without its closure stutters that
+    /// the engine's product `position` names (FSpec FR-364 "Named limit:
+    /// closure edges in mixed loops"): each dropped closure step that
+    /// precedes the position is one position fewer. The sole closure loop is
+    /// written, so it drops nothing.
+    pub fn written_position(&self, position: u64) -> u64 {
+        if self.closure_loop().is_some() {
+            return position;
+        }
+        let in_prefix = self
+            .closure_stutters
+            .iter()
+            .filter(|step| matches!(step.site, StepSite::Prefix(_)))
+            .count();
+        let loop_start = self
+            .lasso
+            .as_ref()
+            .map_or(0, |lasso| lasso.entry)
+            .saturating_add(in_prefix);
+        let dropped = self
+            .closure_stutters
+            .iter()
+            .filter(|step| {
+                let product_step = match step.site {
+                    StepSite::Prefix(index) => index,
+                    StepSite::Loop(index) => loop_start.saturating_add(index),
+                };
+                u64::try_from(product_step).is_ok_and(|step| step < position)
+            })
+            .count();
+        position.saturating_sub(u64::try_from(dropped).unwrap_or(u64::MAX))
+    }
+
+    /// The closure-stutter loop the counterexample's lasso is: the one
+    /// listed closure step is the sole step of its loop, which re-enters at
+    /// the prefix's last state.
+    pub fn closure_loop(&self) -> Option<&ClosureStutter> {
+        match (self.closure_stutters.as_slice(), self.lasso.as_ref()) {
+            ([only], Some(lasso))
+                if only.site == StepSite::Loop(0)
+                    && !lasso.terminal_stutter
+                    && lasso.entry == self.prefix.len() =>
+            {
+                Some(only)
+            }
+            _ => None,
+        }
+    }
+
     /// The counterexample's length: its number of transitions, stem and loop
     /// together (ADR-018 "Length"). A terminal stutter loop is one transition
-    /// (ADR-018 SM-4) that [`Self::prefix`] does not list.
+    /// (ADR-018 SM-4) that [`Self::prefix`] does not list, and so is each
+    /// closure stutter.
     pub fn len(&self) -> usize {
-        self.prefix.len().saturating_add(usize::from(
-            self.lasso
-                .as_ref()
-                .is_some_and(|lasso| lasso.terminal_stutter),
-        ))
+        self.prefix
+            .len()
+            .saturating_add(self.closure_stutters.len())
+            .saturating_add(usize::from(
+                self.lasso
+                    .as_ref()
+                    .is_some_and(|lasso| lasso.terminal_stutter),
+            ))
     }
 
     /// Whether the counterexample has no transition: it ends at an initial

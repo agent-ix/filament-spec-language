@@ -1905,6 +1905,7 @@ fn refuted(
         refinement: Some(failure),
         blocked: Vec::new(),
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 

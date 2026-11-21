@@ -785,6 +785,7 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
                 blocked: Vec::new(),
                 refinement: None,
                 final_delay: None,
+                closure_stutters: Vec::new(),
             });
         }
         for (transition, next) in expansion.successors {

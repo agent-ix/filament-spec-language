@@ -1181,7 +1181,6 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         ModelCheckRefusal::StateUnobservable(stop) => Refusal::Failed(stop.cause),
         // The forms and subjects EN-1 does not decide yet.
         ModelCheckRefusal::ProtocolRefinement
-        | ModelCheckRefusal::Liveness(LivenessRefusal::ClosureStutterLoop)
         | ModelCheckRefusal::FormNotDecided { .. }
         | ModelCheckRefusal::CaptureRead { .. }
         | ModelCheckRefusal::WeakLiveness
@@ -1485,12 +1484,6 @@ mod tests {
         assert_eq!(
             unsupported(ModelCheckRefusal::Hyper(
                 HyperRefusal::NotSingleExistential { form: None }
-            )),
-            not_yet
-        );
-        assert_eq!(
-            unsupported(ModelCheckRefusal::Liveness(
-                LivenessRefusal::ClosureStutterLoop
             )),
             not_yet
         );

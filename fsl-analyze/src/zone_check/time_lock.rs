@@ -430,5 +430,6 @@ fn time_lock(LockPath { initial, concrete }: LockPath) -> Result<TemporalCounter
         blocked: Vec::new(),
         refinement: None,
         final_delay: Some(concrete.last_stamp.sub(&stem)),
+        closure_stutters: Vec::new(),
     })
 }

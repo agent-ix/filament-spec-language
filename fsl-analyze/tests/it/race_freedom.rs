@@ -453,6 +453,7 @@ fn forged_race_under<M: MemoryModel>(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 

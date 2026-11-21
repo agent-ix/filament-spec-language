@@ -178,7 +178,9 @@ impl<'a> ClauseSubject<'a> {
         })
     }
 
-    pub(super) fn configured(mut self, temporal: super::TemporalItem) -> Self {
+    /// The subject with the request item's settings `temporal`, whose
+    /// `stutter_closure` is the authority for replaying a closure lasso.
+    pub fn configured(mut self, temporal: super::TemporalItem) -> Self {
         self.temporal = Some(temporal);
         self
     }
@@ -196,10 +198,7 @@ impl<'a> ClauseSubject<'a> {
             Mode::Bounded,
             en1::BACKEND_ID,
             move |cancel| {
-                let stutter_closure = subject
-                    .temporal
-                    .as_ref()
-                    .is_some_and(|temporal| temporal.stutter_closure == Some(true));
+                let stutter_closure = selects_stutter_closure(subject.temporal.as_ref());
                 if let Some(temporal) = &subject.temporal {
                     if temporal.item_kind != fsl_route::request::ItemKind::Formula
                         || temporal.abstract_subject.is_some()
@@ -333,6 +332,7 @@ impl<'a> ClauseSubject<'a> {
             provision: self.provision,
             max_candidates: self.run.max_candidates,
             timed: None,
+            stutter_closure: selects_stutter_closure(self.temporal.as_ref()),
         };
         let shape = ReplayShape {
             target: RequestTargetWire::state_clause(name.clone()),
@@ -354,10 +354,18 @@ impl<'a> ClauseSubject<'a> {
                 &envelope,
                 &letters,
                 self.limits.accounting,
+                inputs.stutter_closure,
             );
         }
         replay_over(&inputs, shape, payload, letters)
     }
+}
+
+/// Whether the item selects `stutter_closure` (FSpec FR-368): the authority
+/// for closure-stutter replay, read from the admitted item and never from a
+/// counterexample.
+pub(super) fn selects_stutter_closure(temporal: Option<&super::TemporalItem>) -> bool {
+    temporal.is_some_and(|temporal| temporal.stutter_closure == Some(true))
 }
 
 fn clause_has_reference_literal(
@@ -415,6 +423,9 @@ pub(super) struct ReplayInputs<'r, 'a> {
     pub(super) max_candidates: u64,
     /// FR-237: the timed reading the counterexample was found under.
     pub(super) timed: Option<fsl_replay::TimedReplay>,
+    /// The item's selected `stutter_closure`: the authority for replaying a
+    /// closure-stutter lasso (FSpec FR-364 "Closure stutter").
+    pub(super) stutter_closure: bool,
     /// The engine whose run the counterexample came from, which the replay
     /// request and envelope name.
     pub(super) backend: &'static str,
@@ -448,6 +459,7 @@ pub(super) fn replay_over(
             expansion: ExpansionLimits {
                 max_candidates: inputs.max_candidates,
             },
+            stutter_closure: inputs.stutter_closure,
         },
         &envelope,
         letters,
@@ -837,7 +849,7 @@ impl<'a> PackageClauseSubject<'a> {
     /// The subject with the request item's settings `temporal` and its
     /// explicit proof bounds, which the item runs under as
     /// [`ClauseSubject`]'s configured item does.
-    pub(super) fn configured(mut self, temporal: super::TemporalItem) -> Self {
+    pub fn configured(mut self, temporal: super::TemporalItem) -> Self {
         self.proof_bounds.clone_from(&temporal.proof_bounds);
         self.temporal = Some(temporal);
         self
@@ -878,10 +890,12 @@ impl<'a> PackageClauseSubject<'a> {
             en1::BACKEND_ID,
             move |cancel| {
                 let subject = &self;
+                let stutter_closure = selects_stutter_closure(subject.temporal.as_ref());
                 if let Some(temporal) = &subject.temporal {
                     if temporal.item_kind != fsl_route::request::ItemKind::Formula
                         || temporal.abstract_subject.is_some()
-                        || temporal.stutter_closure.is_some()
+                        || (stutter_closure
+                            && subject.clause.property_form() != Some(PropertyForm::Liveness))
                         || temporal.fairness != subject.clause.fairness()
                     {
                         return EngineReport::Refused(Refusal::Unsupported(super::items::NOT_YET));
@@ -920,7 +934,7 @@ impl<'a> PackageClauseSubject<'a> {
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
                         },
-                        stutter_closure: false,
+                        stutter_closure,
                         certificate: CertificateRequest {
                             temporal_clock_selections: &[],
                             subject: subject.model_subject(),
@@ -975,6 +989,26 @@ impl<'a> PackageClauseSubject<'a> {
         }
     }
 
+    /// Replays `payload`, a counterexample of this clause, from the package
+    /// bytes and the handoff supply over the package route's production
+    /// letters, as [`ClauseSubject::replay_counterexample`] does over the
+    /// source.
+    ///
+    /// # Errors
+    ///
+    /// [`ReplayRefusal`] as `replay_model_trace_from_package` refuses it.
+    pub fn replay_counterexample(
+        &self,
+        payload: &TemporalCounterexample,
+    ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+        let broken = || ReplayRefusal::Fault(InternalFault::new("analyze", "clause-letters"));
+        let system = ModelSystem::new(self.simulation()).map_err(ReplayRefusal::Admission)?;
+        let letters = system
+            .package_clause_letters(&self.clause, &self.key)
+            .map_err(|_| broken())?;
+        self.replay(payload, &letters)
+    }
+
     /// FR-128's replay of `payload` over the package bytes and the handoff
     /// supply: the request carries the package and the subject's documents
     /// and no source provision.
@@ -1015,6 +1049,7 @@ impl<'a> PackageClauseSubject<'a> {
                 expansion: ExpansionLimits {
                     max_candidates: self.run.max_candidates,
                 },
+                stutter_closure: selects_stutter_closure(self.temporal.as_ref()),
             },
             &envelope,
             letters,
@@ -1296,6 +1331,7 @@ impl<'a> PackageProtocolWork<'a> {
                         expansion: ExpansionLimits {
                             max_candidates: self.form.max_candidates,
                         },
+                        stutter_closure: false,
                     },
                     protocol: self.protocol.protocol.clone(),
                     over,
@@ -1504,6 +1540,7 @@ protocol Flow using p over (input: M::Widget) on origin {
             max_candidates: 1024,
             timed: None,
             backend: en1::BACKEND_ID,
+            stutter_closure: false,
         };
         let keys = package
             .graph()
@@ -1525,6 +1562,7 @@ protocol Flow using p over (input: M::Widget) on origin {
             blocked: vec![],
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         };
         let (wire, _) = replay_wire(
             &inputs,

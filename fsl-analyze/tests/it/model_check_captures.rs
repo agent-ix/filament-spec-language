@@ -443,6 +443,7 @@ fn replay_reproduces_an_undefined_capture_located_at_it() {
         expansion: ExpansionLimits {
             max_candidates: 1_000_000,
         },
+        stutter_closure: false,
     };
     let replay = |payload: TemporalCounterexample| {
         replay_model_trace(

@@ -20,8 +20,8 @@ use std::any::{Any, TypeId};
 
 use super::{undefined_reason, TimedStateWire, TimedTransitionWire};
 use crate::model_check::counterexample::{
-    CounterexampleKind, ModelStep, Race, TemporalCounterexample, UndefinedEvaluation,
-    UndefinedLocus,
+    ClosureStutter, CounterexampleKind, ModelStep, Race, StepSite, TemporalCounterexample,
+    UndefinedEvaluation, UndefinedLocus,
 };
 use crate::refinement::{RefinementFailure, StepRejection};
 
@@ -231,7 +231,8 @@ pub fn replay_task_product_trace<T: Spelling + Clone + 'static>(
 pub fn read_temporal_counterexample<T: Spelling + Clone + 'static>(
     document: &Json,
 ) -> Result<TemporalCounterexample<T>, TemporalCounterexampleReadRefusal> {
-    let read = read_task_temporal_document(document)?;
+    let model_alphabet = TypeId::of::<T>() == TypeId::of::<ModelTransition>();
+    let read = read_document(document, model_alphabet)?;
     let task = read.counterexample;
     if TypeId::of::<T>() == TypeId::of::<TaskProductTransition>() {
         return (&task as &dyn Any)
@@ -271,6 +272,7 @@ pub fn read_temporal_counterexample<T: Spelling + Clone + 'static>(
         blocked: task.blocked,
         refinement: task.refinement,
         final_delay: task.final_delay,
+        closure_stutters: task.closure_stutters,
     };
     (&model as &dyn Any)
         .downcast_ref::<TemporalCounterexample<T>>()
@@ -290,6 +292,17 @@ fn unsupported_alphabet() -> TemporalCounterexampleReadRefusal {
 /// responsible for validating enabledness, derived identity and post-state.
 pub fn read_task_temporal_document(
     document: &Json,
+) -> Result<TaskProductCounterexampleDocument, TemporalCounterexampleReadRefusal> {
+    read_document(document, false)
+}
+
+/// [`read_task_temporal_document`], also reading FSpec FR-364's
+/// `closure-stutter` step into [`TemporalCounterexample::closure_stutters`]
+/// when `closure_alphabet`, which only the model alphabet has. Where the
+/// alphabet has none the step is the alphabet refusal of any foreign step.
+fn read_document(
+    document: &Json,
+    closure_alphabet: bool,
 ) -> Result<TaskProductCounterexampleDocument, TemporalCounterexampleReadRefusal> {
     use base64::Engine;
     use filament_exact::Integer;
@@ -568,7 +581,9 @@ pub fn read_task_temporal_document(
                 &["priority", "budget_delta"],
                 &transition_pointer,
             ),
-            "terminal-stutter" => exact_members(transition, &["type"], &[], &transition_pointer),
+            "terminal-stutter" | "closure-stutter" => {
+                exact_members(transition, &["type"], &[], &transition_pointer)
+            }
             _ => {
                 // Validate the remainder before returning the alphabet refusal.
                 exact_members(transition, &["type"], &[], &transition_pointer)
@@ -586,8 +601,10 @@ pub fn read_task_temporal_document(
             ));
         }
         // A source step of the model alphabet may omit its delay; a task step
-        // and the terminal stutter carry theirs (FR-237 "Reading the wire").
-        if kind == "transition" && value.get("delay").is_none() {
+        // and the terminal stutter carry theirs (FR-237 "Reading the wire"). A
+        // closure stutter carries none, and a `delay` member is read so that
+        // replay can refuse it at its own pointer.
+        if matches!(kind, "transition" | "closure-stutter") && value.get("delay").is_none() {
             return Ok(());
         }
         let _ = rational(
@@ -632,6 +649,31 @@ pub fn read_task_temporal_document(
             .map_err(|_| malformed("invalid-value", format!("{pointer}/post_state/key")))?;
         Ok(ModelStep {
             transition,
+            post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+            delay: value
+                .get("delay")
+                .map(|delay| rational(delay, &format!("{pointer}/delay")))
+                .transpose()?,
+        })
+    }
+
+    fn parse_closure(
+        value: &Json,
+        site: StepSite,
+    ) -> Result<ClosureStutter, TemporalCounterexampleReadRefusal> {
+        let pointer = site.pointer();
+        let key = required(
+            required(value, "post_state", &pointer)?,
+            "key",
+            &format!("{pointer}/post_state"),
+        )?
+        .as_str()
+        .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/post_state/key")))?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(key)
+            .map_err(|_| malformed("invalid-value", format!("{pointer}/post_state/key")))?;
+        Ok(ClosureStutter {
+            site,
             post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
             delay: value
                 .get("delay")
@@ -713,8 +755,20 @@ pub fn read_task_temporal_document(
         .and_then(|value| usize::try_from(value).ok())
         .ok_or_else(|| malformed("wrong-value-kind", "/initial_state"))?;
     let mut steps = Vec::with_capacity(prefix.len() + looped.len());
+    let mut closure_stutters = Vec::new();
     let mut alphabet_refusal = None;
+    let is_closure = |step: &Json| step["transition"]["type"].as_str() == Some("closure-stutter");
     for (index, step) in prefix.iter().enumerate() {
+        if is_closure(step) {
+            if closure_alphabet {
+                closure_stutters.push(parse_closure(step, StepSite::Prefix(index))?);
+            } else {
+                alphabet_refusal.get_or_insert(TemporalCounterexampleReadRefusal::TraceAlphabet {
+                    pointer: format!("/prefix/{index}/transition/type"),
+                });
+            }
+            continue;
+        }
         match parse_step(step, &format!("/prefix/{index}")) {
             Ok(step) => steps.push(step),
             Err(error @ TemporalCounterexampleReadRefusal::TraceAlphabet { .. }) => {
@@ -730,6 +784,16 @@ pub fn read_task_temporal_document(
     // appends it from `Lasso::terminal_stutter_delay` (FR-249-AC-11).
     let mut stutter_delay = None;
     for (index, step) in looped.iter().enumerate() {
+        if is_closure(step) {
+            if closure_alphabet {
+                closure_stutters.push(parse_closure(step, StepSite::Loop(index))?);
+            } else {
+                alphabet_refusal.get_or_insert(TemporalCounterexampleReadRefusal::TraceAlphabet {
+                    pointer: format!("/loop/{index}/transition/type"),
+                });
+            }
+            continue;
+        }
         match parse_step(step, &format!("/loop/{index}")) {
             Ok(step) if terminal_stutter => stutter_delay = step.delay,
             Ok(step) => steps.push(step),
@@ -764,10 +828,15 @@ pub fn read_task_temporal_document(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters,
     };
     let position = required(document, "trace_position", "")?;
     let expected_position = if queue_growth.is_some() {
         task_miss_position(&counterexample).map(Json::from)
+    } else if closure_alphabet && counterexample.lasso.is_some() {
+        // A model formula lasso is decided at its origin, which the task
+        // alphabet's rule (the recorded deadline miss) does not name.
+        Some(Json::from(0))
     } else {
         counterexample.trace_position().map(Json::from)
     };
@@ -1266,6 +1335,19 @@ fn temporal<T: Spelling>(
         }
         looped.push(stutter);
     }
+    if let Some(closure) = counterexample.closure_loop() {
+        // The sole closure loop is the one `closure-stutter` step at the
+        // entry state's key; the entry may be the initial state, so no last
+        // step is copied.
+        let mut stutter = json!({
+            "transition": {"type": "closure-stutter"},
+            "post_state": state(&closure.post_state)?,
+        });
+        if let Some(delay) = &closure.delay {
+            stutter["delay"] = rational(delay);
+        }
+        looped.push(stutter);
+    }
     let over_binding = match (&counterexample.over_binding, over) {
         (None, _) => Json::Null,
         (Some(_), Some(found)) => reference(found)?,
@@ -1278,6 +1360,17 @@ fn temporal<T: Spelling>(
         .iter()
         .map(T::fairness)
         .collect::<Result<Vec<Json>, _>>()?;
+    let mut kind = kind;
+    if matches!(
+        counterexample.kind,
+        CounterexampleKind::UndefinedEvaluation(_)
+    ) {
+        // A mixed engine lasso is written without its closure stutters, so
+        // its positions are re-indexed past each dropped one.
+        if let Some(position) = kind["where"]["position"].as_u64() {
+            kind["where"]["position"] = json!(counterexample.written_position(position));
+        }
+    }
     let mut written = json!({
         "trace": "model",
         "kind": kind,
@@ -2245,6 +2338,7 @@ mod tests {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         }
     }
 
@@ -2320,6 +2414,7 @@ mod tests {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         };
         let mut activation = missed_job.clone();
         activation.action = crate::TaskTransitionAction::Activate;
@@ -2350,6 +2445,7 @@ mod tests {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         };
         let readable_wire = task_temporal_wire(&readable_counterexample, None, None)
             .expect("activation, miss and loop use the task-product alphabet");
@@ -2785,6 +2881,89 @@ mod tests {
                 "initial terminal stutter"
             ))
         );
+    }
+
+    /// FR-128-AC-14: a closure-only engine lasso is written as the sole
+    /// `closure-stutter` loop step at the entry state's key, with an empty
+    /// prefix as with a stem, and reads back for the model alphabet only.
+    #[trace("TC-523", "FR-128-AC-14")]
+    #[test]
+    fn a_closure_only_lasso_is_written_and_read_back_as_the_sole_loop_step() {
+        let closure_lasso = |stem: usize| {
+            let mut found = counterexample(stem, CounterexampleKind::Formula);
+            found.lasso = Some(Lasso {
+                entry: stem,
+                terminal_stutter: false,
+                terminal_stutter_delay: None,
+            });
+            found.closure_stutters = vec![ClosureStutter {
+                site: StepSite::Loop(0),
+                post_state: key(stem),
+                delay: None,
+            }];
+            found
+        };
+        let empty = closure_lasso(0);
+        let wire = temporal_wire(&empty, None, None).expect("an initial closure lasso is spelled");
+        assert_eq!(wire["prefix"], json!([]));
+        assert_eq!(
+            wire["loop"],
+            json!([{
+                "transition": {"type": "closure-stutter"},
+                "post_state": state(&key(0)).expect("a key"),
+            }])
+        );
+        assert_eq!(
+            read_temporal_counterexample::<ModelTransition>(&wire),
+            Ok(empty)
+        );
+
+        let stemmed = closure_lasso(1);
+        let wire = temporal_wire(&stemmed, None, None).expect("spelled");
+        assert_eq!(wire["prefix"].as_array().map(Vec::len), Some(1));
+        assert_eq!(
+            wire["loop"][0]["post_state"],
+            state(&key(1)).expect("a key")
+        );
+        let read = read_temporal_counterexample::<ModelTransition>(&wire).expect("reads");
+        assert_eq!(read.closure_stutters, stemmed.closure_stutters);
+        assert_eq!(read.lasso, stemmed.lasso);
+        assert!(read.closure_loop().is_some());
+
+        // Only the model alphabet has the step.
+        assert_eq!(
+            read_temporal_counterexample::<TaskProductTransition>(&wire),
+            Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
+                pointer: "/loop/0/transition/type".to_owned(),
+            })
+        );
+    }
+
+    /// FR-128-AC-14, FSpec FR-364 "Named limit": an engine lasso with a
+    /// closure stutter among its model steps is written without it, and a
+    /// position past the dropped stutter is re-indexed onto the written
+    /// lasso.
+    #[trace("TC-523", "FR-128-AC-14", "FR-364-AC-29")]
+    #[test]
+    fn a_mixed_engine_lasso_is_written_without_its_closure_stutters() {
+        let CounterexampleKind::UndefinedEvaluation(mut evaluation) = undefined_at(false) else {
+            unreachable!("undefined_at builds an undefined evaluation");
+        };
+        evaluation.site.position = 3;
+        let mut mixed = counterexample(2, CounterexampleKind::UndefinedEvaluation(evaluation));
+        // Product steps: s1, closure, s2: the closure stutter stands at step 1.
+        mixed.closure_stutters = vec![ClosureStutter {
+            site: StepSite::Prefix(1),
+            post_state: key(1),
+            delay: None,
+        }];
+        assert_eq!(mixed.written_position(1), 1);
+        assert_eq!(mixed.written_position(2), 1, "a position past the stutter");
+        assert_eq!(mixed.written_position(3), 2);
+        let wire = temporal_wire(&mixed, None, Some(&claim())).expect("spelled");
+        assert_eq!(wire["prefix"].as_array().map(Vec::len), Some(2));
+        assert_eq!(wire["kind"]["where"]["position"], 2);
+        assert_eq!(wire["trace_position"], 2);
     }
 
     /// FR-286-AC-14: a time-lock counterexample carries its `final_delay`,

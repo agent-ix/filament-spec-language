@@ -1977,7 +1977,34 @@ mod tests {
     use filament_exact::CollectionKind;
     use fsl_semantics::model::observation::{ClauseSelectionInput, DocumentRef, SelectedObject};
     use fsl_semantics::model::observation::{NativeKind, RawForm, RawNativeKind};
+    use ix_trace_rs::trace;
     use std::collections::BTreeMap;
+
+    /// FR-128-AC-14: the closure stutter is a synthetic step of the product,
+    /// so the route that reads a user's trace as observed model steps keeps
+    /// refusing it at the step's transition type, and still reads the terminal
+    /// stutter.
+    #[trace("TC-523", "FR-128-AC-14")]
+    #[test]
+    fn an_observed_model_step_refuses_the_closure_stutter() {
+        let key =
+            base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, b"[0,[]]");
+        let step = |kind: &str| -> super::ModelStepWire {
+            serde_json::from_value(serde_json::json!({
+                "transition": {"type": kind},
+                "post_state": {"key": key},
+            }))
+            .expect("the closed step shape")
+        };
+        let refused = super::model_step(&step("closure-stutter"), "trace.steps[0]")
+            .err()
+            .expect("a closure stutter is not an observed model step");
+        assert_eq!(refused.member, "trace.steps[0].transition.type");
+        assert!(matches!(
+            super::model_step(&step("terminal-stutter"), "trace.steps[0]"),
+            Ok(None)
+        ));
+    }
 
     #[test]
     fn temporal_wire_selection_reads_finite_and_lasso_key_order() {

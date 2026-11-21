@@ -90,6 +90,7 @@ fn replay(
                 expansion: ExpansionLimits {
                     max_candidates: 1_000_000,
                 },
+                stutter_closure: false,
             },
             protocol: protocol.to_owned(),
             over: instance("c"),
@@ -594,6 +595,7 @@ fn echo_lasso(case: &Case) -> TemporalCounterexample<ProtocolTransition> {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 

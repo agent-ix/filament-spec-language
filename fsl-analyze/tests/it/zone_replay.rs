@@ -144,6 +144,7 @@ fn payload(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 
@@ -259,6 +260,7 @@ fn time_lock(world: &World) -> TemporalCounterexample {
         over_binding: None,
         fairness: Vec::new(),
         final_delay: Some(whole(3)),
+        closure_stutters: Vec::new(),
         ..payload(
             world,
             walk(world, &[("send", whole(0))]),
@@ -332,6 +334,7 @@ fn stalled(world: &World, delay: Rational) -> TemporalCounterexample {
         over_binding: None,
         fairness: Vec::new(),
         final_delay: Some(delay),
+        closure_stutters: Vec::new(),
         ..payload(world, Vec::new(), CounterexampleKind::TimeLock, None)
     }
 }
@@ -1120,6 +1123,7 @@ fn malformed_timed_counterexamples_are_refused() {
     let counterexample = violated(claim(&three, ZoneCheckLimits::default(), &Cancel::new()));
     let stray = TemporalCounterexample {
         final_delay: Some(whole(1)),
+        closure_stutters: Vec::new(),
         ..counterexample.clone()
     };
     let (cause, code) = refusal(replay(&three, &stray));
@@ -1143,6 +1147,7 @@ fn malformed_timed_counterexamples_are_refused() {
     assert_eq!(cause, ModelTraceRefusal::TimeLockLasso);
     let undelayed = TemporalCounterexample {
         final_delay: None,
+        closure_stutters: Vec::new(),
         ..time_lock(&locked)
     };
     let (cause, _) = refusal(replay_on(&locked, &undelayed, true, &Limits::default()));

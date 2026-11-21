@@ -605,6 +605,7 @@ fn drifting_lasso(world: &AuxWorld<'_>) -> TemporalCounterexample {
         }),
         blocked: Vec::new(),
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 
@@ -849,6 +850,7 @@ fn handmade(
         refinement: Some(failure),
         blocked: Vec::new(),
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 

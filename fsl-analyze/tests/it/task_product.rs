@@ -268,6 +268,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let wire = task_temporal_wire(&counterexample, None, None).expect("FR-364 spelling");
     assert_eq!(wire["prefix"][0]["transition"]["type"], "task-transition");
@@ -598,6 +599,7 @@ fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     fsl_replay::replay_task_product_trace(&product, &typed_counterexample)
         .expect("the typed task trace independently replays");
@@ -627,6 +629,7 @@ fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     assert_eq!(
         fsl_replay::replay_task_product_trace(&product, &model_alphabet),
@@ -1245,6 +1248,7 @@ fn refutation_of(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 
@@ -1476,6 +1480,7 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let claim = &world.package.graph().task_sets().claims()[0];
     let occurrence = claim.occurrence().expect("the claim has an occurrence");
@@ -1498,6 +1503,7 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet() {
             initial: request.initial.clone(),
             universes: request.universes.clone(),
             expansion: request.expansion,
+            stutter_closure: false,
         },
         &crate::model_settle::envelope_at(
             projection,

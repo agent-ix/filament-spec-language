@@ -1419,6 +1419,7 @@ impl Run<'_, '_, '_> {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         };
         if live.product.vertices[entry].tail {
             // The idle tail: the stem to the quiescent state, then its

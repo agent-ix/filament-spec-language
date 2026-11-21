@@ -1823,6 +1823,8 @@ const TRANSFER_DECLARATIONS: &str =
      always eventually holds(c.value = 2) }\n\
      temporal StuckTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
      on origin { always eventually holds(c.value = 2) }\n\
+     temporal PendingTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { always (holds(c.value = 1) implies eventually holds(c.value = 2)) }\n\
      temporal AtMostTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
      on origin { always holds(c.value <= 2) }\n\
      temporal BoundedTwo using ev over (c: Spec::Counter) clock \"model-steps\" \
@@ -2224,12 +2226,14 @@ fn an_any_arm_refinement_is_not_step_for_step() {
     assert_eq!(result["cause"]["operator"], "once[1,1]", "{value}");
 }
 
-/// FR-1030-AC-4: a liveness clause with no fairness is not proved over the
-/// abstract stutter closure, where the abstract model may repeat any state
-/// forever; its premise is a typed unproved slot 1.
+/// FR-1030-AC-6: a liveness clause with no fairness is violated by the
+/// abstract stutter closure's own self-loop at a nonterminal state. Slot 1
+/// settles `refuted` through the closure lasso that FR-128 replays, and the
+/// transfer is `inconclusive`, `premise-unproved` with that result, never
+/// `unsupported`.
 #[test]
-#[trace("TC-2920", "FR-1030-AC-4")]
-fn a_liveness_clause_that_the_stutter_closure_violates_is_not_proved() {
+#[trace("TC-2920", "FR-1030-AC-6")]
+fn a_liveness_clause_that_the_stutter_closure_violates_refutes_its_premise() {
     let (exit, value) = transfer_run(
         &[(
             "refinement_transfer",
@@ -2242,10 +2246,30 @@ fn a_liveness_clause_that_the_stutter_closure_violates_is_not_proved() {
     assert_eq!(result["value"], "inconclusive", "{value}");
     assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
     assert_eq!(result["cause"]["premise"], 1, "{value}");
-    // The only violating loop is the closure's own self-loop, which has no
-    // replayable lasso, so EN-1 refuses it as unsupported.
-    assert_eq!(result["cause"]["result"], "unsupported", "{value}");
-    assert_eq!(result["slots"][1]["value"], "unsupported", "{value}");
+    assert_eq!(result["cause"]["result"], "refuted", "{value}");
+    assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
+}
+
+/// FR-1030-AC-7: `PendingTwo` is violated only by the closure stutter at
+/// value 1, so its refutation needs a one-step real prefix; the transfer
+/// settles as `StuckTwo`'s does.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-7")]
+fn a_closure_violation_after_a_real_step_refutes_its_premise() {
+    let (exit, value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["PendingTwo"]),
+        )],
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    let result = transfer(&value, "PendingTwo");
+    assert_eq!(result["value"], "inconclusive", "{value}");
+    assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
+    assert_eq!(result["cause"]["premise"], 1, "{value}");
+    assert_eq!(result["cause"]["result"], "refuted", "{value}");
+    assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
 }
 
 /// FSpec FR-820 slot 1 is keyed without `stutter_closure`, which the planner

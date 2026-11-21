@@ -576,6 +576,7 @@ impl Fixture {
                 expansion: ExpansionLimits {
                     max_candidates: 1_000_000,
                 },
+                stutter_closure: false,
             },
             payload,
             clause.map(|index| clause_identity(&self.package, index)),

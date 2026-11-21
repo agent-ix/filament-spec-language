@@ -1117,6 +1117,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         };
         if product.vertices[entry].tail {
             // The stem to the quiescent state, then its stutter forever.
@@ -1231,6 +1232,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         }))
     }
 

@@ -1531,6 +1531,7 @@ fn replay_instance(
         expansion: ExpansionLimits {
             max_candidates: read.form.max_candidates,
         },
+        stutter_closure: false,
     };
     let replayed = match read.source {
         Source::Checked { .. } => {

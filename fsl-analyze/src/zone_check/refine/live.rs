@@ -1433,6 +1433,7 @@ impl Product<'_, '_> {
             refinement: Some(failure.clone()),
             blocked: Vec::new(),
             final_delay: None,
+            closure_stutters: Vec::new(),
         };
         let places = run.dim() - 1;
         let mut stem = path_to(live, entry);

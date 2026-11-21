@@ -113,6 +113,7 @@ pub(super) fn digital_clause_item<'a>(
                         max_clocks,
                         digital: true,
                     }),
+                    stutter_closure: false,
                 };
                 // The closure checker reads no digital-clock product: the
                 // proof settles `uncertified` with no certificate (FR-625).
