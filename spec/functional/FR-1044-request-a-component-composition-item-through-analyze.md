@@ -253,12 +253,30 @@ two indices, over one shared set of premise items.
 - When a registered backend advertises `composition`, FSL SHALL negotiate the
   routed item to it (FSpec FR-348-AC-3) and send it, through the external
   provider request, the item with its derived `premises` slot keys and its
-  `options`. FSL settles the provider's verdict as for any external provider:
-  `proved` carries the provider's own certification, `unknown` is
-  `inconclusive`, and a `refuted` verdict is `inconclusive` too, because FSL
-  has nothing to replay it at. FSL sends no premise result and no component
-  proof with it. How a provider reads the premises' results, and what it
-  refutes, is the second PR's decision.
+  `options`. An item sends its `options` only to a backend it names (FR-967),
+  and the backend publishes each option it is sent. FSL sends no premise
+  result and no component proof with it. FSL settles the provider's verdict
+  as for any external provider, with these causes: `unknown` is
+  `inconclusive` `solver-inconclusive` (FSpec FR-331); `refuted` is
+  `inconclusive` `replay-refused` with the code `unknown_required_feature`,
+  because a composition has no replay (FSpec FR-290 "Replay context"); and
+  `proved` carries the certification FSL assigns the provider's origin (FSpec
+  FR-635: `trusted` for a plugin, `uncertified` for a linked provider), never
+  one the provider states. How a provider reads the premises' results, and
+  what it refutes, is the second PR's decision.
+- FSL SHALL accept a provider's `proved` for a composition only when every
+  component-guarantee premise of that composition settled `proved` in the same
+  request. FSL decides this from its own records, never from the provider, and
+  it reads each premise by the request index of the item its typed slot key
+  (the assumptions included) was given, so a guarantee equal on the wire but
+  checked under other peer guarantees is another item and never discharges
+  this one. A premise that settled otherwise, by an engine, by disposition
+  before any engine ran (`unsupported` under peer guarantees), or not at all,
+  fails the check. The composition then settles `inconclusive` with cause
+  `replay-refused` (FSpec FR-331's cause for a result FSL does not accept; it
+  is an FSL-only cause) and the code `unsupported_projection`, naming the
+  provider, with no certification. FSL runs no composition algorithm of its
+  own and adds no proof.
 
 ### Current system behavior
 
@@ -268,22 +286,25 @@ AC below stays as written and open on QSL-2739.
 
 - **AC-7.** No compiler or profile step binds a profile that declares FSpec
   FR-176's lattice to a source unit, so a request through `fsl analyze` meets
-  no lattice and a cycle settles by the AC-6 refusal. The `fixed-point` item
-  is written, with its `premises` and `options`, only for a checked package
-  that carries the lattice. Which profile declares the lattice, and its
-  binding, are decisions for the standard before the second PR.
-- **AC-10, `package` handoff.** The package route reads no composition term's
-  slots or component packages, and a package names a composition by no name
-  row. A `package` handoff of a unit that declares compositions is refused
-  whole and settles no item, either at the handoff's admission
-  (`missing_import`, while the component dependency closure is not
-  persisted) or, over an admitted package, by the package route's typed
-  `unsupported_construct`/`not-yet-implemented` (exit 21). The latter names the
-  `composition` rule as having no package form yet (FR-940) for a request with
-  no `items` over a package that holds a composition, and the `unnamed-claim`
-  family for an item that names a composition or a name no row carries; it is
-  never `unknown-claim` and never an item settled without the composition.
-  The owner of the package form is the package-consumer API lane.
+  no lattice and a cycle settles by the AC-6 refusal. No public request
+  reaches the `fixed-point` item: it is written only for a checked package
+  that carries the lattice, which no source or package route builds today.
+  Which profile declares the lattice, and its binding, are decisions for the
+  standard before the second PR.
+- **AC-10, `package` handoff.** Today a `package` handoff of a unit that
+  declares compositions is refused whole at the request stage, and settles no
+  item: the strict package reader refuses the package the producer emits, at
+  an operand row of its `semantic_graph`, and FSL reports it
+  `invalid_package` with no cause, category `refusal`, exit 20, for a request
+  with or without `items`. No composition item reaches the package route's own
+  resolution. The package route itself reads no composition term's slots or
+  component packages: over a package the reader admits, a request with no
+  `items` is refused as `unsupported_construct`/`not-yet-implemented` naming
+  the `composition` rule, and an item naming a composition or a name no row
+  carries is refused naming the `unnamed-claim` family, never as
+  `unknown-claim`. That second behavior is the route's source behavior; no
+  public request reaches it yet, and its evidence is deferred with AC-10 to the
+  package-consumer API lane, which owns the package form.
 - **Text mode.** Text rendering of the outcome belongs to the external driver.
   No test in this repository exercises it, and this requirement does not
   weaken the text half of the fixture.

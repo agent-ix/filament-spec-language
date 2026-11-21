@@ -13,7 +13,7 @@
 //! settles `unsupported` at negotiation, and the `assume-guarantee` item,
 //! which has no FSpec FR-331 request item, settles `unsupported` before it.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use filament_semantic_value::catalog::CatalogCode;
@@ -51,6 +51,11 @@ pub struct CompositionClaim {
     /// The record the item settles with before negotiation (FR-621 `S4`);
     /// `None` when negotiation settles it.
     pub settled: Option<Box<TerminalRecord>>,
+    /// For a composition, the request index of the item of each of its
+    /// component-guarantee premises, as assigned by [`premise_items`]: the
+    /// items whose own settlements decide whether a provider's `proved` for
+    /// the composition stands. Empty for every other claim.
+    pub required: Vec<RequestIndex>,
 }
 
 /// What resolving one selection of a composition gives.
@@ -358,6 +363,7 @@ fn claim_item(
         },
         package: None,
         settled: None,
+        required: Vec::new(),
     }))
 }
 
@@ -416,21 +422,41 @@ fn premise_of(composition: &CheckedComposition, premise: &CompositionPremise) ->
     })
 }
 
-/// The premise items of `groups`, one group per selected composition, each
-/// written once however many selections derive it, numbered from `first`.
+/// The premise items of `groups`, one group per selected composition at the
+/// request index it is paired with, each written once however many
+/// selections derive it and numbered after `resolved`. A composition's item
+/// in `resolved` records the request index of each of its component
+/// guarantees, which is the item its own slot key (assumptions included)
+/// identifies, so a guarantee checked under other peers is never read as
+/// this one.
 pub(super) fn premise_items(
     ctx: &Context<'_>,
-    groups: Vec<Vec<Premise>>,
+    groups: Vec<(RequestIndex, Vec<Premise>)>,
+    resolved: &mut [ResolvedItem],
     first: usize,
 ) -> Vec<ResolvedItem> {
-    let mut written: HashSet<ItemKey> = HashSet::new();
+    let mut written: HashMap<ItemKey, RequestIndex> = HashMap::new();
     let mut items = Vec::new();
-    for premise in groups.into_iter().flatten() {
-        if !written.insert(premise.key.clone()) {
-            continue;
+    for (composition, premises) in groups {
+        let mut required = Vec::new();
+        for premise in premises {
+            let guarantee = !matches!(premise.kind, PremiseKind::FixedPoint { .. });
+            let index = match written.get(&premise.key) {
+                Some(index) => *index,
+                None => {
+                    let index = RequestIndex::new(first + items.len());
+                    written.insert(premise.key.clone(), index);
+                    items.push(premise_item(ctx, index, premise));
+                    index
+                }
+            };
+            if guarantee {
+                required.push(index);
+            }
         }
-        let index = RequestIndex::new(first + items.len());
-        items.push(premise_item(ctx, index, premise));
+        if let Some(ResolvedItem::Composition(claim)) = resolved.get_mut(composition.get()) {
+            claim.required = required;
+        }
     }
     items
 }
@@ -488,6 +514,7 @@ fn premise_item(ctx: &Context<'_>, index: RequestIndex, premise: Premise) -> Res
                 claim: *claim,
                 package: Some(component),
                 settled,
+                required: Vec::new(),
             }))
         }
     }

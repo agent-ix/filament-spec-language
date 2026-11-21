@@ -200,10 +200,13 @@ fn the_production_registry_has_no_composition_candidate() {
 
 const PROVIDER: &str = "fsl.test-composition-provider";
 
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<Value>>>;
+
 /// A registered composition provider outside FSL that records every request
-/// it is sent as serialized, and decides nothing.
-#[derive(Debug, Default)]
-struct Recording(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+/// it is sent as serialized and answers each item with one fixed verdict. It
+/// proves nothing of its own: the verdict is the external provider's claim.
+#[derive(Debug)]
+struct Recording(Seen, fsl_analyze::provider::ProviderVerdict);
 
 impl fsl_analyze::provider::ExternalProvider for Recording {
     fn settle(
@@ -215,12 +218,16 @@ impl fsl_analyze::provider::ExternalProvider for Recording {
             .lock()
             .expect("the record lock")
             .push(serde_json::to_value(request).expect("the request serializes"));
-        vec![fsl_analyze::provider::ProviderVerdict::Unknown; request.items().len()]
+        vec![self.1.clone(); request.items().len()]
     }
 }
 
+/// The provider process that advertises `composition` and publishes the
+/// option `profile`, which an item sends only to a backend it names
+/// (FR-967).
 fn composition_provider(
-    seen: &std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    seen: &Seen,
+    verdict: fsl_analyze::provider::ProviderVerdict,
 ) -> fsl_analyze::analyze::Engine {
     use fsl_semantics::check::Capability;
     let descriptor = fsl_route::descriptor_from_manifest(
@@ -238,30 +245,60 @@ fn composition_provider(
             reductions: None,
         },
     )
-    .expect("the descriptor advertises composition");
+    .expect("the descriptor advertises composition")
+    .with_options([("profile".to_owned(), "p0".to_owned())]);
     fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-composition", "1").expect("a tool"),
-        Box::new(Recording(std::sync::Arc::clone(seen))),
+        Box::new(Recording(std::sync::Arc::clone(seen), verdict)),
     )
     .expect("a composition process provider registers (FR-635)")
 }
 
+/// The composition `name` selected by the provider backend, with the
+/// provider's option.
+fn provided(name: &str) -> Value {
+    json!({"claim": name, "kind": "composition", "backend": PROVIDER,
+        "options": {"profile": "p1"}})
+}
+
+/// The document of `items` over `Capped` clause `capped`, the provider
+/// answering `verdict` to each composition, and every request it was sent.
+fn through_provider(
+    dir: &str,
+    capped: &str,
+    items: Value,
+    verdict: fsl_analyze::provider::ProviderVerdict,
+) -> (crate::analyze_cli_support::Run, Vec<Value>) {
+    let ws = Workspace::new(dir);
+    let path = request_for(&ws, &system(), capped, Some(items));
+    let seen = Seen::default();
+    let run = analyze_with_providers(&path, vec![composition_provider(&seen, verdict)]);
+    let sent = seen.lock().expect("the record lock").clone();
+    (run, sent)
+}
+
 /// FSpec FR-348-AC-3: a registered composition-capable provider is
 /// negotiated the routed item and receives it with its derived premise slot
-/// keys; its `unknown` verdict settles `inconclusive`, never `proved`, and
-/// the components still settle by their own engine.
+/// keys and its options; its `unknown` verdict settles `inconclusive`
+/// `solver-inconclusive`, never `proved`, and the components still settle by
+/// their own engine.
 #[trace("FSpec-FR-348-AC-3")]
 #[test]
 fn a_registered_provider_receives_the_composition_with_its_premises() {
-    let ws = Workspace::new("compose-provider");
-    let item = json!({"claim": "Sys", "kind": "composition", "options": {"profile": "p1"}});
-    let path = request(&ws, &system(), json!([item]));
-    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let run = analyze_with_providers(&path, vec![composition_provider(&seen)]);
+    let (run, sent) = through_provider(
+        "compose-provider",
+        BOUNDED,
+        json!([provided("Sys")]),
+        fsl_analyze::provider::ProviderVerdict::Unknown,
+    );
     let document = run.document();
     let items = document["items"].as_array().expect("items");
     assert_eq!(label(&items[0]), "inconclusive", "{document}");
+    assert_eq!(
+        items[0]["record"]["cause"]["kind"], "solver-inconclusive",
+        "{document}"
+    );
     assert_eq!(items[0]["record"]["backend"], PROVIDER, "{document}");
     assert_eq!(
         items[0]["request"]["candidates"],
@@ -270,7 +307,6 @@ fn a_registered_provider_receives_the_composition_with_its_premises() {
     );
     assert_eq!(label(&items[1]), "proved", "{document}");
     assert_eq!(label(&items[2]), "proved", "{document}");
-    let sent = seen.lock().expect("the record lock");
     assert_eq!(sent.len(), 1, "one request to the one provider");
     let sent_items = sent[0]["items"].as_array().expect("sent items");
     assert_eq!(sent_items.len(), 1, "only the composition is sent");
@@ -283,6 +319,130 @@ fn a_registered_provider_receives_the_composition_with_its_premises() {
     assert_eq!(sent_items[0]["options"], json!({"profile": "p1"}));
     assert_eq!(items[0]["request"]["options"], json!({"profile": "p1"}));
     assert_eq!(sent_items[0]["candidates"]["backends"], json!([PROVIDER]));
+}
+
+/// FR-1044 "Behavior": a provider's `proved` stands, with FR-635's
+/// certification of a plugin, when every component guarantee of the
+/// composition settled `proved` in the same request.
+#[trace("FSpec-FR-348-AC-3")]
+#[test]
+fn a_provider_proof_stands_when_every_component_guarantee_is_proved() {
+    let (run, _) = through_provider(
+        "compose-provider-proved",
+        BOUNDED,
+        json!([provided("Sys")]),
+        fsl_analyze::provider::ProviderVerdict::Proved,
+    );
+    let document = run.document();
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(label(&items[0]), "proved", "{document}");
+    assert_eq!(items[0]["record"]["backend"], PROVIDER, "{document}");
+    assert_eq!(items[0]["record"]["certification"], "trusted", "{document}");
+    assert_eq!(label(&items[1]), "proved", "{document}");
+    assert_eq!(label(&items[2]), "proved", "{document}");
+    assert_eq!(run.exit, 0, "{document}");
+}
+
+/// Asserts `item` is a composition the provider proved, which FSL did not
+/// accept: `inconclusive` `replay-refused`, naming the provider.
+fn assert_proof_not_accepted(item: &Value) {
+    assert_eq!(label(item), "inconclusive", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "replay-refused", "{item}");
+    assert_eq!(
+        item["record"]["cause"]["code"], "unsupported_projection",
+        "{item}"
+    );
+    assert_eq!(item["record"]["backend"], PROVIDER, "{item}");
+    assert!(item["record"]["certification"].is_null(), "{item}");
+}
+
+/// FR-1044-AC-9: a provider's `proved` for a composition whose component
+/// guarantee `refuted` is not accepted.
+#[trace("FR-1044-AC-9")]
+#[test]
+fn a_provider_proof_is_refused_over_a_refuted_component_guarantee() {
+    let (run, sent) = through_provider(
+        "compose-provider-refuted",
+        "always holds(c.value <= 2)",
+        json!([provided("Sys")]),
+        fsl_analyze::provider::ProviderVerdict::Proved,
+    );
+    let document = run.document();
+    assert_eq!(sent.len(), 1, "the provider answered: {document}");
+    assert_proof_not_accepted(&document["items"][0]);
+    assert_eq!(label(&document["items"][1]), "proved", "{document}");
+    assert_eq!(label(&document["items"][2]), "refuted", "{document}");
+}
+
+/// FR-1044-AC-5: a provider's `proved` for a composition whose component
+/// guarantee is checked under peer guarantees, which settles `unsupported` by
+/// disposition before any engine runs, is not accepted.
+#[trace("FR-1044-AC-5")]
+#[test]
+fn a_provider_proof_is_refused_over_an_unsupported_component_guarantee() {
+    let (run, _) = through_provider(
+        "compose-provider-unsupported",
+        BOUNDED,
+        json!([provided("SysRely")]),
+        fsl_analyze::provider::ProviderVerdict::Proved,
+    );
+    let document = run.document();
+    assert_proof_not_accepted(&document["items"][0]);
+    assert_eq!(label(&document["items"][1]), "proved", "{document}");
+    assert_eq!(label(&document["items"][2]), "unsupported", "{document}");
+}
+
+/// FR-1044-AC-8: two compositions of one request whose `Capped` guarantees
+/// are equal on the wire and differ in assumptions each read their own item.
+/// `Sys`'s proved `Capped` never discharges `SysRely`'s assumed one.
+#[trace("FR-1044-AC-8")]
+#[test]
+fn an_unassumed_proof_does_not_discharge_an_assumed_guarantee() {
+    let (run, sent) = through_provider(
+        "compose-provider-peers",
+        BOUNDED,
+        json!([provided("Sys"), provided("SysRely")]),
+        fsl_analyze::provider::ProviderVerdict::Proved,
+    );
+    let document = run.document();
+    let items = document["items"].as_array().expect("items");
+    assert_eq!(items.len(), 5, "{document}");
+    let sent_items: usize = sent
+        .iter()
+        .map(|request| request["items"].as_array().map_or(0, Vec::len))
+        .sum();
+    assert_eq!(sent_items, 2, "both compositions reach the provider");
+    assert_eq!(label(&items[0]), "proved", "{document}");
+    assert_proof_not_accepted(&items[1]);
+    assert_eq!(items[3]["claim_name"], "Capped", "{document}");
+    assert_eq!(label(&items[3]), "proved", "{document}");
+    assert_eq!(items[4]["claim_name"], "Capped", "{document}");
+    assert_eq!(label(&items[4]), "unsupported", "{document}");
+    assert_eq!(
+        items[3]["request"]["claim"], items[4]["request"]["claim"],
+        "the two guarantees are equal on the wire"
+    );
+}
+
+/// FSpec FR-290 "Replay context": a provider's `refuted` for a composition,
+/// which has no replay, settles `inconclusive` `replay-refused`.
+#[test]
+fn a_provider_refutation_of_a_composition_is_not_replayable() {
+    let (run, _) = through_provider(
+        "compose-provider-refutes",
+        BOUNDED,
+        json!([provided("Sys")]),
+        fsl_analyze::provider::ProviderVerdict::Refuted {
+            counterexample: Vec::new(),
+        },
+    );
+    let item = &run.document()["items"][0];
+    assert_eq!(label(item), "inconclusive", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "replay-refused", "{item}");
+    assert_eq!(
+        item["record"]["cause"]["code"], "unknown_required_feature",
+        "{item}"
+    );
 }
 
 /// FR-1044-AC-2: the other routed rules write AC-1's items; an
@@ -680,9 +840,13 @@ fn a_refuted_premise_keeps_its_own_record() {
     assert_eq!(label(capped), "refuted", "{document}");
     assert_eq!(capped["record"]["backend"], "en-1", "{document}");
     assert!(capped["record"]["certification"].is_null(), "{document}");
-    for premise in [bounded, capped] {
+    // Each premise keeps the extent of its own clause, which is the extent
+    // its slot key in the composition's request names.
+    for (slot, premise) in [bounded, capped].into_iter().enumerate() {
+        let key = &document["items"][0]["request"]["premises"][slot]["key"];
+        assert_eq!(key["extent"]["classification"], "unbounded", "{document}");
         assert_eq!(
-            premise["request"]["extent"]["classification"], "bounded",
+            premise["request"]["extent"]["classification"], key["extent"]["classification"],
             "{document}"
         );
     }
@@ -739,28 +903,26 @@ fn package_handoff(ws: &Workspace, path: &std::path::Path) -> PathBuf {
     )
 }
 
-/// Asserts the public `package` handoff of a composition unit refused the
-/// whole request, with no item settled, by one of the two refusals that
-/// path has today: the admission of the handoff, which refuses
-/// `missing_import` while the component dependency closure is not persisted
-/// (package-consumer API, QSL-2739), or the package route's own typed
-/// `unsupported_construct`/`not-yet-implemented` for a form it cannot read.
-/// It is never `unknown-claim` and never an item settled without the
-/// composition.
+/// Asserts the public `package` handoff of a composition unit is refused
+/// whole at the request stage, exit 20, with no item: the strict reader
+/// refuses the package the producer emitted at an operand row of its
+/// `semantic_graph`, and FSL reports it `invalid_package` with no cause.
+/// Nothing settles, so the package route's own resolution, which an admitted
+/// package would reach, is not exercised (QSL-2739: package-consumer API).
 fn assert_package_refused(run: &crate::analyze_cli_support::Run) {
     let document = run.document();
     let diagnostic = &document["diagnostics"][0];
+    assert_eq!(run.exit, 20, "{document}");
     assert_eq!(document["category"], "refusal", "{document}");
     assert_eq!(document["items"], json!([]), "{document}");
-    let code = diagnostic["code"].as_str().expect("a diagnostic code");
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert!(diagnostic["cause"].is_null(), "{diagnostic}");
     assert!(
-        matches!(code, "missing_import" | "unsupported_construct"),
+        diagnostic["message"].as_str().is_some_and(
+            |text| text.starts_with("invalid_package at /semantic_graph/operand_rows/")
+        ),
         "{diagnostic}"
     );
-    if code == "unsupported_construct" {
-        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
-        assert_eq!(run.exit, 21, "{document}");
-    }
 }
 
 /// FR-1044 "Current system behavior" (QSL-2739): a `package` handoff of a

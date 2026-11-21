@@ -451,6 +451,7 @@ pub fn settle_package_run(
     };
     let Negotiation {
         components: _,
+        gates: _,
         negotiated,
         unrouted_items,
         settled,

@@ -21,7 +21,7 @@ use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
-use fsl_replay::{OutcomeAxes, TerminalRecord, TerminalValue};
+use fsl_replay::{InconclusiveCause, OutcomeAxes, TerminalRecord, TerminalValue};
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::routing::Disposition;
 use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
@@ -1645,7 +1645,7 @@ pub fn resolve_items(
                 match composition_item::resolve(&compositions, index, selection) {
                     Some(selected) => {
                         resolved.push(selected.item);
-                        premises.push(selected.premises);
+                        premises.push((index, selected.premises));
                     }
                     None => resolved.push(resolve_one(
                         package, subject, index, selection, registry, binding,
@@ -1654,11 +1654,9 @@ pub fn resolve_items(
             }
             // FR-1044: the premise items follow the caller's items.
             let first = resolved.len();
-            resolved.extend(composition_item::premise_items(
-                &compositions,
-                premises,
-                first,
-            ));
+            let derived =
+                composition_item::premise_items(&compositions, premises, &mut resolved, first);
+            resolved.extend(derived);
             resolved
         }
         None => default_items(package, subject, registry, units, binding, limits),
@@ -3016,7 +3014,7 @@ fn default_items(
                 match composition_item::resolve(&compositions, index, &selection) {
                     Some(selected) => {
                         resolved.push(selected.item);
-                        premises.push(selected.premises);
+                        premises.push((index, selected.premises));
                     }
                     None => resolved.push(composition_item::failed(index, composition.name())),
                 }
@@ -3082,11 +3080,8 @@ fn default_items(
     };
     resolved.extend(derived);
     let first = resolved.len();
-    resolved.extend(composition_item::premise_items(
-        &compositions,
-        premises,
-        first,
-    ));
+    let written = composition_item::premise_items(&compositions, premises, &mut resolved, first);
+    resolved.extend(written);
     resolved
 }
 
@@ -3688,6 +3683,7 @@ pub fn settle_run(
     let source_input = fsl_eval::simulation::model::ModelCheckInput::source(package);
     let Negotiation {
         components,
+        gates,
         negotiated,
         unrouted_items,
         settled,
@@ -3702,7 +3698,7 @@ pub fn settle_run(
             family: &|kind, claim| crate::claim_family::claim_family(package, kind, claim),
         },
     )?;
-    let outcome = super::request::analyze_bound(
+    let mut outcome = super::request::analyze_bound(
         &super::RunInput::source(package),
         &binding,
         &provision,
@@ -3719,6 +3715,7 @@ pub fn settle_run(
         _ => AnalyzeDocumentError::Fault,
     })?
     .into_value();
+    gate_compositions(&mut outcome.records, &gates);
     let (targets, routes) = negotiated_routes(&negotiated, &unrouted_items, engines);
     // FR-634: each simulation item's document at its request index; it
     // settles no claim, so it is no aggregate gap, and its category ranks
@@ -3753,6 +3750,45 @@ pub fn settle_run(
     )
 }
 
+/// FR-1044: a routed composition's `proved` stands only when every one of its
+/// component-guarantee items settled `proved` in this request. The items are
+/// the ones its slot keys identified at resolution, by request index, so a
+/// guarantee checked under other peers is never read as this one; an item
+/// absent from `records` settled by disposition, before any engine ran, and
+/// is not `proved`. A provider's `proved` that fails the check settles
+/// `inconclusive` with FR-331's `replay-refused` (the provider's proof is not
+/// accepted) and the code of an unsupported capability.
+fn gate_compositions(
+    records: &mut [TerminalRecord],
+    gates: &BTreeMap<RequestIndex, Vec<RequestIndex>>,
+) {
+    let proved: std::collections::BTreeSet<RequestIndex> = records
+        .iter()
+        .filter(|record| matches!(record.value(), TerminalValue::Proved { .. }))
+        .map(TerminalRecord::request_index)
+        .collect();
+    for record in records.iter_mut() {
+        let index = record.request_index();
+        let Some(required) = gates.get(&index) else {
+            continue;
+        };
+        if !matches!(record.value(), TerminalValue::Proved { .. })
+            || required.iter().all(|premise| proved.contains(premise))
+        {
+            continue;
+        }
+        let backend = record
+            .backend()
+            .cloned()
+            .unwrap_or_else(|| BackendId::new("composition"));
+        *record = TerminalRecord::inconclusive(
+            index,
+            backend,
+            InconclusiveCause::ReplayRefused(fsl_foundation::Code::UnsupportedProjection),
+        );
+    }
+}
+
 /// What a run reads of its package while it negotiates its items: the
 /// source route reads its checked package, the package route (FR-850) the
 /// package forms of its items' claims.
@@ -3772,6 +3808,10 @@ struct ItemReads<'r> {
 struct Negotiation {
     /// The checked package each component item is analyzed over (FR-1044).
     components: BTreeMap<RequestIndex, std::sync::Arc<CheckedPackage>>,
+    /// Each routed composition's component-guarantee items (FR-1044): its
+    /// provider's `proved` stands only when every one of them settled
+    /// `proved`.
+    gates: BTreeMap<RequestIndex, Vec<RequestIndex>>,
     negotiated: Vec<NegotiatedItem>,
     unrouted_items: Vec<RequestIndex>,
     settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)>,
@@ -3794,8 +3834,9 @@ fn negotiate_items(
     let mut echoes: BTreeMap<RequestIndex, Echo> = BTreeMap::new();
     let mut simulations: Vec<super::SimulationItem> = Vec::new();
     let mut components = BTreeMap::new();
+    let mut gates = BTreeMap::new();
     for resolved in items {
-        let (claim, owner, before) = match resolved {
+        let (claim, owner, before, required) = match resolved {
             ResolvedItem::Simulation(item) => {
                 simulations.push(*item);
                 continue;
@@ -3804,14 +3845,15 @@ fn negotiate_items(
                 settled.insert(record.request_index(), (claim_name, *record));
                 continue;
             }
-            ResolvedItem::Claim(claim) => (*claim, None, None),
+            ResolvedItem::Claim(claim) => (*claim, None, None, Vec::new()),
             ResolvedItem::Composition(derived) => {
                 let CompositionClaim {
                     claim,
                     package,
                     settled,
+                    required,
                 } = *derived;
-                (claim, package, settled)
+                (claim, package, settled, required)
             }
         };
         let ResolvedClaim {
@@ -3908,6 +3950,9 @@ fn negotiate_items(
         if let Some(package) = owner {
             components.insert(item.request_index, package);
         }
+        if item.kind == Capability::Composition {
+            gates.insert(item.request_index, required);
+        }
         negotiated.push(NegotiatedItem {
             item,
             disposition,
@@ -3916,6 +3961,7 @@ fn negotiate_items(
     }
     Ok(Negotiation {
         components,
+        gates,
         negotiated,
         unrouted_items,
         settled,

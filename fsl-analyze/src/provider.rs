@@ -635,6 +635,8 @@ pub(crate) enum ProviderReport {
     /// The provider's assignment-shaped counterexample could not be replayed
     /// as an operation-contract counterexample.
     ReplayParity,
+    /// The provider's counterexample is for an item with no replay.
+    ReplayRefused(fsl_foundation::Code),
     /// The provider transport failed while enforcing a typed byte limit.
     Failed(ToolFailure),
     /// The provider's counterexample, confirmed by replay or not.
@@ -1116,6 +1118,7 @@ pub(crate) fn finish(
     cancel: &Cancel,
     engine: &Engine,
 ) -> EngineReport {
+    let composition = matches!(work.selection, ProviderSelection::Composition(_));
     let target = match work.selection {
         ProviderSelection::Value(Ok(target)) => Some(target),
         ProviderSelection::Value(Err(Selection::NoForm))
@@ -1159,6 +1162,11 @@ pub(crate) fn finish(
             }
             ProviderVerdict::Failed { .. } => EngineReport::Refused(Refusal::Failed(
                 InternalFault::new("external-provider", "limit-cause-mismatch").catalog_code(),
+            )),
+            // A composition has no replay: its counterexample is not
+            // replayable (FSpec FR-290 "Replay context").
+            ProviderVerdict::Refuted { .. } if composition => EngineReport::Provider(Box::new(
+                ProviderReport::ReplayRefused(fsl_foundation::Code::UnknownRequiredFeature),
             )),
             ProviderVerdict::Refuted { .. } => {
                 EngineReport::Provider(Box::new(ProviderReport::ReplayParity))
@@ -1255,6 +1263,10 @@ pub(crate) fn settle_record(
                     ),
                 }),
             ),
+            None,
+        ),
+        ProviderReport::ReplayRefused(code) => (
+            TerminalRecord::inconclusive(index, backend, InconclusiveCause::ReplayRefused(code)),
             None,
         ),
         ProviderReport::Failed(cause) => (TerminalRecord::tool_failed(index, backend, cause), None),
