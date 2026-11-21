@@ -110,9 +110,17 @@ fn absent_items_analyze_every_claim_then_the_derived_items() {
         .iter()
         .map(|item| item["claim_name"].clone())
         .collect();
-    assert_eq!(names[..2], [json!("Bounded"), json!("BelowThree")]);
     assert_eq!(
-        run.item(2)["request"]["temporal"]["item_kind"],
+        names[..4],
+        [
+            json!("CanInc"),
+            json!("Inc"),
+            json!("Bounded"),
+            json!("BelowThree")
+        ]
+    );
+    assert_eq!(
+        run.item(4)["request"]["temporal"]["item_kind"],
         "deadlock-freedom"
     );
 }
@@ -315,12 +323,20 @@ fn analyze_defaults_universes_and_limit_names() {
         .as_array()
         .expect("items")
         .iter()
-        .take(2)
+        .take(4)
         .map(|item| item["claim_name"].clone())
         .collect();
-    assert_eq!(names, [json!("BelowThree"), json!("Bounded")]);
     assert_eq!(
-        run.item(2)["request"]["temporal"]["item_kind"],
+        names,
+        [
+            json!("CanInc"),
+            json!("Inc"),
+            json!("BelowThree"),
+            json!("Bounded")
+        ]
+    );
+    assert_eq!(
+        run.item(4)["request"]["temporal"]["item_kind"],
         "deadlock-freedom"
     );
 
@@ -475,8 +491,13 @@ fn default_items_rank_units_in_request_order() {
         .map(|item| item["claim_name"].clone())
         .collect();
     assert_eq!(
-        names[..2],
-        [json!("BelowThree"), json!("Bounded")],
+        names[..4],
+        [
+            json!("CanInc"),
+            json!("Inc"),
+            json!("BelowThree"),
+            json!("Bounded")
+        ],
         "{document}"
     );
     assert!(!names.contains(&json!("Early")), "{document}");

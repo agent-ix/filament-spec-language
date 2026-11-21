@@ -299,7 +299,7 @@ pub fn settle_package_run(
     // yet, so the default items of a package that holds one are refused
     // whole rather than written without it.
     if items.is_none() {
-        if let Some(node) = unnamed_composition(package) {
+        if let Some(node) = admitted_composition(package) {
             return Err(PackageRunError::Pending(PendingPackageFamily {
                 request_index: None,
                 note: None,
@@ -698,8 +698,9 @@ fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
 /// neither carries settles `invalid-request` `invalid_capability`/
 /// `unknown-claim` as the source route settles it, but only when the
 /// package holds no claim whose name it does not carry (an `invariant`
-/// state clause, a refinement, a state-graph claim): the name could be that
-/// claim's.
+/// state clause, a refinement, a state-graph claim) and no component
+/// composition, which the package form does not read yet: the name could be
+/// that claim's or composition's.
 fn resolve_names<'s>(
     view: &dyn AnalysisView,
     selections: &'s [ItemSelection],
@@ -714,7 +715,7 @@ fn resolve_names<'s>(
     };
     let clauses = view.clause_names();
     let declared = view.declared_names();
-    let unnamed = !view.unnamed_claims().is_empty();
+    let unnamed = !view.unnamed_claims().is_empty() || admitted_composition(view).is_some();
     let models: Vec<String> = view
         .model_selections()
         .into_iter()
@@ -1879,18 +1880,16 @@ impl<'a> WorkInputs<'_, 'a> {
     }
 }
 
-/// The node of the first component composition the package holds, which no
-/// name table row carries.
-fn unnamed_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
-    let unnamed = view.unnamed_claims();
+/// The node of the first component composition the package holds. No name
+/// table row carries a composition, and the producer writes it as a
+/// declaration, not a claim occurrence, so [`AnalysisView::unnamed_claims`]
+/// never lists it.
+fn admitted_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
     view.package()
         .resolved_graph()
         .nodes
         .iter()
-        .find(|node| {
-            unnamed.contains(&&node.node_id)
-                && crate::claim_family::is_component_composition(&node.semantic_form)
-        })
+        .find(|node| crate::claim_family::is_component_composition(&node.semantic_form))
         .map(|node| node.node_id.clone())
 }
 
