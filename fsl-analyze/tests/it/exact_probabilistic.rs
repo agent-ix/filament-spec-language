@@ -2621,6 +2621,150 @@ fn a_budget_equal_to_the_product_size_completes() {
     ));
 }
 
+/// Observe the real relation and full-target construction boundaries, rather
+/// than inferring admission from the final product's size.
+#[cfg(feature = "test-support")]
+#[trace("TC-631", "FR-203-AC-7", "FR-196-AC-3", "FR-196-AC-4")]
+#[test]
+fn untimed_exact_admits_edges_before_relation_and_target_construction() {
+    use fsl_analyze::exact_probabilistic::{
+        product_construction_counts, reset_product_construction_counts,
+    };
+    let world = World::new(&prob_world::health(
+        "self.healthy = (pre(self.healthy) and not fault)",
+        "true: 1, false: 1",
+        false,
+        HEALTH,
+    ));
+    for claim in ["Steadily", "Anyhow"] {
+        for max_transitions in [0, 1] {
+            reset_product_construction_counts();
+            let mut limits = ModelCheckLimits::default();
+            limits.limits.max_transitions = max_transitions;
+            let result = build_product(world.request(claim, limits), &Cancel::new());
+            assert!(
+                matches!(
+                    result,
+                    Err(ProductRefusal::Stopped(ProductStop::Limit {
+                        limit: ModelCheckLimit::ExactProbMaxTransitions,
+                        ..
+                    }))
+                ),
+                "{claim}: {result:?}"
+            );
+            let counts = product_construction_counts();
+            assert_eq!(
+                counts.relations,
+                usize::from(max_transitions != 0),
+                "{claim}"
+            );
+            assert_eq!(counts.edges, max_transitions, "{claim}");
+            assert_eq!(
+                counts.targets,
+                1 + max_transitions,
+                "{claim}: the unpaid target is never materialized"
+            );
+        }
+    }
+    // The first two edges are pending-draw states. The third resolves one
+    // actual post-state; the fourth must stop before retaining its target.
+    let world = loose_health();
+    reset_product_construction_counts();
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_transitions = 3;
+    let result = build_product(world.request("Anyhow", limits), &Cancel::new());
+    assert!(
+        matches!(
+            result,
+            Err(ProductRefusal::Stopped(ProductStop::Limit {
+                limit: ModelCheckLimit::ExactProbMaxTransitions,
+                ..
+            }))
+        ),
+        "{result:?}"
+    );
+    let counts = product_construction_counts();
+    assert_eq!(counts.edges, 3);
+    assert_eq!(counts.targets, 4);
+    assert_eq!(
+        counts.relations, 1,
+        "resolution reuses the admitted relation"
+    );
+}
+
+#[cfg(feature = "test-support")]
+#[trace("TC-631", "FR-203-AC-7", "FR-196-AC-3", "FR-196-AC-4")]
+#[test]
+fn untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity() {
+    use fsl_analyze::exact_probabilistic::{
+        product_construction_counts, reset_product_construction_counts,
+    };
+    let extra = "probabilistic Reuse using inf on M over (n: M::Node) under every scheduler on origin { probability >= 0 [ eventually holds(n.healthy) ] }";
+    let mut model = prob_world::health("self.healthy = false", "true: 1, false: 1", false, extra);
+    model.operations.push(prob_world::Operation {
+        name: "other",
+        parameters: vec![("fault", prob_world::BOOLEAN.to_owned())],
+        modifies: vec!["healthy"],
+        deletes: false,
+    });
+    model.body.push_str("\npost Other using v on M::Node::other { self.healthy = false }\nrandom Node::other(fault) ~ { true: 1, false: 1 };\n");
+    let world = World::new(&model);
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = 2;
+    reset_product_construction_counts();
+    let result = build_product(world.request("Reuse", limits), &Cancel::new());
+    let Ok(ProbBuild::Built(product)) = result else {
+        panic!("two actions share the same pending key, then reuse it at full capacity: {result:?}")
+    };
+    assert_eq!(product.states.len(), 2);
+    assert_eq!(product.edges.len(), 4);
+    assert_eq!(product_construction_counts().edges, 4);
+
+    // Distinct intermediate draw keys must each reserve a new slot even
+    // though none of the planned targets has been interned yet.
+    let world = loose_health();
+    reset_product_construction_counts();
+    let result = build_product(world.request("Anyhow", limits), &Cancel::new());
+    assert!(
+        matches!(
+            result,
+            Err(ProductRefusal::Stopped(ProductStop::Limit {
+                limit: ModelCheckLimit::ExactProbMaxStates,
+                value: 2
+            }))
+        ),
+        "{result:?}"
+    );
+    let counts = product_construction_counts();
+    assert_eq!(
+        counts.targets, 2,
+        "initial plus the first admitted pending key"
+    );
+    assert_eq!(
+        counts.edges, 1,
+        "the next distinct key is denied before its edge is retained"
+    );
+
+    reset_product_construction_counts();
+    limits.limits.max_states = 1;
+    let result = build_product(world.request("Anyhow", limits), &Cancel::new());
+    assert!(
+        matches!(
+            result,
+            Err(ProductRefusal::Stopped(ProductStop::Limit {
+                limit: ModelCheckLimit::ExactProbMaxStates,
+                value: 1
+            }))
+        ),
+        "{result:?}"
+    );
+    assert_eq!(
+        product_construction_counts().targets,
+        1,
+        "a genuinely new key cannot materialize a target at full capacity"
+    );
+}
+
 const TOSS: &str = "probabilistic Tossed using ev on M over (c: M::Coin) under every scheduler \
      on origin { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }\n\
      probabilistic Plain using ev on M under every scheduler on origin \

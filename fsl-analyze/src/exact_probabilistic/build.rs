@@ -6,7 +6,7 @@
 use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 use fsl_foundation::IdentityLimits;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, Identifier, Integer, ObjectReference, Rational, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
@@ -221,6 +221,7 @@ fn build_configured(
         cancel,
         nodes: Vec::new(),
         index: BTreeMap::new(),
+        pending_keys: BTreeSet::new(),
         readings: BTreeMap::new(),
         edges: Vec::new(),
         queue: VecDeque::new(),
@@ -377,6 +378,12 @@ struct Target {
     resolution: Option<Resolution>,
 }
 
+/// Only the control and key needed to decide target admission.
+struct Arrival {
+    key: ProbKey,
+    truths: Vec<bool>,
+}
+
 /// An edge of the state being expanded, before its target is numbered.
 struct Planned {
     choice: ProductAction,
@@ -423,6 +430,8 @@ struct Builder<'r, 'c, 'p, 'k> {
     cancel: &'r Cancel,
     nodes: Vec<Node>,
     index: BTreeMap<ProbKey, usize>,
+    /// Distinct new keys already reserved by this expansion's planned edges.
+    pending_keys: BTreeSet<ProbKey>,
     /// The predicates' truths at a model state, by binding and state key.
     readings: BTreeMap<usize, BTreeMap<Vec<u8>, Vec<bool>>>,
     edges: Vec<ProbEdge>,
@@ -487,6 +496,8 @@ impl Builder<'_, '_, '_, '_> {
                 };
                 let (monitor, accumulator) = self.plan.start(&truths, &mut self.measure_meter)?;
                 let key = self.key_of(&state, binding, monitor, accumulator, None)?;
+                self.admit_state(&key)?;
+                super::observe_target_construction();
                 let target = Target {
                     key,
                     model: state.clone(),
@@ -684,6 +695,42 @@ impl Builder<'_, '_, '_, '_> {
         })
     }
 
+    fn admit_state(&mut self, key: &ProbKey) -> Step<()> {
+        if !self.index.contains_key(key) && !self.pending_keys.contains(key) {
+            if self.nodes.len().saturating_add(self.pending_keys.len()) >= self.max_states {
+                return Err(Self::stopped(
+                    ModelCheckLimit::ExactProbMaxStates,
+                    self.max_states,
+                ));
+            }
+            self.pending_keys.insert(key.clone());
+        }
+        Ok(())
+    }
+
+    fn admit_edge(&self, pending: usize) -> Step<()> {
+        self.poll()?;
+        if self.edges.len().saturating_add(pending) >= self.max_transitions {
+            return Err(Self::stopped(
+                ModelCheckLimit::ExactProbMaxTransitions,
+                self.max_transitions,
+            ));
+        }
+        Ok(())
+    }
+
+    fn target(&mut self, arrival: Arrival, model: &ModelSimState, pending: usize) -> Step<Target> {
+        self.admit_edge(pending)?;
+        self.admit_state(&arrival.key)?;
+        super::observe_target_construction();
+        Ok(Target {
+            key: arrival.key,
+            model: model.clone(),
+            truths: arrival.truths,
+            resolution: None,
+        })
+    }
+
     /// The state of `target`, numbered at its first discovery. A state with
     /// decided control is never expanded.
     fn intern(
@@ -719,6 +766,7 @@ impl Builder<'_, '_, '_, '_> {
                 .saturating_add(std::mem::size_of::<usize>()),
         )?;
         self.index.insert(target.key.clone(), id);
+        self.pending_keys.remove(&target.key);
         self.nodes.push(Node {
             key: target.key,
             model: target.model,
@@ -819,7 +867,7 @@ impl Builder<'_, '_, '_, '_> {
         post: &ModelSimState,
         rewards: &[(Identifier, Value)],
         step: Option<&TraceStep>,
-    ) -> Step<Target> {
+    ) -> Step<Arrival> {
         let binding = self.binding_of(at)?;
         let truths = match if self.plan.reads_post(self.nodes[at].key.monitor) {
             self.truths(post, binding)?
@@ -882,15 +930,13 @@ impl Builder<'_, '_, '_, '_> {
             Err(error) => return Err(error.into()),
         };
         let key = self.key_of(post, binding, monitor, accumulator, None)?;
-        Ok(Target {
-            key,
-            model: post.clone(),
-            truths,
-            resolution: None,
-        })
+        Ok(Arrival { key, truths })
     }
 
     fn expand(&mut self, at: usize) -> Step<()> {
+        self.pending_keys.clear();
+        // A full transition prefix never constructs another successor relation.
+        self.admit_edge(0)?;
         let planned = match self.nodes[at].resolution.take() {
             Some(resolution) => self.resolve(at, &resolution)?,
             None => {
@@ -926,9 +972,12 @@ impl Builder<'_, '_, '_, '_> {
     /// The edges out of an intermediate state: each post-state of the draw,
     /// with probability 1.
     fn resolve(&mut self, at: usize, resolution: &Resolution) -> Step<Vec<Planned>> {
-        let mut planned = Vec::with_capacity(resolution.successors.len());
+        let mut planned = Vec::new();
         for post in &resolution.successors {
-            let target = self.advance(at, post, &resolution.rewards, None)?;
+            self.admit_edge(planned.len())?;
+            let arrival = self.advance(at, post, &resolution.rewards, None)?;
+            let target = self.target(arrival, post, planned.len())?;
+            super::observe_edge_construction();
             planned.push(Planned {
                 choice: ProductAction::PostState(Box::new(target.key.clone())),
                 action: None,
@@ -944,6 +993,7 @@ impl Builder<'_, '_, '_, '_> {
 
     /// A DTMC state's edges: FR-187's weighted steps.
     fn weighted(&mut self, at: usize, model: &ModelSimState) -> Step<Vec<Planned>> {
+        super::observe_relation_construction();
         let workload = self
             .workload
             .ok_or_else(|| fault("a-dtmc-has-a-workload"))?;
@@ -973,10 +1023,11 @@ impl Builder<'_, '_, '_, '_> {
                 return Err(ProductRefusal::UndecidedSuccessor(undecided).into());
             }
         };
-        let mut planned = Vec::with_capacity(steps.len());
+        let mut planned = Vec::new();
         for step in steps {
+            self.admit_edge(planned.len())?;
             let Some(identity) = step.identity else {
-                planned.push(self.terminal(at, model, step.rewards)?);
+                planned.push(self.terminal(at, model, step.rewards, planned.len())?);
                 continue;
             };
             let taken = TraceStep {
@@ -984,7 +1035,9 @@ impl Builder<'_, '_, '_, '_> {
                 draw: Some(step.random.clone()),
                 probability: step.probability.clone(),
             };
-            let target = self.advance(at, &step.post, &step.rewards, Some(&taken))?;
+            let arrival = self.advance(at, &step.post, &step.rewards, Some(&taken))?;
+            let target = self.target(arrival, &step.post, planned.len())?;
+            super::observe_edge_construction();
             planned.push(Planned {
                 choice: ProductAction::Identity(identity.clone()),
                 action: Some(identity),
@@ -1001,6 +1054,7 @@ impl Builder<'_, '_, '_, '_> {
     /// An MDP state's edges: FR-187's actions, each draw an edge, or an
     /// intermediate state when it has several post-states (SCH-2).
     fn choices(&mut self, at: usize, model: &ModelSimState) -> Step<Vec<Planned>> {
+        super::observe_relation_construction();
         let result = match self.key_policy {
             Some(policy) => self
                 .system
@@ -1025,7 +1079,7 @@ impl Builder<'_, '_, '_, '_> {
         };
         if actions.is_empty() {
             let rewards = self.system.zero_rewards();
-            return Ok(vec![self.terminal(at, model, rewards)?]);
+            return Ok(vec![self.terminal(at, model, rewards, 0)?]);
         }
         let mut planned = Vec::new();
         for action in actions {
@@ -1065,12 +1119,12 @@ impl Builder<'_, '_, '_, '_> {
                 }
                 1 => {
                     let (_, post) = successors.remove(0);
-                    let target = self.advance(at, &post, &draw.rewards, Some(&taken))?;
+                    let arrival = self.advance(at, &post, &draw.rewards, Some(&taken))?;
                     // Draws of one action that reach the same post-state with
                     // the same rewards are one edge with their summed
                     // probability.
                     if let Some(merged) = planned[first..].iter_mut().find(|edge| {
-                        edge.target.key == target.key && same_rewards(&edge.rewards, &draw.rewards)
+                        edge.target.key == arrival.key && same_rewards(&edge.rewards, &draw.rewards)
                     }) {
                         merged.probability = merged.probability.add(&draw.probability);
                         merged.draw = None;
@@ -1081,6 +1135,8 @@ impl Builder<'_, '_, '_, '_> {
                         });
                         continue;
                     }
+                    let target = self.target(arrival, &post, planned.len())?;
+                    super::observe_edge_construction();
                     planned.push(Planned {
                         choice: ProductAction::Identity(action.identity.clone()),
                         action: Some(action.identity.clone()),
@@ -1115,6 +1171,9 @@ impl Builder<'_, '_, '_, '_> {
                     // The intermediate keeps the source's model state, so its
                     // predicates read as the source's; the monitor and the
                     // accumulator advance at the resolution, once.
+                    self.admit_edge(planned.len())?;
+                    self.admit_state(&key)?;
+                    super::observe_target_construction();
                     let target = Target {
                         key,
                         model: model.clone(),
@@ -1124,6 +1183,7 @@ impl Builder<'_, '_, '_, '_> {
                             rewards: draw.rewards.clone(),
                         }),
                     };
+                    super::observe_edge_construction();
                     planned.push(Planned {
                         choice: ProductAction::Identity(action.identity.clone()),
                         action: Some(action.identity.clone()),
@@ -1147,6 +1207,7 @@ impl Builder<'_, '_, '_, '_> {
         at: usize,
         model: &ModelSimState,
         rewards: Vec<(Identifier, Value)>,
+        pending: usize,
     ) -> Step<Planned> {
         let probability = Rational::from_integer(Integer::one());
         let taken = TraceStep {
@@ -1169,15 +1230,19 @@ impl Builder<'_, '_, '_, '_> {
                 None,
                 None,
             )?;
-            Target {
-                key,
-                model: model.clone(),
-                truths: self.nodes[at].truths.clone(),
-                resolution: None,
-            }
+            self.target(
+                Arrival {
+                    key,
+                    truths: self.nodes[at].truths.clone(),
+                },
+                model,
+                pending,
+            )?
         } else {
-            self.advance(at, model, &rewards, Some(&taken))?
+            let arrival = self.advance(at, model, &rewards, Some(&taken))?;
+            self.target(arrival, model, pending)?
         };
+        super::observe_edge_construction();
         Ok(Planned {
             choice: ProductAction::TerminalStutter,
             action: None,

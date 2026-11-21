@@ -36,6 +36,63 @@ mod settle;
 mod unbounded;
 mod witness;
 
+/// Actual product-construction events on the current test thread.
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProductConstructionCounts {
+    /// Successor relation construction calls.
+    pub relations: usize,
+    /// Full targets materialized after state admission (including roots).
+    pub targets: usize,
+    /// Planned edges retained after transition admission.
+    pub edges: usize,
+}
+
+#[cfg(feature = "test-support")]
+thread_local! {
+    static PRODUCT_CONSTRUCTION: std::cell::Cell<ProductConstructionCounts> =
+        std::cell::Cell::new(ProductConstructionCounts { relations: 0, targets: 0, edges: 0 });
+}
+
+/// Reset this thread's construction observer before exercising a real builder.
+#[cfg(feature = "test-support")]
+pub fn reset_product_construction_counts() {
+    PRODUCT_CONSTRUCTION.set(ProductConstructionCounts::default());
+}
+
+/// Read this thread's actual construction events.
+#[cfg(feature = "test-support")]
+pub fn product_construction_counts() -> ProductConstructionCounts {
+    PRODUCT_CONSTRUCTION.get()
+}
+
+pub(crate) fn observe_relation_construction() {
+    #[cfg(feature = "test-support")]
+    PRODUCT_CONSTRUCTION.with(|counts| {
+        let mut next = counts.get();
+        next.relations += 1;
+        counts.set(next);
+    });
+}
+
+pub(crate) fn observe_target_construction() {
+    #[cfg(feature = "test-support")]
+    PRODUCT_CONSTRUCTION.with(|counts| {
+        let mut next = counts.get();
+        next.targets += 1;
+        counts.set(next);
+    });
+}
+
+pub(crate) fn observe_edge_construction() {
+    #[cfg(feature = "test-support")]
+    PRODUCT_CONSTRUCTION.with(|counts| {
+        let mut next = counts.get();
+        next.edges += 1;
+        counts.set(next);
+    });
+}
+
 pub use build::build_product;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
