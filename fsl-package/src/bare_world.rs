@@ -233,6 +233,34 @@ impl BarePackage<'_> {
                 ),
             ));
         }
+        for tuple in identities.source_tuple_rows() {
+            if tuple
+                .positions
+                .iter()
+                .any(|position| position.member_type.is_some())
+            {
+                continue;
+            }
+            if !matches!(
+                self.exact_type_projections().get(&tuple.structural_node),
+                Some(Ok(_))
+            ) {
+                continue;
+            }
+            let positions = tuple
+                .positions
+                .iter()
+                .filter_map(|position| position.value_type.clone())
+                .collect();
+            composites.push((
+                &tuple.structural_node,
+                CompositeDeclaration::new(
+                    tuple.type_handle.clone(),
+                    tuple.qualified_declaration.join("::"),
+                    CompositeShape::Tuple(positions),
+                ),
+            ));
+        }
         for union in identities.source_union_rows() {
             if !matches!(
                 self.exact_type_projections().get(&union.structural_node),
