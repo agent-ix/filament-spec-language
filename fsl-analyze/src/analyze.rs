@@ -2082,23 +2082,7 @@ impl AnalyzeRecord {
             .as_ref()
             .and_then(|artifact| artifact.counterexample_wire())
         {
-            return Some(wire.and_then(|counterexample| {
-                #[derive(serde::Serialize)]
-                struct Entry<'a> {
-                    request_index: usize,
-                    backend: Option<&'a str>,
-                    counterexample: serde_json::Value,
-                }
-                serde_json::to_value(Entry {
-                    request_index: self.request_index.get(),
-                    backend: self
-                        .terminal()
-                        .and_then(|terminal| terminal.backend())
-                        .map(BackendId::as_str),
-                    counterexample,
-                })
-                .map_err(|_| CounterexampleWireError::Unspelled("protocol counterexample entry"))
-            }));
+            return Some(wire);
         }
         if let Some(found) = self
             .hyper_check

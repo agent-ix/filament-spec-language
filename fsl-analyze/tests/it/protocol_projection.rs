@@ -1637,13 +1637,12 @@ fn protocol_counterexample_outcomes_keep_both_projection_decisions() {
         assert!(
             matches!(typed.as_ref(), ProtocolAnalysisCounterexample::Projection(found) if found.as_ref() == &native)
         );
-        let entry = found[0].wire.as_ref().unwrap();
-        assert_eq!(entry["request_index"], 0);
+        assert_eq!(found[0].request_index, RequestIndex::new(0));
         assert_eq!(
-            entry["backend"],
+            found[0].backend.as_str(),
             fsl_analyze::protocol_analysis::manifest::BACKEND_ID
         );
-        let body = &entry["counterexample"];
+        let body = found[0].wire.as_ref().unwrap();
         assert_eq!(body.as_object().unwrap().len(), 6);
         assert_eq!(body["type"], "protocol-analysis-counterexample");
         assert_eq!(body["kind"], "projection");
@@ -1721,6 +1720,6 @@ fn protocol_counterexample_outcomes_keep_both_projection_decisions() {
         let wire: serde_json::Value =
             serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
         assert_eq!(wire["items"][0]["result"], "refuted");
-        assert_eq!(&wire["items"][0]["counterexample"], entry);
+        assert_eq!(&wire["items"][0]["counterexample"], body);
     }
 }
