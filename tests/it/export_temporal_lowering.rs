@@ -428,6 +428,265 @@ fn exported_text(body: &str, target: Target) -> String {
     exported_text_from(body, target, None)
 }
 
+mod dense_time {
+    use super::{counter_request, json, Target, Value};
+    use crate::plan_export_surface::counter_model;
+    use ix_trace_rs::trace;
+    use std::path::{Path, PathBuf};
+
+    fn lamp(body: &str, target: Target, on: bool) -> (u8, Value) {
+        let (_dir, path) = lamp_request(body, target, on);
+        run_lamp(&path)
+    }
+
+    fn lamp_request(body: &str, target: Target, on: bool) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = counter_request(
+            dir.path(),
+            json!({"profile": target.profile(), "obligations": ["T"]}),
+        );
+        let model = String::from_utf8(counter_model())
+            .unwrap()
+            .replace("Counter", "Lamp");
+        let mut model: Value = serde_json::from_str(&model).unwrap();
+        let object = &mut model["types"][1];
+        let prefix = "ix://example/counter-third/Lamp";
+        let mut on_field = object["fields"][0].clone();
+        on_field["identity"] = json!(format!("{prefix}/on"));
+        on_field["name"] = json!("on");
+        on_field["typeRef"] = json!("ix://filament/native/Boolean");
+        let mut clock = on_field.clone();
+        clock["identity"] = json!(format!("{prefix}/x"));
+        clock["name"] = json!("x");
+        clock["typeRef"] = json!("ix://filament/native/Clock");
+        object["fields"] = json!([on_field, clock]);
+        let operation = &mut object["operations"][0];
+        operation["identity"] = json!(format!("{prefix}/release"));
+        operation["name"] = json!("release");
+        operation["frame"]["modifies"] = json!([format!("{prefix}/on"), format!("{prefix}/x")]);
+        std::fs::write(dir.path().join("counter.json"), model.to_string()).unwrap();
+        let snapshot_path = dir.path().join("counter-0.json");
+        let mut snapshot: Value =
+            serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+        let row = &mut snapshot["populations"][0]["objects"][0];
+        row["type"] = json!(prefix);
+        row["fields"] = json!({"on": {"boolean": on}});
+        std::fs::write(snapshot_path, snapshot.to_string()).unwrap();
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             profile c = \"filament.temporal.complete/v1\";\n\
+             profile t = \"filament.temporal.timed/v1\";\n\
+             model Lamp = \"example/counter-third\";\n\
+             dimension Time; unit ms : Time = rational(1, 1); time Lamp dense unit ms;\n\
+             pre CanRelease using v on Lamp::Lamp::release {{ self.on and self.x >= 2 ms }}\n\
+             post Release using v on Lamp::Lamp::release {{ not self.on and self.x = 0 ms }}\n\
+             time invariant WhileOn when {{ self.on }} {{ self.x <= 5 ms }}\n\
+             temporal T using t over (l: Lamp::Lamp) clock \"model-time\" on origin {{ {body} }}\n"
+        );
+        std::fs::write(dir.path().join("unit.native"), unit).unwrap();
+        (dir, path)
+    }
+
+    fn run_lamp(path: &Path) -> (u8, Value) {
+        match fsl_command::command::run(path, &crate::negotiation::Fr290) {
+            Ok(result) => (
+                result.exit_code,
+                serde_json::from_str(&result.value.to_string()).unwrap(),
+            ),
+            Err(error) => (error.category().exit_code(), error.value().unwrap()),
+        }
+    }
+
+    fn lamp_checked_node(path: &Path, find: impl Fn(&Value) -> bool) -> Value {
+        let directory = path.parent().unwrap();
+        let mut compile: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        compile["format"] = json!("native-compile/1");
+        let request = &mut compile["request"];
+        request.as_object_mut().unwrap().remove("export");
+        request["output"] = json!({"package": "package.json"});
+        request["handoff"] = json!({
+            "directory": "handoff", "package_name": "test:w21:unit.native",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}
+        });
+        let compile_path = directory.join("lamp-compile.json");
+        std::fs::write(&compile_path, compile.to_string()).unwrap();
+        fsl_command::command::compile(&compile_path).expect("the Lamp checked package compiles");
+        let checked: Value =
+            serde_json::from_slice(&std::fs::read(directory.join("package.json")).unwrap())
+                .unwrap();
+        let (row, node) = checked["semantic_graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .find(|(_, node)| find(node))
+            .expect("the checked graph has the expected node");
+        // FR-322 gives export outcomes document-held IDs. Resolve this node's
+        // operand slots through its own row before comparing the outcome.
+        let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&checked)
+            .expect("the checked package has a valid operand table");
+        graph
+            .document_value_in_row(row, node)
+            .expect("the checked node's operand slots resolve to graph indexes")
+    }
+
+    fn node_text(checked: &Value) -> String {
+        let id: fsl_package::CheckedNodeId =
+            serde_json::from_value(checked["node_id"].clone()).unwrap();
+        fsl_replay::protocol_analysis::node_text(&id).unwrap()
+    }
+
+    #[trace("FSpec-FR-813-AC-18", "FSpec-TC-1972")]
+    #[test]
+    fn a_dense_subject_emits_clock_updates_urgency_and_quiescence() {
+        let (_dir, path) = lamp_request("always holds(l.on or not l.on)", Target::Tla, true);
+        let (exit, tla) = run_lamp(&path);
+        assert_eq!(exit, 0, "{tla}");
+        let text = tla["export"]["target_text"].as_str().unwrap();
+        for expected in [
+            "TLC, Reals",
+            "VARIABLES v_Lamp, now, tick, idle, k_Lamp_x",
+            "Tick(d) ==",
+            "TimeInv(d)",
+            "k_Lamp_x[k] + d <= 5",
+            "Quiescent == ~Urgent /\\ ~(\\E k \\in DOMAIN v_Lamp : v_Lamp[k].fld_on)",
+            "k_Lamp_x[r_self] >= 2",
+            "k_Lamp_x' = [k_Lamp_x EXCEPT ![r_self] = 0]",
+            "now' = now",
+            "tick' = FALSE",
+            "idle' = TRUE",
+            "NZ == \\A r \\in Real : <>(now > r)",
+        ] {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+        let record = &tla["export"]["records"][0];
+        assert_eq!(record["disposition"], "conditional", "{record}");
+        let [condition] = record["conditions"].as_array().unwrap().as_slice() else {
+            panic!("one condition: {record}");
+        };
+        assert_eq!(condition["type"], "real-valued-time", "{condition}");
+        assert_eq!(condition["clause"], "T", "{condition}");
+        let root = lamp_checked_node(&path, |node| {
+            node["node_tag"] == "timed_model" && node["semantic_form"] == "timed_model"
+        });
+        assert_eq!(condition["node"], node_text(&root), "{condition}");
+        assert_clock_name_map(&tla, Target::Tla);
+        let (exit, lean) = lamp("always holds(l.on or not l.on)", Target::Lean, true);
+        assert_eq!(exit, 0, "{lean}");
+        let text = lean["export"]["target_text"].as_str().unwrap();
+        for expected in [
+            "ts : Nat -> Q",
+            "ck : Nat -> Clocks",
+            "F_clockWf",
+            "F_clockInit",
+            "F_clockAdvance",
+            "TimeInv",
+            "nz : forall r : Q",
+        ] {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+        assert_eq!(
+            lean["export"]["records"][0]["disposition"], "preserved",
+            "{lean}"
+        );
+        assert_eq!(
+            lean["export"]["records"][0]["conditions"],
+            json!([]),
+            "{lean}"
+        );
+        assert_clock_name_map(&lean, Target::Lean);
+    }
+
+    fn assert_clock_name_map(value: &Value, target: Target) {
+        let names = value["export"]["name_map"].as_array().unwrap();
+        assert!(names
+            .iter()
+            .any(|entry| entry["name"] == "k_Lamp_x" && entry["node"].is_string()));
+        let fixed = "now tick idle TimeInv Tick Idle Urgent Quiescent TNext NZ Q Clocks TBehaviour";
+        for fixed in fixed.split_ascii_whitespace() {
+            assert!(
+                !names.iter().any(|entry| entry["name"] == fixed),
+                "{fixed}: {names:?}"
+            );
+        }
+        if matches!(target, Target::Lean) {
+            let helpers =
+                "Q_normalize Q_add Q_sub Q_le Q_lt Q_eq Q_wf F_clockWf F_clockInit F_clockAdvance";
+            for helper in helpers.split_ascii_whitespace() {
+                let mut entries = names.iter().filter(|entry| entry["name"] == helper);
+                let entry = entries
+                    .next()
+                    .unwrap_or_else(|| panic!("missing helper {helper}"));
+                assert!(
+                    entries.next().is_none()
+                        && entry.get("binding").is_none()
+                        && entry["node"].is_string(),
+                    "{entry}"
+                );
+            }
+        }
+    }
+
+    fn assert_operator_refusal(body: &str, target: Target, operation: &str) {
+        let (_dir, path) = lamp_request(body, target, true);
+        let (exit, value) = run_lamp(&path);
+        assert_eq!(exit, 21, "{value}");
+        let refusal = &value["export"]["refusal"];
+        assert_eq!(refusal["code"], "unimplemented_capability", "{refusal}");
+        assert_eq!(refusal["cause"], "unimplemented-meaning", "{refusal}");
+        let checked = lamp_checked_node(&path, |node| {
+            node["body"]["operation"]["identity"] == operation
+        });
+        let construct = format!(
+            "{}/{}",
+            checked["node_tag"].as_str().unwrap(),
+            checked["semantic_form"].as_str().unwrap()
+        );
+        assert_eq!(refusal["node"], node_text(&checked), "{refusal}");
+        assert_eq!(refusal["construct"], construct, "{refusal}");
+        let family = match target {
+            Target::Tla => "tla",
+            Target::Lean => "lean",
+        };
+        assert_eq!(
+            refusal["capability"],
+            format!("export:{family}:{construct}"),
+            "{refusal}"
+        );
+        assert!(value["export"]["target_text"].is_null(), "{value}");
+    }
+
+    #[trace("FSpec-FR-813-AC-24", "FSpec-TC-1972")]
+    #[test]
+    fn dense_tla_refuses_the_root_until_at_its_checked_operator_node() {
+        assert_operator_refusal(
+            "holds(l.on) until holds(not l.on)",
+            Target::Tla,
+            "filament.op.temporal.until",
+        );
+    }
+
+    #[trace("FSpec-FR-813-AC-27", "FSpec-TC-1972")]
+    #[test]
+    fn dense_liveness_reads_positions_and_requires_time_divergence() {
+        let (exit, tla) = lamp("always eventually holds(not l.on)", Target::Tla, false);
+        assert_eq!(exit, 0, "{tla}");
+        let text = tla["export"]["target_text"].as_str().unwrap();
+        assert!(text.contains("NZ /\\ []<>~tick"), "{text}");
+        assert!(text.contains("[](tick \\/ <>(~tick /\\ "), "{text}");
+    }
+
+    #[trace("FSpec-FR-813-AC-24", "FSpec-TC-1972")]
+    #[test]
+    fn a_repeated_timed_window_keeps_its_typed_refusal() {
+        let body = "always eventually[0 ms, 5 ms] holds(not l.on)";
+        for target in [Target::Tla, Target::Lean] {
+            assert_operator_refusal(body, target, "filament.op.temporal.eventually");
+        }
+    }
+}
+
 fn exported_text_from(body: &str, target: Target, start: Option<i64>) -> String {
     let (exit, value) = export_from(body, target, start);
     assert_eq!(exit, 0, "{value}");

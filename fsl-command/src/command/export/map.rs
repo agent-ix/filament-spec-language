@@ -16,7 +16,7 @@ use filament_contract_model::{
 };
 use filament_exact::NodeKey;
 use fsl_semantics::check::wire_id::WireGraph;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One authored clause of the program an obligation name may resolve to.
@@ -456,7 +456,7 @@ impl<'a> Graph<'a> {
         })
     }
 
-    fn construct(&self, position: usize) -> String {
+    pub(super) fn construct(&self, position: usize) -> String {
         let node = self.node(position);
         format!("{}/{}", node.node_tag, node.semantic_form)
     }

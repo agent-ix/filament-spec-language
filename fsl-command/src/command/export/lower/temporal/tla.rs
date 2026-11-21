@@ -42,6 +42,8 @@ pub(in crate::command::export::lower) struct Extra {
     /// Each obligation whose TLA+ encoding is a nondeterministic monitor,
     /// with its clause's node.
     pub(in crate::command::export::lower) conditional: Vec<Cond>,
+    pub(in crate::command::export::lower) dense: bool,
+    pub(in crate::command::export::lower) dense_names: Vec<(String, usize)>,
 }
 
 // ---- Normal form -----------------------------------------------------------
@@ -839,6 +841,14 @@ pub(in crate::command::export::lower) fn tla(
         if universes.insert(clause.object) {
             universe(input, clause, object, &names, out, &mut extra).map_err(attribute)?;
         }
+        if let Some(model) = input.dense {
+            extra.conditional.push(Cond {
+                obligation: clause.name.clone(),
+                kind: "real-valued-time",
+                node: model.node,
+                type_name: None,
+            });
+        }
         if input.snapshot.is_none() {
             extra.conditional.push(Cond {
                 obligation: clause.name.clone(),
@@ -854,7 +864,33 @@ pub(in crate::command::export::lower) fn tla(
             names,
             histories: Vec::new(),
         };
-        tla_clause(ctx, out, &mut extra).map_err(attribute)?;
+        if input.dense.is_some() {
+            let mut presence = vec![format!("{} \\in DOMAIN {}", ctx.key(), object.variable())];
+            for def in &clause.defs {
+                presence.push(input.show.expr(def).map_err(attribute)?);
+            }
+            out.push(define(
+                clause.position,
+                Some(ctx.names.ok.clone()),
+                format!(
+                    "{}({}) == {}",
+                    ctx.names.ok,
+                    ctx.key(),
+                    presence.join(" /\\ "),
+                ),
+                Some(clause.name.as_str()),
+            ));
+            super::super::dense::tla_clause(
+                clause,
+                &ctx.names.ids,
+                &ctx.names.ok,
+                |tf, primed| ctx.state(tf, primed),
+                out,
+            )
+            .map_err(attribute)?;
+        } else {
+            tla_clause(ctx, out, &mut extra).map_err(attribute)?;
+        }
     }
     Ok(extra)
 }
