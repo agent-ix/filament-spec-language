@@ -507,7 +507,7 @@ fn assert_process_failure(verdict: ProviderVerdict, cause: ToolFailure) {
 }
 
 /// Explicit memory breaches preserve the observed FR-462 process death.
-#[trace("FR-287-AC-12", "FR-291-AC-1")]
+#[trace("FR-291-AC-1")]
 #[test]
 fn process_memory_limits_settle_typed_failures_through_both_entries() {
     assert_eq!(ProviderLimit::MaxMemoryBytes.as_str(), "max_memory_bytes");
@@ -523,7 +523,7 @@ fn process_memory_limits_settle_typed_failures_through_both_entries() {
 }
 
 /// A CPU-limit signal is a crash; no unobserved CPU count is fabricated.
-#[trace("FR-287-AC-12", "FR-291-AC-1")]
+#[trace("FR-291-AC-1")]
 #[test]
 fn process_cpu_limits_settle_typed_failures_through_both_entries() {
     assert_eq!(ProviderLimit::MaxCpuMs.as_str(), "max_cpu_ms");
