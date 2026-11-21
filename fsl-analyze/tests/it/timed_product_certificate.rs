@@ -721,7 +721,6 @@ fn elapsed_quantile_at_most_refutes() {
 /// FR-877-AC-3: `>= 1 ms` is proved by a region `upper` document of `-1/2`.
 #[trace("TC-2494", "FR-877-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-5")]
-#[ignore = "QSL-2156: the region route for >= is not implemented yet"]
 #[test]
 fn elapsed_quantile_at_least_is_certified_over_regions() {
     let world = quantiles();
@@ -739,7 +738,7 @@ fn elapsed_quantile_at_least_is_certified_over_regions() {
 /// FR-877-AC-4: at a transform maximum of exactly 0 the tight search reaches
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
-#[ignore = "QSL-2156: the region route for >= is not implemented yet"]
+#[ignore = "QSL-2156: a refutation needs the timed witness replay (draco/qsl-2156-cycles)"]
 #[test]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();

@@ -406,7 +406,11 @@ pub fn region_probability_product_key(
         kind,
         corner,
     } = input;
-    if scale == 0 || subdivisions < 2 || elapsed.is_some() {
+    if scale == 0
+        || subdivisions < 2
+        || (deadline.is_some() && elapsed.is_some())
+        || (elapsed.is_some() && kind != RegionKeyKind::Region)
+    {
         return Err(ExactProbabilityGraphError::InvalidDigitalKey);
     }
     let mut keyed_clocks = clocks
@@ -441,6 +445,20 @@ pub fn region_probability_product_key(
         Some(_) => return Err(ExactProbabilityGraphError::InvalidDigitalKey),
         None => None,
     };
+    // FR-920: an elapsed measure clock, `null` before activation.
+    let measure_values = match elapsed {
+        Some((limit, value))
+            if value.is_none_or(|value| {
+                limit
+                    .checked_add(subdivisions)
+                    .is_some_and(|cap| value <= cap)
+            }) =>
+        {
+            Some((limit, value))
+        }
+        Some(_) => return Err(ExactProbabilityGraphError::InvalidDigitalKey),
+        None => None,
+    };
     let mut fractions = keyed_clocks
         .iter()
         .filter_map(|(_, _, value, cap)| {
@@ -450,6 +468,14 @@ pub fn region_probability_product_key(
         })
         .collect::<BTreeSet<_>>();
     if let Some((limit, elapsed)) = deadline_values {
+        if elapsed < limit.saturating_add(subdivisions) {
+            let fraction = elapsed % subdivisions;
+            if fraction > 0 {
+                fractions.insert(fraction);
+            }
+        }
+    }
+    if let Some((limit, Some(elapsed))) = measure_values {
         if elapsed < limit.saturating_add(subdivisions) {
             let fraction = elapsed % subdivisions;
             if fraction > 0 {
@@ -495,7 +521,18 @@ pub fn region_probability_product_key(
             (elapsed / subdivisions).to_string(),
             fraction_rank(elapsed, limit.saturating_add(subdivisions))
         ]),
-        None => Value::Null,
+        None => match measure_values {
+            Some((limit, value)) => json!([
+                "elapsed",
+                (limit / subdivisions).to_string(),
+                value.map(|value| (value / subdivisions).to_string()),
+                value.map_or_else(
+                    || "0".to_owned(),
+                    |value| fraction_rank(value, limit.saturating_add(subdivisions))
+                )
+            ]),
+            None => Value::Null,
+        },
     };
     let tag = match kind {
         RegionKeyKind::Region => "region",
@@ -1800,16 +1837,32 @@ fn check_exact_reachability(
     ))
 }
 
-/// Check exact values of an expected terminal reward on an acyclic
+/// How the certificate's values relate to the terminal-reward equations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RewardValues {
+    /// Every value equals the best choice's expectation (`exact`, `lower`).
+    Exact,
+    /// Every value is at least the best choice's expectation (`upper`), and
+    /// the threshold is strict: FR-877's `max E[...] < 0`.
+    StrictUpper,
+}
+
+/// Check the values of an expected terminal reward on an acyclic
 /// checker-owned graph: a terminal state's value is its reward (zero when it
 /// has none), every other state's value is the best choice's expectation.
-/// FR-877's quantile transform is such a reward.
+/// FR-877's quantile transform is such a reward. Under
+/// [`RewardValues::StrictUpper`] an initial value of exactly the threshold
+/// sends the checker through the tight actions from the initial state, and it
+/// rejects `InequalityFails` at the first state of `activated` they reach.
+#[allow(clippy::too_many_arguments)]
 fn check_exact_terminal_rewards(
     graph: &CheckerGraph,
     rewards: &BTreeMap<ProbabilityProductKey, Rational>,
     certificate: &ExactProbabilityCertificate,
     objective: ProbabilityObjective,
     bound: &Bound,
+    reading: RewardValues,
+    activated: &BTreeSet<ProbabilityProductKey>,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
     poll_cancel(cancel)?;
@@ -1827,55 +1880,21 @@ fn check_exact_terminal_rewards(
         let actual = if state.terminal.is_some() {
             rewards.get(key).cloned().unwrap_or_else(|| zero.clone())
         } else {
-            if state.choices.is_empty() {
+            let Some((best, _)) = choice_values(state, &values, objective, &zero, &one, cancel)?
+            else {
                 return Ok(rejected(
                     ProbabilityCertificateRule::InequalityFails,
                     key.clone(),
                 ));
-            }
-            let mut choice_values = Vec::with_capacity(state.choices.len());
-            for choice in &state.choices {
-                poll_cancel(cancel)?;
-                let mut mass = zero.clone();
-                let mut value = zero.clone();
-                for edge in choice {
-                    poll_cancel(cancel)?;
-                    if edge.probability < zero {
-                        return Ok(rejected(
-                            ProbabilityCertificateRule::InequalityFails,
-                            key.clone(),
-                        ));
-                    }
-                    if edge.probability == zero {
-                        continue;
-                    }
-                    let Some(successor) = values.get(&edge.target) else {
-                        return Ok(rejected(
-                            ProbabilityCertificateRule::InequalityFails,
-                            key.clone(),
-                        ));
-                    };
-                    mass = mass.add(&edge.probability);
-                    value = value.add(&edge.probability.mul(successor));
-                }
-                if mass != one {
-                    return Ok(rejected(
-                        ProbabilityCertificateRule::InequalityFails,
-                        key.clone(),
-                    ));
-                }
-                choice_values.push(value);
-            }
-            match objective {
-                ProbabilityObjective::Minimum => choice_values.into_iter().min(),
-                ProbabilityObjective::Maximum => choice_values.into_iter().max(),
-                ProbabilityObjective::Workload => {
-                    return Err(ExactProbabilityGraphError::UnsupportedClaimForm);
-                }
-            }
-            .unwrap_or_else(|| zero.clone())
+            };
+            best
         };
-        if values.get(key) != Some(&actual) {
+        let certified = values.get(key);
+        let sound = match reading {
+            RewardValues::Exact => certified == Some(&actual),
+            RewardValues::StrictUpper => certified.is_some_and(|value| *value >= actual),
+        };
+        if !sound {
             return Ok(rejected(
                 ProbabilityCertificateRule::InequalityFails,
                 key.clone(),
@@ -1888,11 +1907,47 @@ fn check_exact_terminal_rewards(
             graph.initial.clone(),
         ));
     };
-    let meets_bound = match bound {
-        Bound::AtLeast(threshold) => initial >= threshold,
-        Bound::AtMost(threshold) => initial <= threshold,
+    let meets_bound = match (bound, reading) {
+        (Bound::AtLeast(threshold), RewardValues::Exact) => initial >= threshold,
+        (Bound::AtMost(threshold), RewardValues::Exact) => initial <= threshold,
+        (Bound::AtLeast(threshold), RewardValues::StrictUpper) => initial > threshold,
+        (Bound::AtMost(threshold), RewardValues::StrictUpper) => initial < threshold,
     };
     if !meets_bound {
+        let at_threshold = matches!(bound, Bound::AtLeast(t) | Bound::AtMost(t) if t == initial);
+        if reading == RewardValues::StrictUpper && at_threshold {
+            // FR-201's tight actions: the actions that attain each state's
+            // value, followed from the initial state until an activated
+            // state, where the measure's transform is positive somewhere.
+            let mut seen = BTreeSet::from([graph.initial.clone()]);
+            let mut pending = std::collections::VecDeque::from([graph.initial.clone()]);
+            while let Some(key) = pending.pop_front() {
+                poll_cancel(cancel)?;
+                if activated.contains(&key) {
+                    return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
+                }
+                let Some(state) = graph.states.get(&key) else {
+                    return Err(ExactProbabilityGraphError::MissingSuccessor);
+                };
+                let Some(own) = values.get(&key) else {
+                    return Err(ExactProbabilityGraphError::MissingSuccessor);
+                };
+                let Some((_, each)) = choice_values(state, &values, objective, &zero, &one, cancel)?
+                else {
+                    continue;
+                };
+                for (choice, value) in state.choices.iter().zip(each) {
+                    if &value != own {
+                        continue;
+                    }
+                    for edge in choice {
+                        if edge.probability != zero && seen.insert(edge.target.clone()) {
+                            pending.push_back(edge.target.clone());
+                        }
+                    }
+                }
+            }
+        }
         return Ok(rejected(
             ProbabilityCertificateRule::ThresholdMissed,
             graph.initial.clone(),
@@ -1910,6 +1965,54 @@ fn check_exact_terminal_rewards(
             },
         },
     ))
+}
+
+/// The expectation of each choice of a nonterminal state under `values` and
+/// the best of them; `None` for a state with no choice or a choice whose
+/// probabilities are negative or do not sum to one.
+fn choice_values(
+    state: &CheckerState,
+    values: &BTreeMap<ProbabilityProductKey, Rational>,
+    objective: ProbabilityObjective,
+    zero: &Rational,
+    one: &Rational,
+    cancel: &Cancel,
+) -> Result<Option<(Rational, Vec<Rational>)>, ExactProbabilityGraphError> {
+    if state.choices.is_empty() {
+        return Ok(None);
+    }
+    let mut each = Vec::with_capacity(state.choices.len());
+    for choice in &state.choices {
+        poll_cancel(cancel)?;
+        let mut mass = zero.clone();
+        let mut value = zero.clone();
+        for edge in choice {
+            poll_cancel(cancel)?;
+            if edge.probability < *zero {
+                return Ok(None);
+            }
+            if edge.probability == *zero {
+                continue;
+            }
+            let Some(successor) = values.get(&edge.target) else {
+                return Ok(None);
+            };
+            mass = mass.add(&edge.probability);
+            value = value.add(&edge.probability.mul(successor));
+        }
+        if mass != *one {
+            return Ok(None);
+        }
+        each.push(value);
+    }
+    let best = match objective {
+        ProbabilityObjective::Minimum => each.iter().min(),
+        ProbabilityObjective::Maximum => each.iter().max(),
+        ProbabilityObjective::Workload => {
+            return Err(ExactProbabilityGraphError::UnsupportedClaimForm);
+        }
+    };
+    Ok(best.cloned().map(|best| (best, each)))
 }
 
 enum CertificateValues {

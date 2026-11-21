@@ -64,17 +64,28 @@ pub(super) fn check(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     };
     // FR-877: `<= c` is decided by the transform's minimum on the digital
-    // route; `>= c` takes the region route (its `M < c` is strict).
-    let Bound::AtMost(threshold) = &query.bound else {
-        return Err(ProbabilityDocumentError::Unsupported);
+    // route; `>= c` by its maximum on the region route (its `M < c` is
+    // strict), certified by an `upper` document.
+    let (at_least, expected_route, optimization) = match &query.bound {
+        Bound::AtMost(_) => (
+            false,
+            TimedProbabilityRoute::Digital,
+            ProbabilityObjective::Minimum,
+        ),
+        Bound::AtLeast(_) => (
+            true,
+            TimedProbabilityRoute::Region,
+            ProbabilityObjective::Maximum,
+        ),
     };
-    if route != TimedProbabilityRoute::Digital
+    let threshold = threshold(&query.bound);
+    if route != expected_route
         || !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every)
         || !claim.fairness.is_empty()
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
-    if document.optimization != ProbabilityObjective::Minimum
+    if document.optimization != optimization
         || !document.ranking.is_empty()
         || document.cyclic_dtmc
         || document.event.is_some()
@@ -94,22 +105,42 @@ pub(super) fn check(
         until: query.until,
         q: query.q.clone(),
         threshold: threshold_units,
-        strict: false,
+        strict: at_least,
     });
     let mut terminals = BTreeMap::new();
-    let graph = enumerate_digital_deadline(
-        system,
-        timed,
-        binding.as_ref(),
-        &watch,
-        window,
-        scale,
-        limits,
-        cancel,
-        meter,
-        storage,
-        &mut terminals,
-    )?;
+    let mut activated = BTreeSet::new();
+    let graph = if at_least {
+        enumerate_region_deadline(
+            system,
+            timed,
+            claim,
+            binding.as_ref(),
+            &watch,
+            window,
+            scale,
+            scale,
+            limits,
+            cancel,
+            meter,
+            storage,
+            &mut terminals,
+            &mut activated,
+        )?
+    } else {
+        enumerate_digital_deadline(
+            system,
+            timed,
+            binding.as_ref(),
+            &watch,
+            window,
+            scale,
+            limits,
+            cancel,
+            meter,
+            storage,
+            &mut terminals,
+        )?
+    };
     let mut targets = terminals
         .iter()
         .filter(|(_, (_, within))| *within)
@@ -130,8 +161,18 @@ pub(super) fn check(
         &graph,
         &rewards,
         &certificate,
-        ProbabilityObjective::Minimum,
-        &Bound::AtLeast(zero()),
+        optimization,
+        &if at_least {
+            Bound::AtMost(zero())
+        } else {
+            Bound::AtLeast(zero())
+        },
+        if at_least {
+            super::super::super::RewardValues::StrictUpper
+        } else {
+            super::super::super::RewardValues::Exact
+        },
+        &activated,
         cancel,
     )
     .map_err(ProbabilityDocumentError::Graph)?;

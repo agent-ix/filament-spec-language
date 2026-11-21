@@ -15,6 +15,7 @@ use crate::exact_probabilistic::{MeasurePhase, MonitorState, MonitorVerdict};
 fn transform_values(
     product: &ProbProduct,
     q: &Rational,
+    maximum: bool,
     cancel: &Cancel,
     tripped: &mut Option<filament_exact::CancelCause>,
 ) -> Option<Vec<Rational>> {
@@ -78,7 +79,14 @@ fn transform_values(
                                 None => choices.push((&edge.choice, weighted)),
                             }
                         }
-                        choices.into_iter().map(|(_, total)| total).min()?
+                        {
+                            let totals = choices.into_iter().map(|(_, total)| total);
+                            if maximum {
+                                totals.max()?
+                            } else {
+                                totals.min()?
+                            }
+                        }
                     }
                 };
                 values[state] = Some(value);
@@ -111,14 +119,16 @@ pub(super) fn run(
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
 ) -> EngineReport {
     let claim = request.claim;
-    let ProbForm::Quantile {
-        q,
-        threshold: Bound::AtMost(_),
-        ..
-    } = &claim.form
-    else {
-        // `>= c` takes the region route (QSL-2156 remainder).
+    let ProbForm::Quantile { q, threshold, .. } = &claim.form else {
         return not_yet();
+    };
+    // `<= c` is decided by the transform's minimum over the digital product;
+    // `>= c` by its maximum over the region product, whose `M < c` is strict.
+    let at_least = matches!(threshold, Bound::AtLeast(_));
+    let optimization = if at_least {
+        ProbabilityObjective::Maximum
+    } else {
+        ProbabilityObjective::Minimum
     };
     if !matches!(claim.scheduler, ProbScheduler::Every) || !claim.fairness.is_empty() {
         return not_yet();
@@ -156,7 +166,7 @@ pub(super) fn run(
         Ok(timed) => timed,
         Err(_) => return not_yet(),
     };
-    if crate::exact_probabilistic::timed_region_route(&timed, claim) {
+    if crate::exact_probabilistic::timed_region_route(&timed, claim) != at_least {
         return not_yet();
     }
     let certificate_scale =
@@ -180,7 +190,7 @@ pub(super) fn run(
         return not_yet();
     };
     let mut tripped = None;
-    let values = transform_values(&product, q, cancel, &mut tripped);
+    let values = transform_values(&product, q, at_least, cancel, &mut tripped);
     if let Some(cause) = tripped {
         return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
     }
@@ -190,9 +200,11 @@ pub(super) fn run(
     let Some(value) = values.get(start.index()) else {
         return broken();
     };
-    // `quantile q of M <= c` holds exactly when the minimum is not negative;
-    // its refutation needs a timed witness replay, which does not exist yet.
-    if *value < Rational::from_integer(0_i64.into()) {
+    // `quantile q of M <= c` holds exactly when the minimum is not negative and
+    // `>= c` when the maximum is negative; the converse is a refutation, which
+    // needs a timed witness replay that does not exist yet.
+    let zero = Rational::from_integer(0_i64.into());
+    if (at_least && *value >= zero) || (!at_least && *value < zero) {
         return not_yet();
     }
     let values = values
@@ -238,9 +250,13 @@ pub(super) fn run(
         event: None,
         failures: Vec::new(),
         reward: None,
-        optimization: ProbabilityObjective::Minimum,
+        optimization,
         timed: Some(TimedProbabilityObjective {
-            route: TimedProbabilityRoute::Digital,
+            route: if at_least {
+                TimedProbabilityRoute::Region
+            } else {
+                TimedProbabilityRoute::Digital
+            },
             unit: timed.source().unit_node.clone(),
             scale: certificate_scale,
             form: TimedProbabilityForm::ElapsedQuantile,
@@ -259,5 +275,5 @@ pub(super) fn run(
             cancel,
         )
     })();
-    checked_report(checked, certificate, binding, Some(Extremum::Min), subject)
+    checked_report(checked, certificate, binding, Some(if at_least { Extremum::Max } else { Extremum::Min }), subject)
 }
