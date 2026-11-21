@@ -499,8 +499,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                                     .and_then(|candidates| candidates.get(location))
                                     .unwrap_or(&empty_transitions)
                             });
+                            let package_constraint = self
+                                .package_program
+                                .as_ref()
+                                .and_then(|package| package.controls.get(&node))
+                                .is_some_and(|control| control.constraint.is_some());
                             let enabled: Vec<(ModelTransition, Option<Value>)> =
-                                if attempt.constraint.is_some() {
+                                if attempt.constraint.is_some() || package_constraint {
                                     self.model
                                         .apply_attempt(
                                             &format!("{node:?}"),
@@ -553,7 +558,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                                 {
                                     continue;
                                 }
-                                if let Some(constraint) = attempt.constraint {
+                                if attempt.constraint.is_some() || package_constraint {
                                     let mut frame = self.frame(instance, &observation_path, node);
                                     if let (Some(slot), Some(result)) =
                                         (self.program.binder_of.get(&node), &result)
@@ -562,10 +567,17 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                                             *entry = Some(result.clone());
                                         }
                                     }
-                                    if !matches!(
-                                        self.evaluate_observed(constraint, frame, observed)?,
-                                        Verdict::True
-                                    ) {
+                                    let verdict = if let Some(constraint) = attempt.constraint {
+                                        self.evaluate_observed(constraint, frame, observed)?
+                                    } else {
+                                        self.evaluate_package_control(
+                                            node,
+                                            frame,
+                                            observed.state(),
+                                        )?
+                                        .unwrap_or(Verdict::True)
+                                    };
+                                    if !matches!(verdict, Verdict::True) {
                                         continue;
                                     }
                                 }
@@ -603,16 +615,43 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 }
             }
         }
-        super::access::classify_enabled_state(
-            &self.model,
-            self.protocol,
-            &self.program,
-            &self.weak_ancestors,
-            &state.model,
-            applications,
-            readers,
-        )
-        .map_err(ExpansionStop::from)
+        let classified = if let Some(protocol) = self.protocol {
+            super::access::classify_enabled_state(
+                &self.model,
+                protocol,
+                &self.program,
+                &self.weak_ancestors,
+                &state.model,
+                applications,
+                readers,
+            )
+        } else {
+            let orderings = self
+                .package_program
+                .as_ref()
+                .map(|package| {
+                    package
+                        .controls
+                        .values()
+                        .filter(|control| {
+                            control.operation
+                                == fsl_package::protocol_view::ControlOperation::Attempt
+                        })
+                        .map(|control| (control.id, control.ordering))
+                        .collect()
+                })
+                .unwrap_or_default();
+            super::access::classify_enabled_package_state(
+                &self.model,
+                &self.program,
+                &self.weak_ancestors,
+                &state.model,
+                applications,
+                readers,
+                &orderings,
+            )
+        };
+        classified.map_err(ExpansionStop::from)
     }
 
     /// The model locations the application `transition` of the attempt
@@ -933,12 +972,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 .ok()?;
             let (Ok(Value::Reference(source)), Ok(Value::Reference(target))) = (first, second)
             else {
-                return self
-                    .protocol
-                    .relationships
-                    .iter()
-                    .find(|relationship| relationship.key == clause.relationship)
-                    .map(|relationship| relationship.name.clone());
+                return self.protocol.and_then(|protocol| {
+                    protocol
+                        .relationships
+                        .iter()
+                        .find(|relationship| relationship.key == clause.relationship)
+                        .map(|relationship| relationship.name.clone())
+                });
             };
             let holds = state.model.state().extents.iter().any(|extent| {
                 extent.relationship == clause.relationship
@@ -948,12 +988,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .any(|pair| pair.0 == source && pair.1 == target)
             });
             if !holds {
-                return self
-                    .protocol
-                    .relationships
-                    .iter()
-                    .find(|relationship| relationship.key == clause.relationship)
-                    .map(|relationship| relationship.name.clone());
+                return self.protocol.and_then(|protocol| {
+                    protocol
+                        .relationships
+                        .iter()
+                        .find(|relationship| relationship.key == clause.relationship)
+                        .map(|relationship| relationship.name.clone())
+                });
             }
         }
         None
@@ -1858,14 +1899,26 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     value: Some(result.clone()),
                     enc: value_enc(result, self.model.typing()),
                 });
-            if let Some(constraint) = attempt.constraint {
+            if attempt.constraint.is_some()
+                || self
+                    .package_program
+                    .as_ref()
+                    .and_then(|package| package.controls.get(&node))
+                    .is_some_and(|control| control.constraint.is_some())
+            {
                 let mut frame = self.frame(instance, path, node);
                 if let (Some(slot), Some(bound)) = (self.program.binder_of.get(&node), &bound) {
                     if let Some(entry) = frame.get_mut(*slot) {
                         *entry = bound.value.clone();
                     }
                 }
-                match self.evaluate_observed(constraint, frame, observed)? {
+                let verdict = if let Some(constraint) = attempt.constraint {
+                    self.evaluate_observed(constraint, frame, observed)?
+                } else {
+                    self.evaluate_package_control(node, frame, observed.state())?
+                        .unwrap_or(Verdict::True)
+                };
+                match verdict {
                     Verdict::True => {}
                     Verdict::False => continue,
                     Verdict::Undecided(outcome) => {
@@ -2263,7 +2316,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .iter()
             .filter(|applied| &applied.transition == candidate)
         {
-            if let Some(constraint) = attempt.constraint {
+            if attempt.constraint.is_some()
+                || self
+                    .package_program
+                    .as_ref()
+                    .and_then(|package| package.controls.get(&node))
+                    .is_some_and(|control| control.constraint.is_some())
+            {
                 let mut frame = self.frame(instance, path, node);
                 if let (Some(slot), Some(result)) = (
                     self.program.binder_of.get(&node),
@@ -2273,7 +2332,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         *entry = Some(result.clone());
                     }
                 }
-                match self.evaluate_observed(constraint, frame, &observed)? {
+                let verdict = if let Some(constraint) = attempt.constraint {
+                    self.evaluate_observed(constraint, frame, &observed)?
+                } else {
+                    self.evaluate_package_control(node, frame, observed.state())?
+                        .unwrap_or(Verdict::True)
+                };
+                match verdict {
                     Verdict::True => {}
                     Verdict::False => continue,
                     Verdict::Undecided(outcome) => {
@@ -2840,18 +2905,34 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .values_of(record_type, &state.model, &mut gathered.budget)?
             .ok_or_else(|| ProtocolRefusal::fault("a-finish-type-is-bounded"))?;
         for record in records {
-            if !self.admits(
-                Reader {
-                    instance,
-                    path,
-                    node: finish.node,
-                },
-                finish.constraint,
-                *slot,
-                &record,
-                &state.model,
-                &mut gathered.findings,
-            )? {
+            let admitted = if self.package_program.is_some() {
+                let mut frame = self.frame(instance, path, finish.node);
+                if let Some(value) = frame.get_mut(*slot) {
+                    *value = Some(record.clone());
+                }
+                match self.evaluate_package_finish(frame, &state.model)? {
+                    Some(Verdict::True) | None => true,
+                    Some(Verdict::False) => false,
+                    Some(Verdict::Undecided(outcome)) => {
+                        gathered.findings.push(undetermined(&finish.text, outcome));
+                        false
+                    }
+                }
+            } else {
+                self.admits(
+                    Reader {
+                        instance,
+                        path,
+                        node: finish.node,
+                    },
+                    finish.constraint,
+                    *slot,
+                    &record,
+                    &state.model,
+                    &mut gathered.findings,
+                )?
+            };
+            if !admitted {
                 continue;
             }
             let mut next = state.clone();

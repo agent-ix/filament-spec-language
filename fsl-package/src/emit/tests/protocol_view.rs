@@ -12,17 +12,17 @@ use filament_contract_model::{
 use fsl_semantics::check::{CheckedProtocol, EdgeKind as InEdge, Port as InPort};
 
 use super::protocol_requirements::fixture_w::{
-    document, tc134_clock, tc134_selections, tc134_source, TIMED_PROFILES_W,
+    document, tc134_clock, tc134_selections, tc134_source, TIMED_PROFILES_W, W,
 };
 use super::*;
 use crate::protocol_view::{
     attempts_maximum, attempts_over, await_anchor, binder, causal_relation, channel_connection,
     channel_endpoints, channel_ordering, choice_visibility, control_operation, declaration,
-    delivery, dependency, fifo_key, locus, operation_identity, owner_model, protocol_view,
-    queue_capacity, queue_channel, queue_overflow, relation_over, selection, source,
-    temporal_binding, AwaitAnchor, AwaitAnchorKind, ChannelOrdering, ChoiceVisibility,
-    ControlOperation, Delivery, FifoKey, LossSelector, Overflow, QueueCapacity, Scheduling,
-    ViewRefusal,
+    delivery, dependency, fifo_key, locus, operation_identity, owner_model,
+    protocol_execution_view, protocol_view, queue_capacity, queue_channel, queue_overflow,
+    relation_over, selection, source, temporal_binding, AwaitAnchor, AwaitAnchorKind,
+    ChannelOrdering, ChoiceVisibility, ControlBody, ControlOperation, Delivery, FifoKey,
+    LossSelector, Overflow, QueueCapacity, Scheduling, ViewRefusal,
 };
 
 /// The TC-134 workflow plus an `await` anchored at an event, so every edge
@@ -49,6 +49,8 @@ struct Fixture {
     admitted: Box<CheckedPackageV2>,
     /// FSL's I2 read of the same bytes.
     fsl_read: Arc<CheckedPackageV2>,
+    /// The selected identity rows of the emitted package.
+    identity_rows: crate::ReadIdentityRows,
     protocol: CheckedProtocol,
     activation_rows: Vec<filament_contract_model::CheckedProtocolActivationRow>,
 }
@@ -101,10 +103,17 @@ fn fixture_over(text: &str) -> Fixture {
     else {
         panic!("FSL's I2 reader admits the package");
     };
+    let identity_rows = emission
+        .identity_rows(
+            &fsl_read,
+            &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+        )
+        .expect("final identity rows");
     Fixture {
         wire: wire(&emission),
         admitted,
         fsl_read,
+        identity_rows,
         protocol,
         activation_rows,
     }
@@ -1124,6 +1133,21 @@ fn an_interval_channel_needs_no_temporal_profile_and_reads_no_clock() {
         "the header selects no temporal profile"
     );
     let package = lowered.ir.as_ref().expect("the package is admitted");
+    let execution = protocol_execution_view(package, &clause(package).node_id)
+        .expect("the admitted protocol has an execution view");
+    assert_eq!(
+        execution.protocol.controls().len(),
+        execution.controls.len()
+    );
+    for (id, control) in execution
+        .protocol
+        .controls()
+        .iter()
+        .zip(&execution.controls)
+    {
+        assert_eq!(*id, &control.node.node_id);
+        assert_eq!(control.operation, control_operation(control.node).unwrap());
+    }
     assert_eq!(
         delivery(by_name(package, "Pay")).unwrap(),
         Delivery::Between { lower: 1, upper: 2 }
@@ -1141,6 +1165,89 @@ fn an_interval_channel_needs_no_temporal_profile_and_reads_no_clock() {
             .all(|node| !matches!(&*node.semantic_form, "temporal_clause" | "clock_place")),
         "no temporal clause or clock place node is emitted"
     );
+}
+
+/// The package execution view reads the attempt facts from the admitted
+/// protocol nodes, including the role, operation, contracts and ordering.
+#[trace("FR-519", "FR-519-AC-5", "TC-1314")]
+#[test]
+fn the_execution_view_reads_attempt_facts_from_package_nodes() {
+    // The compensation clause carries a clock reference the package reader does
+    // not yet admit, and this test reads no compensation.
+    let start = W
+        .find("  compensate Refund")
+        .expect("the compensation clause");
+    let end = W.find("  terminal any;").expect("the terminal clause");
+    let source = format!("{}{}", &W[..start], &W[end..])
+        .replace("parallel Shipments {", "parallel Shipments memory tso {");
+    let fixture = fixture_over(&source);
+    let package = &fixture.admitted;
+    let execution = protocol_execution_view(package, &clause(package).node_id).unwrap();
+    let bare = crate::BarePackage::new(&fixture.fsl_read)
+        .with_supply(
+            crate::BareSupply {
+                identities: &fixture.identity_rows,
+                equality: None,
+            },
+            &mut crate::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("the fixture budget admits the supply");
+    let via_analysis_view = crate::AnalysisView::protocol_execution_named(&bare, "OrderFlow")
+        .unwrap()
+        .expect("AnalysisView resolves the declared protocol name");
+    assert_eq!(
+        via_analysis_view.protocol.clause(),
+        execution.protocol.clause()
+    );
+    assert_eq!(
+        &*node(package, execution.protocol.over()).semantic_form,
+        "parameter"
+    );
+    assert_eq!(&*execution.finish.node.semantic_form, "obligation");
+    assert_eq!(
+        &*node(package, execution.finish.binder).semantic_form,
+        "parameter"
+    );
+    assert!(execution.finish.constraint.is_some());
+    let attempt = execution
+        .controls
+        .iter()
+        .find(|control| control.operation == ControlOperation::Attempt)
+        .expect("the protocol has an attempt");
+    let ControlBody::Attempt {
+        role,
+        operation,
+        ordering,
+        contracts,
+        binder,
+        ..
+    } = &attempt.body
+    else {
+        panic!("an attempt has its checked package form");
+    };
+    assert_eq!(name(package, role), path(&["OrderFlow", "role", "Payments"]));
+    assert_eq!(&*node(package, operation).semantic_form, "operation_anchor");
+    let operation = bare
+        .protocol_operation(operation)
+        .expect("the attempt anchor resolves through the package identity rows");
+    let selected_role = execution
+        .roles
+        .iter()
+        .find(|candidate| &candidate.node.node_id == *role)
+        .expect("the attempt role belongs to the protocol");
+    assert_eq!(
+        bare.protocol_role_model(selected_role.model)
+            .expect("the static role model resolves through package identity rows"),
+        operation.declaring
+    );
+    assert!(!operation.operation.is_empty());
+    assert!(!contracts.is_empty());
+    assert_eq!(&*node(package, binder).semantic_form, "parameter");
+    assert_eq!(*ordering, None);
+    assert!(execution.controls.iter().any(|control| {
+        control.operation == ControlOperation::Parallel
+            && control.memory == Some(fsl_foundation::MemoryModelName::Tso)
+    }));
 }
 
 /// FR-519-AC-5, locus: the package source-map entry of a node; and the clock

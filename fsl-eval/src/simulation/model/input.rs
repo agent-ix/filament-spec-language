@@ -44,8 +44,8 @@ use fsl_semantics::model::operation::{OperationDeclaration, OperationTable};
 use fsl_semantics::model::state::StateModel;
 
 use crate::value::{
-    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, QualifiedName,
-    WrittenCollection,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, ProtocolSlot,
+    ProtocolSlotEvaluation, ProtocolSupply, QualifiedName, WrittenCollection,
 };
 
 /// The reads a body derivation reports, and the reference literals the body
@@ -175,6 +175,16 @@ pub struct ModelCheckInput<'a> {
     pub admitted: Option<&'a fsl_package::CheckedPackageV2>,
 }
 
+/// A protocol definition in the form the selected analysis route reads.
+/// Package definitions borrow only the admitted V2 nodes; they do not
+/// reconstruct a source checked graph.
+pub enum ProtocolDefinition<'a> {
+    /// The source route's checked semantic form.
+    Source(&'a CheckedProtocol),
+    /// The package route's typed protocol-node form.
+    Package(Box<fsl_package::protocol_view::ProtocolExecutionView<'a>>),
+}
+
 impl<'a> ModelCheckInput<'a> {
     /// The source route's input (FR-531): every table read from the source
     /// package's `CheckedGraph`, and the package itself as the evaluator.
@@ -279,6 +289,19 @@ impl<'a> ModelCheckInput<'a> {
                     )
                 }),
         )
+    }
+
+    /// FR-940: resolve a protocol through this input's selected route, keeping
+    /// source checked forms and package node forms distinct.
+    pub fn protocol_definition(&self, name: &str) -> Option<ProtocolDefinition<'_>> {
+        self.evaluator
+            .protocol(name)
+            .map(ProtocolDefinition::Source)
+            .or_else(|| {
+                self.evaluator
+                    .package_protocol(name)
+                    .map(|form| ProtocolDefinition::Package(Box::new(form)))
+            })
     }
 
     /// The packages an admission of this package's observations
@@ -1159,6 +1182,36 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
 
+    /// FR-940: evaluate a package protocol slot from its admitted node
+    /// descriptor and supplied package binders. This is separate from the
+    /// source `CheckedBody` path so package execution never synthesizes one.
+    fn evaluate_package_protocol_slot(
+        &self,
+        _slot: &ProtocolSlot,
+        _supply: &ProtocolSupply<'_>,
+        _meter: &mut Meter,
+    ) -> Result<ProtocolSlotEvaluation, CallFailure> {
+        Err(CallFailure::Fault(SOURCE_FORM))
+    }
+
+    /// Admit a simulated state as this package evaluator's current protocol
+    /// observation, retaining the bare package's admission authority.
+    fn package_protocol_observation(
+        &self,
+        _model: &DomainPackageRef,
+        _packages: &fsl_semantics::model::intake::PackageInput,
+        _limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        _state: &fsl_semantics::model::state::ModelState,
+        _identity: fsl_semantics::model::observation::DocumentRef,
+    ) -> Result<
+        filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'static>,
+        >,
+        InternalFault,
+    > {
+        Err(SOURCE_FORM)
+    }
+
     /// [`crate::value::evaluate_join_predicate`].
     ///
     /// # Errors
@@ -1188,6 +1241,55 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
 
     /// The checked protocol `name`.
     fn protocol(&self, name: &str) -> Option<&CheckedProtocol>;
+
+    /// FR-940: the package-native protocol structure read through the
+    /// admitted package view. This is available on the bytes route without
+    /// rebuilding a source `CheckedProtocol`.
+    fn package_protocol(
+        &self,
+        _name: &str,
+    ) -> Option<fsl_package::protocol_view::ProtocolExecutionView<'_>> {
+        None
+    }
+
+    /// FR-940: form a package protocol-slot descriptor from its admitted
+    /// structural identity. `None` means this evaluator has no package-side
+    /// identity row for `node`.
+    fn package_protocol_slot(
+        &self,
+        _node: &CheckedNodeId,
+        _member: &str,
+        _index: Option<usize>,
+    ) -> Option<ProtocolSlot> {
+        None
+    }
+
+    /// FR-390: the exact binder identities read by an admitted package
+    /// protocol slot, in its evaluator-defined order.
+    fn package_protocol_slot_binders(&self, _slot: &ProtocolSlot) -> Option<Vec<NodeKey>> {
+        None
+    }
+
+    /// FR-531: the exact identity row for one admitted package node.
+    fn package_node_key(&self, _node: &CheckedNodeId) -> Option<NodeKey> {
+        None
+    }
+
+    /// FR-531: the declaring type and operation selected by a package
+    /// protocol attempt's admitted operation anchor.
+    fn package_protocol_operation(&self, _anchor: &CheckedNodeId) -> Option<(EffectiveId, String)> {
+        None
+    }
+
+    /// FR-531: the exact object type selected by a package protocol role.
+    fn package_protocol_role_model(&self, _model: &CheckedNodeId) -> Option<EffectiveId> {
+        None
+    }
+
+    /// FR-531: the admitted value type of a package protocol binder.
+    fn package_protocol_parameter_type(&self, _binder: &CheckedNodeId) -> Option<ValueType> {
+        None
+    }
 
     /// The admitted node keys of the protocol `name`.
     fn protocol_node_keys(&self, name: &str) -> Option<&CheckedProtocolNodeKeys>;
@@ -1768,6 +1870,22 @@ const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
 };
 
 impl ModelEvaluator for BarePackage<'_> {
+    fn package_protocol_observation(
+        &self,
+        model: &DomainPackageRef,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        state: &fsl_semantics::model::state::ModelState,
+        identity: fsl_semantics::model::observation::DocumentRef,
+    ) -> Result<
+        filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'static>,
+        >,
+        InternalFault,
+    > {
+        Ok(self.admit_protocol_state(model, packages, limits, state, identity))
+    }
+
     fn evaluate_clause(
         &self,
         clause: &QualifiedName,
@@ -2018,6 +2136,15 @@ impl ModelEvaluator for BarePackage<'_> {
         Err(SOURCE_FORM)
     }
 
+    fn evaluate_package_protocol_slot(
+        &self,
+        slot: &ProtocolSlot,
+        supply: &ProtocolSupply<'_>,
+        meter: &mut Meter,
+    ) -> Result<ProtocolSlotEvaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_protocol_slot(self, slot, supply, meter)
+    }
+
     fn evaluate_join_predicate(
         &self,
         _function: &NodeKey,
@@ -2042,6 +2169,63 @@ impl ModelEvaluator for BarePackage<'_> {
 
     fn protocol(&self, _name: &str) -> Option<&CheckedProtocol> {
         None
+    }
+
+    fn package_protocol(
+        &self,
+        name: &str,
+    ) -> Option<fsl_package::protocol_view::ProtocolExecutionView<'_>> {
+        fsl_package::AnalysisView::protocol_execution_named(self, name)
+            .ok()
+            .flatten()
+    }
+
+    fn package_protocol_slot(
+        &self,
+        node: &CheckedNodeId,
+        member: &str,
+        index: Option<usize>,
+    ) -> Option<ProtocolSlot> {
+        Some(ProtocolSlot {
+            node: self.node_key(node)?,
+            member: member.to_owned(),
+            index,
+        })
+    }
+
+    fn package_protocol_slot_binders(&self, slot: &ProtocolSlot) -> Option<Vec<NodeKey>> {
+        let selected = self
+            .select_protocol_slot(&fsl_package::ProtocolSlotDescriptor::new(
+                slot.node.clone(),
+                slot.member.clone(),
+                slot.index,
+            ))
+            .ok()?;
+        Some(
+            selected
+                .sources()
+                .iter()
+                .map(|source| source.binder().clone())
+                .collect(),
+        )
+    }
+
+    fn package_node_key(&self, node: &CheckedNodeId) -> Option<NodeKey> {
+        self.node_key(node)
+    }
+
+    fn package_protocol_operation(&self, anchor: &CheckedNodeId) -> Option<(EffectiveId, String)> {
+        self.protocol_operation(anchor)
+            .ok()
+            .map(|operation| (operation.declaring, operation.operation))
+    }
+
+    fn package_protocol_role_model(&self, model: &CheckedNodeId) -> Option<EffectiveId> {
+        self.protocol_role_model(model).ok()
+    }
+
+    fn package_protocol_parameter_type(&self, binder: &CheckedNodeId) -> Option<ValueType> {
+        self.protocol_parameter_type(binder).ok()
     }
 
     fn protocol_node_keys(&self, _name: &str) -> Option<&CheckedProtocolNodeKeys> {

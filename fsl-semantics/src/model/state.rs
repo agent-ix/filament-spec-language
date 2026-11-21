@@ -537,6 +537,20 @@ impl StateModel {
         observe_state(&self.views, &self.types, state, identity)
     }
 
+    /// Observe the complete simulated state with the population authority
+    /// required to admit protocol reference arguments. All listed populations
+    /// are complete and their whole object closure is validated together.
+    ///
+    /// # Errors
+    /// The same state/model invariant failures as [`Self::observation`].
+    pub fn protocol_observation(
+        &self,
+        state: &ModelState,
+        identity: DocumentRef,
+    ) -> Result<Observation, AdmissionFailure> {
+        crate::model::observation::observe_protocol_state(&self.views, &self.types, state, identity)
+    }
+
     /// The model index `population`'s declarations resolve in, for the
     /// [`FrameDecision`](crate::model::population::FrameDecision) over that
     /// population; `None` when no selected model declares it.

@@ -310,6 +310,25 @@ impl<'p> Reader<'p> {
                     within: within.clone(),
                 });
             }
+            ControlBody::Attempt { .. }
+            | ControlBody::Effect { .. }
+            | ControlBody::Check { .. }
+            | ControlBody::Fence { .. } => {
+                let operation = control_operation(node)?;
+                let (maximum, window) = Self::projection_attributes(node, operation);
+                self.input.events.push(GlobalEvent {
+                    at: enter,
+                    out: exit,
+                    kind: GlobalEventKind::Control {
+                        operation,
+                        owner: self.owner_of(node),
+                        maximum,
+                        window,
+                        record_type: self.record_type(node),
+                    },
+                    within: within.clone(),
+                });
+            }
             ControlBody::Other(operation) => {
                 if matches!(
                     operation,

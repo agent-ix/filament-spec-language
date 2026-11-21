@@ -32,6 +32,7 @@ mod fairness;
 mod footprint;
 mod identity;
 mod memory;
+mod package_program;
 mod program;
 mod ra;
 mod race;
@@ -97,6 +98,10 @@ pub use memory::{
     Access, CarriedKey, Chosen, FootprintStep, GatedStep, MemoryBranch, MemoryChoice, MemoryModel,
     MemoryStep, MemoryStepId, Read, ReadChoice, Sc, ScComponent, SharedCell, Written,
 };
+pub use package_program::{
+    PackageAttemptContext, PackageControl, PackageProgramRefusal, PackageProtocolProgram,
+    PackageRole,
+};
 use program::{Program, Rest};
 pub use ra::{CarriedView, Ra, RaComponent};
 pub use race::{AccessRecord, Conflict, DataRace, EarlierKind};
@@ -118,6 +123,12 @@ pub enum Unsupported {
     /// A step binder whose record type has no enumeration here: a type with
     /// a field of no finite domain, such as a text type or a map.
     UnenumerableRecord,
+    /// A checked package protocol operation this transition program does
+    /// not step.
+    PackageControl(fsl_package::protocol_view::ControlOperation),
+    /// A package protocol declares a replicated role this program does not
+    /// step yet.
+    PackageReplicatedRole,
 }
 
 impl Unsupported {
@@ -126,6 +137,8 @@ impl Unsupported {
         match self {
             Self::WeakMemory => "memory",
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
+            Self::PackageControl(_) => "package protocol control",
+            Self::PackageReplicatedRole => "package replicated role",
         }
     }
 }
@@ -912,8 +925,13 @@ pub fn explore_protocol<M: MemoryModel>(
     limits: crate::simulation::explore::Limits,
     poll: impl FnMut() -> bool,
 ) -> Result<crate::simulation::explore::Exploration<ModelFinding>, NotSimulated> {
-    check_attempt_types(&system.model, system.protocol, system.evaluator)?;
-    let domains = subject_domains(&system.model, system.protocol, system.evaluator);
+    if let Some(protocol) = system.protocol {
+        check_attempt_types(&system.model, protocol, system.evaluator)?;
+    }
+    let domains = system.protocol.map_or_else(
+        || system.model.rooted_domains(),
+        |protocol| subject_domains(&system.model, protocol, system.evaluator),
+    );
     crate::simulation::explore::explore_request(
         system,
         &roots(&domains),
@@ -1058,6 +1076,82 @@ pub fn load_buffering_shapes(
     )
 }
 
+/// FR-220, FR-940: classify weak-memory accesses from an admitted package
+/// protocol program, without a source `CheckedProtocol`.
+pub fn classify_package_accesses(
+    model: &ModelSystem<'_>,
+    program: &PackageProtocolProgram<'_>,
+    over: &Value,
+    potential: bool,
+) -> Result<WeakAccesses, ProtocolRefusal> {
+    let governing = program
+        .governing_models()
+        .map_err(ProtocolRefusal::Memory)?;
+    let runtime = Program::new_package(model, program)?;
+    let orderings = program
+        .controls
+        .values()
+        .filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Attempt
+        })
+        .map(|control| (control.id, control.ordering))
+        .collect();
+    access::classify_package(
+        model,
+        &runtime,
+        &governing,
+        model.initial().first(),
+        over,
+        if potential {
+            access::ClassificationMode::Potential
+        } else {
+            access::ClassificationMode::Enabled
+        },
+        &orderings,
+    )
+}
+
+/// FR-226, FR-940: load-buffering shapes of an admitted package protocol
+/// under `ra`, preserving the same access and program-order rules as source.
+pub fn package_load_buffering_shapes(
+    model: &ModelSystem<'_>,
+    program: &PackageProtocolProgram<'_>,
+    over: &Value,
+) -> Result<Vec<LoadBufferingShape>, ProtocolRefusal> {
+    let governing = program
+        .governing_models()
+        .map_err(ProtocolRefusal::Memory)?;
+    if !governing
+        .values()
+        .any(|model| *model == fsl_foundation::MemoryModelName::Ra)
+    {
+        return Ok(Vec::new());
+    }
+    let runtime = Program::new_package(model, program)?;
+    let orderings = program
+        .controls
+        .values()
+        .filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Attempt
+        })
+        .map(|control| (control.id, control.ordering))
+        .collect();
+    let accesses = access::classify_package(
+        model,
+        &runtime,
+        &governing,
+        model.initial().first(),
+        over,
+        access::ClassificationMode::Potential,
+        &orderings,
+    )?;
+    Ok(
+        access::load_buffering_shapes(&runtime, &governing, &accesses)?
+            .into_iter()
+            .collect(),
+    )
+}
+
 /// One bounded protocol expansion together with its terminal classification.
 pub type ProtocolSuccessorsAndTerminal<M> = (
     Expansion<ProtocolTransition, ProtocolState<M>, ModelFinding>,
@@ -1068,8 +1162,14 @@ pub type ProtocolSuccessorsAndTerminal<M> = (
 pub struct ProtocolSystem<'a, M: MemoryModel> {
     model: ModelSystem<'a>,
     evaluator: &'a dyn ModelEvaluator,
-    protocol: &'a CheckedProtocol,
+    protocol: Option<&'a CheckedProtocol>,
+    protocol_name: String,
     program: Program<'a>,
+    /// The admitted package execution form, when this system was built from
+    /// package nodes rather than a source `CheckedProtocol`.
+    package_program: Option<PackageProtocolProgram<'a>>,
+    /// The package route's model admission inputs for current slot observations.
+    package_subject: Option<&'a ProtocolSubject<'a>>,
     /// A loop proof item is a product of the ordinary protocol state with
     /// the prior decision value for exactly one repeat invocation.
     loop_proof_target: Option<ProtocolLoopProofTarget>,
@@ -1415,8 +1515,11 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let mut system = Self {
             model,
             evaluator,
-            protocol,
+            protocol: Some(protocol),
+            protocol_name: protocol.name.clone(),
             program,
+            package_program: None,
+            package_subject: None,
             loop_proof_target,
             memory,
             channel_message_bound: None,
@@ -1447,6 +1550,174 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 ));
             }
         }
+        system.universes = system.role_universes()?;
+        system.initial = system.initial_states()?;
+        Ok(system)
+    }
+
+    /// FR-940: build the sequence, weak-parallel, attempt and finish
+    /// transition system directly from the admitted package protocol form.
+    /// The checked package node identities remain the expression and
+    /// operation authority throughout execution.
+    pub fn new_package(
+        model: ModelSystem<'a>,
+        subject: &'a ProtocolSubject<'a>,
+        memory: M,
+    ) -> Result<Self, ProtocolRefusal> {
+        let input = &subject.model.simulation.input;
+        let form = input
+            .protocol_definition(&subject.protocol)
+            .and_then(|definition| match definition {
+                super::model::ProtocolDefinition::Package(form) => Some(form),
+                super::model::ProtocolDefinition::Source(_) => None,
+            })
+            .ok_or_else(|| ProtocolRefusal::UnknownProtocol {
+                protocol: subject.protocol.clone(),
+            })?;
+        let package = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
+            .map_err(|refusal| match refusal {
+                PackageProgramRefusal::Memory(refusal) => ProtocolRefusal::Memory(refusal),
+                PackageProgramRefusal::Unsupported(operation) => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageControl(operation))
+                }
+                _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
+            })?;
+        if let Some(binding) = subject.capacities.first() {
+            return Err(ProtocolRefusal::Capacity(CapacityRefusal::UnknownName {
+                name: binding.name.clone(),
+            }));
+        }
+        if package.roles.iter().any(|role| role.replicated) {
+            return Err(ProtocolRefusal::Unsupported(
+                Unsupported::PackageReplicatedRole,
+            ));
+        }
+        let mut roles = Vec::new();
+        for role in package.roles.iter().filter(|role| !role.replicated) {
+            let binding = subject
+                .roles
+                .iter()
+                .find(|binding| binding.role == role.name)
+                .ok_or_else(|| ProtocolRefusal::RoleMapping {
+                    role: role.name.clone(),
+                })?;
+            let admits = model
+                .declaring_package(role.model_identity.clone())
+                .is_some_and(|declaring| declaring == binding.model);
+            if !admits {
+                return Err(ProtocolRefusal::RoleMapping {
+                    role: role.name.clone(),
+                });
+            }
+            roles.push((role.name.clone(), binding.model.clone()));
+        }
+        if let Some(unknown) = subject.roles.iter().find(|binding| {
+            !package
+                .roles
+                .iter()
+                .any(|role| !role.replicated && role.name == binding.role)
+        }) {
+            return Err(ProtocolRefusal::RoleMapping {
+                role: unknown.role.clone(),
+            });
+        }
+        let over_values = match &package.over_type {
+            ValueType::Reference(object_type) => {
+                let instances = model.instances(&package.over_type).map_err(|_| {
+                    ProtocolRefusal::OverBinding {
+                        parameter: "over".to_owned(),
+                        object: subject.over.key.clone(),
+                    }
+                })?;
+                if !instances.contains(&subject.over) {
+                    return Err(ProtocolRefusal::OverBinding {
+                        parameter: "over".to_owned(),
+                        object: subject.over.key.clone(),
+                    });
+                }
+                vec![Value::Reference(
+                    model
+                        .bound_reference(object_type.clone(), &subject.over)
+                        .map_err(|_| ProtocolRefusal::fault("a-package-over-reference-resolves"))?,
+                )]
+            }
+            _ => {
+                return Err(ProtocolRefusal::fault(
+                    "package-protocol-over-is-a-reference-value",
+                ));
+            }
+        };
+        let governing = package
+            .governing_models()
+            .map_err(ProtocolRefusal::Memory)?;
+        let implemented = memory.models();
+        if governing
+            .values()
+            .any(|resolved| !implemented.contains(resolved))
+        {
+            return Err(ProtocolRefusal::Unsupported(Unsupported::WeakMemory));
+        }
+        let program = Program::new_package(&model, &package)?;
+        let mut enabled = WeakAccesses::default();
+        let mut weak = WeakAccesses::default();
+        for over in &over_values {
+            enabled.extend(classify_package_accesses(&model, &package, over, false)?);
+            weak.extend(classify_package_accesses(&model, &package, over, true)?);
+        }
+        let weak_ancestors = access::weak_ancestors(&program, &governing)?;
+        let mut weak_parallel_paths = BTreeSet::new();
+        for (node, resolved) in &governing {
+            if resolved.is_weak()
+                && program.control(*node)?.step == fsl_semantics::check::ControlStep::Parallel
+            {
+                weak_parallel_paths.insert(program.text(*node)?.to_owned());
+            }
+        }
+        let mut attempts_by_weak_context = BTreeMap::new();
+        for node in program.attempts.keys() {
+            let Some(ancestors) = weak_ancestors.get(node) else {
+                return Err(ProtocolRefusal::fault("an-attempt-has-weak-ancestors"));
+            };
+            let context = ancestors
+                .iter()
+                .rev()
+                .filter(|ancestor| ancestor.is_branch_context)
+                .map(|ancestor| (ancestor.path.clone(), ancestor.branch.clone()))
+                .collect::<Vec<_>>();
+            if !context.is_empty() {
+                attempts_by_weak_context
+                    .entry(context)
+                    .or_insert_with(Vec::new)
+                    .push(*node);
+            }
+        }
+        let mut system = Self {
+            model,
+            evaluator: input.evaluator,
+            protocol: None,
+            protocol_name: subject.protocol.clone(),
+            program,
+            package_program: Some(package),
+            package_subject: Some(subject),
+            loop_proof_target: None,
+            memory,
+            channel_message_bound: None,
+            delivery_reads: None,
+            message_reads: None,
+            governing,
+            weak_ancestors,
+            weak_parallel_paths,
+            attempts_by_weak_context,
+            non_atomic: weak.non_atomic(),
+            potential: weak,
+            initial_enabled: enabled,
+            over_values,
+            roles,
+            universes: Vec::new(),
+            max_live_instances: DEFAULT_MAX_LIVE_INSTANCES,
+            initial: Vec::new(),
+            model_footprints: std::sync::Mutex::default(),
+        };
         system.universes = system.role_universes()?;
         system.initial = system.initial_states()?;
         Ok(system)
@@ -1596,6 +1867,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     /// The checked protocol clause.
     pub fn protocol(&self) -> &'a CheckedProtocol {
         self.protocol
+            .expect("the source protocol accessor is used on a source route")
     }
 
     /// FR-212 (ADR-027 PA-3, FSpec FR-430): the fairness set of an
@@ -1622,11 +1894,14 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         authored: &[filament_semantic_value::fairness::FairnessConstraint],
         authored_targets: &[fsl_semantics::check::CheckedProtocolFairness],
     ) -> Result<Vec<ProtocolFairness>, ProtocolFairnessError> {
+        let Some(protocol) = self.protocol else {
+            return self.package_fairness_set(authored, authored_targets);
+        };
         let memory = self
             .memory
-            .fairness(&fairness::memory_branches(self.protocol, &self.governing));
+            .fairness(&fairness::memory_branches(protocol, &self.governing));
         fairness::fairness_set(
-            self.protocol,
+            protocol,
             authored,
             authored_targets,
             |constraint| {
@@ -1636,6 +1911,90 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             },
             memory,
         )
+    }
+
+    /// Build the same fairness set from the admitted package protocol form.
+    /// Package controls use checked-package node identities, so source
+    /// `ProtocolNodeId` targets cannot be resolved against them directly.
+    fn package_fairness_set(
+        &self,
+        authored: &[filament_semantic_value::fairness::FairnessConstraint],
+        authored_targets: &[fsl_semantics::check::CheckedProtocolFairness],
+    ) -> Result<Vec<ProtocolFairness>, ProtocolFairnessError> {
+        let Some(package) = self.package_program.as_ref() else {
+            return Err(ProtocolFairnessError::UnknownProtocolTarget {
+                name: self.protocol_name.clone(),
+            });
+        };
+        if let Some(target) = authored_targets.first() {
+            return Err(ProtocolFairnessError::UnknownProtocolTarget {
+                name: target.protocol.clone(),
+            });
+        }
+
+        let mut members = Vec::new();
+        for constraint in authored {
+            let operation = constraint.operation();
+            let name = self
+                .model
+                .operation_text(operation.declaring_type(), operation.name())
+                .ok_or_else(|| ProtocolFairnessError::UnknownOperation {
+                    name: operation.name().to_owned(),
+                })?;
+            members.push(ProtocolFairness::new(
+                constraint.kind(),
+                ProtocolTarget::Operation {
+                    name: name.to_owned(),
+                },
+                constraint.granularity(),
+                FairnessOrigin::Authored,
+            ));
+        }
+
+        if package.form.protocol.scheduling()
+            != Some(fsl_package::protocol_view::Scheduling::Adversarial)
+        {
+            members.push(ProtocolFairness::scheduler(ProtocolTarget::Root));
+            for control in package.controls.values().filter(|control| {
+                control.operation == fsl_package::protocol_view::ControlOperation::Parallel
+            }) {
+                let parallel = control.path.join("/");
+                for (branch, _) in &control.branches {
+                    members.push(ProtocolFairness::scheduler(ProtocolTarget::branch(
+                        parallel.clone(),
+                        branch.clone(),
+                    )));
+                }
+            }
+        }
+
+        let branches = self
+            .governing
+            .iter()
+            .filter_map(|(parallel, model)| {
+                let control = package.controls.get(parallel)?;
+                Some(
+                    control
+                        .branches
+                        .iter()
+                        .map(move |(branch, _)| MemoryBranch {
+                            model: *model,
+                            parallel: control.path.join("/"),
+                            branch: branch.clone(),
+                        }),
+                )
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        members.extend(self.memory.fairness(&branches));
+
+        let mut keyed = BTreeMap::new();
+        for member in members {
+            let bytes = quire_canonical::to_vec(&member, quire_canonical::Limits::new(u64::MAX))
+                .map_err(|error| ProtocolFairnessError::Encoding(error.to_string()))?;
+            keyed.entry(bytes).or_insert(member);
+        }
+        Ok(keyed.into_values().collect())
     }
 
     /// The memory model it runs under.
@@ -2454,6 +2813,182 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         })
     }
 
+    /// Evaluate a package control constraint from admitted binder identities.
+    /// A package expression receives the state values by node identity and
+    /// never crosses through a synthetic `CheckedBody`.
+    pub(super) fn evaluate_package_control(
+        &self,
+        node: fsl_semantics::check::ProtocolNodeId,
+        frame: Vec<Option<Value>>,
+        state: &ModelSimState,
+    ) -> Result<Option<Verdict>, ExpansionStop> {
+        let Some(package) = self.package_program.as_ref() else {
+            return Ok(None);
+        };
+        let Some(control) = package.controls.get(&node) else {
+            return Ok(None);
+        };
+        let Some(slot) = control.constraint.as_ref() else {
+            return Ok(None);
+        };
+        let observation = self.package_observation(state)?;
+        let binders = self.package_binder_values(frame, &observation, slot)?;
+        let supply = package
+            .supply_for_slot(slot, binders, Some(&observation))
+            .map_err(|_| broken())?;
+        let result = package
+            .evaluate_control_constraint(node, &supply, &mut Meter::new(self.model.meter()))
+            .map_err(|_| broken())?;
+        package_slot_verdict(result).map(Some)
+    }
+
+    /// Evaluate the package finish constraint over its finish record.
+    pub(super) fn evaluate_package_finish(
+        &self,
+        frame: Vec<Option<Value>>,
+        state: &ModelSimState,
+    ) -> Result<Option<Verdict>, ExpansionStop> {
+        let Some(package) = self.package_program.as_ref() else {
+            return Ok(None);
+        };
+        let Some(slot) = package.finish.as_ref() else {
+            return Ok(None);
+        };
+        let observation = self.package_observation(state)?;
+        let binders = self.package_binder_values(frame, &observation, slot)?;
+        let supply = package
+            .supply_for_slot(slot, binders, Some(&observation))
+            .map_err(|_| broken())?;
+        let result = package
+            .evaluate_finish(&supply, &mut Meter::new(self.model.meter()))
+            .map_err(|_| broken())?;
+        result
+            .map(|evaluation| package_slot_verdict(Some(evaluation)))
+            .transpose()
+    }
+
+    fn package_observation(
+        &self,
+        state: &ModelSimState,
+    ) -> Result<
+        filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'static>,
+        >,
+        ExpansionStop,
+    > {
+        let subject = self.package_subject.ok_or_else(broken)?;
+        let request = &subject.model.simulation;
+        let package = self.package_program.as_ref().ok_or_else(broken)?;
+        let ValueType::Reference(over) = &package.over_type else {
+            return Err(broken());
+        };
+        let declaring = self
+            .model
+            .declaring_package(over.clone())
+            .ok_or_else(broken)?;
+        let selection = request
+            .input
+            .model_selections
+            .iter()
+            .find(|selection| selection.identity == declaring)
+            .ok_or_else(broken)?;
+        self.evaluator
+            .package_protocol_observation(
+                selection,
+                request.packages,
+                request.normalization,
+                state.state(),
+                self.model.observation_of(state)?.identity,
+            )
+            .map_err(|_| broken())
+    }
+
+    fn package_binder_values(
+        &self,
+        frame: Vec<Option<Value>>,
+        observation: &filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'_>,
+        >,
+        slot: &crate::value::ProtocolSlot,
+    ) -> Result<
+        Vec<(
+            fsl_package::CheckedNodeId,
+            crate::value::ProtocolSuppliedValue,
+        )>,
+        ExpansionStop,
+    > {
+        let filament_semantic_value::admission::ObservationAdmission::Admitted(observation) =
+            observation
+        else {
+            return Err(broken());
+        };
+        let subject = self.package_subject.ok_or_else(broken)?;
+        let package = self.package_program.as_ref().ok_or_else(broken)?;
+        let required: BTreeSet<_> = package
+            .slot_binders(slot)
+            .map_err(|_| broken())?
+            .into_iter()
+            .collect();
+        self.program
+            .package_binders
+            .iter()
+            .zip(frame)
+            .filter(|(binder, _)| {
+                binder
+                    .as_ref()
+                    .and_then(|binder| self.evaluator.package_node_key(binder))
+                    .is_some_and(|key| required.contains(&key))
+            })
+            .filter_map(|(binder, value)| {
+                binder.as_ref().map(|binder| {
+                    let mut references = Vec::new();
+                    let value = match value {
+                        Some(value) => {
+                            for (path, reference) in crate::value::reference_occurrences(
+                                &value,
+                                subject.model.simulation.input.types,
+                            )
+                            .map_err(|_| broken())?
+                            {
+                                let environment = observation.environment();
+                                let population = if binder == &package.over {
+                                    fsl_semantics::model::key::population_node_key(
+                                        &subject.over.population,
+                                    )
+                                    .map_err(|_| broken())?
+                                } else {
+                                    environment
+                                        .population_completeness()
+                                        .keys()
+                                        .find(|population| {
+                                            environment
+                                                .population_members(population)
+                                                .is_some_and(|members| members.contains(&reference))
+                                        })
+                                        .and_then(|population| {
+                                            environment.population_node(population)
+                                        })
+                                        .cloned()
+                                        .ok_or_else(broken)?
+                                };
+                                references.push(crate::value::ProtocolReferenceOccurrence {
+                                    path,
+                                    population,
+                                });
+                            }
+                            crate::value::SuppliedValue::Value(value)
+                        }
+                        None => crate::value::SuppliedValue::Unavailable(BROKEN),
+                    };
+                    Ok((
+                        binder.clone(),
+                        crate::value::ProtocolSuppliedValue { value, references },
+                    ))
+                })
+            })
+            .collect()
+    }
+
     /// FR-211 and ADR-027 PD-1: the class of `state`. A state with no live
     /// instance is intended; otherwise the protocol's `terminal` member
     /// decides, read through the one clause evaluator.
@@ -2486,9 +3021,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             return Ok(TerminalClass::Intended);
         }
         match self.program.terminal {
-            CheckedTerminalMember::None => Ok(TerminalClass::Deadlocked),
-            CheckedTerminalMember::Any => Ok(TerminalClass::Intended),
-            CheckedTerminalMember::When { predicate, .. } => {
+            None | Some(CheckedTerminalMember::None) => Ok(TerminalClass::Deadlocked),
+            Some(CheckedTerminalMember::Any) => Ok(TerminalClass::Intended),
+            Some(CheckedTerminalMember::When { predicate, .. }) => {
                 let mut frame = vec![None; self.program.slots.len()];
                 if let Some(first) = frame.first_mut() {
                     *first = Some(state.over.clone());
@@ -2511,7 +3046,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         if let Some(cause) = outcome.undefined_cause() {
                             TerminalClass::Undefined {
                                 model: super::model::TerminalModel::named(
-                                    self.protocol.name.clone(),
+                                    self.protocol_name.clone(),
                                 ),
                                 cause,
                             }
@@ -2526,7 +3061,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         } else {
                             TerminalClass::Undecided {
                                 model: super::model::TerminalModel::named(
-                                    self.protocol.name.clone(),
+                                    self.protocol_name.clone(),
                                 ),
                             }
                         }
@@ -2537,7 +3072,18 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     }
 }
 
-/// `runtime_invariant`/`established-invariant-broken`.
+fn package_slot_verdict(
+    result: Option<crate::value::ProtocolSlotEvaluation>,
+) -> Result<Verdict, ExpansionStop> {
+    match result {
+        None => Ok(Verdict::True),
+        Some(crate::value::ProtocolSlotEvaluation::Evaluated(evaluation, _)) => {
+            Ok(verdict(&evaluation.outcome))
+        }
+        Some(crate::value::ProtocolSlotEvaluation::Unavailable { .. }) => Err(broken()),
+    }
+}
+
 fn broken() -> ExpansionStop {
     ExpansionStop {
         cause: BROKEN,
