@@ -427,11 +427,9 @@ mod backend_agreement {
     #[trace("TC-1193", "FR-448-AC-9")]
     fn replay_refusals_are_not_definite_and_faults_fail() {
         let mut provider = FixtureProvider::new(Plan::WrongProof, 2);
-        provider.replay = Some(Recheck::Refused {
-            code: "resource_exhausted".into(),
-            cause: "replay-limit".into(),
-        });
-        let outcome = Corpus::new().run(&provider, &[]).unwrap();
+        let outcome = Corpus::new()
+            .run(&provider, &["--limit", "accounting.work_units=0"])
+            .unwrap();
         assert_eq!(outcome.code, 0);
         assert_eq!(
             document(&outcome)["entries"][1]["settlement"],
