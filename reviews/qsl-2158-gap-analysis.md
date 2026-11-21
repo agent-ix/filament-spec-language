@@ -568,3 +568,56 @@ scope:
     value for each declared field, where every reference value names an object
     of the state. It also carries its anchor, which its key omits.
 ```
+
+## Targeted verification round 3
+
+Frozen source `9e0a042d5f3f967e32caa2f9d4cd57d373379b82`; actual base `645bef0e0e810a5c551b7894ee98d7c6288b7467`. Same independent Codex reviewer. All earlier history above is retained verbatim.
+
+**Latest qualification: CONDITIONAL with final runtime compile-blocked/zero tests.** Prior gap outcomes remain unchanged (GA001/003/004 fixed; GA002 generic proof scope deferred). No new gap analysis or finding.
+
+Architecture-authorized targeted exception only: CR021 resource boundary and CR022 mechanical borrow error, not a full third review. The superseding ruling (QSL2158 commenta36a5342) accepts one conservatively prepaid bounded atomic clone/closure/extent interval, cancellation polled before and after; an inner callback is explicitly outside completion scope. The older CR021 wording requiring inner cancellability is therefore not a remaining requirement. No new upstream callback API, pin or validator was demanded.
+
+CR021 source verification: declaration fields and universe members are indexed once, with caller admission before index construction and per-lookup work. No per-row field or universe vector rescan remains at the reported sites. observation_work_size traverses selected package records with caller callback charges, at least one per view including empty views, plus population-member visits; returned cardinalities include records absent from the state key. Its traversal performs sizing without validation or retained allocation. It accounts relationship/population declaration-key byte sizes. Restoration combines canonical source bytes, decoded value/task count, actual objects/extents, indexed fields/universes and selected declarations; checked arithmetic computes conservative cross-product work and clone storage. All prepayment uses the existing actual caller budget/meter and can stop before the owner call. tick/retain poll before the interval, tick(0) polls after the call even if observation returns a structural error, so cancellation retains precedence. Owner validation remains the existing observation call. No fresh default budget or duplicated validator was introduced.
+
+CR022 source verification: source and target references are evaluated in separate locals before self.push, removing the two overlapping mutable self borrows with the same evaluation order and same retained pair.
+
+The new owning66-field test constructs a genuinely admitted Link model with64 extra Boolean fields, obtains its actual canonical key, and supplies positive caller work bytes.len()+33. The initial byte charge and reservation-backed canonical read precede declaration indexing; the66-field charge must be the denied next charge. Assertions inspect actual retained Incomplete WorkUnits, consumed input bytes, next_charge66 and exact charge sequence. It is a meaningful nonzero caller-denial assertion by inspection; runtime is still pending. Existing owner/provenance/detached tests were not changed by this correction.
+
+No remaining CR021/022 defect found within the authorized target; newly supplied compiler evidence is recorded separately as CR023. Every earlier fixed/rejected/deferred outcome is preserved; CR019/020 are not reopened, and generic GA002 remains architecture-deferred. No new full gap, BASE, normative or global audit ran. Accepted SR507 remains intact. Only the newly supplied actual compiler block is added as CR023; no expanded source-review hunt ran. Source stayed frozen and clean. Read-only diff --check passes; this correction changes only model restoration, its approved sizing accessor and one owning resource test (plus prior review custody). Pins, wire, default scopes and main behavior are unchanged.
+
+Parent reports exact frozen9e0a first30-profile command COMPILE101/ZERO tests: measure.rs475/504/521 pass ProbabilityKeyAdmission where quire_canonical::Reservation is required, but it implements filament_exact::Reservation; measure.rs552 calls nonexistent enabled_actions_with_budget (actual API actions_with_budget). Commands2–16 held. Raw /private/tmp/qsl-3285-9e0a-1.log. No45-test acceptance or executed66-field test. Prior10564 first30-profile command COMPILE101/ZERO tests (two E0499); commands2–15 held. Older400617 owner-unit1pass0fail0ignore272filtered is older-source evidence only. No local cargo/tests/clippy/baseline/Kani/sweep/devcompile; no45-test acceptance claim.
+
+Plan completion: not assessed
+
+Existing D2 static matrix qualifications and diagnostic limitations are retained; no matrix/coverage command was rerun for this narrow exception.
+
+### Targeted examined scope
+
+```yaml
+scope:
+- id: FR-1043-AC-7
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-1's numerator with `window`, `threshold`, `comparison`, `reward`, `unit`, `level` or `payoff` changed
+    refuses objective mismatch; a key whose accumulator amount or phase is altered is not an alias and fails coverage;
+    a `shifted` value below `−level` is rejected `Malformed` at `values`. Pre-cancellation and exhaustion of each
+    caller limit during expansion, payoff evaluation or exact sums settle `incomplete` with the actual limit and
+    no truth value.
+- id: FR-1043-AC-9
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: AC-5's exact workload mean `5/12` at `>= 5/12` and `<= 5/12`, a valid workload `upper` bound `1/2` at
+    `>= 1/2`, and a valid `lower` bound `2/5` at `<= 2/5` each reject `ThresholdMissed` at the initial key and settle
+    `inconclusive`, `CertificateRejected`. In AC-8, a valid `lower` minimum document with initial bound `1/5` at
+    `>= 1/2` and a valid `upper` maximum document with bound `1/2` at `<= 1/3` each reject `Malformed` at `kind`
+    with the same settlement. Identity/base mismatch retains its typed refusal; an invalid value rejects `InequalityFails`
+    with `CertificateRejected`; a disagreeing witne
+- id: FR-1043
+  path: spec/functional/FR-1043-certify-finite-horizon-measure-verdicts.md
+  role: examined
+  excerpt: |-
+    Expansion, payoff evaluation, unit conversion and exact
+      sums SHALL run under the caller's byte, state, edge, work, storage,
+      representation and arithmetic limits and cancellation; a stop SHALL
+      settle `incomplete` with its limit and no truth value.
+```

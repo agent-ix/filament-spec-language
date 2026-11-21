@@ -114,6 +114,12 @@ impl Reservation for ProbabilityKeyAdmission<'_> {
         Ok(())
     }
 }
+impl quire_canonical::Reservation for ProbabilityKeyAdmission<'_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), quire_canonical::ReservationDenied> {
+        Reservation::reserve(self, bytes).map_err(|_| quire_canonical::ReservationDenied)
+    }
+}
+
 impl IntegerDecimalBudget for ProbabilityKeyAdmission<'_> {
     fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
         self.charge(Charge::new(ChargePoint::GraphEdge).work(Integer::from(units)))

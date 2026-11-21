@@ -549,8 +549,8 @@ fn restore_named(
         let mut admission =
             ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
         let actions = system
-            .enabled_actions_with_budget(&model, identity, &mut admission, cancel)
-            .map_err(|error| distribution_error(error, &mut admission))?
+            .actions_with_budget(&model, identity, &mut admission, cancel)
+            .map_err(|error| admission.expansion_refusal(error))?
             .map_err(|_| {
                 ProbabilityDocumentError::Build(Box::new(
                     crate::ExactProbBuildIssue::UndecidedSuccessor,
