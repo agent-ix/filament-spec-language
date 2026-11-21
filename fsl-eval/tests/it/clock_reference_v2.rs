@@ -874,3 +874,259 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
         }
     }
 }
+
+/// Authenticated scope disagreement is malformed input, independently of the
+/// dangling outcome for an old field removed from the correct declaration.
+#[trace("TC-464", "FR-230-AC-45")]
+#[test]
+fn clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare() {
+    use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure};
+    use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceIdentity};
+
+    let checked = fixture(false);
+    let package = CheckedPackage::link(checked.graph);
+    let model = StateModel::new(
+        package.graph().model_inputs(),
+        package.graph().scope().types(),
+        &checked.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("actual model declarations");
+    let valid = snapshot(&expected_place("c1", "x"), &expected_place("c2", "x"), true);
+    let Value::Reference(reference) = capture(&package, &checked.packages, &valid, 0, "c1") else {
+        panic!("actual seeded Clock producer");
+    };
+    let read = fsl_package::read_evaluation_package(
+        &package,
+        fsl_semantics::library::LibraryName::new(package.graph().package_name()).expect("name"),
+        &checked.packages,
+        V2ReadLimits::fixture(),
+        EmitLimits::fixture(),
+    )
+    .expect("actual checked package emits and reads");
+    let rows = read
+        .emission()
+        .identity_rows(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("identity rows");
+    let equality = read
+        .emission()
+        .equality_witness(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("equality rows");
+    let bare = BarePackage::new(read.admitted())
+        .with_supply(
+            BareSupply {
+                identities: &rows,
+                equality: Some(&equality),
+            },
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("actual Bare supply");
+    model
+        .admit_initial(&valid, &identity(), ObservationLimits::default())
+        .expect("unchanged reference admits on Source");
+    bare.admit_call_snapshot(
+        &checked.packages,
+        ModelNormalizationLimits::default(),
+        &valid,
+        &identity(),
+        ObservationLimits::default(),
+    )
+    .expect("unchanged reference admits on Bare");
+
+    for changed_component in ["population", "scope"] {
+        let mut changed = PlaceIdentity::decode(
+            reference.object().as_str(),
+            quire_canonical::Limits::new(4096),
+        )
+        .expect("actual producer's canonical identity");
+        match changed_component {
+            "population" => {
+                changed.population = DeclarationScope::Model {
+                    identity: QUEUE.to_owned(),
+                    declaration: node(QUEUE, "queues"),
+                }
+            }
+            "scope" => {
+                changed.template.scope = DeclarationScope::Model {
+                    identity: QUEUE.to_owned(),
+                    declaration: node(QUEUE, "Queue"),
+                }
+            }
+            _ => unreachable!("two scope components"),
+        }
+        let changed = changed
+            .encode(quire_canonical::Limits::new(4096))
+            .expect("canonical hostile payload");
+        for field in ["r", "maybe", "refs"] {
+            let mut document: Json = serde_json::from_slice(&valid[&identity()]).expect("snapshot");
+            let hostile = raw_reference(&changed);
+            document["populations"][0]["objects"][0]["fields"][field] = match field {
+                "r" => hostile,
+                "maybe" => json!({"present":hostile}),
+                "refs" => json!({"sequence":[hostile,raw_reference(reference.object().as_str())]}),
+                _ => unreachable!("three transport fields"),
+            };
+            let snapshots =
+                BTreeMap::from([(identity(), serde_json::to_vec(&document).expect("snapshot"))]);
+            let source = model
+                .admit_initial(&snapshots, &identity(), ObservationLimits::default())
+                .expect_err("scope disagreement cannot admit Source state");
+            let bytes = bare
+                .admit_call_snapshot(
+                    &checked.packages,
+                    ModelNormalizationLimits::default(),
+                    &snapshots,
+                    &identity(),
+                    ObservationLimits::default(),
+                )
+                .expect_err("scope disagreement cannot admit Bare observation");
+            let mut path = vec![
+                PathStep::Field("populations".to_owned()),
+                PathStep::Index(0),
+                PathStep::Field("objects".to_owned()),
+                PathStep::Index(0),
+                PathStep::Field("fields".to_owned()),
+                PathStep::Field(field.to_owned()),
+            ];
+            let suffix = match field {
+                "maybe" => {
+                    path.push(PathStep::OptionValue);
+                    "/present"
+                }
+                "refs" => {
+                    path.push(PathStep::Index(0));
+                    "/sequence/0"
+                }
+                _ => "",
+            };
+            let expected = AdmissionRecord {
+                catalog: CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                fields: BTreeMap::from([
+                    ("population", node(CLOCKS, "calls")),
+                    ("object", "c1".to_owned()),
+                    ("field", field.to_owned()),
+                    (
+                        "path",
+                        format!("/populations/0/objects/0/fields/{field}{suffix}"),
+                    ),
+                ]),
+                path,
+                kernel: None,
+            };
+            for failure in [source, bytes] {
+                let AdmissionFailure::Refused(record) = failure else {
+                    panic!("typed invalid input refusal")
+                };
+                assert_eq!(
+                    *record, expected,
+                    "{changed_component} disagreement retains its original {field} locus"
+                );
+            }
+        }
+    }
+
+    let (_, foreign_universe) = fsl_semantics::model::observation::declared_type_universe_for(
+        package.graph().model_inputs(),
+        &checked.packages,
+        ModelNormalizationLimits::default(),
+        &key(QUEUE, "Queue"),
+    )
+    .expect("actual selected Queue declaration")
+    .expect("Queue has a declared universe");
+    assert_ne!(
+        &foreign_universe,
+        reference.universe(),
+        "the negative uses a distinct real catalog universe"
+    );
+    let hostile = ObjectReference::new(
+        foreign_universe,
+        reference.object_type().clone(),
+        reference.object().clone(),
+    );
+    let keys = package
+        .graph()
+        .protocol_node_keys("Places")
+        .expect("protocol keys");
+    let binder = &keys
+        .binders
+        .iter()
+        .find(|binder| binder.name == "chosen")
+        .expect("Clock DATA binder")
+        .node;
+    let slot = ProtocolSlot {
+        node: keys.clause.clone().expect("protocol root"),
+        member: "captures".to_owned(),
+        index: Some(4),
+    };
+    let selection = fsl_semantics::model::domain_package::DomainPackageRef {
+        identity: CLOCKS.to_owned(),
+    };
+    let source_view = package.evaluation_view();
+    let source = source_view.admit_protocol_observation(
+        &selection,
+        &checked.packages,
+        ModelNormalizationLimits::default(),
+        &valid,
+        &identity(),
+        ObservationLimits::default(),
+    );
+    let bytes = bare.admit_protocol_observation(
+        &selection,
+        &checked.packages,
+        ModelNormalizationLimits::default(),
+        &valid,
+        &identity(),
+        ObservationLimits::default(),
+    );
+    for (evaluator, observation) in [
+        (&package as &dyn CheckedPackageEvaluation, &source),
+        (&bare as &dyn CheckedPackageEvaluation, &bytes),
+    ] {
+        let ObservationAdmission::Admitted(admitted) = observation else {
+            panic!("actual complete owner observation admits")
+        };
+        let population = admitted
+            .environment()
+            .population_node(&node(CLOCKS, "calls"))
+            .expect("actual owner population")
+            .clone();
+        let supply = ProtocolSupply {
+            binders: vec![(
+                binder.clone(),
+                ProtocolSuppliedValue {
+                    value: SuppliedValue::Value(Value::Reference(hostile.clone())),
+                    references: vec![ProtocolReferenceOccurrence {
+                        path: Vec::new(),
+                        population,
+                    }],
+                },
+            )],
+            observation: Some(observation),
+        };
+        let failure = evaluator
+            .evaluate_protocol_slot(&slot, &supply, &mut Meter::new(LIMITS))
+            .expect_err("outer Clock universe disagreement is invalid input");
+        let CallFailure::Admission(failure) = failure else {
+            panic!("typed call admission refusal")
+        };
+        let CallAdmissionFailure::Refused(record) = *failure else {
+            panic!("complete owner population is not incomplete")
+        };
+        assert_eq!(
+            record.record,
+            AdmissionRecord {
+                catalog: CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                fields: BTreeMap::new(),
+                path: Vec::new(),
+                kernel: None
+            }
+        );
+        assert_eq!(record.locus, CallAdmissionLocus::Binder(binder.clone()));
+    }
+}
