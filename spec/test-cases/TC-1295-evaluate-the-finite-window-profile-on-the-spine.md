@@ -3,6 +3,8 @@ id: TC-1295
 title: "Evaluate a temporal clause under the finite-window profile on the spine"
 type: TC
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-283
+    type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-501
     type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-330
@@ -14,7 +16,8 @@ relationships:
 
 ## Description
 
-Verify FR-501-AC-1 to AC-26 and FR-330-AC-9 (the finite-window part): the
+Verify FR-501-AC-1 to AC-26, FR-501-AC-31, FR-283-AC-18 and
+FR-330-AC-9 (the finite-window part): the
 spine evaluator returns a definite verdict on a closed complete window, pending
 or indeterminate only for a genuinely unresolved obligation, and never refuses
 the profile.
@@ -25,8 +28,9 @@ incomplete input read as closed, an event at the inclusive deadline dropped, a
 watermark that fails to settle a silent window, a result that depends on
 ingestion order, and a repeated order key of one authority ordered by
 observation identity for an order-sensitive operator, plus a package report
-that changes an atom's authored text or obtains it from a source the caller
-did not supply.
+that changes unique authored atom text, invents a per-use locus for a shared
+node, refuses valid differing spellings, or obtains text from a source the
+caller did not supply.
 
 ## Test Procedure
 
@@ -58,6 +62,25 @@ The command explicitly reads those selected files during intake, then passes
 the admitted sources to execution. This file intake is distinct from the
 direct byte-only adapter's absence of file reads. Source-run command controls
 omit `sources` and use their compilation's admitted sources.
+
+For rows 45–47, use the existing valid source fixture
+`tests/corpus/temporal/timestamped-window.native`: `record Pulse { ok: Boolean; }`,
+clause `StampedPulse`, binder `p: Pulse`, clock `sensor`, with its existing
+timestamped-event profile and `timestamp_unit` `ms` selection. Replace only
+the clause body as stated in the row. Supply samples stamped 0, 2, 5 whose
+`ok` values are true, false, true, `W` 5, `C(5)`, scope `Closed`. The body
+is `always[0,5]` over the stated atom or conjunction. Run each through the
+source and emitted-package routes with equal caller sources, then through
+their command routes with row 43's explicit package source selection.
+Check that the shared-node fixtures actually retain multiple `Expression`
+regions for one checked atom, selected by the explicit `Claim` occurrence
+and declaration containment; do not silently replace that condition with
+two distinct checked atoms. Assert exact regions against the admitted
+source map, independently of the rendering helper. `holds(p.ok)` is the
+literal canonical field-read expectation under FR-931's printer (the same
+field-printing rule exercised by `holds(c.versionNumber <= 2)` in
+`tests/it/request_surface_s1_16.rs`); the expected name SHALL be this literal,
+not a call to the implementation's printer.
 
 | # | Clause (`on origin` unless stated) | Trace and progress | Expected |
 | --- | --- | --- | --- |
@@ -105,6 +128,9 @@ omit `sources` and use their compilation's admitted sources.
 | 42 | PackageMissingSourceRefusal: row 41's direct byte-only package request after caller provisioning | remove the caller-supplied source whose reference matches the atom region; then replace it with a source of another reference; then supply the matching reference with bytes shorter than the span or with a span endpoint inside a UTF-8 scalar | each case preserves FR-283's `SourceNotSupplied` contract: category refusal, `invalid_runtime_input`/`missing-member` naming `sources`, exit 20, with the region's source identity and no clause record; the run refusal stays at stage `call`, as on the source route, without using handoff source bytes, doing file intake during adapter execution or compiling source again |
 | 43 | PackageCommandSupportAtomParity: row 41 through the command's package route | explicitly select the unit's exact original bytes in `request.sources`; use an authored file path different from the compile path and separately change only valid `document` and `formal_revision`; run timestamped and progressed inputs, with and without the ledger | non-empty support pairs equal the source command control and direct adapter; atom text is exactly `holds( p )`; native reference matching and text do not depend on the valid formal metadata or file path; explicitly selected files are admitted once before execution, no source compilation |
 | 44 | PackageCommandMissingSourceRefusal: row 43 | omit `sources`, use `[]`, replace the native reference, shorten the valid admitted UTF-8 bytes, then move the region endpoint inside a UTF-8 scalar; retain different source bytes in the handoff | each gives row 42's stage `call` refusal and no clause record; the command's explicit source intake is permitted, while the handoff supplies no fallback text; an invalid-UTF-8 source file instead retains FR-001's source/S0 intake refusal, not `SourceNotSupplied` |
+| 45 | UniqueRegionExactText: `always[0,5] holds( p.ok )` | one `Expression` candidate for the atom in `StampedPulse`; the stated samples and progress | both routes name the atom exactly `holds( p.ok )` and use that exact expression region as locus; verdict `Completed(false)`, basis `closed-scope`, support exactly {(position 1, that checked atom)} |
+| 46 | SharedIdenticalText: `always[0,5] (holds( p.ok ) and holds( p.ok ))` | one shared atom with both whole caller texts byte-identical; the stated samples and progress | both routes name it exactly `holds( p.ok )` and use `StampedPulse`'s actual claim declaration region as the coarser locus, never either expression region; original false verdict, basis and support positions retained |
+| 47 | SharedDifferingText: `always[0,5] (holds( p.ok ) and holds(p.ok))` | one shared checked atom with differing caller text bytes; the stated samples and progress | both routes name it exactly `holds(p.ok)` by FR-931 and use `StampedPulse`'s actual claim declaration region as the coarser locus; original false verdict, `closed-scope` basis and position-1 support retained; no attribution refusal or additional result row |
 
 ## Expected Results
 
@@ -121,3 +147,13 @@ omit `sources` and use their compilation's admitted sources.
   `Indeterminate`.
 - The independent expected values come from the authored stamps and FSpec's
   vectors, never from the evaluator's own output.
+- Rows 45–47 assert both name and locus and equal source/package results.
+  Reversing candidate enumeration changes neither. Distinct checked atoms
+  remain distinct if their printed labels coincide; no test uses label
+  deduplication or source rank as identity. Apply rows 42 and 44's missing,
+  wrong-reference, short-byte and split-UTF-8 controls to the candidate text
+  regions and actual selected declaration locus; canonical printing gives
+  no caller-source fallback. A refused condition retains its original
+  refusal and category under the same attribution rule. These assertions
+  establish no exact per-use attribution for repeated nodes: that remains
+  QSL-2726's later admitted use-to-occurrence work.

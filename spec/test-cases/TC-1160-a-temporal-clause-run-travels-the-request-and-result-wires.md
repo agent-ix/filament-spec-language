@@ -27,7 +27,7 @@ basis, and that a refused `holds` condition settles as a refusal at its
 position.
 
 Scope: FR-312-AC-7, FR-312-AC-8, FR-267-AC-13, FR-267-AC-14, FR-267-AC-15, FR-267-AC-16, FR-267-AC-18, FR-267-AC-24, FR-266-AC-4,
-FR-327-AC-6, FR-330-AC-7, FR-267-AC-30 and FR-267-AC-31.
+FR-327-AC-6, FR-330-AC-7, FR-267-AC-30, FR-267-AC-31 and FR-267-AC-32.
 
 ## Test Procedure
 
@@ -76,6 +76,21 @@ clause `Fair`, TC-847's undefined and `GuardUndefined` clauses, FR-328-AC-1's
     changed `trace_position`, and omission of a violated row's witness.
     Keep well-shaped but semantically foreign keys and bindings for TC-523's
     replay checks rather than treating structural read as subject validation.
+11. Retain the actual producer's model references in step 9's reports. Assert
+    the explicit native shape at `over_binding`, transition receivers and
+    reference arguments, including references inside existing recursive
+    typed-value containers: exactly `type`, `universe`, `object_type` and
+    `identity`, with `type` `reference`, the actual universe `NodeId`, native
+    `EffectiveId` object type and identity UTF-8 text. The Counter object `a`
+    has `object_type` exactly
+    `{"owner_effective_type":null,"original":{"package":"counter","node":"Counter"}}`
+    and `identity` exactly `"a"`. Read and re-encode the produced documents.
+    Independently apply the missing/extra member, wrong-kind universe,
+    backend-node object type, malformed effective identity, non-text identity
+    and FR-650 wrapper mutations of FR-267-AC-32 at each reference position.
+    Preserve all other model-arm members in each mutation. Use independent
+    literal expectations for these fields, never a call to the producer as
+    the expected-value oracle.
 
 Tag the tests `#[trace("TC-1160", "<criterion>")]` with the criterion each
 step asserts.
@@ -123,3 +138,12 @@ step asserts.
   the offending member. Removing a violated row's counterexample refuses;
   accepting the existing model undefined omission does not make that witness
   optional. Semantic replay controls remain separately asserted by TC-523.
+- Step 11: the actual native reference form strictly reads and round-trips
+  equal typed payloads and canonical bytes; each malformed reference refuses
+  at its offending member. These are native reader assertions. The current
+  native reference is not a backend `TypedValue.reference` conformance
+  fixture and SHALL NOT be submitted to the backend schema and reported as
+  passing it. QSL-2726's remaining package-bound canonical reference conversion
+  and replay restoration cover projection, outcome counterexamples and
+  task-product wires separately. Step 9's model invariants and TC-523's
+  semantic replay authentication remain required.

@@ -25,6 +25,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-643
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-931
+    type: references
 ---
 # FR-283: Monitor a supplied trace offline against temporal clauses
 
@@ -225,12 +227,13 @@ impl MonitorRecord {
 
 `MonitorRecord::atom()` is the name of the atom an `InsufficientData` or
 `Indeterminate` record names, and is `None` for every other record. The
-name is the source text of the whole atom (a `holds` atom such as
-`holds(c.value > 0)`, or a window aggregate), read from `sources`
-(Behavior). An `InsufficientData` record's atom is its aggregate, such as
+name follows the atom rendering rule in Behavior: whole caller source text
+when one region or byte-identical candidate texts identify it, and FR-931's
+canonical printed form when a shared node has differing candidate texts.
+A `holds` atom includes the whole `holds(...)`. An `InsufficientData` record's atom is its aggregate, such as
 `count over past[0, 9] min_count 2 >= 1`. An `Indeterminate` record's atom
 is the `atom` its FR-501 reason (`MissingValuation`,
-`ConflictingValuation`) names, also by source text.
+`ConflictingValuation`) names, under that same rendering rule.
 
 Each record is rendered into an FR-286 `monitor` item by
 `OutcomeItem::from_clause_run`, which adds the `clause` member naming the
@@ -470,11 +473,34 @@ clause reports no verdict for the others.
   its locus as FR-100's `locus` (`file` and `span`) over the element of
   `sources` whose reference equals the region's.
 - When a record names an atom (`InsufficientData`'s `atom`, an
-  `Indeterminate` reason's `atom`), the `monitor` operation shall name it by
-  the source text of the whole atom, read from the element of `sources`
-  whose reference equals the atom's region, and never by a
-  formula node index, and shall expose that name as the record's
-  `MonitorRecord::atom()`.
+  `Indeterminate` reason's `atom`), the `monitor` operation SHALL apply the
+  following same rule on both source and checked-package routes and expose the name as
+  `MonitorRecord::atom()`. Candidate `Expression` regions are those of the
+  formula node within the selected claim declaration's region and source,
+  selected using the explicit `Claim` occurrence. The `monitor` operation SHALL
+  retain all such candidates. Declaration containment does not select
+  a first use.
+  - When exactly one valid candidate region exists, the `monitor` operation SHALL
+    return the exact caller text of the whole atom and that exact
+    region as its locus.
+  - When several candidate regions have byte-identical whole caller texts,
+    the `monitor` operation SHALL return that text and the selected claim
+    declaration's actual region as its coarser locus. An arbitrary candidate
+    is not the selected locus.
+  - When several candidate regions have differing caller texts, the
+    `monitor` operation SHALL return the checked node's canonical printed
+    form under FR-931's existing atom printer, shared with TL lowering,
+    and the selected claim declaration's actual region as its locus.
+    The `monitor` operation SHALL retain the original evaluator outcome or
+    refusal unchanged. This valid case introduces no attribution refusal
+    or new disposition row.
+  Text SHALL come from caller `sources` matched by native source reference.
+  The report layer owns text retrieval and canonical printing; an
+  occurrence-source helper supplies admitted regions and occurrence identity,
+  never text. Source rank, formula-use pairing by order, label-string
+  deduplication and synthetic loci SHALL NOT select an occurrence. Atom
+  identity remains the checked node's identity even when printed labels
+  are equal. The unique-region case SHALL NOT be universally canonicalized.
 - If no element of `sources` has the source of a record's locus or named
   atom as its reference, then the `monitor` operation shall refuse the
   whole request with `MonitorRefusal::SourceNotSupplied` naming the clause
@@ -483,6 +509,18 @@ clause reports no verdict for the others.
   UTF-8 boundaries, then the `monitor` operation shall refuse the whole
   request with `MonitorRefusal::SourceNotSupplied` naming the clause and
   that source's identity, with no clause record.
+  These checks apply to every candidate text region the rule reads and the
+  actual selected locus region, including a coarser declaration locus.
+  Missing references, wrong references, short bytes and split UTF-8
+  endpoints retain this original `SourceNotSupplied` behavior; canonical
+  printing SHALL NOT supply missing caller text. Neither route discovers
+  source in a handoff or recompiles source to render a package report.
+
+Exact per-use loci for repeated shared nodes remain QSL-2726 work requiring
+admitted use-to-occurrence facts in a later dependency update. Declaration
+containment and the existing `Claim` occurrence provide no such edge fact;
+the coarser declaration locus above does not assert per-use attribution.
+
 - When the trace is finite and ADR-014 A-4's finite-prefix rule makes the
   clause false for every extension, `monitor` shall report a violation.
 - When the trace is finite and every extension makes the clause true
@@ -543,6 +581,8 @@ clause reports no verdict for the others.
 | FR-283-AC-16 | Over AC-15's `Timestamped` trace, in a package declaring two clock-bearing finite-window clauses `Window` and `Window2`: a request selecting `Window` then `Window2` whose `temporal_selections` lack `Window2`'s selection refuses with `ClauseRefused` naming `Window2`, `missing_declaration`/`missing-selection` with `member` `temporal_selections`; a request selecting `Window2` then `Window` whose `packages` is empty refuses with `ClauseRefused` naming `Window2`, `invalid_runtime_input`/`invalid-value` with `member` `packages` and `stage` `strict-read`; and for a package checked against a library dependency, a request whose `packages` omits the library's domain package document refuses with `ClauseRefused`, `invalid_runtime_input`/`invalid-value` with `member` `packages` and `stage` `closure`. Each has no record. | Test (TC-765) |
 | FR-283-AC-17 | Over the `Finite` trace `c.value` 0, 1, 2, FR-330-AC-1's `Bounded` (event-position) returns `violation` at position 0 with `truth` `false`, and FR-330-AC-2's `Reaches` (infinite-trace) returns `success` with `truth` `true`, its prefix being a good prefix (FR-328). The same records come back when the request also sets `limits.max_window_values` to 1 and when it passes an empty `temporal_selections`. A `Document` trace of the same snapshots carrying `"closed": true`, and one carrying `"open": true`, are each refused `invalid_runtime_input`/`unknown-member` naming that member, before any position is admitted. | Test (TC-2323) |
 
+| FR-283-AC-18 | On both source and checked-package routes, TC-1295 rows 45–47 give exact whole caller text and exact expression locus for a unique candidate, identical caller text and the actual coarser claim declaration locus for shared byte-identical candidates, and FR-931's literal canonical name `holds(p.ok)` and that declaration locus for shared differing spellings. The original verdict or refusal, category and support positions remain unchanged, with no attribution refusal for valid differing texts. Missing caller sources and invalid selected spans retain `SourceNotSupplied`; no handoff fallback supplies them. | Test |
+
 ## Dependencies
 
 - ADR-029 OP-3: the operation.
@@ -551,6 +591,7 @@ clause reports no verdict for the others.
 - [FR-106](FR-106-admit-snapshots-and-invocations.md): position admission.
 - FR-330: the `Temporal` selection, `TraceInput`, the trace-subject route and `TemporalCounterexample`; FR-327 to FR-329: the trace evaluator; FR-267: the temporal-disposition rows the verdict follows; FR-261: the shared reader.
 - FR-194: window aggregates and `max_window_values`; FR-501 and FR-504: the finite-window and progressed evaluations; FR-522 and FR-515: binding authentication against the package's rows; FR-100: the rendered `locus`.
+- FR-931: canonical atom printing for shared nodes with differing caller text.
 - [FR-275](FR-275-take-a-typed-request-limits-and-cancel-on-every-lifecycle-operation.md): the call shape.
 - ADR-018 (draft): the temporal clauses.
 - FSpec FR-300: the `monitor` operation; FSpec FR-362: the missing fairness
