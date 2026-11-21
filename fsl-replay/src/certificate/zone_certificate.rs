@@ -2085,6 +2085,23 @@ impl<O> Checker<'_, '_, O> {
             .collect()
     }
 
+    /// `zone` split by the conjunction `constraints`: the part where they
+    /// hold and the disjoint convex branches where they fail, in the order
+    /// of [`negation_branches`]. The producer splits the same way.
+    fn split(&self, zone: &Zone, constraints: &[PlaceConstraint]) -> Step<(Zone, Vec<Zone>), O> {
+        let mut inside = zone.clone();
+        self.constrain(&mut inside, constraints)?;
+        let mut outside = Vec::new();
+        for branch in negation_branches(constraints) {
+            let mut piece = zone.clone();
+            self.constrain(&mut piece, &branch)?;
+            if !piece.is_empty() {
+                outside.push(piece);
+            }
+        }
+        Ok((inside, outside))
+    }
+
     /// Split `zone` by which of `candidates` satisfy their own time
     /// invariant on it, each piece with the indices of the candidates that
     /// do; a piece where none does is cut, as the product cuts every zone to
@@ -2103,21 +2120,16 @@ impl<O> Checker<'_, '_, O> {
                 }
                 continue;
             }
-            let mut cover = Zone::universe(self.dim());
-            self.constrain(&mut cover, &invariants)?;
             let mut next = Vec::new();
             for (piece, alive) in pieces {
-                let mut hit = piece.clone();
-                intersect(&mut hit, &cover)?;
+                let (hit, outside) = self.split(&piece, &invariants)?;
                 if !hit.is_empty() {
                     let mut kept = alive.clone();
                     kept.push(index);
                     next.push((hit, kept));
                 }
-                for outside in piece.minus(&cover)? {
-                    if !outside.is_empty() {
-                        next.push((outside, alive.clone()));
-                    }
+                for outside in outside {
+                    next.push((outside, alive.clone()));
                 }
             }
             self.charge(u64::try_from(next.len()).unwrap_or(u64::MAX))?;
@@ -2244,37 +2256,33 @@ impl<O> Checker<'_, '_, O> {
                     }
                 }
                 Some(step) => {
-                    let mut covers = Vec::new();
-                    for part in step.parts() {
-                        let shifted = part
-                            .iter()
-                            .map(|constraint| {
-                                PlaceConstraint::new(
-                                    offset + constraint.place(),
-                                    constraint.op(),
-                                    constraint.bound().clone(),
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        let mut cover = Zone::universe(self.dim());
-                        self.constrain(&mut cover, &shifted)?;
-                        covers.push(cover);
-                    }
+                    let covers: Vec<Vec<PlaceConstraint>> = step
+                        .parts()
+                        .iter()
+                        .map(|part| {
+                            part.iter()
+                                .map(|constraint| {
+                                    PlaceConstraint::new(
+                                        offset + constraint.place(),
+                                        constraint.op(),
+                                        constraint.bound().clone(),
+                                    )
+                                })
+                                .collect()
+                        })
+                        .collect();
                     for (piece, mask) in patterns {
                         let mut outside = vec![piece];
                         for cover in &covers {
                             let mut rest = Vec::new();
                             for residual in outside {
-                                let mut hit = residual.clone();
-                                intersect(&mut hit, cover)?;
+                                let (hit, others) = self.split(&residual, cover)?;
                                 if !hit.is_empty() {
                                     let mut held = mask.clone();
                                     held.push(true);
                                     next.push((hit, held));
                                 }
-                                if !residual.is_empty() {
-                                    rest.extend(residual.minus(cover)?);
-                                }
+                                rest.extend(others);
                             }
                             outside = rest;
                         }

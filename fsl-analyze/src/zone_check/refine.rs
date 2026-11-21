@@ -72,8 +72,8 @@ use super::certificate::Proof;
 use super::concretise::{concretise, Stage, Target};
 use super::divergence::{Escape, EscapeWitness};
 use super::search::{
-    intersect, not_simulated, uncovered, widen, Arrival, Halt, Inserted, Judged, Run, Searched,
-    ZoneCheckLimit, ZoneCheckLimits, ZoneCheckRefusal, ZoneStats, ZoneStop, ZoneUndecided,
+    not_simulated, widen, Arrival, Halt, Inserted, Judged, Run, Searched, ZoneCheckLimit,
+    ZoneCheckLimits, ZoneCheckRefusal, ZoneStats, ZoneStop, ZoneUndecided,
 };
 use super::{Bound, Dbm};
 
@@ -1056,6 +1056,27 @@ impl Product<'_, '_> {
         Ok(())
     }
 
+    /// `zone` split by the conjunction `constraints`: the part where they
+    /// hold and the disjoint convex branches where they fail, in the order
+    /// of [`negation_branches`]. The checker splits the same way.
+    fn split(
+        run: &Run<'_, '_, '_>,
+        zone: &Dbm,
+        constraints: &[PlaceConstraint],
+    ) -> Result<(Dbm, Vec<Dbm>), Halt> {
+        let mut inside = zone.clone();
+        run.constrain(&mut inside, constraints)?;
+        let mut outside = Vec::new();
+        for branch in negation_branches(constraints) {
+            let mut piece = zone.clone();
+            run.constrain(&mut piece, &branch)?;
+            if !piece.is_empty() {
+                outside.push(piece);
+            }
+        }
+        Ok((inside, outside))
+    }
+
     /// Split `zone` by which of `candidates` satisfy their own time
     /// invariant on it, each piece with the indices of the candidates that
     /// do; a piece where none does is cut.
@@ -1074,18 +1095,15 @@ impl Product<'_, '_> {
                 }
                 continue;
             }
-            let mut cover = Dbm::universe(run.dim());
-            run.constrain(&mut cover, &invariants)?;
             let mut next = Vec::new();
             for (piece, alive) in pieces {
-                let mut hit = piece.clone();
-                intersect(&mut hit, &cover)?;
+                let (hit, outside) = Self::split(run, &piece, &invariants)?;
                 if !hit.is_empty() {
                     let mut kept = alive.clone();
                     kept.push(index);
                     next.push((hit, kept));
                 }
-                for outside in uncovered(&piece, std::slice::from_ref(&cover))? {
+                for outside in outside {
                     next.push((outside, alive.clone()));
                 }
             }
@@ -1209,25 +1227,23 @@ impl Product<'_, '_> {
                     }
                 }
                 Some(step) => {
-                    let mut covers = Vec::new();
-                    for part in step.parts() {
-                        let mut cover = Dbm::universe(run.dim());
-                        run.constrain(&mut cover, &auxiliary_constraints(offset, part))?;
-                        covers.push(cover);
-                    }
+                    let covers: Vec<Vec<PlaceConstraint>> = step
+                        .parts()
+                        .iter()
+                        .map(|part| auxiliary_constraints(offset, part))
+                        .collect();
                     for (piece, mask) in patterns {
                         let mut outside = vec![piece];
                         for cover in &covers {
                             let mut rest = Vec::new();
                             for residual in outside {
-                                let mut hit = residual.clone();
-                                intersect(&mut hit, cover)?;
+                                let (hit, others) = Self::split(run, &residual, cover)?;
                                 if !hit.is_empty() {
                                     let mut held = mask.clone();
                                     held.push(true);
                                     next.push((hit, held));
                                 }
-                                rest.extend(uncovered(&residual, std::slice::from_ref(cover))?);
+                                rest.extend(others);
                             }
                             outside = rest;
                         }
