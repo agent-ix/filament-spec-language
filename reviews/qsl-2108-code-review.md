@@ -85,6 +85,23 @@ dispositions:
   - {"fnd":"FND-003","outcome":"fixed","after_excerpt":"if claims.is_empty() && entries.is_empty() {\n        entries.push(failed_vector(\n            vector,\n            Settlement::NotCompared,\n            json!({\"reason\":\"no-resolved-verification-item\"}),\n        ));\n    }"}
 ```
 
+### Round 2
+
+Reviewed frozen source 940db8e4b877c070c60e5ba1010a8ffeead2d07e. All original findings remain fixed. The first Draco run returned 4 passed and 12 failed because pure Boolean helper functions produced no automatic verification items, so those fixtures never reached the comparisons. The approved correction selects P/R Claim items through the public FSL ItemSelection type, the actual resolver and FR-075; no claim, candidate, checked package or backend result is fabricated.
+
+The new public run_with_selected_items API maps corpus vector IDs to explicit selections, rejects selections that name a backend and rejects unknown vector IDs before compilation/backend execution. Existing corpus/schema/settings preflight is retained. Vectors without entries in that map use the unchanged automatic discovery path. The CLI still calls that automatic path; it does not discover every Boolean helper. The mixed-corpus regression now distinguishes a real automatic x+1 obligation from an unselected Boolean helper and a declaration-only unit. The native decoder helper resolves the same explicit Claim selection its captured real request names. Core item/category decoding, subject/capability/index validation, raw-record retention, value replay and unresolved-vector accounting are unchanged by this round. No new bounded-scope defect was found.
+
+```yaml
+dispositions:
+  - {"fnd":"FND-001","outcome":"fixed","after_excerpt":"let items = BTreeMap::from_iter([\"P\", \"R\"].map(|id| {\n                (\n                    id.to_owned(),\n                    vec![fsl_analyze::analyze::document::ItemSelection {\n                        claim: Some(\"Claim\".to_owned()),\n                        kind: Some(\"value-validity\".to_owned()),\n                        ..Default::default()\n                    }],\n                )\n            }));\n            gate::run_with_selected_items(&args, provider, &items)"}
+  - {"fnd":"FND-002","outcome":"fixed","after_excerpt":"let items = BTreeMap::from_iter([\"P\", \"R\"].map(|id| {\n                (\n                    id.to_owned(),\n                    vec![fsl_analyze::analyze::document::ItemSelection {\n                        claim: Some(\"Claim\".to_owned()),\n                        kind: Some(\"value-validity\".to_owned()),\n                        ..Default::default()\n                    }],\n                )\n            }));\n            gate::run_with_selected_items(&args, provider, &items)"}
+  - {"fnd":"FND-003","outcome":"fixed","after_excerpt":"let items = BTreeMap::from_iter([\"P\", \"R\"].map(|id| {\n                (\n                    id.to_owned(),\n                    vec![fsl_analyze::analyze::document::ItemSelection {\n                        claim: Some(\"Claim\".to_owned()),\n                        kind: Some(\"value-validity\".to_owned()),\n                        ..Default::default()\n                    }],\n                )\n            }));\n            gate::run_with_selected_items(&args, provider, &items)"}
+```
+
 ## Disposition verdict
 
 **CONDITIONAL** — all original findings are fixed by inspection; no new defect was found in the bounded fix diff. Parent-owned focused runtime checks remain required before merge. The author reports focused lib/bin/test compilation passed. Reviewer ran no Cargo. The production native refuted and unsupported fixtures are byte-equal to the real driver outputs retained in this scratchpad. The decoder regression invokes production read_response and replay, rejects eight changed identity fields, and covers real-shaped agreement/conflict/non-comparison. Mixed-corpus and already-settled resolution regressions cover retained entries.
+
+## Final disposition verdict — round 2
+
+**CONDITIONAL** — original code and gap findings remain fixed at 940db8e4b877c070c60e5ba1010a8ffeead2d07e. Focused lib/bin/test compilation is reported passed by the author; the same 16 runtime checks are queued on Draco and their final counts are pending. Reviewer ran no Cargo and makes no runtime-pass claim. There is no request for a broader audit, aggregate gate or additional fixture scope.
