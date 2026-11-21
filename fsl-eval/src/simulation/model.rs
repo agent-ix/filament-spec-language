@@ -2331,7 +2331,6 @@ fn check_model_bounds_with_clock_selectors(
     position_limit: u64,
     selectors: Option<&domain::ClockSelectorMaxima>,
 ) -> Result<(), NotSimulated> {
-    use fsl_foundation::bound::DomainKey;
     use fsl_semantics::family::ClaimExtent;
     let roots = system.rooted_domains();
     let borrowed: Vec<_> = roots
@@ -2344,17 +2343,37 @@ fn check_model_bounds_with_clock_selectors(
         ClaimExtent::Bounded => None,
         ClaimExtent::Unbounded(domains) => Some(domains),
     };
+    let clock_references = clock_reference_domains(system, &roots, selectors);
+    if domains.is_none() && clock_references.is_empty() {
+        Ok(())
+    } else {
+        Err(NotSimulated::RequiresBound(
+            crate::simulation::RequiresBound {
+                domains,
+                capacities: Vec::new(),
+                clock_references,
+            },
+        ))
+    }
+}
+
+/// Clock selector requirements under already classified, actual subject roots.
+/// A caller's one generic classification owns its resource ceiling and errors.
+pub(super) fn clock_reference_domains(
+    system: &ModelSystem<'_>,
+    roots: &[(NodeKey, Vec<u32>, ValueType)],
+    selectors: Option<&domain::ClockSelectorMaxima>,
+) -> Vec<crate::simulation::ClockReferenceDomain> {
+    use fsl_foundation::bound::DomainKey;
     // Use original member types: finite composite roots may have been reduced
     // to Boolean by the ordinary classifier, while still carrying references.
     let generated = system.generation_domains();
     let mut clock_references = Vec::new();
-    for (node, base, _) in &roots {
-        let Some((_, _, value_type)) = generated
+    for (node, base, classified_type) in roots {
+        let value_type = generated
             .iter()
             .find(|(actual, path, _)| actual == node && path == base)
-        else {
-            continue;
-        };
+            .map_or(classified_type, |(_, _, original)| original);
         for path in domain::clock_reference_paths(value_type, system.types) {
             let mut member_path = base.clone();
             member_path.extend(path);
@@ -2387,17 +2406,9 @@ fn check_model_bounds_with_clock_selectors(
             }
         }
     }
-    if domains.is_none() && clock_references.is_empty() {
-        Ok(())
-    } else {
-        Err(NotSimulated::RequiresBound(
-            crate::simulation::RequiresBound {
-                domains,
-                capacities: Vec::new(),
-                clock_references,
-            },
-        ))
-    }
+    clock_references.sort();
+    clock_references.dedup();
+    clock_references
 }
 
 /// FR-101's `explore_request` over `system`, its [`ModelSystem::domains`] and

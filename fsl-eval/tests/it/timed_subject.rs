@@ -899,7 +899,19 @@ fn a_timed_post_state_key_changes_with_its_clock_value_alone() {
 }
 
 fn clock_reference_world(
+    document: Json,
+    unit: &str,
+) -> (
+    World,
+    filament_exact::ObjectReference,
+    filament_exact::ObjectReference,
+) {
+    clock_reference_world_with_profiles(document, "", unit)
+}
+
+fn clock_reference_world_with_profiles(
     mut document: Json,
+    profiles: &str,
     unit: &str,
 ) -> (
     World,
@@ -926,7 +938,7 @@ fn clock_reference_world(
         .push(operation("point", &["r"]));
     let mut world = world_holding(
         serde_json::to_vec(&document).expect("JSON"),
-        "",
+        profiles,
         unit,
         json!({}),
     );
@@ -971,13 +983,7 @@ fn clock_reference_world(
     (world, x, y)
 }
 
-/// A ClockRef member needs a selector bound even though its own type is
-/// scalar. A timed profile's actual bound supplies that finite data domain;
-/// two subjects over the same model retain their own selector bounds.
-#[trace("TC-3084", "FR-1040-AC-8")]
-#[test]
-fn clock_reference_domains_require_a_selector_bound() {
-    use filament_exact::Value;
+fn unbounded_clock_reference_document() -> Json {
     let mut document: Json =
         serde_json::from_slice(&clocked_document(true, &["y", "q"])).expect("JSON");
     let fields = document["types"][1]["fields"]
@@ -993,6 +999,17 @@ fn clock_reference_domains_require_a_selector_bound() {
         &["q"],
     ))
     .expect("JSON");
+    document
+}
+
+/// A ClockRef member needs a selector bound even though its own type is
+/// scalar. A timed profile's actual bound supplies that finite data domain;
+/// two subjects over the same model retain their own selector bounds.
+#[trace("TC-3084", "FR-1040-AC-8")]
+#[test]
+fn clock_reference_domains_require_a_selector_bound() {
+    use filament_exact::Value;
+    let document = unbounded_clock_reference_document();
     let (world, x, y) = clock_reference_world(document, &only(&["point"], ""));
     let held = system(&world);
     let Err(NotSimulated::RequiresBound(required)) = check_model_bounds(&held, BOUND_POSITIONS)
@@ -1079,6 +1096,90 @@ fn clock_reference_domains_require_a_selector_bound() {
         check_model_bounds(&held, BOUND_POSITIONS),
         Err(NotSimulated::RequiresBound(_))
     ));
+}
+
+/// Protocol preflight retains every ordinary binder domain and the data
+/// member's actual clock selector site in one typed requires-bound outcome.
+#[trace("TC-3084", "FR-1040-AC-8", "FR-215-AC-4")]
+#[test]
+fn protocol_preflight_retains_generic_domains_and_clock_selector_sites() {
+    use fsl_eval::simulation::protocol::{check_protocol_bounds, Capacities};
+    use fsl_foundation::bound::{DomainKey, DomainKind};
+    let (world, _, _) = clock_reference_world_with_profiles(
+        unbounded_clock_reference_document(),
+        "profile p = \"filament.protocol.finite-global/v1\";\n",
+        &only(
+            &["point"],
+            r#"
+record Count { a: Integer; b: Integer; }
+protocol Gate using p over (input: M::Call) on origin {
+  role R on M::Call;
+  run sequence Main { event Read by R as (count: Count) { true }; }
+  finish End as (outcome: Boolean) { true };
+}
+"#,
+        ),
+    );
+    let model = system(&world);
+    let graph = world.package.graph();
+    let protocol = graph.protocol("Gate").expect("checked protocol");
+    let capacities = Capacities::admit(protocol, &[]).expect("no capacity names");
+    let Err(NotSimulated::RequiresBound(required)) = check_protocol_bounds(
+        &model,
+        protocol,
+        &capacities,
+        &world.package,
+        BOUND_POSITIONS,
+    ) else {
+        panic!("ordinary and clock domains both require bounds");
+    };
+    let binder = graph
+        .protocol_node_keys("Gate")
+        .and_then(|keys| keys.binders.iter().find(|binder| binder.name == "count"))
+        .expect("actual checked binder");
+    let actual: Vec<_> = required
+        .domains
+        .as_ref()
+        .expect("ordinary domains")
+        .iter()
+        .map(|(key, kind)| (key.clone(), kind))
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            (
+                DomainKey::Node {
+                    node: binder.node.clone(),
+                    path: vec![0]
+                },
+                DomainKind::Integer
+            ),
+            (
+                DomainKey::Node {
+                    node: binder.node.clone(),
+                    path: vec![1]
+                },
+                DomainKind::Integer
+            ),
+        ]
+    );
+    let Err(NotSimulated::RequiresBound(model_only)) = check_model_bounds(&model, BOUND_POSITIONS)
+    else {
+        panic!("the model alone names its clock selector site");
+    };
+    assert!(model_only.domains.is_none());
+    assert_eq!(required.clock_references, model_only.clock_references);
+    assert_eq!(required.clock_references.len(), 1);
+    assert!(required.capacities.is_empty());
+    assert!(
+        matches!(
+            check_protocol_bounds(&model, protocol, &capacities, &world.package, 0),
+            Err(NotSimulated::Extent(
+                fsl_semantics::family::ClassifyFailure::Limit(_)
+            )),
+        ),
+        "the generic classifier's resource failure stays immediate"
+    );
 }
 
 /// Point writes only the data reference, keeps both clock valuations, and
