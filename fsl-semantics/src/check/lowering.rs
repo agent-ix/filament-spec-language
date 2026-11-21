@@ -7745,7 +7745,7 @@ fn is_map(content: &NodeContent) -> bool {
 /// give different computations one path and source-order ordinals. Value,
 /// hybrid and bounded-domain nodes retain their compact first-occurrence
 /// spelling; this computation-key rule does not revise their encodings. A
-/// decimal range retains repeated text, so equal bounds repeat.
+/// decimal or integer range retains repeated text, so equal bounds repeat.
 fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     if content.node_tag == NodeTag::State {
@@ -7871,11 +7871,12 @@ fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     }
 }
 
-/// Whether `content` is a `bounded_domain`/`decimal_range` node, whose path
-/// repeats a text operand (FSpec's `dec_cents` vector).
+/// Whether `content` is an integer or decimal range, whose path retains both
+/// endpoint texts even when they are equal (FSpec FR-322).
 #[ix_trace_rs::string_edge]
-fn is_decimal_range(content: &NodeContent) -> bool {
-    content.node_tag == NodeTag::BoundedDomain && content.semantic_form == "decimal_range"
+fn retains_bound_text(content: &NodeContent) -> bool {
+    content.node_tag == NodeTag::BoundedDomain
+        && matches!(content.semantic_form, "integer_range" | "decimal_range")
 }
 
 /// Whether `content` is a `carried_quantity` scalar type (the FR-322 wire
@@ -8052,10 +8053,9 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     struct Walk {
         seen: HashSet<PathSegment>,
         operands: Vec<PathSegment>,
-        /// Whether a repeated text operand is kept: a decimal range's path
-        /// repeats a bound's text where two bounds are equal (`scale_min` and
-        /// `scale_max` of FSpec's `dec_cents`), so only a repeated node is
-        /// dropped.
+        /// Whether a repeated text operand is kept: integer and decimal ranges
+        /// retain each named bound even when its text equals another bound's,
+        /// so only a repeated node is dropped.
         keep_text_repeats: bool,
         /// Whether every operand position is kept (a computation node).
         keep_repeats: bool,
@@ -8147,7 +8147,7 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     let mut walk = Walk {
         seen: HashSet::new(),
         operands: Vec::new(),
-        keep_text_repeats: is_decimal_range(content),
+        keep_text_repeats: retains_bound_text(content),
         keep_repeats: matches!(content.node_tag, NodeTag::Expression | NodeTag::Temporal),
     };
     match &content.body {
