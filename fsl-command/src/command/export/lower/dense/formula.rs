@@ -128,6 +128,14 @@ fn state_only(tf: &Tf) -> bool {
     }
 }
 
+fn has_window(tf: &Tf) -> bool {
+    match tf {
+        Tf::Timed(_) => true,
+        Tf::And(left, right) => has_window(left) || has_window(right),
+        _ => false,
+    }
+}
+
 fn direct(
     clause: &ClauseLow,
     tf: &Tf,
@@ -154,6 +162,7 @@ fn direct(
 
 struct Monitor {
     name: String,
+    domain: &'static str,
     init: String,
     next: String,
     node: usize,
@@ -169,16 +178,24 @@ struct Clause<'a, ShowState> {
 }
 
 impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
-    fn part(&mut self, tf: &Tf) -> Lower<()> {
+    fn part(&mut self, tf: &Tf, repeated: bool) -> Lower<()> {
         match tf {
             Tf::And(left, right) => {
-                self.part(left)?;
-                self.part(right)?;
+                self.part(left, repeated)?;
+                self.part(right, repeated)?;
             }
+            Tf::Always(iv, inner) if !iv.is_some() && has_window(inner) => {
+                self.part(inner, true)?
+            }
+            Tf::Timed(window) if repeated => self.repeated_monitor(window)?,
             Tf::Timed(window) => self.monitor(window)?,
             _ => {
                 let text = direct(self.clause, tf, &self.show_state)?;
-                self.statements.push(text);
+                self.statements.push(if repeated {
+                    format!("[](tick \\/ {text})")
+                } else {
+                    text
+                });
             }
         }
         Ok(())
@@ -213,6 +230,7 @@ impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
         };
         self.monitors.push(Monitor {
             name: name.clone(),
+            domain: "{\"run\", \"acc\", \"rej\"}",
             node,
             init: at("0", &current),
             next: format!(
@@ -234,6 +252,69 @@ impl<ShowState: Fn(&Tf, bool) -> Lower<String>> Clause<'_, ShowState> {
         self.statements.push(statement);
         Ok(())
     }
+
+    fn repeated_monitor(&mut self, window: &Window) -> Lower<()> {
+        let idx = self.ordinal;
+        self.ordinal += 1;
+        let node = window.at;
+        let key = &self.clause.binder;
+        let current = (self.show_state)(&window.predicate, false)?;
+        let next = (self.show_state)(&window.predicate, true)?;
+        let base = mangle("m_", &self.clause.name);
+        let starts = format!("{base}_s{idx}");
+        let reject = format!("{base}_r{idx}");
+        let accept = mangle("accept_", &self.clause.name);
+        let accept = if idx == 0 {
+            accept
+        } else {
+            format!("{accept}_{idx}")
+        };
+        let origin = window.inside("0");
+        let duration = "now' - s";
+        let inside = window.inside(duration);
+        let expired = window.expired(duration);
+        let open = format!("{starts}[{key}] \\cup {{now'}}");
+        let (initial, retain, initial_reject, fail) = match window.operator {
+            Operator::Always => (
+                format!("IF {} THEN {{}} ELSE {{0}}", window.expired("0")),
+                format!("~({expired})"),
+                format!("{origin} /\\ ~({current})"),
+                format!("\\E s \\in ({open}) : {inside} /\\ ~({next})"),
+            ),
+            Operator::Eventually => (
+                format!("IF {origin} /\\ {current} THEN {{}} ELSE {{0}}"),
+                format!("~({inside} /\\ {next})"),
+                window.expired("0"),
+                format!("\\E s \\in ({open}) : {expired}"),
+            ),
+        };
+        self.monitors.push(Monitor {
+            name: starts.clone(),
+            domain: "SUBSET Real",
+            node,
+            init: initial,
+            next: format!("{{s \\in ({open}) : {retain}}}"),
+        });
+        self.monitors.push(Monitor {
+            name: reject.clone(),
+            domain: "BOOLEAN",
+            node,
+            init: initial_reject,
+            next: format!("{reject}[{key}] \\/ ({fail})"),
+        });
+        self.accepts
+            .push((accept.clone(), format!("~{reject}[{key}]"), node));
+        self.statements.push(format!("[]{accept}({key})"));
+        // Time divergence ensures every fixed start has a last occurrence.
+        // For an upper-unbounded eventuality, each such start still needs
+        // a witness that removes it from the open set.
+        if window.operator == Operator::Eventually && window.upper.is_none() {
+            self.statements.push(format!(
+                "(\\A s \\in Real : []<>(s \\notin {starts}[{key}]))"
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub(in crate::command::export::lower) fn tla_clause(
@@ -251,7 +332,7 @@ pub(in crate::command::export::lower) fn tla_clause(
         accepts: Vec::new(),
         ordinal: 0,
     };
-    lowering.part(&clause.tf)?;
+    lowering.part(&clause.tf, false)?;
     let mut variables = Vec::new();
     let obligation = Some(clause.name.as_str());
     let key = &clause.binder;
@@ -272,9 +353,7 @@ pub(in crate::command::export::lower) fn tla_clause(
             let name = mon.name;
             init.push(format!("{name} = [{key} \\in {ids} |-> {}]", mon.init));
             next.push(format!("{name}' = [{key} \\in {ids} |-> {}]", mon.next));
-            types.push(format!(
-                "{name} \\in [{ids} -> {{\"run\", \"acc\", \"rej\"}}]"
-            ));
+            types.push(format!("{name} \\in [{ids} -> {}]", mon.domain));
             variables.push((name, mon.node));
         }
         let names = variables

@@ -187,8 +187,24 @@ struct Scope {
     past: bool,
     /// Reached from the root through conjunctions only.
     conj: bool,
-    /// Whether timed intervals can be read in this model-time formula.
-    timed_window: bool,
+    window: WindowScope,
+}
+
+#[derive(Clone, Copy)]
+enum WindowScope {
+    Unsupported,
+    Origin,
+    Always,
+}
+
+impl WindowScope {
+    fn through(self, operation: FormulaOperation, interval: Iv) -> Self {
+        match (self, operation, interval.is_some()) {
+            (scope, FormulaOperation::And, false) => scope,
+            (Self::Origin, FormulaOperation::Always, false) => Self::Always,
+            _ => Self::Unsupported,
+        }
+    }
 }
 
 fn build(
@@ -212,11 +228,11 @@ fn build(
     let here = at_node(graph, node.node)?;
     let direction = kind.direction();
     if let Some(CheckedOperationInterval::Timed { .. }) = &node.interval {
-        if !scope.timed_window || !scope.conj {
+        if matches!(scope.window, WindowScope::Unsupported) {
             return defer_at(
                 here,
                 &graph.construct(here),
-                "a timed window outside the origin conjunction",
+                "a timed window outside the origin or its unbounded always",
             );
         }
         return super::dense::Window::read(graph, kind, node, here, |operand| {
@@ -229,7 +245,7 @@ fn build(
                     future: true,
                     past: false,
                     conj: false,
-                    timed_window: false,
+                    window: WindowScope::Unsupported,
                 },
                 refuse_at,
             )
@@ -255,7 +271,7 @@ fn build(
         future: scope.future || direction == Some(OperatorDirection::Future),
         past: scope.past || direction == Some(OperatorDirection::Past),
         conj: scope.conj && kind == FormulaOperation::And,
-        timed_window: scope.timed_window,
+        window: scope.window.through(kind, iv),
     };
     let mut operands = Vec::new();
     for &operand in &node.operands {
@@ -394,7 +410,11 @@ pub(super) fn read(
         future: false,
         past: false,
         conj: true,
-        timed_window: timed_root.is_some(),
+        window: if timed_root.is_some() {
+            WindowScope::Origin
+        } else {
+            WindowScope::Unsupported
+        },
     };
     let tf = build(
         graph,
