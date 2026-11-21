@@ -3054,7 +3054,7 @@ fn positive_source_policies_preserve_witnesses_and_canonical_native_order() {
             .iter()
             .find(|field| field.field().name() == "number")
             .unwrap();
-        let ValueType::Int(bounds) = field.field().value_type() else {
+        let filament_exact::ValueType::Int(bounds) = field.field().value_type() else {
             panic!("actual admitted native interval");
         };
         assert_eq!(

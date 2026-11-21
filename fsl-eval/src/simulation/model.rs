@@ -2464,6 +2464,7 @@ impl<'a> ModelSystem<'a> {
             meter: std::cell::RefCell::new(meter),
             stopped: std::cell::RefCell::new(None),
         };
+        budget.work(0)?;
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
         };
@@ -2519,6 +2520,7 @@ impl<'a> ModelSystem<'a> {
         let copy = |text: &str| -> Result<String, PolicyStateError> {
             let mut bytes = Vec::new();
             budget.copy(&mut bytes, text.as_bytes())?;
+            budget.work(bytes.len())?;
             String::from_utf8(bytes).map_err(|_| PolicyStateError::Invalid)
         };
         let mut instances = Vec::new();

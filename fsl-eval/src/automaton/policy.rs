@@ -336,6 +336,21 @@ impl StepPolicy {
             kind: Kind::Bounded { kind, upper },
         })
     }
+    fn owns(&self, state: PolicyState) -> bool {
+        match (self.kind, state) {
+            (Kind::Safety, PolicyState::Safety(_)) => true,
+            (
+                Kind::Bounded { .. },
+                PolicyState::Bounded(BoundedState::Accept | BoundedState::Reject),
+            ) => true,
+            (
+                Kind::Bounded { upper, .. },
+                PolicyState::Bounded(BoundedState::Open { remaining }),
+            ) => remaining <= upper,
+            _ => false,
+        }
+    }
+
     /// The actual checked holds atom read by this monitor.
     pub const fn atom(&self) -> FormulaNodeId {
         self.atom
@@ -350,12 +365,18 @@ impl StepPolicy {
         )
     }
     /// Advance the shared safety or bounded control state by one real position.
+    ///
+    /// # Errors
+    /// An incompatible state or the original accounting/cancellation stop.
     pub fn advance(
         &self,
         before: Option<PolicyState>,
         holds: bool,
         meter: &mut Meter,
     ) -> Result<PolicyState, PolicyStateError> {
+        if before.is_some_and(|state| !self.owns(state)) {
+            return Err(PolicyStateError::Invalid);
+        }
         Budget {
             meter: RefCell::new(meter),
             stopped: RefCell::new(None),
@@ -392,12 +413,18 @@ impl StepPolicy {
         )
     }
     /// Decide the actual final letter repeated forever, without false extension.
+    ///
+    /// # Errors
+    /// An incompatible state or the original accounting/cancellation stop.
     pub fn terminal(
         &self,
         value: PolicyState,
         final_holds: bool,
         meter: &mut Meter,
     ) -> Result<bool, PolicyStateError> {
+        if !self.owns(value) {
+            return Err(PolicyStateError::Invalid);
+        }
         Budget {
             meter: RefCell::new(meter),
             stopped: RefCell::new(None),
@@ -419,6 +446,9 @@ impl StepPolicy {
         })
     }
     /// Copy retained policy vectors on the original representation ledger.
+    ///
+    /// # Errors
+    /// The original accounting, cancellation or allocation stop.
     pub fn copy_states(
         monitors: &[Vec<u8>],
         meter: &mut Meter,
@@ -439,13 +469,17 @@ impl StepPolicy {
     }
 
     /// Encode the ordered vector of full canonical per-instance keys.
+    ///
+    /// # Errors
+    /// Context/state cardinality or shape mismatch, or the original accounting,
+    /// cancellation, identity-byte or allocation/encoding refusal.
     pub fn encode(
         &self,
         contexts: &[PolicyContext<'_>],
         states: &[PolicyState],
         meter: &mut Meter,
     ) -> Result<Vec<u8>, PolicyStateError> {
-        if contexts.len() != states.len() {
+        if contexts.len() != states.len() || states.iter().any(|state| !self.owns(*state)) {
             return Err(PolicyStateError::Invalid);
         }
         let budget = Budget {
@@ -472,6 +506,10 @@ impl StepPolicy {
         Ok(output)
     }
     /// Strictly admit vector framing and every context/state; no local IDs exist.
+    ///
+    /// # Errors
+    /// Malformed, unreachable, noncanonical or foreign state, or the original
+    /// accounting, cancellation, identity-byte or allocation/encoding refusal.
     pub fn admit(
         &self,
         contexts: &[PolicyContext<'_>],
