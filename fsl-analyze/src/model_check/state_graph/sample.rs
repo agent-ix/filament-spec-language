@@ -18,7 +18,9 @@ use std::collections::BTreeMap;
 use filament_exact::{
     length_amount, Cancel, Charge, ChargePoint, Meter, ObjectReference, ScalarLimits,
 };
-use fsl_eval::simulation::model::{sample_model_walk, ModelSystem, PredicateReading, WalkMemo};
+use fsl_eval::simulation::model::{
+    sample_model_walk_keyed, ModelSystem, ModelWalkSettings, PredicateReading, WalkMemo,
+};
 use fsl_eval::simulation::{
     NotSimulated, SampleProvenance, StateKey, StopReason, TransitionSystem,
 };
@@ -276,16 +278,19 @@ impl Phase<'_, '_> {
         let mut found: Vec<Option<Found>> = vec![None; targets.len()];
         let mut halt: Option<Result<Halt, ModelCheckRefusal>> = None;
         let mut position = 0;
-        let walked = sample_model_walk(
+        let walked = sample_model_walk_keyed(
             self.system,
             initial,
-            BOUND_POSITIONS,
-            sampler,
-            self.seed,
-            trace,
-            step_ceiling(self.limits, self.horizon),
-            Some(&self.walks),
-            |state| {
+            ModelWalkSettings {
+                position_limit: BOUND_POSITIONS,
+                sampler,
+                seed: self.seed,
+                trace,
+                max_steps: step_ceiling(self.limits, self.horizon),
+                cancel: Some(self.cancel),
+            },
+            &self.walks,
+            |state, key| {
                 let here = position;
                 position += 1;
                 if let Some(cancel) = cancelled(self.cancel) {
@@ -295,17 +300,10 @@ impl Phase<'_, '_> {
                 let open: Vec<usize> = (0..targets.len())
                     .filter(|index| found[*index].is_none())
                     .collect();
-                let key = match self.system.state_key(state) {
-                    Ok((bytes, _)) => StateKey::from_canonical_bytes(bytes),
-                    Err(refusal) => {
-                        halt = Some(Err(ModelCheckRefusal::Encoding(refusal)));
-                        return true;
-                    }
-                };
                 let mut known = Vec::with_capacity(open.len());
                 let mut missing = Vec::new();
                 for index in &open {
-                    let reading = match truths.get(&key, target_indices[*index]) {
+                    let reading = match truths.get(key, target_indices[*index]) {
                         Ok(reading) => reading,
                         Err(incomplete) => {
                             halt = Some(Ok(cancelled(self.cancel).unwrap_or_else(|| {
@@ -353,7 +351,7 @@ impl Phase<'_, '_> {
                             halt = Some(Err(fault("one-reading-per-target")));
                             return true;
                         };
-                        truths.retain(&key, target_indices[index], &reading);
+                        truths.retain(key, target_indices[index], &reading);
                         reading
                     };
                     found[index] = match reading {

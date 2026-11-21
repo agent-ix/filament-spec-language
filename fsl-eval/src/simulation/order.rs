@@ -40,6 +40,7 @@ pub(crate) fn sorted_initial<S: TransitionSystem>(
 
 /// One successor, keyed and with its transition identity's
 /// canonical bytes, ready to sort.
+#[derive(Clone)]
 pub(crate) struct OrderedSuccessor<T, S> {
     pub(crate) transition: T,
     pub(crate) state: S,
@@ -52,6 +53,7 @@ type PendingSuccessor<T, S> = (Vec<u8>, OrderedSuccessor<T, S>);
 
 /// One state's expansion with its successors in canonical order, or the
 /// system's stop.
+#[derive(Clone)]
 pub(crate) enum Expanded<T, S, F> {
     /// The state expanded.
     Successors {

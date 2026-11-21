@@ -12,7 +12,7 @@ use fsl_foundation::selection::DefinitionRef;
 use crate::simulation::choice::{choose, ChoicePoint, Weights};
 use crate::simulation::expansion::StateFindings;
 use crate::simulation::explore::TransitionSystem;
-use crate::simulation::key::EncodingRefusal;
+use crate::simulation::key::{EncodingRefusal, StateKey};
 use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, Root};
 use crate::simulation::order::{expand, sorted_initial, Expanded};
 use crate::simulation::trace::{SampleProvenance, Step, StopReason, Trace};
@@ -121,6 +121,47 @@ pub(crate) fn sample<S: TransitionSystem>(
     identity: IdentityLimits,
     mut end: impl FnMut(&S::State) -> bool,
 ) -> SampleResult<S::TransitionId, S::Finding> {
+    sample_using(
+        system,
+        SamplePlan {
+            sampler,
+            seed,
+            trace_index,
+            max_steps,
+            identity,
+        },
+        |state, _| end(state),
+        |state, _| expand(system, state, identity),
+    )
+}
+
+struct SamplePlan {
+    sampler: DefinitionRef,
+    seed: u64,
+    trace_index: u64,
+    max_steps: usize,
+    identity: IdentityLimits,
+}
+
+fn sample_using<S: TransitionSystem>(
+    system: &S,
+    plan: SamplePlan,
+    mut end: impl FnMut(&S::State, &StateKey) -> bool,
+    mut expansion: impl FnMut(
+        &S::State,
+        &StateKey,
+    ) -> Result<
+        Expanded<S::TransitionId, S::State, S::Finding>,
+        EncodingRefusal,
+    >,
+) -> SampleResult<S::TransitionId, S::Finding> {
+    let SamplePlan {
+        sampler,
+        seed,
+        trace_index,
+        max_steps,
+        identity,
+    } = plan;
     let mut initial = sorted_initial(system, identity)?;
     if initial.is_empty() {
         return Ok(None);
@@ -137,10 +178,10 @@ pub(crate) fn sample<S: TransitionSystem>(
     let mut steps = Vec::new();
     let mut findings = Vec::new();
     let stopped = loop {
-        if end(&current) {
+        if end(&current, &current_key) {
             break StopReason::Reached;
         }
-        let (mut successors, state_findings) = match expand(system, &current, identity)? {
+        let (mut successors, state_findings) = match expansion(&current, &current_key)? {
             Expanded::Successors {
                 successors,
                 findings,
@@ -290,7 +331,28 @@ pub struct SampleRequest<'r, R: Root = (NodeKey, &'r ValueType)> {
 pub fn sample_request_until<S: TransitionSystem, R: Root>(
     system: &S,
     request: SampleRequest<'_, R>,
-    end: impl FnMut(&S::State) -> bool,
+    mut end: impl FnMut(&S::State) -> bool,
+) -> Result<Trace<S::TransitionId, S::Finding>, NotSimulated> {
+    let identity = request.identity;
+    sample_request_using(
+        system,
+        request,
+        |state, _| end(state),
+        |state, _| expand(system, state, identity),
+    )
+}
+
+/// The same admitted sampler with caller-supplied canonical expansions.
+/// The model walk uses its request-local memo without changing draw order.
+pub(crate) fn sample_request_using<S: TransitionSystem, R: Root>(
+    system: &S,
+    request: SampleRequest<'_, R>,
+    end: impl FnMut(&S::State, &StateKey) -> bool,
+    expansion: impl FnMut(
+        &S::State,
+        &StateKey,
+    )
+        -> Result<Expanded<S::TransitionId, S::State, S::Finding>, EncodingRefusal>,
 ) -> Result<Trace<S::TransitionId, S::Finding>, NotSimulated> {
     if !is_pinned_sampler(request.sampler) {
         return Err(NotSimulated::GeneratorMismatch {
@@ -298,14 +360,17 @@ pub fn sample_request_until<S: TransitionSystem, R: Root>(
         });
     }
     check_requires_bound(request.domains, request.types, request.position_limit)?;
-    sample(
+    sample_using(
         system,
-        request.sampler.clone(),
-        request.seed,
-        request.trace,
-        request.max_steps,
-        request.identity,
+        SamplePlan {
+            sampler: request.sampler.clone(),
+            seed: request.seed,
+            trace_index: request.trace,
+            max_steps: request.max_steps,
+            identity: request.identity,
+        },
         end,
+        expansion,
     )?
     .ok_or(NotSimulated::EmptyInitial)
 }
