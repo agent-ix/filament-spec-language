@@ -744,6 +744,7 @@ pub(super) fn project(
     meter: &mut HybridReplayMeter,
 ) -> Result<(Vec<Vec<Polynomial>>, Vec<Poly>)> {
     let mut levels = vec![Vec::new(); dimensions];
+    let mut time = Vec::new();
     for coordinate in (1..=dimensions).rev() {
         let mut unique = Vec::new();
         for p in set {
@@ -756,7 +757,17 @@ pub(super) fn project(
             meter.charge_by(p.size())?;
             let mut reductum = p.clone();
             for degree in (0..=p.degree(coordinate).unwrap_or(0)).rev() {
-                keep(&mut projected, p.coefficient(coordinate, degree), meter)?;
+                let coefficient = p.coefficient(coordinate, degree);
+                // Retain the signed time coefficients read by elimination,
+                // including constant decisions. Canonical scaling below is
+                // only for projection deduplication, not their provenance.
+                if coordinate == 1 {
+                    let decision = coefficient.univariate(meter)?;
+                    if !time.contains(&decision) {
+                        time.push(decision);
+                    }
+                }
+                keep(&mut projected, coefficient, meter)?;
                 if degree > 0 && reductum.degree(coordinate) == Some(degree) {
                     keep(&mut reducta, reductum.clone(), meter)?;
                 }
@@ -792,9 +803,11 @@ pub(super) fn project(
         }
         set = projected;
     }
-    let mut time = Vec::new();
     for p in &set {
-        time.push(p.univariate(meter)?);
+        let decision = p.univariate(meter)?;
+        if !time.contains(&decision) {
+            time.push(decision);
+        }
     }
     Ok((levels, time))
 }
