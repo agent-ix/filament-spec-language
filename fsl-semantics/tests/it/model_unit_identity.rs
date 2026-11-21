@@ -88,9 +88,9 @@ fn inherited_source_member_keeps_original_and_changes_effective_owner() {
         );
     }
     assert_eq!(base.preimage.derivation.len(), 1);
-    assert_eq!(base.preimage.derivation[0].rule.identity, RULE_QUALIFY);
+    assert_eq!(base.preimage.derivation[0].rule, RULE_QUALIFY);
     assert_eq!(child.preimage.derivation.len(), 1);
-    assert_eq!(child.preimage.derivation[0].rule.identity, RULE_INHERIT);
+    assert_eq!(child.preimage.derivation[0].rule, RULE_INHERIT);
     assert_eq!(
         child.preimage.derivation[0].parent.as_ref(),
         Some(&base.effective_id)
@@ -150,7 +150,7 @@ fn most_specific_source_redefinition_retains_hidden_correspondence() {
             .preimage
             .derivation
             .iter()
-            .any(|fact| fact.rule.identity == RULE_REDEFINE));
+            .any(|fact| fact.rule == RULE_REDEFINE));
         assert!(!view
             .links()
             .unwrap()
@@ -211,7 +211,7 @@ fn source_diamond_retains_two_direct_facts_and_both_expanded_paths() {
     let join = entry(&view, "Join", "Base/field");
     assert_eq!(join.preimage.derivation.len(), 2);
     for (fact, parent) in join.preimage.derivation.iter().zip(["Left", "Right"]) {
-        assert_eq!(fact.rule.identity, RULE_INHERIT);
+        assert_eq!(fact.rule, RULE_INHERIT);
         assert_eq!(
             fact.parent.as_ref(),
             Some(&entry(&view, parent, "Base/field").effective_id)
@@ -224,7 +224,7 @@ fn source_diamond_retains_two_direct_facts_and_both_expanded_paths() {
         .unwrap();
     let inherited: Vec<_> = expanded
         .iter()
-        .filter(|fact| fact.rule.identity == RULE_INHERIT)
+        .filter(|fact| fact.rule == RULE_INHERIT)
         .map(|fact| {
             fact.inputs
                 .iter()

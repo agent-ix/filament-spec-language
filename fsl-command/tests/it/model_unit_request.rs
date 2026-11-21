@@ -117,8 +117,13 @@ fn original_effective_identity_reaches_native_requests() {
         json!({"kind": "boolean", "value": false})
     );
 
-    let conflict = model.replace("object Leaf extends Mid {", "object Other extends Base { field: Integer redefines Base::field; }\nobject Leaf extends Mid, Other {")
-        .replace("  field: Integer redefines Base::field;\n}\npopulation", "}\npopulation");
+    let conflict = "language \"ix:native\" edition \"1-draft\";
+        domain \"example/identity\";
+        object Base { inherited: Integer; field: Integer; }
+        object Mid extends Base { field: Integer redefines Base::field; }
+        object Other extends Base { field: Integer redefines Base::field; }
+        object Leaf extends Mid, Other {}
+        population leaves: Leaf;";
     std::fs::write(directory.path().join("model.fsl"), conflict).unwrap();
     let error = command::run(&run_path, &crate::negotiation::Fr290)
         .err()
