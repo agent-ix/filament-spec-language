@@ -888,7 +888,7 @@ fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
     let claim = |name: &str, scheduler: &str| {
         format!(
             "probabilistic {name} using ev on M over (c: M::Call) {scheduler} on origin \
-             {{ probability <= 1 [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
+             {{ probability <= 0.99 [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
         )
     };
     let world = retx_with(
