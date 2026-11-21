@@ -54,6 +54,17 @@ fn unreachable_release() -> World {
     ))
 }
 
+fn release_after_enable() -> World {
+    world(&document(&[], &[("fire_a", &["phase"]), ("enable", &["phase"])]), TIMED, &format!(
+        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable NFp on N under fixed_priority;\n\
+         pre Blocked using v on M::Call::fire_a {{ self.phase = 1 }}\n\
+         post Fire using v on M::Call::fire_a {{ self.phase = pre(self.phase) }}\n\
+         post Enable using v on M::Call::enable {{ self.phase = 1 }}\n\
+         release N.a on M::Call::fire_a;\n"
+    ))
+}
+
 /// A declared but unreachable release uses the same genuine source closure
 /// as a release-free source, including the engine's admission witness.
 #[trace("TC-371", "FR-418-AC-14")]
@@ -79,8 +90,27 @@ fn the_no_reachable_release_producer_certificate_is_accepted_from_its_json() {
             Ok(ZoneCertificateVerdict::Accepted)
         );
     }
+    for world in [releasable(), release_after_enable()] {
+        assert!(
+            no_release_emitted(&world, ZoneCheckLimits::default(), &Cancel::new())
+                .expect("source search runs")
+                .is_none()
+        );
+    }
+}
+
+/// Release absence alone is insufficient: the source must admit a genuine
+/// time-divergent behaviour for the emitted certificate's witness.
+#[trace("TC-371", "FR-418-AC-14")]
+#[test]
+fn a_no_release_source_without_admitted_behaviour_builds_no_certificate() {
+    let world = world(&document(&["x"], &[]), TIMED, &format!(
+        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable NFp on N under fixed_priority;\n\
+         time invariant Cap when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n"
+    ));
     assert!(
-        no_release_emitted(&releasable(), ZoneCheckLimits::default(), &Cancel::new())
+        no_release_emitted(&world, ZoneCheckLimits::default(), &Cancel::new())
             .expect("source search runs")
             .is_none()
     );
