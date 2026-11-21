@@ -10,7 +10,7 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::SourceOwner;
 use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceTemplate};
 use fsl_semantics::model::clock_reference::normalization::{
-    SourceDeclarationFact, SourceDeclarations,
+    ClockDeclarationResolutionError, SourceDeclarationFact, SourceDeclarations,
 };
 
 use crate::{BarePackage, BareSelectionFailure, CheckedClockPlace, ClockPathStep};
@@ -41,7 +41,7 @@ impl ClockDeclarations {
     pub fn clock_template(
         &self,
         clock: &CheckedClockPlace,
-    ) -> Result<PlaceTemplate, BareSelectionFailure> {
+    ) -> Result<PlaceTemplate, ClockDeclarationResolutionError> {
         use fsl_semantics::check::{CollectionShape, PlaceRow, PlaceStep};
 
         let steps = clock
@@ -64,7 +64,11 @@ impl ClockDeclarations {
                             "bag" => (false, false, false),
                             "ordered_set" => (true, true, false),
                             "map" => (false, true, true),
-                            _ => return Err(fault("admitted-clock-slot-has-checked-kind")),
+                            _ => {
+                                return Err(projection_fault(
+                                    "admitted-clock-slot-has-checked-kind",
+                                ))
+                            }
                         };
                         PlaceStep::Slot(CollectionShape {
                             ordered,
@@ -76,7 +80,7 @@ impl ClockDeclarations {
                     }
                 })
             })
-            .collect::<Result<Vec<_>, BareSelectionFailure>>()?;
+            .collect::<Result<Vec<_>, InternalFault>>()?;
         let rows = clock
             .resolved_path
             .iter()
@@ -91,23 +95,24 @@ impl ClockDeclarations {
             .collect::<Vec<_>>();
         let first = rows
             .first()
-            .ok_or_else(|| fault("admitted-clock-has-resolution-rows"))?;
+            .ok_or_else(|| projection_fault("admitted-clock-has-resolution-rows"))?;
         let scope = self
-            .row_scope(&first.declaring_type)
-            .map_err(|_| fault("admitted-clock-scope-is-unambiguous"))?
-            .ok_or_else(|| fault("admitted-clock-has-original-declaring-scope"))?;
+            .row_scope(&first.declaring_type)?
+            .ok_or_else(|| projection_fault("admitted-clock-has-original-declaring-scope"))?;
         fsl_semantics::model::clock_reference::path::normalize(
             scope,
             &steps,
             &rows,
             |text| self.source.text(text),
-            |declaring, member| self.source.member(declaring, member),
+            |declaring, member| self.source.member(declaring, member).map_err(Into::into),
             |text| self.row_scope(text),
         )
-        .map_err(|_| fault("admitted-clock-path-normalizes"))
     }
 
-    fn row_scope(&self, text: &str) -> Result<Option<DeclarationScope>, InternalFault> {
+    fn row_scope(
+        &self,
+        text: &str,
+    ) -> Result<Option<DeclarationScope>, ClockDeclarationResolutionError> {
         let mut found = self.source.row_scope(text)?;
         for scope in self.models.values() {
             let DeclarationScope::Model { declaration, .. } = scope else {
@@ -118,7 +123,8 @@ impl ClockDeclarations {
                     return Err(InternalFault::new(
                         "clock-declaration-projection",
                         "clock-type-rendering-has-one-original-scope",
-                    ));
+                    )
+                    .into());
                 }
                 found = Some(scope.clone());
             }
@@ -214,4 +220,8 @@ fn fault(invariant: &'static str) -> BareSelectionFailure {
     BareSelectionFailure::from(crate::protocol_selection::SlotSelectionFailure::Fault(
         InternalFault::new("clock-declaration-projection", invariant),
     ))
+}
+
+fn projection_fault(invariant: &'static str) -> InternalFault {
+    InternalFault::new("clock-declaration-projection", invariant)
 }
