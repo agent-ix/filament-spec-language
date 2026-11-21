@@ -428,15 +428,32 @@ fn a_rational_product_refuses_when_its_derived_range_does_not_fit() {
 }
 
 /// Dividing a positive bounded rational by one, or taking its reciprocal,
-/// preserves these bounds; neither upper bound can be narrowed.
+/// preserves these bounds; neither upper bound can be narrowed. A direct
+/// expression fails its range proof; an inferred binding has a wider type.
 #[trace("FSpec-FR-146-AC-9")]
 #[test]
 fn positive_rational_division_by_one_keeps_its_derived_bounds() {
-    for body in [
-        "a / rational(1, 1)",
-        "let quotient = a / rational(1, 1) in quotient",
-        "rational(2, 2) / a",
-        "let quotient = rational(2, 2) / a in quotient",
+    for (body, code, cause) in [
+        (
+            "a / rational(1, 1)",
+            Code::UndefinedExpression,
+            "unproved-range",
+        ),
+        (
+            "let quotient = a / rational(1, 1) in quotient",
+            Code::IllTyped,
+            "type-mismatch",
+        ),
+        (
+            "rational(2, 2) / a",
+            Code::UndefinedExpression,
+            "unproved-range",
+        ),
+        (
+            "let quotient = rational(2, 2) / a in quotient",
+            Code::IllTyped,
+            "type-mismatch",
+        ),
     ] {
         let declarations = format!(
             "profile law = \"filament.value.integer-division.euclidean/v1\";\n\
@@ -452,10 +469,7 @@ fn positive_rational_division_by_one_keeps_its_derived_bounds() {
             );
             assert_eq!(
                 source_refusals(&declarations),
-                Err(vec![(
-                    Code::UndefinedExpression,
-                    Some("unproved-range".to_owned()),
-                )]),
+                Err(vec![(code, Some(cause.to_owned()))]),
                 "the normalized quotient {body} does not fit {result}"
             );
         }
