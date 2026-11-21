@@ -2,15 +2,14 @@
 //! FR-230/FR-995: original declaration provenance from the admitted bare
 //! graph. No source-side package or new witness participates in this view.
 
-use std::collections::BTreeMap;
-
 use filament_contract_model::CheckedNodeOwner;
 use filament_exact::{Identifier, NodeKey};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::SourceOwner;
 use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceTemplate};
 use fsl_semantics::model::clock_reference::normalization::{
-    ClockDeclarationResolutionError, SourceDeclarationFact, SourceDeclarations,
+    ClockDeclarationCollision, ClockDeclarationOrigin, ClockDeclarationResolutionError,
+    ClockDeclarationTable, SourceDeclarationFact, SourceDeclarations,
 };
 
 use crate::{BarePackage, BareSelectionFailure, CheckedClockPlace, ClockPathStep};
@@ -19,7 +18,6 @@ use crate::{BarePackage, BareSelectionFailure, CheckedClockPlace, ClockPathStep}
 #[derive(Clone, Debug)]
 pub struct ClockDeclarations {
     source: SourceDeclarations,
-    models: BTreeMap<NodeKey, DeclarationScope>,
 }
 
 impl ClockDeclarations {
@@ -31,9 +29,7 @@ impl ClockDeclarations {
     /// Read the actual admitted node's original scope. An absent declaration
     /// is not replaced by a short-name or effective-receiver lookup.
     pub fn scope(&self, node: &NodeKey) -> Option<&DeclarationScope> {
-        self.source
-            .node_scope(node)
-            .or_else(|| self.models.get(node))
+        self.source.declaration_scope_for_node(node)
     }
 
     /// Normalize an admitted clock place through the same typed path
@@ -42,95 +38,107 @@ impl ClockDeclarations {
         &self,
         clock: &CheckedClockPlace,
     ) -> Result<PlaceTemplate, ClockDeclarationResolutionError> {
-        use fsl_semantics::check::{CollectionShape, PlaceRow, PlaceStep};
-
-        let steps = clock
-            .path
-            .iter()
-            .map(|step| {
-                Ok(match step {
-                    ClockPathStep::Field(name) => PlaceStep::Field(name.clone()),
-                    ClockPathStep::Tuple(position) => PlaceStep::Field(position.to_string()),
-                    ClockPathStep::Union(case) => PlaceStep::Union(case.clone()),
-                    ClockPathStep::Slot {
-                        collection,
-                        minimum,
-                        maximum,
-                        ..
-                    } => {
-                        let (ordered, unique, map) = match collection.as_str() {
-                            "sequence" => (true, false, false),
-                            "set" => (false, true, false),
-                            "bag" => (false, false, false),
-                            "ordered_set" => (true, true, false),
-                            "map" => (false, true, true),
-                            _ => {
-                                return Err(projection_fault(
-                                    "admitted-clock-slot-has-checked-kind",
-                                ))
-                            }
-                        };
-                        PlaceStep::Slot(CollectionShape {
-                            ordered,
-                            unique,
-                            min: *minimum,
-                            max: *maximum,
-                            map,
-                        })
-                    }
-                })
-            })
-            .collect::<Result<Vec<_>, InternalFault>>()?;
-        let rows = clock
-            .resolved_path
-            .iter()
-            .map(|row| PlaceRow {
-                declaring_type: row.declaring_type.clone(),
-                member_identity: row.member_identity.clone(),
-                member_type: row.member_type.clone(),
-                collection_kind: row.collection_kind.clone(),
-                minimum: row.minimum.clone(),
-                maximum: row.maximum.clone(),
-            })
-            .collect::<Vec<_>>();
-        let first = rows
-            .first()
-            .ok_or_else(|| projection_fault("admitted-clock-has-resolution-rows"))?;
-        let scope = self
-            .row_scope(&first.declaring_type)?
-            .ok_or_else(|| projection_fault("admitted-clock-has-original-declaring-scope"))?;
-        fsl_semantics::model::clock_reference::path::normalize(
-            scope,
-            &steps,
-            &rows,
-            |text| self.source.text(text),
-            |declaring, member| self.source.member(declaring, member).map_err(Into::into),
-            |text| self.row_scope(text),
-        )
+        let (steps, rows) = clock_rows(clock)?;
+        self.source.clock_template_rows(&steps, &rows)
     }
 
-    fn row_scope(
+    /// Recover the original inline member chain from the admitted typed rows.
+    pub fn clock_origin(
         &self,
-        text: &str,
-    ) -> Result<Option<DeclarationScope>, ClockDeclarationResolutionError> {
-        let mut found = self.source.row_scope(text)?;
-        for scope in self.models.values() {
-            let DeclarationScope::Model { declaration, .. } = scope else {
-                continue;
-            };
-            if declaration == text {
-                if found.as_ref().is_some_and(|previous| previous != scope) {
-                    return Err(InternalFault::new(
-                        "clock-declaration-projection",
-                        "clock-type-rendering-has-one-original-scope",
-                    )
-                    .into());
-                }
-                found = Some(scope.clone());
-            }
-        }
-        Ok(found)
+        clock: &CheckedClockPlace,
+    ) -> Result<ClockDeclarationOrigin, ClockDeclarationResolutionError> {
+        let (steps, rows) = clock_rows(clock)?;
+        self.source.clock_origin_rows(&steps, &rows)
     }
+
+    /// Build atomically from actual admitted timed-model rows. Map places
+    /// retain their existing unsupported boundary and acquire no encoding.
+    pub fn table(
+        &self,
+        models: &[crate::CheckedTimedModel],
+    ) -> Result<ClockDeclarationTable, ClockDeclarationTableError> {
+        let mut entries = Vec::new();
+        for clock in models.iter().flat_map(|model| &model.clock_places) {
+            if clock.path.iter().any(
+                |step| matches!(step, ClockPathStep::Slot {collection, ..} if collection == "map"),
+            ) {
+                continue;
+            }
+            entries.push((self.clock_template(clock)?, self.clock_origin(clock)?));
+        }
+        Ok(ClockDeclarationTable::from_entries(entries)?
+            .with_source_declarations(self.source.clone()))
+    }
+}
+
+/// Existing declaration-resolution and collision outcomes, retained before a
+/// bare route publishes any normalized place table.
+#[derive(Debug, thiserror::Error)]
+pub enum ClockDeclarationTableError {
+    /// Original scope resolution refused or found a broken checked invariant.
+    #[error(transparent)]
+    Resolution(#[from] ClockDeclarationResolutionError),
+    /// Distinct original declarations claimed one canonical place template.
+    #[error(transparent)]
+    Collision(#[from] ClockDeclarationCollision),
+}
+
+fn clock_rows(
+    clock: &CheckedClockPlace,
+) -> Result<
+    (
+        Vec<fsl_semantics::check::PlaceStep>,
+        Vec<fsl_semantics::check::PlaceRow>,
+    ),
+    InternalFault,
+> {
+    use fsl_semantics::check::{CollectionShape, PlaceRow, PlaceStep};
+    let steps = clock
+        .path
+        .iter()
+        .map(|step| {
+            Ok(match step {
+                ClockPathStep::Field(name) => PlaceStep::Field(name.clone()),
+                ClockPathStep::Tuple(position) => PlaceStep::Field(position.to_string()),
+                ClockPathStep::Union(case) => PlaceStep::Union(case.clone()),
+                ClockPathStep::Slot {
+                    collection,
+                    minimum,
+                    maximum,
+                    ..
+                } => {
+                    let (ordered, unique, map) = match collection.as_str() {
+                        "sequence" => (true, false, false),
+                        "set" => (false, true, false),
+                        "bag" => (false, false, false),
+                        "ordered_set" => (true, true, false),
+                        "map" => (false, true, true),
+                        _ => return Err(projection_fault("admitted-clock-slot-has-checked-kind")),
+                    };
+                    PlaceStep::Slot(CollectionShape {
+                        ordered,
+                        unique,
+                        min: *minimum,
+                        max: *maximum,
+                        map,
+                    })
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, InternalFault>>()?;
+    let rows = clock
+        .resolved_path
+        .iter()
+        .map(|row| PlaceRow {
+            declaring_type: row.declaring_type.clone(),
+            member_identity: row.member_identity.clone(),
+            member_type: row.member_type.clone(),
+            collection_kind: row.collection_kind.clone(),
+            minimum: row.minimum.clone(),
+            maximum: row.maximum.clone(),
+        })
+        .collect();
+    Ok((steps, rows))
 }
 
 impl BarePackage<'_> {
@@ -142,7 +150,7 @@ impl BarePackage<'_> {
     /// agrees with the package's checked structural node correspondence.
     pub fn clock_declarations(&self) -> Result<ClockDeclarations, BareSelectionFailure> {
         let mut source = Vec::new();
-        let mut models = BTreeMap::new();
+        let mut models = Vec::new();
         for node in &self.package().resolved_graph().nodes {
             let Some(owner) = &node.owner else {
                 continue;
@@ -174,19 +182,20 @@ impl BarePackage<'_> {
                     });
                 }
                 CheckedNodeOwner::Model { identity, node } => {
-                    models.insert(
+                    models.push((
                         key,
-                        DeclarationScope::Model {
-                            identity: identity.to_string(),
-                            declaration: node.to_string(),
+                        filament_checked::key::DeclarationKey {
+                            package: identity.to_string(),
+                            node: node.to_string(),
                         },
-                    );
+                    ));
                 }
                 CheckedNodeOwner::ModelRoot { .. } => {}
             }
         }
         let mut source = SourceDeclarations::from_facts(source)
-            .map_err(|_| fault("admitted-source-declaration-provenance-is-consistent"))?;
+            .map_err(|_| fault("admitted-source-declaration-provenance-is-consistent"))?
+            .with_model_declarations(models);
         let aliases = match self.witness() {
             Ok((_, identities)) => identities
                 .source_record_rows()
@@ -212,7 +221,7 @@ impl BarePackage<'_> {
                 .retain_node_alias(&key, handle)
                 .map_err(|_| fault("source-type-handle-joins-its-original-declaration"))?;
         }
-        Ok(ClockDeclarations { source, models })
+        Ok(ClockDeclarations { source })
     }
 }
 

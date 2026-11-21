@@ -196,17 +196,19 @@ impl SourceDeclarations {
             });
         }
         let mut result = Self::from_facts(facts)?;
-        for node in graph.semantic_graph().nodes() {
-            if let Some(crate::check::Owner::Model(owner)) = node.owner() {
-                result.model_scopes.insert(
+        result =
+            result.with_model_declarations(graph.semantic_graph().nodes().filter_map(|node| {
+                let Some(crate::check::Owner::Model(owner)) = node.owner() else {
+                    return None;
+                };
+                Some((
                     node.key(),
-                    DeclarationScope::Model {
-                        identity: owner.identity().to_owned(),
-                        declaration: owner.node().to_owned(),
+                    DeclarationKey {
+                        package: owner.identity().to_owned(),
+                        node: owner.node().to_owned(),
                     },
-                );
-            }
-        }
+                ))
+            }));
         for declaration in graph.scope().types().composites() {
             if let Some(node) = graph.semantic_graph().composite_node(&declaration.key()) {
                 if result.node_scope(node).is_some() {
@@ -215,6 +217,26 @@ impl SourceDeclarations {
             }
         }
         Ok(result)
+    }
+
+    /// Retain original model declarations from their actual checked nodes.
+    /// A retained SourceOwner remains authoritative for a source-owned node.
+    pub fn with_model_declarations(
+        mut self,
+        declarations: impl IntoIterator<Item = (NodeKey, DeclarationKey)>,
+    ) -> Self {
+        for (node, declaration) in declarations {
+            if !self.node_scopes.contains_key(&node) {
+                self.model_scopes.insert(
+                    node,
+                    DeclarationScope::Model {
+                        identity: declaration.package,
+                        declaration: declaration.node,
+                    },
+                );
+            }
+        }
+        self
     }
 
     /// Normalize facts supplied by the checked-source or sealed-package
@@ -268,6 +290,14 @@ impl SourceDeclarations {
             result.node_scopes.insert(fact.node, scope);
         }
         Ok(result)
+    }
+
+    /// Original provenance of an actual checked declaration node, retaining
+    /// SourceOwner priority over selected-model provenance.
+    pub fn declaration_scope_for_node(&self, node: &NodeKey) -> Option<&DeclarationScope> {
+        self.node_scopes
+            .get(node)
+            .or_else(|| self.model_scopes.get(node))
     }
 
     /// The original source scope attached to this actual checked node.
@@ -351,8 +381,17 @@ impl SourceDeclarations {
         &self,
         clock: &crate::check::ClockField,
     ) -> Result<super::identity::PlaceTemplate, ClockDeclarationResolutionError> {
-        let first = clock
-            .resolved_path()
+        self.clock_template_rows(clock.path(), clock.resolved_path())
+    }
+
+    /// Normalize the actual checked rows supplied by either route through
+    /// the same original-declaration resolver and path normalizer.
+    pub fn clock_template_rows(
+        &self,
+        steps: &[crate::check::PlaceStep],
+        rows: &[crate::check::PlaceRow],
+    ) -> Result<PlaceTemplate, ClockDeclarationResolutionError> {
+        let first = rows
             .first()
             .ok_or_else(|| fault("clock-field-has-a-resolved-path"))?;
         let scope = self
@@ -360,13 +399,10 @@ impl SourceDeclarations {
             .ok_or_else(|| fault("clock-field-has-original-declaring-scope"))?;
         super::path::normalize(
             scope,
-            clock.path(),
-            clock.resolved_path(),
+            steps,
+            rows,
             |text| self.text(text),
-            |declaring, member| {
-                self.member(declaring, member)
-                    .map_err(ClockDeclarationResolutionError::from)
-            },
+            |declaring, member| self.member(declaring, member).map_err(Into::into),
             |text| self.row_scope(text),
         )
     }
@@ -378,11 +414,21 @@ impl SourceDeclarations {
         &self,
         clock: &crate::check::ClockField,
     ) -> Result<ClockDeclarationOrigin, ClockDeclarationResolutionError> {
-        if clock.path().len() != clock.resolved_path().len() {
+        self.clock_origin_rows(clock.path(), clock.resolved_path())
+    }
+
+    /// Recover the same original inline member chain from either route's
+    /// checked steps and resolution rows, without a second provenance join.
+    pub fn clock_origin_rows(
+        &self,
+        steps: &[crate::check::PlaceStep],
+        rows: &[crate::check::PlaceRow],
+    ) -> Result<ClockDeclarationOrigin, ClockDeclarationResolutionError> {
+        if steps.len() != rows.len() {
             return Err(fault("clock-path-and-resolution-rows-correspond").into());
         }
         let mut members = Vec::new();
-        for (step, row) in clock.path().iter().zip(clock.resolved_path()) {
+        for (step, row) in steps.iter().zip(rows) {
             let crate::check::PlaceStep::Field(name) = step else {
                 continue;
             };
