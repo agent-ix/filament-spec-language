@@ -3606,7 +3606,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             {
                 ValueType::String
             }
-            Err(_) => return Err(unsupported()),
+            Err(error) => bounded_rational_literal_type(error, literal.type_id, self.index)
+                .ok_or_else(unsupported)?,
         };
         Ok(self.push(ReaderProjectedNode::leaf(
             NodeKind::Literal(CheckedLiteral(value)),
@@ -4323,15 +4324,25 @@ fn literal_value(
     })
 }
 
+/// The `Rational[..]` type of a literal whose type node is a bounded
+/// `rational_range`, which the exact-type projection leaves unsupported.
+fn bounded_rational_literal_type(
+    error: &filament_contract_model::ExactTypeProjectionError,
+    type_id: &CheckedNodeId,
+    index: &WireIndex<'_>,
+) -> Option<ValueType> {
+    (error.code == filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType
+        && error.form.as_deref() == Some("bounded_domain/rational_range"))
+    .then(|| rational_range_type(index.node(type_id)?).ok())
+    .flatten()
+}
+
 fn project_literal_type(type_id: &CheckedNodeId, index: &WireIndex<'_>) -> Option<ValueType> {
     match index.projections.get(type_id)?.as_ref() {
         Ok(projection) => Some(projection.value_type().clone()),
         Err(error) => {
-            if error.code
-                == filament_contract_model::ExactTypeProjectionErrorCode::UnsupportedExactType
-                && error.form.as_deref() == Some("bounded_domain/rational_range")
-            {
-                return rational_range_type(index.node(type_id)?).ok();
+            if let Some(value_type) = bounded_rational_literal_type(error, type_id, index) {
+                return Some(value_type);
             }
             if !matches!(
                 error.code,
