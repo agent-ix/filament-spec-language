@@ -343,6 +343,66 @@ pub fn emit_monitor_plan_over(
     limits: crate::checked_v2::V2ReadLimits,
     emit: crate::checked::EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
+    // Temporary bounded diagnostic for the base reader's body-location refusal.
+    let diagnose = || -> Result<(), String> {
+        let document: serde_json::Value = serde_json::from_slice(retained.package().bytes())
+            .map_err(|error| error.to_string())?;
+        let row: filament_contract_model::CheckedBodySemanticLocation =
+            serde_json::from_value(document["checked_term_data"]["body_locations"][2].clone())
+                .map_err(|error| error.to_string())?;
+        let graph: CheckedSemanticGraphV2 =
+            serde_json::from_value(document["semantic_graph"].clone())
+                .map_err(|error| error.to_string())?;
+        let nodes = super::document_nodes(graph).map_err(|error| format!("{error:?}"))?;
+        let sources: Vec<CheckedSourceMapEntry> =
+            serde_json::from_value(document["source_map"].clone())
+                .map_err(|error| error.to_string())?;
+        let bounded = |text: String| text.chars().take(2048).collect::<String>();
+        eprintln!(
+            "monitor-base-probe wire.name={}",
+            bounded(document["name"].to_string())
+        );
+        eprintln!(
+            "monitor-base-probe row2.application={}",
+            bounded(format!("{:?}", row.application))
+        );
+        eprintln!(
+            "monitor-base-probe row2.origin={}",
+            bounded(format!("{:?}", row.location.origin))
+        );
+        let matched: Vec<_> = nodes
+            .iter()
+            .filter(|node| node.node_id == row.application)
+            .collect();
+        eprintln!("monitor-base-probe exact_node_count={}", matched.len());
+        if let Some(node) = matched.first() {
+            eprintln!(
+                "monitor-base-probe node.kind={:?}/{:?} body={}",
+                node.node_tag,
+                node.semantic_form,
+                bounded(format!("{:?}", node.body))
+            );
+        }
+        let matched_sources = sources
+            .iter()
+            .filter(|entry| {
+                entry.node_id == row.application
+                    && entry.role == row.occurrence.role
+                    && entry.ordinal == row.occurrence.ordinal
+            })
+            .count();
+        eprintln!(
+            "monitor-base-probe source_occurrence={:?}/{} matches={matched_sources}",
+            row.occurrence.role, row.occurrence.ordinal
+        );
+        Ok(())
+    };
+    if let Err(error) = diagnose() {
+        eprintln!(
+            "monitor-base-probe diagnostic_error={}",
+            error.chars().take(2048).collect::<String>()
+        );
+    }
     let read = crate::checked_v2::read_checked_package_v2_at(
         retained.package().bytes(),
         identity,
