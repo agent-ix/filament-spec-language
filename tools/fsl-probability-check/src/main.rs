@@ -265,7 +265,8 @@ fn source_failure(error: ProbabilitySourceError) -> Result<Value, String> {
         ProbabilitySourceError::Document(
             Document::Unsupported
             | Document::MixedInfiniteCoverage
-            | Document::ZeroWeightComponent { .. },
+            | Document::ZeroWeightComponent { .. }
+            | Document::WorkloadFreeDelays(_),
         ) => "unsupported",
         ProbabilitySourceError::Document(
             Document::KeyEncoding(fsl_eval::simulation::EncodingRefusal::NoEncoding(_))
@@ -275,7 +276,8 @@ fn source_failure(error: ProbabilitySourceError) -> Result<Value, String> {
             | Document::MissingMember(_)
             | Document::Noncanonical
             | Document::IdentityMismatch
-            | Document::ObjectiveMismatch,
+            | Document::ObjectiveMismatch
+            | Document::OptimizationMismatch,
         )
         | ProbabilitySourceError::SourceMismatch
         | ProbabilitySourceError::Source { .. }

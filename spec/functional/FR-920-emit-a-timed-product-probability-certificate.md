@@ -64,7 +64,14 @@ would have refused the certificate before reading a value.
   member. `kind` SHALL be `exact`, `lower` or `upper`.
 - `objective` SHALL carry `profile`, the targets or measure of the form,
   `optimization` (`minimum`, `maximum`, `workload`, `workload-minimum` or
-  `workload-maximum`), `fairness`, and `timed`:
+  `workload-maximum`), `fairness`, and `timed`. `optimization` SHALL be
+  `workload` when the checker's product has exactly one choice at every state;
+  otherwise it SHALL be `workload-minimum` for a `>=` bound and
+  `workload-maximum` for a `<=` bound, the residual choices being FR-204's
+  free-delay choices and the time-passing choices (a unit delay against the
+  idle delay), so that a bound is decided on the extremum of the choices the
+  workload leaves the scheduler. The checker derives the spelling from its own
+  product, and a document that states another spelling is rejected. `timed` is
   `{"route": "digital" | "region", "unit": <UnitId>, "scale": "<n>", "form": <form>}`
   with `form` one of `reach`, `until`, `always`, `deadline`, `bounded-window`,
   `expected-elapsed`, `elapsed-quantile`. The checker compares these with its
@@ -117,6 +124,7 @@ would have refused the certificate before reading a value.
 | FR-920-AC-1 | Over `Retx` (ADR-028 §15.5) with the guard `self.x >= 1 ms`, the exact proof of `Deadline` at 0.99 over every scheduler retains a `timed-product/v1` document whose `objective.timed` is `{route: "digital", unit: ms, scale: "1", form: "deadline"}`, whose keys give `x` the values 0 to 2 and the deadline clock 0 to 5, and whose initial value is `99/100`; `check_probability_certificate_document` accepts it. | Test (TC-2489) |
 | FR-920-AC-2 | With the guard `self.x > 1 ms`, the proof of `Deadline` retains a document with `route: "region"` and region keys; two of its keys that differ only in the `fraction` of `x` and of the deadline clock survive a write and read as distinct keys. | Test (TC-2489) |
 | FR-920-AC-3 | AC-1's document with an added `components` member is rejected `Malformed` at `components`; the package S4 emits for AC-1's unit contains no certificate node. | Test (TC-2489) |
+| FR-920-AC-4 | Over a workload whose product has a delay choice (a free `tick` guarded `self.x >= 1 ms` racing `send` given 1 or 2 ms under a workload weighing both 1), the proof of a `>=` bound retains `workload-minimum` and of a `<=` bound `workload-maximum`, each with the value of that extremum; a bound strictly between the extrema is refuted with the checker's recomputed mass of the witness scheduler; a document that states `workload` or the other extremum's spelling is rejected. A workload whose product has one choice at every state retains `workload`, and a residual spelling is rejected there. | Test (TC-2489) |
 
 ## Dependencies
 

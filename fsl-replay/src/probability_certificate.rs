@@ -610,6 +610,12 @@ pub enum ProbabilityObjective {
     Maximum,
     /// A workload with exactly one enabled probability distribution.
     Workload,
+    /// A workload that leaves the scheduler a choice (a unit delay against an
+    /// idle delay, or a free delay, FR-204): the minimum over those choices
+    /// only, for a `>=` bound.
+    WorkloadMinimum,
+    /// As [`Self::WorkloadMinimum`], the maximum, for a `<=` bound.
+    WorkloadMaximum,
 }
 
 /// Whether the certified initial value satisfies the checked claim's bound.
@@ -1722,7 +1728,9 @@ fn check_exact_reachability(
         let actual = match objective {
             ProbabilityObjective::Minimum => exit_values.into_iter().min(),
             ProbabilityObjective::Maximum => exit_values.into_iter().max(),
-            ProbabilityObjective::Workload => {
+            ProbabilityObjective::Workload
+            | ProbabilityObjective::WorkloadMinimum
+            | ProbabilityObjective::WorkloadMaximum => {
                 return Err(ExactProbabilityGraphError::UnsupportedClaimForm);
             }
         }
@@ -1792,7 +1800,9 @@ fn check_exact_reachability(
             match objective {
                 ProbabilityObjective::Minimum => choice_values.into_iter().min(),
                 ProbabilityObjective::Maximum => choice_values.into_iter().max(),
-                ProbabilityObjective::Workload => choice_values.into_iter().next(),
+                ProbabilityObjective::Workload
+                | ProbabilityObjective::WorkloadMinimum
+                | ProbabilityObjective::WorkloadMaximum => choice_values.into_iter().next(),
             }
             .unwrap_or_else(|| zero.clone())
         };
@@ -2022,7 +2032,9 @@ fn choice_values(
     let best = match objective {
         ProbabilityObjective::Minimum => each.iter().min(),
         ProbabilityObjective::Maximum => each.iter().max(),
-        ProbabilityObjective::Workload => {
+        ProbabilityObjective::Workload
+        | ProbabilityObjective::WorkloadMinimum
+        | ProbabilityObjective::WorkloadMaximum => {
             return Err(ExactProbabilityGraphError::UnsupportedClaimForm);
         }
     };

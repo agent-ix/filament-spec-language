@@ -241,6 +241,33 @@ impl ProbabilityDocumentLimits {
     }
 }
 
+/// The two workload states EN-5 refuses until the standard rules between FR-204's
+/// `UnitDelay` plus one weighted `WorkloadResolve` and ADR-026 SD-1 and SD-3
+/// (the scheduler picks each free identity's delay inside its window).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkloadFreeDelayRefusal {
+    /// No given delay races and two or more free identities are enabled now.
+    ManyFreeEnabled,
+    /// A free identity enabled now is disabled after the unit delay.
+    ClosesBeforeFiring,
+}
+
+impl WorkloadFreeDelayRefusal {
+    /// The catalog code the refusal travels under.
+    pub const fn code(self) -> filament_semantic_value::catalog::CatalogCode {
+        match self {
+            Self::ManyFreeEnabled => filament_semantic_value::catalog::CatalogCode::new(
+                "unsupported_construct",
+                "workload-free-delays-race",
+            ),
+            Self::ClosesBeforeFiring => filament_semantic_value::catalog::CatalogCode::new(
+                "unsupported_construct",
+                "workload-free-delay-window-closes",
+            ),
+        }
+    }
+}
+
 /// A document never becomes accepted evidence when one of these occurs.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProbabilityDocumentError {
@@ -268,12 +295,20 @@ pub enum ProbabilityDocumentError {
         /// First complete key of the independently computed zero-weight component.
         state: ProbabilityProductKey,
     },
+    /// A workload state where FR-204's `WorkloadResolve` reading and ADR-026
+    /// SD-1 and SD-3 give different verdicts (see [`WorkloadFreeDelayRefusal`]).
+    #[error("unsupported: workload free delay race ({0:?})")]
+    WorkloadFreeDelays(WorkloadFreeDelayRefusal),
     /// Structural identity differs from the requested checked claim.
     #[error("conflicting_identity: probability certificate")]
     IdentityMismatch,
     /// Targets or optimization differ from the independently checked claim.
     #[error("invalid_runtime_input: probability certificate objective mismatch")]
     ObjectiveMismatch,
+    /// A timed document's optimization spelling is not the checker's own
+    /// (the route, unit, scale, form and targets stay `ObjectiveMismatch`).
+    #[error("invalid_runtime_input: probability certificate optimization mismatch")]
+    OptimizationMismatch,
     /// A caller byte, row or arithmetic ceiling was reached.
     #[error("probability certificate limit reached: {} ({actual} > {bound})", limit.setting())]
     Limit {
@@ -808,7 +843,7 @@ fn read_document_profile(
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
         || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
-        || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload"))
+        || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload" | "workload-minimum" | "workload-maximum"))
         || match objective
             .and_then(|node| node.get("fairness"))
             .map(|node| node.node())
@@ -979,6 +1014,8 @@ fn read_document_profile(
         "minimum" => ProbabilityObjective::Minimum,
         "maximum" => ProbabilityObjective::Maximum,
         "workload" => ProbabilityObjective::Workload,
+        "workload-minimum" => ProbabilityObjective::WorkloadMinimum,
+        "workload-maximum" => ProbabilityObjective::WorkloadMaximum,
         _ => return Err(ProbabilityDocumentError::Unsupported),
     };
     let node = fsl_foundation::node_wire::node_key_from_text(wire.identity.node_id.get())
@@ -2046,7 +2083,9 @@ fn check_document_equalities(
                         Some(previous) => match objective {
                             ProbabilityObjective::Minimum => previous.min(sum),
                             ProbabilityObjective::Maximum => previous.max(sum),
-                            ProbabilityObjective::Workload => {
+                            ProbabilityObjective::Workload
+                            | ProbabilityObjective::WorkloadMinimum
+                            | ProbabilityObjective::WorkloadMaximum => {
                                 return Err(ProbabilityDocumentError::Unsupported);
                             }
                         },

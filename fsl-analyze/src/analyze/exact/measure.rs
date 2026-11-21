@@ -345,7 +345,9 @@ pub(super) fn run(
     let extremum = match optimization {
         ProbabilityObjective::Minimum => Some(Extremum::Min),
         ProbabilityObjective::Maximum => Some(Extremum::Max),
-        ProbabilityObjective::Workload => None,
+        ProbabilityObjective::Workload
+        | ProbabilityObjective::WorkloadMinimum
+        | ProbabilityObjective::WorkloadMaximum => None,
     };
     checked_report(checked, certificate, binding, extremum, subject)
 }

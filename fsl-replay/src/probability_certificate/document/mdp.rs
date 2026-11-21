@@ -653,7 +653,9 @@ fn equality_failure(
                         Some(previous) => match objective {
                             ProbabilityObjective::Minimum => previous.min(choice.clone()),
                             ProbabilityObjective::Maximum => previous.max(choice.clone()),
-                            ProbabilityObjective::Workload => {
+                            ProbabilityObjective::Workload
+                            | ProbabilityObjective::WorkloadMinimum
+                            | ProbabilityObjective::WorkloadMaximum => {
                                 return Err(ProbabilityDocumentError::Unsupported)
                             }
                         },
@@ -707,7 +709,9 @@ fn progress_failure(
                             )))
                         }
                         ProbabilityObjective::Maximum => closed = true,
-                        ProbabilityObjective::Workload => {
+                        ProbabilityObjective::Workload
+                        | ProbabilityObjective::WorkloadMinimum
+                        | ProbabilityObjective::WorkloadMaximum => {
                             return Err(ProbabilityDocumentError::Unsupported)
                         }
                     }
@@ -747,7 +751,11 @@ fn progress_failure(
             ProbabilityObjective::Maximum if cx.reward => all && !state.choices.is_empty(),
             ProbabilityObjective::Minimum => all && !state.choices.is_empty(),
             ProbabilityObjective::Maximum => any,
-            ProbabilityObjective::Workload => return Err(ProbabilityDocumentError::Unsupported),
+            ProbabilityObjective::Workload
+            | ProbabilityObjective::WorkloadMinimum
+            | ProbabilityObjective::WorkloadMaximum => {
+                return Err(ProbabilityDocumentError::Unsupported)
+            }
         };
         if !progress {
             return Ok(Some((ProbabilityCertificateRule::RankBroken, key.clone())));
@@ -813,7 +821,9 @@ fn derive_ranks(
                         }
                     }
                     ProbabilityObjective::Minimum | ProbabilityObjective::Maximum => {}
-                    ProbabilityObjective::Workload => {
+                    ProbabilityObjective::Workload
+                    | ProbabilityObjective::WorkloadMinimum
+                    | ProbabilityObjective::WorkloadMaximum => {
                         return Err(ProbabilityDocumentError::Unsupported)
                     }
                 }

@@ -1603,6 +1603,8 @@ impl Encode for Events<'_> {
             ProbabilityObjective::Minimum => "minimum",
             ProbabilityObjective::Maximum => "maximum",
             ProbabilityObjective::Workload => "workload",
+            ProbabilityObjective::WorkloadMinimum => "workload-minimum",
+            ProbabilityObjective::WorkloadMaximum => "workload-maximum",
         })?;
         writer.name("fairness")?;
         writer.begin_array()?;
@@ -1896,7 +1898,9 @@ fn checked_values(
                                     sum
                                 }
                             }
-                            ProbabilityObjective::Workload => {
+                            ProbabilityObjective::Workload
+                            | ProbabilityObjective::WorkloadMinimum
+                            | ProbabilityObjective::WorkloadMaximum => {
                                 return Err(ProbabilityDocumentError::Malformed)
                             }
                         },

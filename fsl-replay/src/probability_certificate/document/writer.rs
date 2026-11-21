@@ -277,6 +277,8 @@ impl Encode for Events<'_> {
             ProbabilityObjective::Minimum => "minimum",
             ProbabilityObjective::Maximum => "maximum",
             ProbabilityObjective::Workload => "workload",
+            ProbabilityObjective::WorkloadMinimum => "workload-minimum",
+            ProbabilityObjective::WorkloadMaximum => "workload-maximum",
         })?;
         writer.name("fairness")?;
         writer.begin_array()?;
