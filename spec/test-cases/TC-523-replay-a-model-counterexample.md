@@ -67,7 +67,7 @@ replay checks `#[trace("TC-523", "FR-330-AC-20")]`.
   routes, even with no source file remaining. The branch key selects the
   actual successor; the initially terminal case replays its actual terminal
   key without requiring a fabricated observed snapshot.
-- Step 7: AC-10 reproduces with `trace_position` 0 for both stems and refuses at `/loop/0/transition/type` without the flag; each AC-11 case refuses at its pointer; AC-12 reproduces for the disabled-`inc` lasso and refuses `UnfairLasso` naming the constraint for the enabled-`inc` lasso, and the terminal-stutter lasso is unchanged; AC-13 settles `inconclusive`, `ReplayParity` (`NoValue` for the undefined atom); AC-14 reads back equal and re-indexes position 3 to 2; AC-15 reproduces on both routes with equal results. The schema vectors of FSpec FR-364-AC-26 are not evidence of any of these.
 - Step 6: every semantic defect refuses replay with no reproduced result.
   A native reader's acceptance of a well-shaped state key or typed binding
   does not count as successful model re-execution or subject authentication.
+- Step 7: AC-10 reproduces with `trace_position` 0 for both stems and refuses at `/loop/0/transition/type` without the flag; each AC-11 case refuses at its pointer; AC-12 reproduces for the disabled-`inc` lasso and refuses `UnfairLasso` naming the constraint for the enabled-`inc` lasso, and the terminal-stutter lasso is unchanged; AC-13 settles `inconclusive`, `ReplayParity` (`NoValue` for the undefined atom; the mixed-loop case over its constructed lasso); AC-14 reads back equal and re-indexes position 3 to 2; AC-15 reproduces on both routes with equal results. The schema vectors of FSpec FR-364-AC-26 are not evidence of any of these.
