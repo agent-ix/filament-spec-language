@@ -3222,16 +3222,16 @@ fn package_clause_selections_timed_results_match_source() {
     }
 }
 
-/// FR-1039 Outputs: until reader body locations are available, a violated
-/// snapshot/model clause explicitly refuses its missing decisive record.
+/// FR-1039 Outputs: violated snapshot/model clauses follow the same traced
+/// decisive decision walk and return the source route's complete record.
 #[test]
 #[trace("TC-3019", "FR-1039")]
-fn package_clause_selections_violations_refuse_missing_decisive_locations() {
+fn package_clause_selections_violations_match_source_decisive_locations() {
     let unit = bump_low().replace(LOW_BODY, "holds(c.versionNumber > 2)");
     package_clause_selection_outcomes(
         &unit,
         &[(json!({"finite": ["s0", "s1"]}), 10)],
-        true,
+        false,
         SelectionObjects::Present,
     );
     let unit = unit
@@ -3240,34 +3240,16 @@ fn package_clause_selections_violations_refuse_missing_decisive_locations() {
             "pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1",
             "false",
         );
-    let directory = bump_directory(&unit, &["a"], true);
-    let snapshot = snapshot_of(directory.path(), &["a"], true);
-    let clause = json!({"selection": {"temporal": {"name": "Low", "over": {"reference": {
-        "population": snapshot["populations"][0]["population"], "key": "a"}},
-        "trace": {"model": {"initial": "s0", "universes": ["s0"], "prefix": [],
-        "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}}}},
-        "observations": {"s0": "s.json"}});
-    let path = directory.path().join("source-reference.json");
-    std::fs::write(&path, serde_json::to_vec(&json!({"format": "native-run/1", "request": {
-        "models": [{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}],
-        "program": {"source": source("unit.native")}, "clause": clause}})).unwrap()).unwrap();
-    let source_request = fsl_command::command::read_clause_run_request(&path).unwrap();
-    let report = fsl_replay::spine::run_clause(source_request).unwrap();
-    assert_eq!(
-        report.disposition.exit_code(),
-        10,
-        "{:?}",
-        report.disposition
+    package_clause_selection_outcomes(
+        &unit,
+        &[(
+            json!({"model": {"initial": "s0", "universes": ["s0", "s1"], "prefix": [],
+            "loop": [{"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]}}),
+            10,
+        )],
+        false,
+        SelectionObjects::Present,
     );
-    let models = compile_handoff(directory.path(), &unit);
-    let actual = write_request(
-        directory.path(),
-        &json!({"format": "native-run/1", "request": {
-        "models": models, "package": {"directory": "handoff"}, "clause": clause}}),
-    );
-    assert_eq!(actual.0, 20, "{}", actual.1);
-    assert_eq!(actual.1["code"], "invalid-request", "{}", actual.1);
-    refusal_names(&actual.1, "clause.selection");
 }
 
 /// FR-1039 Outputs: timed record samples share the snapshot timed evaluator,
