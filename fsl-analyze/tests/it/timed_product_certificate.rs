@@ -548,7 +548,7 @@ fn distribution_free_values_are_rejected() {
 }
 
 /// FR-923-AC-3: over every scheduler a tie at the least delay is the
-/// scheduler's choice, so the maximum is 1 where `Both` gives `21/40`.
+/// scheduler's choice, so the maximum is 1 and a bound of `<= 0.6` is refuted.
 #[trace("TC-2492", "FR-923-AC-3")]
 #[test]
 fn every_scheduler_tie_is_the_schedulers_choice() {
@@ -575,6 +575,34 @@ fn every_scheduler_tie_is_the_schedulers_choice() {
     );
     let record = settle(&world, "Every");
     assert!(is_refuted(&record), "{record:#?}");
+}
+
+/// FR-923-AC-3: the same tie under the workload `Both` is resolved by its
+/// weights and gives `21/40`.
+#[trace("TC-2492", "FR-923-AC-3")]
+#[ignore = "QSL-2156: the workload-scheduler timed deadline check (weights resolving a timed tie) is not implemented yet"]
+#[test]
+fn a_workload_resolves_a_timed_tie_by_its_weights() {
+    let claim = |name: &str, scheduler: &str| {
+        format!(
+            "probabilistic {name} using ev on M over (c: M::Call) {scheduler} on origin \
+             {{ probability <= 0.6 [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
+        )
+    };
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("tick", &["retried"])],
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
+         post Ticked using v on M::Call::tick { self.retried = true }\n\
+         workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
+        &format!(
+            "{}{}",
+            claim("Every", "under every scheduler"),
+            claim("Weighted", "under Both")
+        ),
+    );
     assert_eq!(proved_value(&settle(&world, "Weighted")), ratio(21, 40));
 }
 
