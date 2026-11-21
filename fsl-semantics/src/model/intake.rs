@@ -1493,9 +1493,9 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         // shared validator unchanged.
         .filter(|located| !decimal_schema_diagnostic(document, located))
         // The upstream validator also emits generic supertype diagnostics for
-        // process cross-meaning edges and cycles, and for record, event and
-        // state machine cycles. The binder retains those edges so
-        // normalization can report the ordered FSL loci.
+        // the exact structural obligations in the table below. The binder
+        // retains those edges so normalization emits the full typed FR-082
+        // refusal payload, including ordered cycle keys and source loci.
         .filter(|located| !process_subtype_generalization_schema_diagnostic(document, located))
         .filter_map(|located| {
             // Other reader diagnostics on this conflicting member are detail
@@ -2085,19 +2085,37 @@ fn process_subtype_generalization_schema_diagnostic(
     document: &PackageDocument,
     located: &agent_ix_semantic_ir::diag::Located,
 ) -> bool {
-    use agent_ix_semantic_ir::constructs::{CONSTRUCT_TARGET_KIND, SUPERTYPE_CYCLE};
-    if ![CONSTRUCT_TARGET_KIND, SUPERTYPE_CYCLE].contains(&located.code) {
-        return false;
+    use agent_ix_semantic_ir::constructs::{
+        CONSTRUCT_TARGET_KIND, SUPERTYPE_CYCLE, UNRESOLVED_FEATURE_REF,
+    };
+    #[derive(Clone, Copy, Debug)]
+    enum Member {
+        Supertypes,
+        OperationRedefines,
     }
+    const ROWS: &[(&str, &str, Member)] = &[
+        (CONSTRUCT_TARGET_KIND, meaning::PROCESS, Member::Supertypes),
+        (SUPERTYPE_CYCLE, meaning::PROCESS, Member::Supertypes),
+        (
+            SUPERTYPE_CYCLE,
+            meaning::RECORD_VALUE_TYPE,
+            Member::Supertypes,
+        ),
+        (SUPERTYPE_CYCLE, meaning::EVENT_TYPE, Member::Supertypes),
+        (SUPERTYPE_CYCLE, meaning::STATE_MACHINE, Member::Supertypes),
+        (SUPERTYPE_CYCLE, meaning::OBJECT_TYPE, Member::Supertypes),
+        (
+            UNRESOLVED_FEATURE_REF,
+            meaning::OBJECT_TYPE,
+            Member::OperationRedefines,
+        ),
+    ];
     let Some(rest) = located.pointer.strip_prefix("/ir/types/") else {
         return false;
     };
     let Some((position, member)) = rest.split_once('/') else {
         return false;
     };
-    if member != "supertypes" && !member.starts_with("supertypes/") {
-        return false;
-    }
     let Some(type_value) = document
         .tree
         .get("types")
@@ -2117,21 +2135,62 @@ fn process_subtype_generalization_schema_diagnostic(
     let Ok(meanings) = meaning_index(&document.tree) else {
         return false;
     };
-    meanings
-        .get(&(kind.0.to_owned(), kind.1.to_owned()))
-        .is_some_and(|resolved| {
-            // A cycle among record, event or state machine types is reported
-            // by normalization, once per declaration and cycle, like a
-            // process cycle.
-            resolved == meaning::PROCESS
-                || (located.code == SUPERTYPE_CYCLE
-                    && [
-                        meaning::RECORD_VALUE_TYPE,
-                        meaning::EVENT_TYPE,
-                        meaning::STATE_MACHINE,
-                    ]
-                    .contains(&resolved.as_str()))
-        })
+    let Some(resolved) = meanings.get(&(kind.0.to_owned(), kind.1.to_owned())) else {
+        return false;
+    };
+    ROWS.iter().any(|(code, meaning, obligation)| {
+        if located.code != *code || resolved.as_str() != *meaning {
+            return false;
+        }
+        match obligation {
+            Member::Supertypes => {
+                (member == "supertypes"
+                    && type_value
+                        .get("supertypes")
+                        .and_then(Value::as_array)
+                        .is_some())
+                    || member.strip_prefix("supertypes/").is_some_and(|index| {
+                        index.parse::<usize>().ok().is_some_and(|index| {
+                            type_value
+                                .get("supertypes")
+                                .and_then(Value::as_array)
+                                .and_then(|types| types.get(index))
+                                .is_some()
+                        })
+                    })
+            }
+            Member::OperationRedefines => {
+                let Some(operation) = member.strip_prefix("operations/") else {
+                    return false;
+                };
+                let Some((operation_index, "redefines")) = operation.split_once('/') else {
+                    return false;
+                };
+                let Some(target) = operation_index
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|index| type_value.get("operations")?.as_array()?.get(index))
+                    .and_then(|operation| operation.get("redefines"))
+                    .and_then(Value::as_str)
+                else {
+                    return false;
+                };
+                document
+                    .tree
+                    .get("types")
+                    .and_then(Value::as_array)
+                    .is_some_and(|types| {
+                        types
+                            .iter()
+                            .filter_map(|ty| ty.get("operations").and_then(Value::as_array))
+                            .flatten()
+                            .any(|operation| {
+                                operation.get("identity").and_then(Value::as_str) == Some(target)
+                            })
+                    })
+            }
+        }
+    })
 }
 
 /// FR-208 and FR-154 own duplicate step, state, transition, clause, field,
@@ -7592,6 +7651,147 @@ fn inherit_process_identity_fields(records: &mut [DomainPackageRecord]) {
 mod tests {
     use super::*;
     use ix_trace_rs::trace;
+
+    fn normalization_diagnostic_document(meaning: &str, target: &str) -> PackageDocument {
+        let tree = serde_json::json!({
+            "constructs": [{"kind": {"module": "test", "name": "T"}, "construct": {"meaning": meaning}}],
+            "types": [
+                {"identity": "ix://test/Child", "kind": {"module": "test", "name": "T"},
+                 "supertypes": ["ix://test/Base"],
+                 "operations": [{"identity": "ix://test/Child/m", "redefines": target}]},
+                {"identity": "ix://test/Base", "kind": {"module": "test", "name": "T"},
+                 "fields": [{"identity": "ix://test/Base/f"}],
+                 "operations": [{"identity": "ix://test/Base/m"}]}
+            ]
+        });
+        parse_document(&serde_json::to_vec(&tree).expect("the diagnostic document encodes"))
+    }
+
+    fn normalization_diagnostic(
+        code: &'static str,
+        pointer: &str,
+    ) -> agent_ix_semantic_ir::diag::Located {
+        agent_ix_semantic_ir::diag::Located {
+            code,
+            pointer: pointer.to_owned(),
+            severity: agent_ix_semantic_ir::diag::Severity::Error,
+            message: "structural obligation".to_owned(),
+            owner: "ix://test/Child".to_owned(),
+            blocking: true,
+            locus: None,
+        }
+    }
+
+    #[trace("FR-082-AC-2", "FR-056-AC-33")]
+    #[test]
+    fn normalization_diagnostic_rows_defer_only_the_owned_structural_obligation() {
+        use agent_ix_semantic_ir::constructs::{
+            CONSTRUCT_TARGET_KIND, SUPERTYPE_CYCLE, UNRESOLVED_FEATURE_REF,
+        };
+        for (code, meaning, member) in [
+            (CONSTRUCT_TARGET_KIND, meaning::PROCESS, "supertypes/0"),
+            (SUPERTYPE_CYCLE, meaning::PROCESS, "supertypes"),
+            (SUPERTYPE_CYCLE, meaning::RECORD_VALUE_TYPE, "supertypes"),
+            (SUPERTYPE_CYCLE, meaning::EVENT_TYPE, "supertypes"),
+            (SUPERTYPE_CYCLE, meaning::STATE_MACHINE, "supertypes"),
+            (SUPERTYPE_CYCLE, meaning::OBJECT_TYPE, "supertypes"),
+            (
+                UNRESOLVED_FEATURE_REF,
+                meaning::OBJECT_TYPE,
+                "operations/0/redefines",
+            ),
+        ] {
+            let document = normalization_diagnostic_document(meaning, "ix://test/Base/m");
+            let diagnostic = normalization_diagnostic(code, &format!("/ir/types/0/{member}"));
+            assert!(
+                process_subtype_generalization_schema_diagnostic(&document, &diagnostic),
+                "{code} {meaning} {member} is owned by the typed normalizer"
+            );
+        }
+    }
+
+    #[trace("FR-082-AC-2", "FR-056-AC-33")]
+    #[test]
+    fn normalization_diagnostic_rows_retain_unknown_wrong_kind_and_unrelated_diagnostics() {
+        use agent_ix_semantic_ir::constructs::{
+            CONSTRUCT_TARGET_KIND, SUPERTYPE_CYCLE, UNRESOLVED_FEATURE_REF,
+        };
+        for (code, meaning, pointer, target) in [
+            (
+                UNRESOLVED_FEATURE_REF,
+                meaning::OBJECT_TYPE,
+                "/ir/types/0/operations/0/redefines",
+                "ix://test/Missing/m",
+            ),
+            (
+                UNRESOLVED_FEATURE_REF,
+                meaning::OBJECT_TYPE,
+                "/ir/types/0/operations/0/redefines",
+                "ix://test/Base/f",
+            ),
+            (
+                UNRESOLVED_FEATURE_REF,
+                meaning::RECORD_VALUE_TYPE,
+                "/ir/types/0/operations/0/redefines",
+                "ix://test/Base/m",
+            ),
+            (
+                CONSTRUCT_TARGET_KIND,
+                meaning::OBJECT_TYPE,
+                "/ir/types/0/supertypes/0",
+                "ix://test/Base/m",
+            ),
+            (
+                SUPERTYPE_CYCLE,
+                meaning::OBJECT_TYPE,
+                "/ir/types/0/fields/0",
+                "ix://test/Base/m",
+            ),
+            (
+                SUPERTYPE_CYCLE,
+                meaning::OBJECT_TYPE,
+                "/ir/types/0/supertypes/0/extra",
+                "ix://test/Base/m",
+            ),
+            (
+                SUPERTYPE_CYCLE,
+                meaning::OBJECT_TYPE,
+                "/ir/types/0/supertypes/9",
+                "ix://test/Base/m",
+            ),
+            (
+                UNRESOLVED_FEATURE_REF,
+                meaning::OBJECT_TYPE,
+                "/ir/types/0/operations/9/redefines",
+                "ix://test/Base/m",
+            ),
+            (
+                UNRESOLVED_FEATURE_REF,
+                meaning::OBJECT_TYPE,
+                "/ir/types/0/operations/0/redefines/extra",
+                "ix://test/Base/m",
+            ),
+            (
+                UNRESOLVED_FEATURE_REF,
+                meaning::OBJECT_TYPE,
+                "/ir/types/9/operations/0/redefines",
+                "ix://test/Base/m",
+            ),
+            (
+                UNRESOLVED_FEATURE_REF,
+                meaning::OBJECT_TYPE,
+                "/types/0/operations/0/redefines",
+                "ix://test/Base/m",
+            ),
+        ] {
+            let document = normalization_diagnostic_document(meaning, target);
+            let diagnostic = normalization_diagnostic(code, pointer);
+            assert!(
+                !process_subtype_generalization_schema_diagnostic(&document, &diagnostic),
+                "{code} {meaning} {pointer} targeting {target} keeps its admission diagnostic"
+            );
+        }
+    }
 
     #[trace("FR-056-AC-67")]
     #[test]
