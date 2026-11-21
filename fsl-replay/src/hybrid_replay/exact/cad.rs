@@ -623,7 +623,12 @@ impl<'a> Kernel<'a> {
 /// is expensive but complete; every minor and arithmetic operation is charged
 /// before execution, so caller WorkUnits bound it without a degree cutoff.
 fn determinant(rows: &[Vec<Polynomial>], meter: &mut HybridReplayMeter) -> Result<Polynomial> {
-    meter.charge()?;
+    meter.charge_by(
+        rows.iter()
+            .flatten()
+            .map(Polynomial::size)
+            .fold(1, u64::saturating_add),
+    )?;
     let Some(first) = rows.first() else {
         return Ok(Polynomial::constant(one()));
     };

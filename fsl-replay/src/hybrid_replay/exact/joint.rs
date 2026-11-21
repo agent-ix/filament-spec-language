@@ -180,7 +180,6 @@ impl Decision {
             }
             Operation::Compare(operation) => {
                 let difference = a.arithmetic(ArithmeticOp::Sub, b, meter)?;
-                let polynomial = difference.numerator.mul(&difference.denominator, meter)?;
                 let holds = |sign| {
                     Self::boolean(match operation {
                         CompareOp::Eq => sign == Ordering::Equal,
@@ -191,11 +190,23 @@ impl Decision {
                         CompareOp::Ge => sign != Ordering::Less,
                     })
                 };
-                Rc::new(Self::Sign {
-                    polynomial,
+                let positive = Rc::new(Self::Sign {
+                    polynomial: difference.numerator.clone(),
                     less: holds(Ordering::Less),
                     equal: holds(Ordering::Equal),
                     greater: holds(Ordering::Greater),
+                });
+                let negative = Rc::new(Self::Sign {
+                    polynomial: difference.numerator,
+                    less: holds(Ordering::Greater),
+                    equal: holds(Ordering::Equal),
+                    greater: holds(Ordering::Less),
+                });
+                Rc::new(Self::Sign {
+                    polynomial: difference.denominator,
+                    less: negative,
+                    equal: Rc::new(Self::Undefined),
+                    greater: positive,
                 })
             }
         })
