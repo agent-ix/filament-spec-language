@@ -21,15 +21,15 @@ use fsl_semantics::check::{FormulaNode, FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::engine::DecisiveSearch;
-use super::finite_window::{TimestampedTrace, Valuation, WindowEvaluation, evaluate_finite_window};
+use super::finite_window::{evaluate_finite_window, TimestampedTrace, Valuation, WindowEvaluation};
 use super::observed_aggregate;
 use super::tape::{TapeEntry, TapeLetter, TapeReading};
-use super::window::{AggregateAtom, DEFAULT_MAX_WINDOW_VALUES, WindowTrace};
+use super::window::{AggregateAtom, WindowTrace, DEFAULT_MAX_WINDOW_VALUES};
 use super::{
     AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace, UndefinedCause, UndefinedEvaluation,
 };
-use crate::value::{CheckedPackageEvaluation, evaluate_capture};
+use crate::value::{evaluate_capture, CheckedPackageEvaluation};
 use filament_eval::{CallFailure, Evaluation};
 
 /// Why a `holds` condition stopped the run without a reading, kept whole so
@@ -1985,6 +1985,118 @@ impl TemporalLetters for PackageLetters<'_> {
             "temporal.observed",
             "package-form-reads-no-capture-yet",
         )))
+    }
+}
+
+/// FR-501/FR-504 over admitted package expressions. The existing window
+/// engine owns truth, support and charges; this supplies the same letters
+/// through the package evaluator, without reconstructing checked source.
+pub fn evaluate_package_finite_window(
+    evaluator: &dyn crate::simulation::model::ModelEvaluator,
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    key: &filament_exact::NodeKey,
+    positions: PackagePositions<'_>,
+    trace: &TimestampedTrace,
+    valuations: WindowValuations<'_>,
+    meter: &mut Meter,
+) -> ObservedWindowRun {
+    let mut letters = PackageWindowLetters {
+        inner: PackageLetters {
+            evaluator,
+            clause,
+            key,
+            positions,
+            trace: TemporalTrace::Finite {
+                len: u64::try_from(trace.len()).unwrap_or(u64::MAX),
+            },
+            empty: ObjectEnvironment::default(),
+            stopped: None,
+            undefined: None,
+            activated: false,
+        },
+        valuations,
+    };
+    let facts = match positions {
+        PackagePositions::Objects { .. } => crate::temporal::facts::ClauseFacts::of_checked(clause),
+        PackagePositions::Samples(_) => {
+            crate::temporal::facts::ClauseFacts::of_checked_letters(clause)
+        }
+    };
+    let result = evaluate_finite_window(&facts, trace, &mut letters, meter);
+    let stopped = match (letters.inner.stopped, &result) {
+        (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
+        (stopped, _) => stopped,
+    };
+    ObservedWindowRun {
+        result,
+        stopped,
+        undefined: letters.inner.undefined,
+    }
+}
+
+struct PackageWindowLetters<'a> {
+    inner: PackageLetters<'a>,
+    valuations: WindowValuations<'a>,
+}
+
+impl TemporalLetters for PackageWindowLetters<'_> {
+    fn atom(
+        &mut self,
+        atom: FormulaNodeId,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        if self
+            .valuations
+            .silent_from
+            .is_some_and(|first| position.index() >= first)
+        {
+            return Ok(AtomReading::False);
+        }
+        self.inner.atom(atom, position, meter)
+    }
+
+    fn valuation(
+        &mut self,
+        atom: FormulaNodeId,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<Valuation, LetterStop> {
+        let atom_index = u64::try_from(atom.index()).map_err(|_| {
+            LetterStop::Fault(InternalFault::new("temporal.observed", "atom-in-u64"))
+        })?;
+        if self
+            .valuations
+            .absent
+            .contains(&(position.index(), atom_index))
+        {
+            return Ok(Valuation::Missing);
+        }
+        self.atom(atom, position, meter).map(Valuation::from)
+    }
+
+    fn atom_class(&self, atom: FormulaNodeId) -> usize {
+        self.valuations
+            .classes
+            .get(atom.index())
+            .copied()
+            .unwrap_or(atom.index())
+    }
+
+    fn activation(
+        &mut self,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        self.inner.activation(position, meter)
+    }
+
+    fn captures(
+        &mut self,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<CaptureReading, LetterStop> {
+        self.inner.captures(position, meter)
     }
 }
 
