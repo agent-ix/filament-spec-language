@@ -971,7 +971,6 @@ fn the_reader_projects_a_conditional_slot_root() {
 #[trace("TC-1070", "FR-390-AC-42")]
 #[trace("TC-3039", "FR-400-AC-13")]
 #[test]
-#[ignore = "QSL-2728: contract-ir reader does not accept binder yet"]
 fn the_reader_projects_nested_let_binders_into_distinct_slots() {
     let source = e_c_with_let(true).replace(
         "let c = lm.count in c + c >= 1",
@@ -997,7 +996,9 @@ fn the_reader_projects_nested_let_binders_into_distinct_slots() {
                 panic!("the outer let is the projected root");
             };
             let Some(filament_checked::node::NodeKind::Let {
-                slot: inner_slot, name: inner_name, ..
+                slot: inner_slot,
+                name: inner_name,
+                ..
             }) = projection.kind(*inner)
             else {
                 panic!("the inner let is projected in the outer body");

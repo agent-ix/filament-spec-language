@@ -2443,6 +2443,11 @@ fn member_term(ids: &StructuralIds, member: &MemberTerm) -> Result<CheckedTerm, 
             };
             CheckedTerm::Binding {
                 name: binding.name.as_str().into(),
+                binder: binding
+                    .binder
+                    .as_ref()
+                    .map(|binder| admitted_id(ids, binder))
+                    .transpose()?,
                 value: Box::new(value),
             }
         }
