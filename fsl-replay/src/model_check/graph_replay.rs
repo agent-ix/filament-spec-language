@@ -371,7 +371,7 @@ pub fn replay_model_graph_from_package(
         .native_join_limits()
         .budget()
         .with_read_storage_limit(u64::MAX);
-    let admitted = supply.admit_package(
+    let (admitted, dependencies) = supply.admit_package(
         request.package().bytes(),
         &packages,
         read_limits,
@@ -385,7 +385,7 @@ pub fn replay_model_graph_from_package(
         .transpose()
         .map_err(|_| fault("handoff-equality-admit"))?;
     let bare = fsl_package::BarePackage::new(&admitted)
-        .with_dependency_artifacts(supply.dependencies, &mut budget)
+        .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
             package.with_supply(
                 fsl_package::BareSupply {

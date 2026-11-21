@@ -13,11 +13,11 @@ pub struct DependencyArtifact {
     /// The package admitted with its direct dependencies.
     pub package: Arc<CheckedPackageV2>,
     /// Exact original package bytes, retained for replay.
-    pub bytes: Vec<u8>,
+    pub bytes: Arc<[u8]>,
     /// Original identity witness bytes.
-    pub identity_bytes: Vec<u8>,
+    pub identity_bytes: Arc<[u8]>,
     /// Original equality witness bytes, including an empty witness.
-    pub equality_bytes: Vec<u8>,
+    pub equality_bytes: Arc<[u8]>,
     /// Identity rows joined against this library.
     pub identities: ReadIdentityRows,
     /// Equality rows joined against this library.

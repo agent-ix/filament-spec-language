@@ -399,9 +399,9 @@ pub(super) fn admit(
         dependencies.push(fsl_package::DependencyArtifact {
             identity,
             package: read,
-            bytes: package.bytes,
-            identity_bytes,
-            equality_bytes,
+            bytes: package.bytes.into(),
+            identity_bytes: identity_bytes.into(),
+            equality_bytes: equality_bytes.into(),
             identities,
             equality,
         });

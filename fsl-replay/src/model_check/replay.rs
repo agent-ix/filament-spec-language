@@ -791,7 +791,7 @@ pub fn replay_model_trace(
 /// them, the equality rows.
 #[derive(Clone, Copy, Debug)]
 pub struct HandoffSupply<'s> {
-    /// The retained unique dependency artifacts and each owner's witnesses.
+    /// The retained unique dependency artifacts in admission order, with each owner's witnesses.
     pub dependencies: &'s [fsl_package::DependencyArtifact],
     /// The bytes of `identities.json`.
     pub identities: &'s [u8],
@@ -806,25 +806,68 @@ impl HandoffSupply<'_> {
         documents: &fsl_semantics::model::intake::PackageInput,
         limits: fsl_package::V2ReadLimits,
         budget: &mut filament_contract_model::NativeJoinBudget,
-    ) -> Result<filament_contract_model::CheckedPackageV2, ReplayRefusal> {
-        let evidence = self
-            .dependencies
-            .iter()
-            .map(|artifact| {
-                (
-                    artifact.identity.clone(),
-                    std::sync::Arc::clone(&artifact.package),
+    ) -> Result<
+        (
+            filament_contract_model::CheckedPackageV2,
+            Vec<fsl_package::DependencyArtifact>,
+        ),
+        ReplayRefusal,
+    > {
+        let malformed =
+            || ReplayRefusal::PackageRead(crate::execute::PackageReadRefusal::Malformed);
+        let admission_refusal = |refusal: fsl_package::PackageAdmissionRefusal| match refusal.limit
+        {
+            Some(limit) => ReplayRefusal::Recompile {
+                refusal: Box::new(crate::spine::CompileRefusal::Limit(*limit)),
+                pointer: refusal.pointer,
+            },
+            None => malformed(),
+        };
+        let mut evidence =
+            fsl_package::checked_package_evidence(documents, &std::collections::BTreeMap::new())
+                .map_err(admission_refusal)?;
+        let mut dependencies = Vec::with_capacity(self.dependencies.len());
+        let mut seen = std::collections::BTreeSet::new();
+        for artifact in self.dependencies {
+            if !seen.insert(artifact.identity.as_str()) {
+                return Err(malformed());
+            }
+            let package = fsl_package::admit_checked_package_with_evidence(
+                &artifact.bytes,
+                &evidence,
+                limits,
+                budget,
+            )
+            .map_err(admission_refusal)?;
+            if package.name() != artifact.identity {
+                return Err(malformed());
+            }
+            let identities =
+                fsl_package::ReadIdentityRows::read(&artifact.identity_bytes, &package, budget)
+                    .map_err(|_| malformed())?;
+            let equality = fsl_package::ReadEqualityRows::read(&artifact.equality_bytes, &package)
+                .map_err(|_| malformed())?;
+            let package = std::sync::Arc::new(package);
+            evidence
+                .insert_dependency_package(
+                    artifact.identity.as_str(),
+                    std::sync::Arc::clone(&package),
                 )
-            })
-            .collect();
-        fsl_package::admit_checked_package_with_budget(bytes, documents, &evidence, limits, budget)
-            .map_err(|refusal| match refusal.limit {
-                Some(limit) => ReplayRefusal::Recompile {
-                    refusal: Box::new(crate::spine::CompileRefusal::Limit(*limit)),
-                    pointer: refusal.pointer,
-                },
-                None => ReplayRefusal::PackageRead(crate::execute::PackageReadRefusal::Malformed),
-            })
+                .map_err(|_| malformed())?;
+            dependencies.push(fsl_package::DependencyArtifact {
+                identity: artifact.identity.clone(),
+                package,
+                bytes: std::sync::Arc::clone(&artifact.bytes),
+                identity_bytes: std::sync::Arc::clone(&artifact.identity_bytes),
+                equality_bytes: std::sync::Arc::clone(&artifact.equality_bytes),
+                identities,
+                equality,
+            });
+        }
+        let package =
+            fsl_package::admit_checked_package_with_evidence(bytes, &evidence, limits, budget)
+                .map_err(admission_refusal)?;
+        Ok((package, dependencies))
     }
 }
 
@@ -872,7 +915,7 @@ pub fn replay_model_trace_from_package(
         .native_join_limits()
         .budget()
         .with_read_storage_limit(u64::MAX);
-    let admitted = supply.admit_package(
+    let (admitted, dependencies) = supply.admit_package(
         request.package().bytes(),
         &packages,
         read_limits,
@@ -886,7 +929,7 @@ pub fn replay_model_trace_from_package(
         .transpose()
         .map_err(|_| fault("handoff-equality-admit"))?;
     let bare = fsl_package::BarePackage::new(&admitted)
-        .with_dependency_artifacts(supply.dependencies, &mut budget)
+        .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
             package.with_supply(
                 fsl_package::BareSupply {
@@ -1361,7 +1404,7 @@ pub fn replay_protocol_trace_from_package(
         .native_join_limits()
         .budget()
         .with_read_storage_limit(u64::MAX);
-    let admitted = supply.admit_package(
+    let (admitted, dependencies) = supply.admit_package(
         request.package().bytes(),
         &packages,
         read_limits,
@@ -1375,7 +1418,7 @@ pub fn replay_protocol_trace_from_package(
         .transpose()
         .map_err(|_| fault("handoff-equality-admit"))?;
     let bare = fsl_package::BarePackage::new(&admitted)
-        .with_dependency_artifacts(supply.dependencies, &mut budget)
+        .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
             package.with_supply(
                 fsl_package::BareSupply {
