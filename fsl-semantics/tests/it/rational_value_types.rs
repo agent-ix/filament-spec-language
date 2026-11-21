@@ -427,14 +427,16 @@ fn a_rational_product_refuses_when_its_derived_range_does_not_fit() {
     );
 }
 
-/// Dividing a positive bounded rational by one preserves its normalized
-/// numerator and denominator bounds; neither upper bound can be narrowed.
+/// Dividing a positive bounded rational by one, or taking its reciprocal,
+/// preserves these bounds; neither upper bound can be narrowed.
 #[trace("FSpec-FR-146-AC-9")]
 #[test]
 fn positive_rational_division_by_one_keeps_its_derived_bounds() {
     for body in [
         "a / rational(1, 1)",
         "let quotient = a / rational(1, 1) in quotient",
+        "rational(2, 2) / a",
+        "let quotient = rational(2, 2) / a in quotient",
     ] {
         let declarations = format!(
             "profile law = \"filament.value.integer-division.euclidean/v1\";\n\
