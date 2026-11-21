@@ -16,6 +16,8 @@ mod mapping;
 pub(crate) mod predicate;
 mod subject;
 
+pub(crate) use subject::{ClauseBodies, ClauseBodyRefusal};
+
 pub use crate::protocol_occurrence::SubjectKind;
 pub use mapping::{
     mapping_support, support_of, AuthenticatedSelection, Classification, Closure, MappingRefusal,

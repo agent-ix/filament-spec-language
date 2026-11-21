@@ -26,6 +26,21 @@ impl<'p> Graph<'p> {
         Self { package, positions }
     }
 
+    /// Index one authentic owner, paying each retained entry before insertion.
+    pub(super) fn with_budget(
+        package: &'p CheckedPackageV2,
+        budget: &mut filament_contract_model::NativeJoinBudget,
+        locus: filament_contract_model::NativeJoinLocus,
+    ) -> Result<Self, crate::native_row::NativeRowError> {
+        let mut positions = BTreeMap::new();
+        crate::native_row::items(budget, locus, package.resolved_graph().nodes.len())?;
+        for (at, node) in package.resolved_graph().nodes.iter().enumerate() {
+            crate::native_row::work(budget, locus, 1)?;
+            positions.insert(&node.node_id, at);
+        }
+        Ok(Self { package, positions })
+    }
+
     pub(super) fn package(&self) -> &'p CheckedPackageV2 {
         self.package
     }
