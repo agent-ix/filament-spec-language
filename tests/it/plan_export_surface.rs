@@ -1875,17 +1875,51 @@ fn transfer_member(
     })
 }
 
+/// `BoundedTwo`'s declaration inside [`TRANSFER_DECLARATIONS`]: a configured
+/// (event-position) clause, which the package emitter refuses without a clock
+/// selection, so the closure transfer unit, whose refuted premise needs its own
+/// emitted graph for held node ids, leaves it out.
+const BOUNDED_TWO: &str =
+    "temporal BoundedTwo using ev over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { eventually[0,2] holds(c.value = 2) }\n";
+
+/// The refinement unit's declarations: every original caller's is
+/// [`TRANSFER_DECLARATIONS`] and `CasRefinesCounter` unchanged; the closure
+/// transfer cases and their emission test use the same declarations without
+/// the unused configured clause `BoundedTwo`.
+fn transfer_declarations(closure_unit: bool) -> String {
+    let clauses = if closure_unit {
+        assert!(
+            TRANSFER_DECLARATIONS.contains(BOUNDED_TWO),
+            "the clause to omit is declared"
+        );
+        TRANSFER_DECLARATIONS.replacen(BOUNDED_TWO, "", 1)
+    } else {
+        TRANSFER_DECLARATIONS.to_owned()
+    };
+    format!(
+        "{clauses}{}",
+        crate::support::refinement_cas::cas_refines_counter()
+    )
+}
+
 /// Writes ADR-020 §8's counter models, a unit with `CasRefinesCounter` and
 /// [`TRANSFER_DECLARATIONS`], the initial snapshots and a `native-run/1`
 /// request carrying `members` (with the `Spec` model's entry dropped when
 /// `supply_spec` is false), runs it and returns its exit code and document.
 fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
+    transfer_run_over(members, supply_spec, false)
+}
+
+/// [`transfer_run`] over the closure transfer unit when `closure_unit`.
+fn transfer_run_over(
+    members: &[(&str, Value)],
+    supply_spec: bool,
+    closure_unit: bool,
+) -> (u8, Value) {
     use crate::support::refinement_cas::{self, Variant};
     let directory = tempfile::tempdir().unwrap();
-    let declarations = format!(
-        "{TRANSFER_DECLARATIONS}{}",
-        refinement_cas::cas_refines_counter()
-    );
+    let declarations = transfer_declarations(closure_unit);
     let unit = refinement_cas::unit_text(
         &refinement_cas::packages(Variant::CAS),
         &declarations,
@@ -1941,9 +1975,9 @@ fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
     )
 }
 
-/// The held-id precondition of a refuted transfer premise: the exact unit
-/// `transfer_run` writes (`TRANSFER_DECLARATIONS`, `CasRefinesCounter` and the
-/// three counter models) is emitted at the analyze run's emit limit and read
+/// The held-id precondition of a refuted transfer premise: the exact closure
+/// unit the two closure transfer cases write (`transfer_declarations(true)`,
+/// `CasRefinesCounter` and the three counter models) is emitted at the analyze run's emit limit and read
 /// back through the strict reader, as `analyze` does before it holds a result's
 /// node ids. A refusal fails the test with its typed cause, not `NotEmitted`.
 #[test]
@@ -1951,10 +1985,7 @@ fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
 fn the_transfer_unit_emits_and_strict_reads_its_package() {
     use crate::support::refinement_cas::{self, Variant};
     let packages = refinement_cas::packages(Variant::CAS);
-    let declarations = format!(
-        "{TRANSFER_DECLARATIONS}{}",
-        refinement_cas::cas_refines_counter()
-    );
+    let declarations = transfer_declarations(true);
     let unit = refinement_cas::unit_text(&packages, &declarations, Variant::CAS);
     let checked = crate::support::front_end::checked(
         fsl_foundation::SourceIdentity::new("agent-ix", "unit.native"),
@@ -2322,11 +2353,12 @@ fn assert_closure_lasso_reads_back(value: &Value, stem: usize) {
 #[test]
 #[trace("TC-2920", "FR-1030-AC-6")]
 fn a_liveness_clause_that_the_stutter_closure_violates_refutes_its_premise() {
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["StuckTwo"]),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 22, "{value}");
@@ -2345,11 +2377,12 @@ fn a_liveness_clause_that_the_stutter_closure_violates_refutes_its_premise() {
 #[test]
 #[trace("TC-2920", "FR-1030-AC-7")]
 fn a_closure_violation_after_a_real_step_refutes_its_premise() {
-    let (exit, value) = transfer_run(
+    let (exit, value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["PendingTwo"]),
         )],
+        true,
         true,
     );
     assert_eq!(exit, 22, "{value}");
