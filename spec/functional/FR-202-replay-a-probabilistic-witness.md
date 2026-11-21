@@ -130,8 +130,10 @@ race gives that post-key and elapsed amount.
   refuted only by an exact minimum below `θ` or an `upper` certificate on
   that minimum below `θ`; `<= θ` SHALL be refuted only by an exact maximum
   above `θ` or a `lower` certificate on that maximum above `θ`. The bound
-  document SHALL retain FR-1042's required policy for that extremum, with
-  the counterexample's scheduler agreeing with that policy; an exact
+  document SHALL use FR-1042's independently checked policy for that
+  extremum, synthesized in canonical action order where a hint is absent
+  and checked against the offered action where a hint is present. The
+  counterexample's scheduler SHALL agree with that selected policy; an exact
   document's witness SHALL attain its deciding extremum.
 - When checking that mean certificate as refutation evidence, the checker
   SHALL apply the strict refutation comparison above after the certificate
