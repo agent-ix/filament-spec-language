@@ -216,12 +216,10 @@ fn outcome(output: &Output) -> Value {
     })
 }
 
+// These are the external filament-specification criteria. The FSpec prefix
+// distinguishes their identifiers from same-numbered criteria in this repo.
 #[test]
-#[trace(
-    "ix://agent-ix/filament-specification/FR-180-AC-5",
-    "ix://agent-ix/filament-specification/FR-049-AC-8",
-    "ix://agent-ix/filament-specification/FR-046-AC-6"
-)]
+#[trace("FSpec-FR-180-AC-5", "FSpec-FR-049-AC-8", "FSpec-FR-046-AC-6")]
 fn source_aggregates_group_reservations_and_duplicate_refunds_by_order() {
     let output = run(true, false);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -235,11 +233,7 @@ fn source_aggregates_group_reservations_and_duplicate_refunds_by_order() {
 }
 
 #[test]
-#[trace(
-    "ix://agent-ix/filament-specification/FR-180-AC-5",
-    "ix://agent-ix/filament-specification/FR-049-AC-8",
-    "ix://agent-ix/filament-specification/FR-046-AC-6"
-)]
+#[trace("FSpec-FR-180-AC-5", "FSpec-FR-049-AC-8", "FSpec-FR-046-AC-6")]
 fn an_incomplete_refund_population_cannot_settle_a_recovery_aggregate() {
     let output = run(false, false);
     assert_eq!(output.status.code(), Some(22), "{output:?}");
@@ -249,11 +243,7 @@ fn an_incomplete_refund_population_cannot_settle_a_recovery_aggregate() {
 }
 
 #[test]
-#[trace(
-    "ix://agent-ix/filament-specification/FR-180-AC-5",
-    "ix://agent-ix/filament-specification/FR-049-AC-8",
-    "ix://agent-ix/filament-specification/FR-046-AC-6"
-)]
+#[trace("FSpec-FR-180-AC-5", "FSpec-FR-049-AC-8", "FSpec-FR-046-AC-6")]
 fn a_contradictory_refund_total_does_not_pass_recovery() {
     let output = run(true, true);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
