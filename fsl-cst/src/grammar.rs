@@ -278,12 +278,6 @@ pub(super) fn complete_reserved_words(
     for rule in grammar.values() {
         collect(rule, &mut output);
     }
-    // These three collection constructors are `Literal` terminals so their
-    // spelling can be recognized in a value position, but they are reserved
-    // throughout the complete grammar just like the `Exact` keywords above.
-    for spelling in ["set", "bag", "orderedSet"] {
-        output.insert(spelling);
-    }
     output
 }
 
@@ -3047,7 +3041,7 @@ fn analysis(g: &mut Grammar) {
             literal("align"),
             literal("skip"),
             x("{"),
-            list(|| r(P::QualifiedName)),
+            opt(list(|| r(P::QualifiedName))),
             x("}"),
         ]),
     );
