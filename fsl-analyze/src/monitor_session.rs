@@ -1083,14 +1083,19 @@ impl<'a> MonitorSession<'a> {
                 ProgressValue::Watermark(next.watermark),
             );
         }
-        let retreats = match (held.completeness, next.completeness) {
-            (ProgressCompleteness::Complete { .. }, ProgressCompleteness::Incomplete) => true,
-            (
-                ProgressCompleteness::Complete { through: held },
-                ProgressCompleteness::Complete { through: next },
-            ) => next < held,
-            _ => false,
-        };
+        // FR-861: the owner's history-free revision check decides whether the
+        // assertion retreats; the session holds no covered set, so it lists none.
+        let (held_upper, held_state) = owner_reading(held.completeness);
+        let (next_upper, next_state) = owner_reading(next.completeness);
+        let retreats = filament_observation::authority::completeness::check_revision(
+            held_upper,
+            held_state,
+            &NoHolding,
+            next_upper.or(held_upper),
+            next_state,
+            &[],
+        )
+        .is_err();
         if retreats {
             return contradiction(
                 ContradictedDimension::Completeness,
@@ -1561,5 +1566,35 @@ impl<'a> MonitorSession<'a> {
             }
         }
         Ok(session)
+    }
+}
+
+/// The owner's `(upper bound, state)` reading of one completeness assertion
+/// (FR-944 "Completeness").
+fn owner_reading(
+    completeness: ProgressCompleteness,
+) -> (
+    Option<i128>,
+    filament_observation::authority::completeness::State,
+) {
+    use filament_observation::authority::completeness::State;
+    match completeness {
+        ProgressCompleteness::Complete { through } => (Some(i128::from(through)), State::Complete),
+        ProgressCompleteness::Incomplete => (None, State::Incomplete),
+    }
+}
+
+/// A retained assessment that holds no member: the session keeps only the
+/// assertion, so the owner's check reads the boundary and state alone.
+struct NoHolding;
+
+impl filament_observation::authority::completeness::RetainedHolding for NoHolding {
+    type Key = str;
+
+    fn held(
+        &self,
+        _key: &str,
+    ) -> Option<filament_observation::authority::completeness::HeldFact<'_>> {
+        None
     }
 }
