@@ -9,6 +9,8 @@ relationships:
     type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-203
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-1044
+    type: verifies
 ---
 # TC-641: An undefined state reached with positive probability refutes an exact claim
 
@@ -19,7 +21,7 @@ product state of positive probability, with an `Undefined` path as its
 evidence, that the evidence replays, and that the item settles `refuted`
 with cause `UndefinedEvaluation` whatever the threshold.
 
-Scope: FR-196-AC-5, FR-196-AC-13, FR-202-AC-5, FR-203-AC-5.
+Scope: FR-196-AC-5, FR-196-AC-13, FR-202-AC-5, FR-203-AC-5, FR-1044-AC-1.
 
 ## Test Procedure
 
