@@ -211,6 +211,8 @@ fn build_configured(
         workload,
         kind,
         plan,
+        measure_meter: filament_exact::Meter::new(system.meter_limits())
+            .with_cancel(cancel.clone()),
         reads,
         bindings,
         max_states: limits.limits.max_states,
@@ -257,7 +259,15 @@ fn plan_refusal(
             claim: claim.cloned(),
             member,
         },
-        PlanFault::Broken(invariant) => fault(invariant),
+        PlanFault::Measure(fsl_eval::probabilistic::MeasureError::Accounting(error)) => {
+            ProductRefusal::PredicateRefused(
+                fsl_eval::simulation::model::ClauseOutcome::Incomplete(*error),
+            )
+        }
+        PlanFault::Broken(invariant)
+        | PlanFault::Measure(fsl_eval::probabilistic::MeasureError::Broken(invariant)) => {
+            fault(invariant)
+        }
     }
 }
 
@@ -398,6 +408,7 @@ struct Builder<'r, 'c, 'p, 'k> {
     workload: Option<&'r Workload>,
     kind: ProductKind,
     plan: Plan<'c>,
+    measure_meter: filament_exact::Meter,
     reads: Reads<'c>,
     /// Each `over` binding, with the reference its predicates are read for.
     bindings: Vec<(Option<ModelInstance>, Option<ObjectReference>)>,
@@ -455,7 +466,8 @@ impl Builder<'_, '_, '_, '_> {
                 let truths = match self.truths(&state, binding)? {
                     Ok(truths) => truths,
                     Err(hit) => {
-                        let (monitor, accumulator) = self.plan.initial_control()?;
+                        let (monitor, accumulator) =
+                            self.plan.initial_control(&mut self.measure_meter)?;
                         let key = ProbKey {
                             binding: self.bindings[binding].0.clone(),
                             model: hit.model.clone(),
@@ -467,7 +479,7 @@ impl Builder<'_, '_, '_, '_> {
                         return Err(self.undefined(None, None, None, at, key, hit));
                     }
                 };
-                let (monitor, accumulator) = self.plan.start(&truths)?;
+                let (monitor, accumulator) = self.plan.start(&truths, &mut self.measure_meter)?;
                 let key = self.key_of(&state, binding, monitor, accumulator, None)?;
                 let target = Target {
                     key,
@@ -832,6 +844,7 @@ impl Builder<'_, '_, '_, '_> {
             &source.truths,
             &truths,
             rewards,
+            &mut self.measure_meter,
         )?;
         let key = self.key_of(post, binding, monitor, accumulator, None)?;
         Ok(Target {
