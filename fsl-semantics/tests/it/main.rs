@@ -83,8 +83,8 @@ mod model_subject_bound;
 mod model_systems;
 #[cfg(feature = "test-support")]
 mod model_systems_resolve;
-mod model_unit_inheritance;
 mod model_unit_identity;
+mod model_unit_inheritance;
 mod model_unit_input;
 mod moved_item_paths;
 mod named_population;
