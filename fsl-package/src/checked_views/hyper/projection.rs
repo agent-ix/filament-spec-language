@@ -191,16 +191,7 @@ fn components(
         if let NodeKind::Local(level) = kind {
             ownership = ownership.join(Ownership::Trace(slots.get(*level)?.trace));
         }
-        if matches!(
-            kind,
-            NodeKind::Attribute { .. }
-                | NodeKind::History { .. }
-                | NodeKind::Navigate { .. }
-                | NodeKind::Reaches { .. }
-                | NodeKind::ReachesEnd { .. }
-                | NodeKind::AllInstances { .. }
-                | NodeKind::Lookup { .. }
-        ) {
+        if model_read(kind) {
             let Ownership::Trace(component) = ownership else {
                 return None;
             };
@@ -208,5 +199,28 @@ fn components(
         }
         owners.insert(index, ownership);
     }
+    // Function bodies are separate projection contexts. A read in one has
+    // no atom-slot owner, so it must never select the first component by
+    // falling through the root context's component map.
+    let mut index = 0;
+    while let Some(kind) = projection.kind(index) {
+        if model_read(kind) && !owners.contains_key(&index) {
+            return None;
+        }
+        index += 1;
+    }
     Some(reads)
+}
+
+fn model_read(kind: &NodeKind<usize, filament_checked::node::CheckedLiteral>) -> bool {
+    matches!(
+        kind,
+        NodeKind::Attribute { .. }
+            | NodeKind::History { .. }
+            | NodeKind::Navigate { .. }
+            | NodeKind::Reaches { .. }
+            | NodeKind::ReachesEnd { .. }
+            | NodeKind::AllInstances { .. }
+            | NodeKind::Lookup { .. }
+    )
 }

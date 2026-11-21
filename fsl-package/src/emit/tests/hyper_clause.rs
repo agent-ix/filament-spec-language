@@ -1082,7 +1082,13 @@ fn a_package_hyper_atom_refuses_an_admitted_mixed_component_receiver() {
         .iter_mut()
         .find(|node| node["body"]["operation"]["identity"] == "filament.op.function.call")
         .expect("the receiver's pure function call");
-    call["body"]["arguments"][2]["target"] = slot_b;
+    call["body"]["arguments"][2]["target"] = slot_b.clone();
+    let graph = crate::checked_v2::wire_graph(&original).expect("structural keys");
+    let dependencies = call["dependencies"]
+        .as_array_mut()
+        .expect("call dependencies");
+    dependencies.push(slot_b);
+    dependencies.sort_by_key(|dependency| graph.key_of_value(dependency).expect("dependency key"));
     assert_eq!(strict_verdict(&built, &changed), None);
     let mut evidence = read_evidence(&built.emission);
     for document in &built.documents {
