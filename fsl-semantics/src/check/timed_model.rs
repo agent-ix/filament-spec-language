@@ -1813,8 +1813,6 @@ struct SelectionDraft {
 /// What [`prepare`] read out of a unit: one draft per dense time source.
 pub(crate) struct TimedDrafts {
     models: Vec<ModelDraft>,
-    /// The unfoldings of each clock-reading call site, in reading order.
-    pub(crate) unfoldings: Vec<(Span, u64)>,
 }
 
 /// What [`prepare`] reads.
@@ -1841,8 +1839,6 @@ pub(crate) struct Inputs<'a> {
     /// Each selected model alias's declaration span, which locates a clock
     /// field of an untimed model that no clause reads.
     pub(crate) model_spans: &'a std::collections::BTreeMap<String, Span>,
-    /// The checker's work budget.
-    pub(crate) work_budget: u64,
     /// The source region a span of the unit names.
     pub(crate) locate: &'a dyn Fn(Span) -> Option<SourceRegion>,
 }
@@ -2775,16 +2771,12 @@ type Dnf = Vec<(Vec<(DataLiteral, bool)>, Vec<ClockConstraint>)>;
 
 /// The parts of a guard's disjunctive forms, counted against the package's
 /// node limit: a guard whose disjunctive form grows past it is refused, as
-/// a body with that many nodes would be. It also counts the unfoldings of
-/// clock-reading declarations, each a unit of the checker's work budget.
+/// a body with that many nodes would be. It also charges each unfolding of a
+/// clock-reading declaration to the checker's work meter.
 struct PartBudget<'m> {
     limit: u64,
     used: u64,
-    /// The checker's work budget, which no unfolding count may pass.
-    work_limit: u64,
-    unfolded: u64,
-    /// The unfoldings of each call site, in reading order.
-    sites: Vec<(Span, u64)>,
+    meter: &'m mut Meter,
     /// The source region of a span, for a refusal located at a call.
     locate: &'m dyn Fn(Span) -> Option<SourceRegion>,
 }
@@ -2809,23 +2801,30 @@ impl PartBudget<'_> {
         Ok(())
     }
 
-    /// Count one unfolding of the clock-reading declaration called at
-    /// `call`, which the work meter is charged once the unit's other work
-    /// is known ([`settle_unfoldings`]).
+    /// Charge one unfolding of the clock-reading declaration called at
+    /// `call` to the work meter.
     fn unfold(&mut self, call: Span) -> Result<(), CheckCause> {
-        self.unfolded = self.unfolded.saturating_add(1);
-        if self.unfolded > self.work_limit {
-            return Err(work_budget(
-                self.work_limit,
-                u128::from(self.unfolded),
-                (self.locate)(call),
-            ));
-        }
-        match self.sites.last_mut() {
-            Some((site, count)) if *site == call => *count += 1,
-            _ => self.sites.push((call, 1)),
-        }
-        Ok(())
+        self.meter
+            .charge(Charge::new(ChargePoint::DeclarationCheck).work(Integer::from(1_u64)))
+            .map_err(|incomplete| {
+                limit_exceeded(
+                    super::refusal::CheckingLimitKind::WorkBudget,
+                    incomplete.limit,
+                    u128::from(incomplete.consumed) + 1,
+                    (self.locate)(call),
+                )
+            })
+    }
+
+    /// The refusal of a constant of `bits` bits past the rational-bit
+    /// ceiling `limit`, located at `at`.
+    fn too_wide(&self, limit: u64, bits: u64, at: Span) -> CheckCause {
+        limit_exceeded(
+            super::refusal::CheckingLimitKind::RationalBits,
+            limit,
+            u128::from(bits),
+            (self.locate)(at),
+        )
     }
 
     fn product(&mut self, left: &Dnf, right: &Dnf) -> Result<Dnf, CheckCause> {
@@ -2844,39 +2843,19 @@ impl PartBudget<'_> {
     }
 }
 
-fn work_budget(limit: u64, actual: u128, region: Option<SourceRegion>) -> CheckCause {
+fn limit_exceeded(
+    kind: super::refusal::CheckingLimitKind,
+    limit: u64,
+    actual: u128,
+    region: Option<SourceRegion>,
+) -> CheckCause {
     CheckCause::ResourceExhausted(Box::new(super::refusal::StageLimitCause {
         stage: super::refusal::CheckingStage::Typing,
-        kind: super::refusal::CheckingLimitKind::WorkBudget,
+        kind,
         limit,
         actual,
         region,
     }))
-}
-
-/// Charge the work meter the unfoldings [`prepare`] counted, each call
-/// site's together, so a call whose unfolding the budget does not cover is
-/// refused `work-budget-exceeded` at that call.
-///
-/// # Errors
-///
-/// The call whose unfoldings the meter denies.
-pub(crate) fn settle_unfoldings(
-    unfoldings: &[(Option<SourceRegion>, u64)],
-    meter: &mut Meter,
-) -> Result<(), CheckRefusal> {
-    for (call, count) in unfoldings {
-        meter
-            .charge(Charge::new(ChargePoint::DeclarationCheck).work(Integer::from(*count)))
-            .map_err(|incomplete| {
-                refusal(work_budget(
-                    incomplete.limit,
-                    u128::from(incomplete.consumed) + u128::from(*count),
-                    call.clone(),
-                ))
-            })?;
-    }
-    Ok(())
 }
 
 fn timed(cause: TemporalCause) -> CheckCause {
@@ -4384,6 +4363,7 @@ fn urgency(
 pub(crate) fn prepare(
     inputs: &Inputs<'_>,
     state_clauses: &mut [StateClauseDeclaration],
+    meter: &mut Meter,
 ) -> Result<TimedDrafts, CheckRefusal> {
     // FR-146 over the clock-reading declarations, which have no function
     // node for the value checker's measure check to reach (FR-091-AC-30).
@@ -4400,19 +4380,18 @@ pub(crate) fn prepare(
             },
         });
     }
-    prepare_models(inputs, state_clauses).map_err(refusal)
+    prepare_models(inputs, state_clauses, meter).map_err(refusal)
 }
 
 fn prepare_models(
     inputs: &Inputs<'_>,
     state_clauses: &mut [StateClauseDeclaration],
+    meter: &mut Meter,
 ) -> Result<TimedDrafts, CheckCause> {
     let mut budget = PartBudget {
         limit: inputs.nodes,
         used: 0,
-        work_limit: inputs.work_budget,
-        unfolded: 0,
-        sites: Vec::new(),
+        meter,
         locate: inputs.locate,
     };
     // FR-230 "Clock-reading declarations": each body is checked once. A call
@@ -4687,10 +4666,7 @@ fn prepare_models(
             urgency: urgency_drafts,
         });
     }
-    Ok(TimedDrafts {
-        models,
-        unfoldings: budget.sites,
-    })
+    Ok(TimedDrafts { models })
 }
 
 /// What [`check`] reads of the unit beside the drafts.
