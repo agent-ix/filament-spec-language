@@ -66,6 +66,7 @@ pub(super) enum Tf {
     Release(Iv, Box<Tf>, Box<Tf>),
     Since(Iv, Box<Tf>, Box<Tf>),
     Triggered(Iv, Box<Tf>, Box<Tf>),
+    Timed(Box<super::dense::Window>),
 }
 
 /// One fairness constraint of a clause, as read from the package.
@@ -186,6 +187,24 @@ struct Scope {
     past: bool,
     /// Reached from the root through conjunctions only.
     conj: bool,
+    window: WindowScope,
+}
+
+#[derive(Clone, Copy)]
+enum WindowScope {
+    Unsupported,
+    Origin,
+    Always,
+}
+
+impl WindowScope {
+    fn through(self, operation: FormulaOperation, interval: Iv) -> Self {
+        match (self, operation, interval.is_some()) {
+            (scope, FormulaOperation::And, false) => scope,
+            (Self::Origin, FormulaOperation::Always, false) => Self::Always,
+            _ => Self::Unsupported,
+        }
+    }
 }
 
 fn build(
@@ -208,6 +227,31 @@ fn build(
     }
     let here = at_node(graph, node.node)?;
     let direction = kind.direction();
+    if let Some(CheckedOperationInterval::Timed { .. }) = &node.interval {
+        if matches!(scope.window, WindowScope::Unsupported) {
+            return defer_at(
+                here,
+                &graph.construct(here),
+                "a timed window outside the origin or its unbounded always",
+            );
+        }
+        return super::dense::Window::read(graph, kind, node, here, |operand| {
+            build(
+                graph,
+                uses,
+                operand,
+                atom,
+                Scope {
+                    future: true,
+                    past: false,
+                    conj: false,
+                    window: WindowScope::Unsupported,
+                },
+                refuse_at,
+            )
+        })
+        .map(|window| Tf::Timed(Box::new(window)));
+    }
     let iv = interval(graph, node)?;
     if direction == Some(OperatorDirection::Future) {
         if scope.past {
@@ -227,6 +271,7 @@ fn build(
         future: scope.future || direction == Some(OperatorDirection::Future),
         past: scope.past || direction == Some(OperatorDirection::Past),
         conj: scope.conj && kind == FormulaOperation::And,
+        window: scope.window.through(kind, iv),
     };
     let mut operands = Vec::new();
     for &operand in &node.operands {
@@ -365,6 +410,11 @@ pub(super) fn read(
         future: false,
         past: false,
         conj: true,
+        window: if timed_root.is_some() {
+            WindowScope::Origin
+        } else {
+            WindowScope::Unsupported
+        },
     };
     let tf = build(
         graph,
@@ -406,7 +456,9 @@ pub(super) fn read(
 /// Locate unsupported operators while their checked node IDs are still
 /// available. In particular, an unbounded root `until` has no nested
 /// future operator to supply the generic monitor refusal location.
+/// The dense TLA+ renderer emits one window monitor per clause.
 fn check_dense_tla_operators(graph: &Graph<'_>, uses: &[FormulaNodeUse<'_>]) -> Lower<()> {
+    let mut has_window = false;
     for usage in uses {
         let supported = matches!(
             usage.kind(),
@@ -432,6 +484,20 @@ fn check_dense_tla_operators(graph: &Graph<'_>, uses: &[FormulaNodeUse<'_>]) -> 
                 &graph.construct(at),
                 "an operator outside the dense TLA+ lowering",
             );
+        }
+        if matches!(
+            &usage.interval,
+            Some(CheckedOperationInterval::Timed { .. })
+        ) {
+            if has_window {
+                let at = at_node(graph, usage.node)?;
+                return defer_at(
+                    at,
+                    &graph.construct(at),
+                    "more than one timed window in a dense TLA+ clause",
+                );
+            }
+            has_window = true;
         }
     }
     Ok(())
@@ -541,6 +607,29 @@ impl LeanClause<'_> {
             Tf::Triggered(iv, left, right) => {
                 let (left, right) = (negate(left), negate(right));
                 format!("Not {}", self.relation(*iv, &left, &right, position, "-")?)
+            }
+            Tf::Timed(window) => {
+                let d = self.fresh("d");
+                let next = format!("({position} + {d})");
+                let points =
+                    format!("Q_sub (b.ts (Int.toNat {next})) (b.ts (Int.toNat {position}))");
+                let bounds = window.lean_bounds(&format!("({points})"));
+                let inner = match &window.predicate {
+                    Tf::Atom(index) => format!(
+                        "{} (b.st (Int.toNat {next})) {}",
+                        self.atom_name(*index),
+                        self.clause.binder,
+                    ),
+                    formula => self.at(formula, &next)?,
+                };
+                match window.operator {
+                    super::dense::Operator::Always => format!(
+                        "(forall {d} : Int, 0 <= {d} -> 0 <= {next} -> ({bounds}) -> {inner})"
+                    ),
+                    super::dense::Operator::Eventually => format!(
+                        "(exists {d} : Int, 0 <= {d} /\\ (0 <= {next} /\\ {bounds} /\\ {inner}))"
+                    ),
+                }
             }
         })
     }
