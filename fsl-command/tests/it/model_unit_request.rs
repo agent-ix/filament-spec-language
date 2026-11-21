@@ -192,6 +192,21 @@ fn systems_source_compiles_to_the_same_checked_package_as_its_document() {
         );
         assert!(nodes.iter().any(|node| &node["node_id"] == target));
         assert!(channel["dependencies"].as_array().unwrap().contains(target));
+        let clause = nodes
+            .iter()
+            .find(|node| node["semantic_form"] == "protocol_clause")
+            .expect("protocol emitted");
+        let relationships = clause["body"]["arguments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|argument| argument["name"] == "relationships")
+            .unwrap();
+        assert!(relationships["value"]["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|term| &term["target"] == target));
         let mut ports = Vec::new();
         for role in nodes.iter().filter(|node| node["semantic_form"] == "role") {
             let member = role["body"]["arguments"]
@@ -404,17 +419,20 @@ fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
 #[test]
 #[trace("TC-3013", "FR-897-AC-3", "FR-897-AC-5")]
 fn systems_source_refuses_reversed_channel_and_non_port_roles() {
-    let mut variants =
-        vec![SYSTEMS_PROTOCOL.replace("from Outlet to Inlet", "from Inlet to Outlet")];
+    let mut variants = vec![(
+        SYSTEMS_PROTOCOL.replace("from Outlet to Inlet", "from Inlet to Outlet"),
+        "Link".to_owned(),
+    )];
     for role in ["PumpOut", "TankIn"] {
         for member in ["SysPump", "Pipe"] {
-            variants.push(
+            variants.push((
                 SYSTEMS_PROTOCOL.replace(&format!("on N::{role};"), &format!("on N::{member};")),
-            );
+                format!("N::{member}"),
+            ));
         }
     }
     let directory = tempfile::tempdir().unwrap();
-    for protocol in variants {
+    for (protocol, located) in variants {
         let path = systems_request(directory.path(), SYSTEMS_MODEL, &protocol);
         let error = command::compile_outcome(&path)
             .err()
@@ -422,6 +440,24 @@ fn systems_source_refuses_reversed_channel_and_non_port_roles() {
         let artifact = error.artifact_value().unwrap();
         assert_eq!(artifact["code"], "invalid_model_binding", "{artifact}");
         assert_eq!(artifact["cause"], "malformed-declaration", "{artifact}");
+        let start = if located == "Link" {
+            protocol.find("via Link").unwrap() + 4
+        } else {
+            protocol.find(&located).unwrap()
+        };
+        assert_eq!(
+            artifact["details"]["span"]["start"]["byte"], start,
+            "{artifact}"
+        );
+        assert_eq!(
+            artifact["details"]["span"]["end"]["byte"],
+            start + located.len(),
+            "{artifact}"
+        );
+        assert_eq!(
+            artifact["details"]["source"]["identity"],
+            "test:pipeline.fsl"
+        );
     }
 }
 
@@ -460,6 +496,16 @@ fn systems_source_preserves_independent_connection_admission_causes() {
         assert_eq!(artifact["cause"], cause, "{artifact}");
         assert!(
             artifact.to_string().contains("ix://test/plant/Pipe"),
+            "{artifact}"
+        );
+        let start = SYSTEMS_PROTOCOL.find("N::Pipe").unwrap();
+        assert_eq!(
+            artifact["details"]["span"]["start"]["byte"], start,
+            "{artifact}"
+        );
+        assert_eq!(
+            artifact["details"]["span"]["end"]["byte"],
+            start + "N::Pipe".len(),
             "{artifact}"
         );
     }
