@@ -849,7 +849,7 @@ pub struct ModelSystem<'a> {
 /// An expression meter, shared across a source-plan request when enabled.
 pub enum EvaluationMeter<'a> {
     /// The existing independent evaluation contract outside source planning.
-    Local(filament_exact::Meter),
+    Local(Box<filament_exact::Meter>),
     /// The request's serialized accounting session.
     Shared(std::sync::MutexGuard<'a, filament_exact::Meter>),
 }
@@ -977,7 +977,7 @@ impl ModelSystem<'_> {
         if self.shares_evaluation_meter() {
             EvaluationMeter::Shared(self.shared_meter.lock().expect("evaluation meter lock"))
         } else {
-            EvaluationMeter::Local(filament_exact::Meter::new(self.meter))
+            EvaluationMeter::Local(Box::new(filament_exact::Meter::new(self.meter)))
         }
     }
 }

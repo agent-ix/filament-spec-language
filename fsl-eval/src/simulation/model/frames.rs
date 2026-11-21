@@ -215,9 +215,11 @@ pub(super) fn apply(
         let args = arguments_of(application, &domains, &digits)?;
         apply_argument(
             walk,
-            row,
-            application,
-            clauses,
+            ApplicationContext {
+                row,
+                application,
+                clauses,
+            },
             args,
             &frames,
             budget,
@@ -235,26 +237,36 @@ pub(super) fn apply(
     Ok(())
 }
 
+/// The receiver, operation and selected clauses shared by its argument vectors.
+struct ApplicationContext<'a, 'c> {
+    row: &'a Row,
+    application: &'a Application,
+    clauses: &'a Selected<'c>,
+}
+
 /// Apply one typed argument vector through the same native relation used by
 /// every model caller. Enumeration and source-plan cursors share this path.
 fn apply_argument(
     walk: &Walk<'_, '_>,
-    row: &Row,
-    application: &Application,
-    clauses: &Selected<'_>,
+    context: ApplicationContext<'_, '_>,
     args: Vec<(String, Value)>,
     frames: &ArgumentFrames,
     budget: &mut Budget,
     outputs: Outputs<'_>,
 ) -> Result<(), ExpansionStop> {
+    let ApplicationContext {
+        row,
+        application,
+        clauses,
+    } = context;
     let Outputs {
         contract,
         successors,
-        mut enabled,
-        mut enabled_transitions,
-        mut recommendations,
+        enabled,
+        enabled_transitions,
+        recommendations,
         selected_transitions,
-        mut charged,
+        charged,
     } = outputs;
     let system = walk.system;
     let preconditions = &clauses.preconditions;
@@ -325,7 +337,7 @@ fn apply_argument(
         }
     }
 
-    if let Some(recommendations) = recommendations.as_deref_mut() {
+    if let Some(recommendations) = recommendations {
         recommendations.push(super::application::RecommendedApplication {
             operation: application.text.clone(),
             receiver: row.reference.clone(),
@@ -351,10 +363,10 @@ fn apply_argument(
     // completes when no attempt constraint reads a completed result. Keep
     // the transition only if at least one candidate post-state succeeds.
     let before = budget.used();
-    if let Some(transitions) = enabled_transitions.as_deref_mut() {
+    if let Some(transitions) = enabled_transitions {
         let mut first_successor = Vec::new();
         let completes = application_run.first_candidate(budget, contract, &mut first_successor)?;
-        if let Some(charged) = charged.as_deref_mut() {
+        if let Some(charged) = charged {
             charged.push((transition.clone(), budget.used() - before));
         }
         if completes {
@@ -365,10 +377,10 @@ fn apply_argument(
 
     let first = successors.len();
     application_run.candidates(budget, contract, successors)?;
-    if let Some(charged) = charged.as_deref_mut() {
+    if let Some(charged) = charged {
         charged.push((transition.clone(), budget.used() - before));
     }
-    if let Some(enabled) = enabled.as_deref_mut() {
+    if let Some(enabled) = enabled {
         enabled.push(EnabledVector {
             transition,
             receiver: row.reference.clone(),
@@ -462,9 +474,11 @@ pub(super) fn visit_operation(
             let mut successors = Vec::new();
             apply_argument(
                 walk,
-                row,
-                application,
-                &clauses,
+                ApplicationContext {
+                    row,
+                    application,
+                    clauses: &clauses,
+                },
                 args,
                 &frames,
                 budget,
