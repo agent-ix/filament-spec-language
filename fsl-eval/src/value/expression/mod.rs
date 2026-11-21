@@ -47,7 +47,7 @@ pub(crate) use evaluate::reader_source::{
     package_constraint_reads, package_guard_reads, package_operation_footprint, package_term_reads,
     ProjectedClause,
 };
-use evaluate::Machine;
+use evaluate::{Machine, ReferenceOrigins};
 use filament_eval::{Registry, SessionLimits};
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};
 use filament_semantic_value::admission::AdmissionRecord;
@@ -1867,7 +1867,7 @@ struct ClauseSetup<'a> {
     current: &'a ObjectEnvironment,
     pre: Option<&'a ObjectEnvironment>,
     bindings: Vec<Value>,
-    reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
+    reference_origins: Vec<ReferenceOrigins>,
     trail: s6a::separation::Trail,
     receiver_path: Option<s6a::separation::RuntimeValuePath>,
 }
@@ -1937,7 +1937,7 @@ pub(super) struct ClauseBinding<'a> {
     pub(super) current: &'a ObjectEnvironment,
     pub(super) pre: Option<&'a ObjectEnvironment>,
     pub(super) bindings: Vec<Value>,
-    pub(super) reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
+    pub(super) reference_origins: Vec<ReferenceOrigins>,
     pub(super) trail: s6a::separation::Trail,
     pub(super) receiver_path: Option<s6a::separation::RuntimeValuePath>,
 }
@@ -1996,12 +1996,15 @@ pub(super) fn bind_clause<'a>(
             })?;
         bindings.push(value);
     }
-    let mut reference_origins = vec![Vec::new(); bindings.len()];
+    let mut reference_origins: Vec<ReferenceOrigins> = vec![None; bindings.len()];
     if let Some(population) = &observations.self_population {
-        reference_origins[0].push(ProtocolReferenceOccurrence {
-            path: Vec::new(),
-            population: population.clone(),
-        });
+        reference_origins[0] = Some(
+            vec![ProtocolReferenceOccurrence {
+                path: Vec::new(),
+                population: population.clone(),
+            }]
+            .into(),
+        );
     }
     let pre = observations
         .pre
