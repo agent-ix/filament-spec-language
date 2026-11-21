@@ -276,6 +276,11 @@ impl TaskProductState {
         &self.source
     }
 
+    /// Each task's last nominal activation time, absent before its first.
+    pub fn arrivals(&self) -> &[Option<Rational>] {
+        &self.arrivals
+    }
+
     /// Current absolute task-product time.
     pub fn now(&self) -> &Rational {
         &self.now
@@ -1493,7 +1498,7 @@ impl<'s, 'a> TaskProductSystem<'s, 'a> {
         }
     }
 
-    fn job_order(&self, left: &TaskProductJob, right: &TaskProductJob) -> std::cmp::Ordering {
+    pub(super) fn job_order(&self, left: &TaskProductJob, right: &TaskProductJob) -> std::cmp::Ordering {
         let left_task = &self.plan.task_set.tasks[left.task_index];
         let right_task = &self.plan.task_set.tasks[right.task_index];
         match self.plan.policy {
@@ -1742,7 +1747,7 @@ impl<'a> TaskProductPlan<'a> {
     }
 }
 
-fn source_clock_maxima(source: &TimedSystem<'_, '_>) -> Vec<Rational> {
+pub(super) fn source_clock_maxima(source: &TimedSystem<'_, '_>) -> Vec<Rational> {
     let mut maxima = vec![task_zero(); source.model().clocks().len()];
     for guard in source.model().guards() {
         for part in guard.parts() {
