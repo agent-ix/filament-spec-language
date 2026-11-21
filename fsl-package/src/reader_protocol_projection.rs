@@ -298,6 +298,34 @@ impl ReaderProtocolProjection {
         self.locals.get(binder).copied()
     }
 
+    /// Join a projected HP-1 read to its admitted symbolic execution owner.
+    pub(crate) fn model_relation_components(
+        &self,
+        symbolic: &[crate::model_relation_form::ModelRelationRead],
+    ) -> Option<BTreeMap<Location, usize>> {
+        let mut reads = BTreeMap::new();
+        for index in walk(&self.nodes, self.root) {
+            let node = self.nodes.get(index)?;
+            if !matches!(
+                node.kind,
+                NodeKind::Attribute { .. } | NodeKind::Navigate { .. }
+            ) {
+                continue;
+            }
+            let term = node.term.as_ref()?;
+            let owners: BTreeSet<_> = symbolic
+                .iter()
+                .filter(|read| &read.node == term)
+                .map(|read| read.execution)
+                .collect();
+            if owners.len() != 1 {
+                return None;
+            }
+            reads.insert(node.location.clone()?, *owners.first()?);
+        }
+        Some(reads)
+    }
+
     /// The location of each application position of the slot's walk, in
     /// walk order (FR-383).
     #[cfg(test)]

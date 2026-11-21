@@ -357,6 +357,21 @@ impl Lowering<'_> {
             .collect();
         let mut binders = Binders::new(&body_slot_names, &binders_scope);
         let body = self.expression(relation.typed_body().root(), &mut binders)?;
+        let subject_declaration_order = relation
+            .aliases()
+            .iter()
+            .map(|alias| {
+                let (_, model) = input
+                    .subjects
+                    .iter()
+                    .find(|(selected, _)| selected == alias)
+                    .ok_or_else(|| stage_fault(&claim, "step-relation-subject-selected"))?;
+                Ok(GroupMember::Binding(Binding::new(
+                    alias.clone(),
+                    LeafTerm::reference(model.clone()),
+                )))
+            })
+            .collect::<Result<Vec<_>, CheckRefusal>>()?;
         let declaration = Identifier::new(relation.name().to_owned())
             .map_err(|_| stage_fault(&claim, "step-relation-name-is-identifier"))?;
         let body = BodyTerm::aggregate(vec![
@@ -370,6 +385,10 @@ impl Lowering<'_> {
                 BindingValue::Aggregate(AggregateTerm::new(invariant_terms)),
             ),
             MemberTerm::bound("body", body),
+            MemberTerm::binding(
+                "subject_declaration_order",
+                BindingValue::Group(GroupTerm::new(subject_declaration_order)),
+            ),
         ]);
         Ok(LoweredStepRelation {
             boolean,

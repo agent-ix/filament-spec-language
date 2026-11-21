@@ -890,3 +890,112 @@ fn hp1_checker_state_transition_and_cancellation_stops_never_certify() {
         }
     ));
 }
+
+/// The source adapter and the source-free request enter the same EN-1 search.
+#[trace("FR-179-AC-1")]
+#[test]
+fn hp1_relation_port_preserves_search_and_undefined_outcomes() {
+    use fsl_analyze::model_check::{check_model_relation_input, ModelRelationInput};
+    use fsl_eval::simulation::model::ModelRelationDescriptor;
+
+    for text in [
+        DETERMINISTIC,
+        "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { 1 mod x.i >= y.i }",
+    ] {
+        let fixture = Fixture::new(Vault::Secure, text);
+        let relation = ModelRelationDescriptor::of_source(&fixture.package, &fixture.relation)
+            .expect("the package owns the checked relation");
+        assert_eq!(relation.aliases(), fixture.relation.aliases());
+        assert_eq!(relation.executions(), fixture.relation.executions());
+        let source = check_model_relation(
+            ModelRelationCheckRequest {
+                relation: &fixture.relation,
+                package: &fixture.package,
+                subjects: fixture.subjects(),
+                limits: ModelCheckLimits::default(),
+                max_depth: None,
+                meter: UNLIMITED,
+            },
+            &Cancel::new(),
+        )
+        .expect("the original source request admits");
+        let through_port = check_model_relation_input(
+            ModelRelationInput {
+                relation: &relation,
+                evaluator: &fixture.package,
+                subjects: fixture.subjects(),
+                limits: ModelCheckLimits::default(),
+                max_depth: None,
+                meter: UNLIMITED,
+            },
+            &Cancel::new(),
+        )
+        .expect("the descriptor request admits");
+        assert_eq!(through_port, source);
+        match through_port {
+            ModelRelationOutcome::Holds { stats, .. } => assert_eq!(stats.relation_tuples, 64),
+            ModelRelationOutcome::Refuted { counterexample, .. } => assert!(matches!(
+                counterexample.kind,
+                fsl_replay::HyperCounterexampleKind::Undefined(_)
+            )),
+            other => panic!("expected holding or undefined relation, got {other:?}"),
+        }
+    }
+}
+
+/// The independent checker keeps its own tuple allowance through the port.
+#[trace("FR-163-AC-10", "FR-184-AC-4")]
+#[test]
+fn hp1_relation_port_preserves_certificate_rejection_and_fresh_budget() {
+    use fsl_eval::simulation::model::ModelRelationDescriptor;
+    use fsl_replay::{check_model_relation_closure, ModelRelationClosureRequest};
+
+    let fixture = Fixture::new(Vault::Secure, DETERMINISTIC);
+    let proof = fixture.proof(ModelCheckLimits::default());
+    let relation = ModelRelationDescriptor::of_source(&fixture.package, &fixture.relation)
+        .expect("the package owns the checked relation");
+    let subjects = fixture.subjects();
+    let request = ModelRelationClosureRequest {
+        relation: &relation,
+        evaluator: &fixture.package,
+        subjects: &subjects,
+        meter: UNLIMITED,
+    };
+    for allowance in [64, 63, 64] {
+        let limits = ModelCheckLimits {
+            max_relation_tuples: allowance,
+            ..ModelCheckLimits::default()
+        };
+        let check = check_model_relation_closure(&request, &proof, &limits, &Cancel::new())
+            .expect("the independent checker reconstructs from original inputs");
+        assert_eq!(
+            check,
+            fixture.check(&proof, limits).expect("source adapter")
+        );
+        if allowance == 64 {
+            assert_eq!(check, ProductClosureCheck::Accepted);
+        } else {
+            let ProductClosureCheck::Stopped {
+                tuple: Some(stop), ..
+            } = check
+            else {
+                panic!("expected complete first unpaid tuple, got {check:?}");
+            };
+            assert_eq!(stop.count, 64);
+            assert_eq!(stop.first_unpaid.transitions.len(), 2);
+        }
+    }
+    let mut tampered = proof;
+    closure_mut(&mut tampered)[0].executions[0]
+        .transitions
+        .remove(0);
+    assert_eq!(
+        check_model_relation_closure(
+            &request,
+            &tampered,
+            &ModelCheckLimits::default(),
+            &Cancel::new()
+        ),
+        Err(fsl_replay::ProductClosureRefusal::Input("execution-edges"))
+    );
+}

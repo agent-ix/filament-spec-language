@@ -1,0 +1,594 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-940: HP-1 analysis and independent checking from package bytes alone.
+
+use filament_exact::Cancel;
+use fsl_analyze::model_check::{
+    check_model_relation_input, ModelRelationInput, ModelRelationOutcome,
+};
+use fsl_eval::model_subject::ModelSubject;
+use fsl_eval::simulation::model::{
+    ExpansionLimits, ModelRelationDescriptor, ModelSimulationRequest, PackageModelInput,
+    PopulationUniverse,
+};
+use fsl_package::{AnalysisView, BarePackage, BareSupply, ReadEqualityRows, ReadIdentityRows};
+use fsl_replay::{
+    check_model_relation_closure, ModelCheckLimits, ModelRelationClosureRequest, ProductClosure,
+    ProductClosureCheck, ProductClosureRefusal,
+};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::observation::ObservationLimits;
+use ix_trace_rs::trace;
+use serde_json::{json, Value};
+
+use crate::analyze_cli_support::{
+    analyze, label, package_selection, request_members, request_over, Workspace, HANDOFF,
+};
+use crate::counter::UNLIMITED;
+use crate::hyper_world::{self, request_files_over_starts, Vault, STARTS};
+use crate::relation_claims::{initial_world, step_with_result_document, DETERMINISTIC};
+
+fn analyze_package(ws: &Workspace, name: &str, members: &Value) -> crate::analyze_cli_support::Run {
+    analyze(
+        &ws.write(
+            name,
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    )
+}
+
+fn forget_source(ws: &Workspace) {
+    ws.write("program.fsl", b"not a native unit");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("delete retained sources");
+}
+
+/// Includes a real post-state violation, runtime undefined body and counted stops.
+#[trace("FR-940-AC-24", "FR-940-AC-25")]
+#[test]
+fn hp1_package_analyze_matches_source_after_source_deletion() {
+    const NONDETERMINISTIC: &str =
+        "post Step using v on V::Vault::step { self.l = i or self.l = 1 - i }\n";
+    for (case, vault, relation, temporal, expected) in [
+        ("holds", Vault::Secure, DETERMINISTIC, json!({}), "proved"),
+        ("results-holds", Vault::Custom("post Step using v on V::Vault::step { (result = 0 or result = 1) and self.l = 0 }\n"), "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { true }", json!({}), "proved"),
+        ("results-refuted", Vault::Custom("post Step using v on V::Vault::step { (result = 0 or result = 1) and self.l = 0 }\n"), "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { x.result = y.result }", json!({}), "refuted"),
+        (
+            "refuted",
+            Vault::Custom(NONDETERMINISTIC),
+            DETERMINISTIC,
+            json!({}),
+            "refuted",
+        ),
+        (
+            "undefined",
+            Vault::Secure,
+            "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { 1 mod x.i >= y.i }",
+            json!({}),
+            "refuted",
+        ),
+        (
+            "tuple-stop",
+            Vault::Secure,
+            DETERMINISTIC,
+            json!({"limits": {"max_relation_tuples": 63}}),
+            "incomplete",
+        ),
+        (
+            "tuple-paid",
+            Vault::Secure,
+            DETERMINISTIC,
+            json!({"limits": {"max_relation_tuples": 64}}),
+            "proved",
+        ),
+        (
+            "depth",
+            Vault::Secure,
+            DETERMINISTIC,
+            json!({"max_depth": 1}),
+            "inconclusive",
+        ),
+    ] {
+        let ws = Workspace::new(&format!("hp1-package-{case}"));
+        let (unit, mut model, snapshots) = request_files_over_starts(vault, false, &STARTS, relation);
+        if case.starts_with("results-") { model = step_with_result_document(); }
+        let path = request_over(
+            &ws,
+            &unit,
+            &model,
+            &snapshots,
+            json!({"items": [{"claim": "Det", "temporal": temporal}]}),
+        );
+        let source = analyze(&path);
+        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+        let request: Value = serde_json::from_slice(&std::fs::read(path).expect("request file"))
+            .expect("request JSON");
+        let (members, _) = package_selection(&ws, &request["request"]);
+        forget_source(&ws);
+        let package = analyze_package(&ws, "package.json", &members);
+        assert_eq!(package.exit, source.exit, "{}", package.document());
+        for member in ["record", "counterexample", "replay", "certificate"] {
+            assert_eq!(
+                package.item(0)[member],
+                source.item(0)[member],
+                "{case}: {member}: {}",
+                package.document()
+            );
+        }
+        if expected == "proved" {
+            assert_eq!(package.item(0)["record"]["certification"], "certified");
+        }
+        if expected == "refuted" {
+            assert_eq!(package.item(0)["replay"]["reproduced"], true);
+        }
+    }
+}
+
+/// Neither the engine nor its independent checker receives a checked source package.
+#[trace("FR-940-AC-25", "FR-184-AC-4")]
+#[test]
+fn hp1_package_checker_accepts_and_refuses_tampering_without_source() {
+    let ws = Workspace::new("hp1-package-independent");
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, DETERMINISTIC);
+    let path = request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Det"}]}),
+    );
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(path).expect("request file")).expect("request JSON");
+    let (_, bytes) = package_selection(&ws, &request["request"]);
+    forget_source(&ws);
+    let (packages, snapshots, initial) = initial_world(&model);
+    let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+    let admitted = fsl_package::admit_checked_package(&bytes, &packages, limits)
+        .expect("the package admits without source");
+    let mut budget = limits.native_join_limits().budget();
+    let identities = ReadIdentityRows::read(
+        &std::fs::read(ws.path(&format!("{HANDOFF}/identities.json"))).expect("identities"),
+        &admitted,
+        &mut budget,
+    )
+    .expect("identity witness admits");
+    let equality = std::fs::read(ws.path(&format!("{HANDOFF}/equality.json")))
+        .ok()
+        .map(|bytes| ReadEqualityRows::read(&bytes, &admitted).expect("equality witness admits"));
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("supply joins");
+    let selected = bare.claim_name("Det").expect("the admitted claim name");
+    let form = bare
+        .model_relation_form(&selected)
+        .expect("HP-1 form selects");
+    let relation =
+        ModelRelationDescriptor::of_package(&bare, &form).expect("execution descriptor projects");
+    let input = PackageModelInput::of(&bare, &packages, ModelNormalizationLimits::default())
+        .expect("package model input");
+    let subject = ModelSubject {
+        simulation: ModelSimulationRequest {
+            input: input.input(),
+            packages: &packages,
+            normalization: ModelNormalizationLimits::default(),
+            snapshots: &snapshots,
+            initial,
+            universes: vec![PopulationUniverse {
+                population: hyper_world::key("vaults"),
+                keys: vec!["v".to_owned()],
+            }],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            meter: UNLIMITED,
+            emit: fsl_package::EmitLimits::fixture(),
+        },
+        proof_bounds: Vec::new(),
+    };
+    let subjects = vec![subject];
+    let outcome = check_model_relation_input(
+        ModelRelationInput {
+            relation: &relation,
+            evaluator: &bare,
+            subjects: subjects
+                .iter()
+                .map(|subject| ModelSubject {
+                    simulation: subject.simulation.clone(),
+                    proof_bounds: subject.proof_bounds.clone(),
+                })
+                .collect(),
+            limits: ModelCheckLimits::default(),
+            max_depth: None,
+            meter: UNLIMITED,
+        },
+        &Cancel::new(),
+    )
+    .expect("package EN-1 admits");
+    let ModelRelationOutcome::Holds { certificate, stats } = outcome else {
+        panic!("holding package relation: {outcome:?}");
+    };
+    assert_eq!(stats.relation_tuples, 64);
+    let request = ModelRelationClosureRequest {
+        relation: &relation,
+        evaluator: &bare,
+        subjects: &subjects,
+        meter: UNLIMITED,
+    };
+    for allowance in [64, 63, 64] {
+        let limits = ModelCheckLimits {
+            max_relation_tuples: allowance,
+            ..ModelCheckLimits::default()
+        };
+        let result = check_model_relation_closure(&request, &certificate, &limits, &Cancel::new())
+            .expect("checker reconstructs from package inputs");
+        if allowance == 64 {
+            assert_eq!(result, ProductClosureCheck::Accepted);
+        } else {
+            let ProductClosureCheck::Stopped {
+                tuple: Some(tuple), ..
+            } = result
+            else {
+                panic!("first unpaid tuple: {result:?}");
+            };
+            assert_eq!(tuple.count, 64);
+            let ProductClosure::Relation(closure) = &certificate.closure else {
+                panic!("HP-1 closure");
+            };
+            assert_eq!(
+                tuple.first_unpaid.transitions,
+                [
+                    closure[0].executions[0].transitions[7].clone(),
+                    closure[0].executions[1].transitions[7].clone()
+                ]
+            );
+        }
+    }
+    for defect in 0..3 {
+        let mut tampered = certificate.clone();
+        let ProductClosure::Relation(subjects) = &mut tampered.closure else {
+            panic!("HP-1 closure");
+        };
+        match defect {
+            0 => {
+                subjects[0].states.remove(0);
+            }
+            1 => {
+                subjects[0].executions[0].transitions.remove(0);
+            }
+            2 => {
+                subjects[0].executions[0].transitions[0].result = Some("\"wrong-type\"".to_owned());
+            }
+            _ => unreachable!(),
+        }
+        let checked = check_model_relation_closure(
+            &request,
+            &tampered,
+            &ModelCheckLimits::default(),
+            &Cancel::new(),
+        );
+        if defect == 0 {
+            assert!(matches!(checked, Ok(ProductClosureCheck::Rejected(_))));
+        } else {
+            assert_eq!(
+                checked,
+                Err(ProductClosureRefusal::Input("execution-edges"))
+            );
+        }
+    }
+}
+
+fn ordered_handoff(
+    ws: &Workspace,
+    separate_models: bool,
+) -> (Value, Vec<u8>, fsl_semantics::model::intake::PackageInput) {
+    let declarations = "relation Ordered using v over (y: N::Vault::step, x: V::Vault::step) { pre(x.self.h) = pre(x.self.h) and pre(y.self.h) = pre(y.self.h) and x.self.l = x.self.l and y.self.l = y.self.l }\ninvariant Sibling using v on V::Vault { true }";
+    let (unit, model, other, snapshots, extra) = if separate_models {
+        let (unit, model, other, snapshot) =
+            hyper_world::two_model_request_files((0, 0), declarations);
+        ws.write("other.json", &other);
+        let mut models = request_members(None)["models"].clone();
+        models.as_array_mut().expect("model selections").push(json!({"format": "semantic-ir/2.0.0", "source": {"file": "other.json", "authority": "test", "identity": "vault-other-model", "document": "VaultOther", "formal_revision": 1}}));
+        (
+            unit,
+            model,
+            Some(other),
+            vec![snapshot],
+            json!({"models": models}),
+        )
+    } else {
+        let (unit, model, snapshots) =
+            request_files_over_starts(Vault::Secure, false, &STARTS, declarations);
+        let unit = unit.replace(
+            "function Noop",
+            &format!("model N = \"{}\";\nfunction Noop", hyper_world::PACKAGE),
+        );
+        (unit, model, None, snapshots, json!({}))
+    };
+    let mut extra = extra;
+    extra["items"] =
+        json!([{"claim": "Ordered"}, {"claim": "Sibling", "kind": "operation-contract"}]);
+    let path = request_over(ws, &unit, &model, &snapshots, extra);
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(path).expect("request file")).expect("request JSON");
+    let mut documents = vec![model.as_slice()];
+    if let Some(other) = &other {
+        documents.push(other);
+    }
+    let packages =
+        fsl_semantics::model::intake::package_input(documents).expect("domain packages admit");
+    let (members, bytes) = package_selection(ws, &request["request"]);
+    (members, bytes, packages)
+}
+
+#[trace("FR-940-AC-23", "FR-940-AC-27")]
+#[test]
+fn hp1_package_forms_preserve_declaration_order_and_distinct_aliases() {
+    for separate_models in [false, true] {
+        let ws = Workspace::new(&format!("hp1-package-form-{separate_models}"));
+        let (members, bytes, packages) = ordered_handoff(&ws, separate_models);
+        let source_run = analyze(&ws.path("analyze.json"));
+        assert_eq!(
+            label(&source_run.item(0)),
+            "proved",
+            "{}",
+            source_run.document()
+        );
+        let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
+            .expect("the written source handoff compiles");
+        let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+        let source_read = fsl_package::read_evaluation_package(
+            compiled.checked(),
+            fsl_semantics::library::LibraryName::new(compiled.checked().graph().package_name())
+                .expect("package name"),
+            &packages,
+            limits,
+            fsl_package::EmitLimits::fixture(),
+        )
+        .expect("the source emission admits through the same reader");
+        let admitted = fsl_package::admit_checked_package(&bytes, &packages, limits)
+            .expect("written bytes admit");
+        let bare = BarePackage::new(&admitted);
+        let source = source_read
+            .model_relation_form(
+                &source_read
+                    .claim_name("Ordered")
+                    .expect("source occurrence"),
+            )
+            .expect("source form");
+        let package = bare
+            .model_relation_form(&bare.claim_name("Ordered").expect("package occurrence"))
+            .expect("package form");
+        assert_eq!(source, package);
+        use fsl_semantics::model::clause_observation::Observation;
+        assert_eq!(
+            package
+                .reads()
+                .iter()
+                .map(|read| (read.execution, read.observation))
+                .collect::<std::collections::BTreeSet<_>>(),
+            [
+                (0, Observation::Pre),
+                (1, Observation::Pre),
+                (0, Observation::Post),
+                (1, Observation::Post)
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(
+            package.span(),
+            compiled.checked().graph().step_relations()[0].span()
+        );
+        assert_eq!(
+            package
+                .subjects()
+                .iter()
+                .map(|subject| subject.alias.as_str())
+                .collect::<Vec<_>>(),
+            ["V", "N"]
+        );
+        assert_eq!(
+            package
+                .body()
+                .subjects
+                .iter()
+                .map(|(alias, _)| alias.as_ref())
+                .collect::<Vec<_>>(),
+            ["N", "V"]
+        );
+        assert_eq!(
+            package
+                .body()
+                .executions
+                .iter()
+                .map(|execution| execution.variable.as_ref())
+                .collect::<Vec<_>>(),
+            ["y", "x"]
+        );
+        assert_eq!(
+            package.subjects()[0].root == package.subjects()[1].root,
+            !separate_models
+        );
+        assert_eq!(
+            package.subjects()[0].identity == package.subjects()[1].identity,
+            !separate_models
+        );
+        drop(source_read);
+        drop(compiled);
+        forget_source(&ws);
+        let package_run = analyze_package(&ws, "ordered-package.json", &members);
+        assert_eq!(
+            package_run.exit,
+            source_run.exit,
+            "{}",
+            package_run.document()
+        );
+        for member in ["record", "certificate", "counterexample", "replay"] {
+            assert_eq!(
+                package_run.item(0)[member],
+                source_run.item(0)[member],
+                "{member}: {}",
+                package_run.document()
+            );
+        }
+    }
+}
+
+#[trace("FR-940-AC-27")]
+#[test]
+fn hp1_package_bad_order_evidence_refuses_but_legacy_absence_is_item_local() {
+    let ws = Workspace::new("hp1-package-order-admission");
+    let (members, bytes, packages) = ordered_handoff(&ws, true);
+    let original: Value = serde_json::from_slice(&bytes).expect("checked package JSON");
+    let nodes = original["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("graph nodes");
+    let position = nodes
+        .iter()
+        .position(|node| node["semantic_form"] == "step_relation")
+        .expect("relation node");
+    let prefix = format!("/semantic_graph/nodes/{position}/body/members/4");
+    for (defect, suffix) in [
+        (0, "/value/members/1/name"),
+        (1, "/value/members/0/name"),
+        (2, "/value/members/1"),
+        (3, "/value/members/0/value/target"),
+        (4, ""),
+        (5, "/value"),
+        (6, "/value/members/0"),
+    ] {
+        let mut altered = original.clone();
+        let member = &mut altered["semantic_graph"]["nodes"][position]["body"]["members"][4];
+        match defect {
+            0 => {
+                member["value"]["members"][1]["name"] =
+                    member["value"]["members"][0]["name"].clone();
+            }
+            1 => {
+                member["value"]["members"][0]["name"] = json!("Unknown");
+            }
+            2 => {
+                member["value"]["members"]
+                    .as_array_mut()
+                    .expect("order Group")
+                    .pop();
+            }
+            3 => {
+                member["value"]["members"][0]["value"] =
+                    member["value"]["members"][1]["value"].clone();
+            }
+            4 => {
+                member["name"] = json!("wrong-member");
+            }
+            5 => {
+                member["value"] = member["value"]["members"][0]["value"].clone();
+            }
+            6 => {
+                member["value"]["members"][0] = member["value"]["members"][0]["value"].clone();
+            }
+            _ => unreachable!(),
+        }
+        let refused = fsl_package::admit_checked_package(
+            &serde_json::to_vec(&altered).expect("altered JSON"),
+            &packages,
+            fsl_package::V2ReadLimits::bounded(1 << 24),
+        )
+        .expect_err("present malformed evidence refuses globally");
+        assert_eq!(refused.code, fsl_foundation::Code::InvalidPackage);
+        assert_eq!(refused.cause, None);
+        assert_eq!(
+            refused.pointer.as_deref(),
+            Some(format!("{prefix}{suffix}").as_str()),
+            "defect {defect}"
+        );
+    }
+    let mut legacy = original;
+    legacy["semantic_graph"]["nodes"][position]["body"]["members"]
+        .as_array_mut()
+        .expect("body bindings")
+        .pop();
+    let bytes = serde_json::to_vec(&legacy).expect("legacy JSON");
+    let admitted = fsl_package::admit_checked_package(
+        &bytes,
+        &packages,
+        fsl_package::V2ReadLimits::bounded(1 << 24),
+    )
+    .expect("legacy four-member package still admits");
+    let bare = BarePackage::new(&admitted);
+    assert!(matches!(
+        bare.model_relation_form(&bare.claim_name("Ordered").expect("legacy claim")),
+        Err(fsl_package::ModelRelationFormRefusal::MissingSubjectDeclarationOrder { .. })
+    ));
+    ws.write(&format!("{HANDOFF}/checked-package.json"), &bytes);
+    forget_source(&ws);
+    let run = analyze_package(&ws, "legacy.json", &members);
+    assert_eq!(label(&run.item(0)), "unsupported", "{}", run.document());
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["code"],
+        "unknown_required_feature"
+    );
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["cause"],
+        "unsupported-feature"
+    );
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["details"]["reason"],
+        "missing-subject-declaration-order"
+    );
+    assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
+}
+
+#[trace("FR-940-AC-26")]
+#[test]
+fn hp1_package_ambiguous_model_read_fails_only_its_item() {
+    let ws = Workspace::new("hp1-package-ambiguous-read");
+    let declarations = "relation Ambiguous using v over (x: V::Vault::step, y: V::Vault::step) { (if x.i = 0 then x.self else y.self).l = 0 }\ninvariant Sibling using v on V::Vault { true }";
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, declarations);
+    let path = request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Ambiguous"}, {"claim": "Sibling", "kind": "operation-contract"}]}),
+    );
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(path).expect("request file")).expect("request JSON");
+    let (members, bytes) = package_selection(&ws, &request["request"]);
+    let (packages, _, _) = initial_world(&model);
+    let admitted = fsl_package::admit_checked_package(
+        &bytes,
+        &packages,
+        fsl_package::V2ReadLimits::bounded(1 << 24),
+    )
+    .expect("the typed reader admits the expression and its execution binders");
+    let bare = BarePackage::new(&admitted);
+    let selected = bare
+        .claim_name("Ambiguous")
+        .expect("the ambiguous claim is named");
+    assert!(
+        matches!(
+            bare.model_relation_form(&selected),
+            Err(fsl_package::ModelRelationFormRefusal::MalformedNode { .. })
+        ),
+        "the admitted expression has no unique execution owner"
+    );
+    forget_source(&ws);
+    let run = analyze_package(&ws, "ambiguous.json", &members);
+    assert_eq!(label(&run.item(0)), "failed", "{}", run.document());
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["details"]["selection"],
+        "malformed-node"
+    );
+    assert!(run.item(0)["counterexample"].is_null());
+    assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
+}

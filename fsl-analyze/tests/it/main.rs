@@ -90,6 +90,7 @@ mod monitor_root;
 mod observation_mapping;
 mod operation_contract;
 mod package_forms;
+mod package_model_relation;
 mod package_probabilistic_source;
 mod package_refusal_route;
 mod partial_order;
