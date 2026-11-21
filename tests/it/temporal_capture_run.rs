@@ -18,6 +18,7 @@ fn unit() -> String {
          profile v = \"filament.value.complete/v1\";\n\
          profile e = \"{EVENTS}\";\n\
          profile i = \"{INFINITE}\";\n\
+         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure {{ xs }}\n\
          record Reading {{ level: Int[0, 9]; stopped: Boolean; }}\n\
          temporal Fast using e over (r: Reading) clock \"events\" on origin \
          {{ capture startFast: Boolean = r.level > 3; eventually[0,3] holds(r.stopped or not startFast) }}\n\
@@ -40,7 +41,6 @@ fn unit() -> String {
 /// an `unproved-range` obligation that S3 refuses under Linked (FR-766), so the
 /// clause is kept out of the shared unit.
 const REFUSED: &str = "type Zero = Int[0, 0];\n\
-     function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
      temporal Refused using e over (r: Reading) clock \"events\" on origin \
      { capture z: Zero = count<Zero>(m in ints(sequence[r.level]): m > 0); always[0,1] holds(z = 0) }\n";
 
