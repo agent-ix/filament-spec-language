@@ -3585,6 +3585,13 @@ impl Disposition {
                 match refusal.as_ref() {
                     super::RunRefusal::Reference(error) => {
                         let fields = match error.as_ref() {
+                            crate::reference_codec::ReferenceCodecError::Normalization {
+                                cause,
+                                ..
+                            } => {
+                                fsl_semantics::model::observation::normalization_limit_record(cause)
+                                    .fields
+                            }
                             crate::reference_codec::ReferenceCodecError::Native {
                                 cause, ..
                             } => match cause {

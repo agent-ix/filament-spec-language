@@ -435,17 +435,25 @@ fn run_execute(
     };
     let limits = ExecuteLimits {
         accounting,
-        supplied: Default::default(),
         prepare: PrepareLimits::default(),
         session: Default::default(),
     };
-    *typed = Some(ExecuteResult(std::sync::Arc::new(execute(
-        checked.package(),
-        &request,
-        &backends,
-        &limits,
-        cancel,
-    ))));
+    let evaluated = filament_semantic_value::supplied_stop::SuppliedRun::new(
+        Default::default(),
+        cancel.clone(),
+    )
+    .map_err(CallFailure::Supplied)
+    .and_then(|mut run| {
+        execute(
+            checked.package(),
+            &request,
+            &backends,
+            &limits,
+            &mut run,
+            cancel,
+        )
+    });
+    *typed = Some(ExecuteResult(std::sync::Arc::new(evaluated)));
 
     let call = Call {
         clocks: Default::default(),

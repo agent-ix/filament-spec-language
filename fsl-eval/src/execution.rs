@@ -68,7 +68,6 @@
 //! use fsl_eval::execution::ExecuteLimits;
 //! fn limits() -> ExecuteLimits {
 //!     ExecuteLimits {
-//!         supplied: Default::default(),
 //!         prepare: Default::default(),
 //!     }
 //! }
@@ -87,11 +86,9 @@
 //! use fsl_eval::execution::{ExecuteLimits, PrepareLimits};
 //! use filament_eval::SessionLimits;
 //! use filament_exact::ScalarLimits;
-//! use filament_semantic_value::supplied_stop::SuppliedLimits;
 //! fn limits(accounting: ScalarLimits) -> ExecuteLimits {
 //!     ExecuteLimits {
 //!         accounting,
-//!         supplied: SuppliedLimits::default(),
 //!         prepare: PrepareLimits::default(),
 //!         session: SessionLimits::default(),
 //!     }
@@ -108,7 +105,7 @@ use filament_eval::{
 };
 use filament_exact::{Cancel, CancelCause, ScalarLimits, Value};
 use filament_semantic_value::catalog::InternalFault;
-use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
+use filament_semantic_value::supplied_stop::SuppliedRun;
 use fsl_foundation::diagnostic::LimitExceeded;
 use fsl_foundation::{Setting, SettingLimits};
 use fsl_package::CheckedPackage;
@@ -531,9 +528,6 @@ pub struct ExecuteRequest {
 pub struct ExecuteLimits {
     /// The accounting limits the run charges under.
     pub accounting: ScalarLimits,
-    /// FR-277: the supplied-value helper ceilings; read for a function's
-    /// arguments only.
-    pub supplied: SuppliedLimits,
     /// The one `PrepareLimits` that applies to whichever backend is chosen.
     pub prepare: PrepareLimits,
     /// The evaluator session's live-occurrence bound (NFR-130).

@@ -1064,24 +1064,28 @@ pub(crate) fn run_compiled(
         )
         .ok()
     };
-    let mut reference_joins = filament_contract_model::NativeJoinBudget::unlimited();
-    let reference_catalog = if call.canonical_values && call.snapshot.is_some() {
-        Some(
-            fsl_package::ReferenceCatalog::from_checked_call(
-                package,
-                models.selected_models(),
-                &mut reference_joins,
-            )
-            .map_err(|_| {
-                Box::new(RunRefusal::Fault(InternalFault::new(
-                    "call",
-                    "checked-reference-catalog",
-                )))
-            })?,
-        )
+    let mut reference_joins = super::run_value::NormalizationReferenceBudget::source(
+        models.selected_models(),
+        fsl_semantics::model::accounting::ChargePoint::ReferenceCatalog,
+    );
+    let catalog_result = if call.canonical_values {
+        Some(fsl_package::ReferenceCatalog::from_checked_call(
+            package,
+            models.selected_models(),
+            &mut reference_joins,
+        ))
     } else {
         None
     };
+    if let Some(refusal) = reference_joins.take_normalization_refusal() {
+        return Err(refusal);
+    }
+    let reference_catalog = catalog_result.transpose().map_err(|_| {
+        Box::new(RunRefusal::Fault(InternalFault::new(
+            "call",
+            "checked-reference-catalog",
+        )))
+    })?;
     let references = reference_catalog
         .as_ref()
         .map(|catalog| {
@@ -1093,42 +1097,50 @@ pub(crate) fn run_compiled(
             )
         })
         .transpose()
-        .map_err(|error| Box::new(RunRefusal::Reference(Box::new(error))))?;
-    let reference_admission =
-        std::cell::RefCell::new(super::run_value::ReferenceAdmission::default());
-    let restore_reference = |value: &serde_json::Value| {
-        references
+        .map_err(super::run_value::reference_refusal)?;
+    let supplied_run = std::sync::Mutex::new(
+        filament_semantic_value::supplied_stop::SuppliedRun::new(call.supplied, cancel.clone())
+            .map_err(|stop| Box::new(RunRefusal::Supplied(stop)))?,
+    );
+    let restore_reference = |value: &serde_json::Value, argument: usize, node: u64| {
+        let mut run = supplied_run.lock().expect("conversion does not unwind");
+        let mut admission =
+            super::run_value::SuppliedReferenceAdmission::new(&mut run, argument, node);
+        let restored = references
             .as_ref()
             .ok_or(ReadStop::Fault("call-has-reference-catalog"))?
-            .restore_reference(
-                value,
-                &mut *reference_admission.borrow_mut(),
-                cancel,
-                usize::MAX,
-            )
-            .map_err(|error| ReadStop::Refusal(Box::new(RunRefusal::Reference(Box::new(error)))))
+            .restore_reference(value, &mut admission, cancel, usize::MAX)
+            .map_err(|error| ReadStop::Refusal(super::run_value::reference_refusal(error)));
+        match admission.stopped {
+            Some(stop) => Err(ReadStop::Refusal(Box::new(RunRefusal::Supplied(stop)))),
+            None => restored,
+        }
     };
-    let encode_value = |value: &serde_json::Value| {
-        references
-            .as_ref()
-            .ok_or(ReadStop::Fault("call-has-reference-catalog"))?
-            .encode_value(
-                value,
-                &mut *reference_admission.borrow_mut(),
-                cancel,
-                usize::MAX,
-            )
-            .map_err(|error| ReadStop::Refusal(Box::new(RunRefusal::Reference(Box::new(error)))))
+    let encode_value = |value: &Value| {
+        let mut admission = super::run_value::NormalizationReferenceBudget::source(
+            models.selected_models(),
+            fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+        );
+        super::run_value::write_run_value(
+            value,
+            package.graph().scope().types(),
+            package.graph().scope().enums(),
+            package.graph().scope().variant_types(),
+            references.as_ref(),
+            &mut admission,
+            cancel,
+        )
     };
     let world = call.snapshot.as_ref().map(|_| super::run_value::World {
         objects,
         universe_of: &universe_of,
         restore_reference: references.as_ref().map(|_| {
             &restore_reference
-                as &dyn Fn(&serde_json::Value) -> Result<filament_exact::ObjectReference, ReadStop>
-        }),
-        encode_value: references.as_ref().map(|_| {
-            &encode_value as &dyn Fn(&serde_json::Value) -> Result<serde_json::Value, ReadStop>
+                as &dyn Fn(
+                    &serde_json::Value,
+                    usize,
+                    u64,
+                ) -> Result<filament_exact::ObjectReference, ReadStop>
         }),
     });
     let forms = Forms::new(
@@ -1136,6 +1148,7 @@ pub(crate) fn run_compiled(
         package.graph().scope().enums(),
     )
     .with_variants(package.graph().scope().variant_types())
+    .with_canonical_writer(&encode_value)
     .in_world(own_package, world.as_ref());
     let supplied = admit_wire_arguments(&forms, selected.parameters, call)?;
     let arguments = bind_arguments(selected.parameters, &supplied)?;
@@ -1159,13 +1172,15 @@ pub(crate) fn run_compiled(
         backends,
         &ExecuteLimits {
             accounting: call.accounting,
-            supplied: call.supplied,
             prepare: *prepare,
             session: SessionLimits {
                 live_occurrences: call.live_occurrences,
                 held: 0,
             },
         },
+        &mut supplied_run
+            .lock()
+            .expect("conversion and execution do not unwind"),
         cancel,
     )
     .map_err(|failure| match failure {
@@ -1464,7 +1479,7 @@ pub(crate) fn admit_wire_arguments(
         let read = if let Some(selected) = &wire.selected_object {
             forms.read(&serde_json::json!({"reference": {"population": selected.population, "key": selected.key}}), value_type)
         } else if call.canonical_values {
-            forms.read_canonical(&wire.value, value_type)
+            forms.read_canonical(&wire.value, value_type, position)
         } else {
             match &wire.value {
                 serde_json::Value::Number(number) => match number.as_i64() {

@@ -6,7 +6,7 @@ use filament_contract_model::{
     CheckedNodeId, CheckedNodePathSegment, CheckedPackageV2, ExactTypeProjectionError,
     NativeJoinBudget, NativeJoinChargeKind, NativeJoinDeniedCharge, NativeJoinLocus,
     NativeJoinLocusSource, SelectedExactDeclarationForm, SelectedExactDeclarationRow,
-    SelectedExactIdentity,
+    SelectedExactIdentities, SelectedExactIdentity,
 };
 use filament_exact::EffectiveId;
 use fsl_semantics::model::intake::SelectedModels;
@@ -18,6 +18,9 @@ use crate::{AdmittedPackageRead, CheckedPackage};
 /// A catalog could not establish a complete authoritative reference mapping.
 #[derive(Debug, thiserror::Error)]
 pub enum ReferenceCatalogError {
+    /// The actual normalized model owner's cumulative allowance stopped.
+    #[error("reference normalization stopped: {0:?}")]
+    Normalization(fsl_semantics::model::accounting::NormalizationIncomplete),
     /// Structural package admission rejected the genuine producer rows.
     #[error(transparent)]
     Projection(#[from] ExactTypeProjectionError),
@@ -45,9 +48,15 @@ pub struct ReferenceDeclaration<'a> {
     effective: &'a EffectiveId,
     key: &'a DeclarationKey,
     universe: &'a ObjectUniverse,
+    normalization_owner: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
 }
 
-impl ReferenceDeclaration<'_> {
+impl<'a> ReferenceDeclaration<'a> {
+    /// The genuine snapshot-normalization owner of this declaration, when
+    /// the call obtained its model from snapshot admission.
+    pub fn normalization_owner(&self) -> Option<&'a fsl_semantics::model::intake::NormalizedModel> {
+        self.normalization_owner
+    }
     /// The actual structural declaration node admitted by the package.
     pub fn node(&self) -> &CheckedNodeId {
         &self.row.structural_node
@@ -77,7 +86,64 @@ pub struct ReferenceCatalog<'a> {
     source: Option<&'a CheckedPackage>,
     model: Option<&'a StateModel>,
     selected_models: Option<&'a SelectedModels>,
+    snapshot_models: Option<&'a [fsl_semantics::model::intake::NormalizedModel]>,
     declarations: Vec<ReferenceDeclaration<'a>>,
+}
+
+#[derive(Clone, Copy)]
+enum CallModels<'a> {
+    Unit(&'a SelectedModels),
+    Snapshot(&'a fsl_semantics::model::intake::NormalizedModel),
+}
+
+impl<'a> CallModels<'a> {
+    fn rows(self) -> &'a [SelectedExactDeclarationRow] {
+        match self {
+            Self::Unit(models) => models.exact_declaration_rows(),
+            Self::Snapshot(model) => model.exact_declaration_rows(),
+        }
+    }
+    fn views(self) -> impl Iterator<Item = &'a fsl_semantics::model::normalize::EffectiveView> {
+        let unit = match self {
+            Self::Unit(models) => Some(models),
+            Self::Snapshot(_) => None,
+        };
+        let snapshot = match self {
+            Self::Snapshot(model) => Some(model),
+            Self::Unit(_) => None,
+        };
+        unit.into_iter()
+            .flat_map(|models| models.iter().map(|model| &model.view))
+            .chain(snapshot.into_iter().map(|model| model.view()))
+    }
+    fn owner(self) -> Option<&'a fsl_semantics::model::intake::NormalizedModel> {
+        match self {
+            Self::Unit(_) => None,
+            Self::Snapshot(model) => Some(model),
+        }
+    }
+}
+
+struct SnapshotCatalogBudget<'a>(&'a fsl_semantics::model::intake::NormalizedModel);
+impl CatalogBudget for SnapshotCatalogBudget<'_> {
+    fn charge(
+        &mut self,
+        kind: NativeJoinChargeKind,
+        amount: u128,
+    ) -> Result<(), ReferenceCatalogError> {
+        match kind {
+            NativeJoinChargeKind::Work => self
+                .0
+                .charge_reference_work(
+                    fsl_semantics::model::accounting::ChargePoint::ReferenceCatalog,
+                    u64::try_from(amount).map_err(|_| ReferenceCatalogError::Allocation)?,
+                )
+                .map_err(ReferenceCatalogError::Normalization),
+            // Physical reservations remain fallible at their actual allocation;
+            // normalization has no invented generic-storage dimension.
+            NativeJoinChargeKind::Storage => Ok(()),
+        }
+    }
 }
 
 trait CatalogBudget {
@@ -186,6 +252,7 @@ fn insert_declaration<'a>(
     actual: &'a EffectiveId,
     key: &'a DeclarationKey,
     universe: &'a ObjectUniverse,
+    normalization_owner: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
     budget: &mut dyn CatalogBudget,
 ) -> Result<(), ReferenceCatalogError> {
     let SelectedExactIdentity::Object(effective) = &row.exact_identity else {
@@ -225,6 +292,13 @@ fn insert_declaration<'a>(
             return Err(ReferenceCatalogError::ConflictingMapping);
         }
         if same_type {
+            if !match (previous.normalization_owner, normalization_owner) {
+                (None, None) => true,
+                (Some(left), Some(right)) => std::ptr::eq(left, right),
+                (Some(_), None) | (None, Some(_)) => false,
+            } {
+                return Err(ReferenceCatalogError::ConflictingMapping);
+            }
             if !text_equal(
                 &previous.universe.model_selection.identity,
                 &universe.model_selection.identity,
@@ -262,6 +336,7 @@ fn insert_declaration<'a>(
             effective: actual,
             key,
             universe,
+            normalization_owner,
         });
     }
     Ok(())
@@ -283,7 +358,7 @@ impl<'a> ReferenceCatalog<'a> {
         let mut declarations = Vec::new();
         Self::join_call_rows(
             source.graph().selected_exact_declaration_rows(),
-            models,
+            CallModels::Unit(models),
             &mut declarations,
             &mut CoreCatalogBudget(budget),
         )?;
@@ -292,6 +367,7 @@ impl<'a> ReferenceCatalog<'a> {
             source: Some(source),
             model: None,
             selected_models: Some(models),
+            snapshot_models: None,
             declarations,
         })
     }
@@ -303,36 +379,85 @@ impl<'a> ReferenceCatalog<'a> {
     /// Preserves the strict structural join and charged identity refusals.
     pub fn from_admitted_call(
         package: &'a CheckedPackageV2,
-        models: &'a SelectedModels,
+        models: &'a [fsl_semantics::model::intake::NormalizedModel],
         budget: &mut NativeJoinBudget,
     ) -> Result<Self, ReferenceCatalogError> {
-        let identities = models.exact_identities(package, budget)?;
+        for model in models {
+            let rows = model
+                .exact_declaration_rows()
+                .len()
+                .saturating_add(model.exact_field_rows().len());
+            model
+                .charge_reference_work(
+                    fsl_semantics::model::accounting::ChargePoint::ReferenceCatalog,
+                    u64::try_from(rows).map_err(|_| ReferenceCatalogError::Allocation)?,
+                )
+                .map_err(ReferenceCatalogError::Normalization)?;
+        }
+        let identities = SelectedExactIdentities::from_stage_rows(
+            package,
+            models
+                .iter()
+                .flat_map(|model| model.exact_declaration_rows())
+                .filter(|row| {
+                    package.resolved_graph().nodes.iter().any(|node| {
+                        fsl_semantics::model::intake::selected_exact_declaration_row_matches_node(
+                            row, node,
+                        )
+                    })
+                })
+                .cloned(),
+            models
+                .iter()
+                .flat_map(|model| model.exact_field_rows())
+                .filter(|row| {
+                    package.resolved_graph().nodes.iter().any(|node| {
+                        fsl_semantics::model::intake::selected_exact_field_row_matches_node(
+                            row, node,
+                        )
+                    })
+                })
+                .cloned(),
+            budget,
+        )?;
         let mut declarations = Vec::new();
         for admitted in identities.declaration_rows() {
-            work(budget, 1)?;
             // Borrow the genuine producer row, not the join's owned copy.
-            for row in models.exact_declaration_rows() {
-                work(budget, 1)?;
-                if row.form != SelectedExactDeclarationForm::ObjectType
-                    || !object_node_equal(&row.structural_node, &admitted.structural_node, budget)?
-                {
-                    continue;
+            for model in models {
+                let mut owner = SnapshotCatalogBudget(model);
+                for row in model.exact_declaration_rows() {
+                    work(&mut owner, 1)?;
+                    if row.form != SelectedExactDeclarationForm::ObjectType
+                        || !object_node_equal(
+                            &row.structural_node,
+                            &admitted.structural_node,
+                            &mut owner,
+                        )?
+                    {
+                        continue;
+                    }
+                    Self::join_call_rows(
+                        std::slice::from_ref(row),
+                        CallModels::Snapshot(model),
+                        &mut declarations,
+                        &mut owner,
+                    )?;
                 }
-                Self::join_call_rows(std::slice::from_ref(row), models, &mut declarations, budget)?;
             }
         }
         Ok(Self {
             package: Some(package),
             source: None,
             model: None,
-            selected_models: Some(models),
+            selected_models: None,
+            snapshot_models: Some(models),
             declarations,
         })
     }
 
     fn join_call_rows(
         rows: &'a [SelectedExactDeclarationRow],
-        models: &'a SelectedModels,
+        models: CallModels<'a>,
         declarations: &mut Vec<ReferenceDeclaration<'a>>,
         budget: &mut dyn CatalogBudget,
     ) -> Result<(), ReferenceCatalogError> {
@@ -345,7 +470,7 @@ impl<'a> ReferenceCatalog<'a> {
                 return Err(ReferenceCatalogError::ForeignModel);
             };
             let mut admitted_row = false;
-            for admitted in models.exact_declaration_rows() {
+            for admitted in models.rows() {
                 work(budget, 1)?;
                 if admitted.form != SelectedExactDeclarationForm::ObjectType
                     || !object_node_equal(&row.structural_node, &admitted.structural_node, budget)?
@@ -370,27 +495,34 @@ impl<'a> ReferenceCatalog<'a> {
                 return Err(ReferenceCatalogError::ForeignModel);
             }
             let mut found = false;
-            for model in models.iter() {
+            for view in models.views() {
                 work(budget, 1)?;
                 if !text_equal(
-                    &model.view.model_selection().identity,
+                    &view.model_selection().identity,
                     &row.selected_document,
                     budget,
                 )? {
                     continue;
                 }
-                for (key, actual) in model.view.type_identities() {
+                for (key, actual) in view.type_identities() {
                     work(budget, 1)?;
                     if !text_equal(&key.package, &row.selected_document, budget)?
                         || !text_equal(&key.node, &row.original_identity, budget)?
                     {
                         continue;
                     }
-                    let universe = model
-                        .view
+                    let universe = view
                         .object_universe_with_work(key, &mut |units| work(budget, units))?
                         .ok_or(ReferenceCatalogError::UnknownDeclaration)?;
-                    insert_declaration(declarations, row, actual, key, universe, budget)?;
+                    insert_declaration(
+                        declarations,
+                        row,
+                        actual,
+                        key,
+                        universe,
+                        models.owner(),
+                        budget,
+                    )?;
                     found = true;
                 }
             }
@@ -480,13 +612,14 @@ impl<'a> ReferenceCatalog<'a> {
             else {
                 return Err(ReferenceCatalogError::UnknownDeclaration);
             };
-            insert_declaration(&mut declarations, row, actual, key, universe, budget)?;
+            insert_declaration(&mut declarations, row, actual, key, universe, None, budget)?;
         }
         Ok(Self {
             package: Some(package),
             source,
             model: Some(model),
             selected_models: None,
+            snapshot_models: None,
             declarations,
         })
     }
@@ -509,6 +642,45 @@ impl<'a> ReferenceCatalog<'a> {
     /// The original model-admission owner of a direct source function call.
     pub fn selected_models(&self) -> Option<&SelectedModels> {
         self.selected_models
+    }
+
+    /// The exact per-package snapshot-normalization owners of a package call.
+    pub fn snapshot_models(&self) -> Option<&[fsl_semantics::model::intake::NormalizedModel]> {
+        self.snapshot_models
+    }
+
+    /// Resolve the actual declaration's normalization owner, charging each
+    /// inspected identity before comparison. Catalog construction has already
+    /// refused duplicate complete identities with different owners.
+    pub fn normalization_owner_for(
+        &self,
+        reference: &filament_exact::ObjectReference,
+    ) -> Result<
+        Option<&'a fsl_semantics::model::intake::NormalizedModel>,
+        fsl_semantics::model::accounting::NormalizationIncomplete,
+    > {
+        for declaration in &self.declarations {
+            let Some(owner) = declaration.normalization_owner else {
+                return Ok(None);
+            };
+            owner.charge_reference_work(
+                fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                1,
+            )?;
+            if StateModel::reference_identity_equal_with_work(
+                declaration.effective,
+                reference.object_type(),
+                &mut |units| {
+                    owner.charge_reference_work(
+                        fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                        units,
+                    )
+                },
+            )? {
+                return Ok(Some(owner));
+            }
+        }
+        Ok(None)
     }
 
     /// Borrow the admitted declarations; no unchecked insertion is exposed.

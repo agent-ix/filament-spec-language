@@ -1,0 +1,193 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Genuine call-world acceptance for canonical conversion accounting.
+
+use crate::reference_codec::ReferenceCodec;
+use filament_exact::{Cancel, IntegerDecimalBudget, Reservation, ReservationDenied, Value};
+use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedPhase, SuppliedRun};
+use fsl_eval::execution::{
+    execute, ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends,
+};
+use fsl_package::ReferenceCatalog;
+use fsl_semantics::model::accounting::{ChargePoint, LimitKind};
+use fsl_semantics::model::intake::{package_input, PackageInput};
+use fsl_semantics::model::object_environment::ObjectEnvironment;
+use fsl_semantics::model::observation::{admit_current_snapshot, DocumentRef, ObservationLimits};
+use serde_json::json;
+
+#[path = "../../../../examples/config-version/spine_unit.rs"]
+#[allow(
+    dead_code,
+    reason = "the shared domain package supplies genuine identity provenance"
+)]
+mod domain;
+
+struct Fixture {
+    compiled: crate::spine::ComposedUnit,
+    objects: ObjectEnvironment,
+}
+
+fn fixture(work: Option<u64>) -> Fixture {
+    let packages = package_input([domain::DOMAIN_PACKAGE.as_bytes()]).unwrap();
+    let mut limits = crate::spine::SpineLimits::default();
+    if let Some(work) = work {
+        limits.model.work_units = work;
+    }
+    let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n", domain::PACKAGE_IDENTITY);
+    let compiled = crate::spine::compose(
+        fsl_foundation::SourceIdentity::new("test", "canonical-run-accounting"),
+        "canonical-run.native",
+        text.as_bytes(),
+        &packages,
+        &crate::spine::DependencyInput::default(),
+        limits,
+    )
+    .expect("genuine source checking and selected model admission");
+    let selected = DocumentRef {
+        authority: "test".into(),
+        identity: "canonical-current".into(),
+    };
+    let snapshot = json!({
+        "format":"filament.state.snapshot/v1", "identity":{"authority": selected.authority,"identity":selected.identity},
+        "observation":"current","anchor":{"kind":"handler","name":"read"},
+        "model":{"identity":domain::PACKAGE_IDENTITY},
+        "populations":[{"population":"ix://example/config-version/config_history","complete":true,
+            "objects":[{"key":"雪","type":"ix://example/config-version/ConfigVersion",
+                "fields":{"versionNumber":{"integer":"2"},"parent":{"absent":{}}}}]}]
+    });
+    let provisions = std::collections::BTreeMap::from([(
+        selected.clone(),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )]);
+    let checked = &compiled.package;
+    let (objects, _) = admit_current_snapshot(
+        checked.graph().model_inputs(),
+        checked.graph().scope().types(),
+        &packages,
+        limits.model,
+        &provisions,
+        &selected,
+        ObservationLimits::default(),
+    )
+    .expect("genuine snapshot admission");
+    Fixture { compiled, objects }
+}
+
+#[derive(Default)]
+struct ConversionWork(u64);
+impl Reservation for ConversionWork {
+    fn reserve(&mut self, _: usize) -> Result<(), ReservationDenied> {
+        Ok(())
+    }
+}
+impl IntegerDecimalBudget for ConversionWork {
+    fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
+        self.0 = self.0.checked_add(units).ok_or(ReservationDenied)?;
+        Ok(())
+    }
+}
+
+/// Trace: FR-650-AC-20
+#[test]
+fn canonical_run_conversion_and_execution_share_one_limit() {
+    let fixture = fixture(None);
+    let models = fixture.compiled.models.selected_models();
+    let cancel = Cancel::new();
+    let mut catalog_budget =
+        super::NormalizationReferenceBudget::source(models, ChargePoint::ReferenceCatalog);
+    let catalog =
+        ReferenceCatalog::from_checked_call(&fixture.compiled.package, models, &mut catalog_budget)
+            .unwrap();
+    let codec = ReferenceCodec::for_checked_call(
+        &catalog,
+        &fixture.compiled.package,
+        models,
+        &fixture.objects,
+    )
+    .unwrap();
+    let [reference] = fixture.objects.references() else {
+        panic!("one genuine object")
+    };
+    let mut wire_budget = ConversionWork::default();
+    let wire = codec
+        .encode_reference(reference, &mut wire_budget, &cancel, 64)
+        .unwrap();
+    let mut conversion = ConversionWork::default();
+    codec
+        .restore_reference(&wire, &mut conversion, &cancel, 64)
+        .unwrap();
+    let limits = SuppliedLimits::default().with_conversion_work_units(conversion.0);
+    let request = ExecuteRequest {
+        selection: ExecuteSelection::Function {
+            name: fsl_eval::value::QualifiedName::unqualified("keep").unwrap(),
+            arguments: vec![Value::Reference(reference.clone())],
+            environment: fixture.objects.clone(),
+        },
+        backend: filament_eval::ExecutionBackendChoice::Interpreter,
+    };
+    let execution = ExecuteLimits {
+        accounting: crate::spine::default_accounting(1_000_000),
+        prepare: PrepareLimits::default(),
+        session: filament_eval::SessionLimits::default(),
+    };
+    let mut execution_only = SuppliedRun::new(limits, cancel.clone()).unwrap();
+    execute(
+        &fixture.compiled.package,
+        &request,
+        &SuppliedBackends::default(),
+        &execution,
+        &mut execution_only,
+        &cancel,
+    )
+    .expect("execution alone fits the same conversion limit");
+    let mut combined = SuppliedRun::new(limits, cancel.clone()).unwrap();
+    let mut admission = super::SuppliedReferenceAdmission::new(&mut combined, 0, 0);
+    assert_eq!(
+        codec
+            .restore_reference(&wire, &mut admission, &cancel, 64)
+            .unwrap(),
+        *reference
+    );
+    assert!(admission.stopped.is_none(), "conversion alone fits exactly");
+    drop(admission);
+    let failure = execute(
+        &fixture.compiled.package,
+        &request,
+        &SuppliedBackends::default(),
+        &execution,
+        &mut combined,
+        &cancel,
+    )
+    .expect_err("combined conversion and execution exceed the unchanged limit");
+    let filament_eval::CallFailure::Supplied(stop) = failure else {
+        panic!("typed supplied stop: {failure:?}")
+    };
+    assert_eq!(stop.context.phase, SuppliedPhase::Conversion);
+    assert_eq!(stop.context.parameter, Some(0));
+    assert_eq!(stop.context.consumed, conversion.0);
+}
+
+/// Trace: FR-650-AC-21
+#[test]
+fn canonical_run_catalog_preserves_normalization_work_denial() {
+    let baseline = fixture(None);
+    let consumed = baseline
+        .compiled
+        .models
+        .selected_models()
+        .consumed(LimitKind::WorkUnits);
+    let fixture = fixture(Some(consumed));
+    let models = fixture.compiled.models.selected_models();
+    let mut budget =
+        super::NormalizationReferenceBudget::source(models, ChargePoint::ReferenceCatalog);
+    ReferenceCatalog::from_checked_call(&fixture.compiled.package, models, &mut budget)
+        .expect_err("catalog cannot replace the original normalization allowance");
+    let denial = budget
+        .stopped
+        .take()
+        .expect("original typed normalization denial");
+    assert_eq!(denial.limit_kind, LimitKind::WorkUnits);
+    assert_eq!(denial.limit, consumed);
+    assert_eq!(denial.consumed, consumed);
+    assert_eq!(denial.charge_point, ChargePoint::ReferenceCatalog);
+    assert!(denial.next_charge > 0);
+}

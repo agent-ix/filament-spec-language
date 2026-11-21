@@ -22,11 +22,14 @@ use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use serde_json::{json, Map, Value as Json};
 
+#[cfg(test)]
+mod accounting_tests;
 mod canonical;
 mod references;
+pub use references::NormalizationReferenceBudget;
 pub(crate) use references::{
     reference_cancel_cause, reference_error_cause, reference_error_code, reference_error_pointer,
-    ReferenceAdmission,
+    reference_refusal, write_run_value, SuppliedReferenceAdmission,
 };
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
@@ -75,6 +78,7 @@ pub(crate) struct Forms<'a> {
     own_package: &'a str,
     /// The call's object world, when the call names a snapshot.
     world: Option<&'a World<'a>>,
+    canonical_writer: Option<&'a dyn Fn(&Value) -> Result<Json, WriteStop>>,
 }
 
 /// The object world of a call (FR-650 "Arguments"): the admitted snapshot's
@@ -84,8 +88,8 @@ pub(crate) struct World<'a> {
     pub objects: &'a ObjectEnvironment,
     /// The universe of the objects of a declared object type.
     pub universe_of: &'a dyn Fn(&EffectiveId) -> Option<UniverseId>,
-    pub restore_reference: Option<&'a dyn Fn(&Json) -> Result<ObjectReference, ReadStop>>,
-    pub encode_value: Option<&'a dyn Fn(&Json) -> Result<Json, ReadStop>>,
+    pub restore_reference:
+        Option<&'a dyn Fn(&Json, usize, u64) -> Result<ObjectReference, ReadStop>>,
 }
 
 impl<'a> Forms<'a> {
@@ -96,7 +100,16 @@ impl<'a> Forms<'a> {
             variants: &[],
             own_package: "",
             world: None,
+            canonical_writer: None,
         }
+    }
+
+    pub(crate) fn with_canonical_writer(
+        mut self,
+        writer: &'a dyn Fn(&Value) -> Result<Json, WriteStop>,
+    ) -> Self {
+        self.canonical_writer = Some(writer);
+        self
     }
 
     pub(crate) fn with_variants(

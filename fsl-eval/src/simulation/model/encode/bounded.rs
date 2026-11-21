@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    Cancel, Integer, IntegerDecimalBudget, IntegerDecimalBudgetError, NodeKey, ReservationDenied,
-    Value, VariantId,
+    Cancel, Integer, IntegerDecimalBudget, IntegerDecimalBudgetError, NodeKey, Reservation,
+    ReservationDenied, Value, VariantId,
 };
 use filament_semantic_value::declaration::{CompositeDeclaration, TypeEnvironment};
 use fsl_foundation::{IdentityLimits, Setting};

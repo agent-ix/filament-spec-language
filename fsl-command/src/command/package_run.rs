@@ -989,7 +989,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
             snapshot.observation.reference.clone(),
             snapshot.observation.bytes.clone(),
         )]);
-        bare.admit_call_snapshot_with_views(
+        bare.admit_call_snapshot_with_provenance(
             &packages,
             model_limits,
             &provision,
@@ -1019,7 +1019,13 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
     let cancel = filament_exact::Cancel::new();
     let called = match &snapshot_views {
         Some(views) => fsl_replay::spine::run_package_with_snapshot_views(
-            &bare, &call, &objects, views, &sources, &cancel,
+            &bare,
+            &call,
+            &objects,
+            views,
+            &mut budget,
+            &sources,
+            &cancel,
         ),
         None => {
             fsl_replay::spine::run_package_with_sources(&bare, &call, &objects, &sources, &cancel)

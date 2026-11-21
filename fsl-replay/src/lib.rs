@@ -46,6 +46,7 @@
 mod admitted;
 mod reference_codec;
 pub use reference_codec::{ReferenceCodec, ReferenceCodecError, ReferenceFailure, ReferenceScope};
+pub use reference_codec::admit_native_value_bytes;
 mod application;
 mod axes;
 pub mod backends;

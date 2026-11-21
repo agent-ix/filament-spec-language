@@ -46,6 +46,14 @@ pub enum ReferenceFailure {
 /// A typed boundary refusal with an RFC 6901 locus; resource causes are retained.
 #[derive(Debug, thiserror::Error)]
 pub enum ReferenceCodecError {
+    /// The actual normalized declaration owner's cumulative work stopped.
+    #[error("reference normalization stopped at {pointer}: {cause:?}")]
+    Normalization {
+        /// Original normalization work denial and real charge point.
+        cause: fsl_semantics::model::accounting::NormalizationIncomplete,
+        /// The reference being encoded.
+        pointer: String,
+    },
     /// A complete native identity copy stopped under the actual caller budget.
     #[error("reference identity copy stopped at {pointer}: {cause:?}")]
     IdentityCopy {
@@ -106,7 +114,7 @@ pub struct ReferenceCodec<'c, 'm, 'r> {
 /// Nested carrier writers share this budget rather than creating fresh limits.
 pub struct ReferenceScope<'s, 'c, 'm, 'r> {
     codec: &'s ReferenceCodec<'c, 'm, 'r>,
-    scope: Scope<'s>,
+    scope: Scope<'s, 'm>,
     limits: quire_canonical::Limits,
 }
 
@@ -337,14 +345,15 @@ enum ReferenceRuntime<'c, 'r> {
     Call(&'c ObjectEnvironment),
 }
 
-struct Scope<'a> {
+struct Scope<'a, 'n> {
     budget: &'a mut dyn IntegerDecimalBudget,
     cancel: &'a Cancel,
     path: String,
     max_depth: usize,
+    normalization_owner: Option<&'n fsl_semantics::model::intake::NormalizedModel>,
 }
 
-impl Scope<'_> {
+impl Scope<'_, '_> {
     fn count(&mut self, number: u64) -> Result<(), ReferenceCodecError> {
         self.work(1)?;
         if number > 9_007_199_254_740_991 {
@@ -464,10 +473,39 @@ impl Scope<'_> {
     fn work(&mut self, units: usize) -> Result<(), ReferenceCodecError> {
         self.poll()?;
         let units = u64::try_from(units).map_err(|_| self.stopped(ModelKeyError::SizeOverflow))?;
-        self.budget
-            .work(units)
-            .map_err(|_| self.stopped(ModelKeyError::Denied))?;
+        if let Some(owner) = self.normalization_owner {
+            owner
+                .charge_reference_work(
+                    fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                    units,
+                )
+                .map_err(|cause| ReferenceCodecError::Normalization {
+                    cause,
+                    pointer: std::mem::take(&mut self.path),
+                })?;
+        } else {
+            self.budget
+                .work(units)
+                .map_err(|_| self.stopped(ModelKeyError::Denied))?;
+        }
         self.poll()
+    }
+
+    fn with_admission<T>(
+        &mut self,
+        action: impl FnOnce(&Admission<'_>) -> Result<T, ModelKeyError>,
+    ) -> Result<T, ReferenceCodecError> {
+        let admission = Admission::new(&mut *self.budget, self.cancel, self.normalization_owner);
+        let result = action(&admission);
+        let normalization = admission.normalization_failure.borrow_mut().take();
+        let result = admission.finish(result);
+        if let Some(cause) = normalization {
+            return Err(ReferenceCodecError::Normalization {
+                cause,
+                pointer: std::mem::take(&mut self.path),
+            });
+        }
+        result.map_err(|error| self.stopped(error))
     }
 
     fn reserve(&mut self, bytes: usize) -> Result<(), ReferenceCodecError> {
@@ -756,6 +794,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             scope: Scope {
                 budget,
                 cancel,
+                normalization_owner: None,
                 path: String::new(),
                 max_depth,
             },
@@ -766,7 +805,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         &self,
         declaration: &ReferenceDeclaration<'_>,
         object: &str,
-        scope: &mut Scope<'_>,
+        scope: &mut Scope<'_, '_>,
     ) -> Result<ObjectReference, ReferenceCodecError> {
         // Account the model-owned declaring/type lookup and its subsequent
         // reference construction before invoking the allocating owner method.
@@ -844,7 +883,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         value: &Value,
         restore: bool,
         depth: usize,
-        scope: &mut Scope<'_>,
+        scope: &mut Scope<'_, 'm>,
     ) -> Result<Value, ReferenceCodecError> {
         scope.work(1)?;
         // Match the existing certificate typed-value ceiling and respect a
@@ -1034,7 +1073,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     pub fn for_admitted_call(
         catalog: &'c ReferenceCatalog<'m>,
         package: &CheckedPackageV2,
-        models: &SelectedModels,
+        models: &[fsl_semantics::model::intake::NormalizedModel],
         objects: &'c ObjectEnvironment,
     ) -> Result<Self, ReferenceCodecError> {
         let matches = catalog.source().is_none()
@@ -1042,7 +1081,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
                 .package()
                 .is_some_and(|actual| std::ptr::eq(actual, package))
             && catalog
-                .selected_models()
+                .snapshot_models()
                 .is_some_and(|actual| std::ptr::eq(actual, models));
         Self::call_context(catalog, objects, matches)
     }
@@ -1068,21 +1107,41 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         &self,
         value: &Value,
         restore: bool,
-        scope: &mut Scope<'_>,
+        scope: &mut Scope<'_, 'm>,
+    ) -> Result<Value, ReferenceCodecError> {
+        let owner = scope.normalization_owner;
+        let result = self.reference_in(value, restore, scope);
+        scope.normalization_owner = owner;
+        result
+    }
+
+    fn reference_in(
+        &self,
+        value: &Value,
+        restore: bool,
+        scope: &mut Scope<'_, 'm>,
     ) -> Result<Value, ReferenceCodecError> {
         let map = scope.closed(value, &["type", "universe", "object_type", "identity"])?;
         if map["type"].as_str() != Some("reference") {
             return Err(scope.fail(ReferenceFailure::MalformedWire));
         }
-        let universe = scope.member("universe", |s| s.node(&map["universe"], 0))?;
         let declaration = scope.member("object_type", |s| {
             let wire_node = if restore {
                 Some(s.node(&map["object_type"], 0)?)
             } else {
-                s.validate_effective(&map["object_type"])?;
+                if self.catalog.snapshot_models().is_none() {
+                    s.validate_effective(&map["object_type"])?;
+                }
                 None
             };
             for declaration in self.catalog.declarations() {
+                let previous = s.normalization_owner;
+                if !restore {
+                    if let Some(owner) = declaration.normalization_owner() {
+                        s.normalization_owner = Some(owner);
+                        s.validate_effective(&map["object_type"])?;
+                    }
+                }
                 s.work(1)?;
                 let matches = if let Some(wire) = &wire_node {
                     let candidate = s.declaration_json(declaration)?;
@@ -1095,9 +1154,11 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
                 if matches {
                     return Ok(declaration);
                 }
+                s.normalization_owner = previous;
             }
             Err(s.fail(ReferenceFailure::UnknownDeclaration))
         })?;
+        let universe = scope.member("universe", |s| s.node(&map["universe"], 0))?;
         let object = scope.member("identity", |s| {
             let text = s.string(&map["identity"])?;
             if restore {
@@ -1115,11 +1176,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let expected = native.universe().root_type();
         // Shared NodeId codec receives a shape already bounded and charged by
         // `node`; budget the encoded temporary before the owner codec allocates.
-        let admission = Admission::new(&mut *scope.budget, scope.cancel);
-        let expected_json = admission.node_json(expected);
-        let expected_json = admission
-            .finish(expected_json)
-            .map_err(|error| scope.stopped(error))?;
+        let expected_json = scope.with_admission(|admission| admission.node_json(expected))?;
         if !scope.same_json(&universe, &expected_json)? {
             return scope.member("universe", |s| {
                 Err(s.fail(ReferenceFailure::IncompatibleUniverse))
@@ -1163,10 +1220,36 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             &mut Scope {
                 budget,
                 cancel,
+                normalization_owner: None,
                 path: String::new(),
                 max_depth,
             },
         )
+    }
+
+    /// Admit the borrowed writer's native typed bytes before converting its
+    /// references under the original caller budget.
+    ///
+    /// # Errors
+    /// Original typed wire, authority, normalization and caller failures.
+    pub fn encode_value_bytes(
+        &self,
+        written: &[u8],
+        budget: &mut dyn IntegerDecimalBudget,
+        cancel: &Cancel,
+        max_depth: usize,
+    ) -> Result<Value, ReferenceCodecError> {
+        let mut scope = Scope {
+            budget,
+            cancel,
+            normalization_owner: None,
+            path: String::new(),
+            max_depth,
+        };
+        let text = std::str::from_utf8(written)
+            .map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
+        let value = parse_text(text, &mut scope)?;
+        self.value(&value, false, 0, &mut scope)
     }
 
     /// Restore a closed backend typed value to its exact native representation.
@@ -1187,6 +1270,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
             &mut Scope {
                 budget,
                 cancel,
+                normalization_owner: None,
                 path: String::new(),
                 max_depth,
             },
@@ -1207,16 +1291,26 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
-        let admission = Admission::new(&mut *scope.budget, cancel);
-        let native = admission.encoded(quire_canonical::Limits::new(u64::MAX), |writer| {
-            fsl_eval::simulation::model::encode_reference(reference, writer)
-        });
-        let native = admission
-            .finish(native)
-            .map_err(|error| scope.stopped(error))?;
+        if self.catalog.snapshot_models().is_some() {
+            scope.normalization_owner = Some(
+                self.catalog
+                    .normalization_owner_for(reference)
+                    .map_err(|cause| ReferenceCodecError::Normalization {
+                        cause,
+                        pointer: String::new(),
+                    })?
+                    .ok_or_else(|| scope.fail(ReferenceFailure::UnknownDeclaration))?,
+            );
+        }
+        let native = scope.with_admission(|admission| {
+            admission.encoded(quire_canonical::Limits::new(u64::MAX), |writer| {
+                fsl_eval::simulation::model::encode_reference(reference, writer)
+            })
+        })?;
         let text = std::str::from_utf8(&native)
             .map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
         let value = parse_text(text, &mut scope)?;
@@ -1237,6 +1331,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
@@ -1266,6 +1361,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
@@ -1275,7 +1371,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     fn restore_transition_in(
         &self,
         value: &Value,
-        scope: &mut Scope<'_>,
+        scope: &mut Scope<'_, 'm>,
         limits: quire_canonical::Limits,
     ) -> Result<ModelTransition, ReferenceCodecError> {
         let map = scope.closed(value, &["type", "operation", "receiver", "arguments"])?;
@@ -1354,6 +1450,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
@@ -1363,7 +1460,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     fn encode_transition_in(
         &self,
         transition: &ModelTransition,
-        scope: &mut Scope<'_>,
+        scope: &mut Scope<'_, 'm>,
     ) -> Result<Value, ReferenceCodecError> {
         let operation = scope.member("operation", |s| parse_text(transition.operation(), s))?;
         if !matches!(operation, Value::String(_) | Value::Object(_)) {
@@ -1418,6 +1515,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let mut scope = Scope {
             budget,
             cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth,
         };
@@ -1464,9 +1562,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
                 continue;
             }
             let expected = binding.universe().root_type();
-            let admission = Admission::new(&mut *scope.budget, cancel);
-            let expected = admission.node_json(expected);
-            let expected = admission.finish(expected).map_err(|e| scope.stopped(e))?;
+            let expected = scope.with_admission(|admission| admission.node_json(expected))?;
             if !scope.same_json(&native["universe"], &expected)? {
                 return Err(scope.fail(ReferenceFailure::WrongPopulation));
             }
@@ -1490,7 +1586,30 @@ fn integer_text(text: &str) -> bool {
         && text != "-0"
 }
 
-fn parse_text(text: &str, scope: &mut Scope<'_>) -> Result<Value, ReferenceCodecError> {
+/// Read native typed-value bytes using the caller's existing work and
+/// physical-reservation policy. Reference authentication remains the codec's.
+///
+/// # Errors
+/// The original caller/cancellation refusal or malformed typed JSON.
+pub fn admit_native_value_bytes(
+    written: &[u8],
+    budget: &mut dyn IntegerDecimalBudget,
+    cancel: &Cancel,
+    max_depth: usize,
+) -> Result<Value, ReferenceCodecError> {
+    let mut scope = Scope {
+        budget,
+        cancel,
+        normalization_owner: None,
+        path: String::new(),
+        max_depth,
+    };
+    let text =
+        std::str::from_utf8(written).map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
+    parse_text(text, &mut scope)
+}
+
+fn parse_text(text: &str, scope: &mut Scope<'_, '_>) -> Result<Value, ReferenceCodecError> {
     scope.work(text.len())?;
     let bytes = text
         .len()
@@ -1503,12 +1622,10 @@ fn parse_text(text: &str, scope: &mut Scope<'_>) -> Result<Value, ReferenceCodec
 
 fn canonical_text(
     value: &Value,
-    scope: &mut Scope<'_>,
+    scope: &mut Scope<'_, '_>,
     limits: quire_canonical::Limits,
 ) -> Result<String, ReferenceCodecError> {
-    let admission = Admission::new(&mut *scope.budget, scope.cancel);
-    let result = admission.canonical(value, limits);
-    let bytes = admission.finish(result).map_err(|e| scope.stopped(e))?;
+    let bytes = scope.with_admission(|admission| admission.canonical(value, limits))?;
     String::from_utf8(bytes).map_err(|_| scope.fail(ReferenceFailure::MalformedWire))
 }
 
@@ -1516,7 +1633,7 @@ fn sort_values(
     values: &mut Vec<Value>,
     map: bool,
     unique: bool,
-    scope: &mut Scope<'_>,
+    scope: &mut Scope<'_, '_>,
 ) -> Result<(), ReferenceCodecError> {
     let capacity = values
         .len()
@@ -1568,14 +1685,23 @@ struct Admission<'a> {
     budget: RefCell<&'a mut dyn IntegerDecimalBudget>,
     cancel: &'a Cancel,
     failure: RefCell<Option<ModelKeyError>>,
+    normalization_owner: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
+    normalization_failure:
+        RefCell<Option<fsl_semantics::model::accounting::NormalizationIncomplete>>,
 }
 
 impl<'a> Admission<'a> {
-    fn new(budget: &'a mut dyn IntegerDecimalBudget, cancel: &'a Cancel) -> Self {
+    fn new(
+        budget: &'a mut dyn IntegerDecimalBudget,
+        cancel: &'a Cancel,
+        normalization_owner: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
+    ) -> Self {
         Self {
             budget: RefCell::new(budget),
             cancel,
             failure: RefCell::new(None),
+            normalization_owner,
+            normalization_failure: RefCell::new(None),
         }
     }
 
@@ -1590,10 +1716,24 @@ impl<'a> Admission<'a> {
     fn work(&self, units: usize) -> Result<(), ModelKeyError> {
         self.poll()?;
         let units = u64::try_from(units).map_err(|_| ModelKeyError::SizeOverflow)?;
-        self.budget
-            .borrow_mut()
-            .work(units)
-            .map_err(|_| ModelKeyError::Denied)?;
+        if let Some(owner) = self.normalization_owner {
+            owner
+                .charge_reference_work(
+                    fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                    units,
+                )
+                .map_err(|cause| {
+                    if self.normalization_failure.borrow().is_none() {
+                        *self.normalization_failure.borrow_mut() = Some(cause);
+                    }
+                    ModelKeyError::Denied
+                })?;
+        } else {
+            self.budget
+                .borrow_mut()
+                .work(units)
+                .map_err(|_| ModelKeyError::Denied)?;
+        }
         self.poll()
     }
 
@@ -1803,6 +1943,7 @@ mod tests {
         let mut scope = Scope {
             budget: &mut budget,
             cancel: &cancel,
+            normalization_owner: None,
             path: String::new(),
             max_depth: 64,
         };
@@ -1821,6 +1962,7 @@ mod tests {
             let mut scope = Scope {
                 budget: &mut budget,
                 cancel: &cancel,
+                normalization_owner: None,
                 path: "/identity".to_owned(),
                 max_depth: 64,
             };
@@ -1840,6 +1982,7 @@ mod tests {
             let mut scope = Scope {
                 budget: &mut budget,
                 cancel: &cancel,
+                normalization_owner: None,
                 path: "/identity".to_owned(),
                 max_depth: 64,
             };
@@ -1861,6 +2004,7 @@ mod tests {
         let mut scope = Scope {
             budget: &mut budget,
             cancel: &cancel,
+            normalization_owner: None,
             path: "/argument".to_owned(),
             max_depth: 64,
         };
@@ -1962,7 +2106,7 @@ mod tests {
             panic!("a reference-valued completed call");
         };
         assert_eq!(&result, native);
-        let mut join_budget = NativeJoinBudget::new(1_000_000, 1_000_000);
+        let mut join_budget = Budget::new(1_000_000, 1_000_000);
         let catalog = ReferenceCatalog::from_checked_call(checked, models, &mut join_budget)
             .expect("genuine checked call catalog");
         assert!(catalog.package().is_none());

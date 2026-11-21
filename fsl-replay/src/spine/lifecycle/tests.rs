@@ -2651,6 +2651,16 @@ fn interpret(
     accounting: filament_exact::ScalarLimits,
     cancel: &Cancel,
 ) -> Result<filament_eval::Evaluation, CallFailure> {
+    let limits = fsl_eval::execution::ExecuteLimits {
+        accounting,
+        prepare: fsl_eval::execution::PrepareLimits::default(),
+        session: Default::default(),
+    };
+    let mut run = filament_semantic_value::supplied_stop::SuppliedRun::new(
+        SuppliedLimits::default(),
+        cancel.clone(),
+    )
+    .map_err(CallFailure::Supplied)?;
     fsl_eval::execution::execute(
         checked.package(),
         &fsl_eval::execution::ExecuteRequest {
@@ -2662,12 +2672,8 @@ fn interpret(
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
         },
         &fsl_eval::execution::SuppliedBackends::default(),
-        &fsl_eval::execution::ExecuteLimits {
-            accounting,
-            supplied: SuppliedLimits::default(),
-            prepare: fsl_eval::execution::PrepareLimits::default(),
-            session: Default::default(),
-        },
+        &limits,
+        &mut run,
         cancel,
     )
 }

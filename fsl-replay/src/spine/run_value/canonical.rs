@@ -4,13 +4,24 @@
 
 use super::*;
 
+struct Position {
+    argument: usize,
+    next: u64,
+}
+
 impl Forms<'_> {
     pub(crate) fn read_canonical(
         &self,
         form: &Json,
         declared: &ValueType,
+        argument: usize,
     ) -> Result<Value, ReadStop> {
-        let normalized = self.canonical_input(form, declared, &mut Path::new())?;
+        let normalized = self.canonical_input(
+            form,
+            declared,
+            &mut Path::new(),
+            &mut Position { argument, next: 0 },
+        )?;
         self.read(&normalized, declared).map_err(|stop| match stop {
             ReadStop::Defect(mut defect) => {
                 defect.path = canonical_pointer(form, &normalized, &defect.path);
@@ -26,7 +37,13 @@ impl Forms<'_> {
         form: &Json,
         declared: &ValueType,
         path: &mut Path,
+        position: &mut Position,
     ) -> Result<Json, ReadStop> {
+        let node = position.next;
+        position.next = position
+            .next
+            .checked_add(1)
+            .ok_or(ReadStop::Fault("canonical-preorder-fits-u64"))?;
         if matches!(declared, ValueType::Population(_)) {
             identity_form::closed(form, &["population"], path)?;
             return Ok(form.clone());
@@ -123,7 +140,8 @@ impl Forms<'_> {
                 if object["value"].is_null() {
                     Ok(json!({"absent": {}}))
                 } else {
-                    let value = self.canonical_child(&object["value"], payload, path, "value")?;
+                    let value =
+                        self.canonical_child(&object["value"], payload, path, "value", position)?;
                     Ok(json!({"present": value}))
                 }
             }
@@ -134,6 +152,7 @@ impl Forms<'_> {
                     collection.element(),
                     path,
                     "elements",
+                    position,
                 )?;
                 Ok(json!({wanted: values}))
             }
@@ -147,9 +166,15 @@ impl Forms<'_> {
                 for (index, entry) in entries.iter().enumerate() {
                     path.push(&index.to_string());
                     let entry = identity_form::closed(entry, &["key", "value"], path)?;
-                    let key = self.canonical_child(&entry["key"], map.key(), path, "key")?;
-                    let value =
-                        self.canonical_child(&entry["value"], map.values(), path, "value")?;
+                    let key =
+                        self.canonical_child(&entry["key"], map.key(), path, "key", position)?;
+                    let value = self.canonical_child(
+                        &entry["value"],
+                        map.values(),
+                        path,
+                        "value",
+                        position,
+                    )?;
                     normalized.push(json!({"key": key, "value": value}));
                     path.pop();
                 }
@@ -168,7 +193,7 @@ impl Forms<'_> {
                 }
                 Ok(json!({"variant": {"type": name, "case": object["member"]}}))
             }
-            ValueType::Composite(key) => self.canonical_composite(object, key, path),
+            ValueType::Composite(key) => self.canonical_composite(object, key, path, position),
             ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_) => {
@@ -180,7 +205,15 @@ impl Forms<'_> {
                 Ok(json!({"kind": "quantity", "unit": unit,
                     "magnitude": {"kind": "rational", "numerator": object["numerator"], "denominator": object["denominator"]}}))
             }
-            ValueType::Reference(_) => self.canonical_reference(object, declared, path),
+            ValueType::Reference(_) => self.canonical_reference(
+                object,
+                declared,
+                path,
+                &mut Position {
+                    argument: position.argument,
+                    next: node,
+                },
+            ),
             ValueType::Population(_) => Err(ReadStop::Fault("population-already-read")),
         }
     }
@@ -191,9 +224,10 @@ impl Forms<'_> {
         declared: &ValueType,
         path: &mut Path,
         segment: &str,
+        position: &mut Position,
     ) -> Result<Json, ReadStop> {
         path.push(segment);
-        let value = self.canonical_input(form, declared, path);
+        let value = self.canonical_input(form, declared, path, position);
         path.pop();
         value
     }
@@ -203,6 +237,7 @@ impl Forms<'_> {
         object: &Map<String, Json>,
         _declared: &ValueType,
         path: &mut Path,
+        position: &mut Position,
     ) -> Result<Json, ReadStop> {
         closed(
             object,
@@ -213,7 +248,12 @@ impl Forms<'_> {
         let restore = world
             .restore_reference
             .ok_or(ReadStop::Fault("canonical-call-has-reference-adapter"))?;
-        let reference = restore(&Json::Object(object.clone())).map_err(|mut error| {
+        let reference = restore(
+            &Json::Object(object.clone()),
+            position.argument,
+            position.next,
+        )
+        .map_err(|mut error| {
             if let ReadStop::Refusal(ref mut refusal) = error {
                 if let super::super::RunRefusal::Reference(ref mut reference) = **refusal {
                     let pointer = match reference.as_mut() {
@@ -231,9 +271,11 @@ impl Forms<'_> {
                         | crate::reference_codec::ReferenceCodecError::Refused {
                             pointer, ..
                         }
-                        | crate::reference_codec::ReferenceCodecError::Key { pointer, .. } => {
-                            pointer
-                        }
+                        | crate::reference_codec::ReferenceCodecError::Key { pointer, .. }
+                        | crate::reference_codec::ReferenceCodecError::Normalization {
+                            pointer,
+                            ..
+                        } => pointer,
                     };
                     *pointer = format!("{}{pointer}", path.pointer());
                 }
@@ -249,6 +291,7 @@ impl Forms<'_> {
         declared: &ValueType,
         path: &mut Path,
         segment: &str,
+        position: &mut Position,
     ) -> Result<Vec<Json>, ReadStop> {
         let values = form
             .as_array()
@@ -256,7 +299,13 @@ impl Forms<'_> {
         path.push(segment);
         let mut normalized = Vec::with_capacity(values.len());
         for (index, value) in values.iter().enumerate() {
-            normalized.push(self.canonical_child(value, declared, path, &index.to_string())?);
+            normalized.push(self.canonical_child(
+                value,
+                declared,
+                path,
+                &index.to_string(),
+                position,
+            )?);
         }
         path.pop();
         Ok(normalized)
@@ -267,6 +316,7 @@ impl Forms<'_> {
         object: &Map<String, Json>,
         declared: &NodeKey,
         path: &mut Path,
+        position: &mut Position,
     ) -> Result<Json, ReadStop> {
         let name = object.get("name").ok_or_else(|| {
             defect_below(Code::InvalidRuntimeInput, "missing-member", path, &["name"])
@@ -316,6 +366,7 @@ impl Forms<'_> {
                                 field.value_type(),
                                 path,
                                 "value",
+                                position,
                             )?;
                             if presence == Presence::Optional {
                                 json!({"present": value})
@@ -332,7 +383,8 @@ impl Forms<'_> {
             }
             CompositeShape::Tuple(positions) => {
                 closed(object, &["type", "name", "components"], path)?;
-                let values = self.canonical_positions(&object["components"], positions, path)?;
+                let values =
+                    self.canonical_positions(&object["components"], positions, path, position)?;
                 Ok(json!({"tuple": {"type": legacy_name, "components": values}}))
             }
             CompositeShape::Union(members) => {
@@ -349,8 +401,12 @@ impl Forms<'_> {
                             &["member"],
                         )
                     })?;
-                let values =
-                    self.canonical_positions(&object["components"], member.positions(), path)?;
+                let values = self.canonical_positions(
+                    &object["components"],
+                    member.positions(),
+                    path,
+                    position,
+                )?;
                 if values.is_empty() {
                     Ok(json!({"variant": {"type": legacy_name, "case": name}}))
                 } else {
@@ -367,6 +423,7 @@ impl Forms<'_> {
         form: &Json,
         positions: &[ValueType],
         path: &mut Path,
+        position: &mut Position,
     ) -> Result<Vec<Json>, ReadStop> {
         let values = form
             .as_array()
@@ -382,7 +439,13 @@ impl Forms<'_> {
         path.push("components");
         let mut normalized = Vec::with_capacity(values.len());
         for (index, (value, declared)) in values.iter().zip(positions).enumerate() {
-            normalized.push(self.canonical_child(value, declared, path, &index.to_string())?);
+            normalized.push(self.canonical_child(
+                value,
+                declared,
+                path,
+                &index.to_string(),
+                position,
+            )?);
         }
         path.pop();
         Ok(normalized)
@@ -408,34 +471,19 @@ impl Forms<'_> {
                         key.type_identity.clone(),
                         object,
                     ));
-                    fsl_eval::simulation::model::run_value_json(
-                        &value,
-                        self.types,
-                        self.enums,
-                        self.variants,
+                    self.canonical_writer
+                        .ok_or(WriteStop::Fault("canonical-call-has-typed-writer"))?(
+                        &value
                     )
-                    .ok_or(WriteStop::NoForm)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             elements.sort_by_key(order_key);
             json!({"type": "set", "elements": elements})
         } else {
-            fsl_eval::simulation::model::run_value_json(
-                value,
-                self.types,
-                self.enums,
-                self.variants,
-            )
-            .ok_or(WriteStop::NoForm)?
+            self.canonical_writer
+                .ok_or(WriteStop::Fault("canonical-call-has-typed-writer"))?(value)?
         };
-        match self.world.and_then(|world| world.encode_value) {
-            Some(encode) => encode(&native).map_err(|stop| match stop {
-                ReadStop::Refusal(refusal) => WriteStop::Refusal(refusal),
-                ReadStop::Fault(invariant) => WriteStop::Fault(invariant),
-                ReadStop::Defect(_) => WriteStop::Fault("canonical-writer-produced-admitted-value"),
-            }),
-            None => Ok(native),
-        }
+        Ok(native)
     }
 }
 

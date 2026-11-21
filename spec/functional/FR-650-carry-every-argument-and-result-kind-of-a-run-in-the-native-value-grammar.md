@@ -104,6 +104,15 @@ refusal or incomplete category. A Population argument retains its native
 `{"population":P}` selection because a population has no FR-181 value
 form; its returned members use the canonical set and reference forms.
 
+Canonical reference argument conversion and execution SHALL borrow the same
+supplied-value run, retaining its counters, original argument index and
+preorder position. Reference catalog work and result-reference encoding SHALL
+charge `work_units` on the normalization owner that admitted the actual
+declaration, at `reference.catalog` or `reference.result`. Snapshot admission
+SHALL retain each model's original owner; selecting a declaration SHALL NOT
+substitute the first model's owner or create a fresh allowance. A denied
+charge SHALL preserve its typed normalization refusal and charge point.
+
 The native forms below remain the internal admission representation and
 the contract of the separately exposed spine and clause readers. They are
 not additional accepted forms at the public run command boundary. The
@@ -460,6 +469,8 @@ function id_opt using v(a: Option<Int[0, 9]>): Option<Int[0, 9]> pure { a }
 | FR-650-AC-15 | `sameIdentity` called with `a` an identity reference whose `universe` is `{"package": "other/package", "path": ["ConfigVersion"], "ordinal": 0}` refuses `foreign_reference`/`foreign-universe` at stage `call` with `details.position` 0, exit 20. An FR-651 `items` request whose `call` selection of `sameIdentity` names the observation key of the healthy current snapshot as `snapshot`, with `a` and `b` both the reference to `child`, completes `{"boolean": true}`. | Test (TC-2376) |
 | FR-650-AC-18 | Through the public run command, canonical Integer, Boolean, Text, Sequence and Set arguments complete with canonical values; a 23-digit integer remains exact, `4/6` completes as `2/3`, an empty sequence and one at its maximum retain order, and a set supplied as 3 then 1 completes as 1 then 3. A call with no arguments also writes its result canonically. | Test |
 | FR-650-AC-19 | The public run command refuses an untagged integer, a bare integer, a tagged integer with noncanonical decimal spelling, an unknown member, and an out-of-domain integer, each with exit 20. Request and dependent-byte exhaustion remain incomplete with no completed value. | Test |
+| FR-650-AC-20 | Genuine reference conversion and execution each fit a supplied conversion-work limit independently, but their combined work on the same supplied run exceeds it and returns the typed supplied-value limit refusal. | Test |
+| FR-650-AC-21 | A genuine checked-call reference catalog exhausts its original normalization owner's remaining work allowance and returns `NormalizationIncomplete` at `reference.catalog`, retaining the configured limit, prior consumption and denied charge. | Test |
 
 ## Dependencies
 
