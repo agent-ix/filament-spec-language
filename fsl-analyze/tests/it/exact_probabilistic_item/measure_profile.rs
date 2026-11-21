@@ -932,3 +932,209 @@ fn every_scheduler_exact_mean_witness_attains_the_deciding_extremum() {
         "{replay:?}"
     );
 }
+
+fn mean_bound(
+    witness: &fsl_replay::ProbabilisticCounterexample,
+    lower: bool,
+    every: bool,
+) -> Value {
+    let mut document: Value =
+        serde_json::from_slice(witness.subsystem.as_ref().unwrap().as_bytes()).unwrap();
+    let base = document["objective"].take();
+    document["objective"] =
+        json!({"profile":"filament.probability-objective/value-bounds/v1","base":base});
+    document["kind"] = json!(if lower { "lower" } else { "upper" });
+    if lower {
+        // The least unnamed value is zero. Retain all positive rows, including
+        // their actual horizon ranks, without offering an upper counterpart.
+        document["values"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|row| row["value"]["numerator"] != "0");
+        let states = document["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["state"].clone())
+            .collect::<Vec<_>>();
+        document["ranking"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|row| states.contains(&row["state"]));
+    } else {
+        document.as_object_mut().unwrap().remove("ranking");
+    }
+    if every {
+        let states = document["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["state"].clone())
+            .collect::<Vec<_>>();
+        document["policy"] = Value::Array(witness.scheduler.iter().filter_map(|(key, action)| {
+            let state = json!(URL_SAFE_NO_PAD.encode(key.as_bytes()));
+            if !states.contains(&state) { return None; }
+            let fsl_replay::ProductAction::Identity(schedule) = action else { return None; };
+            let triple: Value = serde_json::from_slice(schedule.as_bytes()).unwrap();
+            Some(json!({"state":state,"choice":{"type":"transition","operation":serde_json::to_string(&triple[0]).unwrap(),"receiver":triple[1],"arguments":triple[2]}}))
+        }).collect());
+    }
+    document
+}
+
+fn replay_mean_document(
+    world: &World,
+    baseline: &fsl_replay::ProbabilisticCounterexample,
+    document: &Value,
+) -> Result<fsl_replay::ProbabilityWitnessReplay, fsl_replay::ProbabilityWitnessError> {
+    let mut offered = baseline.clone();
+    offered.subsystem = Some(Box::new(
+        fsl_replay::ProbabilitySubsystemCertificate::from_bytes(
+            &serde_json::to_vec(document).unwrap(),
+            document_limits(),
+            &Cancel::new(),
+        )
+        .unwrap(),
+    ));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    fsl_replay::replay_probabilistic_witness(
+        &world.package,
+        &system,
+        &offered.item,
+        &offered,
+        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        &Cancel::new(),
+    )
+}
+
+#[trace("FR-1043-AC-8", "FR-1043-AC-9", "FR-202-AC-28", "FR-202-AC-29")]
+#[test]
+fn bounded_mean_refutation_roles_accept_upper_minimum_and_partial_lower_maximum() {
+    for scheduler in ["Steady", "every scheduler"] {
+        let world = World::new(&retry(
+            &(claim(
+                "Min",
+                scheduler,
+                "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+            ) + &claim(
+                "Max",
+                scheduler,
+                "mean of fraction holds(m.delivered) over [0,2] <= rational(1,3)",
+            )),
+        ));
+        for (name, lower) in [("Min", false), ("Max", true)] {
+            let baseline = settle(&world, name, ModelCheckLimits::default());
+            assert_eq!(
+                baseline.terminal().unwrap().value(),
+                &TerminalValue::Refuted,
+                "{:?}",
+                baseline.settlement
+            );
+            let token = baseline.probabilistic_counterexample.as_ref().unwrap();
+            let document = mean_bound(token.evidence(), lower, scheduler == "every scheduler");
+            let replay = replay_mean_document(&world, token.evidence(), &document);
+            assert!(
+                matches!(
+                    replay,
+                    Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+                ),
+                "{name}/{scheduler}: {replay:?}"
+            );
+            let root = URL_SAFE_NO_PAD.encode(token.evidence().initial_key.as_bytes());
+            let mut equality = document.clone();
+            let row = equality["values"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|row| row["state"] == root)
+                .expect("the initial bound");
+            row["value"] = if lower {
+                json!({"numerator":"1","denominator":"3"})
+            } else {
+                json!({"numerator":"1","denominator":"2"})
+            };
+            let replay = replay_mean_document(&world, token.evidence(), &equality);
+            assert!(
+                matches!(
+                    replay,
+                    Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                        ProbabilityCertificateRejection {
+                            rule: ProbabilityCertificateRule::ThresholdMissed,
+                            ..
+                        }
+                    ))
+                ),
+                "valid non-refuting equality: {replay:?}"
+            );
+            let mut invalid = document.clone();
+            let row = invalid["values"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|row| row["state"] == root)
+                .unwrap();
+            row["value"] = json!({"numerator":if lower { "1" } else { "0" },"denominator":"1"});
+            let replay = replay_mean_document(&world, token.evidence(), &invalid);
+            assert!(
+                matches!(
+                    replay,
+                    Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                        ProbabilityCertificateRejection {
+                            rule: ProbabilityCertificateRule::InequalityFails,
+                            ..
+                        }
+                    ))
+                ),
+                "invalid bound: {replay:?}"
+            );
+            if lower {
+                let original: Value =
+                    serde_json::from_slice(token.evidence().subsystem.as_ref().unwrap().as_bytes())
+                        .unwrap();
+                assert!(
+                    document["values"].as_array().unwrap().len()
+                        < original["values"].as_array().unwrap().len(),
+                    "the lower must really omit states"
+                );
+                let mut changed = document.clone();
+                changed["ranking"][0]["rank"] = json!(99);
+                let replay = replay_mean_document(&world, token.evidence(), &changed);
+                assert!(
+                    matches!(
+                        replay,
+                        Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                            ProbabilityCertificateRejection {
+                                rule: ProbabilityCertificateRule::RankBroken,
+                                ..
+                            }
+                        ))
+                    ),
+                    "{replay:?}"
+                );
+            } else {
+                let mut changed = document.clone();
+                changed["values"].as_array_mut().unwrap().pop();
+                let replay = replay_mean_document(&world, token.evidence(), &changed);
+                assert!(
+                    matches!(
+                        replay,
+                        Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                            ProbabilityCertificateRejection {
+                                rule: ProbabilityCertificateRule::Malformed,
+                                at: fsl_replay::ProbabilityCertificateLocus::Member("values")
+                            }
+                        ))
+                    ),
+                    "{replay:?}"
+                );
+            }
+            let mut changed = document.clone();
+            changed["objective"]["base"]["measure"]["window"] = json!(3);
+            let replay = replay_mean_document(&world, token.evidence(), &changed);
+            assert!(
+                matches!(replay, Err(fsl_replay::ProbabilityWitnessError::Refused)),
+                "{replay:?}"
+            );
+        }
+    }
+}

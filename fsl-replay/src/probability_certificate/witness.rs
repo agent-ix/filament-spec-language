@@ -63,6 +63,20 @@ pub struct ProbabilitySubsystemCertificate {
     bytes: Box<[u8]>,
 }
 impl ProbabilitySubsystemCertificate {
+    /// Admit canonical exact or bounded mean evidence without accepting its claim.
+    ///
+    /// # Errors
+    /// Closed document syntax, caller limits or cancellation.
+    pub fn from_bytes(
+        bytes: &[u8],
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+    ) -> Result<Self, ProbabilityDocumentError> {
+        super::document::measure::bounds::admit_subsystem(bytes, limits, cancel)?;
+        Ok(Self {
+            bytes: bytes.into(),
+        })
+    }
     /// Encode a typed finite-horizon measure certificate without accepting it.
     ///
     /// # Errors

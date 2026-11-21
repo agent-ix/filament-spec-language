@@ -11,6 +11,8 @@ use quire_canonical::{Encode, Error, Node, Sink, Writer};
 use std::cell::RefCell;
 
 pub(super) const PROFILE: &str = "filament.probability-objective/finite-horizon-measure/v1";
+pub(in crate::probability_certificate) mod bounds;
+pub(in crate::probability_certificate) mod bounds;
 
 /// Terminal-payoff role of a finite-horizon measure proof.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2121,6 +2123,17 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<MeanRefutationCheck, ProbabilityDocumentError> {
+    poll(cancel)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limits.bytes {
+        return Err(exceeded(
+            ProbabilityDocumentLimit::Bytes,
+            limits.bytes,
+            u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        ));
+    }
+    if bounds::is_bound(bytes)? {
+        return bounds::check(system, claim, item, bytes, scheduler, limits, cancel);
+    }
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let mut storage = 0;
     let document =
