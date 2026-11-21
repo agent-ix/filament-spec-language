@@ -445,9 +445,18 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
         ),
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let mut concrete_request = world.concrete_request();
+    let mut snapshots = concrete_request.snapshots.clone();
+    let initial = snapshots
+        .get_mut(&concrete_request.initial[0])
+        .expect("concrete initial snapshot");
+    let mut snapshot: Json = serde_json::from_slice(initial).expect("snapshot JSON");
+    snapshot["populations"][0]["objects"][0]["fields"]["r"] = json!({"absent": {}});
+    *initial = serde_json::to_vec(&snapshot).expect("snapshot JSON");
+    concrete_request.snapshots = &snapshots;
     let systems = open_systems(
         the_refinement(&world),
-        &world.concrete_request(),
+        &concrete_request,
         &world.package,
         world.abstract_initials.clone(),
     )
@@ -462,7 +471,9 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
         ),
         "the generic subject has no clock-profile selector bound"
     );
-    let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
+    let mut request = safety_request(&world);
+    request.concrete = concrete_request;
+    let refused = check_timed_refinement(request, &Cancel::new())
         .expect_err("the existing hidden abstract field gate still applies");
     assert!(
         matches!(
