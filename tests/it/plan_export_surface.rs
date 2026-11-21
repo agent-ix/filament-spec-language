@@ -355,9 +355,16 @@ fn finite_imported_parameter_origins_preserve_uri_endpoints_and_flat_details() {
 #[trace("TC-1746", "FR-663-AC-4", "FSpec-FR-806-AC-1")]
 fn finite_missing_parameter_origins_remain_unavailable() {
     let mut model = finite_parameter_model();
+    // The fixture generator consumes the actual parameter's original model
+    // source artifact, while supplying no source coordinates of its own.
+    let input = finite_parameter(&mut model)["origin"]["source"]["sourceIdentity"].clone();
+    assert!(
+        input.is_string(),
+        "the native parameter retains its actual input artifact"
+    );
     finite_parameter(&mut model)["origin"] = json!({"generated":{
         "generatorIdentity":"ix://example/generated-parameter",
-        "generatorVersion":"1.0.0","inputIdentities":[]
+        "generatorVersion":"1.0.0","inputIdentities":[input]
     }});
     for (native, canonical, retained) in
         finite_parameter_refusals(&model, "program-with-native-labels")
