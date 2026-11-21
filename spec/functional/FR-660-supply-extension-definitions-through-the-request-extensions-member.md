@@ -99,8 +99,8 @@ and its capability ids; or a typed refusal.
   `missing_import`/`missing-selection` naming the edge (FR-111).
 - An entry's `capabilities` SHALL name only capabilities of the closed
   complete-V1 inventory (FR-111 "Behavior"). The catalog link SHALL check
-  every entry's capability ids against that inventory before it reads any
-  definition document, and an id outside it SHALL refuse
+  every entry's capability ids against that inventory before it validates any
+  definition document (FSpec FR-467), and an id outside it SHALL refuse
   `unknown_required_feature`/`unknown-feature` (FR-111's refusal table),
   category `unsupported`, exit 21 (FR-285), with the rendered diagnostic's
   `cause` `unknown-feature` and its message naming the id. The id is a
@@ -134,7 +134,7 @@ and its capability ids; or a typed refusal.
 | FR-660-AC-4 | An `extensions` member that is `null`, an entry with an unknown member `version`, an entry missing `file`, an entry with a blank `identity`, and two entries with one `{authority, identity}` each refuse before any compile: the first four `invalid-request` at stage `request` naming the member, the last `invalid_package`/`conflicting-definition` naming both entry indices; with every program and model file absent, none of them reads a file other than the request. | Test (TC-1741) |
 | FR-660-AC-5 | An entry whose `file` makes the request's dependent files one byte over `dependent_bytes` settles `incomplete` with `resource_exhausted` (FR-026 Outputs) naming `dependent_bytes`, and with the ceiling raised to the total the same request compiles. | Test (TC-1741) |
 | FR-660-AC-6 | The `parse` operation over the AC-1 unit with a catalog holding `ext.retention` returns an admissible `ParsedSource` holding one `retention` form; without the catalog the form refuses as an unselected extension form. | Test (TC-1740) |
-| FR-660-AC-7 | A `native-compile/1` request over the unit `language "ix:native" edition "1-draft"; profile p = "filament.value.complete/v1"; function postage_marker using p(): Integer pure { 29 }` whose `extensions` member supplies one entry `{authority: "producer-tests", identity: "original:postal-extension", file: "definition.json", capabilities: ["original:unknown-capability"]}`, with `definition.json` holding `{}`, refuses `unknown_required_feature` with the rendered diagnostic's `cause` `unknown-feature`, category `unsupported`, exit 21, its message naming `original:unknown-capability`, and reads no grammar schema from `definition.json`: the refusal comes before definition validation, so the `{}` document's missing members are not reported, and it is never `invalid_package`. With `capabilities` naming an id of the closed inventory instead, the request does not refuse `unknown-feature`. | Test (TC-1741) |
+| FR-660-AC-7 | A `native-compile/1` request over the unit `language "ix:native" edition "1-draft"; profile p = "filament.value.complete/v1"; function postage_marker using p(): Integer pure { 29 }` whose `extensions` member supplies one entry `{authority: "producer-tests", identity: "original:postal-extension", file: "definition.json", capabilities: ["original:unknown-capability"]}`, with `definition.json` holding `{}`, refuses `unknown_required_feature` with the rendered diagnostic's `cause` `unknown-feature`, category `unsupported`, exit 21, its message naming `original:unknown-capability`, and validates no grammar schema of `definition.json` (FSpec FR-467): the refusal comes before definition validation, so the `{}` document's missing members are not reported, and it is never `invalid_package`. With `capabilities` naming an id of the closed inventory instead, the request does not refuse `unknown-feature`. | Test (TC-1741) |
 
 ## Dependencies
 

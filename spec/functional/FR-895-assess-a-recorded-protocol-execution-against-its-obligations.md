@@ -102,9 +102,13 @@ A requirement obligation whose `requires temporal` clause is inactive over
 the recording, every activation guard false so the clause creates no
 obligation (FSpec FR-093-AC-5, AC-6), SHALL be `satisfied` on a `closed`
 recording and `pending` on an open one, and an item that settles `proved`
-on a `closed` recording stays `proved` with it: an inactive clause decides
-nothing against the recording, so it neither refutes a closed recording nor
-proves an open one.
+on a `closed` recording stays `proved` with it. This is not satisfaction
+by the absence of a violation: for an inactive clause the `closed` closure
+record is the deciding evidence, because it asserts that the recording is
+complete, so no further observation can make a guard true and no
+activation can occur. An open recording has no such evidence, since a later
+observation could still activate the clause, so the obligation stays
+`pending` there.
 
 **Result.** The item settles with the FR-360 labels:
 

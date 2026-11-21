@@ -28,4 +28,4 @@ Tag the tests `#[trace("TC-1741", "<AC id>")]`.
 - Step 2: `invalid_package` with `missing-member`, `conflicting-definition` and `definition-cycle` respectively, naming the definitions, stage `compile`, exit 20.
 - Step 3: `invalid-request` at stage `request` naming the member for the first four, `invalid_package`/`conflicting-definition` naming both indices for the last; only the request file is read.
 - Step 4: the request settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, naming `dependent_bytes`; the raised request compiles.
-- Step 5: `unknown_required_feature`, rendered `cause` `unknown-feature`, category `unsupported`, exit 21, the message naming the id, no grammar schema read and no `invalid_package`; with an inventory id, no `unknown-feature` refusal.
+- Step 5: `unknown_required_feature`, rendered `cause` `unknown-feature`, category `unsupported`, exit 21, the message naming the id, no grammar schema validated and no `invalid_package`; with an inventory id, no `unknown-feature` refusal.

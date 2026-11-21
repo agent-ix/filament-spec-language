@@ -189,10 +189,11 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
     `Undefined` as below, because no continuation removes a present
     position, and `max_window_values` still stops the run as below.
 
-  FR-501's lifting then decides the clause: a two-valued aggregate atom is
-  never a decisive witness or counterexample, so the activation that reads
-  it is `Pending` with its deadline while `W` is short and `Indeterminate`
-  with reason `IncompleteInput` once `W` has passed it. An established
+  A two-valued aggregate atom is never decisive on its own: FR-501's lifting
+  decides the activation that reads it, which is definite when the atom
+  lies outside the verdict's decision support and otherwise `Pending` with
+  its deadline while `W` is short, or `Indeterminate` with reason
+  `IncompleteInput` once `W` has passed it. An established
   activation (FR-501 "Established window") reads only windows whose latest
   stamp is at or below `t0 + Hf`, which completeness then covers, so every
   aggregate it reads is definite. This rule is sound and incomplete: it

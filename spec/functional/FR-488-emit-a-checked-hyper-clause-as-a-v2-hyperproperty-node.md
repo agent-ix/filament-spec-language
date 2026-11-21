@@ -265,7 +265,9 @@ occurrence, or for the copy-swap symmetry, a function of the clause.
   `slot_s<esc(p)>_s<esc(t)>` (§ "Slot node names"), at the level the rule above gives, typed by the type node of
   the slot's checked type `Reference<T>`.
 - It SHALL record the node's one `expression` occurrence at the site
-  `hyper <c> slot <k>` and a `type` occurrence of its type node there, as
+  `hyper <c> slot <k>`, `k` the slot's position in the slot scope (its
+  level), never its index in `atom_slots()`, so the site does not depend on the
+  quantifier order, and a `type` occurrence of its type node there, as
   FR-337 records the `over` parameter node's.
 - Every atom of the clause SHALL read the same slot nodes, whatever the atom.
 

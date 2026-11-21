@@ -68,8 +68,9 @@ population holds, so there is no absent owner to test.
   by `target`. A `typeRef` never spells a type argument, and
   `ix://filament/native/Clock` itself names a clock place, so the reference
   type definition is the only spelling. Model intake (FR-056) SHALL read such
-  a field as a data member of type `Reference<Clock>` (or `Reference<A>`
-  for an alias `A`): it is no clock member, contributes no clock place,
+  a field as a data member of type `Reference<Clock>`, also when the
+  reference type's `target` is an alias of `Clock` or a value type bound to
+  it (FSpec FR-154 "Clock reference types"): it is no clock member, contributes no clock place,
   takes its multiplicity and presence as any data field does
   (`Sequence<Reference<Clock>>[0, 3]`, `Option<Reference<Clock>>`), and is
   counted in the owning type's data part. S4 SHALL type the field, its reads
