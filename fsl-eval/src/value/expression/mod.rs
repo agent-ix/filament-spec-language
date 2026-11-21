@@ -44,8 +44,8 @@ pub(crate) use bare::{
     evaluate_terminal_predicate as evaluate_bare_terminal_predicate, StateGraphOver,
 };
 pub(crate) use evaluate::reader_source::{
-    package_constraint_reads, package_guard_reads, package_operation_footprint, package_term_reads,
-    ProjectedClause,
+    package_constraint_reads, package_guard_reads, package_node_reads, package_operation_footprint,
+    package_term_reads, ProjectedClause,
 };
 use evaluate::Machine;
 use filament_eval::{Registry, SessionLimits};

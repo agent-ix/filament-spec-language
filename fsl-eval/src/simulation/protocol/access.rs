@@ -28,13 +28,13 @@ use fsl_foundation::MemoryModelName;
 use fsl_semantics::check::AccessOrdering;
 use fsl_semantics::check::{AccessClass, CheckedProtocol, ControlStep, ProtocolNodeId};
 
-use super::ProtocolRefusal;
 use super::identity::ThreadPath;
 use super::program::Program;
+use super::ProtocolRefusal;
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Location;
+use crate::simulation::model::encode::{reference_enc, Enc};
 use crate::simulation::model::FootprintError;
-use crate::simulation::model::encode::{Enc, reference_enc};
 use crate::simulation::model::{Cell, ModelSimState, ModelSystem, OperationRef};
 
 /// What one instantiated attempt is (ADR-025 MA-2, MA-4).
@@ -609,15 +609,18 @@ pub(crate) fn classify(
 pub(crate) fn classify_package(
     model: &ModelSystem<'_>,
     program: &Program<'_>,
+    package: &super::PackageProtocolProgram<'_>,
     governing: &BTreeMap<ProtocolNodeId, MemoryModelName>,
     initial: Option<&ModelSimState>,
     over: &Value,
     mode: ClassificationMode,
-    orderings: &BTreeMap<ProtocolNodeId, Option<AccessOrdering>>,
 ) -> Result<WeakAccesses, ProtocolRefusal> {
     classify_with(
         model,
-        ClassificationSource::Package(orderings),
+        ClassificationSource::Package {
+            over: &package.over_key,
+            controls: &package.controls,
+        },
         program,
         governing,
         initial,
@@ -629,7 +632,10 @@ pub(crate) fn classify_package(
 /// The selected route's source of binders and attempt orderings.
 enum ClassificationSource<'a> {
     Checked(&'a CheckedProtocol),
-    Package(&'a BTreeMap<ProtocolNodeId, Option<AccessOrdering>>),
+    Package {
+        over: &'a filament_exact::NodeKey,
+        controls: &'a BTreeMap<ProtocolNodeId, super::package_program::PackageControl>,
+    },
 }
 
 fn classify_with(
@@ -641,9 +647,9 @@ fn classify_with(
     over: &Value,
     mode: ClassificationMode,
 ) -> Result<WeakAccesses, ProtocolRefusal> {
-    let (protocol, package_orderings) = match source {
+    let (protocol, package_constraints) = match source {
         ClassificationSource::Checked(protocol) => (Some(protocol), None),
-        ClassificationSource::Package(orderings) => (None, Some(orderings)),
+        ClassificationSource::Package { over, controls } => (None, Some((over, controls))),
     };
     let Some(initial) = initial else {
         return Ok(WeakAccesses::default());
@@ -693,7 +699,7 @@ fn classify_with(
                 .map(|(node, message)| (node, message.record.constraint)),
         );
     for (node, constraint) in constraints {
-        let (Some(body), Some(chain)) = (constraint, chain_of(*node)?) else {
+        let Some(chain) = chain_of(*node)? else {
             continue;
         };
         let over = match over {
@@ -701,17 +707,58 @@ fn classify_with(
             _ => None,
         };
         let path = program.text(*node)?;
-        let reads = model
-            .node_reads(path, &parameters, body, over)
-            .map_err(|error| match error {
-                FootprintError::Refused(refusal) => ProtocolRefusal::NodeFootprint {
-                    node: path.to_owned(),
-                    refusal,
-                },
-                FootprintError::UnknownTransition | FootprintError::UnknownConstraint => {
-                    ProtocolRefusal::fault("a-node-constraint-has-a-footprint")
+        let reads =
+            match (constraint, package_constraints) {
+                (None, None) => continue,
+                (Some(body), None) => model.node_reads(path, &parameters, body, over).map_err(
+                    |error| match error {
+                        FootprintError::Refused(refusal) => ProtocolRefusal::NodeFootprint {
+                            node: path.to_owned(),
+                            refusal,
+                        },
+                        FootprintError::UnknownTransition | FootprintError::UnknownConstraint => {
+                            ProtocolRefusal::fault("a-node-constraint-has-a-footprint")
+                        }
+                    },
+                )?,
+                (None, Some((over_key, controls))) => {
+                    let slot = controls
+                        .get(node)
+                        .and_then(|control| control.constraint.as_ref())
+                        .ok_or_else(|| {
+                            ProtocolRefusal::fault("a-package-message-has-a-constraint-slot")
+                        })?;
+                    let package_name = model
+                        .input()
+                        .admitted_package()
+                        .ok_or_else(|| {
+                            ProtocolRefusal::fault("a-package-footprint-has-an-admitted-package")
+                        })?
+                        .name();
+                    model
+                        .package_node_reads(path, slot, over_key, over)
+                        .map_err(|error| match error {
+                            crate::simulation::model::ProtocolNodeReadError::Selection(failure) => {
+                                ProtocolRefusal::PackageNodeFootprint {
+                                    package: package_name.to_owned(),
+                                    node: path.to_owned(),
+                                    failure,
+                                }
+                            }
+                            crate::simulation::model::ProtocolNodeReadError::Footprint(refusal) => {
+                                ProtocolRefusal::NodeFootprint {
+                                    node: path.to_owned(),
+                                    refusal,
+                                }
+                            }
+                        })?
                 }
-            })?
+                _ => {
+                    return Err(ProtocolRefusal::fault(
+                        "a-constraint-has-its-selected-route-form",
+                    ))
+                }
+            }
             .ok_or_else(|| {
                 ProtocolRefusal::fault("a-weak-node-model-read-has-a-reference-over-input")
             })?;
@@ -846,14 +893,20 @@ fn classify_with(
         }
     }
 
-    let ordering_of: BTreeMap<ProtocolNodeId, Option<AccessOrdering>> =
-        package_orderings.cloned().unwrap_or_else(|| {
-            protocol
-                .into_iter()
-                .flat_map(|protocol| protocol.memory.accesses.iter())
-                .map(|access| (access.node, access.ordering))
-                .collect()
-        });
+    let ordering_of: BTreeMap<ProtocolNodeId, Option<AccessOrdering>> = match package_constraints {
+        Some((_, controls)) => controls
+            .values()
+            .filter(|control| {
+                control.operation == fsl_package::protocol_view::ControlOperation::Attempt
+            })
+            .map(|control| (control.id, control.ordering))
+            .collect(),
+        None => protocol
+            .into_iter()
+            .flat_map(|protocol| protocol.memory.accesses.iter())
+            .map(|access| (access.node, access.ordering))
+            .collect(),
+    };
     let mut attempts = BTreeMap::new();
     for (node, instances) in footprints {
         let Some((parallel, _)) = chains.get(&node) else {
