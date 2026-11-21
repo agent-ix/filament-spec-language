@@ -75,7 +75,7 @@ pub struct BarePackage<'p> {
     equality: crate::reader_protocol_projection::EqualityDecisions,
     /// The source-owned units' definitions the supply's equality rows select
     /// (FR-533), empty when the rows select none.
-    pub(crate) units: filament_semantic_value::quantity::UnitTable,
+    pub(crate) units: crate::bare_units::UnitDefinitions,
     /// The identity an observation this package admits carries (FR-533
     /// "Observation admission"); one per value, never copied.
     owner: std::sync::Arc<()>,
@@ -111,7 +111,7 @@ impl<'p> BarePackage<'p> {
             joined: None,
             projections: BTreeMap::new(),
             equality: BTreeMap::new(),
-            units: filament_semantic_value::quantity::UnitTable::default(),
+            units: crate::bare_units::UnitDefinitions::default(),
             owner: std::sync::Arc::new(()),
             objects: Ok(Vec::new()),
             populations: Ok(BTreeMap::new()),
@@ -232,11 +232,11 @@ impl<'p> BarePackage<'p> {
     ) -> Result<
         (
             Result<SelectedExactIdentities, IdentityWitnessRefusal>,
-            filament_semantic_value::quantity::UnitTable,
+            crate::bare_units::UnitDefinitions,
         ),
         crate::NativeJoinFailure,
     > {
-        let none = filament_semantic_value::quantity::UnitTable::default();
+        let none = crate::bare_units::UnitDefinitions::default();
         // Another package's rows are the equality stage's refusal to report.
         let Some(equality) = equality.filter(|equality| {
             equality.package_name() == self.package.name() && !equality.source_units().is_empty()

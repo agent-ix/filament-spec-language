@@ -20,6 +20,14 @@ use fsl_semantics::value::{
 
 use crate::checked_v2::wire_graph;
 
+/// Admitted nominal definitions retained for the complete runtime world.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct UnitDefinitions {
+    dimensions: Vec<(DimensionPreimage, NodeKey)>,
+    units: Vec<(UnitPreimage, NodeKey)>,
+    owners: Vec<NodeOwner>,
+}
+
 /// Why the selected source-unit rows are no unit table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UnitDefinitionRefusal {
@@ -80,10 +88,10 @@ pub(crate) fn read_unit_table(
     package: &CheckedPackageV2,
     rows: &[SelectedSourceUnitRow],
     budget: &mut NativeJoinBudget,
-) -> Result<UnitTable, UnitDefinitionRefusal> {
+) -> Result<UnitDefinitions, UnitDefinitionRefusal> {
     use UnitDefinitionRefusal::{Graph, Read, Unjoined};
     if rows.is_empty() {
-        return Ok(UnitTable::default());
+        return Ok(UnitDefinitions::default());
     }
     let wire = wire_graph(package).map_err(|_| Graph)?;
     let key = |id: &filament_contract_model::CheckedNodeId| -> Result<NodeKey, _> {
@@ -156,14 +164,107 @@ pub(crate) fn read_unit_table(
         units.push((preimage, unit_key));
     }
     // The owners the package selected: its locked raw sources.
-    let selected = OwnerSelection::new(package.lock().sources.iter().map(|source| {
-        NodeOwner::Source(OwnerSubject::new(
-            &*source.authority,
-            &*source.identity,
-            package.name(),
-        ))
-    }));
-    admit(dimensions, units, &selected)
+    let owners: Vec<_> = package
+        .lock()
+        .sources
+        .iter()
+        .map(|source| {
+            NodeOwner::Source(OwnerSubject::new(
+                &*source.authority,
+                &*source.identity,
+                package.name(),
+            ))
+        })
+        .collect();
+    admit(
+        dimensions.clone(),
+        units.clone(),
+        &OwnerSelection::new(owners.clone()),
+    )?;
+    Ok(UnitDefinitions {
+        dimensions,
+        units,
+        owners,
+    })
+}
+
+/// Rebuild the world's graph from its admitted package definitions, then apply
+/// the same equivalence classes and runtime projection as the source route.
+pub(crate) fn world_units(
+    package: &crate::bare::BarePackage<'_>,
+) -> Result<UnitTable, UnitDefinitionRefusal> {
+    use filament_contract_model::{CheckedDimensionOperand, CheckedNodeKind, CheckedTerm};
+    use fsl_semantics::check::EquivalenceClasses;
+    use UnitDefinitionRefusal::Graph;
+
+    let mut dimensions = std::collections::BTreeMap::new();
+    let mut units = std::collections::BTreeMap::new();
+    let mut owners = Vec::new();
+    let mut pairs = Vec::new();
+    for view in std::iter::once(package).chain(package.dependency_views()) {
+        for (definition, key) in &view.units.dimensions {
+            dimensions.insert(key.clone(), definition.clone());
+        }
+        for (definition, key) in &view.units.units {
+            units.insert(key.clone(), definition.clone());
+        }
+        owners.extend(view.units.owners.iter().cloned());
+        let admitted = view.package();
+        for node in &admitted.resolved_graph().nodes {
+            let Some(CheckedTerm::NominalBody(body)) = admitted.term(&node.node_id) else {
+                continue;
+            };
+            let Some(([first, second], ratio)) = body.dimension_equivalence_details() else {
+                continue;
+            };
+            let resolve = |operand: &CheckedDimensionOperand| {
+                let (owner, id) = match operand {
+                    CheckedDimensionOperand::Local(id) => (admitted, id),
+                    CheckedDimensionOperand::Package(reference) => (
+                        admitted
+                            .direct_dependencies()
+                            .find(|dependency| dependency.name() == reference.package.as_ref())
+                            .ok_or(Graph)?,
+                        reference.node.node_id(),
+                    ),
+                };
+                // Resolve in the exact owning package, never the importer's
+                // node table or a guessed transitive edge.
+                if owner.term(id).is_none()
+                    || !matches!(
+                        owner.node_kind(id),
+                        Some(CheckedNodeKind::ScalarType(
+                            filament_contract_model::ScalarTypeForm::Dimension
+                        ))
+                    )
+                {
+                    return Err(Graph);
+                }
+                wire_graph(owner)
+                    .map_err(|_| Graph)?
+                    .key(id)
+                    .map_err(|_| Graph)
+            };
+            pairs.push((
+                resolve(first)?,
+                resolve(second)?,
+                rational(ratio).ok_or(Graph)?,
+            ));
+        }
+    }
+    let graph = admit_unit_graph(
+        dimensions
+            .into_iter()
+            .map(|(key, definition)| (definition, key)),
+        units.into_iter().map(|(key, definition)| (definition, key)),
+        &OwnerSelection::new(owners),
+    )
+    .map_err(|_| Graph)?;
+    let classes = EquivalenceClasses::from_pairs(&pairs);
+    let graph = graph
+        .with_dimension_equivalences(&classes.memberships())
+        .map_err(|_| Graph)?;
+    Ok(UnitTable::declared(&graph))
 }
 
 /// The unit table of the dimension and unit nodes, admitted as the source

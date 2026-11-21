@@ -144,7 +144,7 @@ impl BarePackage<'_> {
     /// environment.
     #[ix_trace_rs::string_edge]
     pub fn world(&self) -> Result<BareWorld, BareSelectionFailure> {
-        self.world_of(false)
+        self.world_of(false, true)
     }
 
     /// [`Self::world`] with the object types of the package's source-object
@@ -157,10 +157,14 @@ impl BarePackage<'_> {
     /// a closed set of types.
     #[ix_trace_rs::string_edge]
     pub fn world_with_source_objects(&self) -> Result<BareWorld, BareSelectionFailure> {
-        self.world_of(true)
+        self.world_of(true, true)
     }
 
-    fn world_of(&self, source_objects: bool) -> Result<BareWorld, BareSelectionFailure> {
+    fn world_of(
+        &self,
+        source_objects: bool,
+        include_units: bool,
+    ) -> Result<BareWorld, BareSelectionFailure> {
         let package = self.package();
         let (_, identities) = self.witness()?;
         let mut composites = Vec::new();
@@ -290,9 +294,14 @@ impl BarePackage<'_> {
             .into_iter()
             .map(|declaration| (declaration.key(), declaration))
             .collect();
-        let mut units = self.units.clone();
+        let units = if include_units {
+            crate::bare_units::world_units(self)
+                .map_err(|_| fault("admitted-unit-definitions-form-a-world-graph"))?
+        } else {
+            filament_semantic_value::quantity::UnitTable::default()
+        };
         for dependency in self.dependency_views() {
-            let world = dependency.world_of(source_objects)?;
+            let world = dependency.world_of(source_objects, false)?;
             for declaration in world.types.composites() {
                 if composites
                     .get(&declaration.key())
@@ -315,7 +324,6 @@ impl BarePackage<'_> {
                     .entry(declaration.key())
                     .or_insert_with(|| declaration.clone());
             }
-            units.append(world.types.units().clone());
         }
         let types = TypeEnvironment::new(composites.into_values(), objects.into_values())
             .map_err(|_| fault("bare-composites-are-a-closed-environment"))?
