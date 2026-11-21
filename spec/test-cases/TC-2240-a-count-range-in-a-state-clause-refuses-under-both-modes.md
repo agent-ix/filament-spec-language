@@ -14,7 +14,8 @@ relationships:
 
 Verify that an unproved `count<N>` result range in a declared `invariant`
 refuses at check under `CheckMode::Kernel` as under `CheckMode::Linked`, and
-that the same count in a function body is left to S6a under `Kernel`.
+that the same count in a function body is left to S6a under `Kernel`, and that
+a bare collection literal as the count source refuses `ambiguous-literal` (AC-9).
 Scope: FR-766-AC-8, FR-766-AC-9.
 
 ## Test Procedure

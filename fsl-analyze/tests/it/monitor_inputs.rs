@@ -16,6 +16,7 @@ use fsl_analyze::monitor::{
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::{Source, SourceIdentity};
 use fsl_package::{ClockConfiguration, TemporalClockSelection};
+use filament_semantic_value::checking::CheckMode;
 use fsl_replay::spine::{
     self, run_package_temporal, CallOutcome, CallRefusal, ClauseDisposition, DependencyInput,
     OverObject, PackageTemporalRequest, ParseRequest, ProgressAssertion, ProgressClosure,
@@ -87,23 +88,9 @@ fn identity() -> SourceIdentity {
 /// its clock-bearing temporal declarations.
 struct Compiled {
     text: String,
-    unit: FixturePackage,
+    unit: spine::CheckedUnit,
     sources: Vec<Source>,
     selections: Vec<TemporalClockSelection>,
-}
-
-enum FixturePackage {
-    Linked(Box<spine::CheckedUnit>),
-    Kernel(Box<fsl_package::CheckedPackage>),
-}
-
-impl FixturePackage {
-    fn package(&self) -> &fsl_package::CheckedPackage {
-        match self {
-            Self::Linked(unit) => unit.package(),
-            Self::Kernel(package) => package,
-        }
-    }
 }
 
 fn selections(parsed: &fsl_cst::ParsedSource) -> Vec<TemporalClockSelection> {
@@ -170,44 +157,17 @@ fn compile_with(documents: &Documents, text: String, dependencies: &DependencyIn
     let cst = fsl_cst::parse(identity, PATH, text.as_bytes(), fsl_cst::Limits::default())
         .expect("the unit parses");
     let selections = selections(&cst);
-    if text.contains("count<Zero>") {
-        let built = fsl_forms::build_unit(&cst).unwrap();
-        let selected = fsl_semantics::model::intake::admit_unit(
-            &built.selections().models,
-            &documents.packages,
-            limits.model,
-        )
-        .unwrap()
-        .with_parsed_operation_clauses(|body| {
-            fsl_forms::parse_clause_text(body, fsl_cst::Limits::default())
-        })
-        .unwrap();
-        let graph = fsl_semantics::check::PackageDeclarations::assemble(
-            cst.source().reference().clone(),
-            "fixture".to_owned(),
-            built,
-            selected,
-            Vec::new(),
-        )
-        .unwrap()
-        .check(
-            filament_semantic_value::checking::CheckMode::Kernel,
-            limits.checking,
-            &fsl_eval::value::S6aRewardEvaluator,
-        )
-        .unwrap();
-        return Compiled {
-            text,
-            sources: vec![cst.source().clone()],
-            unit: FixturePackage::Kernel(Box::new(fsl_package::CheckedPackage::link(graph))),
-            selections,
-        };
-    }
-    let checked = spine::check_with_temporal_selections_and_execution_points(
+    let checked = spine::check_with_execution_points_and_source_inputs(
         &parsed,
         "fixture".to_owned(),
         &StateClauseExecutionPoints::new(),
-        &selections,
+        spine::SourceInputs {
+            temporal_selections: &selections,
+            // A function body is checked under Kernel, so `refusingCount`'s
+            // range refusal is left to S6a; the temporal clauses stay Linked.
+            check_mode: Some(CheckMode::Kernel),
+            ..spine::SourceInputs::default()
+        },
         &models,
         dependencies,
         limits,
@@ -219,7 +179,7 @@ fn compile_with(documents: &Documents, text: String, dependencies: &DependencyIn
     sources.extend(checked.libraries().iter().cloned());
     Compiled {
         text,
-        unit: FixturePackage::Linked(Box::new(checked)),
+        unit: checked,
         sources,
         selections,
     }

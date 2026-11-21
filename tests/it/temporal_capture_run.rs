@@ -18,8 +18,6 @@ fn unit() -> String {
          profile v = \"filament.value.complete/v1\";\n\
          profile e = \"{EVENTS}\";\n\
          profile i = \"{INFINITE}\";\n\
-         type Zero = Int[0, 0];\n\
-         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure {{ xs }}\n\
          record Reading {{ level: Int[0, 9]; stopped: Boolean; }}\n\
          temporal Fast using e over (r: Reading) clock \"events\" on origin \
          {{ capture startFast: Boolean = r.level > 3; eventually[0,3] holds(r.stopped or not startFast) }}\n\
@@ -34,11 +32,17 @@ fn unit() -> String {
          temporal EachLater using e over (r: Reading) clock \"events\" on each (q: Reading) \
          {{ capture start: Int[0, 9] = q.level; eventually[0,2] holds(r.level > start) }}\n\
          temporal EachLoop using i over (r: Reading) clock \"steps\" on each (q: Reading) \
-         {{ capture start: Int[0, 9] = q.level; eventually[0,1] holds(r.level > start) }}\n\
-         temporal Refused using e over (r: Reading) clock \"events\" on origin \
-         {{ capture z: Zero = count<Zero>(m in ints(sequence[r.level]): m > 0); always[0,1] holds(z = 0) }}\n"
+         {{ capture start: Int[0, 9] = q.level; eventually[0,1] holds(r.level > start) }}\n"
     )
 }
+
+/// FR-860-AC-4's clause whose capture counts into `Zero`: the `count` range is
+/// an `unproved-range` obligation that S3 refuses under Linked (FR-766), so the
+/// clause is kept out of the shared unit.
+const REFUSED: &str = "type Zero = Int[0, 0];\n\
+     function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
+     temporal Refused using e over (r: Reading) clock \"events\" on origin \
+     { capture z: Zero = count<Zero>(m in ints(sequence[r.level]): m > 0); always[0,1] holds(z = 0) }\n";
 
 fn clocks() -> Value {
     json!({"events": {"kind": "event_position", "sequence_authority": "events"}})
@@ -254,21 +258,24 @@ fn an_undefined_capture_is_reported_at_the_capture() {
     assert_eq!(temporal(&each)["position"], 1, "{each}");
 }
 
-/// FR-860-AC-4 (negative): a refused capture is a stage `evaluate` refusal
-/// located at the capture, never an internal failure.
+/// FR-860-AC-4 (negative): a capture whose `count` range is unproved is
+/// refused at check, never at run time and never as an internal failure.
 #[test]
 #[trace("TC-2440", "FR-860-AC-4")]
 fn a_refused_capture_is_reported_at_the_capture() {
     let directory = tempfile::tempdir().unwrap();
-    let refused = run(directory.path(), "Refused", json!({"finite": moving(&[1])}));
-    assert_eq!(refused.status.code(), Some(20));
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&refused.stdout),
-        String::from_utf8_lossy(&refused.stderr)
+    let refused = run_with(
+        directory.path(),
+        REFUSED,
+        "Refused",
+        json!({"finite": moving(&[1])}),
     );
-    assert!(text.contains("integer_out_of_domain"), "{text}");
-    assert!(!text.contains("runtime_invariant"), "{text}");
+    assert_eq!(refused.status.code(), Some(20));
+    let document: Value = serde_json::from_slice(&refused.stdout).expect("a result document");
+    let refusal = &document["disposition"]["refusal"];
+    assert_eq!(document["disposition"]["stage"], "compile", "{document}");
+    assert_eq!(refusal["code"], "undefined_expression", "{document}");
+    assert_eq!(refusal["cause"], "unproved-range", "{document}");
 }
 
 /// FR-860-AC-5: the stepping monitor fixes the capture at record 0, reports

@@ -21,6 +21,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-044
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-144
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-981
+    type: references
 ---
 # FR-766: Prove the result range of count<N> at check
 
@@ -81,7 +85,7 @@ counter is an unbounded natural number and only the final count is retained into
   interval, then the checker SHALL refuse the node `undefined_expression`/`unproved-range`.
   The refusal carries both intervals (`Obligation::Range{required, proved}`).
 - The checker SHALL narrow `m` by a guard that bounds `size(c)` in scope (for
-  example `if size(c) <= 3 then count<Int[0, 3]>(x in c: p) else 0`), as it
+  example `if size(c) <= 3 then count<Three>(x in c: p) else 0`), as it
   narrows a `sum`'s source size.
 - The checker SHALL record the obligation for every collection kind:
   sequence, ordered set, set and bag.
@@ -102,6 +106,10 @@ counter is an unbounded natural number and only the final count is retained into
   `Linked` refuses). Such a `count` never reaches S6a outside `N`.
 - Under `CheckMode::Kernel`, for a `count` outside a declared state clause, S6a SHALL return `Outcome::Refused(Refusal::IntegerOutOfDomain{target: N})`,
   located at the `count` node, for a final count outside `N` (FR-096-AC-8).
+- If a collection literal is `count`'s source, then the checker SHALL refuse the
+  node `ill_typed`/`ambiguous-literal` in both modes, because `count` gives its
+  source no expected type (FSpec FR-144-AC-10; FR-981-AC-4). A source annotated
+  with a type, as in `let q: Sequence<Integer>[0, 1] = ...`, has one.
 - A clause run compiles its unit under `CheckMode::Linked`, so when a clause's
   `count` is not proved, spine compile SHALL refuse the unit, and the clause
   run item carries category `refusal`, result `declined` and cause
@@ -114,26 +122,26 @@ counter is an unbounded natural number and only the final count is retained into
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-766-AC-1 | Under `CheckMode::Linked`, for `q` of `Sequence<Integer>[0, 5]`, `Bag<Integer>[0, 5]` and `Set<Integer>[0, 5]`, `count<Int[0, 3]>(x in q: x > 0)` refuses `undefined_expression`/`unproved-range` at the `count` with required `[0, 3]` and proved `[0, 5]`; the same count into `Int[0, 5]` and into `Integer` checks. | Test (TC-2195) |
-| FR-766-AC-2 | Under `CheckMode::Linked`, `if size(q) <= 3 then count<Int[0, 3]>(x in q: x > 0) else 0` checks for the AC-1 sources, and `if size(q) <= 4 then count<Int[0, 3]>(x in q: x > 0) else 0` refuses `unproved-range` with proved `[0, 4]`. | Test (TC-2195) |
-| FR-766-AC-3 | Under `CheckMode::Linked`, `count<Int[1, 3]>(x in q: true)` for `q` of `Sequence<Integer>[0, 3]` refuses `unproved-range` with required `[1, 3]` and proved `[0, 3]`; `count<Int[0, 5]>(x in q: true)` for an unbounded `q` refuses `unproved-range` with a proved interval that has no upper bound. | Test (TC-2195) |
-| FR-766-AC-4 | Under `CheckMode::Kernel`, `count<Int[0, 3]>(x in q: x)` for `q` of `Sequence<Boolean>[0, 5]` checks, and evaluating it over five `true` occurrences refuses `IntegerOutOfDomain` with target `Int[0, 3]`, whose record is `integer_out_of_domain`/`outside-domain` with `expected` `Int[0, 3]`. | Test (TC-2195) |
+| FR-766-AC-1 | Under `CheckMode::Linked`, with `type Three = Int[0, 3];` and `type Tiny = Int[0, 5];`, for `q` of `Sequence<Integer>[0, 5]`, `Bag<Integer>[0, 5]` and `Set<Integer>[0, 5]`, `count<Three>(x in q: x > 0)` refuses `undefined_expression`/`unproved-range` at the `count` with required `[0, 3]` and proved `[0, 5]`; the same count into `Tiny` and into `Integer` checks. | Test (TC-2195) |
+| FR-766-AC-2 | Under `CheckMode::Linked`, with `Three` as in AC-1, `if size(q) <= 3 then count<Three>(x in q: x > 0) else 0` checks for the AC-1 sources, and `if size(q) <= 4 then count<Three>(x in q: x > 0) else 0` refuses `unproved-range` with proved `[0, 4]`. | Test (TC-2195) |
+| FR-766-AC-3 | Under `CheckMode::Linked`, with `type Positive = Int[1, 3];`, `count<Positive>(x in q: true)` for `q` of `Sequence<Integer>[0, 3]` refuses `unproved-range` with required `[1, 3]` and proved `[0, 3]`; `count<Tiny>(x in q: true)`, `Tiny` as in AC-1, for an unbounded `q` refuses `unproved-range` with a proved interval that has no upper bound. | Test (TC-2195) |
+| FR-766-AC-4 | Under `CheckMode::Kernel`, with `Three` as in AC-1, `count<Three>(x in q: x)` for `q` of `Sequence<Boolean>[0, 5]` checks, and evaluating it over five `true` occurrences refuses `IntegerOutOfDomain` with target `Int[0, 3]`, whose record is `integer_out_of_domain`/`outside-domain` with `expected` `Int[0, 3]`. | Test (TC-2195) |
 | FR-766-AC-5 | A unit over FR-108's `Config` model declaring `type One = Int[0, 1];`, `function pair using v(a: Int[0, 1000]): Sequence<Int[0, 1000]>[0, 2] pure { sequence[a, a] }` and `invariant AtMostOne using v on Config::ConfigVersion at current { count<One>(m in pair(self.versionNumber): m >= 0) <= 1 }` refuses at compile `undefined_expression`/`unproved-range` at the `count`, exit 20; with `type One = Int[0, 2];` it compiles. | Test (TC-2195) |
 | FR-766-AC-6 | The AC-5 `Int[0, 1]` unit run as a clause run of `AtMostOne` returns a compile disposition, and the run item built from it carries category `refusal`, result `declined` and cause `{code: undefined_expression, kind: unproved-range}`. | Test (TC-2195) |
 | FR-766-AC-7 | A clause-run report whose disposition is an S6a kernel refusal record `integer_out_of_domain`/`outside-domain` projects to a run item with category `refusal`, result `declined` and cause `{code: integer_out_of_domain, kind: outside-domain}`, never a `null` cause. | Test (TC-2195) |
 | FR-766-AC-8 | Through `PackageDeclarations::check` under `CheckMode::Kernel` and under `CheckMode::Linked`, a unit over FR-108's `Config` model declaring `type Zero = Int[0, 0];` and `invariant I using v on Config::ConfigVersion at current { let q: Sequence<Integer>[0, 1] = sequence[self.versionNumber] in count<Zero>(m in q: m >= 0) = 0 }`, whose source `q` is annotated so its literal has an expected type, refuses `undefined_expression`/`unproved-range` at the `count` in both modes, and no checked graph is returned; the same `count<Zero>` in the body `function f using v(q: Sequence<Integer>[0, 1]): Zero pure { count<Zero>(m in q: m >= 0) }` refuses `unproved-range` under `CheckMode::Linked` and checks under `CheckMode::Kernel`, where S6a meets the out-of-domain count (AC-4). | Test (TC-2240) |
-| FR-766-AC-9 | Through `PackageDeclarations::check` under `CheckMode::Kernel` and under `CheckMode::Linked`, the AC-8 invariant written with the literal as `count`'s source, `count<Zero>(m in sequence[self.versionNumber]: m >= 0) = 0`, refuses `ill_typed`/`ambiguous-literal` in both modes, because `count` gives its source no expected type (FSpec FR-144-AC-10, FR-981-AC-4). | Test (TC-2240) |
+| FR-766-AC-9 | Through `PackageDeclarations::check` under `CheckMode::Kernel` and under `CheckMode::Linked`, the AC-8 invariant written with the literal as `count`'s source, `count<Zero>(m in sequence[self.versionNumber]: m >= 0) = 0`, refuses `ill_typed`/`ambiguous-literal` in both modes, because `count` gives its source no expected type (FSpec FR-144-AC-10; FR-981-AC-4). | Test (TC-2240) |
 
 ## Notes
 
 Spine compile, and so every clause run, checks under `CheckMode::Linked`, and
 no linked integer construct reaches the S6a refusal `integer_out_of_domain`:
 every integer retain is proved at check. The kernel run-time refusal applies
-only to a `count` outside a declared clause. A test fixture that needs
+only to a `count` outside a declared state clause. A test fixture that needs
 an evaluation that meets that refusal at run, such as a `holds` atom refused
 at some trace position (FR-327-AC-6) or a refused monitor condition, SHALL
-write the `count<Int[0, 0]>` atom in a called function body checked under
-`CheckMode::Kernel`. A fixture whose `count` sits in a declared clause
+write the `count<Zero>` atom, with `type Zero = Int[0, 0];`, in a called function
+body checked under `CheckMode::Kernel`. A fixture whose `count` sits in a declared clause
 cannot reach the run-time refusal under either mode: its unproved count
 refuses at check (FR-495). Such a fixture SHALL move the `count` into a
 function body the clause calls, as FR-268-AC-3's refused separating-witness

@@ -1779,9 +1779,6 @@ impl<'a> Definedness<'a> {
                 source,
                 ..
             } => {
-                if self.mode == CheckMode::Kernel {
-                    return Ok(());
-                }
                 let ValueType::Int(domain) = node.value_type() else {
                     return Ok(());
                 };

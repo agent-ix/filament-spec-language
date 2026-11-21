@@ -148,18 +148,18 @@ fn tc_3121_unit_text() -> String {
             !line.starts_with("invariant ")
                 || line.starts_with("invariant AllBelow ")
                 || line.starts_with("invariant NotAllBelow ")
-                || line.starts_with("invariant RefusedDomain ")
                 || line.starts_with("invariant MatchesParent ")
                 || line.starts_with("invariant AtLeastParent ")
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let direct_refusal = "forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): n < 500)";
-    let function_refusal = "forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500)";
-    unit = unit.replace(direct_refusal, function_refusal);
     unit.push_str(
         "\nfunction z using v(x: Integer): Int[0, 0] pure { \
          count<Zero>(m in ints(sequence[x]): m > 0) }\n",
+    );
+    unit.push_str(
+        "invariant RefusedDomain using v on Config::ConfigVersion at current { \
+         forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500) }\n",
     );
     unit
 }
@@ -2971,7 +2971,7 @@ fn tc_743_the_separation_check_names_its_failing_step() {
         assert_eq!(check(&unit, "AllBelow", failing, 1_000_000), unmet(step));
     }
 
-    count_refusal_in_a_called_kernel_function_fails_the_domain_step();
+    assert_count_refusal_fails_the_domain_step();
     assert_eq!(
         check(&unit, "AllBelow", &record, 0),
         SeparationOutcome::Exhausted
@@ -2982,6 +2982,10 @@ fn tc_743_the_separation_check_names_its_failing_step() {
 #[trace("TC-743", "FR-268-AC-3")]
 #[test]
 fn count_refusal_in_a_called_kernel_function_fails_the_domain_step() {
+    assert_count_refusal_fails_the_domain_step();
+}
+
+fn assert_count_refusal_fails_the_domain_step() {
     let (base, packages) = config_version_unit_and_packages();
     let text = base + "type Zero = Int[0, 0];\n\
         function z using v(x: Integer): Zero pure { count<Zero>(m in ints(sequence[x]): m > 0) }\n\
