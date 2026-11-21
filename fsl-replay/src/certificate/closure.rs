@@ -72,7 +72,8 @@ use fsl_eval::model_subject::{
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
 use fsl_eval::simulation::protocol::{
     activates_on_each, check_protocol_bounds, live_instance_bound, Capacities,
-    ProtocolFairnessError, ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory,
+    ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolRefusal,
+    ProtocolSystem, Sc, SubjectMemory,
 };
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
@@ -425,10 +426,15 @@ fn check_protocol(
         request.max_messages,
     ) {
         SubjectMemory::Sc => {
-            let system = ProtocolSystem::new(model, subject, Sc)
-                .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances)
-                .with_cycle_keys(BTreeSet::new());
+            let system = ProtocolSystem::new_with_loop_proof(
+                model,
+                subject,
+                Sc,
+                loop_proof_target(request.item),
+            )
+            .map_err(ClosureRefusal::Protocol)?
+            .with_max_live_instances(live_instances)
+            .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -447,10 +453,15 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxStoreBuffer,
                 value: tso.max_store_buffer(),
             };
-            let system = ProtocolSystem::new(model, subject, tso)
-                .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances)
-                .with_cycle_keys(BTreeSet::new());
+            let system = ProtocolSystem::new_with_loop_proof(
+                model,
+                subject,
+                tso,
+                loop_proof_target(request.item),
+            )
+            .map_err(ClosureRefusal::Protocol)?
+            .with_max_live_instances(live_instances)
+            .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -469,10 +480,15 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxMessages,
                 value: ra.max_messages(),
             };
-            let system = ProtocolSystem::new(model, subject, ra)
-                .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances)
-                .with_cycle_keys(BTreeSet::new());
+            let system = ProtocolSystem::new_with_loop_proof(
+                model,
+                subject,
+                ra,
+                loop_proof_target(request.item),
+            )
+            .map_err(ClosureRefusal::Protocol)?
+            .with_max_live_instances(live_instances)
+            .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -486,6 +502,20 @@ fn check_protocol(
                 cancel,
             )
         }
+    }
+}
+
+fn loop_proof_target(item: ModelCheckItem<'_>) -> Option<ProtocolLoopProofTarget> {
+    match item {
+        ModelCheckItem::LoopInvariant { repeat } => Some(ProtocolLoopProofTarget {
+            repeat,
+            kind: ProtocolLoopProofKind::Invariant,
+        }),
+        ModelCheckItem::LoopTermination { repeat } => Some(ProtocolLoopProofTarget {
+            repeat,
+            kind: ProtocolLoopProofKind::Termination,
+        }),
+        _ => None,
     }
 }
 
@@ -555,7 +585,7 @@ fn check_system<S: SubjectSystem>(
             ));
         }
         Err(ItemRefusal::Unbounded(refusal)) => {
-            return Err(ClosureRefusal::NotSimulated(Box::new(refusal)))
+            return Err(ClosureRefusal::NotSimulated(Box::new(refusal)));
         }
         Err(refusal) => return Err(refusal.into()),
     };
@@ -1078,13 +1108,13 @@ impl<S: SubjectSystem> Check<'_, S> {
                             counter: incomplete.limit_kind,
                         },
                         crate::meter_bound(&self.meter, incomplete.limit_kind),
-                    ))
+                    ));
                 }
                 Err(AtomStop::Fault(internal)) => {
-                    return Err(ClosureRefusal::Fault(internal).into())
+                    return Err(ClosureRefusal::Fault(internal).into());
                 }
                 Err(AtomStop::Refused(outcome)) => {
-                    return Err(fault(refused_invariant(&outcome)).into())
+                    return Err(fault(refused_invariant(&outcome)).into());
                 }
                 Err(AtomStop::Unobservable(stop)) => return Err(self.expansion_stop(stop)),
             }
@@ -1107,13 +1137,13 @@ impl<S: SubjectSystem> Check<'_, S> {
                             counter: incomplete.limit_kind,
                         },
                         crate::meter_bound(&self.meter, incomplete.limit_kind),
-                    ))
+                    ));
                 }
                 Err(AtomStop::Fault(internal)) => {
-                    return Err(ClosureRefusal::Fault(internal).into())
+                    return Err(ClosureRefusal::Fault(internal).into());
                 }
                 Err(AtomStop::Refused(outcome)) => {
-                    return Err(fault(refused_invariant(&outcome)).into())
+                    return Err(fault(refused_invariant(&outcome)).into());
                 }
                 Err(AtomStop::Unobservable(stop)) => return Err(self.expansion_stop(stop)),
             }
@@ -1197,7 +1227,7 @@ impl<S: SubjectSystem> Check<'_, S> {
         {
             Ok(buchi) => buchi,
             Err(fsl_eval::automaton::AutomatonError::KeyEncodingLimit { .. }) => {
-                return Err(ClosureRefusal::Encoding.into())
+                return Err(ClosureRefusal::Encoding.into());
             }
             Err(_) => return Err(fault("tp4-state-key-bridge").into()),
         };
@@ -1367,10 +1397,10 @@ impl<S: SubjectSystem> Check<'_, S> {
             }
             Err(ZeroProgressError::Encoding(refusal)) => return Err(refusal.into()),
             Err(ZeroProgressError::Fairness(error)) => {
-                return Err(ClosureRefusal::Fairness(error).into())
+                return Err(ClosureRefusal::Fairness(error).into());
             }
             Err(ZeroProgressError::Graph) => {
-                return Err(fault("the-zero-progress-graph-is-built-from-states").into())
+                return Err(fault("the-zero-progress-graph-is-built-from-states").into());
             }
         };
         let Some(found) = found else {
@@ -1617,6 +1647,14 @@ impl<S: SubjectSystem> Check<'_, S> {
         missing: CertificateRule,
         visited: &mut BTreeSet<StateKey>,
     ) -> Step<Option<Pending<S>>> {
+        if matches!(
+            self.item,
+            ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. }
+        ) && self.system.loop_proof_violation(&state).is_some()
+        {
+            let at = self.product(translation, state_key, SafetyState::Rejected)?;
+            return Err(Self::reject(CertificateRule::BadState, at));
+        }
         if visited.contains(&state_key) {
             return Ok(None);
         }
@@ -1662,6 +1700,9 @@ impl<S: SubjectSystem> Check<'_, S> {
                         return Err(Self::reject(CertificateRule::BadState, at));
                     }
                 }
+            }
+            SafetyItem::LoopInvariant | SafetyItem::LoopTermination => {
+                (translation.read(before, true), None)
             }
             SafetyItem::DeadlockFreedom => {
                 if !self.models.contains(&state_key) {
@@ -1848,4 +1889,30 @@ impl<S: SubjectSystem> Check<'_, S> {
 
 fn fault(invariant: &'static str) -> ClosureRefusal {
     Checker::Closure.fault(invariant)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{loop_proof_target, ProtocolLoopProofKind, ProtocolLoopProofTarget};
+    use crate::ModelCheckItem;
+    use fsl_semantics::check::ProtocolNodeId;
+
+    #[test]
+    fn closure_requests_retain_the_repeat_and_obligation_kind() {
+        let repeat = ProtocolNodeId(7);
+        assert_eq!(
+            loop_proof_target(ModelCheckItem::LoopInvariant { repeat }),
+            Some(ProtocolLoopProofTarget {
+                repeat,
+                kind: ProtocolLoopProofKind::Invariant,
+            })
+        );
+        assert_eq!(
+            loop_proof_target(ModelCheckItem::LoopTermination { repeat }),
+            Some(ProtocolLoopProofTarget {
+                repeat,
+                kind: ProtocolLoopProofKind::Termination,
+            })
+        );
+    }
 }

@@ -37,6 +37,12 @@ pub fn encode_smt_query(
             }
             .into())
         }
+        ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
+            return Err(Refusal::ItemForm {
+                form: "a protocol loop-proof item",
+            }
+            .into())
+        }
     };
     fsl_eval::smt::encode_smt_query(subject, item, kind, limits)
 }

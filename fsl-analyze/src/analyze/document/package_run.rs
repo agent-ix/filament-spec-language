@@ -134,6 +134,10 @@ pub enum PendingFamily {
     /// A derived item other than a model subject's deadlock-freedom item
     /// (FSpec FR-368).
     Derived,
+    /// FR-730's invariant item, pending the package wire contract.
+    LoopInvariant,
+    /// FR-730's termination item, pending the package wire contract.
+    LoopTermination,
     /// A named declaration.
     Declaration,
     /// A name the package carries no row for while it holds a claim whose
@@ -163,6 +167,8 @@ impl PendingFamily {
         match self {
             Self::Simulation => "simulation",
             Self::Derived => "derived",
+            Self::LoopInvariant => "loop-invariant",
+            Self::LoopTermination => "loop-termination",
             Self::Declaration => "declaration",
             Self::UnnamedClaim => "unnamed-claim",
             Self::ProtocolSubject => "protocol-subject",
@@ -673,14 +679,30 @@ fn resolve_names<'s>(
         .map(|(position, selection)| {
             let index = RequestIndex::new(position);
             let pending = |family| pending(Some(index), family);
-            let Some(name) = selection.claim.as_deref() else {
-                return Err(pending(PendingFamily::Simulation));
-            };
             let item_kind = selection
                 .temporal
                 .as_ref()
                 .and_then(|temporal| temporal.item_kind)
                 .map(super::ItemKindSelection::kind);
+            // FR-730 runs from checked source. Its loop item kinds have no
+            // admitted package wire contract yet, regardless of the claim.
+            match item_kind {
+                Some(ItemKind::LoopInvariant) => return Err(pending(PendingFamily::LoopInvariant)),
+                Some(ItemKind::LoopTermination) => {
+                    return Err(pending(PendingFamily::LoopTermination))
+                }
+                Some(
+                    ItemKind::Formula
+                    | ItemKind::DeadlockFreedom
+                    | ItemKind::TimeLockFreedom
+                    | ItemKind::RaceFreedom
+                    | ItemKind::Refinement,
+                )
+                | None => {}
+            }
+            let Some(name) = selection.claim.as_deref() else {
+                return Err(pending(PendingFamily::Simulation));
+            };
             let derived = item_kind.is_some_and(|kind| kind != ItemKind::Formula);
             if let Some(row) = clauses.iter().find(|row| row.name.as_ref() == name) {
                 if derived {

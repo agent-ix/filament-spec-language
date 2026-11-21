@@ -1688,6 +1688,10 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     value_type_source(actual),
                     value_type_source(expected)
                 ),
+                ProtocolAnchorCause::VariantType { repeat, .. } => format!(
+                    "{message}: the variant of repeat `{repeat}` is neither an integer nor a \
+                     tuple of integers"
+                ),
                 ProtocolAnchorCause::CarriesMismatch { channel, .. } => format!(
                     "{message}: the binder's type is not the type channel `{channel}` carries"
                 ),
