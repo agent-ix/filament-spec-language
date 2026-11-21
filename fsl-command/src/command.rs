@@ -4012,17 +4012,19 @@ fn prepare_run_bytes_with_sources(
 }
 
 /// The request members FR-1031's first row names beside `export`, in the
-/// order a refusal lists them.
-const TRANSFER_EXCLUSIVE: [&str; 9] = [
-    "package",
-    "call",
-    "clause",
-    "items",
-    "tl_lowering",
-    "model_based_test",
-    "verification_plan",
-    "synthesis",
-    "export_evidence",
+/// order a refusal lists them, each with its presence in a typed request.
+/// `export_evidence` is read from the raw request body only, so it is never
+/// present in a typed request.
+const TRANSFER_EXCLUSIVE: [(&str, fn(&wire::Request) -> bool); 9] = [
+    ("package", |request| request.package.is_some()),
+    ("call", |request| request.call.is_some()),
+    ("clause", |request| request.clause.is_some()),
+    ("items", |request| request.items.is_some()),
+    ("tl_lowering", |request| request.tl_lowering.is_some()),
+    ("model_based_test", |request| request.model_based_test.is_some()),
+    ("verification_plan", |request| request.verification_plan.is_some()),
+    ("synthesis", |request| request.synthesis.is_some()),
+    ("export_evidence", |_| false),
 ];
 
 /// FR-1031's first row: `refinement_transfer` beside any other selection
@@ -4033,29 +4035,12 @@ fn refuse_transfer_selection_conflict(request: &wire::Request) -> Result<()> {
     }
     let present: Vec<_> = TRANSFER_EXCLUSIVE
         .into_iter()
-        .filter(|name| transfer_member_present(request, name))
+        .filter_map(|(name, is_present)| is_present(request).then_some(name))
         .collect();
     if present.is_empty() {
         return Ok(());
     }
     Err(transfer_conflict(&present))
-}
-
-/// Whether the typed `request` carries the `TRANSFER_EXCLUSIVE` member
-/// `name`. `export_evidence` is read from the raw request body, never from
-/// the typed request, so it is never present here.
-fn transfer_member_present(request: &wire::Request, name: &str) -> bool {
-    match name {
-        "package" => request.package.is_some(),
-        "call" => request.call.is_some(),
-        "clause" => request.clause.is_some(),
-        "items" => request.items.is_some(),
-        "tl_lowering" => request.tl_lowering.is_some(),
-        "model_based_test" => request.model_based_test.is_some(),
-        "verification_plan" => request.verification_plan.is_some(),
-        "synthesis" => request.synthesis.is_some(),
-        _ => false,
-    }
 }
 
 /// The refusal of `refinement_transfer` beside the selection members

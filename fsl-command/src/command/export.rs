@@ -143,6 +143,7 @@ pub(super) fn run_bytes(
             .chain(
                 super::TRANSFER_EXCLUSIVE
                     .into_iter()
+                    .map(|(name, _)| name)
                     .filter(|name| body.contains_key(*name)),
             )
             .collect();
