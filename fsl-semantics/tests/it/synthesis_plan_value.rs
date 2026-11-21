@@ -39,13 +39,24 @@ fn check_model(
     check_model_with_types(model_text, lengths, objective, goal, "")
 }
 
-fn check_with_types(
+fn check_step_sum(lengths: &str, objective: &str, goal: &str) -> Result<CheckedSynthesis, String> {
+    check_step_sum_with_types(lengths, objective, goal, "")
+}
+
+fn check_step_sum_with_types(
     lengths: &str,
     objective: &str,
     goal: &str,
     types: &str,
 ) -> Result<CheckedSynthesis, String> {
-    check_model_with_types(SHOP, lengths, objective, goal, types)
+    let model = SHOP
+        .replace(
+            "object Order identity (id)",
+            "type OrderId = Int[0,999];\ntype OrderTotal = Int[0,100];\nobject Order identity (id)",
+        )
+        .replace("id: Int[0, 999]", "id: OrderId")
+        .replace("total: Int[0, 100]", "total: OrderTotal");
+    check_model_with_types(&model, lengths, objective, goal, types)
 }
 
 fn check_model_with_types(
@@ -438,7 +449,7 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
 #[trace("FSpec-FR-802-AC-1", "FSpec-TC-1952")]
 #[test]
 fn a_step_sum_types_its_binder_as_the_step_record() {
-    let checked = check(
+    let checked = check_step_sum(
         "Int[0, 3]",
         "minimize Reach.steps.sum(s => s.index + s.after.total)",
         "Reach.length >= 1",
@@ -446,7 +457,7 @@ fn a_step_sum_types_its_binder_as_the_step_record() {
     .expect("`s` is the plan step record with `index` and `after`");
     let objective = checked.objective().expect("the objective is checked");
     assert_eq!(objective.root().value_type(), &ValueType::Integer);
-    let refusals = check(
+    let refusals = check_step_sum(
         "Int[0, 3]",
         "minimize Reach.steps.sum(s => s.cost)",
         "Reach.length >= 1",
@@ -463,7 +474,7 @@ fn a_decimal_step_sum_retains_its_complete_declared_summand_type() {
         "convert<Cost>(0.10)",
         "convert<Cost>(0.10) + 0.05",
     ] {
-        let checked = check_with_types(
+        let checked = check_step_sum_with_types(
             "Int[0, 3]",
             &format!("minimize Reach.steps.sum(s => {term})"),
             "Reach.length >= 1",
@@ -492,7 +503,7 @@ fn a_decimal_step_sum_without_a_typed_context_refuses_ambiguity() {
         "if s.index < 2 then decimal(10,2) else decimal(5,2)",
         "let cost = 0.10 in cost",
     ] {
-        let refusals = check(
+        let refusals = check_step_sum(
             "Int[0, 3]",
             &format!("minimize Reach.steps.sum(s => {term})"),
             "true",
@@ -506,7 +517,7 @@ fn a_decimal_step_sum_without_a_typed_context_refuses_ambiguity() {
 #[test]
 fn a_step_sum_whose_term_is_not_numeric_is_ill_typed() {
     for term in ["true", "s.operation", "s.after"] {
-        let refusals = check(
+        let refusals = check_step_sum(
             "Int[0, 3]",
             &format!("minimize Reach.steps.sum(s => {term})"),
             "Reach.length >= 1",
