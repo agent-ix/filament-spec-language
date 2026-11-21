@@ -1009,19 +1009,24 @@ fn closure_round_trip(formula: &str, stem: usize) {
 
     assert!(found.prefix.len() >= stem, "{found:?}");
 
-    let wire =
-        fsl_replay::temporal_wire(found, source.over_reference.as_ref(), source.claim.as_ref())
-            .expect("the lasso is spelled with its over reference");
+    // The auditor's reader reads FSpec FR-364's formula-kind, unfair subset
+    // with a null `over_binding` (the item fixes the instance, never the
+    // document), so the lasso is written unbound and the item's own instance
+    // is restored on the read-back object before it replays.
+    let mut unbound = found.clone();
+    unbound.over_binding = None;
+    let wire = fsl_replay::temporal_wire(&unbound, None, None).expect("the lasso is spelled");
     assert_eq!(wire["loop"][0]["transition"]["type"], "closure-stutter");
     assert_eq!(wire["loop"].as_array().map(Vec::len), Some(1));
-    let read = fsl_replay::read_temporal_counterexample::<
+    let mut read = fsl_replay::read_temporal_counterexample::<
         filament_semantic_value::model_transition::ModelTransition,
     >(&wire)
     .expect("the auditor's reader reads the written lasso");
     assert_eq!(
-        &read, found,
+        read, unbound,
         "the reader returns the lasso the engine wrote"
     );
+    read.over_binding = found.over_binding.clone();
     let reproduces =
         |replayed: Result<fsl_replay::ModelTraceReplayResult, fsl_replay::ReplayRefusal>| {
             assert!(
