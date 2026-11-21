@@ -127,3 +127,9 @@ impl ModelKeyBudget for ProbabilityKeyAdmission<'_> {
         )
     }
 }
+
+impl fsl_eval::simulation::model::ModelRestoreBudget for ProbabilityKeyAdmission<'_> {
+    fn meter(&mut self) -> &mut filament_exact::Meter {
+        self.meter
+    }
+}

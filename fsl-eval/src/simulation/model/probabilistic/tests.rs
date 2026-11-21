@@ -1171,3 +1171,122 @@ fn a_weight_zero_workload_keeps_every_step_inside_the_state_graph() {
         queue.extend(weighted.into_iter().map(|step| step.post));
     }
 }
+
+#[trace("TC-3152", "FR-1043-AC-9")]
+#[test]
+fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
+    use super::super::{ModelKeyBudget, ModelRestoreBudget, ModelStateProvenance};
+    use filament_exact::{Cancel, IntegerDecimalBudget, Reservation, ReservationDenied};
+    struct Budget {
+        meter: filament_exact::Meter,
+        used: usize,
+    }
+    impl Reservation for Budget {
+        fn reserve(&mut self, bytes: usize) -> Result<(), ReservationDenied> {
+            let actual = self.used.checked_add(bytes).ok_or(ReservationDenied)?;
+            if actual > 4_000_000 {
+                return Err(ReservationDenied);
+            }
+            self.used = actual;
+            Ok(())
+        }
+    }
+    impl IntegerDecimalBudget for Budget {
+        fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
+            self.meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                        .work(Integer::from(units)),
+                )
+                .map_err(|_| ReservationDenied)
+        }
+    }
+    impl ModelKeyBudget for Budget {
+        fn integer(&mut self, value: &Integer) -> Result<(), ReservationDenied> {
+            self.meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::GraphResultRetain)
+                        .size(
+                            filament_exact::LimitKind::IntegerBits,
+                            value.magnitude_bits(),
+                        ),
+                )
+                .map_err(|_| ReservationDenied)
+        }
+    }
+    impl ModelRestoreBudget for Budget {
+        fn meter(&mut self) -> &mut filament_exact::Meter {
+            &mut self.meter
+        }
+    }
+    let model = world::link();
+    let world = World::new(&model);
+    let system = world.system();
+    let actual = initial(&system);
+    let bytes = system.state_key(&actual).unwrap().0;
+    let mut budget = Budget {
+        meter: filament_exact::Meter::new(system.meter_limits()),
+        used: 0,
+    };
+    let restored = system
+        .restore_state_key_with_budget(
+            &bytes,
+            fsl_foundation::IdentityLimits::default(),
+            &mut budget,
+            &Cancel::new(),
+        )
+        .unwrap();
+    assert_eq!(system.state_key(&restored).unwrap().0, bytes);
+    assert!(matches!(
+        restored.provenance(),
+        ModelStateProvenance::RestoredFromKey { effect: None }
+    ));
+    assert!(restored.anchor().is_none() && restored.reached_by().is_none());
+    let refused = restored.required_anchor();
+    assert!(
+        refused.is_err(),
+        "key restoration cannot supply an initial anchor: {refused:?}"
+    );
+    let original = system.actions(&actual).unwrap().unwrap();
+    let rebuilt = system.actions(&restored).unwrap().unwrap();
+    assert_eq!(original.len(), rebuilt.len());
+    for (original, rebuilt) in original.iter().zip(&rebuilt) {
+        assert_eq!(original.identity, rebuilt.identity);
+        assert_eq!(original.draws.len(), rebuilt.draws.len());
+        for (original, rebuilt) in original.draws.iter().zip(&rebuilt.draws) {
+            assert_eq!(original.probability, rebuilt.probability);
+            assert_eq!(original.successors.len(), rebuilt.successors.len());
+            for ((transition, post), (restored_transition, restored_post)) in
+                original.successors.iter().zip(&rebuilt.successors)
+            {
+                assert_eq!(transition, restored_transition);
+                assert_eq!(
+                    system.state_key(post).unwrap().0,
+                    system.state_key(restored_post).unwrap().0
+                );
+                assert!(restored_post.anchor().is_none());
+                assert!(
+                    restored_post.reached_by().is_some(),
+                    "the new actual effect remains available"
+                );
+            }
+        }
+    }
+    let cancel = Cancel::new();
+    cancel.cancel(filament_exact::CancelCause::Deadline);
+    let stopped = system.restore_state_key_with_budget(
+        &bytes,
+        fsl_foundation::IdentityLimits::default(),
+        &mut budget,
+        &cancel,
+    );
+    assert!(
+        matches!(
+            stopped,
+            Err(super::super::ModelRestoreError::Key(
+                super::super::ModelKeyError::Cancelled(filament_exact::CancelCause::Deadline)
+            ))
+        ),
+        "{stopped:?}"
+    );
+}
