@@ -4056,7 +4056,14 @@ fn population_node_type(
     }
     let set = index
         .node(&population.semantic_type)
-        .filter(|node| has_form(node, WireTag::CompositeType, WireForm::Set))
+        .filter(|node| {
+            matches!(
+                index.admitted.node_kind(&node.node_id),
+                Some(filament_contract_model::CheckedNodeKind::CompositeType(
+                    filament_contract_model::CompositeTypeForm::Set
+                ))
+            )
+        })
         .ok_or(TypeError::Unsupported)?;
     let CheckedTerm::Aggregate { members } = &set.body else {
         return Err(TypeError::Unsupported);
@@ -4857,7 +4864,7 @@ mod order_tests {
             crate::emit::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
         let mut evidence = emission.evidence().clone();
         evidence
-            .insert_domain_package_document("acme/orders", model)
+            .insert_domain_package_document("acme/orders", model.as_slice())
             .unwrap();
         let admitted = match filament_contract_model::read_checked_package(
             emission.package().bytes(),
@@ -4905,7 +4912,7 @@ mod order_tests {
         let projection = package.project_function("count").unwrap().unwrap();
         assert_eq!(
             projection.selected_function().unwrap().result_type,
-            &ValueType::INTEGER
+            &ValueType::Integer
         );
         let projection = package.project_function("reference").unwrap().unwrap();
         assert_eq!(
