@@ -14,12 +14,14 @@ use fsl_analyze::analyze::{
     Engines, ItemCounterexample, NegotiatedItem, SourceProvision, SubjectBinding,
 };
 use fsl_analyze::provider::{self, ProviderResults};
-use fsl_analyze::provider::{ExternalProvider, ProviderRequest, ProviderVerdict};
+use fsl_analyze::provider::{ExternalProvider, ProviderLimit, ProviderRequest, ProviderVerdict};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
 use fsl_replay::value_check::ValueTarget;
-use fsl_replay::{Certification, IncompleteCause, InconclusiveCause, ProofBasis, TerminalValue};
+use fsl_replay::{
+    Certification, IncompleteCause, InconclusiveCause, ProofBasis, TerminalValue, ToolFailure,
+};
 use fsl_route::request::ExtentClassification;
 use fsl_route::routing::Disposition;
 use fsl_route::{Candidate, Mode, ProviderOrigin};
@@ -460,4 +462,110 @@ fn cancellation_from_each_external_callback_keeps_no_candidate_counterexample() 
     );
     assert!(analyzed.counterexamples.is_empty());
     assert!(served.counterexamples.is_empty());
+}
+
+fn process_failure_result(verdict: ProviderVerdict) -> (AnalyzeOutcome, ProviderResults) {
+    let fixture = Fixture::new(UNBOUNDED);
+    let (engines, calls) = engines(verdict, false, ProviderOrigin::Process, false);
+    let result = both_entries(
+        &fixture,
+        &engines,
+        ExtentClassification::Unbounded {
+            finite_bound_available: false,
+        },
+        false,
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    result
+}
+
+fn assert_process_failure(verdict: ProviderVerdict, cause: ToolFailure) {
+    let (analyzed, served) = process_failure_result(verdict);
+    assert_eq!(
+        analyzed.records[0].value(),
+        &TerminalValue::ToolFailed(cause)
+    );
+    assert_eq!(
+        analyzed.records[0].backend().map(BackendId::as_str),
+        Some(EXTERNAL)
+    );
+    assert!(analyzed.counterexamples.is_empty());
+    assert!(served.counterexamples.is_empty());
+    let document = served
+        .document()
+        .expect("failed provider result has an outcome document");
+    assert_eq!(document.category().exit_code(), 30);
+    let written: serde_json::Value =
+        serde_json::from_slice(&document.to_bytes().expect("encodes")).expect("JSON outcome");
+    assert_eq!(written["items"][0]["result"], "failed");
+    assert_eq!(
+        written["items"][0]["cause"],
+        serde_json::json!({
+            "kind": "tool-failure", "defect": cause.defect(),
+        })
+    );
+}
+
+/// Explicit memory breaches preserve the observed FR-462 process death.
+#[trace("FR-287-AC-12", "FR-291-AC-1")]
+#[test]
+fn process_memory_limits_settle_typed_failures_through_both_entries() {
+    assert_eq!(ProviderLimit::MaxMemoryBytes.as_str(), "max_memory_bytes");
+    for cause in [ToolFailure::Crash, ToolFailure::NonzeroExit] {
+        assert_process_failure(
+            ProviderVerdict::Failed {
+                limit: ProviderLimit::MaxMemoryBytes,
+                cause,
+            },
+            cause,
+        );
+    }
+}
+
+/// A CPU-limit signal is a crash; no unobserved CPU count is fabricated.
+#[trace("FR-287-AC-12", "FR-291-AC-1")]
+#[test]
+fn process_cpu_limits_settle_typed_failures_through_both_entries() {
+    assert_eq!(ProviderLimit::MaxCpuMs.as_str(), "max_cpu_ms");
+    assert_process_failure(
+        ProviderVerdict::Failed {
+            limit: ProviderLimit::MaxCpuMs,
+            cause: ToolFailure::Crash,
+        },
+        ToolFailure::Crash,
+    );
+}
+
+/// A process death with no evidence of which limit fired retains only its defect.
+#[trace("FR-291-AC-1")]
+#[test]
+fn process_deaths_without_limit_evidence_keep_only_the_observed_cause() {
+    for cause in [ToolFailure::Crash, ToolFailure::NonzeroExit] {
+        assert_process_failure(ProviderVerdict::ProcessFailed { cause }, cause);
+    }
+}
+
+/// A malformed process verdict is rejected, rather than accepted as a limit breach.
+#[trace("FR-291-AC-1")]
+#[test]
+fn process_failure_verdicts_reject_nonprocess_and_mismatched_causes() {
+    for verdict in [
+        ProviderVerdict::Failed {
+            limit: ProviderLimit::MaxMemoryBytes,
+            cause: ToolFailure::FrameLength {
+                limit: 10,
+                value: 11,
+            },
+        },
+        ProviderVerdict::Failed {
+            limit: ProviderLimit::MaxCpuMs,
+            cause: ToolFailure::NonzeroExit,
+        },
+        ProviderVerdict::ProcessFailed {
+            cause: ToolFailure::MalformedFrame,
+        },
+    ] {
+        let (analyzed, _) = process_failure_result(verdict);
+        assert_eq!(analyzed.records[0].value(), &TerminalValue::Failed);
+    }
 }
