@@ -1329,8 +1329,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         let population = match source.declaration_scope_for_node(population_node) {
             Some(scope) => scope.clone(),
             None => source
-                .scope(provenance.declaration())
-                .map_err(Halt::Fault)?,
+                .catalog_scope(provenance.declaration())
+                .cloned()
+                .ok_or_else(unavailable)?,
         };
         let positions = run
             .template
