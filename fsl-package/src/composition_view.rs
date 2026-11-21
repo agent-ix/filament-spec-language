@@ -244,9 +244,6 @@ impl<'p> CompositionView<'p> {
             .package
             .resolve_node_held(self.holder, target)
             .ok_or(CompositionViewRefusal::UnknownTarget)?;
-        if reference.package.as_ref() != owner.name() {
-            return Err(CompositionViewRefusal::UnknownTarget);
-        }
         owner
             .structural_key(&reference)
             .ok_or(CompositionViewRefusal::UnknownTarget)?;
