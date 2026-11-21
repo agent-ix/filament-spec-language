@@ -1003,6 +1003,12 @@ fn fault(invariant: &'static str) -> AdmissionFailure {
 }
 
 impl<'a> ModelSystem<'a> {
+    /// The actual admitted model used by this system's reference operations.
+    /// Borrowing this owner preserves the connection to native state identity.
+    pub fn reference_model(&self) -> &StateModel {
+        &self.model
+    }
+
     /// What this system reads of its package (FR-531, FR-940).
     pub fn input(&self) -> &ModelCheckInput<'a> {
         &self.input

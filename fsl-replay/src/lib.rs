@@ -44,6 +44,8 @@
 #![forbid(unsafe_code)]
 
 mod admitted;
+mod reference_codec;
+pub use reference_codec::{ReferenceCodec, ReferenceCodecError, ReferenceFailure};
 mod application;
 mod axes;
 pub mod backends;
