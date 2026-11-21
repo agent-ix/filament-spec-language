@@ -82,3 +82,31 @@ Pass-1 source: PR agent-ix/filament-spec-language#3330 head 943172bbeda2f23bd427
 | FND-006 | fixed | `MonitoredRun` holds monitor, keys, binding and visited. `monitored_step(run, pending, edge: Option<..>, counted)` derives the stutter case from `pending`. `missing` is gone from `monitored_step`, and both `#[allow(clippy::too_many_arguments)]` are removed. The order is unchanged: rejecting before visited, then the `max_states` budget, then membership. Key encoding still maps to `ClosureRefusal::Encoding`. |
 | FND-007 | fixed | Round 2 (head 8ccf5300). `check_model_with_stutter_closure` returns `ModelCheckRefusal::Item(ItemRefusal::LoopProofOverModel)` for `LoopInvariant` and `LoopTermination` before any instancing (check.rs:598-605). That is the same refusal the kind-less `instances` path gave before this PR. The reduced path's refusal and protocol loop items are unchanged. `a_loop_proof_item_is_refused_over_a_model_subject` drives both kinds through the public `check_model`. Runtime not run. |
 | FND-008 | fixed | Round 2. A later undefined letter now rejects through `product_rejecting(run.keys, state_key)`: the successor model state under `["safety",[]]`, matching TP-1/TP-2 and the TP-3 origin case (closure.rs:1287-1289). The new fourth vector (`|v| (v != 2).then_some(v <= 1)`, candidate keys for 0..1) expects `BadState` at (2, `["safety",[]]`); under the old code it would be (2, value-1 monitor key), so the test distinguishes the two. AC-29 now states the same locus. Runtime not run. |
+
+## Post-qualification verification (single failed-test fix)
+
+Source: PR #3330 head 9350c34bf21bc7de491c2a2d2394761ccc6b5ed5. Its parent is the root's artifact commit 4e791c819b, which was preserved. The source was clear at 8ccf5300, with all 12 findings fixed. Under the standing single-failed-test mechanical exception, only the changed test was inspected. This is not a re-review, and it adds no finding.
+
+Draco runtime at 8ccf5300:
+- fsl-eval: 4 of 4 passed.
+- fsl-analyze: 10 of 11 passed. `closure_certificate::a_past_clause_proof_carries_monitor_keys_the_core_accepts` failed at `keys.len() > 1`.
+- Root: 2 pending.
+
+Cause: the fixture's oracle was wrong; the production code is fine. In `always (once[1,1] p or historically p)` with `p` = `v <= 3`, `p` is true at every position. FR-338's `history` memory for `once[1,1]` is the true-offset set `1..b` from the next position, so it is `["1"]` after every read. `historically p` stays true as well. The origin and every later post-read state therefore legitimately share one key. This review pass's own earlier re-derivation, which said the origin key differs from value 1, made the same mistake.
+
+Verified fix: the diff from 4e791c819b to 9350c34bf2 touches only `fsl-analyze/tests/it/closure_certificate.rs`, and only this test. Compared with 8ccf5300, fsl-eval, fsl-replay, fsl-analyze/src, spec and tests/ are unchanged. `reviews/` is byte-identical to the disposition-2 SRs.
+
+Fixture check:
+- The new fixture is `always (not holds(c.value != 2) implies once[1,1] holds(c.value != 2))` with `|v| Some(v != 2)`.
+- Over values 0..3 plus the terminal stutter at 3, `p` = T, T, F, T, T.
+- `not p` holds only at value 2, where `once[1,1] p` reads `p` at value 1, which is true. So the clause holds, and the run should return `Holds`, `Accepted`, `Proved{Exhaustive, Certified}`.
+
+Oracle check against FR-338, not the kernel:
+- The post-read `once[1,1]` memory is `["1"]` after values 0, 1 and 3 and their stutters, and `[]` after value 2. No future operator sits inside the past operand, so there are no guessed carries ("A future operator inside a past operand…"). With no unbounded F/U on an ordinary subject, the acceptance set is empty.
+- Value 2 therefore keys apart from the others, and values 0, 1 and 3 share the origin key.
+- The deterministic single path gives one certificate entry per value.
+- The `once[1,1]` `["1"]`/`[]` body form is the one `automaton_key::a_tp3_monitor_state_carries_the_specified_past_and_window_members` asserts, and that test passed at Draco.
+- Both tamper negatives target value 2, the one value whose key differs. The checker reaches (0, k), (1, k) and then (2, k₂). Removing (2, k₂), or rewriting it as (2, k), is rejected `SuccessorMissing` at (2, k₂).
+- No assertion was weakened. The equality assertions at values 1 and 3 add an oracle the old test lacked.
+
+Qualification for this test is pending until it actually runs at 9350c34b. Only this one test needs re-running; the 14 greens at 8ccf5300 stand, and the 2 root cases remain pending.
