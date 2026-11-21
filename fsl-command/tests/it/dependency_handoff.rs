@@ -133,18 +133,48 @@ fn transitive_library_calls_run_with_only_handoff_artifacts() {
 #[trace("FR-517-AC-28", "FR-850-AC-13", "TC-1312", "TC-2410")]
 fn diamond_closure_shares_one_artifact_and_missing_transitive_supply_refuses() {
     let directory = tempfile::tempdir().unwrap();
-    prepare(directory.path(), true);
+    let mut request = prepare(directory.path(), true);
+    request.as_object_mut().unwrap().remove("handoff");
+    request["call"] = json!({"function": "answer", "arguments": []});
+    let (source_exit, source_result) =
+        run_request(directory.path(), request.clone(), Default::default());
+    assert_eq!(source_exit, 0, "{source_result}");
+    assert_eq!(
+        source_result["outcome"]["value"],
+        json!({"integer": "42"}),
+        "{source_result}"
+    );
+    for file in [
+        "unit.native",
+        "left.native",
+        "right.native",
+        "shared.native",
+    ] {
+        std::fs::remove_file(directory.path().join(file)).unwrap();
+    }
+    std::fs::remove_dir_all(directory.path().join("handoff/sources")).unwrap();
     let manifest_file = directory.path().join("handoff/dependencies.json");
     let manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_file).unwrap()).unwrap();
     assert_eq!(manifest["dependencies"].as_array().unwrap().len(), 3);
     let (exit, result) = run(directory.path(), json!({"directory": "handoff"}));
-    assert_eq!(exit, 0, "{result}");
-    let mut omitted = manifest;
+    assert_eq!(exit, source_exit, "{result}");
+    assert_eq!(result["outcome"], source_result["outcome"], "{result}");
+    let mut omitted = manifest.clone();
     omitted["dependencies"].as_array_mut().unwrap().pop();
-    std::fs::write(manifest_file, serde_json::to_vec(&omitted).unwrap()).unwrap();
+    std::fs::write(&manifest_file, serde_json::to_vec(&omitted).unwrap()).unwrap();
+    assert!(directory
+        .path()
+        .join("handoff/dependencies/2/checked-package.json")
+        .is_file());
     let (exit, result) = run(directory.path(), json!({"directory": "handoff"}));
     assert_eq!(exit, 20, "{result}");
-    assert!(result.to_string().contains("missing-selection"), "{result}");
+    assert_eq!(result["stage"], "request", "{result}");
+    assert_eq!(result["code"], "missing_import", "{result}");
+    assert_eq!(result["cause"], "missing-selection", "{result}");
+    assert_eq!(
+        result["details"]["path"], "/lock/dependency_selections/0",
+        "{result}"
+    );
     assert!(
         result
             .to_string()
@@ -152,6 +182,55 @@ fn diamond_closure_shares_one_artifact_and_missing_transitive_supply_refuses() {
         "{result}"
     );
     assert!(result.to_string().contains("test/shared"), "{result}");
+    let selection =
+        json!({"package": {"directory": "handoff"}, "models": [], "items": [{"claim": "Missing"}]});
+    let (exit, result) = analyze(directory.path(), selection.clone(), 1 << 20);
+    assert_eq!(exit, 20, "{result}");
+    assert_eq!(result["items"], json!([]), "{result}");
+    assert_eq!(result["last_stage"], Value::Null, "{result}");
+    let diagnostic = &result["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "missing_import", "{result}");
+    assert_eq!(diagnostic["cause"], "missing-selection", "{result}");
+    assert_eq!(
+        diagnostic["details"]["path"], "/lock/dependency_selections/0",
+        "{result}"
+    );
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("dependencies/0/checked-package.json"),
+        "{result}"
+    );
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("test/shared"),
+        "{result}"
+    );
+    std::fs::write(&manifest_file, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    std::fs::remove_file(
+        directory
+            .path()
+            .join("handoff/dependencies/2/checked-package.json"),
+    )
+    .unwrap();
+    let (exit, result) = analyze(directory.path(), selection, 1 << 20);
+    assert_eq!(exit, 20, "{result}");
+    assert_eq!(result["items"], json!([]), "{result}");
+    assert_eq!(result["last_stage"], Value::Null, "{result}");
+    let diagnostic = &result["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "invalid_package", "{result}");
+    assert_eq!(diagnostic["cause"], "missing-file", "{result}");
+    assert_eq!(diagnostic["details"]["path"], Value::Null, "{result}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("dependencies/2/checked-package.json"),
+        "{result}"
+    );
 }
 
 #[test]
@@ -618,6 +697,30 @@ fn dependency_handoff_is_deterministic_under_provision_order_and_refuses_conflic
         .expect("import-free handoff writes an explicit empty closure");
     assert_eq!(std::fs::read(directory.path().join("empty/dependencies.json")).unwrap(), b"{\n  \"format\": \"filament.checked-handoff.dependencies/1\",\n  \"dependencies\": []\n}\n");
     assert!(!directory.path().join("empty/dependencies").exists());
+    std::fs::remove_file(directory.path().join("empty/dependencies.json")).unwrap();
+    let (exit, outcome) = analyze(
+        directory.path(),
+        json!({"package": {"directory": "empty"}, "models": [], "items": [{"claim": "Missing"}]}),
+        1 << 20,
+    );
+    assert_eq!(exit, 20, "{outcome}");
+    assert_eq!(outcome["items"], json!([]), "{outcome}");
+    assert_eq!(outcome["last_stage"], Value::Null, "{outcome}");
+    assert_eq!(
+        outcome["diagnostics"][0]["code"], "invalid_package",
+        "{outcome}"
+    );
+    assert_eq!(
+        outcome["diagnostics"][0]["cause"], "missing-file",
+        "{outcome}"
+    );
+    assert!(
+        outcome["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("dependencies.json"),
+        "{outcome}"
+    );
 }
 
 #[test]
@@ -935,4 +1038,93 @@ fn nested_library_composites_keep_source_values_after_source_deletion() {
         "the strict bytes route keeps the valid nested types: {result}"
     );
     assert_eq!(result["outcome"], source_result["outcome"], "{result}");
+}
+
+#[test]
+#[trace("FR-1039-AC-3", "FR-850-AC-4", "TC-2410")]
+fn extraneous_models_keep_the_run_request_pointer_and_analyze_mapping() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut compile = prepare(directory.path(), false);
+    std::fs::remove_dir_all(directory.path().join("handoff")).unwrap();
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{HEADER}function answer using v(): Integer pure {{ 42 }}"),
+    )
+    .unwrap();
+    compile["libraries"] = json!([]);
+    std::fs::write(
+        directory.path().join("compile.json"),
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": compile})).unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&directory.path().join("compile.json")).unwrap();
+    std::fs::write(
+        directory.path().join("counter.json"),
+        include_bytes!("../fixtures/cli-contract/counter.semantic-ir.json"),
+    )
+    .unwrap();
+    let models = json!([{"format": "semantic-ir/2.0.0", "source": source("counter.json")}]);
+    let call = json!({"function": "answer", "arguments": []});
+    let mut refused = Vec::new();
+    for package in [
+        json!({"file": "handoff/checked-package.json"}),
+        json!({"directory": "handoff"}),
+    ] {
+        let (exit, positive) = run_request(
+            directory.path(),
+            json!({"package": package, "models": [], "call": call}),
+            Default::default(),
+        );
+        assert_eq!(exit, 0, "{positive}");
+        let (exit, outcome) = run_request(
+            directory.path(),
+            json!({"package": package, "models": models, "call": call}),
+            Default::default(),
+        );
+        assert_eq!(exit, 20, "{outcome}");
+        assert_eq!(outcome["stage"], "request", "{outcome}");
+        assert_eq!(outcome["code"], "invalid-request", "{outcome}");
+        assert!(
+            outcome["message"]
+                .as_str()
+                .unwrap()
+                .contains("/request/models/0"),
+            "{outcome}"
+        );
+        assert!(
+            outcome["message"]
+                .as_str()
+                .unwrap()
+                .contains("test/counter"),
+            "{outcome}"
+        );
+        refused.push(outcome);
+    }
+    assert_eq!(
+        refused[0], refused[1],
+        "file and directory preserve the complete original run refusal"
+    );
+    let (exit, outcome) = analyze(
+        directory.path(),
+        json!({"package": {"directory": "handoff"}, "models": models, "items": [{"claim": "Missing"}]}),
+        1 << 20,
+    );
+    assert_eq!(exit, 20, "{outcome}");
+    assert_eq!(outcome["items"], json!([]), "{outcome}");
+    assert_eq!(outcome["last_stage"], Value::Null, "{outcome}");
+    assert_eq!(
+        outcome["diagnostics"][0]["code"], "invalid_package",
+        "{outcome}"
+    );
+    assert_eq!(
+        outcome["diagnostics"][0]["cause"], "conflicting-definition",
+        "{outcome}"
+    );
+    assert!(
+        outcome["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("test/counter"),
+        "{outcome}"
+    );
 }
