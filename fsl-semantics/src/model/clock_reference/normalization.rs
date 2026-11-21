@@ -208,6 +208,18 @@ impl SourceDeclarations {
     /// Read only the SourceOwner and original declaration facts retained by
     /// checking. No short-name search or caller-created numeric id is authority.
     pub fn from_graph(graph: &CheckedGraph) -> Result<Self, InternalFault> {
+        Self::from_graph_with_composites(graph, graph.scope().types().composites())
+    }
+
+    /// Include composite declarations retained in isolated checked scopes,
+    /// using their actual semantic declaration nodes for the same provenance join.
+    pub fn from_graph_with_composites<'a>(
+        graph: &CheckedGraph,
+        composites: impl IntoIterator<
+            Item = &'a filament_semantic_value::declaration::CompositeDeclaration,
+        >,
+    ) -> Result<Self, InternalFault> {
+        let composites: Vec<_> = composites.into_iter().collect();
         let mut facts = Vec::new();
         for node in graph.semantic_graph().nodes() {
             let Some(crate::check::Owner::Source(owner)) = node.owner() else {
@@ -223,7 +235,7 @@ impl SourceDeclarations {
                 original: graph.resolve_declaration(node.key()).cloned(),
             });
         }
-        for declaration in graph.scope().types().composites() {
+        for declaration in &composites {
             let Some(key) = graph.semantic_graph().composite_node(&declaration.key()) else {
                 continue;
             };
@@ -256,7 +268,7 @@ impl SourceDeclarations {
                     },
                 ))
             }));
-        for declaration in graph.scope().types().composites() {
+        for declaration in &composites {
             if let Some(node) = graph.semantic_graph().composite_node(&declaration.key()) {
                 if result.node_scope(node).is_some() {
                     result.retain_node_alias(node, declaration.key())?;

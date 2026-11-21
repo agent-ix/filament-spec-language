@@ -4304,7 +4304,8 @@ fn emission_composites(
 fn source_declaration_key_rewrites(
     graph: &CheckedGraph,
 ) -> Result<SourceDeclarationKeys, EmitRefusal> {
-    SourceDeclarationKeys::from_graph(graph).map_err(|_| EmitRefusal::SourceMapInvariant)
+    SourceDeclarationKeys::from_graph_with_composites(graph, emission_composites(graph))
+        .map_err(|_| EmitRefusal::SourceMapInvariant)
 }
 
 /// The name a function body's rows carry: the checker's function name with a
