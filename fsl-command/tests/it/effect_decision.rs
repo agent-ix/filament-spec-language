@@ -255,41 +255,52 @@ fn receipt_binding_preserves_actual_source_outcome_and_model_truth() {
     "FR-277"
 )]
 fn a_deep_opaque_grant_uses_the_shared_arena_on_a_small_stack() {
-    std::thread::Builder::new()
-        .stack_size(256 * 1024)
-        .spawn(|| {
-            let mut fixture = Fixture::new();
-            let base =
-                String::from_utf8(canonical_json::encode(&fixture.receipt).unwrap()).unwrap();
-            let grant = format!("{}{{}}{}", "{\"a\":".repeat(160), "}".repeat(160));
-            assert!(base.contains("\"authority_grant\":{}"));
-            let deep = base.replacen(
-                "\"authority_grant\":{}",
-                &format!("\"authority_grant\":{grant}"),
-                1,
-            );
-            fixture.select_bytes("deep", deep.as_bytes());
-            assert_eq!(fixture.run().document, fixture.baseline.document);
-            // An unselected receipt is still provisioned through the same
-            // document intake and must stay outside observation premises.
-            fixture.request["request"]["items"][0]
-                .as_object_mut()
-                .unwrap()
-                .remove("effect_decisions");
-            assert_eq!(fixture.run().document, fixture.baseline.document);
-            // Ordinary snapshot documents still reach the real model/replay.
-            let mut snapshot: Value = serde_json::from_slice(SNAPSHOT).unwrap();
-            snapshot["populations"][0]["objects"][0]["fields"]["value"]["integer"] = json!("1");
-            fixture
-                .case
-                .write("start.json", &serde_json::to_vec(&snapshot).unwrap());
-            let changed = fixture.run();
-            assert_eq!(changed.exit, 10, "{}", changed.document);
-            assert_ne!(changed.document, fixture.baseline.document);
-        })
-        .expect("small-stack public receipt intake starts")
-        .join()
-        .expect("small-stack public receipt intake completes");
+    let mut fixture = Fixture::new();
+    let prepare = |path: std::path::PathBuf| {
+        std::thread::Builder::new()
+            .name("receipt-document-intake".to_owned())
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                fsl_command::command::prepare_analyze(&path, RunLimits::default())
+                    .expect("public bounded document intake");
+            })
+            .expect("small-stack public receipt intake starts")
+            .join()
+            .expect("small-stack public receipt intake completes");
+    };
+    // The fixed-stack boundary under test is real document intake. The
+    // normal Source compiler and engine are independently exercised below.
+    prepare(fixture.case.json("ordinary-intake.json", &fixture.request));
+    let base = String::from_utf8(canonical_json::encode(&fixture.receipt).unwrap()).unwrap();
+    let grant = format!("{}{{}}{}", "{\"a\":".repeat(160), "}".repeat(160));
+    assert!(base.contains("\"authority_grant\":{}"));
+    let deep = base.replacen(
+        "\"authority_grant\":{}",
+        &format!("\"authority_grant\":{grant}"),
+        1,
+    );
+    fixture.select_bytes("deep", deep.as_bytes());
+    prepare(fixture.case.json("deep-intake.json", &fixture.request));
+    assert_eq!(fixture.run().document, fixture.baseline.document);
+    // Unselected receipts traverse the same metadata and replay seams.
+    fixture.request["request"]["items"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("effect_decisions");
+    prepare(
+        fixture
+            .case
+            .json("unselected-intake.json", &fixture.request),
+    );
+    assert_eq!(fixture.run().document, fixture.baseline.document);
+    let mut snapshot: Value = serde_json::from_slice(SNAPSHOT).unwrap();
+    snapshot["populations"][0]["objects"][0]["fields"]["value"]["integer"] = json!("1");
+    fixture
+        .case
+        .write("start.json", &serde_json::to_vec(&snapshot).unwrap());
+    let changed = fixture.run();
+    assert_eq!(changed.exit, 10, "{}", changed.document);
+    assert_ne!(changed.document, fixture.baseline.document);
 }
 
 #[test]
