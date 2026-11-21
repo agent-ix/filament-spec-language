@@ -304,7 +304,14 @@ impl Product<'_, '_> {
             .iter()
             .any(|object| !object.hidden.is_empty());
         let mut not_concretised = false;
-        for class in &classes {
+        // With a hidden field the model does not depend on the class, so one
+        // pass decides every class together (FR-899).
+        let passes = if hidden {
+            classes.len().min(1)
+        } else {
+            classes.len()
+        };
+        for class in &classes[..passes] {
             let (model, within, kept) = self.fair_model(run, live, class, &enabled)?;
             let analyses = analyze(&model.graph, &within, &model.constraints, run.cancel)
                 .map_err(|error| fairness(run, error))?;
@@ -314,6 +321,29 @@ impl Product<'_, '_> {
                     return Err(ZoneCheckRefusal::Fault("empty-component").into());
                 };
                 let members: BTreeSet<Vertex> = component.vertices().iter().copied().collect();
+                if hidden {
+                    let view = fair_loops::ComponentView {
+                        model: &model,
+                        kept: &kept,
+                        members: &members,
+                        removed: component.removed(),
+                    };
+                    match self.refute_hidden_component(
+                        run,
+                        live,
+                        &view,
+                        &classes,
+                        &abstract_fairness,
+                    )? {
+                        fair_loops::Refuted::By(found) => {
+                            return Ok(Lived::Violated(Box::new(found)));
+                        }
+                        fair_loops::Refuted::NotConcretised => not_concretised = true,
+                        fair_loops::Refuted::Not => {}
+                        fair_loops::Refuted::Ends(ends) => return Ok(Lived::Ends(ends)),
+                    }
+                    continue;
+                }
                 let walk = model
                     .greedy_loop(&members, component.removed(), entry)
                     .map_err(|_| ZoneCheckRefusal::Fault("component-loop"))?;
@@ -332,58 +362,7 @@ impl Product<'_, '_> {
                         .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
                     cycle.push(index);
                 }
-                let mut named = class.constraint();
-                if hidden {
-                    match self.candidate_loop_has_fair_run(
-                        run,
-                        live,
-                        &cycle,
-                        FairScope::Through(class.constraint()),
-                    )? {
-                        Ok(true) => {
-                            // Another loop of the component may still have no
-                            // fair candidate run: decide every one of them.
-                            let view = fair_loops::ComponentView {
-                                model: &model,
-                                kept: &kept,
-                                members: &members,
-                                removed: component.removed(),
-                            };
-                            let found = self.unfair_candidate_loop(
-                                run,
-                                live,
-                                &view,
-                                &classes,
-                                &abstract_fairness,
-                            )?;
-                            let Some(found) = (match found {
-                                Ok(found) => found,
-                                Err(ends) => return Ok(Lived::Ends(ends)),
-                            }) else {
-                                continue;
-                            };
-                            let named =
-                                match self.first_unfair_constraint(run, live, &found.cycle)? {
-                                    Ok(index) => index,
-                                    Err(ends) => return Ok(Lived::Ends(ends)),
-                                };
-                            match self.lasso(run, live, class, named, found.entry, &found.cycle)? {
-                                Some(counterexample) => {
-                                    return Ok(Lived::Violated(Box::new(counterexample)));
-                                }
-                                None => not_concretised = true,
-                            }
-                            continue;
-                        }
-                        Ok(false) => {
-                            named = match self.first_unfair_constraint(run, live, &cycle)? {
-                                Ok(index) => index,
-                                Err(ends) => return Ok(Lived::Ends(ends)),
-                            };
-                        }
-                        Err(ends) => return Ok(Lived::Ends(ends)),
-                    }
-                }
+                let named = class.constraint();
                 if let Some(found) = self.lasso(run, live, class, named, entry.index(), &cycle)? {
                     return Ok(Lived::Violated(Box::new(found)));
                 }
@@ -879,6 +858,91 @@ impl Product<'_, '_> {
         Ok(here)
     }
 
+    /// Each hidden candidate of vertex `at`'s position, by state key, with
+    /// the abstract transitions it enables: under a timed abstract side its
+    /// guarded steps enabled at the vertex's cell, otherwise its untimed
+    /// successors. A stop or an undetermined successor ends the half.
+    fn vertex_candidates(
+        &self,
+        run: &mut Run<'_, '_, '_>,
+        live: &Live,
+        at: usize,
+    ) -> Result<Result<Vec<(Vec<u8>, Vec<ModelTransition>)>, Decided>, Halt> {
+        let source = live
+            .nodes
+            .get(at)
+            .ok_or(ZoneCheckRefusal::Fault("candidate-loop-source"))?;
+        let mut candidates = Vec::new();
+        let timed_enabled = if run.auxiliary_timed.is_some() {
+            let view = live
+                .views
+                .get(&source.q)
+                .ok_or(ZoneCheckRefusal::Fault("abstract-view-cached"))?;
+            Some(Self::enabled_at_zone(run, view, &source.zone)?)
+        } else {
+            None
+        };
+        for candidate in &self.positions[source.q].abstract_states {
+            run.poll()?;
+            let (key, _) = self
+                .abstract_system
+                .state_key_of(candidate)
+                .map_err(|_| ZoneCheckRefusal::Fault("candidate-loop-state-key"))?;
+            let expansion = match self.abstract_system.expand_state(candidate) {
+                Ok(expansion) => expansion,
+                Err(stop) if stop.is_internal_failure() => {
+                    return Err(ZoneCheckRefusal::Fault("candidate-loop-expansion").into());
+                }
+                Err(stop) => {
+                    let reached = match stop.limit {
+                        Some(ExpansionLimit::EvaluationMeter(counter)) => ReachedLimit {
+                            limit: ModelCheckLimit::EvaluationMeter { counter },
+                            value: fsl_replay::meter_bound(&self.abstract_system.meter(), counter),
+                        },
+                        Some(ExpansionLimit::MaxCandidates) | None => ReachedLimit {
+                            limit: ModelCheckLimit::MaxCandidates,
+                            value: self.abstract_system.max_candidates(),
+                        },
+                    };
+                    return Ok(Err(Decided::Stopped {
+                        cause: TimedRefinementStop::Step(reached),
+                        stats: run.stats(),
+                    }));
+                }
+            };
+            if expansion
+                .findings
+                .iter()
+                .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
+            {
+                return Ok(Err(Decided::Undecided {
+                    cause: TimedRefinementUndecided::Undetermined(Undetermined::UndecidedSuccessor),
+                    stats: run.stats(),
+                }));
+            }
+            // Under a timed abstract side the candidate's steps enabled at
+            // the source vertex's cell, not its untimed successors.
+            let enabled: Vec<_> = match &timed_enabled {
+                Some(held) => {
+                    let mut here: Vec<ModelTransition> = Vec::new();
+                    for (candidate_key, transition) in held {
+                        if *candidate_key == key && !here.contains(transition) {
+                            here.push(transition.clone());
+                        }
+                    }
+                    here
+                }
+                None => expansion
+                    .successors
+                    .into_iter()
+                    .map(|(transition, _)| transition)
+                    .collect(),
+            };
+            candidates.push((key, enabled));
+        }
+        Ok(Ok(candidates))
+    }
+
     fn candidate_loop_has_fair_run(
         &self,
         run: &mut Run<'_, '_, '_>,
@@ -894,83 +958,12 @@ impl Product<'_, '_> {
                 .arcs
                 .get(arc_index)
                 .ok_or(ZoneCheckRefusal::Fault("candidate-loop-arc"))?;
-            let source = live
-                .nodes
-                .get(arc.from)
-                .ok_or(ZoneCheckRefusal::Fault("candidate-loop-source"))?;
-            let mut candidates = Vec::new();
-            let timed_enabled = if run.auxiliary_timed.is_some() {
-                let view = live
-                    .views
-                    .get(&source.q)
-                    .ok_or(ZoneCheckRefusal::Fault("abstract-view-cached"))?;
-                Some(Self::enabled_at_zone(run, view, &source.zone)?)
-            } else {
-                None
+            let candidates = match self.vertex_candidates(run, live, arc.from)? {
+                Ok(candidates) => candidates,
+                Err(ends) => return Ok(Err(ends)),
             };
-            for candidate in &self.positions[source.q].abstract_states {
-                run.poll()?;
-                let (key, _) = self
-                    .abstract_system
-                    .state_key_of(candidate)
-                    .map_err(|_| ZoneCheckRefusal::Fault("candidate-loop-state-key"))?;
-                let expansion = match self.abstract_system.expand_state(candidate) {
-                    Ok(expansion) => expansion,
-                    Err(stop) if stop.is_internal_failure() => {
-                        return Err(ZoneCheckRefusal::Fault("candidate-loop-expansion").into());
-                    }
-                    Err(stop) => {
-                        let reached = match stop.limit {
-                            Some(ExpansionLimit::EvaluationMeter(counter)) => ReachedLimit {
-                                limit: ModelCheckLimit::EvaluationMeter { counter },
-                                value: fsl_replay::meter_bound(
-                                    &self.abstract_system.meter(),
-                                    counter,
-                                ),
-                            },
-                            Some(ExpansionLimit::MaxCandidates) | None => ReachedLimit {
-                                limit: ModelCheckLimit::MaxCandidates,
-                                value: self.abstract_system.max_candidates(),
-                            },
-                        };
-                        return Ok(Err(Decided::Stopped {
-                            cause: TimedRefinementStop::Step(reached),
-                            stats: run.stats(),
-                        }));
-                    }
-                };
-                if expansion
-                    .findings
-                    .iter()
-                    .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
-                {
-                    return Ok(Err(Decided::Undecided {
-                        cause: TimedRefinementUndecided::Undetermined(
-                            Undetermined::UndecidedSuccessor,
-                        ),
-                        stats: run.stats(),
-                    }));
-                }
-                // Under a timed abstract side the candidate's steps enabled at
-                // the source vertex's cell, not its untimed successors.
-                let enabled: Vec<_> = match &timed_enabled {
-                    Some(held) => {
-                        let mut here: Vec<ModelTransition> = Vec::new();
-                        for (candidate_key, transition) in held {
-                            if *candidate_key == key && !here.contains(transition) {
-                                here.push(transition.clone());
-                            }
-                        }
-                        here
-                    }
-                    None => expansion
-                        .successors
-                        .into_iter()
-                        .map(|(transition, _)| transition)
-                        .collect(),
-                };
+            for (_, enabled) in &candidates {
                 transitions.extend(enabled.iter().cloned());
-                candidates.push((key, enabled));
             }
             positions.push(candidates);
             match arc.taken.as_ref() {

@@ -65,10 +65,10 @@ use fsl_semantics::check::CheckedRefinement;
 
 use super::check::{fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
 use super::fair_summary::{
-    compose_candidate_relations, compose_fair_labels, concrete_label_is_fair,
-    idempotent_has_fair_candidate, idempotent_has_fair_candidate_in, insert_relation_label,
-    insert_walk_summary, neutral_label, CandidateRelation, FairLabel, FairMark, FairScope,
-    WalkSummary,
+    candidate_steps_relation, candidate_stutter_relation, compose_candidate_relations,
+    compose_fair_labels, concrete_label_is_fair, idempotent_has_fair_candidate,
+    idempotent_has_fair_candidate_in, insert_relation_label, insert_walk_summary, neutral_label,
+    CandidateEnables, CandidateRelation, FairLabel, FairMark, FairScope, WalkSummary,
 };
 use super::fair_walk::{fairness_constraints, FairModel};
 
@@ -157,6 +157,13 @@ struct CandidateEnabled {
     key: Vec<u8>,
     protocol: Option<fsl_replay::ProtocolCandidate>,
     transitions: Vec<ModelTransition>,
+}
+
+fn candidate_enables(candidates: &[CandidateEnabled]) -> Vec<CandidateEnables<'_>> {
+    candidates
+        .iter()
+        .map(|candidate| (candidate.key.as_slice(), candidate.transitions.as_slice()))
+        .collect()
 }
 
 /// One retained lasso edge, as its source product node and canonical edge
@@ -2869,62 +2876,26 @@ impl Run<'_, '_> {
         let mut relation = CandidateRelation::new();
         match taken {
             Taken::CandidateSteps(rows) => {
-                for row in rows {
-                    let candidate = source_candidates
-                        .iter()
-                        .find(|candidate| candidate.key == row.pre_state)
-                        .ok_or_else(|| fault("candidate-step-source-is-retained"))?;
-                    if !target_candidates
-                        .iter()
-                        .any(|candidate| candidate.key == row.post_state)
-                    {
-                        return Err(fault("candidate-step-target-is-retained").into());
-                    }
-                    let label = classes
-                        .iter()
-                        .map(|class| {
-                            let is_enabled = class.is_enabled_in(&candidate.transitions);
-                            FairMark {
-                                taken: row
-                                    .transition
-                                    .as_ref()
-                                    .is_some_and(|transition| class.covers(transition)),
-                                enabled_somewhere: is_enabled,
-                                enabled_everywhere: is_enabled,
-                            }
-                        })
-                        .collect();
-                    insert_relation_label(
-                        &mut relation,
-                        (row.pre_state.clone(), row.post_state.clone()),
-                        label,
-                    );
-                }
+                relation = candidate_steps_relation(
+                    rows.iter().map(|row| {
+                        (
+                            row.pre_state.as_slice(),
+                            row.transition.as_ref(),
+                            row.post_state.as_slice(),
+                        )
+                    }),
+                    &candidate_enables(source_candidates),
+                    &candidate_enables(target_candidates),
+                    classes,
+                )
+                .map_err(fault)?;
             }
             Taken::Stutter => {
-                for candidate in source_candidates {
-                    if target_candidates
-                        .iter()
-                        .any(|target| target.key == candidate.key)
-                    {
-                        let label = classes
-                            .iter()
-                            .map(|class| {
-                                let is_enabled = class.is_enabled_in(&candidate.transitions);
-                                FairMark {
-                                    taken: false,
-                                    enabled_somewhere: is_enabled,
-                                    enabled_everywhere: is_enabled,
-                                }
-                            })
-                            .collect();
-                        insert_relation_label(
-                            &mut relation,
-                            (candidate.key.clone(), candidate.key.clone()),
-                            label,
-                        );
-                    }
-                }
+                relation = candidate_stutter_relation(
+                    &candidate_enables(source_candidates),
+                    &candidate_enables(target_candidates),
+                    classes,
+                );
             }
             Taken::Protocol(transitions) => {
                 let protocol = self

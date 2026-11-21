@@ -3,36 +3,39 @@
 //! liveness half over every concrete fair loop of a timed component.
 //!
 //! A fair component holds many loops, and the fair run of one of them says
-//! nothing of another (FR-899-AC-7). This is the explicit-state walk-summary
-//! search of the untimed subject, read over the zone product's vertices: a
-//! closed walk's summary holds its concrete fairness marks, which of the
-//! graph's acceptance sets (a divergence, so a loop of positive total
-//! delay, and a position) it meets, and the relation it induces on the
-//! hidden candidates. A closed walk that meets every acceptance set and is
-//! concretely fair, whose candidate relation has no fair cycle, refutes the
-//! refinement. Summaries are kept as an antichain under subsumption, so the
-//! search ends; the budget is charged as symbolic transitions, so a search
-//! that reaches it stops and never holds.
+//! nothing of another. This is the explicit-state walk-summary search of the
+//! untimed subject, read over the zone product's vertices: a closed walk's
+//! summary holds its concrete fairness marks, which of the graph's
+//! acceptance sets (a divergence, so a loop of positive total delay, and a
+//! position) it meets, and the relation it induces on the hidden candidates.
+//! A closed walk that meets every acceptance set and is concretely fair,
+//! whose candidate relation has no fair cycle, is a refuting loop candidate.
+//! Summaries are kept as an antichain under subsumption, so the search ends;
+//! its work is charged as symbolic transitions, so a search that reaches the
+//! budget stops and never holds.
+//!
+//! Each vertex's candidates are those of
+//! [`Product::vertex_candidates`], the guard-aware reading the lasso check
+//! uses too, so the summary and the candidate check read one enabledness.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::FairnessConstraint;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{EdgeLabel, Identity, Vertex};
-use fsl_eval::simulation::model::ModelFinding;
-use fsl_eval::simulation::ExpansionLimit;
-use fsl_replay::{AbstractClass, ModelCheckLimit, ReachedLimit, Taken, Undetermined};
+use fsl_replay::{AbstractClass, TemporalCounterexample};
 
-use super::super::{Product, TimedRefinementStop, TimedRefinementUndecided};
 use super::{Decided, FairScope, Live};
 use crate::model_check::fair_summary::{
-    compose_candidate_relations, compose_fair_labels, concrete_label_is_fair,
-    idempotent_has_fair_candidate, insert_relation_label, insert_walk_summary, neutral_label,
-    CandidateRelation, FairLabel, FairMark, WalkSummary,
+    candidate_steps_relation, candidate_stutter_relation, compose_candidate_relations,
+    compose_fair_labels, concrete_label_is_fair, idempotent_has_fair_candidate,
+    insert_relation_label, insert_walk_summary, neutral_label, CandidateEnables, CandidateRelation,
+    FairLabel, FairMark, WalkSummary,
 };
 use crate::model_check::fair_walk::FairModel;
+use crate::zone_check::refine::Product;
 use crate::zone_check::search::{Halt, Run, ZoneCheckRefusal};
+use fsl_replay::Taken;
 
 /// A fair component as the search reads it.
 pub(super) struct ComponentView<'a> {
@@ -44,65 +47,63 @@ pub(super) struct ComponentView<'a> {
     pub(super) removed: &'a BTreeSet<Identity>,
 }
 
-/// A closed walk the abstract subject has no fair run along: the vertex it
-/// starts and ends at and its arcs.
-pub(super) struct UnfairLoop {
-    pub(super) entry: usize,
-    pub(super) cycle: Vec<usize>,
+/// What the search decided for one component.
+pub(super) enum Refuted {
+    /// A closed walk with no fair candidate run, concretised.
+    By(TemporalCounterexample),
+    /// Such walks exist and none concretises.
+    NotConcretised,
+    /// Every concrete fair loop has a fair candidate run.
+    Not,
+    /// The half ends with this outcome.
+    Ends(Decided),
 }
 
-/// One hidden valuation of a refinement position and the abstract
-/// transitions enabled from it.
-struct Candidate {
-    key: Vec<u8>,
-    enabled: Vec<ModelTransition>,
-}
+/// One hidden valuation of a vertex's position and the abstract transitions
+/// enabled from it.
+type Candidates = Vec<(Vec<u8>, Vec<ModelTransition>)>;
 
 impl Product<'_, '_> {
-    /// The first closed walk of `component` that is concretely fair, meets
-    /// every acceptance set and has no fair candidate run, or `None` when
-    /// every such walk has one.
+    /// Decide `component` over every closed walk that is concretely fair and
+    /// meets every acceptance set: a walk whose candidate relation has no
+    /// fair cycle is refuting when its lasso concretises (FR-241), and the
+    /// search goes on past one that does not. The search ends with the first
+    /// that does, or with every walk examined.
     ///
     /// # Errors
     ///
     /// The run's budgets and cancellation, as a stop, and a fault when the
-    /// product disagrees with the candidate check of the walk found.
-    pub(super) fn unfair_candidate_loop(
+    /// summary and the candidate check of a walk disagree.
+    pub(super) fn refute_hidden_component(
         &self,
         run: &mut Run<'_, '_, '_>,
-        live: &Live,
+        live: &mut Live,
         component: &ComponentView<'_>,
         classes: &[AbstractClass],
         fairness: &[FairnessConstraint],
-    ) -> Result<Result<Option<UnfairLoop>, Decided>, Halt> {
-        let mut candidates = BTreeMap::new();
+    ) -> Result<Refuted, Halt> {
+        let mut candidates: BTreeMap<usize, Candidates> = BTreeMap::new();
         for vertex in component.members {
-            let q = live
-                .nodes
-                .get(vertex.index())
-                .ok_or(ZoneCheckRefusal::Fault("component-vertex"))?
-                .q;
-            if let std::collections::btree_map::Entry::Vacant(slot) = candidates.entry(q) {
-                match self.candidates_at(run, q)? {
-                    Ok(here) => {
-                        slot.insert(here);
-                    }
-                    Err(ends) => return Ok(Err(ends)),
+            match self.vertex_candidates(run, live, vertex.index())? {
+                Ok(here) => {
+                    candidates.insert(vertex.index(), here);
                 }
+                Err(ends) => return Ok(Refuted::Ends(ends)),
             }
         }
         let graph = &component.model.graph;
         let constraints = &component.model.constraints;
         let acceptance = graph.acceptance_sets();
+        let through_all = FairScope::Through(fairness.len().saturating_sub(1));
         let mut relations: BTreeMap<usize, CandidateRelation> = BTreeMap::new();
+        let mut not_concretised = false;
         for &start in component.members {
             run.poll()?;
-            let start_candidates = candidates_of(live, &candidates, start.index())?;
             let mut identity = CandidateRelation::new();
-            for candidate in start_candidates {
+            for (key, _) in vertex_of(&candidates, start.index())? {
                 insert_relation_label(
                     &mut identity,
-                    (candidate.key.clone(), candidate.key.clone()),
+                    (key.clone(), key.clone()),
                     neutral_label(classes.len()),
                 );
             }
@@ -137,8 +138,8 @@ impl Product<'_, '_> {
                             .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
                         let relation = arc_relation(
                             arc.taken.as_ref(),
-                            candidates_of(live, &candidates, arc.from)?,
-                            candidates_of(live, &candidates, arc.to)?,
+                            &enables(vertex_of(&candidates, arc.from)?),
+                            &enables(vertex_of(&candidates, arc.to)?),
                             classes,
                         )?;
                         relations.insert(arc_index, relation);
@@ -180,25 +181,37 @@ impl Product<'_, '_> {
                             && accepted.iter().all(|mark| mark.taken)
                         {
                             let idempotent = idempotent_power(run, &next.candidates)?;
-                            if !idempotent_has_fair_candidate(&idempotent, classes, fairness) {
-                                // The walk's own candidate graph agrees.
-                                let fair_run = self.candidate_loop_has_fair_run(
+                            let summary_fair =
+                                idempotent_has_fair_candidate(&idempotent, classes, fairness);
+                            // The walk's own candidate graph decides the same.
+                            let run_fair = match self.candidate_loop_has_fair_run(
+                                run,
+                                live,
+                                &next_path,
+                                through_all,
+                            )? {
+                                Ok(fair) => fair,
+                                Err(ends) => return Ok(Refuted::Ends(ends)),
+                            };
+                            if summary_fair != run_fair {
+                                return Err(ZoneCheckRefusal::Fault(
+                                    "candidate-summary-agrees-with-lasso-check",
+                                )
+                                .into());
+                            }
+                            if !summary_fair {
+                                match self.concretise_unfair_walk(
                                     run,
                                     live,
+                                    classes,
+                                    start.index(),
                                     &next_path,
-                                    FairScope::Through(fairness.len().saturating_sub(1)),
-                                )?;
-                                return match fair_run {
-                                    Ok(false) => Ok(Ok(Some(UnfairLoop {
-                                        entry: start.index(),
-                                        cycle: next_path,
-                                    }))),
-                                    Ok(true) => Err(ZoneCheckRefusal::Fault(
-                                        "candidate-summary-agrees-with-lasso-check",
-                                    )
-                                    .into()),
-                                    Err(ends) => Ok(Err(ends)),
-                                };
+                                )? {
+                                    Refuted::By(found) => return Ok(Refuted::By(found)),
+                                    Refuted::NotConcretised => not_concretised = true,
+                                    Refuted::Not => {}
+                                    ends @ Refuted::Ends(_) => return Ok(ends),
+                                }
                             }
                         }
                     }
@@ -208,93 +221,52 @@ impl Product<'_, '_> {
                 }
             }
         }
-        Ok(Ok(None))
+        Ok(if not_concretised {
+            Refuted::NotConcretised
+        } else {
+            Refuted::Not
+        })
     }
 
-    /// The hidden valuations of position `q` with the abstract transitions
-    /// enabled from each.
-    ///
-    /// This reads the untimed abstract state only, which is all the
-    /// liveness half admits: `check_timed_refinement` refuses it for a hidden
-    /// field under a timed abstract side. The seam for a provider of
-    /// per-candidate clock valuations and guard-split enabledness is the
-    /// prefill of `candidates` in `unfair_candidate_loop`, which the rest of
-    /// the search reads only through `candidates_of`, by vertex.
-    fn candidates_at(
+    /// The lasso of the closed walk `cycle` from `entry`, which no candidate
+    /// run satisfies `F_A` along, named by FR-899's rule, when it concretises.
+    fn concretise_unfair_walk(
         &self,
-        run: &Run<'_, '_, '_>,
-        q: usize,
-    ) -> Result<Result<Vec<Candidate>, Decided>, Halt> {
-        let mut here = Vec::new();
-        for state in &self.positions[q].abstract_states {
-            run.poll()?;
-            let (key, _) = self
-                .abstract_system
-                .state_key_of(state)
-                .map_err(|_| ZoneCheckRefusal::Fault("candidate-loop-state-key"))?;
-            let expansion = match self.abstract_system.expand_state(state) {
-                Ok(expansion) => expansion,
-                Err(stop) if stop.is_internal_failure() => {
-                    return Ok(Err(Decided::Fault {
-                        fault: InternalFault::new("refinement-liveness", "abstract-expansion"),
-                        stats: run.stats(),
-                    }));
-                }
-                Err(stop) => {
-                    let reached = match stop.limit {
-                        Some(ExpansionLimit::EvaluationMeter(counter)) => ReachedLimit {
-                            limit: ModelCheckLimit::EvaluationMeter { counter },
-                            value: fsl_replay::meter_bound(&self.abstract_system.meter(), counter),
-                        },
-                        Some(ExpansionLimit::MaxCandidates) | None => ReachedLimit {
-                            limit: ModelCheckLimit::MaxCandidates,
-                            value: self.abstract_system.max_candidates(),
-                        },
-                    };
-                    return Ok(Err(Decided::Stopped {
-                        cause: TimedRefinementStop::Step(reached),
-                        stats: run.stats(),
-                    }));
-                }
-            };
-            if expansion
-                .findings
-                .iter()
-                .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
-            {
-                return Ok(Err(Decided::Undecided {
-                    cause: TimedRefinementUndecided::Undetermined(Undetermined::UndecidedSuccessor),
-                    stats: run.stats(),
-                }));
-            }
-            here.push(Candidate {
-                key,
-                enabled: expansion
-                    .successors
-                    .into_iter()
-                    .map(|(transition, _)| transition)
-                    .collect(),
-            });
-        }
-        Ok(Ok(here))
+        run: &mut Run<'_, '_, '_>,
+        live: &mut Live,
+        classes: &[AbstractClass],
+        entry: usize,
+        cycle: &[usize],
+    ) -> Result<Refuted, Halt> {
+        let named = match self.first_unfair_constraint(run, live, cycle)? {
+            Ok(index) => index,
+            Err(ends) => return Ok(Refuted::Ends(ends)),
+        };
+        let class = classes
+            .first()
+            .ok_or(ZoneCheckRefusal::Fault("hidden-component-has-a-class"))?;
+        Ok(match self.lasso(run, live, class, named, entry, cycle)? {
+            Some(found) => Refuted::By(found),
+            None => Refuted::NotConcretised,
+        })
     }
 }
 
-/// The candidates of vertex `node`'s position.
-fn candidates_of<'a>(
-    live: &Live,
-    candidates: &'a BTreeMap<usize, Vec<Candidate>>,
+/// The candidates of vertex `node`.
+fn vertex_of(
+    candidates: &BTreeMap<usize, Candidates>,
     node: usize,
-) -> Result<&'a [Candidate], ZoneCheckRefusal> {
-    let q = live
-        .nodes
-        .get(node)
-        .ok_or(ZoneCheckRefusal::Fault("component-vertex"))?
-        .q;
+) -> Result<&Candidates, ZoneCheckRefusal> {
     candidates
-        .get(&q)
-        .map(Vec::as_slice)
+        .get(&node)
         .ok_or(ZoneCheckRefusal::Fault("component-candidates"))
+}
+
+fn enables(candidates: &Candidates) -> Vec<CandidateEnables<'_>> {
+    candidates
+        .iter()
+        .map(|(key, enabled)| (key.as_slice(), enabled.as_slice()))
+        .collect()
 }
 
 /// The pairs of source and target candidates an arc relates, with the fair
@@ -302,73 +274,32 @@ fn candidates_of<'a>(
 /// candidate.
 fn arc_relation(
     taken: Option<&Taken>,
-    source: &[Candidate],
-    target: &[Candidate],
+    source: &[CandidateEnables<'_>],
+    target: &[CandidateEnables<'_>],
     classes: &[AbstractClass],
 ) -> Result<CandidateRelation, ZoneCheckRefusal> {
-    let mark = |candidate: &Candidate, taken: &dyn Fn(&AbstractClass) -> bool| -> FairLabel {
-        classes
-            .iter()
-            .map(|class| {
-                let enabled = class.is_enabled_in(&candidate.enabled);
-                FairMark {
-                    taken: taken(class),
-                    enabled_somewhere: enabled,
-                    enabled_everywhere: enabled,
-                }
-            })
-            .collect()
-    };
-    let mut relation = CandidateRelation::new();
     match taken {
-        Some(Taken::CandidateSteps(rows)) => {
-            for row in rows {
-                let candidate = source
-                    .iter()
-                    .find(|candidate| candidate.key == row.pre_state)
-                    .ok_or(ZoneCheckRefusal::Fault("candidate-step-source"))?;
-                if !target
-                    .iter()
-                    .any(|candidate| candidate.key == row.post_state)
-                {
-                    return Err(ZoneCheckRefusal::Fault("candidate-step-target"));
-                }
-                let label = mark(candidate, &|class| {
-                    row.transition
-                        .as_ref()
-                        .is_some_and(|transition| class.covers(transition))
-                });
-                insert_relation_label(
-                    &mut relation,
-                    (row.pre_state.clone(), row.post_state.clone()),
-                    label,
-                );
-            }
-        }
-        Some(Taken::Stutter) | None => {
-            for candidate in source {
-                if target.iter().any(|held| held.key == candidate.key) {
-                    let label = mark(candidate, &|_| false);
-                    insert_relation_label(
-                        &mut relation,
-                        (candidate.key.clone(), candidate.key.clone()),
-                        label,
-                    );
-                }
-            }
-        }
-        Some(Taken::Abstract(_)) => {
-            return Err(ZoneCheckRefusal::Fault(
-                "hidden-model-edge-retains-candidate-steps",
-            ));
-        }
-        Some(Taken::Protocol(_) | Taken::ProtocolTraces(_)) => {
-            return Err(ZoneCheckRefusal::Fault(
-                "hidden-model-edge-is-not-a-protocol-edge",
-            ));
-        }
+        Some(Taken::CandidateSteps(rows)) => candidate_steps_relation(
+            rows.iter().map(|row| {
+                (
+                    row.pre_state.as_slice(),
+                    row.transition.as_ref(),
+                    row.post_state.as_slice(),
+                )
+            }),
+            source,
+            target,
+            classes,
+        )
+        .map_err(ZoneCheckRefusal::Fault),
+        Some(Taken::Stutter) | None => Ok(candidate_stutter_relation(source, target, classes)),
+        Some(Taken::Abstract(_)) => Err(ZoneCheckRefusal::Fault(
+            "hidden-model-edge-retains-candidate-steps",
+        )),
+        Some(Taken::Protocol(_) | Taken::ProtocolTraces(_)) => Err(ZoneCheckRefusal::Fault(
+            "hidden-model-edge-is-not-a-protocol-edge",
+        )),
     }
-    Ok(relation)
 }
 
 /// The least power of `relation` that is idempotent, charged and polled as

@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
+use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{Constraint, Strength};
 use fsl_replay::AbstractClass;
 
@@ -210,4 +211,75 @@ pub(crate) fn idempotent_has_fair_candidate_in(
                     .any(|label| candidate_label_is_fair(label, classes, fairness, scope))
             })
     })
+}
+
+/// A hidden candidate's state key and the abstract transitions it enables.
+pub(crate) type CandidateEnables<'a> = (&'a [u8], &'a [ModelTransition]);
+
+fn candidate_label(
+    enabled: &[ModelTransition],
+    classes: &[AbstractClass],
+    taken: impl Fn(&AbstractClass) -> bool,
+) -> FairLabel {
+    classes
+        .iter()
+        .map(|class| {
+            let is_enabled = class.is_enabled_in(enabled);
+            FairMark {
+                taken: taken(class),
+                enabled_somewhere: is_enabled,
+                enabled_everywhere: is_enabled,
+            }
+        })
+        .collect()
+}
+
+/// One candidate step row: the candidate before, the abstract transition
+/// taken (`None` for a stutter) and the candidate after.
+pub(crate) type CandidateRow<'a> = (&'a [u8], Option<&'a ModelTransition>, &'a [u8]);
+
+/// The relation one edge's candidate step rows induce between its source
+/// and target candidates, each pair with the fair label of its row. The
+/// error names the invariant a row broke.
+pub(crate) fn candidate_steps_relation<'a>(
+    rows: impl IntoIterator<Item = CandidateRow<'a>>,
+    source: &[CandidateEnables<'_>],
+    target: &[CandidateEnables<'_>],
+    classes: &[AbstractClass],
+) -> Result<CandidateRelation, &'static str> {
+    let mut relation = CandidateRelation::new();
+    for (pre, transition, post) in rows {
+        let (_, enabled) = source
+            .iter()
+            .find(|(key, _)| *key == pre)
+            .ok_or("candidate-step-source-is-retained")?;
+        if !target.iter().any(|(key, _)| *key == post) {
+            return Err("candidate-step-target-is-retained");
+        }
+        let label = candidate_label(enabled, classes, |class| {
+            transition.is_some_and(|transition| class.covers(transition))
+        });
+        insert_relation_label(&mut relation, (pre.to_vec(), post.to_vec()), label);
+    }
+    Ok(relation)
+}
+
+/// The relation a stutter, or a delay that takes no step, induces: each
+/// source candidate that the target retains stays, taking no class.
+pub(crate) fn candidate_stutter_relation(
+    source: &[CandidateEnables<'_>],
+    target: &[CandidateEnables<'_>],
+    classes: &[AbstractClass],
+) -> CandidateRelation {
+    let mut relation = CandidateRelation::new();
+    for (key, enabled) in source {
+        if target.iter().any(|(held, _)| held == key) {
+            insert_relation_label(
+                &mut relation,
+                (key.to_vec(), key.to_vec()),
+                candidate_label(enabled, classes, |_| false),
+            );
+        }
+    }
+    relation
 }
