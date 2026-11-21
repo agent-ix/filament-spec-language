@@ -65,6 +65,30 @@ fn refusal(package: &BarePackage<'_>, failure: BareSelectionFailure) -> CallFail
     }
 }
 
+fn clock_declarations(
+    package: &BarePackage<'_>,
+) -> Result<fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable, CallFailure>
+{
+    use fsl_semantics::model::observation::AdmissionFailure;
+    package
+        .clock_declaration_table()
+        .map_err(|failure| match failure {
+            AdmissionFailure::Fault(fault) => CallFailure::Fault(fault),
+            AdmissionFailure::Refused(record) => CallFailure::Admission(Box::new(
+                CallAdmissionFailure::Refused(filament_eval::CallAdmissionRecord {
+                    record: *record,
+                    locus: CallAdmissionLocus::Package,
+                }),
+            )),
+            AdmissionFailure::Incomplete(record) => CallFailure::Admission(Box::new(
+                CallAdmissionFailure::Incomplete(filament_eval::CallAdmissionRecord {
+                    record: *record,
+                    locus: CallAdmissionLocus::Package,
+                }),
+            )),
+        })
+}
+
 fn function_projection(
     package: &BarePackage<'_>,
     function: &QualifiedName,
@@ -222,6 +246,7 @@ pub fn evaluate_selected_protocol_slot(
         meter,
         &[],
     )
+    .with_clock_declarations(clock_declarations(package)?)
     .with_reference_origins(reference_origins)
     .run_protocol_frame(
         ReaderNode::root(&projection),
@@ -453,6 +478,7 @@ fn evaluate_state_clause(
             .collect();
     let (evaluation, trail) =
         Machine::with_world(World::Bytes(&world), current, pre, Some(&reads), meter, &[])
+            .with_clock_declarations(clock_declarations(package)?)
             .with_reference_origins(reference_origins)
             .with_trail(trail)
             .run_traced(
