@@ -536,8 +536,12 @@ fn fair_clause_readback_preserves_constraints_and_key_fairness() {
     let fairness = bare
         .temporal_clause_fairness_with_budget(&named.declaration, &mut budget)
         .expect("the admitted operation fairness projects");
-    assert!(budget.consumed().work > before.work);
-    assert!(budget.consumed().storage > before.storage);
+    let consumed = budget.consumed();
+    let (work, storage) = (
+        consumed.work - before.work,
+        consumed.storage - before.storage,
+    );
+    assert!(work > 0 && storage > 0);
     assert_eq!(fairness, source.clause().fairness());
     assert_eq!(
         fairness
@@ -567,6 +571,21 @@ fn fair_clause_readback_preserves_constraints_and_key_fairness() {
         .expect("a fair clause is no longer a Pending fairness form");
     assert_eq!(form.fairness, fairness);
     let world = bare.world().expect("owning world");
+    let mut bounded = form.clone();
+    bounded.profile = fsl_semantics::check::TemporalProfile::EventPositionFalseExtension;
+    assert!(
+        matches!(
+            fsl_semantics::check::CheckedTemporalClause::of_package_run_form(
+                bounded,
+                world.types(),
+                1_000_000
+            ),
+            Err(fsl_semantics::check::PackageClauseRefusal::Profile(
+                fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+            ))
+        ),
+        "read-back does not admit operation fairness under a bounded profile"
+    );
     let rebuilt = fsl_semantics::check::CheckedTemporalClause::of_package_form(
         form,
         world.types(),
@@ -585,9 +604,19 @@ fn fair_clause_readback_preserves_constraints_and_key_fairness() {
             .requirements_over(fsl_semantics::family::ClaimExtent::Bounded)
     );
     let paid = budget.consumed();
+    let mut exact = NativeJoinBudget::new(work, storage);
+    assert_eq!(
+        bare.temporal_clause_fairness_with_budget(&named.declaration, &mut exact)
+            .expect("the exact paid allowance"),
+        fairness
+    );
+    assert_eq!(exact.consumed().work, work);
+    assert_eq!(exact.consumed().storage, storage);
     for (work, storage, code) in [
         (0, 1_000_000, NativeRowErrorCode::WorkLimit),
         (1_000_000, 0, NativeRowErrorCode::StorageLimit),
+        (work - 1, 1_000_000, NativeRowErrorCode::WorkLimit),
+        (1_000_000, storage - 1, NativeRowErrorCode::StorageLimit),
     ] {
         let mut denied = NativeJoinBudget::new(work, storage);
         let Err(BareFairnessRefusal::Native(refusal)) =

@@ -119,6 +119,7 @@ trait FairnessWork {
     fn visit(&mut self) -> Result<(), Self::Error>;
     fn items(&mut self, count: usize) -> Result<(), Self::Error>;
     fn text(&mut self, value: &str) -> Result<(), Self::Error>;
+    fn node(&mut self, value: &CheckedNodeId) -> Result<(), Self::Error>;
     fn effective(&mut self, value: &EffectiveId) -> Result<(), Self::Error> {
         self.items(value.owner_chain().len())?;
         for original in value.owner_chain() {
@@ -142,6 +143,9 @@ impl FairnessWork for UnmeteredFairness {
     fn text(&mut self, _: &str) -> Result<(), Self::Error> {
         Ok(())
     }
+    fn node(&mut self, _: &CheckedNodeId) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 struct MeteredFairness<'a> {
@@ -159,6 +163,9 @@ impl FairnessWork for MeteredFairness<'_> {
     }
     fn text(&mut self, value: &str) -> Result<(), Self::Error> {
         Ok(native_row::text(self.budget, self.locus, value)?)
+    }
+    fn node(&mut self, value: &CheckedNodeId) -> Result<(), Self::Error> {
+        Ok(native_row::node(self.budget, self.locus, value)?)
     }
 }
 
@@ -226,6 +233,7 @@ impl<'p> BarePackage<'p> {
                 name,
             } = target
             else {
+                work.node(declaration)?;
                 return Err(BareClauseRefusal::Pending {
                     fact: "fairness-target",
                     node: declaration.clone(),

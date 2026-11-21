@@ -2709,8 +2709,8 @@ pub struct PackageClauseForm {
 /// package route does not read yet, never a clause built without it.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum PackageClauseRefusal {
-    /// The clause's profile reads timed intervals, which the package form
-    /// does not read yet.
+    /// The selected package execution form does not admit the clause's
+    /// profile, or the profile does not admit the supplied fairness.
     #[error("the package form does not read the {0:?} profile yet")]
     Profile(TemporalProfile),
     /// The formula's arena does not place each operator before its operands.
@@ -2914,6 +2914,9 @@ impl CheckedTemporalClause {
         position_limit: u64,
     ) -> Result<Self, PackageClauseRefusal> {
         let bounded = form.profile.is_bounded();
+        if bounded && !form.fairness.is_empty() {
+            return Err(PackageClauseRefusal::Profile(form.profile));
+        }
         let (formula, operators) = CheckedFormula::of_package_nodes(&form.formula)?;
         let horizon = bounded
             .then(|| package_horizon(&formula.nodes))
