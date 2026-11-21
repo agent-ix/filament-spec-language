@@ -563,6 +563,16 @@ All fixes/findings remain within the existing maximum TWO coder fix rounds. Roun
 | FND-004 | fixed | Removed AC6 tags from all three unrelated step-sum tests. The new classification test targets the actual default-length and maximize-final clauses, but its execution remains unverified; the original trace inflation is removed. |
 | FND-005 | fixed | FR1012AC3 is now bound to the converted decimal test containing the coefficient30/scale2 oracle and removed from the distinct 0.25 test. This fixes the trace/example mismatch, not runtime acceptance: the converted test currently fails under new code FND-005. |
 
+### Round 2 (final)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Syntax-only Float/Quantity forms no longer claim runtime AC3/AC5. Those runtime families remain required open QSL1978 work; unsupported is not completion. |
+| FND-002 | fixed | Real source arithmetic now observes preexisting cancellation even on literal/implicit paths, using the actual shared meter cause with zero charge. The final cancellation test passes Requested and Deadline, all typed/potential/offset/objective callbacks, global work_units0 Accounting0, and cancellation during actual potential construction with best plan retained and no certificate. |
+| FND-003 | fixed | Actual-source negative-cost closure rejects forged accumulated totals; initial potentials omitting/doubling offset reject under the expected Initial/Descent rules. Both negative forgery tests passed atb22; final zero-charge polling changes no noncancelled path or charge schedule. |
+| FND-004 | fixed | Removed all three false AC6 tags; actual SourcePlan default-length and maximize-final classification regression passes with expected objectives, lengths and certificate kinds. The whole-plan-dependent summand remains General. |
+| FND-005 | fixed | Local FR1012AC3 binds the existing converted coefficient30/scale2 oracle rather than the separate0.25 test. Converted root oracle now actually passes after the context fix. |
+
 ## Disposition round 1 data
 
 ```yaml
@@ -607,6 +617,235 @@ dispositions:
   reason: 'FR1012AC3 is now bound to the converted decimal test containing the coefficient30/scale2
     oracle and removed from the distinct 0.25 test. This fixes the trace/example mismatch,
     not runtime acceptance: the converted test currently fails under new code FND-005.'
+scope:
+- id: fsl-forms/tests/it/synthesis_verify_forms.rs::a_step_sum_retains_float_and_quantity_constant_forms
+  path: fsl-forms/tests/it/synthesis_verify_forms.rs
+  role: examined
+  excerpt: "\n/// Numeric families remain representable even when a planner must return\n\
+    /// an explicit unsupported result for their execution.\n#[trace(\"FSpec-FR-802-AC-3\"\
+    , \"FSpec-FR-802-AC-5\")]\n#[test]\nfn a_step_sum_retains_float_and_quantity_constant_forms()\
+    \ {\n    for (term, constant) in [\n        (\n            \"float64(bits: 0x3ff0000000000000)\"\
+    ,\n            \"float64(bits: 0x3ff0000000000000)\",\n        ),"
+- id: fsl-analyze/src/plan_source.rs::add_objective_values
+  path: fsl-analyze/src/plan_source.rs
+  role: examined
+  excerpt: "    fn add_objective_values(\n        &mut self,\n        left: &Rational,\n\
+    \        right: &Rational,\n    ) -> Result<Option<Rational>, RuleStop> {\n  \
+    \      match filament_exact::evaluate_rational_arithmetic(\n            filament_exact::RationalArithmetic::Add(left,\
+    \ right),\n            None,\n            &mut self.system.evaluation_meter(),\n\
+    \        ) {\n            Outcome::Completed(value) => Ok(Some(value)),\n    \
+    \        Outcome::Incomplete(incomplete) => {\n                Err(self.evaluation_stop(incomplete.limit_kind.as_str(),\
+    \ incomplete.limit))\n            }\n            Outcome::Undefined(_) | O"
+- id: fsl-analyze/src/plan_search/certificate.rs::step_total
+  path: fsl-analyze/src/plan_search/certificate.rs
+  role: examined
+  excerpt: "    states: &[ModelSimState],\n    steps: &[super::PlanStep],\n) -> Result<Option<Rational>,\
+    \ PlanStopCause> {\n    let mut sum = zero();\n    for index in 0..steps.len()\
+    \ {\n        let view = PlanView {\n            states: &states[..=index + 1],\n\
+    \            steps: &steps[..=index],\n        };\n        let Some(cost) = rules.step_cost(&view,\
+    \ index).map_err(super::stop_cause)? else {\n            return Ok(None);\n  \
+    \      };\n        let Some(total) = rules\n            .accumulate_step_cost(&view,\
+    \ &sum, &cost)\n            .map_err(super::stop_cause)?\n        else {\n   \
+    \         return Ok(None);\n        };"
+- id: tests/it/plan_export_surface.rs::a_step_sum_adds_its_offset_once_and_certifies_empty_plans
+  path: tests/it/plan_export_surface.rs
+  role: examined
+  excerpt: "/// The offset is charged once at every length, including the empty plan;\n\
+    /// replay and the independent potential checker must agree with search.\n#[test]\n\
+    #[trace(\"FSpec-FR-802-AC-1\", \"FSpec-FR-802-AC-6\")]\nfn a_step_sum_adds_its_offset_once_and_certifies_empty_plans()\
+    \ {\n    for (minimum, expected) in [(0, \"7\"), (1, \"9\"), (3, \"13\")] {\n\
+    \        let (exit, value) = plan(\n            &plan_unit(\n                \"\
+    Int[0, 3]\",\n                \"minimize Reach.steps.sum(s => 2) + 7\",\n    \
+    \            &format!(\"Reach.length >= {minimum}\"),\n            ),\n      \
+    \      json!({}),\n        );"
+- id: FR-1012-AC-3
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  role: examined
+  excerpt: 'A decimal per-step cost objective is written exactly in FSpec FR-181''s
+    typed `decimal` form (`{"type": "decimal", "coefficient": "30", "scale": "2"}`
+    for `0.30`) and certified with a `potential` certificate.'
+findings:
+- fnd: FND-001
+  severity: medium
+  confidence: high
+  method: gap-analysis
+  check: trace
+  artifact_id: fsl-forms/tests/it/synthesis_verify_forms.rs::a_step_sum_retains_float_and_quantity_constant_forms
+  related_ids:
+  - FSpec-FR-802-AC-3
+  - FSpec-FR-802-AC-5
+  path: fsl-forms/tests/it/synthesis_verify_forms.rs
+  lines: 243-253
+  excerpt: "\n/// Numeric families remain representable even when a planner must return\n\
+    /// an explicit unsupported result for their execution.\n#[trace(\"FSpec-FR-802-AC-3\"\
+    , \"FSpec-FR-802-AC-5\")]\n#[test]\nfn a_step_sum_retains_float_and_quantity_constant_forms()\
+    \ {\n    for (term, constant) in [\n        (\n            \"float64(bits: 0x3ff0000000000000)\"\
+    ,\n            \"float64(bits: 0x3ff0000000000000)\",\n        ),"
+  finding: '`a_step_sum_retains_float_and_quantity_constant_forms` checks only that
+    S2 keeps Float and Quantity constant syntax. It is tagged `FSpec-FR-802-AC-3`
+    (seconds-unit tie at 60 s) and `FSpec-FR-802-AC-5` (NaN exclusion and `totalOrder`
+    ranking). Both are runtime behaviours that `SourcePlan::new` still refuses as
+    unsupported, so the tags inflate coverage of two open ACs.'
+- fnd: FND-002
+  severity: medium
+  confidence: high
+  method: gap-analysis
+  check: coverage
+  artifact_id: fsl-analyze/src/plan_source.rs::add_objective_values
+  related_ids: []
+  path: fsl-analyze/src/plan_source.rs
+  lines: 1005-1020
+  excerpt: "    fn add_objective_values(\n        &mut self,\n        left: &Rational,\n\
+    \        right: &Rational,\n    ) -> Result<Option<Rational>, RuleStop> {\n  \
+    \      match filament_exact::evaluate_rational_arithmetic(\n            filament_exact::RationalArithmetic::Add(left,\
+    \ right),\n            None,\n            &mut self.system.evaluation_meter(),\n\
+    \        ) {\n            Outcome::Completed(value) => Ok(Some(value)),\n    \
+    \        Outcome::Incomplete(incomplete) => {\n                Err(self.evaluation_stop(incomplete.limit_kind.as_str(),\
+    \ incomplete.limit))\n            }\n            Outcome::Undefined(_) | O"
+  finding: 'No test in the delta drives a cancellation through the new objective arithmetic:
+    `add_objective_values`, `accumulate_step_cost`, `objective_offset` and the potential
+    build. Nothing shows that it reports `Cancelled` rather than an `accounting.*`
+    incomplete. The brief requires cancellation to be distinguished from named resource
+    stops, and the tests cover only the two `accounting` settings.'
+- fnd: FND-003
+  severity: medium
+  confidence: high
+  method: gap-analysis
+  check: coverage
+  artifact_id: fsl-analyze/src/plan_search/certificate.rs::step_total
+  related_ids: []
+  path: fsl-analyze/src/plan_search/certificate.rs
+  lines: 663-683
+  excerpt: "    states: &[ModelSimState],\n    steps: &[super::PlanStep],\n) -> Result<Option<Rational>,\
+    \ PlanStopCause> {\n    let mut sum = zero();\n    for index in 0..steps.len()\
+    \ {\n        let view = PlanView {\n            states: &states[..=index + 1],\n\
+    \            steps: &steps[..=index],\n        };\n        let Some(cost) = rules.step_cost(&view,\
+    \ index).map_err(super::stop_cause)? else {\n            return Ok(None);\n  \
+    \      };\n        let Some(total) = rules\n            .accumulate_step_cost(&view,\
+    \ &sum, &cost)\n            .map_err(super::stop_cause)?\n        else {\n   \
+    \         return Ok(None);\n        };"
+  finding: 'Checker independence is tested only on the happy path, where search and
+    checker agree. No fault-injection test shows `certificate::check` rejecting either
+    of two forgeries: a recorded `accumulated` that disagrees with the re-derived
+    prefix total, or a potential `initial` value that omits or doubles the offset.
+    The existing `PlanFault` seams (`ForgeEntryState`, `DropSuccessor`, `ParentCycle`)
+    do not reach the new `step_total`, offset or `initial` logic.'
+- fnd: FND-004
+  severity: low
+  confidence: high
+  method: gap-analysis
+  check: trace
+  artifact_id: tests/it/plan_export_surface.rs::a_step_sum_adds_its_offset_once_and_certifies_empty_plans
+  related_ids: []
+  path: tests/it/plan_export_surface.rs
+  lines: 356-369
+  excerpt: "/// The offset is charged once at every length, including the empty plan;\n\
+    /// replay and the independent potential checker must agree with search.\n#[test]\n\
+    #[trace(\"FSpec-FR-802-AC-1\", \"FSpec-FR-802-AC-6\")]\nfn a_step_sum_adds_its_offset_once_and_certifies_empty_plans()\
+    \ {\n    for (minimum, expected) in [(0, \"7\"), (1, \"9\"), (3, \"13\")] {\n\
+    \        let (exit, value) = plan(\n            &plan_unit(\n                \"\
+    Int[0, 3]\",\n                \"minimize Reach.steps.sum(s => 2) + 7\",\n    \
+    \            &format!(\"Reach.length >= {minimum}\"),\n            ),\n      \
+    \      json!({}),\n        );"
+  finding: '`FSpec-FR-802-AC-6` (`maximize Reach.final.value` is general with closure;
+    no objective minimizes `length`) is tagged on `a_step_sum_adds_its_offset_once_and_certifies_empty_plans`,
+    which asserts a `potential` certificate for a step sum, and on two other tests
+    that exercise neither clause.'
+- fnd: FND-005
+  severity: low
+  confidence: high
+  method: gap-analysis
+  check: trace
+  artifact_id: FR-1012-AC-3
+  related_ids:
+  - FSpec-FR-802-AC-1
+  - FSpec-FR-802-AC-7
+  path: spec/functional/FR-1012-search-plans-with-policies-costs-and-canonical-order.md
+  lines: 32-32
+  excerpt: 'A decimal per-step cost objective is written exactly in FSpec FR-181''s
+    typed `decimal` form (`{"type": "decimal", "coefficient": "30", "scale": "2"}`
+    for `0.30`) and certified with a `potential` certificate.'
+  finding: FR-1012-AC-3 states the typed decimal form with the example `coefficient
+    "30"` for `0.30`. Its only bound test, `a_decimal_step_cost_is_exact_and_certified`,
+    now asserts `coefficient "25"` (FR-802-AC-1's 0.25). The spec example and the
+    bound test's oracle disagree. The 0.30 case lives in `a_converted_decimal_step_sum_preserves_cost_and_adds_one_typed_offset`,
+    which is not tagged FR-1012-AC-3.
+bindings: []
+```
+
+## Final disposition round 2
+
+**PASS — scoped review complete; mandatory final compiler/window gate remains lead-owned and pending.**
+
+All36 primary tests now have valid passing evidence, with zero ignored in the supplied runs. Provenance is deliberately distributed: CST3/forms7 at14a10a490ee81653bf4eb76faad8099f74e52dc2; semantics11 and root10 atedcf26c8e16527fa8002493995ce4ecd20120497; analyze3 atb22f311b8409fb807530b86dbc8868756e1c16d7; final cancellation analyze1 and corrected root1 atcefd5366e1dda734c52b494308ddac673980a61b, final exact rerun exit0/2passed/0failed/0ignored. This is NOT a claim that36 ran at one final SHA. Historical failures remain recorded in earlier sections and are superseded only for the exact tests whose fixes and reruns are accounted for. Runtime evidence was supplied by the lead from the Titan service; this reviewer ran no runtime.
+
+Retention is grounded in inspected source/dependency changes: CST/forms/foundation source and manifests/pins are byte-identical from14a toedcf; Cargo only adds root dev base64. Edcf-to-b22 changes only two test fixtures, leaving src/Cargo/lock identical. B22-to-cefd adds a zero-charge cancellation-cause check against the actual shared evaluation meter before literal/implicit returns; with no cancellation it changes neither arithmetic result nor accounting charges. Three already-passed analyze tests do not cancel; the one cancellation test and changed root fixture were rerun and passed atcefd. Complete declared Decimal policy, all-literal ambiguity refusal, exact Rational1/4/3, named budget versus authored-domain outcomes, once-only offsets, negative/maximized closure, independent forgery rejection and cancellation/accounting assertions retain their intended oracles.
+
+Static custody/restack proof: aggregate7d4cc6 has exactly14a's content tree and sole parent e131. Independently reapplied the14a-minus-e131 binary netpatch against a673 using a temporary private index; computed tree8bb72cce2d59d8b1c36abebd9964dbb22d71b1af exactly equals rebased d6ae. No old wiring feature commits were replayed. Approved fixture corrections preserve Amount[0,3], initial0 and exact finite Inc relation0->1->2->3, disabledat3. Root declarations use actual authored type aliases and legal sequence literal syntax; item values and numeric/certificate oracles were preserved. No unrelated accepted-main re-audit or broad matrix rerun was performed.
+
+Both review methods PASS within the scoped lambda review; all11 findings have an explicit latest fixed outcome. This is the SAME FINAL disposition round2 of the existing review, with no third review/fix cycle. Previously closed findings were rechecked explicitly as requested by the dispatching lead, so this round records all11 rather than only the previously open four. Original finding text and prior outcomes remain immutable.
+
+The lead must commit these latest custody artifacts FIRST, then preserve only the owned lambda delta through the required true rebase onto CURRENT origin/main, verify resulting source/dependency/body preservation, and run cargo check --locked --all-targets for every actual touched crate plus fsl-analyze and filament-spec-language at the exact final custody head. The six owned packages are fsl-cst, fsl-forms, fsl-semantics, fsl-eval, fsl-analyze and filament-spec-language. Merge within10 minutes of that PASS with main unchanged; repeat the current-main/check step if main moved. Those mandatory compiler/window checks remain lead-owned and PENDING; production --lib checks are not substituted. No review-custody commit is required after that gate. Scope approval is complete subject to those premerge conditions and preservation of reviewed source.
+
+Float/Quantity objective runtime and native Float/Rational/Decimal result enumeration remain required OPEN QSL1978 work, with typed unsupported neither an acceptance pass nor a waiver. Later imported-locus/finite/inline/policy work remains in the authorized queue. This delta-only PASS is not a repository-wide assurance or full QSL1978 completion claim. Plan completion: not assessed. Native exact model identifier is unavailable and recorded metadata-unavailable. Tools: quire0.52.0(engine0.62.2), quoin0.36.8, spec-artifacts-process@v0.36.0. No source/branch edits, cargo/build/runtime, baseline campaign, merge or new ticket by this reviewer.
+
+## Final disposition round 2 data
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  reason: Syntax-only Float/Quantity forms no longer claim runtime AC3/AC5. Those
+    runtime families remain required open QSL1978 work; unsupported is not completion.
+  after_excerpt: '#[trace("FSpec-FR-802")]
+
+    #[test]
+
+    fn a_step_sum_retains_float_and_quantity_constant_forms() {'
+- fnd: FND-002
+  outcome: fixed
+  reason: Real source arithmetic now observes preexisting cancellation even on literal/implicit
+    paths, using the actual shared meter cause with zero charge. The final cancellation
+    test passes Requested and Deadline, all typed/potential/offset/objective callbacks,
+    global work_units0 Accounting0, and cancellation during actual potential construction
+    with best plan retained and no certificate.
+  after_excerpt: "            assert_eq!(outcome, Err(RuleStop::Cancelled(cause)),\
+    \ \"{operation}\");\n        }\n    }\n    let accounting_limits = ScalarLimits\
+    \ {\n        work_units: 0,\n        ..UNLIMITED\n    };\n    system.begin_plan_replay(accounting_limits);\n\
+    \    let mut rules = SourcePlan::new(\n        &world.package,\n        synthesis,\n\
+    \        &system,\n        vec![],\n        accounting_limits,\n    )\n    .unwrap();\n\
+    \    assert_eq!(\n        rules.add_objective_values(&integer(2), &integer(7)),\n\
+    \        Err(RuleStop::Accounting {\n            counter: \"work_units\","
+- fnd: FND-003
+  outcome: fixed
+  reason: Actual-source negative-cost closure rejects forged accumulated totals; initial
+    potentials omitting/doubling offset reject under the expected Initial/Descent
+    rules. Both negative forgery tests passed atb22; final zero-charge polling changes
+    no noncancelled path or charge schedule.
+  after_excerpt: "    for (forged, rule) in [\n        (-5, CertificateRule::Initial),\n\
+    \        (9, CertificateRule::Descent),\n    ] {\n        let mut rules = SourcePlan::new(\n\
+    \            &world.package,\n            &world.package.graph().syntheses()[0],"
+- fnd: FND-004
+  outcome: fixed
+  reason: Removed all three false AC6 tags; actual SourcePlan default-length and maximize-final
+    classification regression passes with expected objectives, lengths and certificate
+    kinds. The whole-plan-dependent summand remains General.
+  after_excerpt: "fn lambda_objective_classification_preserves_whole_plan_terms_and_default_length()\
+    \ {\n    use fsl_analyze::plan_source::SourcePlan;\n    for (objective, kind,\
+    \ expected, certificate, length) in [\n        (\"\", ObjectiveKind::StepSum,\
+    \ 1, CertificateKind::Potential, 1),\n        (\n            \"maximize Reach.final.number\"\
+    ,\n            ObjectiveKind::General,\n            3,\n            CertificateKind::Closure,\n\
+    \            3,\n        ),\n        (\n            \"maximize Reach.steps.sum(s\
+    \ => Reach.length)\",\n            ObjectiveKind::General,\n            9,\n \
+    \           CertificateKind::Closure,\n         "
+- fnd: FND-005
+  outcome: fixed
+  reason: Local FR1012AC3 binds the existing converted coefficient30/scale2 oracle
+    rather than the separate0.25 test. Converted root oracle now actually passes after
+    the context fix.
+  after_excerpt: "#[trace(\"FSpec-FR-802-AC-7\", \"FR-1012-AC-3\")]\nfn a_converted_decimal_step_sum_preserves_cost_and_adds_one_typed_offset()\
+    \ {\n    for (offset, expected) in [(\"\", \"30\"), (\" + 0.05\", \"35\")] {\n\
+    \        let unit = plan_unit(\n            \"Int[0, 3]\","
 scope:
 - id: fsl-forms/tests/it/synthesis_verify_forms.rs::a_step_sum_retains_float_and_quantity_constant_forms
   path: fsl-forms/tests/it/synthesis_verify_forms.rs

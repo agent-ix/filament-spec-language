@@ -572,6 +572,17 @@ All fixes/findings remain within the existing maximum TWO coder fix rounds. Roun
 | FND-005 | still-open | New round1 finding: required explicit Decimal conversion context is still discarded; repair and run the affected valid-context cases without weakening the ambiguity-negative oracles. |
 | FND-006 | still-open | New round1 finding: the unrelated collection success fixture has no explicit source collection context and fails before classification; repair the fixture while preserving its value/classification assertions. |
 
+### Round 2 (final)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Typed carried StepTotal values and sum_exact extend each source prefix without reevaluating its full sum. Search builds one prefix; checker independently derives one prefix total per entry outside successors. Uncancelled numeric/domain/accounting behavior remains intact. |
+| FND-002 | fixed | Refused exact certificate addition records an adapter fault and stops instead of becoming an undefined edge. Dynamic reachability of Refused is not claimed demonstrated. |
+| FND-003 | fixed | Inferred sum span and unresolved tally type use Option rather than sentinel span/provisional Integer. Retained forms7 pass is valid because source/dependency bytes are unchanged. |
+| FND-004 | fixed | The independently typed objective retains its own slot names and lowering uses the matching table. Current semantics11 pass and positive root oracles confirm the prior binder failure is resolved. |
+| FND-005 | fixed | Only direct Decimal literals and directly negated Decimal literals receive the complete declared conversion target policy; nonliteral operands retain independent source typing. Constructor and different-scale typed-source cases pass with all semantics11; converted and large-coefficient root cases pass. Rational fixture now uses explicit authored Cost binding with exact1/4/3 oracles; no Rational inference widening. |
+| FND-006 | fixed | The unrelated source now has authored Costs=Sequence<Integer>[2,2], legal sequence[1,2] syntax and declared SumTotal=Integer alias. Both explicit sum cases retain exact6/10, General and closure assertions; the final exact root rerun passes. |
+
 ## Disposition round 1 data
 
 ```yaml
@@ -628,6 +639,303 @@ dispositions:
   reason: 'New round1 finding: the unrelated collection success fixture has no explicit
     source collection context and fails before classification; repair the fixture
     while preserving its value/classification assertions.'
+scope:
+- id: fsl-analyze/src/plan_source.rs::accumulate_step_cost
+  path: fsl-analyze/src/plan_source.rs
+  role: examined
+  excerpt: "    fn accumulate_step_cost(\n        &mut self,\n        plan: &PlanView<'_>,\n\
+    \        _total: &Rational,\n        _cost: &Rational,\n    ) -> Result<Option<Rational>,\
+    \ RuleStop> {\n        let Some(body) = self.synthesis.objective() else {\n  \
+    \          return self.objective(plan);\n        };\n        let Some(value) =\
+    \ self.plan_value(plan, 0) else {\n            return Ok(None);\n        };\n\
+    \        // Reuse the evaluator's ordered, typed sum rather than adding the\n\
+    \        // Rational projection outside its decimal domain or meter.\n       \
+    \ Ok(\n            match self.evaluate_node(step_sum_node(body.root"
+- id: fsl-analyze/src/plan_source.rs::add_objective_values
+  path: fsl-analyze/src/plan_source.rs
+  role: examined
+  excerpt: "    fn add_objective_values(\n        &mut self,\n        left: &Rational,\n\
+    \        right: &Rational,\n    ) -> Result<Option<Rational>, RuleStop> {\n  \
+    \      match filament_exact::evaluate_rational_arithmetic(\n            filament_exact::RationalArithmetic::Add(left,\
+    \ right),\n            None,\n            &mut self.system.evaluation_meter(),\n\
+    \        ) {\n            Outcome::Completed(value) => Ok(Some(value)),\n    \
+    \        Outcome::Incomplete(incomplete) => {\n                Err(self.evaluation_stop(incomplete.limit_kind.as_str(),\
+    \ incomplete.limit))\n            }\n            Outcome::Undefined(_) | O"
+- id: fsl-forms/src/value.rs::Shape::StepSum
+  path: fsl-forms/src/value.rs
+  role: examined
+  excerpt: "            Self::StepSum(binder) => {\n                arity(2)?;\n \
+    \               ExprNode::Sum {\n                    result_type: None,\n    \
+    \                result_type_span: Span { start: 0, end: 0 },\n              \
+    \      binder,\n                    source: operands.next()?,\n              \
+    \      summand: operands.next()?,\n                }\n            }\n        \
+    \    Self::Population {\n                form,\n                binder,"
+- id: fsl-semantics/src/check/synthesis.rs::objective
+  path: fsl-semantics/src/check/synthesis.rs
+  role: examined
+  excerpt: "        let objective = if let Some(objective) = &form.objective {\n \
+    \           let (body, _) = check_expression(\n                scope,\n      \
+    \          signatures,\n                &objective.expression.expression,\n  \
+    \              &parameters,\n                None,\n                &objective_location,\n\
+    \            )\n            .map_err(|refusal| vec![refusal])?;"
+- id: fsl-semantics/src/check/check/typing.rs::ExprNode::Convert
+  path: fsl-semantics/src/check/check/typing.rs
+  role: examined
+  excerpt: "            ExprNode::Convert { target, operand } => {\n             \
+    \   let target = self.declared_target(target, &location)?;\n                let\
+    \ goal = Goal::Infer(expression.at(*operand), None, location.child(0));\n    \
+    \            return Ok(Self::unary(Unary::Convert(target), goal, location, frames));\n\
+    \            }"
+- id: tests/it/plan_export_surface.rs::a_nonconstant_suffix_on_an_explicit_sum_remains_general
+  path: tests/it/plan_export_surface.rs
+  role: examined
+  excerpt: '        ("minimize sum<Integer>(s in [1,2]: s) + 7", "10"),'
+- id: FSpec-FR-140::Decimal typing
+  path: spec/functional/type-model/FR-140-evaluate-exact-decimals.md
+  role: examined
+  excerpt: 'A `decimal(c,s)` literal takes exactly its unique
+
+    expected type: the other operand''s static type when that operand is not a
+
+    literal, a declared field, parameter, result or annotated type of its position,
+
+    a `convert` target, or the unique expected type of the enclosing decimal
+
+    operation, which that operation passes to its operands.'
+findings:
+- fnd: FND-001
+  severity: medium
+  confidence: medium
+  method: code-review
+  check: other
+  artifact_id: fsl-analyze/src/plan_source.rs::accumulate_step_cost
+  related_ids: []
+  path: fsl-analyze/src/plan_source.rs
+  lines: 983-1004
+  excerpt: "    fn accumulate_step_cost(\n        &mut self,\n        plan: &PlanView<'_>,\n\
+    \        _total: &Rational,\n        _cost: &Rational,\n    ) -> Result<Option<Rational>,\
+    \ RuleStop> {\n        let Some(body) = self.synthesis.objective() else {\n  \
+    \          return self.objective(plan);\n        };\n        let Some(value) =\
+    \ self.plan_value(plan, 0) else {\n            return Ok(None);\n        };\n\
+    \        // Reuse the evaluator's ordered, typed sum rather than adding the\n\
+    \        // Rational projection outside its decimal domain or meter.\n       \
+    \ Ok(\n            match self.evaluate_node(step_sum_node(body.root"
+  finding: '`SourcePlan::accumulate_step_cost` ignores its `total` and `cost` arguments
+    and re-evaluates the step sum over the whole prefix plan on every call. The search
+    calls it once per extension with the full prefix. The checker''s `step_total`
+    calls it once per prefix index, and does so for every derived successor of every
+    entry. Metered evaluation work is therefore O(depth) per search extension and
+    O(depth^2) per checker successor record, all charged to the one shared `evaluation_meter`.
+    Under a fixed `ScalarLimits` budget, a long-horizon plan search, or its certificate
+    check, stops `incomplete` where linear accumulation would complete. The trait
+    doc ("Add a step cost to its prefix total") also does not describe what the only
+    production impl does. `prefix_with` is computed twice per extension (`plan_search.rs:1091`,
+    `:1110`), and the checker clones extended prefixes even for `General` objectives.'
+- fnd: FND-002
+  severity: low
+  confidence: medium
+  method: code-review
+  check: other
+  artifact_id: fsl-analyze/src/plan_source.rs::add_objective_values
+  related_ids: []
+  path: fsl-analyze/src/plan_source.rs
+  lines: 1005-1020
+  excerpt: "    fn add_objective_values(\n        &mut self,\n        left: &Rational,\n\
+    \        right: &Rational,\n    ) -> Result<Option<Rational>, RuleStop> {\n  \
+    \      match filament_exact::evaluate_rational_arithmetic(\n            filament_exact::RationalArithmetic::Add(left,\
+    \ right),\n            None,\n            &mut self.system.evaluation_meter(),\n\
+    \        ) {\n            Outcome::Completed(value) => Ok(Some(value)),\n    \
+    \        Outcome::Incomplete(incomplete) => {\n                Err(self.evaluation_stop(incomplete.limit_kind.as_str(),\
+    \ incomplete.limit))\n            }\n            Outcome::Undefined(_) | O"
+  finding: '`SourcePlan::add_objective_values` maps `Outcome::Refused` to `Ok(None)`
+    (an undefined objective), whereas `evaluate_node` treats a `Refused` outcome as
+    an adapter fault (`self.fault` plus a `Cancelled` stop). A refused exact addition
+    while a potential is being built, or during the descent/initial checks, would
+    silently drop an edge or reject the certificate, instead of reporting the contract
+    violation the rest of the adapter reports.'
+- fnd: FND-003
+  severity: low
+  confidence: high
+  method: code-review
+  check: other
+  artifact_id: fsl-forms/src/value.rs::Shape::StepSum
+  related_ids: []
+  path: fsl-forms/src/value.rs
+  lines: 1193-1205
+  excerpt: "            Self::StepSum(binder) => {\n                arity(2)?;\n \
+    \               ExprNode::Sum {\n                    result_type: None,\n    \
+    \                result_type_span: Span { start: 0, end: 0 },\n              \
+    \      binder,\n                    source: operands.next()?,\n              \
+    \      summand: operands.next()?,\n                }\n            }\n        \
+    \    Self::Population {\n                form,\n                binder,"
+  finding: 'A step sum is encoded as `ExprNode::Sum { result_type: None, result_type_span:
+    Span { start: 0, end: 0 } }`, and `Typer::tally` seeds `ValueType::Integer` as
+    a placeholder before replacing it once the summand is typed. A sentinel span and
+    a placeholder type stand in for "absent" (rust-style API design: use `Option<T>`
+    for true absence, not a sentinel). An `Option<TypeForm>`-shaped field, or a distinct
+    step-sum node, would keep the meaningless span and placeholder type out of every
+    match site.'
+- fnd: FND-004
+  severity: high
+  confidence: high
+  method: code-review
+  check: code-bug
+  artifact_id: fsl-semantics/src/check/synthesis.rs::objective
+  related_ids: []
+  path: fsl-semantics/src/check/synthesis.rs
+  lines: 279-288
+  excerpt: "        let objective = if let Some(objective) = &form.objective {\n \
+    \           let (body, _) = check_expression(\n                scope,\n      \
+    \          signatures,\n                &objective.expression.expression,\n  \
+    \              &parameters,\n                None,\n                &objective_location,\n\
+    \            )\n            .map_err(|refusal| vec![refusal])?;"
+  finding: The new lambda objective introduces step/let binder slots, but synthesis
+    checking discards the objective Typer slot names (`let (body, _)`) and retains
+    only the independently checked satisfies slot names. Objective lowering then uses
+    that satisfies table for the objective body; binding an objective-only slot refuses
+    NodePreimage(EmptyBindingName). The two new positive semantics tests fail before
+    their numeric/type oracles. Preserve separate source binder metadata for each
+    checked expression and use the corresponding table at lowering; do not weaken
+    the fixtures or infer names from the satisfies body.
+- fnd: FND-005
+  severity: high
+  confidence: high
+  method: code-review
+  check: code-bug
+  artifact_id: fsl-semantics/src/check/check/typing.rs::ExprNode::Convert
+  related_ids:
+  - FSpec-FR-140
+  - FSpec-FR-802-AC-7
+  - FSpec-FR-039
+  path: fsl-semantics/src/check/check/typing.rs
+  lines: 2182-2185
+  excerpt: "            ExprNode::Convert { target, operand } => {\n             \
+    \   let target = self.declared_target(target, &location)?;\n                let\
+    \ goal = Goal::Infer(expression.at(*operand), None, location.child(0));\n    \
+    \            return Ok(Self::unary(Unary::Convert(target), goal, location, frames));\n\
+    \            }"
+  finding: 'Explicit Decimal conversion targets lose their authorized literal context:
+    ExprNode::Convert resolves the complete target and then always infers its operand
+    with no hint. FR-140 explicitly permits a convert target as the unique expected
+    Decimal type, and FR-802-AC-7 requires convert<Cost>(0.10), so rejecting these
+    literals as AmbiguousLiteral is an implementation defect. The positive complete-type
+    semantics test and converted/large-coefficient root tests fail before their type,
+    exact-value or accounting oracles. Propagate the authored target only where the
+    literal/source typing contract permits it; retain independent source typing for
+    actual conversions and the all-literal ambiguity refusals. The Rational root follows
+    the same no-hint route; preserve an explicit FR-039-authored rational source context
+    or justify propagation from its own contract, rather than applying the Decimal
+    rule indiscriminately.'
+- fnd: FND-006
+  severity: medium
+  confidence: high
+  method: code-review
+  check: test-intent
+  artifact_id: tests/it/plan_export_surface.rs::a_nonconstant_suffix_on_an_explicit_sum_remains_general
+  related_ids:
+  - FSpec-FR-145
+  path: tests/it/plan_export_surface.rs
+  lines: 565-574
+  excerpt: '        ("minimize sum<Integer>(s in [1,2]: s) + 7", "10"),'
+  finding: 'The new unrelated-source classification fixture expects success for sum<Integer>(s
+    in [1,2]: s) + 7, but [1,2] has no unique expected collection type: tally infers
+    its source without a hint and collection_type(None) refuses AmbiguousLiteral.
+    The written Integer is the sum result type and does not declare the source collection
+    kind/bound/type. This failing fixture never exercises the promised General classification
+    and value 10. Give the collection an explicit authored collection context while
+    preserving its non-steps source, once-only offset, exact value 10 and closure
+    oracle; do not infer its collection type from the objective or sum result.'
+bindings: []
+```
+
+## Final disposition round 2
+
+**PASS — scoped review complete; mandatory final compiler/window gate remains lead-owned and pending.**
+
+All36 primary tests now have valid passing evidence, with zero ignored in the supplied runs. Provenance is deliberately distributed: CST3/forms7 at14a10a490ee81653bf4eb76faad8099f74e52dc2; semantics11 and root10 atedcf26c8e16527fa8002493995ce4ecd20120497; analyze3 atb22f311b8409fb807530b86dbc8868756e1c16d7; final cancellation analyze1 and corrected root1 atcefd5366e1dda734c52b494308ddac673980a61b, final exact rerun exit0/2passed/0failed/0ignored. This is NOT a claim that36 ran at one final SHA. Historical failures remain recorded in earlier sections and are superseded only for the exact tests whose fixes and reruns are accounted for. Runtime evidence was supplied by the lead from the Titan service; this reviewer ran no runtime.
+
+Retention is grounded in inspected source/dependency changes: CST/forms/foundation source and manifests/pins are byte-identical from14a toedcf; Cargo only adds root dev base64. Edcf-to-b22 changes only two test fixtures, leaving src/Cargo/lock identical. B22-to-cefd adds a zero-charge cancellation-cause check against the actual shared evaluation meter before literal/implicit returns; with no cancellation it changes neither arithmetic result nor accounting charges. Three already-passed analyze tests do not cancel; the one cancellation test and changed root fixture were rerun and passed atcefd. Complete declared Decimal policy, all-literal ambiguity refusal, exact Rational1/4/3, named budget versus authored-domain outcomes, once-only offsets, negative/maximized closure, independent forgery rejection and cancellation/accounting assertions retain their intended oracles.
+
+Static custody/restack proof: aggregate7d4cc6 has exactly14a's content tree and sole parent e131. Independently reapplied the14a-minus-e131 binary netpatch against a673 using a temporary private index; computed tree8bb72cce2d59d8b1c36abebd9964dbb22d71b1af exactly equals rebased d6ae. No old wiring feature commits were replayed. Approved fixture corrections preserve Amount[0,3], initial0 and exact finite Inc relation0->1->2->3, disabledat3. Root declarations use actual authored type aliases and legal sequence literal syntax; item values and numeric/certificate oracles were preserved. No unrelated accepted-main re-audit or broad matrix rerun was performed.
+
+Both review methods PASS within the scoped lambda review; all11 findings have an explicit latest fixed outcome. This is the SAME FINAL disposition round2 of the existing review, with no third review/fix cycle. Previously closed findings were rechecked explicitly as requested by the dispatching lead, so this round records all11 rather than only the previously open four. Original finding text and prior outcomes remain immutable.
+
+The lead must commit these latest custody artifacts FIRST, then preserve only the owned lambda delta through the required true rebase onto CURRENT origin/main, verify resulting source/dependency/body preservation, and run cargo check --locked --all-targets for every actual touched crate plus fsl-analyze and filament-spec-language at the exact final custody head. The six owned packages are fsl-cst, fsl-forms, fsl-semantics, fsl-eval, fsl-analyze and filament-spec-language. Merge within10 minutes of that PASS with main unchanged; repeat the current-main/check step if main moved. Those mandatory compiler/window checks remain lead-owned and PENDING; production --lib checks are not substituted. No review-custody commit is required after that gate. Scope approval is complete subject to those premerge conditions and preservation of reviewed source.
+
+Float/Quantity objective runtime and native Float/Rational/Decimal result enumeration remain required OPEN QSL1978 work, with typed unsupported neither an acceptance pass nor a waiver. Later imported-locus/finite/inline/policy work remains in the authorized queue. This delta-only PASS is not a repository-wide assurance or full QSL1978 completion claim. Plan completion: not assessed. Native exact model identifier is unavailable and recorded metadata-unavailable. Tools: quire0.52.0(engine0.62.2), quoin0.36.8, spec-artifacts-process@v0.36.0. No source/branch edits, cargo/build/runtime, baseline campaign, merge or new ticket by this reviewer.
+
+## Final disposition round 2 data
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  reason: Typed carried StepTotal values and sum_exact extend each source prefix without
+    reevaluating its full sum. Search builds one prefix; checker independently derives
+    one prefix total per entry outside successors. Uncancelled numeric/domain/accounting
+    behavior remains intact.
+  after_excerpt: "        let added = collections::sum_exact(\n            &value_type,\n\
+    \            total.carried.clone(),\n            summand,\n            &mut self.system.evaluation_meter(),\n\
+    \        );\n        let retained = match added {\n            Some(Ok((value,\
+    \ _loss))) => {"
+- fnd: FND-002
+  outcome: fixed
+  reason: Refused exact certificate addition records an adapter fault and stops instead
+    of becoming an undefined edge. Dynamic reachability of Refused is not claimed
+    demonstrated.
+  after_excerpt: "            Outcome::Undefined(_) => Ok(None),\n            Outcome::Refused(_)\
+    \ => {\n                self.fault.get_or_insert_with(|| {\n                 \
+    \   \"a checked objective addition refused evaluation\".to_owned()\n         \
+    \       });\n                Err(RuleStop::Cancelled(filament_exact::CancelCause::Requested))\n\
+    \            }\n        }"
+- fnd: FND-003
+  outcome: fixed
+  reason: Inferred sum span and unresolved tally type use Option rather than sentinel
+    span/provisional Integer. Retained forms7 pass is valid because source/dependency
+    bytes are unchanged.
+  after_excerpt: "            Self::StepSum(binder) => {\n                arity(2)?;\n\
+    \                ExprNode::Sum {\n                    result_type: None,\n   \
+    \                 result_type_span: None,\n                    binder,\n     \
+    \               source: operands.next()?,\n                    summand: operands.next()?,\n\
+    \                }\n            }\n            Self::Population {"
+- fnd: FND-004
+  outcome: fixed
+  reason: The independently typed objective retains its own slot names and lowering
+    uses the matching table. Current semantics11 pass and positive root oracles confirm
+    the prior binder failure is resolved.
+  after_excerpt: "            (Some(objective), Some(body)) => {\n               \
+    \ let mut binders = Binders::new(\n                    &checked.objective_slot_names,\n\
+    \                    &[Binder {\n                        slot: 0,\n          \
+    \              parameter: candidate.clone().into(),\n                        semantic_type:\
+    \ candidate_type.into(),\n                    }],"
+- fnd: FND-005
+  outcome: fixed
+  reason: Only direct Decimal literals and directly negated Decimal literals receive
+    the complete declared conversion target policy; nonliteral operands retain independent
+    source typing. Constructor and different-scale typed-source cases pass with all
+    semantics11; converted and large-coefficient root cases pass. Rational fixture
+    now uses explicit authored Cost binding with exact1/4/3 oracles; no Rational inference
+    widening.
+  after_excerpt: "                let decimal_literal = match operand.node() {\n \
+    \                   ExprNode::DecimalValue { .. } => true,\n                 \
+    \   ExprNode::Negate(inner) => {\n                        matches!(operand.at(*inner).node(),\
+    \ ExprNode::DecimalValue { .. })\n                    }\n                    _\
+    \ => false,\n                };\n                let operand_hint = match &target\
+    \ {\n                    ValueType::Decimal(_) if decimal_literal => Some(Cow::Owned(target.clone())),\n\
+    \                    _ => None,\n                };\n                let goal\
+    \ = Goal::Infer(operand, operand_hint, locati"
+- fnd: FND-006
+  outcome: fixed
+  reason: The unrelated source now has authored Costs=Sequence<Integer>[2,2], legal
+    sequence[1,2] syntax and declared SumTotal=Integer alias. Both explicit sum cases
+    retain exact6/10, General and closure assertions; the final exact root rerun passes.
+  after_excerpt: "            \"minimize let costs: Costs = sequence[1,2] in sum<SumTotal>(s\
+    \ in costs: s) + 7\",\n            \"10\",\n        ),\n    ] {\n        let (exit,\
+    \ value) = plan(\n            &plan_unit(\"Int[0, 3]\", objective, \"Reach.length\
+    \ >= 2\").replace(\n                \"type Lengths\",\n                \"type\
+    \ SumTotal = Integer;\\ntype Costs = Sequence<Integer>[2,2];\\ntype Lengths\"\
+    ,\n            ),\n            json!({}),\n        );\n        let outcome = &value[\"\
+    synthesis\"];"
 scope:
 - id: fsl-analyze/src/plan_source.rs::accumulate_step_cost
   path: fsl-analyze/src/plan_source.rs
