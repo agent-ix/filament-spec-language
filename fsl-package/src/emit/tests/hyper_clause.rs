@@ -768,6 +768,7 @@ struct Built {
     emission: Emission,
     wire: Value,
     documents: Vec<Vec<u8>>,
+    types: TypeEnvironment,
 }
 
 fn build(profile: &str, aliases: &[&str], declarations: &str) -> Built {
@@ -820,6 +821,7 @@ fn build(profile: &str, aliases: &[&str], declarations: &str) -> Built {
             }),
     );
     let clauses = graph.hyper_clauses().to_vec();
+    let types = graph.scope().types().clone();
     let emission = crate::emit::emit_checked_with_temporal_selections(
         &CheckedPackage::link(graph),
         &selections,
@@ -833,7 +835,213 @@ fn build(profile: &str, aliases: &[&str], declarations: &str) -> Built {
         emission,
         wire,
         documents,
+        types,
     }
+}
+
+const PACKAGE_EQUAL: &str = "hyper Equal using t over behaviours (c: V::ConfigVersion) \
+    forall trace a of V forall trace b of V \
+    { always holds(c.versionNumber @ a <= 3 and c.versionNumber @ b <= 3) }";
+
+fn supplied_hyper(
+    built: &Built,
+    admitted: &filament_contract_model::CheckedPackageV2,
+    run: impl FnOnce(crate::BarePackage<'_>),
+) {
+    let mut budget = filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000);
+    let identities = built
+        .emission
+        .identity_rows(admitted, &mut budget)
+        .expect("the producer identity rows admit");
+    let bare = crate::BarePackage::new(admitted)
+        .with_supply(
+            crate::BareSupply {
+                identities: &identities,
+                equality: None,
+            },
+            &mut budget,
+        )
+        .expect("identity supply joins");
+    run(bare);
+}
+
+/// FR-940's hyper-form contract: real emitted Equal facts rebuild without
+/// a source expression, preserving the two traces and their copy swap.
+#[trace("FR-940-AC-16")]
+#[test]
+fn a_universal_package_hyper_form_rebuilds_equal_from_emitted_facts() {
+    let built = build(INFINITE, &["V"], PACKAGE_EQUAL);
+    let admitted = admitted(&built);
+    let roots = hyper_roots(&admitted).expect("hyper roots");
+    let [root] = roots.as_slice() else {
+        panic!("one emitted Equal");
+    };
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("Equal package facts");
+        assert_eq!(form.name, "Equal");
+        assert_eq!(
+            form.profile,
+            fsl_semantics::check::TemporalProfile::InfiniteTrace
+        );
+        assert_eq!(form.aliases, ["V"]);
+        assert_eq!(
+            form.quantifiers
+                .iter()
+                .map(|q| q.variable.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+        assert_eq!(
+            form.atom_slots,
+            [
+                fsl_semantics::check::AtomSlot {
+                    parameter: 0,
+                    trace: 0
+                },
+                fsl_semantics::check::AtomSlot {
+                    parameter: 0,
+                    trace: 1
+                }
+            ]
+        );
+        assert_eq!(form.atoms.len(), 1);
+        assert_eq!(form.atoms[0].2, 2);
+        let rebuilt = fsl_semantics::check::CheckedHyperClause::of_package_form(
+            form,
+            &built.types,
+            1_000_000,
+        )
+        .expect("the admitted facts rebuild");
+        let source = &built.clauses[0];
+        assert_eq!(rebuilt.name(), source.name());
+        assert_eq!(rebuilt.span(), source.span());
+        assert_eq!(rebuilt.aliases(), source.aliases());
+        assert_eq!(rebuilt.parameters(), source.parameters());
+        assert_eq!(rebuilt.quantifiers(), source.quantifiers());
+        assert_eq!(
+            rebuilt.form(),
+            Some(&fsl_semantics::check::HyperForm::Universal)
+        );
+        assert_eq!(rebuilt.copy_group(), source.copy_group());
+        assert_eq!(
+            rebuilt.copy_group().classes,
+            [vec!["a".to_owned(), "b".to_owned()]]
+        );
+        assert_eq!(rebuilt.copy_group().generators[0].atoms, [0]);
+        assert_eq!(rebuilt.occurrence(), Some(root.occurrence()));
+        for (index, node) in rebuilt.body().nodes().iter().enumerate() {
+            if matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }) {
+                let atom = fsl_semantics::check::FormulaNodeId::from_arena_index(index);
+                assert!(rebuilt.condition(atom).is_none());
+                let (_, slots) = rebuilt.package_atom(atom).expect("package atom identity");
+                assert_eq!(slots, 2);
+            }
+        }
+    });
+}
+
+/// Names and levels alone do not belong to I2's hyper read; the package
+/// form refuses an unknown trace and duplicate atom-slot levels.
+#[trace("FR-940-AC-19")]
+#[test]
+fn a_package_hyper_form_refuses_unknown_traces_and_duplicate_slot_levels() {
+    for defect in ["unknown-trace", "duplicate-level"] {
+        let built = build(INFINITE, &["V"], PACKAGE_EQUAL);
+        let mut changed = built.wire.clone();
+        let nodes = changed["semantic_graph"]["nodes"]
+            .as_array_mut()
+            .expect("nodes");
+        let target = nodes
+            .iter_mut()
+            .find(|node| {
+                node["semantic_form"] == "parameter"
+                    && text(binding(&node["body"], "name")) == "slot_sc_sb"
+            })
+            .expect("b slot");
+        let field = if defect == "unknown-trace" {
+            "name"
+        } else {
+            "level"
+        };
+        let value = if defect == "unknown-trace" {
+            "slot_sc_sz"
+        } else {
+            "0"
+        };
+        target["body"]["members"]
+            .as_array_mut()
+            .expect("parameter members")
+            .iter_mut()
+            .find(|member| member["name"] == field)
+            .expect("slot member")["value"]["value"] = json!(value);
+        assert_eq!(
+            strict_verdict(&built, &changed),
+            None,
+            "strict reader admits {defect}"
+        );
+        let mut evidence = read_evidence(&built.emission);
+        for document in &built.documents {
+            evidence
+                .insert_domain_package_document(package_identity(document), document.clone())
+                .expect("model evidence");
+        }
+        let read = crate::checked_v2::read_checked_package_v2(
+            &jcs(&changed),
+            library(),
+            V2ReadLimits::fixture(),
+            &evidence,
+        )
+        .expect("strict FSL reader admits")
+        .into_value();
+        let admitted = read.admitted;
+        let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
+        supplied_hyper(&built, &admitted, |bare| {
+            let error = bare
+                .hyper_clause_form(root.occurrence())
+                .expect_err("malformed package hyper slot");
+            let crate::BareClauseRefusal::Selection(crate::bare_slot::BareSelectionFailure::Slot(
+                crate::protocol_selection::SlotSelectionFailure::MalformedNode(node),
+            )) = error
+            else {
+                panic!("typed malformed-node refusal: {error:?}");
+            };
+            assert_eq!(&node, root.occurrence().node());
+        });
+    }
+}
+
+/// A constructor rejects inconsistent atoms rather than granting a checked
+/// clause with a missing predicate or a foreign slot count.
+#[trace("FR-940-AC-16")]
+#[test]
+fn a_package_hyper_constructor_refuses_inconsistent_atom_facts() {
+    let built = build(INFINITE, &["V"], PACKAGE_EQUAL);
+    let admitted = admitted(&built);
+    let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("Equal facts");
+        for defect in 0..3 {
+            let mut changed = form.clone();
+            match defect {
+                0 => changed.atoms.clear(),
+                1 => changed.atoms[0].2 = 1,
+                2 => changed.atom_slots[0].trace = 2,
+                _ => unreachable!(),
+            }
+            assert!(matches!(
+                fsl_semantics::check::CheckedHyperClause::of_package_form(
+                    changed,
+                    &built.types,
+                    1_000_000
+                ),
+                Err(fsl_semantics::check::PackageClauseRefusal::Shape)
+            ));
+        }
+    });
 }
 
 /// FSpec FR-322-AC-453 / FR-640-AC-12: a hyperproperty's event-position

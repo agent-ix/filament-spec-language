@@ -557,6 +557,16 @@ pub fn temporal_subject<'p>(
     subject_in(&Graph::new(package), clause, FORMULA_VISITS)
 }
 
+/// The same bounded formula walk for a hyper clause's body wrapper.
+pub(super) fn formula_graph_of<'p>(
+    package: &'p CheckedPackageV2,
+    root: &CheckedNodeId,
+) -> Result<Vec<FormulaNodeUse<'p>>, ViewRefusal> {
+    let graph = Graph::new(package);
+    let at = graph.position(root).ok_or(ViewRefusal::UnresolvedClause)?;
+    formula_reads(&graph, at, FORMULA_VISITS).map(|(formula, _)| formula)
+}
+
 /// [`temporal_subject`] with an explicit formula-visit budget, so a test can
 /// read the [`ViewRefusal::FormulaTooLarge`] path without a package of a
 /// million expansions.
