@@ -396,7 +396,7 @@ fn equal_actual_recommendations_in_other_items_do_not_change_local_matching() {
     fixture.request["request"]["items"]
         .as_array_mut()
         .unwrap()
-        .push(second.clone());
+        .push(second);
     let both = fixture.run();
     assert_eq!(both.exit, 10, "{}", both.document);
     assert_eq!(both.document["items"].as_array().unwrap().len(), 2);
@@ -423,7 +423,7 @@ fn equal_actual_recommendations_in_other_items_do_not_change_local_matching() {
 fn parameter_order_and_replicated_actor_retain_their_typed_identity() {
     let mut model: Value = serde_json::from_slice(MODEL).unwrap();
     let mut params = Vec::new();
-    for name in ["first", "second"] {
+    for name in ["allowA", "allowB"] {
         let mut parameter = model["types"][1]["fields"][0].clone();
         let identity = format!("ix://test/counter/Counter/inc/{name}");
         parameter["identity"] = json!(identity);
@@ -434,7 +434,7 @@ fn parameter_order_and_replicated_actor_retain_their_typed_identity() {
         params.push(parameter);
     }
     model["types"][1]["operations"][0]["params"] = json!(params);
-    let source = SOURCE.replace("self.value < 2", "self.value < 2 and first and not second");
+    let source = SOURCE.replace("self.value < 2", "self.value < 2 and allowA and not allowB");
     let mut fixture = Fixture::with_input(&source, &serde_json::to_vec(&model).unwrap());
     fixture.valid();
     let mut reordered = fixture.receipt.clone();
@@ -575,10 +575,33 @@ fn checked_package_receipts_match_the_same_actual_recommendation() {
     assert_eq!(source.document["items"][0]["replay"]["reproduced"], true);
     let compile = json!({"format": "native-compile/1", "request": {
         "program": fixture.request["request"]["program"], "models": fixture.request["request"]["models"],
-        "handoff": {"directory": "handoff", "package_name": "receipt-proof", "native_join": {
+        "handoff": {"directory": "handoff", "package_name": "recommendation", "native_join": {
             "work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
-    fsl_command::command::compile(&fixture.case.json("compile.json", &compile))
+    let emitted = fsl_command::command::compile(&fixture.case.json("compile.json", &compile))
         .expect("public checked handoff");
+    let package: Value = serde_json::from_slice(&emitted).unwrap();
+    let protocol = package["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["semantic_form"] == "protocol_clause")
+        .unwrap();
+    assert_eq!(
+        protocol["node_id"]["package"], "recommendation",
+        "public Source namespace"
+    );
+    let source_map: Vec<_> = package["source_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["node_id"] == protocol["node_id"])
+        .collect();
+    eprintln!(
+        "Package baseline selector: {}; retained protocol: {}; source map: {}",
+        fixture.request["request"]["items"][0],
+        protocol,
+        json!(source_map)
+    );
     fixture.request["request"]
         .as_object_mut()
         .unwrap()
