@@ -429,7 +429,7 @@ fn a_rational_product_refuses_when_its_derived_range_does_not_fit() {
 
 /// Dividing a positive bounded rational by one preserves its normalized
 /// numerator and denominator bounds; neither upper bound can be narrowed.
-#[trace("FSpec-FR-146-AC-9", "FSpec-FR-149-AC-1")]
+#[trace("FSpec-FR-146-AC-9")]
 #[test]
 fn positive_rational_division_by_one_keeps_its_derived_bounds() {
     let declarations = "profile law = \"filament.value.integer-division.euclidean/v1\";\n\
