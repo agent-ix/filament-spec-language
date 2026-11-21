@@ -1757,8 +1757,12 @@ mod tests {
         )
         .expect("ordinary references remain enumerable");
         assert_eq!(ordinary.len(), 2);
-        assert_eq!(ordinary.nth(0), Some(Value::Reference(c1)));
-        assert_eq!(ordinary.nth(1), Some(Value::Reference(c2)));
+        for (index, expected) in [(0, c1), (1, c2)] {
+            let Some(Value::Reference(actual)) = ordinary.nth(index) else {
+                panic!("the ordinary reference domain retains both real owners");
+            };
+            assert_eq!(actual, expected);
+        }
         assert!(ordinary.nth(2).is_none());
     }
 
@@ -1821,8 +1825,8 @@ mod tests {
         ));
         for value_type in [
             clock.clone(),
-            ValueType::Option(Box::new(clock)),
-            ValueType::Option(Box::new(sequence.clone())),
+            ValueType::option(clock),
+            ValueType::option(sequence.clone()),
             sequence,
             ValueType::Composite(record),
             ValueType::Composite(tuple),

@@ -1387,8 +1387,41 @@ impl<'a> ModelSystem<'a> {
             clock_bits: bits,
             bounded: std::sync::OnceLock::new(),
         };
+        // The shared enumeration routes do not yet carry an authenticated
+        // population beside each clock-owner candidate. Refuse those actual
+        // data domains before reward or frame probing can enumerate them.
+        system.check_clock_reference_enumeration()?;
         system.check_rewards_with_cancel(cancel)?;
         Ok(system)
+    }
+
+    fn check_clock_reference_enumeration(&self) -> Result<(), AdmissionFailure> {
+        for field in self.fields.values().flatten() {
+            if !domain::clock_reference_paths(&field.value_type, self.types).is_empty() {
+                return Err(refused(
+                    Code::UnknownRequiredFeature,
+                    "unsupported-feature",
+                    &[
+                        ("reason", "clock-reference-enumeration".to_owned()),
+                        ("member", field.key.node.clone()),
+                    ],
+                ));
+            }
+        }
+        for (node, path, value_type) in self.generation_domains() {
+            if !domain::clock_reference_paths(&value_type, self.types).is_empty() {
+                return Err(refused(
+                    Code::UnknownRequiredFeature,
+                    "unsupported-feature",
+                    &[
+                        ("reason", "clock-reference-enumeration".to_owned()),
+                        ("member", format!("{node:?}")),
+                        ("domain_path", format!("{path:?}")),
+                    ],
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// The RFC 8785 key bytes and `filament.simulation.state-key/v1` state key of
@@ -1699,7 +1732,7 @@ impl<'a> ModelSystem<'a> {
         &self,
         value_type: &ValueType,
         objects: &[ObjectReference],
-        selectors: Option<&domain::ClockSelectorMaxima>,
+        _selectors: Option<&domain::ClockSelectorMaxima>,
     ) -> Option<domain::Domain> {
         let bits = match self
             .max_value_bits
@@ -1708,17 +1741,7 @@ impl<'a> ModelSystem<'a> {
             0 => None,
             bits => Some(bits),
         };
-        domain::Domain::of_bounded_with_clock_places(
-            value_type,
-            objects,
-            self.types,
-            &self.record_orders,
-            bits,
-            domain::ClockDomains {
-                models: self.input.timed_models,
-                maxima: selectors,
-            },
-        )
+        domain::Domain::of_bounded(value_type, objects, self.types, &self.record_orders, bits)
     }
 
     pub(super) fn reset_value_bound_cuts(&self) {
