@@ -28,3 +28,10 @@ Ticket: QSL-2639. Manual criterion-to-test check of the criteria this PR touches
 ## Verdict
 
 CONDITIONAL — the code meets FR-450's enabledness bullet for linear coupling; FND-001 is a spec gap that should be filed or closed with an AC (the PR body already notes it); FND-002 stays tracked by the open QSL-2639.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | The wrong trace is removed in fe4ba64cbe (the three coupled replay tests no longer claim FR-750-AC-12/TC-3037; the joint.rs unit tests are untagged); the missing FR-450 AC for coupled resets is a spec gap stated in the PR body and left to QSL-2639, which stays open |
+| FND-002 | deferred | Non-linear coupling still settles NotExact via ExactGap::CoupledReset; remaining work on QSL-2639, which stays open after this partial slice |

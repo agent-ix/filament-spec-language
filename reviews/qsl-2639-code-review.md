@@ -32,3 +32,11 @@ Tests: filtered `coupled_free hybrid_replay::` run at head (with the two brief s
 ## Verdict
 
 CONDITIONAL — the elimination is sound and exact for linearly coupled free variables (strict/non-strict pairing, exact sign reads at algebraic instants, zero coefficients, one-sided bounds, empty joint solutions, no regression for uncoupled variables, non-linear coupling honestly `NotExact`). FND-001 should be closed in this PR with a strict point-enabledness test and a direct `Joint::exists` test; FND-002 and FND-003 are small fixes.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | fe4ba64cbe adds `coupled_free_variables_strict_target_is_read_strictly` (quantifier_tests.rs) and three `Joint::exists` unit tests in joint.rs (`a_zero_coefficient_leaves_its_constant_condition_to_decide`, `a_strict_bound_makes_the_pairing_strict`, `elimination_at_an_irrational_instant_is_exact`); reviewer re-ran M1-M8 in a throwaway worktree at fe4ba64cbe and each is killed (M1/M2/M7 by the strict tests, M3/M4/M6/M8 by the zero-coefficient test, M5 by four tests); focused run 97 passed |
+| FND-002 | fixed | `ExactGap::CoupledReset` doc and the TEMPORARY comment now say non-linear coupling only (hybrid_replay.rs:399-403, 531-535) |
+| FND-003 | fixed | every elimination sign read (divisor, coefficient, constant) goes through `Joint::sign`, which calls `ExactReal::sign_with` charging `meter.charge_by` (joint.rs:142-150) |
