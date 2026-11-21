@@ -154,3 +154,84 @@ Synthetic capability-row part suffixes locate verbatim fragments; they are not n
   "bindings": []
 }
 ```
+
+
+## Dispositions
+
+### Scope amendment 1
+
+**PASS / review clear** at `c4b68629b62303ed3aa805766ef6a1e14b88f813`. Original review and findings above are preserved verbatim. This pass adds the actual host-reported `the_evaluator_reads_the_clause_only_through_the_facts` failure to scope; it is not an assertion that the historical three unit-test passes exercised this new test. No original or new finding remains.
+
+Only `tests/it/bare_package.rs` changes after custody `32205d`: the existing tagged FR-532-AC-9 test now recursively visits directories, reads every regular file regardless of extension, sorts the complete source-path list, and reports path-specific failures. Unexpected entry kinds fail rather than being followed or skipped. No host-specific failing directory basename was provided or inferred. The original forbidden names, line-comment filtering, nonempty real-source assertion and LedgerBinding check remain.
+
+The temporary layout proves both forbidden types in a nested regular source and SourceIdentity in a non-.rs regular file are detected, with a literal expected violation list. Therefore skipping directories, filtering to .rs, or dropping either forbidden-name check makes this fixture fail. The actual production directory still has to return no violations; this repairs layout handling rather than exempting a source-policy violation.
+
+No Cargo or runtime test was run by this reviewer. The parent reports the three existing library unit tests passed on Titan at earlier custody `32205d`; those are contextual remote evidence only, not current-head root-test acceptance. The six exact root checks remain unexecuted at review time. Test requests belong to Titan under the newest lane instruction, and delivery remains held until #3354 lands. No integration, merge or new native behavior is authorized by this review.
+
+The specification and capability row are unchanged since the initial reviewed source. Their original method verdict stands; no new requirement wording, EARS trigger or spec artifact is introduced by this test-only scope addition.
+
+### Scope added in amendment 1
+
+```yaml
+{
+  "clean": true,
+  "scope": [
+    {
+      "id": "FR-532-AC-9",
+      "path": "spec/functional/FR-532-evaluate-temporal-evidence-from-the-checked-package-s-own-nodes.md",
+      "role": "examined",
+      "excerpt": "A search of `fsl-eval/src/temporal/evidence` for the symbols `CheckedTemporalClause::activation`, `::profile`, `::clock` and `SourceIdentity` finds that the evaluator and the three constructors reach the activation, the profile and the clock only through `ClauseFacts`: an inspection finds no read of `CheckedTemporalClause::activation`, `profile` or `clock` outside the cross-check, and `fsl_foundation::SourceIdentity` is no member of `LedgerBinding`."
+    },
+    {
+      "id": "recursive-regular-file-scan-part-1",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "    fn violations(directory: &std::path::Path) -> Vec<(std::path::PathBuf, &'static str)> {\n        let mut pending = vec![directory.to_owned()];\n        let mut sources = Vec::new();\n        while let Some(directory) = pending.pop() {\n            let mut entries: Vec<_> = std::fs::read_dir(&directory)\n                .unwrap_or_else(|error| panic!(\"{}: {error}\", directory.display()))\n                .map(|entry| {\n                    entry.unwrap_or_else(|error| panic!(\"{}: {error}\", directory.display()))\n                })\n                .collect();\n            entries.sort_by_key"
+    },
+    {
+      "id": "recursive-regular-file-scan-part-2",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "(std::fs::DirEntry::file_name);\n            for entry in entries {\n                let path = entry.path();\n                let kind = entry\n                    .file_type()\n                    .unwrap_or_else(|error| panic!(\"{}: {error}\", path.display()));\n                if kind.is_dir() {\n                    pending.push(path);\n                } else if kind.is_file() {\n                    sources.push(path);\n                } else {\n                    panic!(\"unexpected source entry kind: {}\", path.display());\n                }\n            }\n        }\n        sources.sort();\n   "
+    },
+    {
+      "id": "recursive-regular-file-scan-part-3",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "     assert!(!sources.is_empty(), \"{}: no sources\", directory.display());\n        let mut found = Vec::new();\n        for path in sources {\n            let text = std::fs::read_to_string(&path)\n                .unwrap_or_else(|error| panic!(\"{}: {error}\", path.display()));\n            let code = text\n                .lines()\n                .filter(|line| !line.trim_start().starts_with(\"//\"))\n                .collect::<Vec<_>>()\n                .join(\"\\n\");\n            for forbidden in [\"SourceIdentity\", \"CheckedTemporalClause\"] {\n                if code.contains(forbidden) {\n       "
+    },
+    {
+      "id": "recursive-regular-file-scan-part-4",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "             found.push((path.clone(), forbidden));\n                }\n            }\n        }\n        found\n    }\n"
+    },
+    {
+      "id": "adversarial-layout-fixture-part-1",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "\n    // Module subdirectories and every regular file retain the same forbidden\n    // type checks; neither directory nor extension filtering may hide a read.\n    let fixture = tempfile::tempdir().expect(\"source-layout fixture\");\n    let nested = fixture.path().join(\"nested\");\n    std::fs::create_dir(&nested).expect(\"nested module directory\");\n    let nested_source = nested.join(\"mod.rs\");\n    std::fs::write(\n        &nested_source,\n        \"pub struct SourceIdentity;\\npub struct CheckedTemporalClause;\\n\",\n    )\n    .expect(\"nested forbidden-type source\");\n    std::fs::write(fixture.p"
+    },
+    {
+      "id": "adversarial-layout-fixture-part-2",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "ath().join(\"mod.rs\"), \"mod nested;\\n\").expect(\"root source\");\n    let other_source = fixture.path().join(\"other.inc\");\n    std::fs::write(&other_source, \"pub struct SourceIdentity;\\n\")\n        .expect(\"a source without an rs extension\");\n    assert_eq!(\n        violations(fixture.path()),\n        vec![\n            (nested_source.clone(), \"SourceIdentity\"),\n            (nested_source, \"CheckedTemporalClause\"),\n            (other_source, \"SourceIdentity\"),\n        ]\n    );\n\n    let directory =\n        std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"fsl-eval/src/temporal/evidence"
+    },
+    {
+      "id": "adversarial-layout-fixture-part-3",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "\");\n    let forbidden = violations(&directory);\n    assert!(forbidden.is_empty(), \"{forbidden:?}\");\n"
+    },
+    {
+      "id": "real-evaluator-and-ledger-policy-part-1",
+      "path": "tests/it/bare_package.rs",
+      "role": "examined",
+      "excerpt": "    let ledger = read_source(\"fsl-eval/src/temporal/ledger.rs\");\n    let binding = ledger\n        .split(\"pub struct LedgerBinding\")\n        .nth(1)\n        .and_then(|rest| rest.split('}').next())\n        .expect(\"LedgerBinding\");\n    assert!(!binding.contains(\"SourceIdentity\"));\n}\n\n/// FR-531-AC-11 (TC-1331): FR-515 no longer calls the bytes-only evaluator\n/// out of scope, and FR-515, FR-516 and FR-520 each carry a \"Consumer entry\"\n/// section naming FR-531.\n#[trace(\"FR-531-AC-11\", \"TC-1331\")]\n"
+    }
+  ],
+  "findings": [],
+  "dispositions": []
+}
+```
