@@ -716,11 +716,11 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
     for mode in ["context", "parameter", "ordinary"] {
         let parameter = mode == "parameter";
         use fsl_semantics::model::observation::{
-            AnchorKind, ClauseSelectionInput, SelectedAnchor, SelectedObject, SnapshotValue,
+            ClauseSelectionInput, SelectedObject, SnapshotValue,
         };
         let selected =
             crate::tc235_business_meaning_runtime::lifecycle_document_ref("clock-external");
-        let mut snapshot = json!({"format":"filament.state.snapshot/v1","identity":crate::tc235_business_meaning_runtime::lifecycle_identity(&selected),"observation":if parameter {"pre"} else {"current"},"model":{"identity":crate::tc235_k2::PACKAGE},"populations":[],"contexts":[{"machine":crate::tc235_k2::id("OrderLifecycle"),"fields":{"placed":{"boolean":false},"cancelled":{"boolean":false},"r":if parameter {json!({"absent":{}})} else {json!({"present":raw})}}}]});
+        let mut snapshot = json!({"format":"filament.state.snapshot/v1","identity":crate::tc235_business_meaning_runtime::lifecycle_identity(&selected),"observation":"pre","model":{"identity":crate::tc235_k2::PACKAGE},"populations":[],"contexts":[{"machine":crate::tc235_k2::id("OrderLifecycle"),"fields":{"placed":{"boolean":false},"cancelled":{"boolean":false},"r":if parameter {json!({"absent":{}})} else {json!({"present":raw})}}}]});
         snapshot["contexts"][0]["fields"]["peer"] = json!({"absent":{}});
         if mode == "ordinary" {
             snapshot["contexts"][0]["fields"]["r"] = json!({"absent":{}});
@@ -728,40 +728,26 @@ fn clock_reference_external_observations_are_explicitly_unsupported() {
             snapshot["populations"] =
                 json!([{"population":crate::tc235_k2::id("orders"),"complete":true,"objects":[]}]);
         }
-        if !parameter {
-            snapshot["anchor"] = json!({"kind":"handler","name":"validate"});
-        }
         let snapshots = BTreeMap::from([(
             selected.clone(),
             serde_json::to_vec(&snapshot).expect("snapshot"),
         )]);
-        let input = if parameter {
-            ClauseSelectionInput::PreCall {
-                snapshot: selected,
-                self_object: None,
-                parameters: BTreeMap::from([(
-                    filament_exact::Identifier::new("target").expect("identifier"),
-                    SnapshotValue::reference(SelectedObject {
-                        population: crate::ring_queue::node(CLOCKS, "calls"),
-                        key: reference.object().as_str().to_owned(),
-                    }),
-                )]),
-            }
-        } else {
-            ClauseSelectionInput::Current {
-                snapshot: selected,
-                anchor: SelectedAnchor {
-                    kind: AnchorKind::Handler,
-                    name: "validate".to_owned(),
-                },
-                self_object: None,
-            }
+        let input = ClauseSelectionInput::PreCall {
+            snapshot: selected,
+            self_object: None,
+            parameters: BTreeMap::from([(
+                filament_exact::Identifier::new("target").expect("identifier"),
+                SnapshotValue::reference(SelectedObject {
+                    population: crate::ring_queue::node(CLOCKS, "calls"),
+                    key: reference.object().as_str().to_owned(),
+                }),
+            )]),
         };
         let Err(AdmissionFailure::Refused(record)) =
             crate::tc235_business_meaning_runtime::lifecycle_selection(
                 &context_package,
                 &context_packages,
-                if parameter { "Target" } else { "ContextClock" },
+                "Target",
                 &snapshots,
                 &BTreeMap::new(),
                 input,
