@@ -26,14 +26,14 @@ use super::identity::{
 };
 use super::memory::MemoryModel;
 use super::program::{Channel, Cursor, Message};
-use super::steps::{Gathered, Reader, jcs};
+use super::steps::{jcs, Gathered, Reader};
 use super::{
-    Bound, Entry, FifoKey, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem, QueueKey,
-    broken, undetermined,
+    broken, undetermined, Bound, Entry, FifoKey, Instance, ProtocolRefusal, ProtocolState,
+    ProtocolSystem, QueueKey,
 };
 use crate::simulation::expansion::ExpansionStop;
-use crate::simulation::model::encode::{Enc, value_enc};
-use crate::simulation::model::{ModelFinding, ModelSimState, Verdict, verdict};
+use crate::simulation::model::encode::{value_enc, Enc};
+use crate::simulation::model::{verdict, ModelFinding, ModelSimState, Verdict};
 
 /// How many entries of `queue` ahead of `position` have the bytes of the one
 /// at `position`.

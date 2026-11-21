@@ -67,30 +67,30 @@ use fsl_eval::automaton::{
     SafetyState, SafetyTranslation, StateId, SubjectKind,
 };
 use fsl_eval::model_subject::{
-    AtomStop, ModelLetters, ModelSubject, ProtocolSubject, refused_invariant,
+    refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
 use fsl_eval::simulation::protocol::{
-    Capacities, ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget,
-    ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory, activates_on_each, check_protocol_bounds,
-    live_instance_bound,
+    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities,
+    ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolRefusal,
+    ProtocolSystem, Sc, SubjectMemory,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
-    BOUND_POSITIONS, ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion,
-    ExpansionStop, NotSimulated, SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress,
-    ZeroProgressError,
+    ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated,
+    SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError,
+    BOUND_POSITIONS,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::model::observation::AdmissionFailure;
-use serde::{Serialize, Serializer, ser::SerializeStruct};
+use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::certificate::check::{
     admit, admit_read_identities, expansion_halt, finish, poll, stopped, widen, Budgets, Checker,
     Halt, Step,
 };
 use crate::certificate::recording::Recording;
-use crate::certificate::scc::{Component, ComponentCertificate, check_partition};
+use crate::certificate::scc::{check_partition, Component, ComponentCertificate};
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::identity::ClauseRootRefusal;
 use crate::model_check::item::{
@@ -238,9 +238,7 @@ pub enum ClosureRefusal {
     /// A refinement whose abstract side is a protocol clause: no abstract
     /// protocol step is decided yet (FR-148)
     /// (`unsupported_construct/not-yet-implemented`).
-    #[error(
-        "unsupported_construct/not-yet-implemented: a refinement over an abstract protocol subject is not decided yet"
-    )]
+    #[error("unsupported_construct/not-yet-implemented: a refinement over an abstract protocol subject is not decided yet")]
     ProtocolAbstractSide,
     /// An invariant of the subject broke.
     #[error("the closure check broke invariant {0:?}")]
@@ -434,9 +432,9 @@ fn check_protocol(
                 Sc,
                 loop_proof_target(request.item),
             )
-                .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances)
-                .with_cycle_keys(BTreeSet::new());
+            .map_err(ClosureRefusal::Protocol)?
+            .with_max_live_instances(live_instances)
+            .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -461,9 +459,9 @@ fn check_protocol(
                 tso,
                 loop_proof_target(request.item),
             )
-                .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances)
-                .with_cycle_keys(BTreeSet::new());
+            .map_err(ClosureRefusal::Protocol)?
+            .with_max_live_instances(live_instances)
+            .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -488,9 +486,9 @@ fn check_protocol(
                 ra,
                 loop_proof_target(request.item),
             )
-                .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances)
-                .with_cycle_keys(BTreeSet::new());
+            .map_err(ClosureRefusal::Protocol)?
+            .with_max_live_instances(live_instances)
+            .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -1895,7 +1893,7 @@ fn fault(invariant: &'static str) -> ClosureRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProtocolLoopProofKind, ProtocolLoopProofTarget, loop_proof_target};
+    use super::{loop_proof_target, ProtocolLoopProofKind, ProtocolLoopProofTarget};
     use crate::ModelCheckItem;
     use fsl_semantics::check::ProtocolNodeId;
 

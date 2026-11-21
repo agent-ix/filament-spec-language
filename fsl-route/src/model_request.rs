@@ -250,23 +250,22 @@ impl<S: Clone + Eq> ModelRequest<S> {
             for derived in derived_kinds(&reading) {
                 let kind = derived.item_kind();
                 let property_form = derived.property_form();
-                let claim = if let Some(repeat) = derived.repeat_node() {
-                    reading.protocol_loop_anchor(repeat)
-                } else {
-                    reading.anchor().ok()
+                let anchored = match derived.repeat_node() {
+                    Some(repeat) => reading
+                        .protocol_loop_anchor(repeat)
+                        .ok_or(crate::deadlock::NoAnchor::NoProtocolProfile),
+                    None => reading.anchor(),
                 };
-                let Some(claim) = claim else {
-                    let cause = if reading.protocol_models().is_some() {
-                        crate::deadlock::NoAnchor::NoProtocolProfile
-                    } else {
-                        crate::deadlock::NoAnchor::NoSelection
-                    };
+                let claim = match anchored {
+                    Ok(claim) => claim,
+                    Err(cause) => {
                         unanchored.push(UnanchoredItem {
                             subject: subject.clone(),
                             kind,
                             cause,
                         });
                         continue;
+                    }
                 };
                 let candidates = registry.restrict_to_reductions(
                     registry.restrict_to_timed(
@@ -406,9 +405,7 @@ impl Derived {
             | Self::ProtocolDeadlock(_)
             | Self::Race(_)
             | Self::LoopInvariant { .. }
-            | Self::LoopTermination { .. } => {
-                Some(PropertyForm::ReachableInvariant)
-            }
+            | Self::LoopTermination { .. } => Some(PropertyForm::ReachableInvariant),
             Self::TimeLock => None,
         }
     }
@@ -418,10 +415,7 @@ impl Derived {
             Self::LoopInvariant { repeat, .. } | Self::LoopTermination { repeat, .. } => {
                 Some(*repeat)
             }
-            Self::Deadlock
-            | Self::ProtocolDeadlock(_)
-            | Self::TimeLock
-            | Self::Race(_) => None,
+            Self::Deadlock | Self::ProtocolDeadlock(_) | Self::TimeLock | Self::Race(_) => None,
         }
     }
 }

@@ -241,9 +241,7 @@ pub fn settle_zone_check<S>(
                     | CounterexampleKind::Deadlock
                     | CounterexampleKind::Race(_)
                     | CounterexampleKind::UndefinedEvaluation(_)
-                    | CounterexampleKind::LoopProof(_) => {
-                        SettlementBasis::DecisiveCounterexample
-                    }
+                    | CounterexampleKind::LoopProof(_) => SettlementBasis::DecisiveCounterexample,
                 };
                 ZoneCheckRecord {
                     counterexample: Some(counterexample.as_ref().clone()),

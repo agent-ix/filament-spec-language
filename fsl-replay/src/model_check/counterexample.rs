@@ -312,11 +312,12 @@ impl<T: SubjectTransition> TemporalCounterexample<T> {
                 | CounterexampleKind::LoopProof(_),
                 None,
             )
-            | (CounterexampleKind::Race(_)
-            | CounterexampleKind::UndefinedEvaluation(_)
-            | CounterexampleKind::LoopProof(_), Some(_)) => {
-                u64::try_from(self.prefix.len()).ok()
-            }
+            | (
+                CounterexampleKind::Race(_)
+                | CounterexampleKind::UndefinedEvaluation(_)
+                | CounterexampleKind::LoopProof(_),
+                Some(_),
+            ) => u64::try_from(self.prefix.len()).ok(),
         }
     }
 }

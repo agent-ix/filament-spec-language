@@ -13,8 +13,8 @@
 
 use std::collections::BTreeMap;
 
-use fsl_foundation::MemoryModelName;
 use fsl_foundation::diagnostic::Code;
+use fsl_foundation::MemoryModelName;
 use fsl_semantics::check::{CheckedProtocol, ProtocolNodeId};
 
 /// One entry of a request's `memory` member (FSpec FR-331).
@@ -232,9 +232,7 @@ pub enum MemorySelectionRefusal {
         parallel: String,
     },
     /// The entry names a `parallel` nested in another.
-    #[error(
-        "invalid_runtime_input/invalid-value: memory entry {entry} names the nested parallel {parallel}"
-    )]
+    #[error("invalid_runtime_input/invalid-value: memory entry {entry} names the nested parallel {parallel}")]
     Nested {
         /// The entry's position in the member.
         entry: usize,
@@ -242,9 +240,7 @@ pub enum MemorySelectionRefusal {
         parallel: String,
     },
     /// Two entries name one `parallel`.
-    #[error(
-        "invalid_runtime_input/invalid-value: memory entries {first} and {second} both name {parallel}"
-    )]
+    #[error("invalid_runtime_input/invalid-value: memory entries {first} and {second} both name {parallel}")]
     Duplicate {
         /// The first entry's position.
         first: usize,

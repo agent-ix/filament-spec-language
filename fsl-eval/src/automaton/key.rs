@@ -44,8 +44,8 @@ use filament_semantic_value::fairness::PropertyForm;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::IdentityLimits;
 use fsl_semantics::check::{
-    Activation, CheckedTemporalClause, FormulaNode, FormulaNodeId, ProtocolNodeId,
-    TemporalProfile, UnaryTemporal,
+    Activation, CheckedTemporalClause, FormulaNode, FormulaNodeId, ProtocolNodeId, TemporalProfile,
+    UnaryTemporal,
 };
 use quire_canonical::{Limits, Node, NodeRef};
 
@@ -542,7 +542,10 @@ impl SafetyTranslation {
 
     /// The safety-state key translation for a protocol repeat's invariant.
     pub fn loop_invariant(repeat: ProtocolNodeId) -> Result<Self, KeyRefusal> {
-        Self::new(SafetyItem::LoopInvariant, &StateContext::loop_invariant(repeat))
+        Self::new(
+            SafetyItem::LoopInvariant,
+            &StateContext::loop_invariant(repeat),
+        )
     }
 
     /// The safety-state key translation for a protocol repeat's termination.

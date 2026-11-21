@@ -1137,9 +1137,7 @@ struct ProtocolRun<'r> {
 }
 
 impl ProtocolRun<'_> {
-    fn loop_proof_target(
-        &self,
-    ) -> Option<fsl_eval::simulation::protocol::ProtocolLoopProofTarget> {
+    fn loop_proof_target(&self) -> Option<fsl_eval::simulation::protocol::ProtocolLoopProofTarget> {
         use fsl_eval::simulation::protocol::{
             ProtocolLoopProofKind as Kind, ProtocolLoopProofTarget,
         };
@@ -1588,10 +1586,9 @@ fn ample_of<'r, 'a>(
             fairness,
             constraint,
         ),
-        Item::Deadlock
-        | Item::Race
-        | Item::LoopInvariant { .. }
-        | Item::LoopTermination { .. } => Por::new(system, None, &[], &[], constraint),
+        Item::Deadlock | Item::Race | Item::LoopInvariant { .. } | Item::LoopTermination { .. } => {
+            Por::new(system, None, &[], &[], constraint)
+        }
         // FR-951: the invariant's letter reads what its body reads, so
         // every step that writes a location it reads is visible.
         Item::Invariant { name } => Por::new(system, None, &[], &[], constraint).and_then(|por| {
@@ -2277,19 +2274,14 @@ impl<S: SubjectSystem> Run<'_, S> {
                     return Err(Finish::Violated(violation).into());
                 }
             }
-            if let Some(violation) = self
-                .system
-                .loop_proof_violation(&self.nodes[at].state)
-            {
+            if let Some(violation) = self.system.loop_proof_violation(&self.nodes[at].state) {
                 let target = match self.item {
-                    Item::LoopInvariant { repeat } => (
-                        repeat,
-                        fsl_replay::LoopProofObligation::Invariant,
-                    ),
-                    Item::LoopTermination { repeat } => (
-                        repeat,
-                        fsl_replay::LoopProofObligation::Termination,
-                    ),
+                    Item::LoopInvariant { repeat } => {
+                        (repeat, fsl_replay::LoopProofObligation::Invariant)
+                    }
+                    Item::LoopTermination { repeat } => {
+                        (repeat, fsl_replay::LoopProofObligation::Termination)
+                    }
                     _ => return Err(fault("loop-proof-failure-has-loop-proof-item").into()),
                 };
                 if *target.0 != violation.repeat {

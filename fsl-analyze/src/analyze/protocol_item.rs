@@ -199,8 +199,10 @@ pub(super) fn protocol_clause_item<'a>(
         }
         _ => None,
     };
-    if matches!(form.item_kind, ItemKind::LoopInvariant | ItemKind::LoopTermination)
-        && loop_repeat.is_none()
+    if matches!(
+        form.item_kind,
+        ItemKind::LoopInvariant | ItemKind::LoopTermination
+    ) && loop_repeat.is_none()
     {
         return None;
     }

@@ -50,9 +50,9 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::protocol::{
     check_protocol_bounds, live_instance_bound, protocol_constraints, Capacities, CapacityRefusal,
-    CarriedComponent, MemoryModel, ProtocolFairness, ProtocolFairnessError, ProtocolRefusal,
-    ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolSystem, ProtocolTransition,
-    ResolvedMemory, Sc, SendRecord, StepKind, SubjectMemory,
+    CarriedComponent, MemoryModel, ProtocolFairness, ProtocolFairnessError, ProtocolLoopProofKind,
+    ProtocolLoopProofTarget, ProtocolRefusal, ProtocolSystem, ProtocolTransition, ResolvedMemory,
+    Sc, SendRecord, StepKind, SubjectMemory,
 };
 use fsl_eval::simulation::{
     ConstraintValue, Cut, Expansion, ExpansionStop, NotSimulated, SubjectSystem, SubjectTransition,
@@ -1250,8 +1250,8 @@ pub fn replay_protocol_trace_with_temporal_selections(
                         Sc,
                         loop_proof_target,
                     )
-                        .map_err(built)?
-                        .with_max_live_instances(live_instances),
+                    .map_err(built)?
+                    .with_max_live_instances(live_instances),
                 )?,
                 SubjectMemory::Tso(tso) => replayed.settle(
                     &ProtocolSystem::new_with_loop_proof(
@@ -1260,8 +1260,8 @@ pub fn replay_protocol_trace_with_temporal_selections(
                         tso,
                         loop_proof_target,
                     )
-                        .map_err(built)?
-                        .with_max_live_instances(live_instances),
+                    .map_err(built)?
+                    .with_max_live_instances(live_instances),
                 )?,
                 SubjectMemory::Ra(ra) => replayed.settle(
                     &ProtocolSystem::new_with_loop_proof(
@@ -1270,8 +1270,8 @@ pub fn replay_protocol_trace_with_temporal_selections(
                         ra,
                         loop_proof_target,
                     )
-                        .map_err(built)?
-                        .with_max_live_instances(live_instances),
+                    .map_err(built)?
+                    .with_max_live_instances(live_instances),
                 )?,
             };
             Ok((settlement, Vec::new()))
@@ -1415,12 +1415,13 @@ impl ProtocolReplay<'_> {
                 let Some(position) = positions.last() else {
                     return Err(fault("loop-proof-prefix-has-final-position"));
                 };
-                let reproduced = system
-                    .loop_proof_violation(&position.state)
-                    .is_some_and(|violation| {
-                        violation.repeat.0 == claimed.repeat
-                            && loop_proof_failure(violation.failure) == Some(claimed.failure)
-                    });
+                let reproduced =
+                    system
+                        .loop_proof_violation(&position.state)
+                        .is_some_and(|violation| {
+                            violation.repeat.0 == claimed.repeat
+                                && loop_proof_failure(violation.failure) == Some(claimed.failure)
+                        });
                 if reproduced {
                     ModelTraceSettlement::Reproduced {
                         value: ModelTraceValue::Truth(false),
@@ -1614,14 +1615,13 @@ fn resolve_item<'p, T: SubjectTransition>(
                 clause_node: envelope.clause_node().clone(),
             }));
         };
-        let valid_repeat = package
-            .graph()
-            .protocol(name)
-            .is_some_and(|protocol| {
-                protocol.slots.repeats.iter().any(|repeat| {
-                    repeat.node.0 == proof.repeat && repeat.loop_proof.is_some()
-                })
-            });
+        let valid_repeat = package.graph().protocol(name).is_some_and(|protocol| {
+            protocol
+                .slots
+                .repeats
+                .iter()
+                .any(|repeat| repeat.node.0 == proof.repeat && repeat.loop_proof.is_some())
+        });
         if !valid_repeat {
             return Err(identity_mismatch(
                 clause_node.clone(),

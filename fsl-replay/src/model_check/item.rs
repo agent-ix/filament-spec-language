@@ -26,9 +26,7 @@ use fsl_eval::automaton::{
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::NotSimulated;
-use fsl_semantics::check::{
-    Activation, CheckedStateClause, CheckedTemporalClause, ProtocolNodeId,
-};
+use fsl_semantics::check::{Activation, CheckedStateClause, CheckedTemporalClause, ProtocolNodeId};
 
 use crate::model_check::identity::{ClauseIdentity, ClauseRootRefusal};
 
@@ -289,24 +287,20 @@ impl ModelCheckItem<'_> {
                     ),
                 }])
             }
-            Self::LoopInvariant { repeat } if tp4.is_some() => {
-                Ok(vec![Instance {
-                    binding: None,
-                    translation: Translation::Safety(
-                        SafetyTranslation::loop_invariant(*repeat)
-                            .map_err(|_| ItemRefusal::LoopProofContext)?,
-                    ),
-                }])
-            }
-            Self::LoopTermination { repeat } if tp4.is_some() => {
-                Ok(vec![Instance {
-                    binding: None,
-                    translation: Translation::Safety(
-                        SafetyTranslation::loop_termination(*repeat)
-                            .map_err(|_| ItemRefusal::LoopProofContext)?,
-                    ),
-                }])
-            }
+            Self::LoopInvariant { repeat } if tp4.is_some() => Ok(vec![Instance {
+                binding: None,
+                translation: Translation::Safety(
+                    SafetyTranslation::loop_invariant(*repeat)
+                        .map_err(|_| ItemRefusal::LoopProofContext)?,
+                ),
+            }]),
+            Self::LoopTermination { repeat } if tp4.is_some() => Ok(vec![Instance {
+                binding: None,
+                translation: Translation::Safety(
+                    SafetyTranslation::loop_termination(*repeat)
+                        .map_err(|_| ItemRefusal::LoopProofContext)?,
+                ),
+            }]),
             Self::LoopInvariant { .. } | Self::LoopTermination { .. } => {
                 Err(ItemRefusal::LoopProofOverModel)
             }

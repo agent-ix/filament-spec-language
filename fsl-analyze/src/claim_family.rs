@@ -104,9 +104,7 @@ pub(crate) fn kind_family(item_kind: ItemKind) -> Option<DeclarationFamily> {
         | ItemKind::TimeLockFreedom
         | ItemKind::RaceFreedom
         | ItemKind::LoopInvariant
-        | ItemKind::LoopTermination => {
-            Some(DeclarationFamily::TemporalTrace)
-        }
+        | ItemKind::LoopTermination => Some(DeclarationFamily::TemporalTrace),
         ItemKind::Refinement => Some(DeclarationFamily::RelationClaim),
         ItemKind::Formula => None,
     }
