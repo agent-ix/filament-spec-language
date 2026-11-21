@@ -521,7 +521,8 @@ pub struct ValueInvariantObservations {
 /// Each tuple is `(reference, exact population node, value-relative path)`.
 /// The population is never inferred from a reference's present membership.
 /// Clock-reference data requires the actual declaration table and runtime
-/// identity byte limit; it does not add an object-population closure seed.
+/// identity byte limit. Its explicit owner population retains the same
+/// completeness and recursive closure obligations as ordinary reference seeds.
 pub fn admit_protocol_reference_seeds(
     types: &TypeEnvironment,
     observation: &Observation,
@@ -540,27 +541,17 @@ pub fn admit_protocol_reference_seeds(
             record.path = path.clone();
             return Err(refuse(record));
         };
-        if super::clock_reference::is_clock_type(reference.object_type()) {
-            admit_protocol_clock_seed(
-                types,
-                environment,
-                reference,
-                node,
-                provenance,
-                clock_context,
-            )
-            .map_err(|record| refuse(record.at(path.clone())))?;
-            continue;
-        }
-        let compatible = provenance.member_types().iter().any(|(member, universe)| {
-            reference.universe() == universe
-                && types.conforms(reference.object_type().clone(), member.clone())
-        });
-        if !compatible {
-            let mut record = admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
-                .with("population", provenance.declaration().node.clone());
-            record.path = path.clone();
-            return Err(refuse(record));
+        if !super::clock_reference::is_clock_type(reference.object_type()) {
+            let compatible = provenance.member_types().iter().any(|(member, universe)| {
+                reference.universe() == universe
+                    && types.conforms(reference.object_type().clone(), member.clone())
+            });
+            if !compatible {
+                let mut record = admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
+                    .with("population", provenance.declaration().node.clone());
+                record.path = path.clone();
+                return Err(refuse(record));
+            }
         }
         let identity = provenance.declaration().node.clone();
         if !required.iter().any(|(held, _)| *held == identity) {
@@ -598,12 +589,21 @@ pub fn admit_protocol_reference_seeds(
     }
 
     for (reference, node, path) in seeds {
-        if super::clock_reference::is_clock_type(reference.object_type()) {
-            continue;
-        }
         let Some(provenance) = environment.population_provenance(node) else {
             return Err(fault("validated-protocol-population-stays-admitted"));
         };
+        if super::clock_reference::is_clock_type(reference.object_type()) {
+            admit_protocol_clock_seed(
+                types,
+                environment,
+                reference,
+                node,
+                provenance,
+                clock_context,
+            )
+            .map_err(|record| refuse(record.at(path.clone())))?;
+            continue;
+        }
         let population = &provenance.declaration().node;
         let present = environment
             .population_members(population)
