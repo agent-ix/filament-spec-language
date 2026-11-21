@@ -10,19 +10,21 @@ relationships:
 
 ## Description
 
-Verify that an equality whose operand is an integer division application (the shape of codegen's `self.n mod self.aux = 0` clause) emits and is admitted by Contract IR's independent reader. Scope: FR-495-AC-24.
+Verify that an equality whose operand is an integer division application (the shape of codegen's `self.n mod self.aux = 0` clause) emits and is admitted by Contract IR's independent reader. Scope: FR-495-AC-24, FR-495-AC-26.
 
 ## Test Procedure
 
 1. Compile each source of FR-495-AC-24 through the public `compile_package` (and `compile_package_with_integer_division` for `div` and `rem`) with the `example/config-version` model selected.
 2. Read each package with `CheckedPackageV2::read`, supplying the package's required features and the model document as evidence.
 3. For each source, find the equality application, the position of its `mod`, `div` or `rem` operand, the builtin `Integer` node, and the equality decision.
+4. Compile, read and evaluate at `n = 4` the three equalities of FR-495-AC-26 between two division results.
 
 ## Expected Results
 
 - Step 1: every source compiles; none refuses `MissingEqualityIdentityContext`.
 - Step 2: every read admits.
 - Step 3: one equality decision per source; the division application's `semantic_type` is the builtin `Integer` node, and the decision at that operand's position has `source_type` equal to that node, for all eight sources.
+- Step 4: each compiles and is admitted; both operand positions' `source_type` are the builtin `Integer` node; `n mod 3 = n mod 2` is false and `n mod 3 != n mod 2` true at `n = 4`.
 
 Test: `fsl-replay/src/application/division_tests.rs`
 `an_equality_over_a_mod_application_emits_and_reads_back`, tagged `#[trace("TC-2873", "FR-495-AC-24")]`.

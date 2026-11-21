@@ -15,6 +15,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-497
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-501
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-820
+    type: references
 ---
 # FR-194: Evaluate window aggregates in monitors
 
@@ -153,6 +157,56 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
   `j` with `i − b <= j <= i − a` and `j >= 0`; under timestamped-event, the
   events whose time stamp `t_j` satisfies `t_i − b <= t_j <= t_i − a`. No
   window SHALL read a position after `i`.
+- **Closed ends.** Both ends of `past[a, b]` SHALL be inclusive under both
+  profiles: a position at exactly `i − b` or `i − a`, or an event stamped
+  exactly `t_i − b` or `t_i − a`, is in the window. A bound is the window's
+  last admitted distance, as FR-501 reads a temporal interval's endpoints.
+- **Same stamp.** Under timestamped-event, several events may share the
+  anchor's stamp `t_i` (FR-501 "Canonical order"). The window at `i` SHALL
+  hold only those of them at or before `i` in canonical order: an event of
+  stamp `t_i` that sorts after `i` is a later position, and "no position
+  after `i`" excludes it even though its stamp satisfies the window's
+  inequality. The window therefore grows by one event at each position of
+  one stamp, and the listed order of the observations does not change it.
+- **Windows that reach stamps not asserted complete.** Under
+  timestamped-event the trace may be open or progressed (FR-641, FR-502),
+  or asserted complete only through an earlier stamp. Then an observation
+  can still arrive at a stamp the window covers: FR-501's admissible
+  continuations add positions at stamps above `W`, and at stamps at most
+  `W` where completeness is not asserted through them. The aggregate over
+  the positions present so far is then not the window's value, because a
+  later event could still enter the window and move a count, a sum, a
+  fraction or a quantile either way. The evaluator SHALL give the aggregate
+  atom at `i` a possibility set (FSpec FR-160), as FR-501 "Verdicts" gives
+  every atom:
+  - when completeness is asserted through the window's latest stamp
+    `t_i − a`, the singleton of its comparison over the present positions,
+    or the `Undefined` or `Incomplete` result the rules below give;
+  - otherwise both possibilities, with reason `IncompleteInput`. A window
+    short of `min_count` values is then also two-valued, never
+    `InsufficientData`, since more values may arrive. An undefined filter,
+    value or predicate at a present position still makes the atom
+    `Undefined` as below, because no continuation removes a present
+    position, and `max_window_values` still stops the run as below.
+
+  A two-valued aggregate atom is never decisive on its own: FR-501's lifting
+  decides the activation that reads it, which is definite when the atom
+  lies outside the verdict's decision support and otherwise `Pending` with
+  its deadline while `W` is short, or `Indeterminate` with reason
+  `IncompleteInput` once `W` has passed it. An established
+  activation (FR-501 "Established window") reads only windows whose latest
+  stamp is at or below `t0 + Hf`, which completeness then covers, so every
+  aggregate it reads is definite. This rule is sound and incomplete: it
+  never reads a partial window as final, and it does not look for the cases
+  where every continuation would keep the comparison's value. A position
+  admitted inside a window whose observation holds no valuation of a field
+  the filter, the value expression or the `fraction` predicate reads makes
+  the atom `MissingValuation` (both possibilities, FR-501 "Verdicts"),
+  never `invalid-value` and never a value over the other positions. The
+  carried route (FR-820), which holds an open activation's window positions
+  by value, and a run over a progressed trace (FR-502) SHALL give each
+  aggregate atom the same possibility set as the whole-trace evaluation of
+  the same admitted input.
 - The evaluator SHALL gather the value at each window position where the
   filter holds, in exact arithmetic. `count` is the number of such
   positions; `sum`, `min` and `max` are over their values, and `sum`
@@ -224,6 +278,10 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
 | FR-194-AC-11 | With `model M = "acme/rpc"`, the package declaring base dimension `Time`, its root unit `s` and a unit `ms` of `Time` (`target` `s`, `scale` `1/1000`), and the unit declaring `dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;`, under event-position over event field `latency: Quantity<M::ms>` with values `5`, `1` and `4` of `M::ms` at positions 0 to 2, at position 2 the `sum`, `min`, `max` and `quantile 0.5` terms of `e.latency` over `past[0, 2]` check with value type `Quantity<M::ms>` over the package unit's node and evaluate to `10`, `1`, `5` and `4` of `M::ms`; `sum of e.latency over past[0, 2] <= 1 M::s` checks with its threshold converted to `1000` of `M::ms` and is `true`; `sum of e.latency where holds(e.latency > 9 M::ms) over past[0, 2] min_count 0 = 0 M::ms` is `true`; the thresholds `10 ms` and `10 s` of the source units each refuse `ill_typed`/`unit-mismatch` at the threshold (FSpec FR-414-AC-13). | Test (TC-629) |
 | FR-194-AC-12 | With `dimension Length; unit m : Length = rational(1, 1);` and `type Lc = Quantity<m, Int[-5, 5]>;`, under event-position over event field `d: Quantity<m>`, each of `sum`, `min`, `max` and `quantile 0.5` of `convert<Lc>(e.d)` over `past[0, 2]` with threshold `5 m` reports exactly one refusal, `ill_typed`/`type-mismatch` at `convert<Lc>(e.d)`, and with threshold `5 s` (beside `dimension Time; unit s : Time = rational(1, 1);`) that refusal then `ill_typed`/`unit-mismatch` at `5 s`; `sum of e.d over past[0, 2] <= convert<Lc>(5 m)` refuses `ill_typed`/`type-mismatch` at the threshold; `sum of convert<Quantity<m>>(convert<Lc>(e.d)) over past[0, 2] <= 5 m` checks, and over `d` values `2`, `-1` and `3` of `m` its sum at position 2 is `4 m` (FSpec FR-414-AC-14). | Test (TC-629) |
 | FR-194-AC-13 | Through `command::run`, a unit declaring `record Resp { latency: Quantity<ms>; }` and `temporal P using w over (r: Resp) clock "plant-ms" on origin { always[0, 300000] (quantile 0.95 of r.latency over past[0 ms, 300 s] <= 5 ms) }` under the timestamped-event profile (the operator interval a tick interval in the clock unit `ms`, FR-326-AC-6, and the aggregate window a duration), its role configured `{"kind": "timestamped_event", "timestamp_unit": "ms"}` (FR-640), over AC-1's 20 latencies stamped 0 to 19 ms as a closed `timestamped` trace complete through 300000 (FR-641), reports `violated`, exit 10; with `quantile 0.9` it reports `holds`, exit 0. The model-subject refusal `unsupported_construct`/`expression-form` of AC-7 has category `unsupported`, exit 21 (FR-330-AC-8). | Test (TC-2387) |
+| FR-194-AC-14 | Closed ends. Under timestamped-event over events stamped 0, 5000 and 10000 ms, at position 2 `count over past[5 s, 10 s]` is 2 (positions 0 and 1, both ends admitted), `count over past[5001 ms, 10 s]` is 1 (position 0), `count over past[0 ms, 4999 ms]` is 1 (position 2 itself) and `count over past[0 ms, 5 s]` is 2 (positions 1 and 2). Under event-position over five positions, `count over past[1, 3]` at position 4 reads positions 1, 2 and 3 and is 3. | Test (TC-629) |
+| FR-194-AC-15 | Same stamp. Under timestamped-event over three events all stamped 7 ms, with order keys 1, 2 and 3 of one order authority and listed in the order 3, 1, 2, `count over past[0 ms, 0 ms]` is 1 at canonical position 0, 2 at position 1 and 3 at position 2, and `count over past[0 ms, 0 ms] >= 3` holds only at position 2: an event of the anchor's stamp that sorts after the anchor is not in its window. Listing the events in any other order gives the same values. | Test (TC-629) |
+| FR-194-AC-16 | A window not asserted complete. Through `command::run`, AC-13's unit over AC-1's 20 latencies stamped 0 to 19 ms with watermark 19 and completeness `{"complete": {"through": 9}}` reports `pending-window` with `deadline` 300000, never `violated`: the atom at position 19, whose window reaches stamps 10 to 19, has both possibilities with reason `IncompleteInput`, while the atoms at positions 0 to 9, whose windows end at or below stamp 9, are definite and true. With completeness through 19 the same run reports `violated`, exit 10, from position 19. With `min_count 30` added and completeness through 9 no position reports `InsufficientData`; with completeness through 300000 and watermark 300000 the clause is undefined with `InsufficientData{count: 20, min_count: 30}`. The carried route (FR-820) over the same input gives the same atom possibilities and the same result. | Test (TC-629) |
+| FR-194-AC-17 | A missing valuation in a window. AC-1's trace with the response stamped 18 ms holding no `latency` valuation, complete through 300000 with watermark 300000, gives the `quantile 0.95` atom at position 19 the value `MissingValuation` (both possibilities), so AC-13's run reports `indeterminate` with reason `MissingValuation`, never `invalid-value` and never a quantile over the other 19 values. | Test (TC-629) |
 
 ## Dependencies
 

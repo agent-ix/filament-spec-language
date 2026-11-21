@@ -14,7 +14,7 @@ Verify that `ref(p)` and `present(p)` over clock places check at S3 and lower
 at S4 to FSpec FR-829's place-reference application and FSpec FR-322's
 presence read, per instance under a population binder and through an object
 reference, and that the remaining wrong forms refuse with typed causes.
-Scope: FR-1040-AC-1 to FR-1040-AC-7.
+Scope: FR-1040-AC-1 to FR-1040-AC-8.
 
 ## Test Procedure
 
@@ -35,6 +35,7 @@ refinement rows.
 4. Compile each negative form of FR-1040-AC-6.
 5. Compile FR-1040-AC-7's function and its caller, then the ill-typed
    variant.
+6. Admit FR-1040-AC-8's `acme/rpc` package with `Call.r` typed by the `reference` type over `Clock`, compile `point`, run it and read the emitted field type, the write and the state keys; retype `r` as `ix://filament/native/Clock`; compile FR-1040-AC-8's model unit and read its document.
 
 ## Expected Results
 
@@ -43,6 +44,7 @@ refinement rows.
   stated.
 - Steps 3 and 4: each form refuses with the code, cause and locus stated, or
   checks where the criterion says it does.
+- Step 6: `r` is a `Reference<Clock>` data member typed by the `clock_reference` node, the write checks and lowers with no `clock-write`, the post-state holds the place id of `self.x` and clock-only changes keep one state key; the clock-typed `r` refuses `clock-write`; the model unit's document holds `ix://acme/rpc/Reference_Call_r`.
 
 Tests: `fsl-semantics/src/check/lowering/tests.rs`
 `ref_of_a_clock_place_with_an_id_lowers`, `clock_place_presence_read_lowers`,

@@ -15,7 +15,7 @@ located at the checker's location of that position on both routes, read on
 the package route from the package's `body_locations` rows, including where
 lowering reshaped the body, and that clause function bodies carry their rows.
 
-Scope: FR-531-AC-36, FR-531-AC-37, FR-531-AC-38, FR-531-AC-39, FR-531-AC-40.
+Scope: FR-531-AC-36, FR-531-AC-37, FR-531-AC-38, FR-531-AC-39, FR-531-AC-40, FR-531-AC-41.
 
 ## Test Procedure
 
@@ -43,6 +43,7 @@ Scope: FR-531-AC-36, FR-531-AC-37, FR-531-AC-38, FR-531-AC-39, FR-531-AC-40.
    search the bytes for `ix://source/`, then evaluate the clause function at
    `size`'s pre-state on both routes, once to completion and once under every
    `work_units` limit below its spend.
+9. Emit FR-531-AC-41's 100,000-term sum and 100,000 nested `let`s on a small stack under the default `emit.output_bytes`, compare their rows with FSpec's BL-D1 and BL-D2, admit both packages and read each row's typed path; admit one row rewritten with a whole `path`.
 
 Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
 `an_ordering_over_square_roots_charges_the_same_on_both_routes` (steps 1 to 3),
@@ -77,3 +78,4 @@ Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
   `ix://source/`; two inexact `IeeeFlags` losses at `Body { function: F,
   index: k }` paths `[0]` and `[1]` on both routes, the same `F` and `k`;
   equal `Evaluation.location` at every limit.
+- Step 9: both bodies emit with no `OutputLimit`, their rows equal BL-D1's and BL-D2's, both packages are admitted with the checker's paths, and the whole-`path` row is `malformed_wire` at its `location`.

@@ -13,7 +13,7 @@ relationships:
 Verify emission and I2 read-back at 100,000 deep, and the stratified body
 grammar of every emitted package.
 
-Scope: FR-264-AC-1, FR-264-AC-2, FR-264-AC-6, FR-264-AC-7.
+Scope: FR-264-AC-1, FR-264-AC-2, FR-264-AC-6, FR-264-AC-7, FR-264-AC-8.
 
 ## Test Procedure
 
@@ -30,8 +30,9 @@ Run every step on a thread spawned with a 512 KiB stack unless the step says oth
    emit it at `emit.output_bytes` `N`, `N - 1` and `0` (FR-264-AC-6).
 4. Offer the already emitted package to an emit entry at `N - 1` and at `N`,
    and run the compile lifecycle's E4 entry at both bounds (FR-264-AC-7).
+5. Emit FR-264-AC-8's 100,000-term sum under the default `emit.output_bytes`, count its `body_locations` `up` and `down` entries, then emit it at one byte below its emitted length (FR-264-AC-8).
 
-Tag the tests `#[trace("TC-738", "FR-264-AC-6")]`, `#[trace("TC-738", "FR-264-AC-7")]`, `#[trace("TC-738", "FR-264-AC-1")]`, `#[trace("TC-738", "FR-264-AC-2")]`.
+Tag the tests `#[trace("TC-738", "FR-264-AC-6")]`, `#[trace("TC-738", "FR-264-AC-7")]`, `#[trace("TC-738", "FR-264-AC-1")]`, `#[trace("TC-738", "FR-264-AC-2")]`, `#[trace("TC-738", "FR-264-AC-8")]`.
 
 ## Expected Results
 
@@ -43,3 +44,4 @@ Tag the tests `#[trace("TC-738", "FR-264-AC-6")]`, `#[trace("TC-738", "FR-264-AC
   an actual above it, and write no bytes.
 - Step 4: the remembered emission is refused below `N` and returned at `N`; the
   lifecycle returns `CompileRefusal::Limit` at `N - 1` and emits at `N`.
+- Step 5: the sum emits under the default bound with at most 200,000 location entries; one byte below its length it refuses `OutputLimit` naming `emit.output_bytes` and writes no bytes.

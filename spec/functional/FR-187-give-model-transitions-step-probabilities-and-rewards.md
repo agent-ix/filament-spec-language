@@ -117,6 +117,16 @@ impl ModelSystem {
   `invalid_probabilistic_model`/`negative-reward`, carrying `operation`,
   `reward` and `arguments`, for the first negative value in canonical order,
   the same refusal S3 gives (FSpec FR-411 "Package intake").
+- The canonical order of that evaluation SHALL be the same on the source
+  route and on the package route: rewards ascend by operation key (the
+  operation's declaring type key, then its name), then by reward name, and
+  within one reward the argument vectors ascend in the canonical order of
+  the operation's finite parameter domains. A step's reward values are
+  evaluated and listed in the same order. Declaration order is not used:
+  the package carries no declaration order (its rewards are read in node
+  order, which is an identity order, not a source one), so ordering by
+  either would make the two routes name different rewards when several can
+  be negative.
 - If a contract conjunction is undecided at an application or at a
   postcondition candidate during expansion (FR-120's `ContractUndetermined`
   finding), then `ModelSystem` SHALL return `UndecidedSuccessor{state}` from
@@ -148,6 +158,7 @@ rewards or measures.
 | FR-187-AC-3 | A variant of `Health` (ADR-024 §7.1) whose `tick` postcondition leaves a second Boolean field unconstrained: `weighted_steps` at the initial state returns `NotMarkov` naming the state key, `tick`, the drawn `fault` value and 2 post-states; `actions` returns one action whose draws each carry two successors. A variant whose postcondition is unsatisfiable for `fault = true` returns `NotMarkov` with 0 post-states from both. | Test (TC-622) |
 | FR-187-AC-4 | A reward `refund = n - 3` on an operation with parameter `n: Int[0, 5]`, in a checked package read from the wire whose producer S3 did not check, refuses admission with `invalid_probabilistic_model`/`negative-reward` naming the operation, `refund` and `n = 0`. Over every state of `Service`, the set of transitions with positive probability under `Steady` equals FR-120's successor set. | Test (TC-622) |
 | FR-187-AC-5 | `Service` under a workload with `Server::reset` at weight 0 and weight 1 on `Server::request` and `Server::attempt`: at every state where `reset` and another operation are enabled, `weighted_steps` gives `reset` no step and the other steps sum to 1; at a state where `reset` is the only enabled operation, its steps sum to 1; under weight 0 on all three operations every state gives the steps it gives under weight 1 on all three. A reward `refund = n - 3` over `n: Int[0, 5]` in a package that S3 checked never reaches `ModelSystem::new` (S3 refuses it, FR-185-AC-11); the same reward in a hand-built checked package read from the wire is refused at admission `invalid_probabilistic_model`/`negative-reward` naming `n = 0`. | Test (TC-2064) |
+| FR-187-AC-6 | A model whose operation `Svc::serve(n: Int[0, 4])` declares the rewards `refund = n - 3` and then `credit = n - 2`, both negative at `n = 0`, is refused `invalid_probabilistic_model`/`negative-reward` naming `operation` `Svc::serve`, `reward` `credit` and `arguments` `[0]`, the first by (operation key, reward name), and not `refund`, the first declared; the same model admitted from its checked package read from the wire is refused with the identical record. | Test (TC-2064) |
 
 ## Dependencies
 

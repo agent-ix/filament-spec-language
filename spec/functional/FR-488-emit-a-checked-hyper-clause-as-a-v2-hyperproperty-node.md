@@ -242,22 +242,32 @@ occurrence, or for the copy-swap symmetry, a function of the clause.
 
 ### Atom slots as parameter nodes
 
-- **One level rule.** A slot's level SHALL be its index in the slot list of
-  the term that reads it: `k` in `atom_slots()` for an atom's condition,
-  `j` in `slots()` for a conjunct. The wrapper binds only atom slot 0
-  (through `over`); every other slot of an atom or a conjunct is a free
+- **Atom slot levels.** The atom slots are the body wrapper's binders in
+  scope, its slot scope (FSpec FR-402 "Wrapper slot scope"): the atom slots
+  the body reads, in ascending byte order of their encoded names. An atom
+  slot's level SHALL be its position in that list, the same in every atom,
+  and never its index in `atom_slots()`, which follows quantifier order. Two
+  clauses whose bodies are equal and whose prefixes differ (reversed
+  quantifiers, another alias for one variable) therefore mint the same slot
+  nodes and share one wrapper, as FSpec FR-322 "Hyper clause rows" requires.
+  An atom slot the body never reads mints no node.
+- **Conjunct slot levels.** A `match` conjunct's slot level SHALL be its
+  index `j` in the conjunct's `slots()`. A conjunct is a term of the
+  `hyperproperty` node, not of the wrapper, and each slot of it is a free
   parameter of its term, as an `on each` trigger is of its guard. The same
   read therefore mints different nodes where its position differs: the node
   `op_sb` (the `b.step.op` read) is level 1 in a conjunct that reads
   `a.step.op` first and level 0 in a conjunct that reads only `b`. Parameter nodes are keyed by name, level and
   type (FR-322), so equal reads at equal levels share one node across atoms,
-  conjuncts and clauses. FSpec states no binder scope for them (Q-3).
+  conjuncts and clauses.
 - The emitter SHALL mint, for each atom slot (`t`, `p`) of
-  `atom_slots()` (FR-487 "Atom slots"), one `value`/`parameter` node named
+  `atom_slots()` (FR-487 "Atom slots") that the body reads, one `value`/`parameter` node named
   `slot_s<esc(p)>_s<esc(t)>` (§ "Slot node names"), at the level the rule above gives, typed by the type node of
   the slot's checked type `Reference<T>`.
 - It SHALL record the node's one `expression` occurrence at the site
-  `hyper <c> slot <k>` and a `type` occurrence of its type node there, as
+  `hyper <c> slot <k>`, `k` the slot's position in the slot scope (its
+  level), never its index in `atom_slots()`, so the site does not depend on the
+  quantifier order, and a `type` occurrence of its type node there, as
   FR-337 records the `over` parameter node's.
 - Every atom of the clause SHALL read the same slot nodes, whatever the atom.
 
@@ -330,8 +340,9 @@ reads it would lose its `model_root` `over`. A name outside the form, such as
   `filament.op.temporal.clause` application, with one `temporal_profile` law
   equal to the package's `profile_selections` row of role
   `temporal_profile` for the clause's profile and the six arguments of FSpec FR-370, in order:
-  1. `over`: a reference to the slot node `<p>@<t>` of atom slot 0 or, when
-     the clause has no atom slot (its body reads no object parameter's state
+  1. `over`: a reference to the first slot node of the slot scope (the
+     least encoded name among the atom slots the body reads) or, when
+     the body reads no atom slot (its body reads no object parameter's state
      in any trace, which is always so for a clause with no object
      parameter), a reference to the `model`/`model_root` node of the
      clause's first `subjects` binding, the root of the package the first
@@ -359,7 +370,8 @@ reads it would lose its `model_root` `over`. A name outside the form, such as
   writes it. A `holds` atom's operand is the atom's checked condition
   lowered as FR-093 lowers a Boolean expression, with slot `k` of the
   condition bound to the slot node of atom slot `k`, and the locals the
-  atom binds taking the binder levels after the slots. `@ t` lowers to no
+  atom binds taking the binder levels after the `n` slots of the scope, from
+  `n` (FSpec FR-322 "Binder levels in a temporal clause leaf"). `@ t` lowers to no
   term (FR-487).
 - The emitter SHALL record one `claim` occurrence of the wrapper at the site
   `hyper <c> body`, one `expression` occurrence of each formula node at
@@ -463,12 +475,17 @@ not, so two clauses with equal bodies and different prefixes share one
 wrapper and keep their own per-trace rows (FSpec FR-322 "Hyper clause rows").
 
 - The emitter SHALL write one `claim_names` row
-  `{declaration, occurrence, name, qualified_name, declaration_region}` for
-  every hyper clause, whatever its profile, and no `temporal_clause_names` row
+  `{declaration, occurrence, name, qualified_name, declaration_region, source_unit}` for
+  every hyper clause, whatever its profile and domain, and no `temporal_clause_names` row
   for its wrapper. `declaration` is the `hyperproperty` node's emitted NodeId,
   `occurrence` is the clause's `claim` occurrence of that node (AC-14), `name`
   and `qualified_name` are the declared clause name and its package-local path,
-  and `declaration_region` is the whole hyper declaration's span. Two
+  and `declaration_region` is the whole hyper declaration's span. `source_unit`
+  is the `lock.sources` identity of the source unit that declares the
+  clause, the unit in which the reader resolves every unit name the clause
+  owns (FSpec FR-322 "Hyper clause source unit"); it is never the unit of a
+  subject's model. The clause's `temporal_bindings` rows carry no
+  `source_unit`, and no other `claim_names` row carries one. Two
   structurally equal hyper clauses share one `hyperproperty` node and carry two
   rows at their own ordinals. The name enters no key (AC-12).
 - The emitter SHALL write, for a hyper clause whose profile is
@@ -523,6 +540,8 @@ in FR-487. "Admitted" means FSL's I2 admission of the emitted package
 | FR-488-AC-27 | The package FSL emits for `hyper Same using inf over behaviours (c: Config::ConfigVersion) forall trace a of Config forall trace b of Config { always holds(c.versionNumber @ a = c.versionNumber @ b) }`, edited so its second quantifier Group's `variable` is `a`, is refused by the reader with `ambiguous_declaration`/`ambiguous-name` at that Group's `variable` binding, `/semantic_graph/nodes/{n}/body/members/3/value/members/1/members/0`; the unedited package is admitted. | Test (TC-3007) |
 | FR-488-AC-28 | `hyper Whole using inf over behaviours () forall trace a of V forall trace b of V { always holds(true) }` over the vault model emits a body wrapper whose `over` argument references the `model`/`model_root` node of the vault package, which is among the wrapper's `dependencies`, and the strict reader admits the package; `NonInterference`, whose body reads `v @ a`, keeps `over` on the slot node `slot_sv_sa`. A package whose wrapper for `NonInterference` has `over` edited to the model root refuses `invalid_model_binding`/`malformed-declaration` at `/semantic_graph/nodes/{w}/body/arguments/0`, and one whose wrapper for `Whole` references the root of a package no `subjects` binding names refuses the same. | Test (TC-3010) |
 | FR-488-AC-29 | The checker refuses `ambiguous_declaration`/`ambiguous-name` at the parameter's declaring source region, naming `op_sa` and the tag `op`, for `function f(op_sa: Integer): Integer pure { op_sa }`, and naming `op_s_x41` and the tag `op` for the same function with that parameter name; it refuses the same, naming `slot_sx_sy` and the tag `slot`, for the clock guard binder of `pre F using v on Config::ConfigVersion::attemptUpdate { forall(slot_sx_sy in self.us: slot_sx_sy.x < 5 ms) }` over a `us: Sequence<Timer>` field; no refused unit emits a package. The function with its parameter named `slot_sv`, `op_sa_sb`, `rcv_s`, `op_sa_x4`, `op_s_xC3`, `op_s_xc3` or `slotted` is admitted and emits a parameter node of that name (FSpec FR-402-AC-12). | Test (TC-3082) |
+| FR-488-AC-30 | In AC-26's `Fwd` and `Rev`, whose body reads `v @ a` and `v @ b`, the one wrapper's slot nodes are `slot_sv_sa` at `level` 0 and `slot_sv_sb` at `level` 1 and its `over` references `slot_sv_sa`, in both clauses, although `Rev`'s first quantifier is `b`; compiling `Rev` alone emits the wrapper `node_id` that compiling `Fwd` alone emits. A clause over `forall trace a of V forall trace b of V` whose body reads only `v @ b` mints no node for `slot_sv_sa`, and its wrapper's scope is `slot_sv_sb` at `level` 0, its `over`. AC-16's `Linked`, whose body reads only `v @ a`, emits the `let` binder `r` at `level` 1. The strict reader admits every package (FSpec FR-402-AC-14, FR-402-AC-15). | Test (TC-3000) |
+| FR-488-AC-31 | `NonInterference` declared in unit `example` over the vault model of another unit emits its `claim_names` row with `source_unit` `{"authority": "agent-ix", "identity": "example"}` and its two `temporal_bindings` rows with no `source_unit`; the unit's state-clause `claim_names` rows carry none; and FSpec FR-322-AC-511's finite-domain clause `Fast`, compiled in `example` with the role `t` bound to `{"kind": "timestamped_event", "timestamp_unit": "ms"}`, emits a package whose `ms` resolves in `example` and which the strict reader admits. | Test (TC-1327) |
 
 ## Open FSpec questions
 
@@ -533,17 +552,15 @@ and FSpec FR-402's reader resolves (Q-1, Q-7); a subject is its package's
 `model_root` (Q-2); a constant conjunct is a reference to its literal node
 (Q-4); the body wrapper is FSpec's, excluded by every consumer from the
 single-trace claims (Q-5); the slot names are FSpec's encoding (Q-8); and renaming a trace variable is
-not spelling, so it changes the identity (Q-6). One question remains open:
-
-- **Q-3.** A field read in a package carries no observation or component
-  member, so a hyper atom's per-trace read has no carrier but the slot
-  parameter node it is rooted in. FSL names the slot `slot_s<p>_s<t>` (escaped), refuses a
-  read it cannot root, and asks FSpec to state a slot or component
-  encoding (a `hyper_slot` member or a component on the read). FSpec also
-  states no binder scope for an atom slot beyond slot 0 or for a `match`
-  conjunct's slots, so FSL's one level rule (the slot's index in its term's
-  slot list) leaves them free parameters, and the same read can have a node
-  at two levels; FSpec should state the scope.
+not spelling, so it changes the identity (Q-6). Q-3 is answered too: a
+field read in a package carries no observation or component member, and
+FSpec FR-402 makes the slot parameter node the read is rooted in its one
+carrier (a consumer decodes the trace from the slot's name), and FR-402
+"Wrapper slot scope" states the wrapper's binder scope: its atom slots in
+name order at levels 0 to `n - 1`, with `over` on the first. FSL therefore
+writes atom slots by that scope (§ "Atom slots as parameter nodes") and
+still refuses a read it cannot root in one slot (§ "Clauses S4 does not
+emit", refusal 5).
 
 ## Dependencies
 
