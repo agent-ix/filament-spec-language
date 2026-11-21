@@ -36,3 +36,29 @@ Mutation experiments ran in a separate worktree, with each mutation behind an en
 | FND-007 | low | U5 canonicity gaps. The task route ignores `lu_bounds` and does not require it to be empty. It accepts `locked` on non-miss nodes. Quotient `initials` skip empty initial states, so positions can shift from FR-361 order. | fsl-replay/src/certificate/zone_certificate/task_check.rs:433-466, 744-795 |
 | FND-008 | low | Weak assertions in `a_node_that_does_not_cover_is_rejected`: it accepts either InitialMissing or Malformed, and the column-swap case asserts only `!= UnreachedNode`. Dead `let _ = positive;` in `Divergence::close`. Cancellation and overflow (M5) are untested. | fsl-analyze/tests/it/task_product_certificate.rs:689-739; fsl-replay/src/certificate/zone_certificate/task_check.rs:1213 |
 | FND-009 | low | Multi-release v1 shape, pending arch: one `Source` edge for a multi-activation op, which carries no per-activation template. This is sound, because there is no missing interleaving: the concrete FR-419 step (`task_product.rs:878-992`) and the lowering are both atomic. It diverges from the ZC-19 template-per-activation shape, though, and the ruling is still open. | fsl-replay/src/certificate/zone_certificate/task_check.rs:20-28, 241-252 |
+
+## Dispositions
+
+Round 1 is checked against fix commit 3a1234b428. These mutation runs were made in a throwaway worktree at that head:
+
+| Mutation | Result |
+| --- | --- |
+| M4: miss check removed | caught by `a_reachable_deadline_miss_is_bad_state_or_unchecked_when_locked` |
+| MZ: `advances` always true | caught by `a_zeno_region_cycle_is_not_an_admitted_witness` |
+| M1: `release_ops` check removed | survives |
+| M3: delay coverage skipped | survives |
+| MW: `within_range` skipped | survives |
+
+The PR tests pass: 20/20 and 105/105.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | still-open | M1 still survives. The certificate in `a_reachable_release_is_the_only_defect_of_a_no_release_closure` has no `fire_a` source edge, so ordinary successor-missing rejects it whether or not the release check exists. The test needs a source edge for the release operation with a covering target, so that the release check is the only thing that can reject. The task-edge case asserts Malformed OR SuccessorMissing. A probe on the release-free source shows the code does refuse it as Malformed at `{member: edges}`, so that assertion can be exact. |
+| FND-004 | fixed | - |
+| FND-005 | still-open | The hand-written 4-node certificate is a real independent oracle and closes the common-mode half. M3 still survives: no test tampers a node so that it is not closed under delay within its key. |
+| FND-006 | fixed | - |
+| FND-007 | accepted-no-change | `lu_bounds` must now be empty (`shape`). Locked on a non-miss node stays: FR-418 bars badness without `locked`, not `locked` without badness. Skipping empty initial states stays: such a state has no valuation to cover. Both are low and have no soundness effect. |
+| FND-008 | fixed | - |
+| FND-009 | accepted-no-change | Pending the arch ruling. The v1 shape is sound: the concrete FR-419 step and the lowering are both atomic. |

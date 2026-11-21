@@ -35,3 +35,16 @@ Ticket: QSL-2240. Plan completion: not assessed. This is a scoped check of FSpec
 | --- | --- | --- | --- |
 | FND-001 | medium | FR-418-AC-18 (U1: target `Z` a union of two whole regions accepts; reduced to the other region, `successor-missing`) has no test. The builder's per-key hulls never exercise a deliberate two-region union against a one-region reduction. | fsl-analyze/tests/it/task_product_certificate.rs |
 | FND-002 | medium | Wrong trace tags. `the_certificate_is_the_reachable_closure` is AC-19 (tagged AC-13). `a_work_limit_below_the_graph_is_incomplete` is AC-20 (tagged AC-13). `a_mixed_criticality_set_is_certificate_unchecked` is AC-21 (tagged AC-12). `divergence_and_the_admitted_witness_are_replayed_on_the_quotient` is AC-2-shaped `bad-state`/`witness-fails` (tagged AC-13). `a_node_that_does_not_cover_is_rejected` is AC-2-shaped (tagged AC-12). `a_member_that_differs_from_its_recomputation_is_malformed` is member recompute, which no AC covers (tagged AC-13). | fsl-analyze/tests/it/task_product_certificate.rs:363, 435, 588, 689, 855, 884, 907 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | New tests are mis-tagged. `a_reachable_deadline_miss_is_bad_state_or_unchecked_when_locked` (bad-state on a miss, AC-2-shaped) and `a_zeno_region_cycle_is_not_an_admitted_witness` (witness-fails, AC-2-shaped) are tagged AC-13. `the_certificate_budgets_and_cancellation_stop_the_task_product_check` is tagged AC-20, but AC-20 is about `max_check_work`, not the edge or byte budgets or cancel. | fsl-analyze/tests/it/task_product_certificate.rs:1108, 1186, 1298 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
