@@ -162,10 +162,10 @@ fn an_indexed_read_in_an_ordinary_temporal_clause_parses_for_the_checker_refusal
     assert_eq!(texts(&text, &parsed, Production::IndexedRead), ["v.l @ a"]);
 }
 
-/// FSpec FR-501-AC-8: an `align skip` list names at least one operation.
+/// FSpec FR-501-AC-8 and QSL-2599: an empty `align skip` list parses; FR-172 refuses it at S3.
 #[trace("FSpec-TC-1008", "FSpec-FR-501-AC-8")]
 #[test]
-fn an_empty_align_skip_list_is_a_syntax_error_at_its_closing_brace() {
+fn an_empty_align_skip_list_parses_for_the_s3_refusal() {
     let nonempty = source(
         "hyper NI using inf over behaviours (v: V::Vault)\n\
          forall trace a of V forall trace b of V\n\
@@ -181,9 +181,5 @@ fn an_empty_align_skip_list_is_a_syntax_error_at_its_closing_brace() {
          { always holds(v.l @ a = v.l @ b) }",
     );
     let parsed = parse(&text);
-    assert!(!parsed.is_admissible());
-    assert_eq!(
-        parsed.diagnostics()[0].byte_span().expect("located").start,
-        text.find("{}").expect("the list") + 1
-    );
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
 }

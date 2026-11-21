@@ -207,7 +207,7 @@ pub use time_units::is_clock_unit_node;
 mod timed_model;
 pub use probabilistic::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
-    CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, ClaimReadFault, ClaimReads,
+    CheckedTemporalFormula, ClaimActivation, ClaimMemberPath, ClaimNormalForm, ClaimReadFault, ClaimReads,
     Confidence, ConfidenceFault, Delay, DelayDistribution, DelayFault, Event, FairnessRead,
     FractionMeasure, ModelSubjectRef, OverBinding, PreconditionSite, ProbForm, ProbScheduler,
     ProbabilisticCause, ProbabilisticDeclaration, ProbabilisticFeature, ProbabilisticOperation,

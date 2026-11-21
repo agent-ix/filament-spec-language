@@ -58,6 +58,8 @@ mod refine;
 mod state_predicate;
 mod symbolic;
 mod symmetry;
+mod task_automaton;
+mod task_key;
 mod task_product;
 mod terminal;
 mod timed;
@@ -131,6 +133,15 @@ pub use refine::{RowReading, StateObservation};
 pub use state_predicate::PredicateReading;
 pub(crate) use symbolic::{ParameterValues, ResultValues, SymbolicOperation, SymbolicSubject};
 pub use terminal::{TerminalClass, TerminalModel};
+pub use task_automaton::{
+    AutomatonClock, AutomatonDiagonal, BoundedSubtraction, CertificationRefusal, ClockAtom,
+    ClockCarry, ClockReset, ClockRole, EdgeKind, Guard, JobPhase, LiveJob, LiveJobKey, LocationInfo,
+    LocationKey, Overflow, Successors, TaskAutomaton, TaskAutomatonRefusal, TaskControl, TaskEdge,
+    TaskLocation, TaskTemplate, delay_valuation,
+};
+pub use task_key::{
+    TaskKeyControl, TaskKeyIdentityRefusal, TaskKeyJob, TaskKeyPending, write_task_control,
+};
 pub use task_product::{
     AllowancePhase, CriticalityMode, TaskProductClock, TaskProductClockKind,
     TaskProductDerivedStep, TaskProductJob, TaskProductModeSwitch, TaskProductMoveRefusal,

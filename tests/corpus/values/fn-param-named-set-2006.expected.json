@@ -1,1 +1,1 @@
-{"verb":"check","exit_code":20,"category":"refusal","last_stage":"S1","code":"invalid_syntax","cause":"unexpected-token","flips_with":"none"}
+{"verb":"check","exit_code":0,"category":"success","last_stage":"S4","flips_with":"none"}

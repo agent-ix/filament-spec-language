@@ -33,6 +33,7 @@ mod deep_bodies;
 mod depth;
 mod dimension_equivalence;
 mod expression_depth;
+mod intervals;
 mod leaves;
 mod node_keys;
 mod rows;

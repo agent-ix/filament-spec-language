@@ -36,9 +36,15 @@ pub fn settle_product_refusal(
                 .collect();
             ExactProbBuildIssue::Unsupported(UnavailabilityCause::ZeroDelayCycle { states })
         }
-        ProductRefusal::TimedFormShape { span, claim } => {
-            ExactProbBuildIssue::Unsupported(UnavailabilityCause::TimedFormShape { span, claim })
-        }
+        ProductRefusal::TimedFormShape {
+            span,
+            claim,
+            member,
+        } => ExactProbBuildIssue::Unsupported(UnavailabilityCause::TimedFormShape {
+            span,
+            claim,
+            member,
+        }),
         request @ ProductRefusal::NotStochastic { .. } => return Err(request),
         ProductRefusal::NotSimulated(
             refusal @ (NotSimulated::Extent(_)
@@ -167,10 +173,12 @@ mod tests {
                 ProductRefusal::TimedFormShape {
                     span: fsl_foundation::Span { start: 0, end: 1 },
                     claim: None,
+                    member: None,
                 },
                 UnavailabilityCause::TimedFormShape {
                     span: fsl_foundation::Span { start: 0, end: 1 },
                     claim: None,
+                    member: None,
                 },
             ),
         ];

@@ -457,14 +457,11 @@ fn the_diagnostic_list_is_cut_at_its_bound() {
         cut.byte_span().expect("located").start,
         record + text[record..].find("; }").expect("the offending token")
     );
+    // FR-762 "The diagnostic bound": the cut names the bound and the setting
+    // that raises it.
     assert_eq!(
         cut.message,
-        "50 additional syntax errors omitted after the fixed limit of 100"
-    );
-    assert!(
-        !cut.message.contains("raise")
-            && !cut.message.contains("s1.diagnostics")
-            && !cut.message.contains("i2.diagnostics")
+        "the diagnostic list was cut after 100 syntax errors; raise s1.diagnostics to see the rest"
     );
     assert!(diagnostics
         .iter()
@@ -532,7 +529,6 @@ fn recovery_stops_at_the_work_budget() {
 
 #[trace("TC-2187", "FR-762-AC-9")]
 #[test]
-#[ignore = "QSL-2680: FR-762-AC-9 requires the malformed record Declaration node"]
 fn header_recovery_resumes_at_the_next_declaration() {
     let body = "profile v = ;\nrecord A { x: Integer y: Integer; }\n";
     let (text, parsed) = recover(body);

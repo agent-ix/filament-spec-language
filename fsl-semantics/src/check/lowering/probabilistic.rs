@@ -738,10 +738,10 @@ impl Lowering<'_> {
             ProbForm::Probability { bound, event } => {
                 let event = match event {
                     Event::Formula { formula, .. } => {
-                        let key = self.formula_statement(formula, cx)?;
+                        let (root, nodes) = self.formula_statement(formula, cx)?;
                         Statement::Aggregate(vec![
                             kind("formula"),
-                            ("formula", Statement::Ref(key)),
+                            ("formula", Statement::Formula { root, nodes }),
                         ])
                     }
                     Event::Compare { measure, bound } => {
@@ -851,7 +851,7 @@ impl Lowering<'_> {
         &mut self,
         formula: &CheckedTemporalFormula,
         cx: &StatementCx<'_>,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<(NodeKey, Vec<NodeKey>), CheckRefusal> {
         let conditions: BTreeMap<usize, FormulaCondition<'_>> = formula
             .conditions()
             .iter()
@@ -867,7 +867,7 @@ impl Lowering<'_> {
             .collect();
         let aggregates = BTreeMap::new();
         let at = cx.at.clone();
-        self.temporal_formula(
+        self.temporal_formula_nodes(
             &FormulaInput {
                 formula: formula.formula(),
                 node_site: &|_| at.clone(),

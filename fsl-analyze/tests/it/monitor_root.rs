@@ -348,7 +348,10 @@ fn a_timed_clause_cannot_hold_an_aggregate_atom() {
     let PlanRootRefusal::FrontEnd(front) = refusal else {
         panic!("a front-end refusal");
     };
-    let fsl_replay::ReplayRefusal::Recompile { refusal: compile, .. } = *front else {
+    let fsl_replay::ReplayRefusal::Recompile {
+        refusal: compile, ..
+    } = *front
+    else {
         panic!("a recompile refusal");
     };
     let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = *compile else {
@@ -707,8 +710,10 @@ fn ir_source_record_rows(root: &PlanRoot) -> Vec<filament_contract_model::Select
                         original_member_identity: member.original_member_identity.clone(),
                         admitted_name: member.admitted_name.clone(),
                         presence: member.presence,
-                        type_node: member.type_node.clone(),
-                        value_type: member.value_type.clone(),
+                        type_node: Some(member.type_node.clone()),
+                        value_type: Some(member.value_type.clone()),
+                        member_type: None,
+                        collections: Vec::new(),
                     },
                 )
                 .collect(),
