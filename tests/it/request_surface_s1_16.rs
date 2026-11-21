@@ -3030,10 +3030,6 @@ fn a_model_alias_type_argument_carries_the_model_key_and_a_model_scalar_none() {
 }
 
 /// Run supplied clauses through both selectors after removing the source file.
-fn package_clause_selection_parity(unit: &str, traces: &[(Value, u8)]) {
-    package_clause_selection_outcomes(unit, traces, false, SelectionObjects::Present);
-}
-
 #[derive(Clone, Copy)]
 enum SelectionObjects {
     Present,
@@ -3263,12 +3259,12 @@ fn package_clause_selections_timed_samples_match_source() {
         assert_eq!(result.0, 0, "{}", result.1);
         (clause, result)
     }).collect();
-    let models = compile_handoff_with_clocks(directory.path(), unit, Some(clocks));
+    compile_handoff_with_clocks(directory.path(), unit, Some(clocks));
     for (clause, expected) in clauses {
         let actual = write_request(
             directory.path(),
             &json!({"format": "native-run/1", "request": {
-            "models": models, "package": {"directory": "handoff"}, "clause": clause}}),
+            "models": [], "package": {"directory": "handoff"}, "clause": clause}}),
         );
         assert_eq!(actual, expected);
     }
