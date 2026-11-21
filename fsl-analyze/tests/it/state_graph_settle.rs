@@ -211,6 +211,53 @@ fn the_state_graph_pipeline_runs_and_settles_each_instance() {
         .all(|record| record.method == EXPLICIT_STATE));
 }
 
+#[test]
+#[trace("FR-259", "FR-1046-AC-7")]
+fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let request = || StateGraphRequest {
+        subject: world.subject(AB, UNLIMITED),
+        temporal_clock_selections: Vec::new(),
+        items: vec![StateGraphItem::new(world.claim("ReachesTwo"))],
+        reductions: Default::default(),
+        deadlock_freedom: false,
+        max_depth: None,
+        limits: no_samples(),
+        seed: None,
+    };
+    let baseline = run(request());
+    assert_eq!(baseline.items[0].len(), 2, "two actual native instances");
+    let calls = std::cell::Cell::new(0);
+    let error = check_and_settle_state_graph(request(), &Cancel::new(), |instance| {
+        assert!(instance.over.is_some(), "a real population instance");
+        calls.set(calls.get() + 1);
+        Err(crate::model_settle::allocation_refusal(7333))
+    })
+    .unwrap_err();
+    assert_eq!(
+        calls.get(),
+        1,
+        "no settlement or replay of the second instance after allocation failure"
+    );
+    let fsl_analyze::model_check::StateGraphPipelineRefusal::Engine(
+        fsl_analyze::model_check::ModelCheckRefusal::Admission(failure),
+    ) = error
+    else {
+        panic!("preserved resource admission")
+    };
+    let fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) = *failure else {
+        panic!("allocation incomplete")
+    };
+    assert_eq!(
+        record.catalog,
+        fsl_foundation::diagnostic::ALLOCATION_FAILED
+    );
+    assert_eq!(
+        record.fields,
+        BTreeMap::from([("requested", "7333".to_owned())])
+    );
+}
+
 /// FR-050-AC-6: state-graph identity read-back emits the whole package, so a
 /// configured temporal clause in the same package requires the fixture's
 /// independently selected typed clock row.

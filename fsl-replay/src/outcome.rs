@@ -3285,7 +3285,21 @@ impl OutcomeDocument {
             refusal.code().as_str(),
             locus,
             refusal.to_string(),
-        )])
+        )
+        .with_details(match refusal {
+            ReplayRefusal::Admission(
+                AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record),
+            ) if record.catalog == fsl_foundation::diagnostic::ALLOCATION_FAILED => Some(
+                record
+                    .fields
+                    .iter()
+                    .map(|(name, value)| {
+                        ((*name).to_owned(), serde_json::Value::String(value.clone()))
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })])
     }
 
     fn from_replay_row(

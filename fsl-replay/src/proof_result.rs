@@ -2044,6 +2044,21 @@ impl TerminalRecord {
         Self::with_backend(request_index, backend, TerminalValue::Incomplete(cause))
     }
 
+    /// FR-259 B6: an allocator stop, carrying its requested byte count and
+    /// no configured setting or bound. This is not a semantic replay refusal.
+    pub fn allocation_failed(
+        request_index: RequestIndex,
+        backend: BackendId,
+        requested: usize,
+    ) -> Self {
+        Self::incomplete(request_index, backend, IncompleteCause::ResourceExhausted)
+            .with_diagnostic(Some(fsl_foundation::diagnostic::ALLOCATION_FAILED))
+            .with_diagnostic_detail(serde_json::Map::from_iter([(
+                "requested".to_owned(),
+                serde_json::Value::String(requested.to_string()),
+            )]))
+    }
+
     /// Build a failed record with the producing backend identity.
     pub fn failed(request_index: RequestIndex, backend: BackendId) -> Self {
         Self::with_backend(request_index, backend, TerminalValue::Failed)

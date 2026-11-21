@@ -82,6 +82,57 @@ fn allocation_failure(requested: usize) -> AdmissionFailure {
     }))
 }
 
+/// One item's callback-local evidence, retained before ordinary semantic
+/// replay settlement discards admission fields. Never shared across items.
+#[derive(Default)]
+pub(crate) struct ReplayAllocation(std::cell::RefCell<Option<Box<AdmissionRecord>>>);
+
+impl ReplayAllocation {
+    pub(crate) fn capture<T>(
+        &self,
+        result: Result<T, fsl_replay::ReplayRefusal>,
+    ) -> Result<T, fsl_replay::ReplayRefusal> {
+        if let Err(fsl_replay::ReplayRefusal::Admission(
+            AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record),
+        )) = &result
+        {
+            if record.catalog == fsl_foundation::diagnostic::ALLOCATION_FAILED && !self.stopped() {
+                *self.0.borrow_mut() = Some(record.clone());
+            }
+        }
+        result
+    }
+
+    pub(crate) fn stopped(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+
+    pub(crate) fn take(&self) -> Option<Box<AdmissionRecord>> {
+        self.0.borrow_mut().take()
+    }
+
+    pub(crate) fn report(&self) -> Option<super::super::EngineReport> {
+        self.take().map(|record| allocation_report(&record))
+    }
+}
+
+pub(crate) fn allocation_report(record: &AdmissionRecord) -> super::super::EngineReport {
+    super::super::EngineReport::Refused(allocation_refusal(record))
+}
+
+pub(crate) fn allocation_refusal(record: &AdmissionRecord) -> super::super::Refusal {
+    match record
+        .fields
+        .get("requested")
+        .and_then(|value| value.parse().ok())
+    {
+        Some(requested) if record.catalog == fsl_foundation::diagnostic::ALLOCATION_FAILED => {
+            super::super::Refusal::Allocation(requested)
+        }
+        _ => super::super::Refusal::Failed(super::super::items::BROKEN),
+    }
+}
+
 impl ReceiptError {
     /// Preserve the existing analyze resource or internal-failure domain.
     pub fn into_analyze_error(self) -> super::AnalyzeDocumentError {
@@ -778,6 +829,20 @@ mod tests {
         .into_replay_error();
         assert_eq!(replay.code().as_str(), "resource_exhausted");
         assert_eq!(replay.cause(), Some("allocation-failed"));
+        let refusal = super::super::super::items::model_refusal(
+            &crate::model_check::ModelCheckRefusal::Admission(Box::new(allocation_failure(422))),
+        );
+        assert!(matches!(
+            refusal,
+            super::super::super::Refusal::Allocation(422)
+        ));
+        let outcome = fsl_replay::OutcomeDocument::from_replay_refusal(&replay);
+        assert_eq!(outcome.category().exit_code(), 22);
+        let value = serde_json::to_value(outcome).unwrap();
+        assert_eq!(
+            value["diagnostics"][0]["details"],
+            serde_json::json!({"requested": "421"})
+        );
         let fsl_replay::ReplayRefusal::Admission(AdmissionFailure::Incomplete(record)) = replay
         else {
             panic!("replay must retain allocation evidence");

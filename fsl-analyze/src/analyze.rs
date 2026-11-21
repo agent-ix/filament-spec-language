@@ -1860,6 +1860,8 @@ pub(crate) struct FiniteHyperReport {
 
 /// The FR-281 "Engine refusals" table's rows.
 pub(crate) enum Refusal {
+    /// A replay-document allocator stopped this item before replay settlement.
+    Allocation(usize),
     /// `declined`, with the refusal's cause, `DeclineCode` and full
     /// diagnostic.
     Declined(ProofRefusalCause, DeclineCode, CatalogCode),
@@ -3344,6 +3346,10 @@ fn settle(
         }
         EngineReport::Refused(Refusal::Incomplete(cause)) => record(
             terminal(TerminalRecord::incomplete(index, backend, cause)),
+            None,
+        ),
+        EngineReport::Refused(Refusal::Allocation(requested)) => record(
+            terminal(TerminalRecord::allocation_failed(index, backend, requested)),
             None,
         ),
         EngineReport::Refused(Refusal::Failed(code)) => record(

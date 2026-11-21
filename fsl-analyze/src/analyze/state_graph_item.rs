@@ -451,6 +451,13 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         if let Some(evidence) = evidence.as_ref() {
             match replay_instance(read, evidence.clone(), None, true) {
                 Ok(replay) if replay.settlement == GraphReplaySettlement::Reproduced => {}
+                Err(refusal) => {
+                    let allocation = super::document::effect_decision::ReplayAllocation::default();
+                    let _: Result<(), _> = allocation.capture(Err(*refusal));
+                    return allocation.report().unwrap_or_else(|| {
+                        EngineReport::Refused(Refusal::Failed(super::items::BROKEN))
+                    });
+                }
                 _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
             }
         }
@@ -1164,6 +1171,13 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         if let Some(evidence) = evidence.as_ref() {
             match replay_instance(read, evidence.clone(), Some(&certificate), false) {
                 Ok(replay) if replay.settlement == GraphReplaySettlement::Reproduced => {}
+                Err(refusal) => {
+                    let allocation = super::document::effect_decision::ReplayAllocation::default();
+                    let _: Result<(), _> = allocation.capture(Err(*refusal));
+                    return allocation.report().unwrap_or_else(|| {
+                        EngineReport::Refused(Refusal::Failed(super::items::BROKEN))
+                    });
+                }
                 _ => {
                     return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
                 }
