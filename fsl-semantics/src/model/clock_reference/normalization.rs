@@ -6,10 +6,25 @@
 use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
+use filament_exact::{Identifier, NodeKey};
 use filament_semantic_value::catalog::InternalFault;
 
 use crate::check::{CheckedGraph, SourceOwner};
 use crate::model::clock_reference::identity::DeclarationScope;
+
+/// Original declaration facts read from checking or an admitted package.
+/// This value is not an authentication capability for caller-supplied names.
+#[derive(Clone, Debug)]
+pub struct SourceDeclarationFact {
+    /// The declaration's retained SourceOwner.
+    pub owner: SourceOwner,
+    /// Transient checked node used only to join actual declaration facts.
+    pub node: NodeKey,
+    /// Original qualified declaration name, not an import alias.
+    pub name: Vec<Identifier>,
+    /// Model normalization's original declaration key, when it has one.
+    pub original: Option<DeclarationKey>,
+}
 
 /// Authenticated source declaration correspondences from one checked graph.
 #[derive(Clone, Debug, Default)]
@@ -18,13 +33,14 @@ pub struct SourceDeclarations {
     checked_nodes: BTreeMap<String, String>,
     namespaces: BTreeMap<String, (String, String)>,
     declarations: BTreeMap<DeclarationKey, DeclarationScope>,
+    node_scopes: BTreeMap<NodeKey, DeclarationScope>,
 }
 
 impl SourceDeclarations {
     /// Read only the SourceOwner and original declaration facts retained by
     /// checking. No short-name search or caller-created numeric id is authority.
     pub fn from_graph(graph: &CheckedGraph) -> Result<Self, InternalFault> {
-        let mut result = Self::default();
+        let mut facts = Vec::new();
         for node in graph.semantic_graph().nodes() {
             let Some(crate::check::Owner::Source(owner)) = node.owner() else {
                 continue;
@@ -32,34 +48,12 @@ impl SourceDeclarations {
             let Some(name) = node.declaration() else {
                 continue;
             };
-            let declaration = declaration_uri(owner, name);
-            if let Some(original) = graph.resolve_declaration(node.key()) {
-                let namespace = (owner.authority().to_owned(), owner.identity().to_owned());
-                match result.namespaces.entry(original.package.clone()) {
-                    std::collections::btree_map::Entry::Vacant(entry) => {
-                        entry.insert(namespace);
-                    }
-                    std::collections::btree_map::Entry::Occupied(entry)
-                        if entry.get() == &namespace => {}
-                    std::collections::btree_map::Entry::Occupied(_) => {
-                        return Err(fault("source-package-has-one-authenticated-owner"));
-                    }
-                }
-                result
-                    .packages
-                    .insert(original.package.clone(), owner.identity().to_owned());
-                result.declarations.insert(
-                    original.clone(),
-                    DeclarationScope::Source {
-                        authority: owner.authority().to_owned(),
-                        identity: owner.identity().to_owned(),
-                        declaration: declaration.clone(),
-                    },
-                );
-            }
-            result
-                .checked_nodes
-                .insert(node.key().to_string(), declaration);
+            facts.push(SourceDeclarationFact {
+                owner: owner.clone(),
+                node: node.key(),
+                name: name.to_vec(),
+                original: graph.resolve_declaration(node.key()).cloned(),
+            });
         }
         for declaration in graph.scope().types().composites() {
             let Some(key) = graph.semantic_graph().composite_node(&declaration.key()) else {
@@ -73,11 +67,91 @@ impl SourceDeclarations {
             else {
                 continue;
             };
-            result
-                .checked_nodes
-                .insert(key.to_string(), declaration_uri(owner, name));
+            facts.push(SourceDeclarationFact {
+                owner: owner.clone(),
+                node: key.clone(),
+                name: name.to_vec(),
+                original: None,
+            });
+        }
+        let mut result = Self::from_facts(facts)?;
+        for declaration in graph.scope().types().composites() {
+            if let Some(node) = graph.semantic_graph().composite_node(&declaration.key()) {
+                if result.node_scope(node).is_some() {
+                    result.retain_node_alias(node, declaration.key())?;
+                }
+            }
         }
         Ok(result)
+    }
+
+    /// Normalize facts supplied by the checked-source or sealed-package
+    /// adapter. Both routes retain source authority before rewriting URIs.
+    pub fn from_facts(
+        facts: impl IntoIterator<Item = SourceDeclarationFact>,
+    ) -> Result<Self, InternalFault> {
+        let mut result = Self::default();
+        for fact in facts {
+            let declaration = declaration_uri(&fact.owner, &fact.name);
+            let scope = DeclarationScope::Source {
+                authority: fact.owner.authority().to_owned(),
+                identity: fact.owner.identity().to_owned(),
+                declaration: declaration.clone(),
+            };
+            if let Some(original) = fact.original {
+                let namespace = (
+                    fact.owner.authority().to_owned(),
+                    fact.owner.identity().to_owned(),
+                );
+                match result.namespaces.entry(original.package.clone()) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(namespace);
+                    }
+                    std::collections::btree_map::Entry::Occupied(entry)
+                        if entry.get() == &namespace => {}
+                    std::collections::btree_map::Entry::Occupied(_) => {
+                        return Err(fault("source-package-has-one-authenticated-owner"))
+                    }
+                }
+                result
+                    .packages
+                    .insert(original.package.clone(), fact.owner.identity().to_owned());
+                result.declarations.insert(original, scope.clone());
+            }
+            result
+                .checked_nodes
+                .insert(fact.node.to_string(), declaration);
+            result.node_scopes.insert(fact.node, scope);
+        }
+        Ok(result)
+    }
+
+    /// The original source scope attached to this actual checked node.
+    /// Callers may not replace an absent join by a global short-name match.
+    pub fn node_scope(&self, node: &NodeKey) -> Option<&DeclarationScope> {
+        self.node_scopes.get(node)
+    }
+
+    /// Retain a type handle whose actual checked/selected declaration join
+    /// already resolved to `node`. This is transient lookup provenance, not
+    /// an additional component of the persisted identity.
+    pub fn retain_node_alias(
+        &mut self,
+        node: &NodeKey,
+        handle: NodeKey,
+    ) -> Result<(), InternalFault> {
+        let scope = self
+            .node_scopes
+            .get(node)
+            .ok_or_else(|| fault("type-handle-joins-a-source-declaration"))?
+            .clone();
+        let declaration = match &scope {
+            DeclarationScope::Source { declaration, .. }
+            | DeclarationScope::Model { declaration, .. } => declaration.clone(),
+        };
+        self.checked_nodes.insert(handle.to_string(), declaration);
+        self.node_scopes.insert(handle, scope);
+        Ok(())
     }
 
     /// Choose the original scope from actual declaration provenance, never
