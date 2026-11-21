@@ -260,7 +260,7 @@ fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_path
         record W { c: Clock; }\n\
         tuple Pair(W, Clock);\n\
         union U { armed(Clock), idle }\n\
-        object Order { maybe: Option<W>; q: Sequence<Option<W>>[0, 2]; pair: Pair; mode: U; }\n\
+        object Order { maybe: Option<W>; q: Sequence<Option<W>>[0, 2]; pair: Pair; u: U; }\n\
         time Order dense unit ms;\n";
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("source-only input");
