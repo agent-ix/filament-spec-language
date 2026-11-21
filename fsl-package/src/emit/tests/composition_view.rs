@@ -253,18 +253,14 @@ fn composition_view_projection_preserves_the_cumulative_native_budget() {
     assert!(declaration_charge.work > 0 && declaration_charge.storage > 0);
     assert_eq!(view.name(), projected.name());
     assert_eq!(view.source(), projected.source());
-    let mut visited = 0;
-    // Consume one member at a time so reference reads continue the same budget.
-    for index in 0..view.members().count() {
-        let before = budget.consumed();
-        let member = projected
-            .members_with_budget(&mut budget)
-            .nth(index)
-            .expect("the canonical member")
-            .expect("metered attribution");
-        let after_attribution = budget.consumed();
-        assert!(after_attribution.work > before.work);
-        assert!(after_attribution.storage > before.storage);
+    let members = projected
+        .members_with_budget(&mut budget)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("metered member attributions");
+    assert_eq!(members.len(), 8);
+    assert!(budget.consumed().work > declaration_charge.work);
+    assert!(budget.consumed().storage > declaration_charge.storage);
+    for member in members {
         match member.value() {
             CompositionMemberValue::Component(component) => {
                 let target = projected
@@ -289,9 +285,7 @@ fn composition_view_projection_preserves_the_cumulative_native_budget() {
             }
             CompositionMemberValue::Supply(_) | CompositionMemberValue::Environment(_) => {}
         }
-        visited += 1;
     }
-    assert_eq!(visited, 8);
     assert!(budget.consumed().work > declaration_charge.work);
     assert!(budget.consumed().storage > declaration_charge.storage);
 
@@ -339,6 +333,50 @@ fn composition_view_projection_preserves_the_cumulative_native_budget() {
     assert_eq!(
         exact.consumed().storage,
         u64::try_from(expected_storage).expect("storage")
+    );
+
+    for (work, storage, kind, code, bound) in [
+        (
+            u64::try_from(expected_work - 1).expect("short work"),
+            1_000_000,
+            NativeJoinChargeKind::Work,
+            NativeRowErrorCode::WorkLimit,
+            expected_work - 1,
+        ),
+        (
+            1_000_000,
+            u64::try_from(expected_storage - 1).expect("short storage"),
+            NativeJoinChargeKind::Storage,
+            NativeRowErrorCode::StorageLimit,
+            expected_storage - 1,
+        ),
+    ] {
+        let mut short = NativeJoinBudget::new(work, storage);
+        let Some(Err(CompositionViewRefusal::Native(refusal))) =
+            view.members_with_budget(&mut short).next()
+        else {
+            panic!("the exact attribution refuses one unpaid {kind:?} unit");
+        };
+        assert_eq!(refusal.code(), code);
+        assert_eq!(
+            refusal.configured_bound(),
+            Some(u64::try_from(bound).expect("bound"))
+        );
+        assert_eq!(refusal.denied(), short.first_unpaid());
+        assert_eq!(refusal.denied().expect("unpaid charge").kind, kind);
+        assert_eq!(refusal.locus(), short.first_unpaid_locus());
+    }
+
+    let mut no_reference_storage = NativeJoinBudget::new(1_000_000, 0);
+    let Err(CompositionViewRefusal::Native(reference_denial)) =
+        view.component_subject_with_budget("Producer", &mut no_reference_storage)
+    else {
+        panic!("a resolved held reference requires paid copied storage");
+    };
+    assert_eq!(reference_denial.code(), NativeRowErrorCode::StorageLimit);
+    assert_eq!(
+        reference_denial.denied(),
+        no_reference_storage.first_unpaid()
     );
 
     for (work, storage, kind, code) in [
