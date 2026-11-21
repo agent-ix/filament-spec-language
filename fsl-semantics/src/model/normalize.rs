@@ -3534,6 +3534,7 @@ struct RedefinitionEdge {
     owner: DeclarationKey,
     redefining: DeclarationKey,
     target: DeclarationKey,
+    inherited: bool,
 }
 
 /// One subsetting field's `subsets` entry, reachable at a type from the
@@ -3716,6 +3717,8 @@ fn plan_redefinitions(
             owner: owner.clone(),
             redefining: redefining.clone(),
             target: redefines.clone(),
+            inherited: index.member_owner(redefines) != Some(owner)
+                && store.contains(owner, redefines),
         };
         if is_field {
             all_edges.push(edge);
@@ -3743,7 +3746,8 @@ fn plan_redefinitions(
         // An unreachable target has no member for a redefinition to resolve
         // *to* (H1 finding, PR #228 round 2 review): it derives no fact, and
         // `resolve_redefinitions` refuses every edge in its group.
-        let reachable = store.contains(type_key, &target_key);
+        let reachable =
+            store.contains(type_key, &target_key) && edges.iter().any(|edge| edge.inherited);
         if edges.len() >= 2 {
             // `value-accounting.md:456`: `work_units += Σ (c − 1) × f(o)`,
             // summed over the `c` redefining owners `o` -- once per edge,
@@ -3758,7 +3762,8 @@ fn plan_redefinitions(
             // `model-complete.md:231`: one redefine fact on the redefining
             // feature and one on the redefined feature per edge, contested
             // or not, winner or not.
-            *accounting.phase4_fact_count += 2 * length_amount(edges.len());
+            *accounting.phase4_fact_count +=
+                2 * length_amount(edges.iter().filter(|edge| edge.inherited).count());
         }
         field_groups.push(TargetGroup {
             target: target_key,
@@ -3788,9 +3793,11 @@ fn plan_redefinitions(
                 .cmp(&b.owner)
                 .then_with(|| a.redefining.cmp(&b.redefining))
         });
-        let reachable = store.contains(type_key, &target_key);
+        let reachable =
+            store.contains(type_key, &target_key) && edges.iter().any(|edge| edge.inherited);
         if reachable {
-            *accounting.phase4_fact_count += 2 * length_amount(edges.len());
+            *accounting.phase4_fact_count +=
+                2 * length_amount(edges.iter().filter(|edge| edge.inherited).count());
         }
         if edges.len() >= 2 {
             push_conflict_charge(accounting, owner_effective_id.clone(), &target_key, &edges);
@@ -3904,6 +3911,12 @@ fn resolve_redefinitions(
             edges,
             reachable,
         } = group;
+        if !reachable {
+            record_unreachable_redefinition_target(&target_key, &edges, accounting);
+            continue 'targets;
+        }
+        let (edges, invalid): (Vec<_>, Vec<_>) = edges.into_iter().partition(|edge| edge.inherited);
+        record_unreachable_redefinition_target(&target_key, &invalid, accounting);
         // `Option<usize>`, not a bare `usize`: an ambiguous group (no edge
         // dominates every other) has no winner at all, but still owes every
         // charge below and still derives both facts per edge
@@ -3926,50 +3939,41 @@ fn resolve_redefinitions(
             // refuse `conformance-depth`.
             Some(0)
         } else {
-            if !reachable {
-                None
-            } else {
-                // `owner_ancestor_sets` already holds every owner in the domain package's
-                // own proper-ancestor set (FSL #145: derived once, build-wide,
-                // from phase 3's own `type_paths` rather than a fresh,
-                // separately bounded walk here); `resolve_redefinition_contest`'s
-                // own winner search and undominated-owner fallback each compare
-                // every edge's owner against every other edge's owner, but
-                // TC-196 R07's own documented shape — several redefining members
-                // sharing one contending owner — means distinct owners are
-                // frequently far fewer than edges, and the same owner recurs
-                // across many types and targets within one build; both are plain
-                // `O(1)` set lookups against the already-built map.
-                //
-                // `resolve_redefinition_contest` now returns its own
-                // `Phase4Rank` bundled with its refusal (M1 finding, PR #228
-                // round 2 review): the two `Err` shapes it builds -- a
-                // same-owner `RedefinitionTarget` on
-                // `normalize.redefinition-check` and a genuine
-                // `DerivationConflict` on `normalize.conflict-check`
-                // (`value-accounting.md:492`/`:493`) -- are ranked at the one
-                // place that already knows which of them it built, so this
-                // match has nothing left to re-derive.
-                match resolve_redefinition_contest(
-                    &mut *accounting.lineage,
-                    &owner_effective_id,
-                    type_key,
-                    &target_key,
-                    &edges,
-                ) {
-                    Ok(index) => Some(index),
-                    Err((rank, refusal)) => {
-                        record_phase4_refusal(accounting, rank, refusal);
-                        None
-                    }
+            // `owner_ancestor_sets` already holds every owner in the domain package's
+            // own proper-ancestor set (FSL #145: derived once, build-wide,
+            // from phase 3's own `type_paths` rather than a fresh,
+            // separately bounded walk here); `resolve_redefinition_contest`'s
+            // own winner search and undominated-owner fallback each compare
+            // every edge's owner against every other edge's owner, but
+            // TC-196 R07's own documented shape — several redefining members
+            // sharing one contending owner — means distinct owners are
+            // frequently far fewer than edges, and the same owner recurs
+            // across many types and targets within one build; both are plain
+            // `O(1)` set lookups against the already-built map.
+            //
+            // `resolve_redefinition_contest` now returns its own
+            // `Phase4Rank` bundled with its refusal (M1 finding, PR #228
+            // round 2 review): the two `Err` shapes it builds -- a
+            // same-owner `RedefinitionTarget` on
+            // `normalize.redefinition-check` and a genuine
+            // `DerivationConflict` on `normalize.conflict-check`
+            // (`value-accounting.md:492`/`:493`) -- are ranked at the one
+            // place that already knows which of them it built, so this
+            // match has nothing left to re-derive.
+            match resolve_redefinition_contest(
+                &mut *accounting.lineage,
+                &owner_effective_id,
+                type_key,
+                &target_key,
+                &edges,
+            ) {
+                Ok(index) => Some(index),
+                Err((rank, refusal)) => {
+                    record_phase4_refusal(accounting, rank, refusal);
+                    None
                 }
             }
         };
-
-        if !reachable {
-            record_unreachable_redefinition_target(&target_key, &edges, accounting);
-            continue 'targets;
-        }
 
         for (i, edge) in edges.iter().enumerate() {
             let inputs = vec![edge.redefining.clone(), edge.target.clone()];
@@ -4003,6 +4007,8 @@ fn resolve_redefinitions(
             record_unreachable_redefinition_target(&target_key, &edges, accounting);
             continue;
         }
+        let (edges, invalid): (Vec<_>, Vec<_>) = edges.into_iter().partition(|edge| edge.inherited);
+        record_unreachable_redefinition_target(&target_key, &invalid, accounting);
         let winner_index = if edges.len() < 2 {
             Some(0)
         } else {

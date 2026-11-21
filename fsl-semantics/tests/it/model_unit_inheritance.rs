@@ -149,6 +149,44 @@ fn causes(refusals: &[fsl_semantics::check::CheckRefusal]) -> Vec<&'static str> 
         .collect()
 }
 
+fn assert_redefinition_target(model: &str, expected_target: &str, expected_redefiner: &str) {
+    let packages = compile(model).expect("the model unit compiles");
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "inheritance-unit"),
+        "unit.native",
+        UNIT.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the selecting unit parses");
+    let built = fsl_forms::build_unit(&parsed).expect("the selecting unit builds");
+    let Err(refusal) = admit_unit(
+        &built.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    ) else {
+        panic!("an unrelated operation cannot be a redefinition target");
+    };
+    let UnitIntakeCause::Refused(found) = refusal.cause else {
+        panic!("the refusal is semantic: {refusal:?}");
+    };
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].code,
+        fsl_foundation::diagnostic::Code::InvalidModelBinding
+    );
+    let ModelRefusalCause::RedefinitionTarget { redefiners, target } = &found[0].cause else {
+        panic!("the unreachable target retains its typed cause: {found:?}");
+    };
+    assert_eq!(target.node, expected_target);
+    assert_eq!(
+        redefiners
+            .iter()
+            .map(|key| key.node.as_str())
+            .collect::<Vec<_>>(),
+        [expected_redefiner]
+    );
+}
+
 #[trace("FR-710-AC-3", "TC-1942")]
 #[test]
 fn a_model_unit_writes_supertypes_subsets_and_redefinitions_into_the_document() {
@@ -252,40 +290,43 @@ fn a_redefinition_naming_a_type_that_is_not_a_supertype_refuses_the_target() {
             "object Other { operation bump(): Boolean; }\nobject Child extends Base",
         )
         .replace("redefines Base::bump", "redefines Other::bump");
-    let packages = compile(&model).expect("the model unit compiles");
-    let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("test", "inheritance-unit"),
-        "unit.native",
-        UNIT.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("the selecting unit parses");
-    let built = fsl_forms::build_unit(&parsed).expect("the selecting unit builds");
-    let Err(refusal) = admit_unit(
-        &built.selections().models,
-        &packages,
-        ModelNormalizationLimits::default(),
-    ) else {
-        panic!("an unrelated operation cannot be a redefinition target");
-    };
-    let UnitIntakeCause::Refused(found) = refusal.cause else {
-        panic!("the refusal is semantic: {refusal:?}");
-    };
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(
-        found[0].code,
-        fsl_foundation::diagnostic::Code::InvalidModelBinding
+    assert_redefinition_target(
+        &model,
+        "ix://example/shop/Other/bump",
+        "ix://example/shop/Child/bump",
     );
-    let ModelRefusalCause::RedefinitionTarget { redefiners, target } = &found[0].cause else {
-        panic!("the unreachable target retains its typed cause: {found:?}");
-    };
-    assert_eq!(target.node, "ix://example/shop/Other/bump");
+}
+
+#[trace("FR-082-AC-2", "TC-1942")]
+#[test]
+fn same_owner_and_self_operation_redefinitions_refuse_the_original_owner() {
+    let self_target = SHOP.replace("redefines Base::bump", "redefines Child::bump");
+    assert_redefinition_target(
+        &self_target,
+        "ix://example/shop/Child/bump",
+        "ix://example/shop/Child/bump",
+    );
+    let same_owner = SHOP
+        .replace(
+            "object Child extends Base {",
+            "object Child extends Base { operation other(): Boolean;",
+        )
+        .replace("redefines Base::bump", "redefines Child::other");
+    assert_redefinition_target(
+        &same_owner,
+        "ix://example/shop/Child/other",
+        "ix://example/shop/Child/bump",
+    );
+    let mixed = SHOP.replace("  operation bump(): Boolean modifies self.total;",
+        "  operation bump(): Boolean modifies self.total;\n  operation local(): Boolean redefines Base::bump modifies self.total;");
+    assert_redefinition_target(
+        &mixed,
+        "ix://example/shop/Base/bump",
+        "ix://example/shop/Base/local",
+    );
     assert_eq!(
-        redefiners
-            .iter()
-            .map(|key| key.node.as_str())
-            .collect::<Vec<_>>(),
-        ["ix://example/shop/Child/bump"]
+        check_causes(&compile(SHOP).expect("the proper ancestor form compiles")),
+        Vec::<&str>::new()
     );
 }
 
@@ -435,6 +476,247 @@ fn missing_machine_and_process_supertypes_refuse_at_the_name() {
         assert_eq!(
             compile_refusals(&model),
             [("missing-name", "Ghost".to_owned())]
+        );
+    }
+}
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn an_object_extending_another_meaning_refuses_at_its_declaration() {
+    for parent in ["Row", "BaseMachine", "BaseProcess"] {
+        let declaration = format!("object Child extends {parent} {{ }}");
+        let source = MACHINES_AND_PROCESSES.replace("object Child extends Base { }", &declaration)
+            + "record Row { n: Integer; }\n";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
+            "model.fsl",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("source metadata admitted");
+        let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+            &parsed,
+            ModelNormalizationLimits::default(),
+        )
+        .expect_err("a wrong-meaning supertype never produces a document");
+        let [diagnostic] = diagnostics.as_slice() else {
+            panic!("one wrong-meaning refusal for {parent}: {diagnostics:#?}");
+        };
+        assert_eq!(
+            diagnostic.code,
+            fsl_cst::CompleteCode::InvalidModelBinding,
+            "{parent}: {diagnostic:#?}"
+        );
+        assert_eq!(diagnostic.cause.as_str(), "malformed-declaration");
+        let span = parsed
+            .source()
+            .render(diagnostic.region.as_ref().expect("source-located refusal"))
+            .expect("source span renders");
+        let start = source.find(&declaration).expect("the authored declaration");
+        assert_eq!(span.start.byte, start, "{parent}: {diagnostic:#?}");
+        assert_eq!(span.end.byte, start + declaration.len());
+    }
+}
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn non_object_headers_without_extends_in_the_grammar_refuse_the_keyword() {
+    for declaration in [
+        "record Row extends Ghost { n: Integer; }",
+        "event Notice extends Ghost { timestamp: Timestamp; occurs timestamp; }",
+        "interface Service extends Ghost { operation update(); }",
+        "store Repository extends Ghost persists Node { operation write_record(); }",
+    ] {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             domain \"example/shop\";\n\
+             object Node identity (id) {{ id: Integer; }}\n\
+             {declaration}\n"
+        );
+        assert_eq!(
+            compile_refusals(&source),
+            [("unexpected-token", "extends".to_owned())],
+            "{declaration}"
+        );
+    }
+}
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn non_object_record_fields_refuse_domain_field_narrowing_syntax() {
+    for modifier in ["subsets items", "redefines Row::items"] {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             domain \"example/shop\";\n\
+             record Row {{ items: Integer; small: Integer {modifier}; }}\n"
+        );
+        let keyword = modifier.split_whitespace().next().expect("a modifier");
+        assert_eq!(
+            compile_refusals(&source),
+            [("unexpected-token", keyword.to_owned())],
+            "{modifier}"
+        );
+    }
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn non_object_event_and_interface_local_subsets_survive_compilation_and_intake() {
+    for (owner, declaration) in [
+        (
+            "Notice",
+            "event Notice { small: Integer [0, 2] subsets items; items: Integer [0, 5]; timestamp: Timestamp; occurs timestamp; }",
+        ),
+        (
+            "Service",
+            "interface Service { small: Integer [0, 2] subsets items; items: Integer [0, 5]; operation update(); }",
+        ),
+    ] {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             domain \"example/shop\";\n{declaration}\n"
+        );
+        let packages = compile(&source)
+            .unwrap_or_else(|diagnostics| panic!("{owner} source compiles: {diagnostics:#?}"));
+        let (_, document) = admit(
+            "example/shop",
+            &packages,
+            ModelNormalizationLimits::default().intake,
+        )
+        .expect("the compiler produced an admissible domain document");
+        let records = read_records("example/shop", &document)
+            .expect("the event/interface fields are retained");
+        let field_identity = format!("ix://example/shop/{owner}/small");
+        let field = records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::FieldMember(field) if field.key.node == field_identity => {
+                    Some(field)
+                }
+                _ => None,
+            })
+            .expect("the subsetting field remains a declared member");
+        assert_eq!(field.owner.node, format!("ix://example/shop/{owner}"));
+        assert_eq!(field.subsets.len(), 1);
+        assert_eq!(
+            field.subsets[0].node,
+            format!("ix://example/shop/{owner}/items")
+        );
+        assert!(field.redefines.is_none());
+    }
+}
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn non_object_event_and_interface_field_links_refuse_unresolved_names_at_source() {
+    for declaration in [
+        "event Notice { items: Integer; small: Integer LINK; timestamp: Timestamp; occurs timestamp; }",
+        "interface Service { items: Integer; small: Integer LINK; operation update(); }",
+    ] {
+        for (link, name) in [
+            ("subsets ghost", "ghost"),
+            ("redefines Ghost::items", "Ghost"),
+            ("redefines Notice::ghost", "ghost"),
+        ] {
+            // Both owner spellings are valid declarations in their own row.
+            let owner_link = if declaration.starts_with("interface") {
+                link.replace("Notice::", "Service::")
+            } else {
+                link.to_owned()
+            };
+            let source = format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 domain \"example/shop\";\n{}\n",
+                declaration.replace("LINK", &owner_link)
+            );
+            assert_eq!(
+                compile_refusals(&source),
+                [("missing-name", name.to_owned())],
+                "{declaration}: {owner_link}"
+            );
+        }
+    }
+}
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn non_object_interface_and_store_operation_links_refuse_unresolved_names_at_source() {
+    for declaration in [
+        "interface Service { operation update() redefines LINK; }",
+        "store Repository persists Node { operation write_record() redefines LINK; }",
+    ] {
+        for (link, name) in [("Ghost::update", "Ghost"), ("Other::ghost", "ghost")] {
+            let source = format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 domain \"example/shop\";\n\
+                 object Node identity (id) {{ id: Integer; }}\n\
+                 interface Other {{ operation update(); }}\n{}\n",
+                declaration.replace("LINK", link)
+            );
+            assert_eq!(
+                compile_refusals(&source),
+                [("missing-name", name.to_owned())],
+                "{declaration}: {link}"
+            );
+        }
+    }
+}
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn non_object_redefinitions_retain_the_shared_refusal_at_the_source_declaration() {
+    for declaration in [
+        "event Notice { items: Integer; small: Integer redefines Notice::items; timestamp: Timestamp; occurs timestamp; }",
+        "interface Service { items: Integer; small: Integer redefines Service::items; }",
+        "interface Service { operation a(); operation b() redefines Service::a; }",
+        "store Repository persists Node { operation a(); operation b() redefines Repository::a; }",
+    ] {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nobject Node identity (id) {{ id: Integer; }}\n{declaration}\n"
+        );
+        let Err(diagnostics) = compile(&source) else {
+            panic!("a non-ancestor redefinition cannot produce a document: {declaration}");
+        };
+        assert!(!diagnostics.is_empty());
+        for diagnostic in diagnostics {
+            assert_eq!(
+                diagnostic.code,
+                fsl_cst::CompleteCode::InvalidModelBinding,
+                "{diagnostic:#?}"
+            );
+            assert_eq!(
+                diagnostic.cause.as_str(),
+                "malformed-declaration",
+                "{diagnostic:#?}"
+            );
+            let span = diagnostic
+                .byte_span()
+                .expect("a declaration-located refusal");
+            assert_eq!(
+                &source[span.start..span.end],
+                declaration,
+                "{diagnostic:#?}"
+            );
+        }
+    }
+}
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn non_object_disallowed_members_refuse_at_the_authored_keyword() {
+    for (declaration, keyword) in [
+        (
+            "event Notice { operation bump(); timestamp: Timestamp; occurs timestamp; }",
+            "operation",
+        ),
+        ("store Repository persists Node { n: Integer; }", "n"),
+    ] {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nobject Node identity (id) {{ id: Integer; }}\n{declaration}\n"
+        );
+        assert_eq!(
+            compile_refusals(&source),
+            [("unexpected-token", keyword.to_owned())]
         );
     }
 }
