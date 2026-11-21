@@ -11,6 +11,118 @@ use filament_semantic_value::catalog::InternalFault;
 
 use crate::check::{CheckedGraph, SourceOwner};
 use crate::model::clock_reference::identity::DeclarationScope;
+use crate::model::clock_reference::identity::PlaceTemplate;
+
+/// One actual named member's original declaration, before URI normalization.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum OriginalClockMemberOrigin {
+    /// An inline member of an authenticated source declaration.
+    Source {
+        /// The original declaring unit.
+        owner: SourceOwner,
+        /// The original qualified type and member name.
+        qualified_name: Vec<Identifier>,
+    },
+    /// A member of an admitted original model declaration.
+    Model {
+        /// The actual original member key, independent of import aliases.
+        declaration: DeclarationKey,
+    },
+}
+
+/// The ordered original named members along a checked clock path.
+/// Tuple positions, cases and collection coordinates belong to the template.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ClockDeclarationOrigin(pub Vec<OriginalClockMemberOrigin>);
+
+/// Distinct authenticated declarations claiming one full normalized template.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, thiserror::Error)]
+#[error("clock declarations {first:?} and {second:?} have one normalized identity")]
+pub struct ClockDeclarationCollision {
+    /// The first original declaration chain.
+    pub first: ClockDeclarationOrigin,
+    /// The competing original declaration chain.
+    pub second: ClockDeclarationOrigin,
+}
+
+/// Competing original declarations for one checked declaring-type context.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, thiserror::Error)]
+#[error("clock ownership is ambiguous between {first:?} and {second:?}")]
+pub struct ClockDeclarationAmbiguity {
+    /// The first authenticated candidate.
+    pub first: OriginalClockMemberOrigin,
+    /// The competing authenticated candidate.
+    pub second: OriginalClockMemberOrigin,
+}
+
+/// Declaration resolution preserves user ambiguity separately from a broken
+/// checked-path invariant.
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum ClockDeclarationResolutionError {
+    /// Complete declaration context has competing authenticated origins.
+    #[error(transparent)]
+    Ambiguous(#[from] ClockDeclarationAmbiguity),
+    /// An admitted path no longer agrees with its declaration metadata.
+    #[error(transparent)]
+    Fault(#[from] InternalFault),
+}
+
+/// Validated static clock declarations, independent of runtime populations.
+#[derive(Clone, Debug, Default)]
+pub struct ClockDeclarationTable {
+    entries: std::sync::Arc<BTreeMap<PlaceTemplate, ClockDeclarationOrigin>>,
+    source_declarations: std::sync::Arc<SourceDeclarations>,
+}
+
+impl ClockDeclarationTable {
+    /// Build atomically, collapsing repeated views of the same original
+    /// declaration and refusing distinct origins with one scoped template.
+    pub fn from_entries(
+        entries: impl IntoIterator<Item = (PlaceTemplate, ClockDeclarationOrigin)>,
+    ) -> Result<Self, ClockDeclarationCollision> {
+        let mut table = BTreeMap::new();
+        for (template, origin) in entries {
+            match table.entry(template) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(origin);
+                }
+                std::collections::btree_map::Entry::Occupied(entry) if entry.get() == &origin => {}
+                std::collections::btree_map::Entry::Occupied(entry) => {
+                    return Err(ClockDeclarationCollision {
+                        first: entry.get().clone(),
+                        second: origin,
+                    });
+                }
+            }
+        }
+        Ok(Self {
+            entries: std::sync::Arc::new(table),
+            source_declarations: std::sync::Arc::default(),
+        })
+    }
+
+    /// The authenticated origin of a full scoped declaration template.
+    pub fn origin(&self, template: &PlaceTemplate) -> Option<&ClockDeclarationOrigin> {
+        self.entries.get(template)
+    }
+
+    /// Each unique declaration in canonical template order.
+    pub fn entries(&self) -> impl Iterator<Item = (&PlaceTemplate, &ClockDeclarationOrigin)> {
+        self.entries.iter()
+    }
+
+    /// Attach the original declaration context used by this route's checked
+    /// factory, including original population-key correspondences.
+    pub fn with_source_declarations(mut self, declarations: SourceDeclarations) -> Self {
+        self.source_declarations = std::sync::Arc::new(declarations);
+        self
+    }
+
+    /// Original source provenance used to authenticate population scopes.
+    pub fn source_declarations(&self) -> &SourceDeclarations {
+        &self.source_declarations
+    }
+}
 
 /// Original declaration facts read from checking or an admitted package.
 /// This value is not an authentication capability for caller-supplied names.
@@ -35,6 +147,8 @@ pub struct SourceDeclarations {
     declarations: BTreeMap<DeclarationKey, DeclarationScope>,
     node_scopes: BTreeMap<NodeKey, DeclarationScope>,
     model_scopes: BTreeMap<NodeKey, DeclarationScope>,
+    original_nodes: BTreeMap<NodeKey, OriginalClockMemberOrigin>,
+    original_declarations: BTreeMap<DeclarationKey, Vec<OriginalClockMemberOrigin>>,
 }
 
 impl SourceDeclarations {
@@ -104,6 +218,13 @@ impl SourceDeclarations {
     ) -> Result<Self, InternalFault> {
         let mut result = Self::default();
         for fact in facts {
+            let origin = OriginalClockMemberOrigin::Source {
+                owner: fact.owner.clone(),
+                qualified_name: fact.name.clone(),
+            };
+            result
+                .original_nodes
+                .insert(fact.node.clone(), origin.clone());
             let declaration = declaration_uri(&fact.owner, &fact.name);
             let scope = DeclarationScope::Source {
                 authority: fact.owner.authority().to_owned(),
@@ -111,6 +232,11 @@ impl SourceDeclarations {
                 declaration: declaration.clone(),
             };
             if let Some(original) = fact.original {
+                result
+                    .original_declarations
+                    .entry(original.clone())
+                    .or_default()
+                    .push(origin);
                 let namespace = (
                     fact.owner.authority().to_owned(),
                     fact.owner.identity().to_owned(),
@@ -147,46 +273,69 @@ impl SourceDeclarations {
     /// Resolve the complete type identity already carried by a checked
     /// resolution row against actual declaration metadata. Distinct scopes
     /// sharing a rendering are refused rather than selected by map order.
-    pub fn row_scope(&self, text: &str) -> Result<Option<DeclarationScope>, InternalFault> {
+    pub fn row_scope(
+        &self,
+        text: &str,
+    ) -> Result<Option<DeclarationScope>, ClockDeclarationResolutionError> {
         let mut joined = None;
         for (node, scope) in self.node_scopes.iter().chain(&self.model_scopes) {
             if node.to_string() == text {
-                if joined.as_ref().is_some_and(|previous| previous != scope) {
-                    return Err(fault("clock-checked-type-handle-has-one-scope"));
-                }
-                joined = Some(scope.clone());
+                retain_scope(&mut joined, scope, self.node_origin(node, scope)?)?;
             }
         }
         if joined.is_some() {
-            return Ok(joined);
+            return Ok(joined.map(|(scope, _)| scope));
         }
         let mut original = None;
         for (key, scope) in &self.declarations {
             if key.node == text {
-                if original.as_ref().is_some_and(|previous| previous != scope) {
-                    return Err(fault("clock-original-type-row-has-one-scope"));
+                let origins = self
+                    .original_declarations
+                    .get(key)
+                    .ok_or_else(|| fault("original-declaration-retains-raw-provenance"))?;
+                for origin in origins {
+                    retain_scope(&mut original, scope, origin.clone())?;
                 }
-                original = Some(scope.clone());
             }
         }
         if original.is_some() {
-            return Ok(original);
+            return Ok(original.map(|(scope, _)| scope));
         }
         let normalized = self.text(text);
         let mut found = None;
-        for scope in self.node_scopes.values().chain(self.model_scopes.values()) {
+        for (node, scope) in self.node_scopes.iter().chain(&self.model_scopes) {
             let declaration = match scope {
                 DeclarationScope::Source { declaration, .. }
                 | DeclarationScope::Model { declaration, .. } => declaration,
             };
             if declaration == &normalized {
-                if found.as_ref().is_some_and(|previous| previous != scope) {
-                    return Err(fault("clock-type-rendering-has-one-original-scope"));
-                }
-                found = Some(scope.clone());
+                retain_scope(&mut found, scope, self.node_origin(node, scope)?)?;
             }
         }
-        Ok(found)
+        Ok(found.map(|(scope, _)| scope))
+    }
+
+    fn node_origin(
+        &self,
+        node: &NodeKey,
+        scope: &DeclarationScope,
+    ) -> Result<OriginalClockMemberOrigin, InternalFault> {
+        match scope {
+            DeclarationScope::Source { .. } => self
+                .original_nodes
+                .get(node)
+                .cloned()
+                .ok_or_else(|| fault("source-declaration-retains-raw-provenance")),
+            DeclarationScope::Model {
+                identity,
+                declaration,
+            } => Ok(OriginalClockMemberOrigin::Model {
+                declaration: DeclarationKey {
+                    package: identity.clone(),
+                    node: declaration.clone(),
+                },
+            }),
+        }
     }
 
     /// Normalize an actual checked clock field using this graph's retained
@@ -195,7 +344,7 @@ impl SourceDeclarations {
     pub fn clock_template(
         &self,
         clock: &crate::check::ClockField,
-    ) -> Result<super::identity::PlaceTemplate, InternalFault> {
+    ) -> Result<super::identity::PlaceTemplate, ClockDeclarationResolutionError> {
         let first = clock
             .resolved_path()
             .first()
@@ -208,9 +357,85 @@ impl SourceDeclarations {
             clock.path(),
             clock.resolved_path(),
             |text| self.text(text),
-            |declaring, member| self.member(declaring, member),
+            |declaring, member| {
+                self.member(declaring, member)
+                    .map_err(ClockDeclarationResolutionError::from)
+            },
             |text| self.row_scope(text),
         )
+    }
+
+    /// Recover the original named-member chain through the complete checked
+    /// declaring-type handles in the resolved path. Inline source fields
+    /// belong to their declaring type's actual source owner and name.
+    pub fn clock_origin(
+        &self,
+        clock: &crate::check::ClockField,
+    ) -> Result<ClockDeclarationOrigin, ClockDeclarationResolutionError> {
+        if clock.path().len() != clock.resolved_path().len() {
+            return Err(fault("clock-path-and-resolution-rows-correspond").into());
+        }
+        let mut members = Vec::new();
+        for (step, row) in clock.path().iter().zip(clock.resolved_path()) {
+            let crate::check::PlaceStep::Field(name) = step else {
+                continue;
+            };
+            if super::identity::Decimal::new(name).is_ok() {
+                continue;
+            }
+            let mut declaring = row.declaring_type.as_str();
+            while let Some(payload) = declaring
+                .strip_prefix("Option<")
+                .and_then(|value| value.strip_suffix('>'))
+            {
+                declaring = payload;
+            }
+            let mut original = None;
+            for (node, origin) in &self.original_nodes {
+                if node.to_string() == declaring {
+                    retain_original(&mut original, origin)?;
+                }
+            }
+            for (key, origins) in &self.original_declarations {
+                if key.node == declaring {
+                    for origin in origins {
+                        retain_original(&mut original, origin)?;
+                    }
+                }
+            }
+            match original {
+                Some(OriginalClockMemberOrigin::Source {
+                    owner,
+                    mut qualified_name,
+                }) => {
+                    qualified_name.push(
+                        Identifier::new(name.clone())
+                            .map_err(|_| fault("checked-clock-field-name-is-an-identifier"))?,
+                    );
+                    members.push(OriginalClockMemberOrigin::Source {
+                        owner,
+                        qualified_name,
+                    });
+                }
+                Some(OriginalClockMemberOrigin::Model { .. }) => {
+                    return Err(fault("source-origin-map-retains-source-declarations").into());
+                }
+                None => {
+                    let Some(DeclarationScope::Model { identity, .. }) =
+                        self.row_scope(declaring)?
+                    else {
+                        return Err(fault("clock-member-joins-an-original-declaration").into());
+                    };
+                    members.push(OriginalClockMemberOrigin::Model {
+                        declaration: DeclarationKey {
+                            package: identity,
+                            node: row.member_identity.clone(),
+                        },
+                    });
+                }
+            }
+        }
+        Ok(ClockDeclarationOrigin(members))
     }
 
     /// Retain a type handle whose actual checked/selected declaration join
@@ -231,6 +456,9 @@ impl SourceDeclarations {
             | DeclarationScope::Model { declaration, .. } => declaration.clone(),
         };
         self.checked_nodes.insert(handle.to_string(), declaration);
+        if let Some(origin) = self.original_nodes.get(node).cloned() {
+            self.original_nodes.insert(handle.clone(), origin);
+        }
         self.node_scopes.insert(handle, scope);
         Ok(())
     }
@@ -310,6 +538,39 @@ impl SourceDeclarations {
     }
 }
 
+fn retain_original(
+    selected: &mut Option<OriginalClockMemberOrigin>,
+    candidate: &OriginalClockMemberOrigin,
+) -> Result<(), ClockDeclarationResolutionError> {
+    if let Some(previous) = selected.as_ref().filter(|previous| *previous != candidate) {
+        return Err(ClockDeclarationAmbiguity {
+            first: previous.clone(),
+            second: candidate.clone(),
+        }
+        .into());
+    }
+    *selected = Some(candidate.clone());
+    Ok(())
+}
+
+fn retain_scope(
+    selected: &mut Option<(DeclarationScope, OriginalClockMemberOrigin)>,
+    scope: &DeclarationScope,
+    origin: OriginalClockMemberOrigin,
+) -> Result<(), ClockDeclarationResolutionError> {
+    if let Some((previous_scope, previous)) = selected {
+        if previous_scope != scope || previous != &origin {
+            return Err(ClockDeclarationAmbiguity {
+                first: previous.clone(),
+                second: origin,
+            }
+            .into());
+        }
+    }
+    *selected = Some((scope.clone(), origin));
+    Ok(())
+}
+
 fn declaration_uri(owner: &SourceOwner, name: &[filament_exact::Identifier]) -> String {
     format!(
         "ix://{}/{}",
@@ -323,4 +584,123 @@ fn declaration_uri(owner: &SourceOwner, name: &[filament_exact::Identifier]) -> 
 
 fn fault(invariant: &'static str) -> InternalFault {
     InternalFault::new("clock-declaration-normalization", invariant)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
+    use crate::model::intake::SelectedModels;
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use ix_trace_rs::trace;
+
+    fn source_graph() -> CheckedGraph {
+        let text = "language \"ix:native\" edition \"1-draft\";
+            profile t = \"filament.temporal.complete/v1\";
+            dimension Time; unit ms : Time = rational(1, 1);
+            record W { c: Clock; }
+            object O { w: W; d: Clock; }
+            time O dense unit ms;";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "clock-table"),
+            "clocks.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("source clock fixture parses");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let forms = fsl_forms::build_unit(&parsed).expect("source clock forms");
+        let mut declarations = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "clock-table-test".to_owned(),
+            forms,
+            SelectedModels::fixture_entries(Vec::new()),
+            Vec::new(),
+        )
+        .expect("source clock declarations");
+        let pending = declarations
+            .link_dispatch(crate::model::accounting::ModelNormalizationLimits::default())
+            .expect("source dispatch links");
+        declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &ZeroRewardEvaluator,
+            )
+            .map_err(|refusals| pending.report(refusals))
+            .expect("source clocks check and publish their table")
+    }
+
+    #[trace("FR-1040-AC-9", "TC-3084")]
+    #[test]
+    fn checked_source_publishes_full_original_member_chains() {
+        let graph = source_graph();
+        let table = graph.clock_declaration_table();
+        assert_eq!(table.entries().count(), 2);
+        let nested = table
+            .entries()
+            .find(|(_, origin)| origin.0.len() == 2)
+            .expect("nested record clock retains two original fields");
+        let names: Vec<_> = nested
+            .1
+             .0
+            .iter()
+            .map(|member| match member {
+                OriginalClockMemberOrigin::Source { qualified_name, .. } => qualified_name
+                    .iter()
+                    .map(Identifier::as_str)
+                    .collect::<Vec<_>>(),
+                other => panic!("source provenance was lost: {other:?}"),
+            })
+            .collect();
+        assert_eq!(names, [vec!["O", "w"], vec!["W", "c"]]);
+        let alias_view = ClockDeclarationTable::from_entries(
+            table
+                .entries()
+                .chain(table.entries())
+                .map(|(template, origin)| (template.clone(), origin.clone())),
+        )
+        .expect("repeated authenticated aliases are one view");
+        assert_eq!(alias_view.entries().count(), 2);
+        let shared = table.clone();
+        assert!(std::sync::Arc::ptr_eq(&table.entries, &shared.entries));
+        assert!(std::sync::Arc::ptr_eq(
+            &table.source_declarations,
+            &shared.source_declarations
+        ));
+    }
+
+    #[trace("FR-1040-AC-9", "TC-3084")]
+    #[test]
+    fn collision_names_both_checked_origins_and_returns_no_table() {
+        let graph = source_graph();
+        let entries: Vec<_> = graph.clock_declaration_table().entries().collect();
+        let (template, first) = entries[0];
+        let (_, second) = entries[1];
+        assert_ne!(first, second, "fixture has distinct original declarations");
+        let error = ClockDeclarationTable::from_entries([
+            (template.clone(), first.clone()),
+            (template.clone(), second.clone()),
+        ])
+        .expect_err("distinct original chains cannot share a normalized identity");
+        assert_eq!(&error.first, first);
+        assert_eq!(&error.second, second);
+        let cause = crate::check::CheckCause::DuplicateClockDeclaration(Box::new(error));
+        assert_eq!(
+            cause.code(),
+            fsl_foundation::diagnostic::Code::ConflictingDeclaration
+        );
+        assert_eq!(cause.cause(), Some("duplicate-declaration"));
+        let mut other = template.clone();
+        let DeclarationScope::Source { identity, .. } = &mut other.scope else {
+            panic!("source fixture");
+        };
+        *identity = "independent-unit".to_owned();
+        let distinct = ClockDeclarationTable::from_entries([
+            (template.clone(), first.clone()),
+            (other, second.clone()),
+        ])
+        .expect("identical paths in different authenticated scopes coexist");
+        assert_eq!(distinct.entries().count(), 2);
+    }
 }
