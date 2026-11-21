@@ -2250,6 +2250,11 @@ fn package_parallel_send_preserves_weak_model_reads() {
                     .as_bytes(),
             );
             let source = analyze(&path);
+            assert!(
+                source.item(0).get("record").is_some(),
+                "Source weak fixture {memory}/{capture}: {}",
+                source.document()
+            );
             assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
             let expected = if capture { 2 } else { 1 };
             fn inspect<M: fsl_eval::simulation::protocol::MemoryModel>(
