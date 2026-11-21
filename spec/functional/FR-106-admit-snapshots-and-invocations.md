@@ -460,6 +460,12 @@ origins and producing no partial place table or admitted observation.
 > An unseeded refinement-row receiver supplies no population authority and
 > is not a v2 Clock-reference producer; seeded clause and protocol inputs
 > remain the supported authority seams.
+> Source-owned Bare raw object materialization also remains outside this
+> implementation: it refuses the existing typed
+> `unknown_required_feature`/`unsupported-feature`, naming
+> `missing-type-representation`. Model-owned raw admission and the static
+> SourceOwner declaration-path comparison do not establish that missing
+> materialization capability. QSL-2178 retains this named remainder.
 >
 > The Clock route and declaration-table criteria reviewed as AC-74/AC-75
 > are now AC-76/AC-77. The relationship criteria on the repaired main branch
