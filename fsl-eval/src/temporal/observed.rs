@@ -1572,9 +1572,35 @@ struct PackageLetters<'a> {
     /// The environment a sample position reads: it holds no object.
     empty: ObjectEnvironment,
     stopped: Option<HoldsStop>,
+    /// The first undefined reading, at the earliest position read.
+    undefined: Option<FirstUndefined>,
 }
 
 impl PackageLetters<'_> {
+    /// Keep the first undefined reading at the earliest position read, the
+    /// position the evaluator reports (ADR-018 UE-1).
+    fn note(
+        &mut self,
+        locus: impl FnOnce() -> ObservedLocus,
+        position: TemporalPosition,
+        reading: &Result<AtomReading, LetterStop>,
+    ) {
+        let Ok(AtomReading::Undefined(cause)) = reading else {
+            return;
+        };
+        if self
+            .undefined
+            .as_ref()
+            .is_none_or(|first| position.index() < first.position.index())
+        {
+            self.undefined = Some(FirstUndefined {
+                locus: locus(),
+                position,
+                cause: cause.clone(),
+            });
+        }
+    }
+
     /// The environment position `position` observes and the value its `over`
     /// parameter takes there: a lasso wraps past its last represented
     /// position into the loop.
@@ -1628,7 +1654,10 @@ impl TemporalLetters for PackageLetters<'_> {
         let evaluation = self
             .evaluator
             .evaluate_holds(&named, over, &[], objects, meter);
-        ObservedLetters::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)
+        let reading =
+            ObservedLetters::reading(&mut self.stopped, position, evaluation, HOLDS_CODES);
+        self.note(|| ObservedLocus::Atom(atom), position, &reading);
+        reading
     }
 
     fn activation(
@@ -1640,7 +1669,10 @@ impl TemporalLetters for PackageLetters<'_> {
         let evaluation = self
             .evaluator
             .evaluate_guard(self.key, over, objects, meter);
-        ObservedLetters::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)
+        let reading =
+            ObservedLetters::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES);
+        self.note(|| ObservedLocus::Activation, position, &reading);
+        reading
     }
 
     fn captures(
@@ -1682,8 +1714,55 @@ pub fn package_observed_valuation(
         trace,
         empty: ObjectEnvironment::default(),
         stopped: None,
+        undefined: None,
     };
     letters_valuation(clause, &mut letters, trace, meter)
+}
+
+/// [`evaluate_positions`] for a clause a checked package carries: the clause's
+/// formula evaluated over `positions` of `trace`, its atoms and guard read
+/// through the package's own evaluator `evaluator` (FR-330). A clause with
+/// captures is not read.
+pub fn evaluate_package_positions(
+    evaluator: &dyn crate::simulation::model::ModelEvaluator,
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    key: &filament_exact::NodeKey,
+    positions: PackagePositions<'_>,
+    trace: TemporalTrace,
+    meter: &mut Meter,
+) -> ObservedRun {
+    let mut letters = PackageLetters {
+        evaluator,
+        clause,
+        key,
+        positions,
+        trace,
+        empty: ObjectEnvironment::default(),
+        stopped: None,
+        undefined: None,
+    };
+    let (result, decisive) = super::engine::run_seeking(
+        super::engine::Subject::of_clause(clause),
+        trace,
+        super::engine::Goal::Clause,
+        false,
+        &mut letters,
+        meter,
+    );
+    // A refusal the result does not stop at was passed over: an activation
+    // before it evaluated false, or an atom before it was undefined, and
+    // that result is the run's (FR-327 "Refused condition").
+    let stopped = match (letters.stopped, &result) {
+        (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
+        (stopped, _) => stopped,
+    };
+    ObservedRun {
+        result,
+        stopped,
+        undefined: letters.undefined,
+        decisive,
+        captures: Vec::new(),
+    }
 }
 
 /// [`observed_valuation`] over any letter source: each `holds` atom of

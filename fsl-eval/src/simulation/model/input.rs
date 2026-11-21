@@ -630,7 +630,7 @@ impl<'p> PackageModelInput<'p> {
     ///
     /// [`PendingClauseForm`] as [`Self::temporal_clause`], less the profile and
     /// interval facts.
-    pub fn temporal_valuation_clause(
+    pub fn temporal_run_clause(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         position_limit: u64,
@@ -638,7 +638,7 @@ impl<'p> PackageModelInput<'p> {
         let clause = claim.node();
         let mut form = self
             .package
-            .temporal_clause_valuation_form(claim)
+            .temporal_clause_run_form(claim)
             .map_err(PendingClauseForm::Read)?;
         if !form.captures.is_empty() {
             let node = self

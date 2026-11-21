@@ -45,6 +45,17 @@ enum Work {
     /// FR-1039: lower a temporal clause the package names (FR-931). The
     /// bytes are the `cross_evaluate.initial` snapshot.
     Lowering(super::tl::TlLowering, Option<Vec<u8>>),
+    /// FR-1039: run a temporal clause the package names over record samples.
+    Clause(Box<ClauseWork>),
+}
+
+/// A `clause` run over a selected package: the clause, the trace of record
+/// samples it reads and the selection the result echoes.
+struct ClauseWork {
+    name: String,
+    trace: fsl_replay::spine::TraceInput,
+    selection: fsl_replay::spine::ClauseRunSelection,
+    accounting: filament_exact::ScalarLimits,
 }
 
 /// The package bytes and handoff rows admitted for a selected package. The
@@ -143,7 +154,6 @@ pub(super) fn prepare(
         ));
     }
     for (present, member) in [
-        (request.clause.is_some(), "clause"),
         (request.items.is_some(), "items"),
         (request.verification_plan.is_some(), "verification_plan"),
     ] {
@@ -153,6 +163,9 @@ pub(super) fn prepare(
                 "running this member over a selected checked package is not implemented yet",
             ));
         }
+    }
+    if let Some(clause) = &request.clause {
+        return prepare_clause(directory, request, package, clause, dependent_bytes);
     }
     if let Some(member) = &request.tl_lowering {
         return prepare_lowering(directory, request, package, member, dependent_bytes);
@@ -198,6 +211,139 @@ pub(super) fn prepare(
     })
 }
 
+/// FR-1039: prepare a `clause` request over a selected package. The package
+/// form reads one run: a `temporal` selection of a clause under the
+/// infinite-trace profile over a finite trace or a lasso of record samples;
+/// any other selection refuses here, before a file is opened. A run builds
+/// states over the package's model world, so a `{file}` selection refuses it.
+fn prepare_clause(
+    directory: &Path,
+    request: &wire::Request,
+    package: &wire::RunPackageSelection,
+    clause: &wire::ClauseRun,
+    dependent_bytes: usize,
+) -> Result<PreparedPackageRun> {
+    use fsl_replay::spine::{
+        read_clause_selection, ClauseRunSelection, ClauseSelectionPartsKind, TraceInput,
+    };
+
+    if request.call.is_some() || request.tl_lowering.is_some() {
+        return Err(invalid(
+            "clause",
+            "tl_lowering, call and clause are mutually exclusive",
+        ));
+    }
+    if package.file.is_some() {
+        return Err(RunCause::RequiresDirectory {
+            member: "clause".to_owned(),
+        });
+    }
+    let not_read = |member: &str| {
+        invalid(
+            member,
+            "this clause run is not implemented over a selected checked package yet",
+        )
+    };
+    if !clause.observations.is_empty() || clause.selection.ledger_path().is_some() {
+        return Err(not_read("clause.observations"));
+    }
+    let parts = clause
+        .selection
+        .into_parts()
+        .map_err(|error| invalid(&error.member, error.reason))?;
+    if !matches!(parts, ClauseSelectionPartsKind::Temporal { .. }) {
+        return Err(not_read("clause.selection"));
+    }
+    let selection = read_clause_selection(parts, &std::collections::BTreeMap::new(), None)
+        .map_err(|error| invalid(&error.member, error.reason))?;
+    let ClauseRunSelection::SampledTemporal { name, trace, .. } = &selection else {
+        return Err(not_read("clause.selection.over"));
+    };
+    let runs = match trace {
+        TraceInput::Finite(positions) => !positions.is_empty(),
+        TraceInput::Lasso { repeat, .. } => !repeat.is_empty(),
+        TraceInput::Progressed { .. }
+        | TraceInput::Timestamped { .. }
+        | TraceInput::Timed { .. }
+        | TraceInput::Model { .. } => false,
+    };
+    if !runs {
+        return Err(not_read("clause.selection.trace"));
+    }
+    let work = ClauseWork {
+        name: name.clone(),
+        trace: trace.clone(),
+        selection: selection.clone(),
+        accounting: super::call_accounting(&clause.accounting),
+    };
+    let admitted = admit(directory, request, package, dependent_bytes, None)?;
+    Ok(PreparedPackageRun {
+        package: admitted.package,
+        identities: admitted.identities,
+        equality: admitted.equality,
+        budget: admitted.budget,
+        packages: admitted.packages,
+        model_limits: admitted.model_limits,
+        work: Work::Clause(Box::new(work)),
+        selection: admitted.selection,
+        models: admitted.models,
+    })
+}
+
+/// Run the clause of a prepared `clause` request over the package's own
+/// nodes and evaluator.
+fn execute_clause(
+    bare: &fsl_package::BarePackage<'_>,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    work: ClauseWork,
+) -> Result<RunResult> {
+    let not_read = |reason: String| invalid("clause.selection", reason);
+    let model = fsl_eval::simulation::model::PackageModelInput::of(bare, packages, model_limits)
+        .map_err(|refusal| not_read(refusal.to_string()))?;
+    let package = bare.package();
+    let named = package
+        .temporal_clause_names()
+        .unwrap_or_default()
+        .iter()
+        .find(|row| *row.name == *work.name);
+    let found = named
+        .map(|row| {
+            let key = fsl_package::checked_views::temporal_subject(package, &row.declaration)
+                .ok()
+                .and_then(|subject| subject.declaration_key())
+                .ok_or_else(|| RunCause::TlFault("an admitted clause node has a key".to_owned()))?;
+            let claim = fsl_foundation::source::provenance::OccurrenceKey::new(
+                key.clone(),
+                filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
+            );
+            let clause = model
+                .temporal_run_clause(
+                    &claim,
+                    filament_semantic_value::checking::CheckingLimits::default().nodes(),
+                )
+                .map_err(|refusal| not_read(refusal.to_string()))?;
+            if clause.profile() != fsl_semantics::check::TemporalProfile::InfiniteTrace {
+                return Err(not_read(
+                    "only a clause under the infinite-trace profile runs over record samples"
+                        .to_owned(),
+                ));
+            }
+            Ok((clause, key))
+        })
+        .transpose()?;
+    let report =
+        fsl_replay::spine::run_package_sampled(&fsl_replay::spine::PackageSampledRequest {
+            evaluator: bare,
+            name: &work.name,
+            clause: found.as_ref().map(|(clause, key)| (clause, key)),
+            types: model.input().types,
+            trace: &work.trace,
+            accounting: work.accounting,
+        });
+    output::clause_report(report, &work.selection)
+}
+
 /// FR-1039: prepare a `tl_lowering` request over a selected package. Its
 /// member decodes as the source route decodes it; a `cross_evaluate` builds
 /// states over the package's model world, so it needs the handoff's rows
@@ -209,7 +355,7 @@ fn prepare_lowering(
     member: &serde_json::Value,
     dependent_bytes: usize,
 ) -> Result<PreparedPackageRun> {
-    if request.call.is_some() {
+    if request.call.is_some() || request.clause.is_some() {
         return Err(invalid(
             "tl_lowering",
             "tl_lowering, call and clause are mutually exclusive",
@@ -592,6 +738,11 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         })?;
     let call = match work {
         Work::Call(call) => *call,
+        Work::Clause(work) => {
+            let mut result = execute_clause(&bare, &packages, model_limits, *work)?;
+            result.sources = crate::Sources::from_sources(models);
+            return Ok(result);
+        }
         Work::Lowering(lowering, snapshot) => {
             let record = super::tl::lower_over_package(
                 &bare,

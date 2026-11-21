@@ -75,7 +75,7 @@ pub(super) fn observe(
     let model = PackageModelInput::of(bare, run.packages, run.model_limits)
         .map_err(|refusal| not_read(&refusal))?;
     let clause = model
-        .temporal_valuation_clause(
+        .temporal_run_clause(
             claim,
             filament_semantic_value::checking::CheckingLimits::default().nodes(),
         )

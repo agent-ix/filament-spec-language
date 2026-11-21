@@ -1403,6 +1403,60 @@ fn a_lasso_cross_evaluation_over_a_handoff_directory_returns_the_source_record()
     }
 }
 
+/// FR-1039 (TC-3019): a `clause` run of a temporal clause over record samples,
+/// over the unit's handoff `{"directory": D}` with the source removed, returns
+/// the source route's result document, byte-equal, for a satisfied and a
+/// violated trace and a lasso; over `{file}` it refuses `invalid-request` with
+/// `requires: directory`.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-6")]
+fn a_clause_run_over_a_handoff_directory_returns_the_source_result() {
+    let unit = counter_unit("");
+    let sample = |level: u32| json!({"sample": {"level": {"integer": level.to_string()}}});
+    let traces = [
+        json!({"lasso": {"prefix": [], "loop": [sample(0)]}}),
+        json!({"lasso": {"prefix": [sample(1)], "loop": [sample(1)]}}),
+        json!({"finite": [sample(1), sample(1), sample(2)]}),
+        json!({"finite": [sample(0), sample(1)]}),
+    ];
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let models = compile_handoff(directory.path(), &unit);
+    let mut verdicts = std::collections::BTreeSet::new();
+    for trace in &traces {
+        let clause = json!({"selection": {"temporal": {"name": "C", "trace": trace}},
+            "observations": {}});
+        let (source_code, from_source) = run(&unit, true, ("clause", clause.clone()));
+        assert_ne!(source_code, 20, "{trace}: {from_source}");
+        let (code, from_package) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {"models": models,
+                "package": {"directory": "handoff"}, "clause": clause}}),
+        );
+        assert_eq!(code, source_code, "{trace}: {from_package}");
+        assert_eq!(from_package, from_source, "{trace}");
+        verdicts.insert(source_code);
+    }
+    assert!(
+        verdicts.len() > 1,
+        "a satisfied and a violated trace: {verdicts:?}"
+    );
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"file": "package.json"},
+            "clause": {"selection": {"temporal": {"name": "C", "trace": traces[0]}},
+                "observations": {}}}}),
+    );
+    assert_eq!(code, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(
+        value["details"],
+        json!({"member": "clause", "requires": "directory"}),
+        "{value}"
+    );
+}
+
 /// FR-1039-AC-6 (FR-931-AC-6's snapshot): `cross_evaluate` `{"initial": S,
 /// "max_steps": N}` over the handoff `{"directory": D}` with the source removed
 /// returns the source route's record with its `cross_evaluation`, byte-equal,

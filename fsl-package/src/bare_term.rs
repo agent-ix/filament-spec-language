@@ -857,7 +857,7 @@ impl<'p> BarePackage<'p> {
     /// # Errors
     ///
     /// As [`Self::temporal_clause_form`], less the step interval.
-    pub fn temporal_clause_valuation_form(
+    pub fn temporal_clause_run_form(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
     ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
