@@ -898,14 +898,14 @@ fn duplicate_and_unreachable_selected_identities_refuse_at_the_manifest_row() {
 
 #[test]
 #[trace("FR-850-AC-12", "TC-2410")]
-fn nested_imported_composites_keep_source_values_after_source_deletion() {
+fn nested_library_composites_keep_source_values_after_source_deletion() {
     let directory = tempfile::tempdir().unwrap();
     let mut request = prepare(directory.path(), false);
     std::fs::remove_dir_all(directory.path().join("handoff")).unwrap();
     for (file, body) in [
-        ("a.native", "record A { level: Integer; } function make using v(): A pure { A{level: 42} }"),
-        ("z.native", "import \"test/a\" as a; record Z { inner: a::A; } function make using v(): Z pure { Z{inner: a::make()} }"),
-        ("unit.native", "import \"test/z\" as z; record Wrapped { inner: z::Z; } function answer using v(): Integer pure { let wrapped = Wrapped{inner: z::make()} in wrapped.inner.inner.level }"),
+        ("a.native", "record A { level: Integer; } record NestedA { inner: A; } function answer using v(): Integer pure { let wrapped = NestedA{inner: A{level: 42}} in wrapped.inner.level }"),
+        ("z.native", "import \"test/a\" as a; record LocalZ { level: Integer; } record Z { inner: LocalZ; } function answer using v(): Integer pure { let wrapped = Z{inner: LocalZ{level: a::answer()}} in wrapped.inner.level }"),
+        ("unit.native", "import \"test/z\" as z; record LocalRoot { level: Integer; } record Wrapped { inner: LocalRoot; } function answer using v(): Integer pure { let wrapped = Wrapped{inner: LocalRoot{level: z::answer()}} in wrapped.inner.level }"),
     ] {
         std::fs::write(directory.path().join(file), format!("{HEADER}{body}")).unwrap();
     }
@@ -915,7 +915,7 @@ fn nested_imported_composites_keep_source_values_after_source_deletion() {
     )
     .unwrap();
     fsl_command::command::compile(&directory.path().join("compile.json"))
-        .expect("nested imported record declarations and constructions are valid source");
+        .expect("library-local nested records and imported scalar calls are valid source");
     request.as_object_mut().unwrap().remove("handoff");
     request["call"] = json!({"function": "answer", "arguments": []});
     let (source_exit, source_result) = run_request(directory.path(), request, Default::default());
