@@ -148,6 +148,53 @@ fn canonical_run_values_refuse_legacy_and_malformed_inputs() {
     assert_eq!(plain(&path).exit, 20);
 }
 
+/// Native selections retain their index and order through the owned runner.
+#[test]
+#[trace("FSpec-FR-550-AC-3", "FR-651-AC-1")]
+fn canonical_run_values_items_keep_selection_order_and_individual_results() {
+    let case = Case::new();
+    case.write("packing.fsl", SOURCE.as_bytes());
+    let integer = |value: &str| json!({"type":"integer", "value":value});
+    let mut job = request("packing.fsl", "Remaining", &[]);
+    let selections: Vec<Value> = ["3", "1", "2"]
+        .into_iter()
+        .map(|value| {
+            let call = request(
+                "packing.fsl",
+                "Remaining",
+                &[("total", integer(value)), ("held", integer("0"))],
+            );
+            json!({"call": call["request"]["call"]})
+        })
+        .collect();
+    let body = job["request"]
+        .as_object_mut()
+        .expect("the authored request is an object");
+    body.remove("call");
+    body.insert("items".to_owned(), json!({"selections": selections}));
+    let outcome = plain(&case.json("items.json", &job));
+    assert_eq!(outcome.exit, 0, "{}", outcome.document);
+    let document = &outcome.document;
+    assert_eq!(document["category"], "success", "{document}");
+    assert_eq!(
+        document["selections"],
+        json!([{"index":0,"expanded":1},{"index":1,"expanded":1},{"index":2,"expanded":1}]),
+        "{document}"
+    );
+    let items = document["items"]
+        .as_array()
+        .expect("one result per selection");
+    assert_eq!(items.len(), 3, "{document}");
+    for (index, expected) in ["3", "1", "2"].into_iter().enumerate() {
+        assert_eq!(items[index]["selection"], index, "{document}");
+        assert_eq!(
+            items[index]["result"]["outcome"]["value"],
+            integer(expected),
+            "{document}"
+        );
+    }
+}
+
 /// Run the owner-maintained corpus in place; the source checkout is never
 /// copied into this repository and its refusal snapshots are not the oracle.
 #[test]
