@@ -48,3 +48,15 @@ Rust lane: rust-style idioms are respected. There is no `unwrap` in production c
 - FR-128-AC-15: examined, PackageClauseSubject now admits the flag for Liveness only and threads it
 - FR-1030-AC-6: examined, liveness.rs lasso keeps entry key, refuted only through replay
 - FR-1030-AC-7: examined, same mechanism with a one-step stem
+
+## Dispositions
+
+Disposition pass 1, checked against frozen head 4c9cfbd385be4faef17d13a13dfed5424ca93dd6 over base cf8d85826db560569cd8806cce07007d4b493e0c (the first three commits are range-diff identical to the reviewed f092056d). I read the final source and assertions, not only the coder reports. Runtime evidence is the root's Titan results file: at 8ae3989f, Analyze it 7/7 and Replay lib 1/1 passed, which covers these three fixes; 4c9cfbd only changes one root test file.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | replay_task_product_trace refuses the first listed closure step at `<site>/transition/type` before the product expands; task_product.rs asserts both sites through the public typed entry against a wrong-key control |
+| FND-002 | fixed | evaluate_model_trace calls refuse_closure_alphabet first and passes false to trace_of; closure_replay::the_native_admit_entry_refuses_a_closure_lasso_at_its_alphabet asserts the Alphabet refusal at /loop/0/transition/type |
+| FND-003 | fixed | measured_bytes folds size_of::<ClosureStutter>() per step plus delay presence, the same convention as model steps (heap bytes of a StateKey are counted for neither); the unit test asserts linear growth and the delay term |
+
+Runtime cutoff (root Titan results file, read at 14:12 PST): 13/13 unique tests passed across mixed heads, 11 at 8ae3989f and the two original previous-transfer root tests at 4c9cfbd385; 8ae..4c9 differs in tests/it/plan_export_surface.rs alone.

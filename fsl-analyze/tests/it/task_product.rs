@@ -524,6 +524,7 @@ fn periodic_overload_keeps_queue_overflow_as_an_open_frontier() {
 /// FR-249-AC-9/FR-364: a miss is not a refutation until its same-path lasso
 /// repeats the product state with positive elapsed time.
 #[trace("TC-3008", "FR-249-AC-9", "FR-237-AC-8")]
+#[trace("TC-523", "FR-128-AC-11")]
 #[test]
 fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
     let world = world_with_task(2, 1);

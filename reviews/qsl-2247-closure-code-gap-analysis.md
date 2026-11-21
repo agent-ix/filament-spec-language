@@ -49,3 +49,27 @@ FR-128-AC-10, AC-12, AC-14 and AC-15 have direct, correctly bound tests over the
 - FR-128-AC-15: examined, bound to clause_item::a_closure_lasso_replays_alike_on_the_source_and_the_package_routes
 - FR-1030-AC-6: examined, FND-003
 - FR-1030-AC-7: examined, FND-004
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | The two original previous-transfer acceptance tests now run on a unit with BoundedTwo removed, which routes around a NotEmitted failure on main and does not fix it: since #3329 (1ccd5cfc, after the TP3 merge 158cc432, at which the root evidence report records these tests passing on the full unit), a transfer whose unit declares an unselected configured clause ends resource_exhausted, even when that clause is not transferred | tests/it/plan_export_surface.rs:2057 |
+| FND-008 | low | The FR-128-AC-11 task-derived case is asserted inside missed_deadline_settles_only_with_a_replayed_positive_time_lasso, which is tagged only TC-3008/FR-249-AC-9/FR-237-AC-8, so the matrix binds no test of that case to FR-128-AC-11 | fsl-analyze/tests/it/task_product.rs:526 |
+
+FND-007: this is grounded in the source only. I did not run anything on main. `git log -S hold_item 158cc432..cf8d8582` shows #3329, whose message says it holds "the whole item (counterexample, record, ...)", and an unselected `ev` clause makes `emit_checked` refuse (fixture report: MissingTemporalClockSelection). The assertions are unchanged and the omitted clause is unused, so the previous-transfer rule is still tested. The product behaviour stays defective: an unrelated configured clause makes any held-id transfer fail. The full-unit `BoundedTwo` case is exposed to the same thing. A discriminator for the root: run the two tests on main cf8d with the full unit. If they fail, the regression belongs to #3329/QSL-2744 and should be deferred there; if they pass, this PR caused it.
+
+## Dispositions
+
+Disposition pass 1, checked against frozen head 4c9cfbd385be4faef17d13a13dfed5424ca93dd6 over base cf8d85826db560569cd8806cce07007d4b493e0c. I read the final source, the assertions and the spec rows. Per the root's results file, the tests behind FND-001/005/006 and both clause_item round trips passed at 8ae3989f (Analyze it 7/7). The two root closure transfers and the emit/read control passed there too (3/3).
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | task_product.rs now replays a typed task counterexample with a closure step at Prefix(0) and at Loop(0) through the public replay_task_product_trace and asserts TraceAlphabet at `<site>/transition/type`, against a wrong-key control (the trace tag is FND-008) |
+| FND-002 | fixed | under the architecture ruling, FR-128-AC-11 strikes only the unreachable hybrid case and says plainly that no hybrid entry accepts a temporal counterexample; no API was added, and the helper test is not used as evidence |
+| FND-003 | fixed | under the architecture ruling, FR-1030-AC-6 now rests on three parts: slot 1 refuted only through the production replay gate, lossless written and read equality (clause_item asserts read == unbound, whole struct), and the post-read replay over the source and package routes; the package engine is Refuted with record equality; the phantom transfer-output lasso assertion was removed |
+| FND-004 | fixed | FR-1030-AC-7 is reworded the same way; clause_item::a_closure_violation_after_a_real_step_settles_refuted_through_its_replayed_lasso (tagged FR-1030-AC-7) asserts a stem of at least 1 and the same round trip; the root PendingTwo slot-1 refuted assertion is kept |
+| FND-005 | fixed | zone_replay::a_timed_request_selecting_the_flag_still_refuses_a_closure_step runs replay_model_trace with stutter_closure false and true, and both refuse Alphabet at /loop/0/transition/type |
+| FND-006 | fixed | closure_replay::a_closure_lasso_the_evaluator_does_not_refute_disagrees now settles the item through settle_model_check_over_stutter_closure and asserts TerminalValue::Inconclusive(ReplayParity(NoValue)) with no counterexample |
+
+Runtime cutoff (root Titan results file, read at 14:12 PST): 13/13 unique tests passed across mixed heads, 11 at 8ae3989f and the two original previous-transfer root tests at 4c9cfbd385; 8ae..4c9 differs in tests/it/plan_export_surface.rs alone.
