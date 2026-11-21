@@ -1185,6 +1185,8 @@ fn work<'a>(
         Some(ItemForm::Probabilistic(form))
             if item.kind == Capability::ProbabilisticSatisfaction =>
         {
+            let mut simulation = simulation(input, binding, limits);
+            simulation.expansion.max_candidates = 1_000_000;
             let claim = package
                 .graph()
                 .probabilistic_model()
@@ -1197,7 +1199,7 @@ fn work<'a>(
                         item.request_index,
                         crate::exact_probabilistic::ProductRequest {
                             subject: fsl_eval::model_subject::ModelSubject {
-                                simulation: simulation(input, binding, limits),
+                                simulation,
                                 proof_bounds: Vec::new(),
                             },
                             claim,
@@ -1214,7 +1216,7 @@ fn work<'a>(
                         item.request_index,
                         crate::statistical::StatisticalRequest {
                             subject: fsl_eval::model_subject::ModelSubject {
-                                simulation: simulation(input, binding, limits),
+                                simulation,
                                 proof_bounds: Vec::new(),
                             },
                             claim,
