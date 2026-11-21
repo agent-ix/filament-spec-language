@@ -253,6 +253,12 @@ enum Route<'a> {
     StateGraph(Box<PackageStateGraphSubject<'a>>),
 }
 
+/// An authored clause and the optional protocol subject it runs over.
+struct ClauseRoute<'a> {
+    subject: Box<PackageClauseSubject<'a>>,
+    protocol: Option<ProtocolBinding>,
+}
+
 /// FR-850, FR-940: resolve `run`'s items against the package's name tables,
 /// negotiate them with `negotiate`, run them over their package forms under
 /// `cancel` and settle FR-621's document with the source route's writer.
@@ -346,7 +352,7 @@ pub fn settle_package_run(
                 selection,
             } => match reads.clause(index, name, &claim, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
-                Resolution::Claim(claim, (subject, protocol)) => {
+                Resolution::Claim(claim, ClauseRoute { subject, protocol }) => {
                     let occurrence = subject.occurrence().clone();
                     owners.insert(
                         occurrence.clone(),
@@ -935,8 +941,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         name: &str,
         claim: &OccurrenceKey,
         selection: &ItemSelection,
-    ) -> Result<Resolution<(Box<PackageClauseSubject<'r>>, Option<ProtocolBinding>)>, PackageRunError>
-    {
+    ) -> Result<Resolution<ClauseRoute<'r>>, PackageRunError> {
         let input = self
             .input
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
@@ -1073,7 +1078,10 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: own_subject,
                 unrouted,
             }),
-            (Box::new(clause_subject), protocol),
+            ClauseRoute {
+                subject: Box::new(clause_subject),
+                protocol,
+            },
         ))
     }
 
@@ -1670,10 +1678,12 @@ impl<'a> WorkInputs<'_, 'a> {
                     self.supply,
                     self.binding.clone(),
                     self.limits,
-                    &item.claim,
-                    form,
-                    protocol,
-                    item.request_index,
+                    super::super::clause_item::PackageProtocolSelection {
+                        claim: &item.claim,
+                        form,
+                        protocol,
+                        index: item.request_index,
+                    },
                 )
             }
             (Some(ItemForm::Temporal(form)), Some(Route::Deadlock))

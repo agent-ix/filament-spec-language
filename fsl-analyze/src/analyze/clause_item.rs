@@ -1016,6 +1016,19 @@ struct PackageProtocolWork<'a> {
 }
 
 /// FR-850/FR-940: a derived protocol freedom item anchored at the package
+/// protocol declaration, with its resolved request form.
+pub(super) struct PackageProtocolSelection<'a> {
+    /// The declaration occurrence that anchors this item.
+    pub(super) claim: &'a OccurrenceKey,
+    /// The requested temporal item and its bounds.
+    pub(super) form: &'a TemporalItem,
+    /// The resolved protocol subject and memory bindings.
+    pub(super) protocol: ProtocolBinding,
+    /// This item's position in the request.
+    pub(super) index: RequestIndex,
+}
+
+/// FR-850/FR-940: a derived protocol freedom item anchored at the package
 /// protocol declaration, to be run and replayed through the package protocol
 /// transition system.
 pub(super) fn package_protocol_freedom_item<'a>(
@@ -1024,11 +1037,14 @@ pub(super) fn package_protocol_freedom_item<'a>(
     supply: fsl_replay::HandoffSupply<'a>,
     binding: SubjectBinding<'a>,
     limits: AnalyzeLimits,
-    claim: &OccurrenceKey,
-    form: &TemporalItem,
-    protocol: ProtocolBinding,
-    index: RequestIndex,
+    selection: PackageProtocolSelection<'_>,
 ) -> AnalyzeItem<'a> {
+    let PackageProtocolSelection {
+        claim,
+        form,
+        protocol,
+        index,
+    } = selection;
     PackageProtocolWork {
         input: package.input(),
         clause: None,
