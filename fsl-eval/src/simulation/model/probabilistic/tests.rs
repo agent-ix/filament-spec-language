@@ -1272,6 +1272,83 @@ fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
             }
         }
     }
+    let noninitial = original
+        .iter()
+        .flat_map(|action| &action.draws)
+        .flat_map(|draw| &draw.successors)
+        .map(|(_, post)| post)
+        .find(|post| matches!(field(post, "delivered"), Value::Boolean(false)))
+        .expect("a genuine failed send reaches attempts1");
+    let next_bytes = system.state_key(noninitial).unwrap().0;
+    assert_ne!(next_bytes, bytes);
+    assert!(noninitial.anchor().is_some() && noninitial.reached_by().is_some());
+    let restored_next = system
+        .restore_state_key_with_budget(
+            &next_bytes,
+            fsl_foundation::IdentityLimits::default(),
+            &mut budget,
+            &Cancel::new(),
+        )
+        .unwrap();
+    assert!(restored_next.anchor().is_none() && restored_next.reached_by().is_none());
+    let next_actions = system.actions(noninitial).unwrap().unwrap();
+    let restored_actions = system.actions(&restored_next).unwrap().unwrap();
+    assert_eq!(next_actions.len(), restored_actions.len());
+    for (actual, restored) in next_actions.iter().zip(&restored_actions) {
+        assert_eq!(actual.identity, restored.identity);
+        for (actual, restored) in actual.draws.iter().zip(&restored.draws) {
+            assert_eq!(actual.probability, restored.probability);
+            assert_eq!(
+                actual
+                    .successors
+                    .iter()
+                    .map(|(step, post)| (step.clone(), system.state_key(post).unwrap().0))
+                    .collect::<Vec<_>>(),
+                restored
+                    .successors
+                    .iter()
+                    .map(|(step, post)| (step.clone(), system.state_key(post).unwrap().0))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    let mut invalid: serde_json::Value = serde_json::from_slice(&next_bytes).unwrap();
+    let rows = invalid["semantic"]["entries"][0]["value"]["entries"][0]["value"]["fields"]
+        .as_array_mut()
+        .unwrap();
+    rows.iter_mut()
+        .find(|row| row["name"] == "attempts")
+        .unwrap()["value"] = serde_json::json!({"type":"integer","value":"99"});
+    let invalid = fsl_foundation::canonical_json::encode(&invalid).unwrap();
+    let refused = system.restore_state_key_with_budget(
+        &invalid,
+        fsl_foundation::IdentityLimits::default(),
+        &mut budget,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(refused, Err(super::super::ModelRestoreError::Malformed(_))),
+        "typed member range must be checked: {refused:?}"
+    );
+    let mut exhausted = Budget {
+        meter: filament_exact::Meter::new(system.meter_limits()),
+        used: 4_000_000,
+    };
+    let stopped = system.restore_state_key_with_budget(
+        &next_bytes,
+        fsl_foundation::IdentityLimits::default(),
+        &mut exhausted,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            stopped,
+            Err(super::super::ModelRestoreError::Key(
+                super::super::ModelKeyError::Denied
+            ))
+        ),
+        "caller storage denial: {stopped:?}"
+    );
     let cancel = Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Deadline);
     let stopped = system.restore_state_key_with_budget(
