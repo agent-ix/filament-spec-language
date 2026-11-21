@@ -402,6 +402,77 @@ fn a_timed_abstract_side_with_a_hidden_field_is_refused() {
     );
 }
 
+/// The default timed profile supplies the selector bound for concrete
+/// ClockRef data before refinement's independent hidden-field refusal.
+#[trace("TC-3084", "FR-1040-AC-8")]
+#[test]
+fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
+    let mut concrete: Json =
+        serde_json::from_slice(&document(&["x", "q"], &[("send", &["inflight", "r"])]))
+            .expect("JSON");
+    let mut reference = wire_type(
+        &ident("ClockRef"),
+        "unused",
+        json!({"target": "ix://filament/native/Clock"}),
+    );
+    reference["kind"] = json!("reference");
+    concrete["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(reference);
+    let fields = concrete["types"][1]["fields"]
+        .as_array_mut()
+        .expect("fields");
+    let q = fields
+        .iter_mut()
+        .find(|field| field["name"] == "q")
+        .expect("q");
+    q["multiplicity"] = json!({"lower": 0, "ordered": true, "unique": false});
+    let mut r = wire_field("r", &ident("ClockRef"));
+    r["presence"] = json!("optional");
+    r["multiplicity"]["lower"] = json!(0);
+    fields.push(r);
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
+    );
+    let world = refining(
+        &abstract_model,
+        &serde_json::to_vec(&concrete).expect("JSON"),
+        &format!(
+            "{DENSE}time A dense unit ms;\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let systems = open_systems(
+        the_refinement(&world),
+        &world.concrete_request(),
+        &world.package,
+        world.abstract_initials.clone(),
+    )
+    .expect("subjects open");
+    assert!(
+        matches!(
+            fsl_eval::simulation::model::check_model_bounds(
+                &systems.concrete,
+                fsl_eval::simulation::BOUND_POSITIONS
+            ),
+            Err(fsl_eval::simulation::NotSimulated::RequiresBound(_)),
+        ),
+        "the generic subject has no clock-profile selector bound"
+    );
+    let refused = check_timed_refinement(safety_request(&world), &Cancel::new())
+        .expect_err("the existing hidden abstract field gate still applies");
+    assert!(
+        matches!(
+            refused,
+            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenFieldTimedAbstract)
+        ),
+        "the timed constructor's default bound precedes this gate: {refused:?}"
+    );
+}
+
 /// FR-900-AC-5: an untimed concrete model admits arbitrary delays between
 /// its steps, and the exact failing delay is replayed against abstract time.
 #[trace("TC-2539", "FR-900-AC-5")]
