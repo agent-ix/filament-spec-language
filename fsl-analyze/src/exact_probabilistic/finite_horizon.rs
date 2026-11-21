@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-197: exact backward induction for the bounded acyclic product.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use num_bigint::BigInt;
@@ -15,7 +15,7 @@ use super::unbounded::{
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
 };
-use fsl_replay::TimedAxis;
+use fsl_eval::probabilistic::MonitorState;
 use fsl_semantics::check::Bound;
 
 /// The scheduler objective for a bounded claim over every scheduler.
@@ -260,62 +260,44 @@ fn collapse_zero_time_components(
         UnboundedError::MissingAction => FhError::MissingAction,
         _ => FhError::InvalidProbability,
     })?;
-    let mut edge_axes: BTreeMap<(usize, usize), Vec<TimedAxis>> = BTreeMap::new();
-    for edge in &product.edges {
-        let keys = product
-            .states
-            .get(edge.from.index())
-            .and_then(|state| state.certificate_state.as_ref())
-            .zip(
-                product
-                    .states
-                    .get(edge.to.index())
-                    .and_then(|state| state.certificate_state.as_ref()),
-            );
-        let axes = match keys {
-            Some((from, to)) => fsl_replay::timed_edge_axes(from, to),
-            None if edge.elapsed.is_zero() => vec![TimedAxis::Still],
-            None => Vec::new(),
-        };
-        edge_axes.insert((edge.from.index(), edge.to.index()), axes);
-    }
-    let on_axis = |axis: TimedAxis| {
-        let choices = graph
-            .choices
-            .iter()
-            .map(|choices| {
-                choices
-                    .iter()
-                    .filter(|choice| {
-                        choice.edges.iter().all(|edge| {
-                            edge_axes
-                                .get(&(edge.from.index(), edge.to.index()))
-                                .is_some_and(|axes| axes.contains(&axis))
-                        })
-                    })
-                    .cloned()
-                    .collect()
-            })
-            .collect();
-        Graph { product, choices }
+    let zero_choices = graph
+        .choices
+        .iter()
+        .map(|choices| {
+            choices
+                .iter()
+                .filter(|choice| choice.edges.iter().all(|edge| edge.elapsed.is_zero()))
+                .cloned()
+                .collect()
+        })
+        .collect();
+    let zero_graph = Graph {
+        product,
+        choices: zero_choices,
     };
-    let zero_graph = on_axis(TimedAxis::Still);
-    let mut axes = BTreeSet::from([TimedAxis::Still]);
-    axes.extend(edge_axes.values().flatten().copied());
-    let mut found: Vec<Vec<usize>> = Vec::new();
-    for axis in axes {
-        let restricted = on_axis(axis);
+    let all_states = (0..product.states.len()).collect::<BTreeSet<_>>();
+    let mut found: Vec<Vec<usize>> =
+        maximal_end_components_from(&zero_graph, all_states.clone())
+            .map_err(|_| FhError::InvalidState)?;
+    // FR-924: a maximal end component over all actions is progressive when
+    // every clock entry of its key is reset, crossed or capped by it. A bounded
+    // event over a timed product keeps its deadline clock in the state; that
+    // clock is never reset, an end component that returns to its states cannot
+    // cross a boundary of it, and an undecided state is below its cap. So no
+    // end component of such a product is progressive, and each is one state
+    // with its exits, whatever the other clocks do.
+    let has_deadline = product
+        .states
+        .iter()
+        .any(|state| matches!(state.monitor, Some(MonitorState::Deadline { .. })));
+    if has_deadline {
         found.extend(
-            maximal_end_components_from(
-                &restricted,
-                (0..product.states.len()).collect::<BTreeSet<_>>(),
-            )
-            .map_err(|_| FhError::InvalidState)?,
+            maximal_end_components_from(&graph, all_states).map_err(|_| FhError::InvalidState)?,
         );
     }
-    // A component inside a larger one found on another axis is subsumed; two
-    // that overlap without nesting have no single value for the shared
-    // states, so the claim is not decided here.
+    // A zero-time component lies inside one maximal end component; it is
+    // subsumed by it. Components that overlap without nesting have no single
+    // value for the shared states, so the claim is not decided here.
     found.sort_by(|left, right| right.len().cmp(&left.len()));
     let mut components: Vec<Vec<usize>> = Vec::new();
     for members in found {
@@ -1644,11 +1626,11 @@ mod tests {
         assert!(matches!(maximum, FhResult::Exact { ref policy, .. } if policy[0] == Some(0)));
     }
 
-    /// Trace: TC-632, FR-197-AC-4
-    #[trace("TC-632", "FR-197-AC-4")]
     /// A zero-time cycle that stays reachable but has no end component is solved
     /// by policy iteration; reaching the caller's iteration bound is a typed limit
     /// stop, not a cycle (QSL-2156 FND-006).
+    /// Trace: TC-632
+    #[trace("TC-632")]
     #[test]
     fn policy_iteration_bound_is_a_limit_stop_not_a_cycle() {
         let mut looping = product();
@@ -1671,6 +1653,8 @@ mod tests {
         assert_eq!(result.err(), Some(FhError::PolicyIterationLimit));
     }
 
+    /// Trace: TC-632, FR-197-AC-4
+    #[trace("TC-632", "FR-197-AC-4")]
     #[test]
     fn precision_budget_contains_an_exact_threshold() {
         let result = backward_induction(

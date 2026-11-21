@@ -1056,6 +1056,15 @@ fn run(
                     subject,
                 );
             }
+            Err(FhError::PolicyIterationLimit) => {
+                return settled(
+                    &ExactProbBuildIssue::Limit {
+                        limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                        value: limits.max_policy_iterations,
+                    },
+                    subject,
+                );
+            }
             Err(_) => return broken(),
         }
     } else {

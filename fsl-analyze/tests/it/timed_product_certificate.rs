@@ -806,3 +806,63 @@ fn reset_loop_zeno_values_are_rejected() {
         CertificateRule::InequalityFails
     );
 }
+
+/// FR-924-AC-6 with no deadline clock in the key (the expected-elapsed route):
+/// the reset loop is not progressive because `x` is never reset, crossed or
+/// capped in it, so the value is still the best exit, 10/9, and a value read
+/// off the Zeno loop is rejected.
+#[trace("TC-2493", "FR-924-AC-6")]
+#[test]
+fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
+    let world = retx_over(
+        &["x", "y"],
+        &[("send", &["late", "x"]), ("again", &["y"])],
+        GUARD,
+        true,
+        "pre Again using v on M::Call::again { not self.late and self.y < 1 ms }\n\
+         post Reset using v on M::Call::again { self.y = 0 ms }\n",
+        "probabilistic MeanLow using inf on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) >= 1 ms }\n",
+    );
+    let record = settle(&world, "MeanLow");
+    assert_eq!(proved_value(&record), ratio(10, 9));
+    assert_eq!(document(&record)["objective"]["timed"]["route"], "region");
+    assert!(accepted(&world, "MeanLow", &document(&record)));
+    let tampered = settle_tampered(&world, "MeanLow", |certificate| {
+        for entry in &mut certificate.values {
+            entry.value = ratio(0, 1);
+        }
+    });
+    assert!(proved_value_of(&tampered).is_none());
+}
+
+/// FR-923: a workload resolves a state by its weights, so an operation it does
+/// not weigh cannot be dropped from the checker's product.
+#[trace("TC-2492", "FR-923-AC-3")]
+#[test]
+fn a_workload_that_leaves_an_enabled_operation_unweighted_is_not_proved() {
+    let claim = "probabilistic Unweighted using ev on M over (c: M::Call) under One on origin \
+         { probability >= 0.01 [ eventually[0 ms, 5 ms] holds(c.retried) ] }\n";
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("tick", &["retried"])],
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
+         post Ticked using v on M::Call::tick { self.retried = true }\n\
+         workload One on M { weight Call::send = 1; }\n",
+        claim,
+    );
+    assert!(proved_value_of(&settle(&world, "Unweighted")).is_none());
+}
+
+/// The exact value of a `proved` record, when it is one.
+fn proved_value_of(record: &AnalyzeRecord) -> Option<Rational> {
+    match record.terminal()?.value() {
+        TerminalValue::Proved {
+            basis: ProofBasis::ExactValue { value, .. },
+            ..
+        } => Some(value.value().clone()),
+        _ => None,
+    }
+}

@@ -1,30 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The axes along which an edge of a timed-product graph makes no progress
-//! (FR-924-AC-6, after Alur and Dill).
+//! The Alur-Dill progress condition of FR-924 over timed-product keys.
 //!
-//! A set of states closed under the actions it keeps is a time-convergent end
-//! component when some clock is never reset inside it and never reaches its
-//! cap: that clock bounds the elapsed time, so no run stays in the set
-//! forever and still lets time diverge. A zero-time component is the special
-//! case in which no clock changes at all. The axes are read from the
-//! product-state keys alone, so a checker finds the same components as the
-//! engine without trusting it.
+//! An end component of a timed product is progressive when, for every clock
+//! entry of its states' keys (the deadline included), an action of the
+//! component resets it, a delay of the component takes it across an integer
+//! boundary, or it is at its cap at a state of the component. A component that
+//! is not progressive lets a scheduler stay in it while the total delay
+//! converges, so it is checked as one zero-time state with its exits.
+//!
+//! The checker reads the clock entries from the keys it enumerated itself; the
+//! engine does not share this code.
 
 use serde_json::Value;
 
 use super::ProbabilityProductKey;
-
-/// One way an edge can make no progress.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum TimedAxis {
-    /// No clock and no deadline changes: a zero-time edge.
-    Still,
-    /// The deadline clock keeps its whole part.
-    Deadline,
-    /// The clock at this position of the key keeps its whole part, is not
-    /// reset, and is below its cap in both states.
-    Clock(usize),
-}
 
 struct ClockView {
     whole: u64,
@@ -32,83 +21,159 @@ struct ClockView {
     rank: u64,
 }
 
+struct DeadlineView {
+    limit: u64,
+    whole: u64,
+    rank: u64,
+}
+
 struct KeyView {
     clocks: Vec<ClockView>,
-    deadline: Option<(u64, u64)>,
+    deadline: Option<DeadlineView>,
+}
+
+/// What a product-state key says about time.
+enum Shape {
+    /// A key with no timed model component: no clock can advance.
+    NotTimed,
+    /// A timed key whose clock or deadline entries do not parse.
+    Malformed,
+    Timed(KeyView),
 }
 
 fn number(value: Option<&Value>) -> Option<u64> {
     value?.as_str()?.parse().ok()
 }
 
-fn view(key: &ProbabilityProductKey) -> Option<KeyView> {
-    let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
-    let model = root.get(4)?.get(1)?;
-    let clocks = model
-        .get(4)?
-        .as_array()?
-        .iter()
-        .map(|clock| {
-            Some(ClockView {
-                whole: number(clock.get(1))?,
-                cap: number(clock.get(2))?,
-                rank: number(clock.get(3)).unwrap_or(0),
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let deadline = model
-        .get(5)
-        .and_then(Value::as_array)
-        .filter(|deadline| deadline.first().and_then(Value::as_str) == Some("deadline"))
-        .map(|deadline| {
-            Some((
-                number(deadline.get(2))?,
-                number(deadline.get(3)).unwrap_or(0),
-            ))
-        })
-        .map(|deadline| deadline.unwrap_or((u64::MAX, u64::MAX)));
-    Some(KeyView { clocks, deadline })
-}
-
-/// The number of clocks in a timed key, or `None` for any other key.
-pub(crate) fn timed_clock_count(key: &ProbabilityProductKey) -> Option<usize> {
-    view(key).map(|view| view.clocks.len())
-}
-
-/// The axes along which the edge `from` to `to` is nonprogressive. A key that
-/// is not a timed key has no clocks to advance, so its edges are `Still`.
-pub fn timed_edge_axes(from: &ProbabilityProductKey, to: &ProbabilityProductKey) -> Vec<TimedAxis> {
-    let (Some(from), Some(to)) = (view(from), view(to)) else {
-        return vec![TimedAxis::Still];
+fn shape(key: &ProbabilityProductKey) -> Shape {
+    let Ok(root) = serde_json::from_slice::<Value>(key.as_bytes()) else {
+        return Shape::NotTimed;
     };
-    if from.clocks.len() != to.clocks.len() || from.deadline.is_some() != to.deadline.is_some() {
-        return Vec::new();
+    let Some(model) = root.get(4).and_then(|model| model.get(1)) else {
+        return Shape::NotTimed;
+    };
+    if !matches!(
+        model.get(0).and_then(Value::as_str),
+        Some("digital" | "region")
+    ) {
+        return Shape::NotTimed;
     }
-    let mut axes = Vec::new();
-    let clocks_equal = from
-        .clocks
+    let Some(entries) = model.get(4).and_then(Value::as_array) else {
+        return Shape::Malformed;
+    };
+    let mut clocks = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let (Some(whole), Some(cap)) = (number(entry.get(1)), number(entry.get(2))) else {
+            return Shape::Malformed;
+        };
+        clocks.push(ClockView {
+            whole,
+            cap,
+            rank: number(entry.get(3)).unwrap_or(0),
+        });
+    }
+    let deadline = match model.get(5).and_then(Value::as_array) {
+        Some(deadline) if deadline.first().and_then(Value::as_str) == Some("deadline") => {
+            let (Some(limit), Some(whole)) = (number(deadline.get(1)), number(deadline.get(2)))
+            else {
+                return Shape::Malformed;
+            };
+            Some(DeadlineView {
+                limit,
+                whole,
+                rank: number(deadline.get(3)).unwrap_or(0),
+            })
+        }
+        _ => None,
+    };
+    Shape::Timed(KeyView { clocks, deadline })
+}
+
+/// Whether the edge `from` to `to` takes no time: no clock entry changes. A
+/// key with no timed component takes none; a key that does not parse is not
+/// known to take none.
+pub(crate) fn edge_is_zero_time(from: &ProbabilityProductKey, to: &ProbabilityProductKey) -> bool {
+    match (shape(from), shape(to)) {
+        (Shape::NotTimed, Shape::NotTimed) => true,
+        (Shape::Timed(from), Shape::Timed(to)) => {
+            from.clocks.len() == to.clocks.len()
+                && from
+                    .clocks
+                    .iter()
+                    .zip(&to.clocks)
+                    .all(|(a, b)| a.whole == b.whole && a.rank == b.rank)
+                && match (&from.deadline, &to.deadline) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => a.whole == b.whole && a.rank == b.rank,
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
+/// Whether the end component whose states have keys `members`, with the
+/// internal edges `edges` (indices into `members`), is progressive.
+///
+/// A component that cannot be read is progressive: it is not collapsed, and
+/// FR-201's plain conditions apply to it.
+pub(crate) fn component_is_progressive(
+    members: &[&ProbabilityProductKey],
+    edges: &[(usize, usize)],
+) -> bool {
+    let mut views = Vec::with_capacity(members.len());
+    for key in members {
+        match shape(key) {
+            Shape::Timed(view) => views.push(view),
+            // With no clock entry there is nothing that bounds time.
+            Shape::NotTimed | Shape::Malformed => return true,
+        }
+    }
+    let Some(first) = views.first() else {
+        return true;
+    };
+    let count = first.clocks.len();
+    let has_deadline = first.deadline.is_some();
+    if views
         .iter()
-        .zip(&to.clocks)
-        .all(|(a, b)| a.whole == b.whole && a.rank == b.rank);
-    if clocks_equal && from.deadline == to.deadline {
-        axes.push(TimedAxis::Still);
+        .any(|view| view.clocks.len() != count || view.deadline.is_some() != has_deadline)
+    {
+        return true;
     }
-    if let (Some(before), Some(after)) = (from.deadline, to.deadline) {
-        if before.0 == after.0 {
-            axes.push(TimedAxis::Deadline);
+    for clock in 0..count {
+        let reset = edges.iter().any(|(from, to)| {
+            let (before, after) = (&views[*from].clocks[clock], &views[*to].clocks[clock]);
+            after.whole == 0 && after.rank == 0 && (before.whole > 0 || before.rank > 0)
+        });
+        let crosses = edges
+            .iter()
+            .any(|(from, to)| views[*to].clocks[clock].whole > views[*from].clocks[clock].whole);
+        let capped = views
+            .iter()
+            .any(|view| view.clocks[clock].whole >= view.clocks[clock].cap);
+        if !(reset || crosses || capped) {
+            return false;
         }
     }
-    for (index, (before, after)) in from.clocks.iter().zip(&to.clocks).enumerate() {
-        let reset = before.rank > 0 && after.rank == 0;
-        if before.whole == after.whole
-            && before.whole < before.cap
-            && after.whole < after.cap
-            && !reset
-        {
-            axes.push(TimedAxis::Clock(index));
+    if has_deadline {
+        // The deadline clock is never reset; it is at its cap only past the
+        // limit, where the state is decided and belongs to no component.
+        let crosses = edges.iter().any(|(from, to)| {
+            matches!(
+                (&views[*from].deadline, &views[*to].deadline),
+                (Some(before), Some(after)) if after.whole > before.whole
+            )
+        });
+        let capped = views.iter().any(|view| {
+            view.deadline
+                .as_ref()
+                .is_some_and(|deadline| deadline.whole > deadline.limit)
+        });
+        if !(crosses || capped) {
+            return false;
         }
     }
-    axes
+    true
 }
 
 #[cfg(test)]
@@ -144,31 +209,40 @@ mod tests {
         .expect("digital timed keys are valid")
     }
 
-    /// FR-924-AC-6: a clock that is neither reset nor saturated freezes its
-    /// axis, while a delay of the other clock does not make the edge `Still`.
+    /// FR-924-AC-6: a clock that no action of the component resets, no delay
+    /// takes across a boundary and that is below its cap keeps the component
+    /// from being progressive, whatever the other clock does.
     #[test]
-    fn an_unreset_unsaturated_clock_freezes_its_axis() {
+    fn a_frozen_clock_makes_the_component_nonprogressive() {
         let from = key(&[(1, 3), (0, 3)], None);
         let to = key(&[(1, 3), (1, 3)], None);
-        let axes = timed_edge_axes(&from, &to);
-        assert!(axes.contains(&TimedAxis::Clock(0)));
-        assert!(!axes.contains(&TimedAxis::Clock(1)));
-        assert!(!axes.contains(&TimedAxis::Still));
+        let members = [&from, &to];
+        // The second clock is reset by the way back and crosses on the way
+        // out; the first never changes.
+        assert!(!component_is_progressive(&members, &[(0, 1), (1, 0)]));
     }
 
-    /// A saturated clock bounds nothing, so it freezes no axis; an edge that
-    /// changes nothing is `Still`.
+    /// Every clock reset, crossing or capped: the component is progressive.
     #[test]
-    fn a_saturated_clock_freezes_no_axis_and_an_unchanged_key_is_still() {
+    fn a_component_that_resets_or_crosses_every_clock_is_progressive() {
+        let zero = key(&[(0, 3)], None);
+        let one = key(&[(1, 3)], None);
+        assert!(component_is_progressive(
+            &[&zero, &one],
+            &[(0, 1), (1, 0)]
+        ));
+        let capped = key(&[(3, 3)], None);
+        assert!(component_is_progressive(&[&capped], &[(0, 0)]));
+    }
+
+    /// A key that is not a timed key takes no time, and an edge between equal
+    /// timed keys takes none either.
+    #[test]
+    fn unchanged_keys_take_no_time() {
         let saturated = key(&[(3, 3)], None);
-        assert_eq!(
-            timed_edge_axes(&saturated, &saturated),
-            vec![TimedAxis::Still]
-        );
+        assert!(edge_is_zero_time(&saturated, &saturated));
         let moving = key(&[(1, 3)], Some(1));
         let later = key(&[(2, 3)], Some(1));
-        let axes = timed_edge_axes(&moving, &later);
-        assert!(axes.contains(&TimedAxis::Deadline));
-        assert!(!axes.contains(&TimedAxis::Clock(0)));
+        assert!(!edge_is_zero_time(&moving, &later));
     }
 }

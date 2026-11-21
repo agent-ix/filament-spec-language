@@ -265,14 +265,14 @@ fn check_mean_time_values(
         return Ok(rejected(ProbabilityCertificateRule::RankMissing, at));
     }
     let components =
-        super::super::nonprogressive_end_components_by_axis(graph, cancel, Some(costs))?;
+        super::super::nonprogressive_end_components_by_kind(graph, cancel, Some(costs))?;
     let mut component_of = BTreeMap::new();
     for (component, (_, members)) in components.iter().enumerate() {
         for key in members {
             component_of.insert(key.clone(), component);
         }
     }
-    for (axis, members) in &components {
+    for (kind, members) in &components {
         poll(cancel)?;
         let member_set = members.iter().cloned().collect::<BTreeSet<_>>();
         let mut exits = Vec::new();
@@ -377,7 +377,7 @@ fn check_mean_time_values(
             &ranks,
             cancel,
             meter,
-            *axis,
+            *kind,
         )? {
             return Ok(rejected(
                 ProbabilityCertificateRule::RankBroken,
@@ -545,7 +545,7 @@ fn mean_time_component_policy_valid(
     ranks: &BTreeMap<ProbabilityProductKey, u64>,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
-    axis: crate::TimedAxis,
+    kind: super::super::ComponentKind,
 ) -> Result<bool, ProbabilityDocumentError> {
     let keys = graph.states.keys().cloned().collect::<Vec<_>>();
     let indices = keys
@@ -599,7 +599,7 @@ fn mean_time_component_policy_valid(
                         &candidate,
                         &indices,
                         &zero,
-                        axis,
+                        kind,
                     )? {
                         continue;
                     }
@@ -656,7 +656,7 @@ fn mean_time_component_policy_valid(
                         &candidate,
                         &indices,
                         &zero,
-                        axis,
+                        kind,
                     )? && choice.iter().any(|edge| {
                         edge.probability > zero
                             && distance
@@ -877,9 +877,8 @@ fn enumerate_region_mean_time(
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            .into_iter()
-            .filter(|action| workload_allows(system, claim, &action.identity.operation))
-            .collect::<Vec<_>>();
+            ;
+        admit_workload(system, claim, &actions)?;
         for action in actions {
             charge_work(meter, cancel, 1)?;
             let mut choice: Vec<ProbabilityEdge> = Vec::new();
@@ -1429,13 +1428,9 @@ fn enumerate_digital_deadline(
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            .into_iter()
-            .filter(|action| workload_allows(system, claim, &action.identity.operation))
-            .collect::<Vec<_>>();
-        let enabled = digital_enabled_actions(system, timed, &current.timed, cancel)?
-            .into_iter()
-            .filter(|action| workload_allows(system, claim, &action.identity.operation))
-            .collect::<Vec<_>>();
+;
+        admit_workload(system, claim, &actions)?;
+        let enabled = digital_enabled_actions(system, timed, &current.timed, claim, cancel)?;
         let delta = rational_units(1, key_scale)?;
         let can_delay = timed
             .delay(&current.timed, &delta)
@@ -1447,6 +1442,7 @@ fn enumerate_digital_deadline(
                 let (choice, admitted_edges) = digital_discrete_delay_choice(
                     system,
                     timed,
+                    claim,
                     predicate,
                     binding,
                     &current,
@@ -1801,9 +1797,8 @@ fn enumerate_region_deadline(
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            .into_iter()
-            .filter(|action| workload_allows(system, claim, &action.identity.operation))
-            .collect::<Vec<_>>();
+            ;
+        admit_workload(system, claim, &actions)?;
         for action in actions {
             charge_work(meter, cancel, 1)?;
             let mut choice: Vec<ProbabilityEdge> = Vec::new();
@@ -2365,26 +2360,33 @@ fn digital_idle_delay(
     Ok(Some((key, state)))
 }
 
-/// Whether `operation` runs under the claim's scheduler: every operation under
-/// every scheduler, a positively weighted one under a workload.
-fn workload_allows(
+/// Under a workload every operation enabled at a reached state must be
+/// positively weighted. The workload resolves a state by its weights, so an
+/// operation without one cannot be dropped from the product: the checker
+/// would see a time-lock or a single choice where the engine sees a race.
+fn admit_workload(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
-    operation: &str,
-) -> bool {
+    actions: &[fsl_eval::simulation::model::Action],
+) -> Result<(), ProbabilityDocumentError> {
     let fsl_semantics::check::ProbScheduler::Workload(name) = &claim.scheduler else {
-        return true;
+        return Ok(());
     };
-    system
+    let workload = system
         .source_package()
         .and_then(|package| package.graph().probabilistic_model().workload(name))
-        .is_some_and(|workload| {
-            workload.weights().iter().any(|(weighted, weight)| {
-                !weight.is_zero()
-                    && system.operation_text(weighted.declaring(), weighted.name())
-                        == Some(operation)
-            })
-        })
+        .ok_or(ProbabilityDocumentError::Unsupported)?;
+    for action in actions {
+        let weighted = workload.weights().iter().any(|(weighted, weight)| {
+            !weight.is_zero()
+                && system.operation_text(weighted.declaring(), weighted.name())
+                    == Some(action.identity.operation.as_str())
+        });
+        if !weighted {
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
+    }
+    Ok(())
 }
 
 fn discrete_delay(system: &ModelSystem<'_>, operation: &str) -> Option<Vec<(Rational, Rational)>> {
@@ -2407,6 +2409,7 @@ fn discrete_delay(system: &ModelSystem<'_>, operation: &str) -> Option<Vec<(Rati
 fn digital_discrete_delay_choice(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
     predicate: &fsl_semantics::check::CheckedPredicate,
     binding: Option<&filament_exact::ObjectReference>,
     current: &RegionState,
@@ -2436,7 +2439,7 @@ fn digital_discrete_delay_choice(
             outcomes.push((ticks, weight, state));
             continue;
         }
-        let available = digital_enabled_actions(system, timed, &state.timed, cancel)?;
+        let available = digital_enabled_actions(system, timed, &state.timed, claim, cancel)?;
         if !available
             .iter()
             .any(|candidate| candidate.identity == action.identity)
@@ -2473,7 +2476,7 @@ fn digital_discrete_delay_choice(
             charge_work(meter, cancel, 1)?;
             continue;
         }
-        let tied = digital_enabled_actions(system, timed, &delayed.timed, cancel)?
+        let tied = digital_enabled_actions(system, timed, &delayed.timed, claim, cancel)?
             .into_iter()
             .filter(|candidate| {
                 candidate.identity == action.identity
@@ -2498,7 +2501,7 @@ fn digital_discrete_delay_choice(
             for identity in order {
                 let mut next = Vec::new();
                 for (branch_probability, state) in branches {
-                    let available = digital_enabled_actions(system, timed, &state.timed, cancel)?;
+                    let available = digital_enabled_actions(system, timed, &state.timed, claim, cancel)?;
                     let Some(enabled) = available
                         .iter()
                         .find(|candidate| candidate.identity == identity)
@@ -2610,12 +2613,14 @@ fn digital_enabled_actions(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
     state: &TimedState,
+    claim: &CheckedProbabilisticClaim,
     cancel: &Cancel,
 ) -> Result<Vec<fsl_eval::simulation::model::Action>, ProbabilityDocumentError> {
     let actions = system
         .actions_with_cancel(state.discrete(), cancel)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?
         .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+    admit_workload(system, claim, &actions)?;
     let clocked_steps = timed
         .steps(state)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?;

@@ -57,10 +57,7 @@ pub(crate) fn world_for(set: &str, tasks: &[&str], declarations: &str) -> World 
 
 pub(crate) type Certificate = ZoneCertificate<OccurrenceKey>;
 
-pub(crate) fn claim_of<'a>(
-    world: &'a World,
-    name: &str,
-) -> &'a fsl_semantics::check::CheckedScheduleClaim {
+pub(crate) fn claim_of<'a>(world: &'a World, name: &str) -> &'a fsl_semantics::check::CheckedScheduleClaim {
     world
         .package
         .graph()
