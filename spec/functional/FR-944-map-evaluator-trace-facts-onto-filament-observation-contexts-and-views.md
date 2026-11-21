@@ -13,8 +13,6 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-524
     type: depends_on
-  - target: ix://agent-ix/filament-spec-language/FR-526
-    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-820
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-993
@@ -46,15 +44,14 @@ relationships:
 
 FR-861 makes `filament-observation` the one owner of the partial-value,
 completeness, activation and repair rules, and `fsl-eval` applies the first
-three. The owner's
-rules take owner values: a `Context` over an admitted `History`, a
-module `Selection`, and the validated `View` of a derived document; the
-completeness revision check takes instead the plain values a progress
-ledger entry retains. This
-requirement states how the evaluator builds each of them from the facts it
-holds (a trace's positions, stamps and cover, a progress assertion and the
-ledger entry it revises, an activation scope) and how it reads the owner's
-answer back into the reports FR-501, FR-502, FR-524 and FR-526 state. It
+three. The owner's rules take owner values: a `Context` over an admitted
+`History`, a module `Selection`, and the validated `View` of a derived
+document; the completeness revision check takes instead the plain values a
+progress ledger entry retains. This requirement states how the evaluator
+builds each of them from the facts it holds (a trace's positions, stamps
+and cover, a progress assertion and the ledger entry it revises, an
+activation scope) and how it reads the owner's answer back into the reports
+FR-501, FR-502 and FR-524 state. It
 also states, as requirements on the owner, the completeness revision rule
 FR-502 needs and an unrecorded ingestion instant.
 
@@ -177,8 +174,8 @@ reading maps exactly, with no wrapping, saturation or refusal.
 
 ## Outputs
 
-The owner documents and views below, and FR-501's, FR-502's, FR-524's and
-FR-526's reports, read from them.
+The owner documents and views below, and FR-501's, FR-502's and FR-524's
+reports, read from them.
 
 ## Behavior
 
@@ -190,7 +187,7 @@ FR-526's reports, read from them.
   on `AdmissionOutcome::Available`.
 - The evaluator SHALL keep a side mapping from each record's owner-derived
   identity to its position's FR-106 identity, built at admission, and SHALL
-  report every owner answer (FR-501, FR-502, FR-524, FR-526) under the FR-106
+  report every owner answer (FR-501, FR-502, FR-524) under the FR-106
   identities it maps to. An owner record identity never stands in for an
   FR-106 identity in a report, and no owner document carries an FR-106
   identity: a record's value holds its document without the document's
@@ -242,8 +239,8 @@ FR-526's reports, read from them.
   which is the scope identity the owner compares against the qualified scope,
   and the admitted population identity; `revision`
   1 plus the number of accepted requests already recorded under the binding;
-  and `predecessor` the binding's last accepted owner document of the same
-  module, or none.
+  and `predecessor` none: the ledger retains no owner document, and each
+  request derives over its own admitted history.
 
 ### The package selection
 
@@ -547,10 +544,11 @@ owner's history-free revision check, `completeness::check_revision`
 below). The check reads only values a ledger entry already retains, its
 completeness assertion and its covered set with fingerprints (FR-502,
 FR-993), so the ledger keeps no owner `View`, `Document` or history, its
-carried-state bytes and `filament.progress-ledger/1` file form hold what
-they held before, and batch evaluation, the spine's batch run and carried
-evaluation (FR-820) give one answer from one function over one data source.
-The cost of a request stays one covered-set lookup per position it lists.
+carried-state bytes and `filament.progress-ledger/1` file form hold only
+those values, and `evaluate_temporal_evidence` (FR-516), the spine's batch
+run (FR-330) and carried evaluation (FR-820) give one answer from one
+function over one data source. The cost of a request stays one covered-set
+lookup per position it lists.
 
 - A ledger request SHALL map onto `check_revision`'s arguments as follows,
   where the retained assertion is the binding's entry in the request's input
@@ -566,19 +564,21 @@ The cost of a request stays one covered-set lookup per position it lists.
     `Incomplete` state at an equal boundary.
   - **Successor state.** `Complete` or `Incomplete`, as asserted.
   - **Retained holding.** The check looks a listed position up in the
-    entry's retained covered set, keyed by the position's FR-106 identity
-    (a record sample's index, FR-330) and its stamp, as the covered set
-    records them. A held position is `Available` and its observation is
-    its retained fingerprint, the empty text when it has none. In carried
-    evaluation the holding is the covered set of the entry the state was
-    opened on or last accepted, never the set the current call is
-    extending, exactly as batch evaluation reads the input ledger.
+    entry's retained covered set by the position's identity alone: its
+    FR-106 identity, or a record sample's index (FR-330). The stamp says
+    only where the position is placed against the boundary, as FR-502 and
+    FR-993 decide coverage by identity. A held position is `Available`, and
+    its observation is its retained fingerprint when it has one and absent
+    when it has none. In carried evaluation the holding is the covered set
+    of the binding's entry in the ledger the call starts from
+    (`ClauseOpen.ledger`, or the ledger a previous call of the state
+    returned), never that set extended with the positions the call itself
+    admits, exactly as batch evaluation reads the request's input ledger.
   - **Listed facts.** One fact per position of the request's trace, in
     trace order, each with status `Available`, placed at the position's
-    stamp, and observation its content fingerprint (FR-993), the empty text
-    when the position has none. The observation is always present, so a
-    fingerprinted position and one without a fingerprint at the same key
-    differ exactly as their fingerprints do.
+    stamp, and with its content fingerprint (FR-993) as its observation
+    when it has one and no observation when it has none, so a fingerprinted
+    position and one without a fingerprint under the same identity differ.
 - The ledger SHALL report FR-502's contradiction on `Completeness` exactly
   when `check_revision` refuses, and on no other path, with the binding's
   clock name and the retained assertion, the ledger unchanged, reading the
@@ -587,17 +587,20 @@ The cost of a request stays one covered-set lookup per position it lists.
     `CompleteRegressed` (`Incomplete` after `Complete`): the asserted value
     is the asserted completeness;
   - `UncoveredMember` (a listed position placed at or before the retained
-    `through` that the covered set does not hold, FR-502's uncovered
-    position): the asserted value is that position;
+    `through` whose identity the covered set does not hold, FR-502's
+    uncovered position): the asserted value is that position;
   - `MemberObservationChanged` (a held position listed with a different
     fingerprint, FR-993's changed sample): the asserted value is that
     position without its fingerprint, since no report carries one.
-- Because the holding is keyed by FR-106 identity and stamp, a position
-  whose content equals a covered position's but whose FR-106 identity is
-  new is an uncovered member, although the two share one owner record
-  identity in the admitted trace history: coverage is decided by the
-  identity FR-502 records, and the owner record identity, which omits the
-  FR-106 labels ("The admission request"), takes no part in it.
+- Because the holding is keyed by FR-106 identity, a position whose content
+  equals a covered position's but whose FR-106 identity is new is an
+  uncovered member, although the two share one owner record identity in the
+  admitted trace history: coverage is decided by the identity FR-502
+  records, and the owner record identity, which omits the FR-106 labels
+  ("The admission request"), takes no part in it. A covered record-sample
+  index re-delivered at another stamp is the same member: with the same
+  content it is accepted, and with changed content it is refused
+  `MemberObservationChanged` (FR-993).
 - A covered position that a later request omits stays held, so the same
   position re-supplied by a still later request at or before the retained
   `through` is accepted (FR-502). After a retained `Incomplete` no position
@@ -605,13 +608,14 @@ The cost of a request stays one covered-set lookup per position it lists.
   whatever its stamp; a held record sample listed with a changed
   fingerprint is still refused, because the fingerprint comparison does not
   depend on the retained state (FR-993).
-- The ledger SHALL run its checks in FR-502's order: the watermark check,
-  then `check_revision`, then the decision-scope closure check. The
-  watermark check and the closure check stay the ledger's own and are
+- The ledger SHALL run the watermark check first, then `check_revision`,
+  then the two closure checks (a retained `Closed` decision scope asserted
+  `Open`, and a retained `Closed` surrounding execution asserted `Open`).
+  The watermark check and the closure checks stay the ledger's own and are
   outside FR-861's four rule sets: filament-observation FR-013 names
   watermark monotonicity the progress owner's rule, which FSL's watermark
-  is, and a decision scope's closure is FR-502's rule over FSL's own scope
-  closure, which the owner's completeness rules do not read.
+  is, and the closures are FR-502's rules over FSL's own decision scope and
+  surrounding execution, which the owner's completeness rules do not read.
 
 ### Activation
 
@@ -739,25 +743,31 @@ requirement (filament-observation FR-013, "Revise a completeness assertion
 monotonically across revisions", the normative source of this rule). Where
 the summary below and FR-013 differ, FR-013 governs:
 
-- `completeness::check_revision(prior_upper, prior_state, prior,
-  successor_upper, successor_state, listed)` SHALL be a pure, history-free
-  function over an optional prior and successor upper bound, the prior and
-  successor states as the caller states them, a retained holding that
-  answers, for a caller-chosen key, the held fact's status and observation
-  identity (`RetainedHolding`), and the listed successor facts, each with
-  its key, status, observation identity and placement. It derives no
-  document and has no authority failure.
-- It SHALL run FR-013's checks in order and return the first refusal, typed
-  and naming the contradicted boundary or listed fact: the successor's upper
-  bound below the prior's (`BoundaryRegressed`); a prior `Complete` state
-  succeeded by an `Incomplete` one (`CompleteRegressed`); a listed
-  `Available` fact placed at or before the prior upper bound whose key the
-  prior does not hold (`UncoveredMember`); a listed `Available` fact whose
-  key the prior holds `Available` under a different observation identity
-  (`MemberObservationChanged`). A `None` upper bound places no fact at or
-  before it. Per-fact status governs only the last two checks. It SHALL
-  accept a boundary at or above the prior's, and a held key the successor
-  does not list stays held.
+- `completeness::check_revision(prior_upper: Option<i128>, prior_state:
+  State, prior: &H, successor_upper: Option<i128>, successor_state: State,
+  listed: &[ListedFact<'_, H::Key>]) -> Result<(), ListedContradiction>`,
+  with `H: RetainedHolding`, SHALL be a pure, history-free function. The
+  states are read as the caller states them. `RetainedHolding` answers, for
+  a caller-chosen `Key`, the held fact as a `HeldFact` (its `FactStatus`
+  and optional observation identity), whatever its status, or none. Each
+  `ListedFact` carries its key, `FactStatus`, optional observation identity
+  and `placed` coordinate. It derives no document and has no authority
+  failure.
+- It SHALL run FR-013's checks in order and return the first refusal as a
+  `ListedContradiction`: the successor's upper bound below the prior's
+  (`BoundaryRegressed { prior_upper, successor_upper }`); a prior `Complete`
+  state succeeded by an `Incomplete` one (`CompleteRegressed { prior_upper
+  }`, the prior upper bound optional); a listed `Available` or
+  `Contradicted` fact placed at or before the prior upper bound whose key
+  the prior does not hold (`UncoveredMember { listed }`); a listed
+  `Available` fact whose key the prior holds `Available` under a different
+  observation identity, a present and an absent identity differing
+  (`MemberObservationChanged { listed, prior_observation }`, carrying the
+  held observation identity). `listed` is the index of the listed fact. A
+  `None` upper bound takes part in no boundary comparison, so no fact is
+  placed at or before it. Per-fact status governs only the last two checks.
+  It SHALL accept a boundary at or above the prior's, and a held key the
+  successor does not list stays held.
 - `completeness::Selection` SHALL carry a `TemporalBoundary`, and
   `completeness::revise(prior: &View, context, selection, limits)` SHALL
   derive a successor document whose context names `prior`'s document as
@@ -832,13 +842,13 @@ SHALL carry `None` and this interim rule is removed.
 | FR-944-AC-13 | FR-501-AC-13's request under clock unit `ms` admits with binding `unit` `ms/4`, every record `unit` `ms/4` and every quarter-tick `EventTimeInterval` unit `ms/4`, and `partial::derive` succeeds for every atom of every position; every FSL report names the clock unit `ms`. An event-position clause's request uses `position/4` for all three owner-side labels and derives every partial fact. | Test (TC-3036) |
 | FR-944-AC-14 | For FR-524-AC-10's closed scope whose every delivery has a false guard, with `Admitted` evidence and a complete trigger record: exactly one activation request is built, with binding `required` false, schema `fsl-eval/activation/1`, the trace binding's trigger identity as signal and trigger, the trace identity text with `"role": "activation"` and no `instance` member, the trace request's range, `membership_complete` true and no record; `admit` returns `Available`; `closure::derive` gives a `Closed` view without refusal over the boundary whose `upper_inclusive` is the last stamp and whose `carrier_end_exclusive` and `watermark` are the range's exclusive end, a boundary with `watermark` equal to `upper_inclusive` being the one the owner refuses for `Closed`; the completeness view `Complete` over no fact, and `activation::derive` with `without_trigger`, obligation the trace binding's identity text and `AuthorityProofs::without_capture` gives `Inactive` and no refusal, while the trace request for the same clause keeps `required` true and one record per position. The same scope open gives `Unknown(open)`; with an incomplete trigger record, and with `Missing` and `Refused` trigger evidence, the request still admits `Available` with `membership_complete` true, no completeness view is passed, and `derive` gives `Unknown` with evidence `Incomplete`, reported as `Unknown(open)` with incomplete completeness, `Unknown(missing)` and `Unknown(refused)`, each without a refusal. A scope with one instance-creating delivery and no declared capture gives one request with one trigger record whose value is `{"instance": X}`, a capture view binding exactly that record as `fsl-eval/instance`, and an `Active` view whose captures are exactly `fsl-eval/instance` with value `{"instance": X}`; one declaring captures `a` and `b` gives one request of three records at one anchor and captures `fsl-eval/capture/a`, `fsl-eval/capture/b`, `fsl-eval/instance` in that order, the two declared captures with value text `{"capture", "instance", "type", "value"}` of the instance's FR-524 capture, and a capture faulted `Missing` gives `{"fault": "missing"}`; a delivery with guard `Some(false)` beside it makes no request. Two instances of one clause occurrence capturing equal values give two requests with distinct binding identities, each `capture::derive` and `activation::derive` succeeds and gives `Active`, and the capture record identities and the activation identities differ. No `activation::derive` call of a run is made over the trace request's `Context`. | Test (TC-2624) |
 | FR-944-AC-15 | Two runs given one caller-admitted `AdmittedStaticBundle` by reference build admission requests whose `producer` members are clones equal to that bundle, one clone per request; the bundle is built by `fsl-eval`'s constructor and admitted by the caller through `StaticProducerBundle::admit`. A source scan of `fsl-eval`'s shipped source, `#[cfg(test)]` code excluded, finds no `static`, `OnceLock`, `LazyLock`, `lazy_static!` or `thread_local!` item, and no `Mutex` or `RwLock` field, whose type names `StaticProducerBundle` or `AdmittedStaticBundle`, and fails naming the file and line of any it finds (a fixture source holding `static B: OnceLock<AdmittedStaticBundle>` is reported); a run whose caller passes no bundle cannot be built (the bundle is a required parameter). | Test (TC-3036) |
-| FR-944-AC-16 | For an event-position clause with a retained `Incomplete` whose covered set holds positions stamped 1 to 3, the mapping gives `check_revision` prior upper bound `None`, and a request listing a new position stamped 0 with `Incomplete` is accepted with state `Incomplete`, as is one with `Complete { through: 5 }`. For a fixed-sample clause over record samples with a retained `Incomplete` covering index 1 with fingerprint F, index 1 listed with fingerprint F is accepted and with another fingerprint G is refused `MemberObservationChanged`, reported as FR-502's contradiction on `Completeness` naming the position without a fingerprint (FR-993), the ledger unchanged; the same two answers hold after a retained `Complete { through: 5 }`. A held position with fingerprint F listed with no fingerprint (observation the empty text), and a held position with no fingerprint listed with F, are each refused `MemberObservationChanged`; a held position with no fingerprint listed with none is accepted. Batch evaluation and carried evaluation (FR-820), the carried state passed through `to_bytes` and `from_bytes` between requests, give equal answers and equal ledgers on every case of this criterion and of AC-4. | Test (TC-2624) |
+| FR-944-AC-16 | For an event-position clause with a retained `Incomplete` whose covered set holds positions stamped 1 to 3, the mapping gives `check_revision` prior upper bound `None`, and a request listing a new position stamped 0, with a watermark not below the retained one, is accepted with `Incomplete` (state `Incomplete`) and with `Complete { through: 5 }`. For a fixed-sample clause over record samples with a retained `Incomplete` covering index 1 with fingerprint F, index 1 listed with fingerprint F is accepted and with another fingerprint G is refused `MemberObservationChanged`, reported as FR-502's contradiction on `Completeness` naming the position without a fingerprint (FR-993), the ledger unchanged; the same two answers hold after a retained `Complete { through: 5 }`. After a retained `Complete { through: 5 }` covering index 1 at stamp 1, index 1 re-delivered at stamp 2 with changed content is refused `MemberObservationChanged` (FR-993), and with the same content is accepted as the same member. A held position with fingerprint F listed with no fingerprint, and a held position with no fingerprint listed with F, are each refused `MemberObservationChanged`; a held position with no fingerprint listed with none is accepted. Batch evaluation and carried evaluation (FR-820), the carried state passed through `to_bytes` and `from_bytes` between requests, give equal answers and equal ledgers on every case of this criterion that a trace can express, and on every case of AC-4; the fingerprint present-versus-absent cases are ledger tests. | Test (TC-2624) |
 | FR-944-AC-7 | Scaling is exact at the domain's edge: a reading `18446744073709551615` under `Counter { uncertainty: 18446744073709551615 }` maps to `[0, 147573952589676412923]`, reading 0 under the same cover to `[-73786976294838206460, 73786976294838206463]`, and the bounds `9223372036854775807` and `-9223372036854775808` scale to `36893488147419103228` and `-36893488147419103232`; `within_bound` and `definitely_before` over these readings and bounds equal `ClockCover`'s answers. | Test (TC-2624) |
 
 ## Dependencies
 
 - FR-861: one owner for the four rule sets.
-- FR-501, FR-502, FR-524, FR-526: the reports read from the owner's answers.
+- FR-501, FR-502, FR-524: the reports read from the owner's answers.
 - FR-820, FR-993: carried evaluation, which shares the ledger, and the
   fingerprints the completeness check compares.
 - FR-106, FR-522, FR-966: the trace facts each record carries.
