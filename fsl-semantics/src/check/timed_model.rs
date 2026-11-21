@@ -4455,7 +4455,11 @@ fn timed_declaration_owner(
                 operation_span = operation.span;
             }
         },
-        TimedDeclaration::TimeSource { .. } | TimedDeclaration::ClockType(_) => unreachable!(),
+        TimedDeclaration::TimeSource { .. } | TimedDeclaration::ClockType(_) => {
+            return Err(TemporalCause::AmbiguousTimedDeclaration {
+                span: declaration.span(),
+            });
+        }
     }
 
     let mut evidence: Vec<(Vec<String>, Span)> = Vec::new();
