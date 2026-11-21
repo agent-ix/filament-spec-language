@@ -488,11 +488,16 @@ fn the_liveness_half_of_a_timed_abstract_hidden_field_is_decided() {
         "{:?}",
         outcome.safety
     );
+    // After `send` the only loop is the terminal stutter, with `send`
+    // disabled: the half holds.
     assert!(
         matches!(
             outcome.liveness,
-            Some(TimedLivenessHalf::Checked(
-                TimedLivenessOutcome::Holds { .. } | TimedLivenessOutcome::Undecided { .. }
+            Some(TimedLivenessHalf::Checked(TimedLivenessOutcome::Holds { .. }))
+        ),
+        "{:?}",
+        outcome.liveness
+    );| TimedLivenessOutcome::Undecided { .. }
             ))
         ),
         "{:?}",

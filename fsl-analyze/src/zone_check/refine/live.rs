@@ -869,9 +869,12 @@ impl Product<'_, '_> {
                 .get(arc.from)
                 .ok_or(ZoneCheckRefusal::Fault("candidate-loop-source"))?;
             let mut candidates = Vec::new();
-            let view = self.build_view(run, source.q)?;
             let timed_enabled = if run.auxiliary_timed.is_some() {
-                Some(Self::enabled_at_zone(run, &view, &source.zone)?)
+                let view = live
+                    .views
+                    .get(&source.q)
+                    .ok_or(ZoneCheckRefusal::Fault("abstract-view-cached"))?;
+                Some(Self::enabled_at_zone(run, view, &source.zone)?)
             } else {
                 None
             };
@@ -1363,7 +1366,12 @@ impl Product<'_, '_> {
                 cycle_stages.push(stage(run, live, arc)?);
             }
         }
-        let ceiling = run.timed.max_constant();
+        // The loop's unreset clocks stand past every constant of either
+        // model (FR-236).
+        let ceiling = run.auxiliary_timed.map_or_else(
+            || run.timed.max_constant(),
+            |auxiliary| run.timed.max_constant().max(auxiliary.max_constant()),
+        );
         Ok(run
             .timed_lasso(places, &ceiling, stem_stages, &cycle_stages)?
             .map(|(prefix, entry)| {

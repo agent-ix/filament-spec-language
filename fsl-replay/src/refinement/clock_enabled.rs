@@ -166,8 +166,25 @@ fn clock_step(
     }
 }
 
-/// The abstract clocks after `delay` and then `step`.
-fn advance(values: &[Value], delay: Option<&Rational>, step: Option<&GuardedStep>) -> Vec<Value> {
+/// A loop step's clock operation: carries (destination, source), simultaneous
+/// from the clocks before it, then resets.
+#[derive(Clone, Debug, Default)]
+struct ClockMove {
+    carries: Vec<(usize, usize)>,
+    resets: Vec<(usize, Rational)>,
+}
+
+impl ClockMove {
+    fn of(step: Option<&GuardedStep>) -> Self {
+        step.map_or_else(Self::default, |step| Self {
+            carries: step.carries().to_vec(),
+            resets: step.resets().to_vec(),
+        })
+    }
+}
+
+/// The abstract clocks after `delay` and then `clock_move`.
+fn advance(values: &[Value], delay: Option<&Rational>, clock_move: &ClockMove) -> Vec<Value> {
     let mut next: Vec<Value> = values
         .iter()
         .map(|value| match (value, delay) {
@@ -175,20 +192,89 @@ fn advance(values: &[Value], delay: Option<&Rational>, step: Option<&GuardedStep
             (value, _) => value.clone(),
         })
         .collect();
-    if let Some(step) = step {
-        let before = next.clone();
-        for (to, from) in step.carries() {
-            if let (Some(slot), Some(source)) = (next.get_mut(*to), before.get(*from)) {
-                slot.clone_from(source);
-            }
+    let before = next.clone();
+    for (to, from) in &clock_move.carries {
+        if let (Some(slot), Some(source)) = (next.get_mut(*to), before.get(*from)) {
+            slot.clone_from(source);
         }
-        for (place, value) in step.resets() {
-            if let Some(slot) = next.get_mut(*place) {
-                *slot = Some(value.clone());
-            }
+    }
+    for (place, value) in &clock_move.resets {
+        if let Some(slot) = next.get_mut(*place) {
+            *slot = Some(value.clone());
         }
     }
     next
+}
+
+/// The clocks at each loop step's start once the loop's valuation repeats,
+/// found in at most `passes` passes from every clock past every constant;
+/// `None` when it does not repeat in them.
+fn settled_starts(
+    moves: &[ClockMove],
+    delays: &[Option<Rational>],
+    places: usize,
+    passes: usize,
+) -> Option<Vec<Vec<Value>>> {
+    let mut start: Vec<Value> = vec![None; places];
+    let mut starts: Vec<Vec<Value>> = Vec::new();
+    for _ in 0..passes {
+        let mut current = start.clone();
+        starts.clear();
+        for (clock_move, delay) in moves.iter().zip(delays) {
+            starts.push(current.clone());
+            current = advance(&current, delay.as_ref(), clock_move);
+        }
+        if current == start {
+            return Some(starts);
+        }
+        start = current;
+    }
+    None
+}
+
+/// The instants of a delay of `span` (`None`: forever) at which an enabling
+/// part of `parts` changes truth, with the points between them: the delay's
+/// start, each guard constant crossed strictly inside it, its end, and the
+/// midpoints of consecutive ones.
+fn instants_of(
+    parts: &[Vec<PlaceConstraint>],
+    values: &[Value],
+    span: Option<&Rational>,
+) -> Result<Vec<Rational>, &'static str> {
+    let two = Rational::from_integer(Integer::one().add(&Integer::one()));
+    let mut crossings = BTreeSet::new();
+    crossings.insert(zero());
+    if let Some(span) = span {
+        for constraint in parts.iter().flatten() {
+            if let Some(Some(value)) = values.get(constraint.place()) {
+                let at = constraint.bound().sub(value);
+                if at > zero() && at < *span {
+                    crossings.insert(at);
+                }
+            }
+        }
+        crossings.insert(span.clone());
+    }
+    let points: Vec<Rational> = crossings.into_iter().collect();
+    let mut instants = Vec::new();
+    for (position, point) in points.iter().enumerate() {
+        instants.push(point.clone());
+        if let Some(next) = points.get(position + 1) {
+            instants.push(point.add(next).div(&two).ok_or("timed-abstract-midpoint")?);
+        }
+    }
+    Ok(instants)
+}
+
+/// Whether some part of `parts` holds `instant` past `values`.
+fn part_holds(parts: &[Vec<PlaceConstraint>], values: &[Value], instant: &Rational) -> bool {
+    parts.iter().any(|part| {
+        part.iter().all(|constraint| {
+            values
+                .get(constraint.place())
+                .is_some_and(|value| holds(constraint.op(), value, instant, constraint.bound()))
+        })
+    })
 }
 
 /// For each loop step, the segments of its delay with the transitions each
@@ -199,7 +285,8 @@ fn advance(values: &[Value], delay: Option<&Rational>, step: Option<&GuardedStep
 ///
 /// # Errors
 ///
-/// A fault label when the abstract subject cannot be read.
+/// A fault label when the abstract subject cannot be read or the inputs
+/// disagree in length.
 pub fn loop_segments(
     abstract_system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -211,74 +298,31 @@ pub fn loop_segments(
         return Err("timed-abstract-loop-shape");
     }
     let places = timed.places().len();
-    let mut steps = Vec::with_capacity(taken.len());
+    let mut moves = Vec::with_capacity(taken.len());
     for (candidates, taken) in candidates.iter().zip(taken) {
         match clock_step(abstract_system, timed, candidates, taken)? {
-            Ok(step) => steps.push(step),
+            Ok(step) => moves.push(ClockMove::of(step.as_ref())),
             Err(()) => return Ok(None),
         }
     }
-    // The clocks at each step's start, once the loop's valuation repeats.
-    let mut start: Vec<Value> = vec![None; places];
-    let mut starts: Vec<Vec<Value>> = Vec::new();
-    let mut settled = false;
-    for _ in 0..=places + 1 {
-        let mut current = start.clone();
-        starts.clear();
-        for (step, delay) in steps.iter().zip(delays) {
-            starts.push(current.clone());
-            current = advance(&current, delay.as_ref(), step.as_ref());
-        }
-        if current == start {
-            settled = true;
-            break;
-        }
-        start = current;
-    }
-    if !settled {
+    let Some(starts) = settled_starts(&moves, delays, places, places + 2) else {
         return Ok(None);
-    }
-    let two = Rational::from_integer(Integer::one().add(&Integer::one()));
-    let mut loop_segments = Vec::with_capacity(steps.len());
+    };
+    let mut loop_segments = Vec::with_capacity(moves.len());
     for (index, candidates) in candidates.iter().enumerate() {
         let held = enablings(abstract_system, timed, candidates)?;
         let values = &starts[index];
-        let span = delays[index].clone();
-        // The instants of the delay where a guard constant is crossed.
-        let mut crossings = BTreeSet::new();
-        crossings.insert(zero());
-        if let Some(span) = &span {
-            for constraint in held.iter().flat_map(|e| e.parts.iter().flatten()) {
-                if let Some(Some(value)) = values.get(constraint.place()) {
-                    let at = constraint.bound().sub(value);
-                    if at > zero() && at < *span {
-                        crossings.insert(at);
-                    }
-                }
-            }
-            crossings.insert(span.clone());
-        }
-        let points: Vec<Rational> = crossings.into_iter().collect();
-        let mut instants = Vec::new();
-        for (position, point) in points.iter().enumerate() {
-            instants.push(point.clone());
-            if let Some(next) = points.get(position + 1) {
-                instants.push(point.add(next).div(&two).ok_or("timed-abstract-midpoint")?);
-            }
-        }
+        let all_parts: Vec<Vec<PlaceConstraint>> = held
+            .iter()
+            .flat_map(|entry| entry.parts.iter().cloned())
+            .collect();
+        let instants = instants_of(&all_parts, values, delays[index].as_ref())?;
         let mut segments = Vec::with_capacity(instants.len());
         for instant in &instants {
             let mut enabled: SegmentEnabled = Vec::new();
             for entry in &held {
-                let on = entry.parts.iter().any(|part| {
-                    part.iter().all(|constraint| {
-                        values.get(constraint.place()).is_some_and(|value| {
-                            holds(constraint.op(), value, instant, constraint.bound())
-                        })
-                    })
-                });
                 let pair = (entry.key.clone(), entry.transition.clone());
-                if on && !enabled.contains(&pair) {
+                if part_holds(&entry.parts, values, instant) && !enabled.contains(&pair) {
                     enabled.push(pair);
                 }
             }
@@ -287,4 +331,151 @@ pub fn loop_segments(
         loop_segments.push(segments);
     }
     Ok(Some(loop_segments))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn rational(numerator: i64, denominator: i64) -> Rational {
+        let numerator = if numerator >= 0 {
+            (0..numerator).fold(Integer::zero(), |sum, _| sum.add(&Integer::one()))
+        } else {
+            (0..-numerator).fold(Integer::zero(), |sum, _| sum.sub(&Integer::one()))
+        };
+        let denominator = (0..denominator).fold(Integer::zero(), |sum, _| sum.add(&Integer::one()));
+        Rational::new(numerator, denominator).expect("a nonzero denominator")
+    }
+
+    fn whole(value: i64) -> Rational {
+        rational(value, 1)
+    }
+
+    fn part(place: usize, op: ClockOp, bound: i64) -> Vec<PlaceConstraint> {
+        vec![PlaceConstraint::new(place, op, whole(bound))]
+    }
+
+    /// FR-899 "Timed subjects": a clock the loop never resets is past every
+    /// constant, so a lower bound on it holds and an upper bound or an
+    /// equality fails.
+    #[trace("TC-2536", "FR-899")]
+    #[test]
+    fn an_unreset_clock_holds_each_lower_bound_and_fails_each_upper_bound() {
+        let after = whole(5);
+        let bound = whole(2);
+        for (op, expected) in [
+            (ClockOp::Greater, true),
+            (ClockOp::GreaterOrEqual, true),
+            (ClockOp::Less, false),
+            (ClockOp::LessOrEqual, false),
+            (ClockOp::Equal, false),
+        ] {
+            assert_eq!(holds(op, &None, &after, &bound), expected, "{op:?}");
+        }
+    }
+
+    /// A finite clock compares by its value past the delay.
+    #[trace("TC-2536", "FR-899")]
+    #[test]
+    fn a_finite_clock_compares_by_its_value_after_the_delay() {
+        let value = Some(whole(1));
+        assert!(holds(ClockOp::Equal, &value, &whole(1), &whole(2)));
+        assert!(!holds(ClockOp::Equal, &value, &whole(2), &whole(2)));
+        assert!(holds(ClockOp::LessOrEqual, &value, &whole(1), &whole(2)));
+        assert!(!holds(ClockOp::Less, &value, &whole(1), &whole(2)));
+        assert!(holds(ClockOp::GreaterOrEqual, &value, &whole(1), &whole(2)));
+        assert!(!holds(ClockOp::Greater, &value, &whole(1), &whole(2)));
+    }
+
+    /// An equality guard is enabled only at the point where the clock
+    /// crosses its constant, and that point is an instant of the delay.
+    #[trace("TC-2536", "FR-899")]
+    #[test]
+    fn an_equality_guard_is_enabled_only_at_its_crossing_point() {
+        let parts = vec![part(0, ClockOp::Equal, 1)];
+        let values = vec![Some(whole(0))];
+        let span = whole(2);
+        let instants = instants_of(&parts, &values, Some(&span)).expect("instants");
+        let enabled: Vec<&Rational> = instants
+            .iter()
+            .filter(|instant| part_holds(&parts, &values, instant))
+            .collect();
+        assert_eq!(enabled, [&whole(1)]);
+        assert!(instants.len() > 3, "points and stretches: {instants:?}");
+    }
+
+    /// A crossing exactly at the end of the delay is the delay's end, not a
+    /// crossing inside it, and the end is enabled.
+    #[trace("TC-2536", "FR-899")]
+    #[test]
+    fn a_crossing_at_the_end_of_the_delay_is_the_end_instant() {
+        let parts = vec![part(0, ClockOp::GreaterOrEqual, 2)];
+        let values = vec![Some(whole(0))];
+        let span = whole(2);
+        let instants = instants_of(&parts, &values, Some(&span)).expect("instants");
+        assert_eq!(instants.first(), Some(&whole(0)));
+        assert_eq!(instants.last(), Some(&whole(2)));
+        let enabled: Vec<&Rational> = instants
+            .iter()
+            .filter(|instant| part_holds(&parts, &values, instant))
+            .collect();
+        assert_eq!(enabled, [&whole(2)]);
+    }
+
+    /// A terminal stutter waits forever: one instant, read with every clock
+    /// past every constant.
+    #[trace("TC-2536", "FR-899")]
+    #[test]
+    fn a_terminal_stutter_reads_one_instant_past_every_constant() {
+        let parts = vec![part(0, ClockOp::GreaterOrEqual, 7)];
+        let values: Vec<Value> = vec![None];
+        let instants = instants_of(&parts, &values, None).expect("instants");
+        assert_eq!(instants, [whole(0)]);
+        assert!(part_holds(&parts, &values, &instants[0]));
+        let upper = vec![part(0, ClockOp::LessOrEqual, 7)];
+        assert!(!part_holds(&upper, &values, &instants[0]));
+    }
+
+    /// A carry from an unreset clock leaves the destination past every
+    /// constant; a reset makes a finite value that grows with the delay.
+    #[trace("TC-2536", "FR-899")]
+    #[test]
+    fn a_carry_from_an_unreset_clock_stays_past_every_constant() {
+        let moved = ClockMove {
+            carries: vec![(1, 0)],
+            resets: Vec::new(),
+        };
+        let after = advance(&[None, Some(whole(1))], Some(&whole(1)), &moved);
+        assert_eq!(after, [None, None]);
+        let reset = ClockMove {
+            carries: Vec::new(),
+            resets: vec![(0, whole(0))],
+        };
+        let after = advance(&[None, None], Some(&whole(3)), &reset);
+        assert_eq!(after, [Some(whole(0)), None]);
+        let after = advance(&after, Some(&whole(3)), &ClockMove::default());
+        assert_eq!(after, [Some(whole(3)), None]);
+    }
+
+    /// A loop that resets its clock settles on the reset value; one that
+    /// needs more passes than allowed settles on none.
+    #[trace("TC-2536", "FR-899")]
+    #[test]
+    fn a_valuation_that_does_not_settle_in_the_passes_is_none() {
+        let reset = ClockMove {
+            carries: Vec::new(),
+            resets: vec![(0, whole(0))],
+        };
+        let chain = ClockMove {
+            carries: vec![(1, 0)],
+            resets: vec![(0, whole(0))],
+        };
+        let delays = [Some(whole(1))];
+        let starts = settled_starts(&[reset.clone()], &delays, 1, 3).expect("settles");
+        assert_eq!(starts, [[Some(whole(0))]]);
+        // The carry chain needs a pass to fill the second clock.
+        assert!(settled_starts(&[chain.clone()], &delays, 2, 1).is_none());
+        assert!(settled_starts(&[chain], &delays, 2, 4).is_some());
+    }
 }

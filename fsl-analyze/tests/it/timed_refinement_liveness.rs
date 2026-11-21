@@ -1157,15 +1157,78 @@ fn a_timed_hidden_candidate_guard_that_disables_the_class_is_not_refuted() {
         "{:?}",
         outcome.safety
     );
+    // The dense component holds several loops, so a fair candidate run on one
+    // loop does not answer for it (FR-899-AC-9's per-component check, QSL-2243
+    // remaining item iv): undecided, never a violation, never refused.
+    assert!(
+        !matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Violated { .. }
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
     assert!(
         matches!(
             outcome.liveness,
             Some(TimedLivenessHalf::Checked(
-                TimedLivenessOutcome::Holds { .. }
-                    | TimedLivenessOutcome::Undecided {
-                        cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
-                        ..
-                    }
+                TimedLivenessOutcome::Undecided {
+                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
+                    ..
+                }
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
+}
+
+/// FR-899 "Timed subjects" over a tick source: the liveness half of a timed
+/// abstract side has no instants between positions to read, so it is
+/// refused with its own typed refusal while the holding safety half is still
+/// reported. FR-430 routes a `time tick` subject to the explicit-state
+/// engine, where enabledness at each position's clock valuation is exact:
+/// that route is QSL-2243's remaining item (v), not built here.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn a_timed_abstract_side_under_a_tick_source_refuses_its_liveness_half() {
+    let abstract_model = renamed_package(&document(&["y"], &[("send", &["inflight"])]), "test/req");
+    let concrete = document(&[], &[("send", &["inflight"]), ("tick", &[])]);
+    let body = refinement("self.inflight")
+        .replace("late = self.late", "late = false")
+        .replace("retried = self.retried", "retried = false")
+        .replace(
+            "step M::Call::send -> A::Call::send(self);",
+            "step M::Call::send -> A::Call::send(self);\n\
+             step M::Call::tick -> stutter;\nensure fair weak A::Call::send;",
+        );
+    let world = refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "dimension Time;\nunit s : Time = rational(1, 1);\n\
+             unit ms : Time = rational(1, 1000) * s;\n\
+             time M tick M::Call::tick period 1 ms unit ms;\n\
+             time A dense unit ms;\n{ASEND}\
+             pre MSend using v on M::Call::send {{ not self.inflight and self.retried }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n\
+             pre MTick using v on M::Call::tick {{ not self.inflight }}\n{body}"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let outcome = check(&world);
+    assert!(
+        matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }),
+        "{:?}",
+        outcome.safety
+    );
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Refused(
+                fsl_analyze::zone_check::ZoneCheckRefusal::TimedAbstractLivenessTickSource
             ))
         ),
         "{:?}",
