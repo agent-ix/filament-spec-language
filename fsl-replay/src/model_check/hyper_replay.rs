@@ -114,6 +114,10 @@ pub struct HyperReplay<'a, 's> {
     /// The most members one witness set may reach (FR-184) when a
     /// `WitnessExhausted` counterexample recomputes its sets.
     pub max_witness_set: u64,
+    /// The most closed executions one trace variable may range over (FR-126's
+    /// `max_states`) when a `Closed` counterexample of an HP-3 clause
+    /// recomputes the existential variables' executions.
+    pub max_states: u64,
     /// The replay's cancellation handle.
     pub cancel: &'a Cancel,
 }
@@ -1213,6 +1217,12 @@ fn projected(
             "is of a clause that is not a projection-aligned hyperproperty",
         ));
     }
+    if replay.clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+    {
+        return Err(shape_error(
+            "is a projected counterexample, which stutter-extends a terminal state, of an event-position clause, whose counterexamples are closed",
+        ));
+    }
     about_clause(replay, counterexample, replay.clause.quantifiers().len())?;
     let visible = visible_steps(replay, counterexample)?;
     let projected = visible.first().map_or(0, Vec::len);
@@ -1395,11 +1405,11 @@ fn closed(
 ) -> Result<ModelTraceSettlement, ReplayRefusal> {
     let clause = replay.clause;
     let exists = match clause.form() {
-        Some(HyperForm::Universal) => false,
+        Some(HyperForm::Universal | HyperForm::ProjectionAligned) => false,
         Some(HyperForm::ForallExistsSafety) => true,
         _ => {
             return Err(shape_error(
-                "is of a clause that is not an event-position universal or forall-exists safety hyperproperty",
+                "is of a clause that is not an event-position universal, projection-aligned or forall-exists safety hyperproperty",
             ));
         }
     };
@@ -1417,22 +1427,42 @@ fn closed(
     let Some(horizon) = closed_horizon(clause.body()) else {
         return Err(fault("a-body-has-a-horizon"));
     };
+    let aligned = !clause.align_skip().is_empty();
+    if counterexample
+        .traces
+        .iter()
+        .any(|trace| trace.marks.is_empty() == aligned && !trace.steps.is_empty())
+    {
+        return Err(shape_error(
+            "marks its steps other than as the clause's `align skip` list does: every step of an aligned clause and none of any other",
+        ));
+    }
+    let visible = if aligned {
+        visible_steps(replay, counterexample)?
+    } else {
+        Vec::new()
+    };
     let Some(executed) = execute(replay, counterexample)? else {
         return Ok(no_value());
     };
     let mut executions = Vec::with_capacity(executed.len());
-    for ((trace, positions), system) in counterexample
+    for (component, ((trace, positions), system)) in counterexample
         .traces
         .iter()
         .zip(&executed)
         .zip(&replay.systems)
+        .enumerate()
     {
         let mut steps = Vec::with_capacity(trace.steps.len());
-        for step in &trace.steps {
+        for (index, step) in trace.steps.iter().enumerate() {
             match step {
                 HyperStep::Model(step) => steps.push(ClosedStep {
                     transition: step.transition.clone(),
                     post_state: step.post_state.clone(),
+                    skipped: aligned
+                        && visible
+                            .get(component)
+                            .is_some_and(|taken| !taken.contains(&index)),
                 }),
                 HyperStep::TerminalStutter => {
                     return Err(shape_error(
@@ -1442,7 +1472,16 @@ fn closed(
             }
         }
         let last = positions.last().ok_or_else(|| fault("a-position-exists"))?;
-        let covers = u64::try_from(steps.len()).is_ok_and(|taken| taken == horizon);
+        let taken =
+            u64::try_from(steps.iter().filter(|step| !step.skipped).count()).unwrap_or(u64::MAX);
+        // A trace that covers the horizon ends at its last visible step; steps
+        // after it are not read (FR-173 "Event-position form").
+        let covers = taken == horizon && steps.last().is_none_or(|step| !step.skipped);
+        if taken > horizon || (taken == horizon && !covers) {
+            return Err(shape_error(
+                "holds a trace past the body's horizon, which a closed finite trace does not read",
+            ));
+        }
         if !covers {
             let Ok(expansion) = expand(*system, &last.state)? else {
                 return Ok(no_value());
@@ -1500,14 +1539,14 @@ fn closed(
     }
     let mut lists = Vec::new();
     for (component, system) in replay.systems.iter().enumerate().skip(traced) {
-        let limit = usize::try_from(replay.max_witness_set).unwrap_or(usize::MAX);
-        match closed_executions(system, horizon, limit, replay.cancel) {
+        let limit = usize::try_from(replay.max_states).unwrap_or(usize::MAX);
+        match closed_executions(system, horizon, limit, &BTreeSet::new(), replay.cancel) {
             Ok(list) => lists.push(list),
             Err(ClosedStop::Executions { .. }) => {
                 return Ok(ModelTraceSettlement::Stopped {
                     reached: ReachedLimit {
-                        limit: ModelCheckLimit::MaxWitnessSet,
-                        value: replay.max_witness_set,
+                        limit: ModelCheckLimit::MaxStates,
+                        value: replay.max_states,
                     },
                     count: None,
                 });
@@ -1543,6 +1582,7 @@ fn closed(
                 return Err(fault("the-closed-tuple-evaluates"));
             }
             PartnerSearch::Stopped(_) => no_value(),
+            PartnerSearch::Cancelled => no_value(),
         },
     )
 }

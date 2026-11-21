@@ -653,6 +653,8 @@ fn with_hyper_replay<T>(
         matcher: &matcher,
         meter: item.subjects[0].simulation.meter,
         max_witness_set: ModelCheckLimits::default().max_witness_set,
+        max_states: u64::try_from(ModelCheckLimits::default().limits.max_states)
+            .unwrap_or(u64::MAX),
         cancel: &cancel,
     };
     Ok(run(&replay))

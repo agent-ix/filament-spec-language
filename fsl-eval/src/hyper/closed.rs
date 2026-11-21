@@ -9,6 +9,8 @@
 //! exactly `h + 1` positions, 0 to `h`. A terminal state is not
 //! stutter-extended and no execution is read as a lasso.
 
+use std::collections::BTreeSet;
+
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
@@ -34,6 +36,9 @@ pub struct ClosedStep {
     pub transition: ModelTransition,
     /// The `filament.simulation.state-key/v1` key of the post-state.
     pub post_state: StateKey,
+    /// Whether the step is skipped by the clause's `align skip` list (ADR-023
+    /// PA-1): it enters no projected position.
+    pub skipped: bool,
 }
 
 /// A closed finite execution of one subject.
@@ -45,6 +50,36 @@ pub struct ClosedExecution {
     pub states: Vec<ModelSimState>,
     /// Its steps, in order.
     pub steps: Vec<ClosedStep>,
+}
+
+impl ClosedExecution {
+    /// The execution read at its visible positions (ADR-023 PA-2): position 0
+    /// and the state after each step that is not skipped, with the visible
+    /// steps alone. A skipped step enters no position, and skipped steps after
+    /// the last visible one are not read.
+    #[must_use]
+    pub fn projection(&self) -> Self {
+        let mut states = Vec::with_capacity(self.states.len());
+        let mut steps = Vec::with_capacity(self.steps.len());
+        states.extend(self.states.first().cloned());
+        for (step, state) in self.steps.iter().zip(self.states.iter().skip(1)) {
+            if !step.skipped {
+                steps.push(step.clone());
+                states.push(state.clone());
+            }
+        }
+        Self {
+            initial: self.initial,
+            states,
+            steps,
+        }
+    }
+
+    /// The number of visible steps.
+    #[must_use]
+    pub fn visible_steps(&self) -> usize {
+        self.steps.iter().filter(|step| !step.skipped).count()
+    }
 }
 
 /// Why the closed executions of a subject were not all enumerated.
@@ -64,18 +99,19 @@ pub enum ClosedStop {
 }
 
 /// The body's horizon (ADR-014 TR-4): the greatest sum of interval upper
-/// bounds along a path from the root; an operator with no finite upper bound
-/// adds nothing. `None` for an arena whose operands do not follow their
-/// operator or a sum past `u64`.
+/// bounds along a path from the root. `None` for a body with an operator that
+/// has no finite upper bound (an event-position body has none: FR-326 refuses
+/// it at S3, so the closed reading never guesses a horizon for it), for an
+/// arena whose operands do not follow their operator and for a sum past `u64`.
 pub fn horizon(formula: &CheckedFormula) -> Option<u64> {
     let nodes = formula.nodes();
     let mut reach = vec![0_u64; nodes.len()];
     let upper = |interval: &Option<CheckedInterval>| match interval {
         Some(CheckedInterval::Steps(steps)) => match steps.upper() {
-            TemporalUpper::Finite(upper) => upper,
-            TemporalUpper::Open => 0,
+            TemporalUpper::Finite(upper) => Some(upper),
+            TemporalUpper::Open => None,
         },
-        Some(CheckedInterval::Timed(_)) | None => 0,
+        Some(CheckedInterval::Timed(_)) | None => None,
     };
     for (index, node) in nodes.iter().enumerate().rev() {
         let of = |reach: &[u64], operand: usize| {
@@ -95,7 +131,7 @@ pub fn horizon(formula: &CheckedFormula) -> Option<u64> {
             }
             FormulaNode::Unary {
                 interval, operand, ..
-            } => of(&reach, operand.index())?.checked_add(upper(interval))?,
+            } => of(&reach, operand.index())?.checked_add(upper(interval)?)?,
             FormulaNode::Binary {
                 interval,
                 left,
@@ -103,7 +139,7 @@ pub fn horizon(formula: &CheckedFormula) -> Option<u64> {
                 ..
             } => of(&reach, left.index())?
                 .max(of(&reach, right.index())?)
-                .checked_add(upper(interval))?,
+                .checked_add(upper(interval)?)?,
         };
         *reach.get_mut(index)? = total;
     }
@@ -113,6 +149,9 @@ pub fn horizon(formula: &CheckedFormula) -> Option<u64> {
 /// Every closed finite execution of `system` over `horizon`, from each
 /// initial state in the subject's order, each state's successors in the order
 /// of their transition and state keys, depth first. At most `limit` of them.
+/// `skips` are the texts of the operations the clause skips (`align skip`):
+/// an execution covers `horizon` visible steps and ends there, and a path of
+/// more than `limit` steps is a stop, so skipped steps cannot run for ever.
 ///
 /// # Errors
 ///
@@ -122,6 +161,7 @@ pub fn closed_executions(
     system: &ModelSystem<'_>,
     horizon: u64,
     limit: usize,
+    skips: &BTreeSet<String>,
     cancel: &Cancel,
 ) -> Result<Vec<ClosedExecution>, ClosedStop> {
     let depth = usize::try_from(horizon).unwrap_or(usize::MAX);
@@ -139,7 +179,10 @@ pub fn closed_executions(
             let Some(last) = execution.states.last() else {
                 continue;
             };
-            let successors = if execution.steps.len() >= depth {
+            if execution.steps.len() > limit {
+                return Err(ClosedStop::Executions { limit });
+            }
+            let successors = if execution.visible_steps() >= depth {
                 Vec::new()
             } else {
                 system
@@ -169,6 +212,7 @@ pub fn closed_executions(
                 states.push(next);
                 let mut steps = execution.steps.clone();
                 steps.push(ClosedStep {
+                    skipped: skips.contains(transition.operation()),
                     transition,
                     post_state,
                 });
@@ -264,24 +308,23 @@ impl TupleLetters for ClosedStates<'_> {
     }
 }
 
-/// Whether a `match` part admits joint step `joint` (`1`-based): `None` when
-/// the part reads no step of the tuple, else its reading. A conjunct reads a
-/// joint step only when every component it reads takes it, so a step that a
-/// shorter component does not take is not constrained (FR-173 "Event-position
-/// form").
+/// The reading of a `match` part at joint step `joint` (`1`-based). A component
+/// with no such step is labelled ended, and a conjunct that reads it is not
+/// evaluated there, so `μ` constrains only the joint steps every component a
+/// conjunct reads takes (FR-173 "Event-position form").
 fn step_reading(
     inputs: &ClosedInputs<'_>,
     executions: &[&ClosedExecution],
     components: usize,
     joint: usize,
     existential: bool,
-) -> Result<Option<MatchReading>, ClosedVerdict> {
+) -> Result<MatchReading, ClosedVerdict> {
     let mut labels = Vec::with_capacity(components);
     for execution in executions.iter().take(components) {
-        match execution.steps.get(joint - 1) {
-            Some(step) => labels.push(StepLabel::Operation(&step.transition)),
-            None => return Ok(None),
-        }
+        labels.push(match execution.steps.get(joint - 1) {
+            Some(step) => StepLabel::Operation(&step.transition),
+            None => StepLabel::Ended,
+        });
     }
     let mut meter = Meter::new(inputs.meter).with_cancel(inputs.cancel.clone());
     let reading = if existential {
@@ -295,7 +338,7 @@ fn step_reading(
     };
     match reading {
         Ok(MatchReading::Fault(fault)) => Err(ClosedVerdict::Fault(fault)),
-        Ok(reading) => Ok(Some(reading)),
+        Ok(reading) => Ok(reading),
         Err(_) => Err(ClosedVerdict::MatchUndetermined),
     }
 }
@@ -309,12 +352,19 @@ pub fn judge_closed_tuple(
     executions: &[&ClosedExecution],
 ) -> ClosedVerdict {
     let clause = inputs.clause;
+    // An `align skip` clause is read over the visible positions (ADR-023 PA-2).
+    let projected: Vec<ClosedExecution>;
+    let executions: Vec<&ClosedExecution> = if clause.align_skip().is_empty() {
+        executions.to_vec()
+    } else {
+        projected = executions
+            .iter()
+            .map(|execution| execution.projection())
+            .collect();
+        projected.iter().collect()
+    };
+    let executions = executions.as_slice();
     let universals = clause.universals();
-    let longest = executions
-        .iter()
-        .map(|execution| execution.steps.len())
-        .max()
-        .unwrap_or(0);
     let parts = [
         (universals, false, !clause.mu_universal().is_empty()),
         (executions.len(), true, !clause.mu_existential().is_empty()),
@@ -323,17 +373,23 @@ pub fn judge_closed_tuple(
         if !present {
             continue;
         }
+        let longest = executions
+            .iter()
+            .take(components)
+            .map(|execution| execution.steps.len())
+            .max()
+            .unwrap_or(0);
         for joint in 1..=longest {
             match step_reading(inputs, executions, components, joint, existential) {
-                Ok(None | Some(MatchReading::Holds)) => {}
-                Ok(Some(MatchReading::Fails)) => {
+                Ok(MatchReading::Holds) => {}
+                Ok(MatchReading::Fails) => {
                     return if existential {
                         ClosedVerdict::ExistentialUnmatched
                     } else {
                         ClosedVerdict::UniversalUnmatched
                     };
                 }
-                Ok(Some(_)) => return ClosedVerdict::MatchUndetermined,
+                Ok(_) => return ClosedVerdict::MatchUndetermined,
                 Err(verdict) => return verdict,
             }
         }
@@ -425,6 +481,8 @@ pub enum PartnerSearch {
     },
     /// A reading stopped the search; it settles no partner.
     Stopped(ClosedVerdict),
+    /// The run was cancelled.
+    Cancelled,
 }
 
 /// Search the product of `existentials`, one list of closed executions per
@@ -449,7 +507,7 @@ pub fn search_partner(
     let mut position = 0_u64;
     for picked in Tuples::over(lens) {
         if inputs.cancel.poll() {
-            return PartnerSearch::Stopped(closed_fault("a-cancelled-search-stops"));
+            return PartnerSearch::Cancelled;
         }
         let mut tuple: Vec<&ClosedExecution> = universal.to_vec();
         for (list, index) in existentials.iter().zip(&picked) {

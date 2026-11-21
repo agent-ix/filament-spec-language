@@ -1277,7 +1277,13 @@ fn decide_closed(
     let depth = horizon(clause.body()).ok_or_else(|| fault("a-body-has-a-horizon"))?;
     let limits = request.limits;
     let mut stats = RunStats::default();
-    let executions = match closed_executions(system, depth, limits.limits.max_states, cancel) {
+    let executions = match closed_executions(
+        system,
+        depth,
+        limits.limits.max_states,
+        &std::collections::BTreeSet::new(),
+        cancel,
+    ) {
         Ok(executions) => executions,
         Err(stop) => {
             let end = match stop {
@@ -1328,7 +1334,8 @@ fn decide_closed(
         };
         let mut paths = Vec::with_capacity(initials);
         let mut trapped = None;
-        for initial in 0..initials {
+        let mut stopped: Option<RunEnd> = None;
+        'initials: for initial in 0..initials {
             let mut witness = None;
             for execution in executions
                 .iter()
@@ -1345,7 +1352,31 @@ fn decide_closed(
                     ClosedVerdict::Fault(internal) => {
                         return Err(ModelCheckRefusal::Fault(internal));
                     }
-                    _ => {}
+                    // A reading that stopped settles no witness: the search is
+                    // incomplete, never a trap.
+                    ClosedVerdict::Incomplete(counter) => {
+                        stopped = Some(match cancelled(cancel) {
+                            Some(halt) => halt.end(),
+                            None => RunEnd::Stopped {
+                                cause: IncompleteCause::ResourceExhausted,
+                                limit: Some(ReachedLimit {
+                                    limit: ModelCheckLimit::EvaluationMeter { counter },
+                                    value: fsl_replay::meter_bound(&request.meter, counter),
+                                }),
+                            },
+                        });
+                        break 'initials;
+                    }
+                    ClosedVerdict::MatchUndetermined => {
+                        stopped = Some(RunEnd::Stopped {
+                            cause: IncompleteCause::ResourceExhausted,
+                            limit: None,
+                        });
+                        break 'initials;
+                    }
+                    ClosedVerdict::UniversalUnmatched
+                    | ClosedVerdict::ExistentialUnmatched
+                    | ClosedVerdict::Violated { .. } => {}
                 }
             }
             let Some(execution) = witness else {
@@ -1365,14 +1396,18 @@ fn decide_closed(
                     .collect(),
             });
         }
-        let outcome = match trapped {
-            Some(initial) => ExistentialOutcome::Trapped {
+        let outcome = match (stopped, trapped) {
+            (Some(end), _) => ExistentialOutcome::NoDecision {
+                end,
+                open: BTreeSet::new(),
+            },
+            (None, Some(initial)) => ExistentialOutcome::Trapped {
                 stem: ModelPath {
                     initial: u32::try_from(initial).map_err(|_| fault("an-initial-fits-u32"))?,
                     steps: Vec::new(),
                 },
             },
-            None => ExistentialOutcome::ClosedWitnessed { paths },
+            (None, None) => ExistentialOutcome::ClosedWitnessed { paths },
         };
         outcomes.push(ExistentialInstanceOutcome {
             instance: named(binding),

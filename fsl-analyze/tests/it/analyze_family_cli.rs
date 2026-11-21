@@ -1029,10 +1029,9 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
         "{item}"
     );
     let verdict = label(&item);
-    assert!(matches!(verdict, "proved" | "refuted"), "{item}");
-    if verdict == "refuted" {
-        assert_eq!(item["replay"]["reproduced"], true, "{item}");
-    }
+    // FR-173-AC-6's HP-2 `l` body: the two vaults' `l` differ, so it is refuted.
+    assert_eq!(verdict, "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// FR-640-AC-12 (TC-2243): the hyper model checker refutes a two-model
@@ -1045,7 +1044,6 @@ fn a_two_model_hyper_counterexample_replays_through_the_engine() {
     use filament_exact::Cancel;
     use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
     use fsl_eval::model_subject::ModelInstance;
-    use fsl_eval::simulation::model::ModelSystem;
     use fsl_replay::{
         replay_hyper_trace_tuple, settle_hyper_check, HyperOutcome, HyperReplay, ModelCheckLimits,
         TerminalValue,
@@ -1068,9 +1066,9 @@ fn a_two_model_hyper_counterexample_replays_through_the_engine() {
         panic!("Saves is refuted by the initial model values: {outcome:?}");
     };
 
-    let subject = world.subject();
-    let system = ModelSystem::new(subject.simulation).expect("the subject admits");
-    let systems = vec![&system; world.clause.quantifiers().len()];
+    // One system per trace variable's own model.
+    let seams = world.seams();
+    let systems = seams.per_trace();
     let letters = CheckedHyperLetters::new(&world.package, &world.clause, systems.clone())
         .expect("the clause letters admit the subject");
     let matcher = CheckedStepMatch::new(&world.package, &world.clause);
@@ -1099,6 +1097,7 @@ fn a_two_model_hyper_counterexample_replays_through_the_engine() {
         matcher: &matcher,
         meter: crate::counter::UNLIMITED,
         max_witness_set: limits.max_witness_set,
+        max_states: u64::try_from(limits.limits.max_states).unwrap_or(u64::MAX),
         cancel: &cancel,
     };
     assert!(matches!(

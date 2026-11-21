@@ -819,7 +819,7 @@ impl<'a> ModelSystem<'a> {
     /// FR-106's [`AdmissionFailure`]: `Refused` or `Incomplete`, one record.
     pub fn new(request: ModelSimulationRequest<'a>) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over(request, selections, None)
+        Self::over(request, selections, None, false)
     }
 
     /// [`Self::new`] over the `model_selections` rows the subject reads: those
@@ -852,7 +852,7 @@ impl<'a> ModelSystem<'a> {
             return Self::new(request);
         }
         let sources = request.input.source_packages;
-        Self::over(request, ModelSelections::new(&read, sources), None)
+        Self::over(request, ModelSelections::new(&read, sources), None, false)
     }
 
     /// [`Self::new`] with the caller's cancellation shared by qualified
@@ -866,7 +866,7 @@ impl<'a> ModelSystem<'a> {
         cancel: &filament_exact::Cancel,
     ) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over(request, selections, Some(cancel))
+        Self::over(request, selections, Some(cancel), false)
     }
 
     /// The model system's selected populations in ascending declaration-key
@@ -874,6 +874,32 @@ impl<'a> ModelSystem<'a> {
     /// replay reconstructs an object-parameter binding.
     pub fn populations(&self) -> &[fsl_semantics::model::state::StatePopulation] {
         &self.populations
+    }
+
+    /// The system of trace variable alias `alias` of a hyper clause (FR-173
+    /// "Event-position form": each trace is read over its own model). A unit
+    /// that selects several models gets [`Self::over_model`] the package the
+    /// alias names, so a trace ranges over its own model's executions alone;
+    /// a unit with one model, or a package-route input, gets [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`] and [`Self::over_model`].
+    pub fn for_alias(
+        request: ModelSimulationRequest<'a>,
+        alias: &str,
+    ) -> Result<Self, AdmissionFailure> {
+        let model = match request.source_package() {
+            Some(package) if request.input.model_selections.len() > 1 => package
+                .graph()
+                .model_package_identity(alias)
+                .map(str::to_owned),
+            _ => None,
+        };
+        match model {
+            Some(model) => Self::over_model(request, &model),
+            None => Self::new(request),
+        }
     }
 
     /// [`Self::new`] over the one domain package `model` names, for a unit
@@ -908,6 +934,7 @@ impl<'a> ModelSystem<'a> {
             request,
             fsl_semantics::model::observation::ModelSelections::new(&selected, sources),
             None,
+            true,
         )
     }
 
@@ -915,6 +942,7 @@ impl<'a> ModelSystem<'a> {
         request: ModelSimulationRequest<'a>,
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
         cancel: Option<&filament_exact::Cancel>,
+        foreign_universes_ignored: bool,
     ) -> Result<Self, AdmissionFailure> {
         let input = request.input;
         let types = input.types;
@@ -928,6 +956,9 @@ impl<'a> ModelSystem<'a> {
                 .iter()
                 .any(|population| population.key == universe.population)
             {
+                if foreign_universes_ignored {
+                    continue;
+                }
                 return Err(refused(
                     Code::InvalidRuntimeInput,
                     "wrong-role-mapping",

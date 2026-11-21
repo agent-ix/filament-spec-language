@@ -7,10 +7,11 @@
 //! initial state `h = 1`, `l = 0`, whose `step(i)` sets `l = i` for `i` in
 //! `{0, 1}` and which have no terminal state.
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, CancelCause};
 use fsl_replay::{
     settle_hyper_check, ExistentialOutcome, HyperCounterexampleKind, HyperOutcome, HyperStep,
-    ModelCheckLimits, ModelTraceSettlement, ModelTraceValue, ResultLabel, TerminalValue,
+    IncompleteCause, ModelCheckLimits, ModelTraceSettlement, ModelTraceValue, ResultLabel,
+    TerminalValue,
 };
 use fsl_route::reductions::Reductions;
 use fsl_semantics::check::{HyperForm, TemporalProfile};
@@ -136,7 +137,14 @@ fn replay_refuses_a_trace_that_is_not_closed() {
     for trace in &mut counterexample.traces {
         trace.steps.pop();
     }
-    assert!(world.replay(&counterexample).is_err());
+    let refusal = world
+        .replay(&counterexample)
+        .expect_err("a trace that stops short of its horizon is refused");
+    assert!(
+        format!("{refusal:?}")
+            .contains("neither ends at a terminal state nor covers the body's horizon"),
+        "the refusal names the closed-trace rule: {refusal:?}"
+    );
 }
 
 /// FR-178-AC-1's `align skip { V::Vault::mix }` clause under the event-position
@@ -177,8 +185,17 @@ fn an_event_position_projection_aligned_clause_reaches_a_verdict() {
         .run(ModelCheckLimits::default(), &Cancel::new())
         .expect("the run is not refused");
     let counterexample = refuted(outcome.clone());
-    assert_eq!(counterexample.kind, HyperCounterexampleKind::Projected);
+    assert_eq!(counterexample.kind, HyperCounterexampleKind::Closed);
     assert_eq!(counterexample.traces.len(), 2);
+    for trace in &counterexample.traces {
+        assert!(
+            trace
+                .steps
+                .iter()
+                .all(|step| matches!(step, HyperStep::Model(_))),
+            "a closed trace holds no stutter step and no loop"
+        );
+    }
     let replayed = leaky.replay(&counterexample).expect("the replay reads it");
     assert!(
         matches!(replayed, ModelTraceSettlement::Reproduced { .. }),
@@ -225,6 +242,146 @@ fn an_event_position_single_existential_clause_is_witnessed_or_trapped() {
     };
     assert!(
         matches!(&instance.outcome, ExistentialOutcome::Trapped { stem } if stem.initial == 0 && stem.steps.is_empty()),
+        "{instance:?}"
+    );
+}
+
+/// A vault that steps only while `h = 1`: started from `h = 0` it is terminal
+/// at once.
+const STEPS_WHILE_HIGH: Vault = Vault::Custom(
+    "pre Go using v on V::Vault::step { self.h = 1 }\n\
+     post Step using v on V::Vault::step { self.l = i }\n",
+);
+
+/// FR-043 with FR-173 "Event-position form": a trace that reaches a terminal
+/// state inside the body's horizon is closed there, and an atom past its end
+/// reads false, so `always [0, 3]` is refuted by it; the counterexample's
+/// trace is shorter than the horizon and replays.
+#[trace("TC-2243", "FR-173-AC-6")]
+#[test]
+fn an_event_position_trace_that_ends_inside_the_horizon_is_closed_there() {
+    let world = two_models(FORALL_FORALL, "always [0, 3] holds(v.h @ a = w.h @ b)");
+    let ended = World::with_second_vaults(
+        Vault::Terminal,
+        &[(KEY, (1, 0))],
+        &[(KEY, (1, 0))],
+        "hyper Saves using ep over behaviours (v: V::Vault, w: N::Vault) \
+         forall trace a of V forall trace b of N { always [0, 3] holds(v.h @ a = w.h @ b) }",
+    );
+    // Without a terminal state the same body holds over every full trace.
+    assert!(matches!(run(&world), HyperOutcome::HoldsClosed { .. }));
+    let outcome = run(&ended);
+    let counterexample = refuted(outcome.clone());
+    assert_eq!(counterexample.kind, HyperCounterexampleKind::Closed);
+    assert!(
+        counterexample
+            .traces
+            .iter()
+            .any(|trace| trace.steps.len() < 3),
+        "a trace that ends at its terminal state inside the horizon"
+    );
+    assert!(counterexample
+        .traces
+        .iter()
+        .all(|trace| trace.steps.iter().all(|s| matches!(s, HyperStep::Model(_)))));
+    let replayed = ended.replay(&counterexample).expect("the replay reads it");
+    assert!(
+        matches!(
+            replayed,
+            ModelTraceSettlement::Reproduced {
+                value: ModelTraceValue::Truth(false),
+                ..
+            }
+        ),
+        "{replayed:?}"
+    );
+}
+
+/// FR-173 "Event-position form": `match` constrains a joint step only through
+/// the traces its conjunct reads. With `c` terminal at its start the conjunct
+/// over `a` and `b` still holds every joint step of `a` and `b`, so the
+/// clause, whose body reads `a` and `b` alone, is proved; skipping the whole
+/// `match` once `c` has ended would admit steps with different inputs.
+#[trace("TC-2243", "FR-173-AC-6")]
+#[test]
+fn a_match_conjunct_over_two_traces_still_holds_after_a_third_has_ended() {
+    let declaration = "hyper Three using ep over behaviours (v: V::Vault, w: N::Vault) \
+        forall trace a of V forall trace b of V forall trace c of N \
+        match { a.step.Vault::step.i = b.step.Vault::step.i } \
+        { always [0, 2] holds(v.l @ a = v.l @ b) }";
+    let world = World::with_second_vaults(
+        STEPS_WHILE_HIGH,
+        &[(KEY, (1, 0))],
+        &[(KEY, (0, 0))],
+        declaration,
+    );
+    let outcome = run(&world);
+    assert!(
+        matches!(outcome, HyperOutcome::HoldsClosed { .. }),
+        "{outcome:?}"
+    );
+}
+
+/// FR-176 "Limits": a state budget the closed enumeration passes stops the
+/// run `ResourceExhausted`, never a verdict; a cancelled run stops
+/// `Cancelled` for both the HP-2 and the HP-3 search.
+#[trace("TC-2243", "FR-173-AC-6")]
+#[test]
+fn an_event_position_run_that_a_limit_or_cancellation_stops_decides_nothing() {
+    let universal = "hyper U using ep over behaviours (v: V::Vault) \
+        forall trace a of V forall trace b of V { always [0, 3] holds(v.h @ a = v.h @ b) }";
+    let partnered = "hyper P using ep over behaviours (v: V::Vault) \
+        forall trace a of V exists trace b of V { always [0, 3] holds(v.l @ a = v.l @ b) }";
+    for declaration in [universal, partnered] {
+        let world = World::new(Vault::Secure, false, &[(1, 0)], declaration);
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_states = 1;
+        let outcome = world
+            .run(limits, &Cancel::new())
+            .expect("the run is not refused");
+        let HyperOutcome::Stopped { cause, limit, .. } = outcome else {
+            panic!("{declaration}: expected a stop, got {outcome:?}");
+        };
+        assert_eq!(cause, IncompleteCause::ResourceExhausted, "{declaration}");
+        assert!(limit.is_some(), "{declaration}");
+
+        let cancel = Cancel::new();
+        cancel.cancel(CancelCause::Requested);
+        let outcome = world
+            .run(ModelCheckLimits::default(), &cancel)
+            .expect("the run is not refused");
+        let HyperOutcome::Stopped { cause, limit, .. } = outcome else {
+            panic!("{declaration}: expected a stop, got {outcome:?}");
+        };
+        assert_eq!(
+            cause,
+            IncompleteCause::Cancelled {
+                source: CancelCause::Requested
+            },
+            "{declaration}"
+        );
+        assert_eq!(limit, None, "{declaration}");
+    }
+}
+
+/// HP-5 over closed executions: a limit that stops the witness search leaves
+/// the instance with no decision, never `Trapped`.
+#[trace("TC-2243", "FR-173-AC-6")]
+#[test]
+fn an_event_position_single_existential_run_that_a_limit_stops_is_not_trapped() {
+    let declaration = "hyper Possible using ep over behaviours (v: V::Vault) \
+        exists trace b of V { eventually [0, 2] holds(v.h @ b = 0) }";
+    let world = World::new(Vault::Secure, false, &[(1, 0)], declaration);
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = 1;
+    let run = world
+        .run_single(limits, None, &Cancel::new())
+        .expect("the run is not refused");
+    let [instance] = run.instances.as_slice() else {
+        panic!("one instance: {run:?}");
+    };
+    assert!(
+        matches!(&instance.outcome, ExistentialOutcome::NoDecision { .. }),
         "{instance:?}"
     );
 }

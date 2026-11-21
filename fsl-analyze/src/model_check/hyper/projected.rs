@@ -12,7 +12,6 @@ use fsl_replay::{
     BoundCovers, HyperCounterexample, HyperCounterexampleKind, HyperOutcome, ModelCheckLimit,
     StepMark,
 };
-use fsl_semantics::check::TemporalProfile;
 
 use super::{
     exhausted, fault, tree_path, widen, ModelCheckRefusal, Positions, ProductStateId, RetainedEdge,
@@ -42,16 +41,6 @@ impl Run<'_, '_> {
                 covers: BoundCovers::Moves,
                 stats: totals.stats(),
             }),
-            // An event-position body is bounded, so its monitor product is complete and
-            // closed: the exhausted product is a closed-scope decision (FR-173).
-            (None, _, _)
-                if self.request.clause.profile()
-                    == TemporalProfile::EventPositionFalseExtension =>
-            {
-                Ok(HyperOutcome::HoldsClosed {
-                    stats: totals.stats(),
-                })
-            }
             (None, _, _) => Ok(HyperOutcome::Holds {
                 stats: totals.stats(),
             }),

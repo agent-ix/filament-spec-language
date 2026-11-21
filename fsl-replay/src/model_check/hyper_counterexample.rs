@@ -296,6 +296,11 @@ impl HyperCounterexample {
     pub fn marks_match_kind(&self) -> bool {
         self.traces.iter().all(|trace| match self.kind {
             HyperCounterexampleKind::Projected => trace.marks.len() == trace.steps.len(),
+            // A closed counterexample of an `align skip` clause marks every step;
+            // the replay checks that against the clause.
+            HyperCounterexampleKind::Closed => {
+                trace.marks.is_empty() || trace.marks.len() == trace.steps.len()
+            }
             _ => trace.marks.is_empty(),
         })
     }

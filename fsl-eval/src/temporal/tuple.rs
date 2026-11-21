@@ -489,9 +489,9 @@ impl<L: TupleLetters> TemporalLetters for ClosedLockstep<'_, L> {
 ///
 /// [`TemporalRefusal::TupleArity`] for a tuple whose count differs from the
 /// clause's variables, [`TemporalRefusal::EmptyTrace`] for a component of no
-/// position, [`TemporalRefusal::AlignSkipNotLockstep`] for an `align skip`
-/// clause, and the evaluator's refusal for a profile that reads no closed
-/// trace.
+/// position, and the evaluator's refusal for a profile that reads no closed
+/// trace. An `align skip` clause is read over the caller's visible positions:
+/// `lens` are the lengths of the projected traces (ADR-023 PA-2).
 pub fn evaluate_closed_tuple<L: TupleLetters>(
     body: &CheckedHyperClause,
     lens: &[u64],
@@ -503,9 +503,6 @@ pub fn evaluate_closed_tuple<L: TupleLetters>(
             expected: body.quantifiers().len(),
             found: lens.len(),
         });
-    }
-    if !body.align_skip().is_empty() {
-        return Err(TemporalRefusal::AlignSkipNotLockstep);
     }
     if lens.contains(&0) {
         return Err(TemporalRefusal::EmptyTrace);

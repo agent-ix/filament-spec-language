@@ -25,6 +25,8 @@
 //! `fsl_replay::replay_hyper_trace_tuple` recomputes either verdict with the
 //! same `fsl-eval` code.
 
+use std::collections::BTreeSet;
+
 use filament_exact::LimitKind;
 use fsl_eval::hyper::{
     closed_executions, horizon, judge_closed_tuple, search_partner, ClosedExecution, ClosedInputs,
@@ -32,7 +34,7 @@ use fsl_eval::hyper::{
 };
 use fsl_replay::{
     HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep, HyperTrace,
-    IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, UndecidedCause,
+    IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark, UndecidedCause,
 };
 
 use super::{exhausted, fault, stopped, widen, Ending, HyperRefusal, Run, Totals};
@@ -60,7 +62,13 @@ impl Run<'_, '_> {
         let limits = self.request.limits;
         let mut lists: Vec<Vec<ClosedExecution>> = Vec::with_capacity(self.systems.len());
         for (index, system) in self.systems.iter().enumerate() {
-            match closed_executions(system, depth, limits.limits.max_states, self.cancel) {
+            let skips: BTreeSet<String> = clause
+                .align_skip()
+                .iter()
+                .filter_map(|key| system.operation_text_of(key))
+                .map(str::to_owned)
+                .collect();
+            match closed_executions(system, depth, limits.limits.max_states, &skips, self.cancel) {
                 Ok(list) => {
                     totals.states = totals.states.saturating_add(widen(list.len()));
                     lists.push(list);
@@ -192,6 +200,7 @@ impl Run<'_, '_> {
                 totals,
             )),
             PartnerSearch::Stopped(verdict) => self.stopped_reading(verdict, totals)?,
+            PartnerSearch::Cancelled => Reading::Ended(self.cancelled(totals)?),
         })
     }
 
@@ -208,6 +217,9 @@ impl Run<'_, '_> {
             })),
             ClosedVerdict::Undefined => Err(HyperRefusal::ClosedUndefined.into()),
             ClosedVerdict::Incomplete(counter) => {
+                if self.cancel.poll() {
+                    return self.cancelled(totals).map(Reading::Ended);
+                }
                 Ok(Reading::Ended(self.meter_stop(counter, totals)))
             }
             ClosedVerdict::Fault(internal) => Err(ModelCheckRefusal::Fault(internal)),
@@ -276,7 +288,21 @@ impl Run<'_, '_> {
                     })
                     .collect(),
                 results: Vec::new(),
-                marks: Vec::new(),
+                marks: if self.request.clause.align_skip().is_empty() {
+                    Vec::new()
+                } else {
+                    execution
+                        .steps
+                        .iter()
+                        .map(|step| {
+                            if step.skipped {
+                                StepMark::Skipped
+                            } else {
+                                StepMark::Visible
+                            }
+                        })
+                        .collect()
+                },
             });
         }
         Ok(traces)

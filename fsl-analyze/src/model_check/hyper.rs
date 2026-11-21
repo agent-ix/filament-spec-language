@@ -146,8 +146,11 @@ use super::graph::{
 use fsl_route::reductions::Reductions;
 use lift::{through, Lifted};
 
+mod alias;
 mod projected;
 mod single;
+
+pub use alias::{alias_provisions, alias_system};
 
 pub use single::{check_single_existential, SingleExistentialRequest, SingleExistentialRun};
 
@@ -272,11 +275,22 @@ pub fn check_hyper(
             stats: Totals::default().stats(),
         });
     }
+    let provisions: Vec<Vec<Option<_>>> = request
+        .subjects
+        .iter()
+        .map(|subject| alias_provisions(&subject.simulation, clause))
+        .collect();
     let systems = request
         .subjects
         .iter()
-        .map(|subject| {
-            ModelSystem::new(subject.simulation.clone())
+        .zip(clause.aliases())
+        .enumerate()
+        .map(|(index, (subject, alias))| {
+            let provision = provisions
+                .get(index)
+                .and_then(|owned| owned.get(index))
+                .and_then(Option::as_ref);
+            alias_system(&subject.simulation, provision, alias.as_str())
                 .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -708,7 +722,6 @@ impl<'a> Run<'_, 'a> {
         }
         if self.request.clause.profile()
             == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
-            && !self.projected
         {
             return self.decide_closed(instances, totals);
         }
