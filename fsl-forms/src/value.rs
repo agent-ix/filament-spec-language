@@ -800,6 +800,8 @@ struct Pending {
     production: Production,
     span: Span,
     operator_span: Option<Span>,
+    /// The name tokens of the binders this node declares, in order.
+    binder_spans: Vec<Span>,
     parent: Option<usize>,
     children: Vec<usize>,
 }
@@ -1279,6 +1281,8 @@ struct Mapping<'c> {
     cst: &'c LosslessCst,
     arena: Vec<Pending>,
     work: Vec<Task<'c>>,
+    /// The binder name spans the next node added declares.
+    next_binders: Vec<Span>,
 }
 
 /// An expression CST node (`Expression` or any production under it) as its
@@ -1291,6 +1295,7 @@ pub(crate) fn expression(
     let mut mapping = Mapping {
         cst,
         arena: Vec::new(),
+        next_binders: Vec::new(),
         work: vec![Task {
             node: root,
             parent: None,
@@ -1322,6 +1327,7 @@ impl<'c> Mapping<'c> {
             production,
             span,
             operator_span: None,
+            binder_spans: std::mem::take(&mut self.next_binders),
             parent,
             children: Vec::new(),
         });
@@ -1664,6 +1670,7 @@ impl<'c> Mapping<'c> {
                 if operands.len() != 2 {
                     return Err(unexpected(node));
                 }
+                self.next_binders = vec![name.span()];
                 self.with_children(
                     Shape::Let {
                         name: text(name, node)?,
@@ -1690,13 +1697,15 @@ impl<'c> Mapping<'c> {
     fn case(&mut self, task: Task<'c>, items: &[Item<'c>]) -> Result<(), FormsRefusal> {
         let mut children = vec![only(items, Production::ScrutineeExpression, task.node)?];
         let mut arms = Vec::new();
+        let mut binder_spans = Vec::new();
         for arm in nodes_of(items, Production::CaseArm) {
             let arm_items = self::items(self.cst, arm);
             let member = name_form(self.cst, only(&arm_items, Production::QualifiedName, arm)?)?;
             let binders = nodes_of(&arm_items, Production::CaseBinder)
                 .into_iter()
                 .map(|binder| declared_name(&self::items(self.cst, binder), binder))
-                .collect::<Result<_, FormsRefusal>>()?;
+                .collect::<Result<Vec<DeclaredName>, FormsRefusal>>()?;
+            binder_spans.extend(binders.iter().map(|binder| binder.span));
             let body = only(&arm_items, Production::Expression, arm)?;
             arms.push(ArmSyntax {
                 member,
@@ -1705,6 +1714,7 @@ impl<'c> Mapping<'c> {
             });
             children.push(body);
         }
+        self.next_binders = binder_spans;
         self.with_children(Shape::Case(arms, task.node.span()), &task, children)
     }
 
@@ -2510,6 +2520,19 @@ impl<'c> Mapping<'c> {
             }
         };
         let task = Task { node, ..task };
+        self.next_binders = match &shape {
+            Shape::Query(..) | Shape::Count(..) | Shape::Sum(..) => identifiers
+                .first()
+                .map(|token| token.span())
+                .into_iter()
+                .collect(),
+            Shape::Accumulate { .. } => identifiers
+                .iter()
+                .take(2)
+                .map(|token| token.span())
+                .collect(),
+            _ => Vec::new(),
+        };
         self.with_children(shape, &task, operands)
     }
 
@@ -2531,6 +2554,11 @@ impl<'c> Mapping<'c> {
             let binder = tokens_of(items, TokenKind::Identifier)
                 .get(1)
                 .map_or_else(|| Err(unexpected(node)), |token| text(token, node))?;
+            self.next_binders = tokens_of(items, TokenKind::Identifier)
+                .get(1)
+                .map(|token| token.span())
+                .into_iter()
+                .collect();
             let task = Task { node, ..task };
             return self.with_children(Shape::Seq(binder), &task, operands);
         };
@@ -2546,6 +2574,11 @@ impl<'c> Mapping<'c> {
         let binder = tokens_of(&binder_items, TokenKind::Identifier)
             .first()
             .map_or_else(|| Err(unexpected(binder_node)), |token| text(token, node))?;
+        self.next_binders = tokens_of(&binder_items, TokenKind::Identifier)
+            .first()
+            .map(|token| token.span())
+            .into_iter()
+            .collect();
         let name = only(&binder_items, Production::PopulationName, binder_node)?;
         let population = DeclaredName {
             name: spelled(self.cst, name)?,
@@ -2593,6 +2626,9 @@ impl<'c> Mapping<'c> {
         for (pending, id) in self.arena.iter().zip(ids) {
             if let Some(operator) = pending.operator_span {
                 spans.set_operator_span(id, operator);
+            }
+            if !pending.binder_spans.is_empty() {
+                spans.set_binder_spans(id, pending.binder_spans.clone());
             }
         }
         let mut built: Vec<Option<ExprId>> = vec![None; self.arena.len()];

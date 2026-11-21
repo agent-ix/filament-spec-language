@@ -3470,7 +3470,7 @@ impl<'a> Typer<'a> {
     ) -> Result<Step<'e, 'r>, CheckRefusal> {
         match frame.value.take() {
             None => {
-                let slot = self.bind(
+                let slot = self.bind_declared(
                     frame.name,
                     frame
                         .annotation
@@ -3479,6 +3479,7 @@ impl<'a> Typer<'a> {
                         .clone(),
                     &frame.location,
                     LocalKind::Bound,
+                    Some((&frame.location, 0)),
                 )?;
                 if self.lowers_as_integer(&typed) {
                     self.integer_lowered_locals.insert(slot);
@@ -3586,7 +3587,18 @@ impl<'a> Typer<'a> {
             };
             let mut binders = Vec::with_capacity(arm.binders.len());
             for (binder, value_type) in arm.binders.iter().zip(arms.builder.payload(member)) {
-                binders.push(self.bind(&binder.name, value_type.clone(), &at, LocalKind::Bound)?);
+                let ordinal = frame.case.arms[..arms.next - 1]
+                    .iter()
+                    .map(|arm| arm.binders.len())
+                    .sum::<usize>()
+                    + binders.len();
+                binders.push(self.bind_declared(
+                    &binder.name,
+                    value_type.clone(),
+                    &at,
+                    LocalKind::Bound,
+                    Some((&frame.location, ordinal)),
+                )?);
             }
             let goal = frame.branches.goal(frame.expression.at(arm.body), at);
             arms.open = Some(OpenArm { member, binders });
@@ -4209,7 +4221,13 @@ impl<'a> Typer<'a> {
         match frame.source.take() {
             None => {
                 let element = self.element_type(&typed)?;
-                let slot = self.bind(frame.binder, element, &frame.location, LocalKind::Bound)?;
+                let slot = self.bind_declared(
+                    frame.binder,
+                    element,
+                    &frame.location,
+                    LocalKind::Bound,
+                    Some((&frame.location, 0)),
+                )?;
                 let body_location = frame.location.child(1);
                 let goal = match frame.tally {
                     Tally::Count => {
@@ -4433,7 +4451,13 @@ impl<'a> Typer<'a> {
             }
         };
         let element = self.element_type(&source)?;
-        let slot = self.bind(binder, element, &location, LocalKind::Bound)?;
+        let slot = self.bind_declared(
+            binder,
+            element,
+            &location,
+            LocalKind::Bound,
+            Some((&location, 0)),
+        )?;
         let (awaiting, first) = match (condition, body) {
             (Some(condition), _) => (
                 PopulationAwait::Condition,
@@ -4656,11 +4680,12 @@ impl<'a> Typer<'a> {
                     (self.static_range(&low), self.static_range(&typed)),
                     &frame.location,
                 )?;
-                let slot = self.bind(
+                let slot = self.bind_declared(
                     frame.binder,
                     binder_type.clone(),
                     &frame.location,
                     LocalKind::Bound,
+                    Some((&frame.location, 0)),
                 )?;
                 let body = frame.body;
                 let body_location = frame.location.child(2);

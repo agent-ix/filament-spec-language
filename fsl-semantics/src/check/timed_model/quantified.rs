@@ -137,7 +137,7 @@ pub(super) fn read(
         return Ok(None);
     };
     let span = located.span(id);
-    if let Some(cause) = reserved_slot_cause(quantifier.binder, Some(span)) {
+    if let Some(cause) = reserved_slot_cause(quantifier.binder, Some(located.binder_span(id))) {
         return Err(cause);
     }
     let Some(max) = quantifier.shape.max else {

@@ -28,6 +28,7 @@ pub struct SpanId(usize);
 struct SpanNode {
     span: Span,
     operator: Option<Span>,
+    binders: Vec<Span>,
     children: Vec<SpanId>,
 }
 
@@ -97,6 +98,7 @@ impl ExpressionSpans {
             nodes: vec![SpanNode {
                 span: root,
                 operator: None,
+                binders: Vec::new(),
                 children: Vec::new(),
             }],
         })
@@ -140,6 +142,7 @@ impl ExpressionSpans {
         self.nodes.push(SpanNode {
             span,
             operator: None,
+            binders: Vec::new(),
             children: Vec::new(),
         });
         Ok(id)
@@ -154,6 +157,9 @@ impl ExpressionSpans {
         let mut pending = vec![(node, tree.root())];
         while let Some((source, target)) = pending.pop() {
             tree.nodes[target.0].operator = self.nodes[source.0].operator;
+            tree.nodes[target.0]
+                .binders
+                .clone_from(&self.nodes[source.0].binders);
             for &child in &self.nodes.get(source.0)?.children {
                 let span = self.span(child)?;
                 let added = tree.push_child(target, span).ok()?;
@@ -210,9 +216,11 @@ impl ExpressionSpans {
     ) -> Option<Self> {
         let spans = self.of_nodes(expression)?;
         let mut operators = BTreeMap::new();
+        let mut binders = BTreeMap::new();
         let mut pending = vec![(expression.root_id(), self.root())];
         while let Some((source, located)) = pending.pop() {
             operators.insert(source, self.operator_span(located));
+            binders.insert(source, self.binder_spans(located).to_vec());
             for (index, child) in expression
                 .get(source)?
                 .node()
@@ -228,6 +236,7 @@ impl ExpressionSpans {
         let mut pending = vec![(root, tree.root())];
         while let Some((source, target)) = pending.pop() {
             tree.nodes[target.0].operator = operators.get(&source).copied().flatten();
+            tree.nodes[target.0].binders = binders.get(&source).cloned().unwrap_or_default();
             if leaves.contains(&source) {
                 continue;
             }
@@ -259,6 +268,23 @@ impl ExpressionSpans {
         spans.into_iter().collect()
     }
 
+    /// The binder name spans of each node of `expression`, indexed by its id,
+    /// when these spans fit it.
+    pub fn binders_of_nodes(&self, expression: &Expression) -> Option<Vec<Vec<Span>>> {
+        let mut binders = vec![Vec::new(); expression.len()];
+        let mut stack = vec![(self.root(), expression.root_id())];
+        while let Some((span, id)) = stack.pop() {
+            let node = self.nodes.get(span.0)?;
+            binders.get_mut(id.index())?.clone_from(&node.binders);
+            let children = expression.get(id)?.node().children();
+            if node.children.len() != children.len() {
+                return None;
+            }
+            stack.extend(node.children.iter().copied().zip(children));
+        }
+        Some(binders)
+    }
+
     /// The tree whose root has `span` and whose children are `children`, in
     /// order.
     pub fn joined(span: Span, children: &[Self]) -> Result<Self, SpanRefusal> {
@@ -268,6 +294,9 @@ impl ExpressionSpans {
             let mut pending = vec![(child.root(), top)];
             while let Some((source, target)) = pending.pop() {
                 tree.nodes[target.0].operator = child.nodes[source.0].operator;
+                tree.nodes[target.0]
+                    .binders
+                    .clone_from(&child.nodes[source.0].binders);
                 for &grandchild in &child.nodes[source.0].children {
                     let added = tree.push_child(target, child.nodes[grandchild.0].span)?;
                     pending.push((grandchild, added));
@@ -285,6 +314,20 @@ impl ExpressionSpans {
     /// The operator token of a binary expression read from source, if any.
     pub fn operator_span(&self, node: SpanId) -> Option<Span> {
         self.nodes.get(node.0)?.operator
+    }
+
+    /// The name tokens of the binders the node declares, in declaration
+    /// order: a `let`'s name; a quantifier or query's binder; a fold's
+    /// accumulator then element; each case arm's binders; a `seq` index.
+    /// Empty when the node declares none or was not read from source.
+    pub fn binder_spans(&self, node: SpanId) -> &[Span] {
+        self.nodes.get(node.0).map_or(&[], |node| &node.binders)
+    }
+
+    pub(crate) fn set_binder_spans(&mut self, node: SpanId, binders: Vec<Span>) {
+        if let Some(node) = self.nodes.get_mut(node.0) {
+            node.binders = binders;
+        }
     }
 
     pub(crate) fn set_operator_span(&mut self, node: SpanId, operator: Span) {

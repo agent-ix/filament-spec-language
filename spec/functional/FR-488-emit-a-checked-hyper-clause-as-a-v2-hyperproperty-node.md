@@ -333,8 +333,11 @@ reads it would lose its `model_root` `over`. A name outside the form, such as
 `slotted`, is an ordinary identifier, and a created timed binder such as
 `ts#0` is never in the form.
 
-When the forms carry no separate binder-name region, the checker SHALL locate
-the refusal at the declaring binding form's source region, if available.
+The region is the identifier's own name token wherever the source has one: a
+function parameter, a `let`, quantifier, query, `fold`
+accumulator or element, `seq` or case-arm binder, a clock-guard or time
+invariant binder, and each protocol binder. A model operation parameter has no
+source region in the unit (FR-103), so the refusal names no region for it.
 
 ### The body
 
