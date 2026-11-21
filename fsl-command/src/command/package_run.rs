@@ -64,6 +64,7 @@ struct ClauseWork {
     observation_limits: fsl_semantics::model::observation::ObservationLimits,
     selection: fsl_replay::spine::ClauseRunSelection,
     accounting: filament_exact::ScalarLimits,
+    progress_capacity: u64,
 }
 
 /// The package bytes and handoff rows admitted for a selected package. The
@@ -170,6 +171,7 @@ pub(super) fn prepare(
     request: &wire::Request,
     package: &wire::RunPackageSelection,
     dependent_bytes: usize,
+    progress_capacity: u64,
 ) -> Result<PreparedPackageRun> {
     validate_request(request)?;
     if package.source_package.is_some() {
@@ -196,7 +198,14 @@ pub(super) fn prepare(
         }
     }
     if let Some(clause) = &request.clause {
-        return prepare_clause(directory, request, package, clause, dependent_bytes);
+        return prepare_clause(
+            directory,
+            request,
+            package,
+            clause,
+            dependent_bytes,
+            progress_capacity,
+        );
     }
     if let Some(member) = &request.tl_lowering {
         return prepare_lowering(directory, request, package, member, dependent_bytes);
@@ -256,6 +265,7 @@ fn prepare_clause(
     package: &wire::RunPackageSelection,
     clause: &wire::ClauseRun,
     dependent_bytes: usize,
+    progress_capacity: u64,
 ) -> Result<PreparedPackageRun> {
     use fsl_replay::spine::{
         read_clause_selection, ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation,
@@ -382,6 +392,7 @@ fn prepare_clause(
         observation_limits,
         selection: selection.clone(),
         accounting: super::call_accounting(&clause.accounting),
+        progress_capacity,
     };
     Ok(PreparedPackageRun {
         package: admitted.package,
@@ -445,9 +456,7 @@ fn execute_clause(
                 package: bare,
                 sources,
                 ledger: work.ledger.as_ref(),
-                progress_capacity: fsl_replay::spine::SpineLimits::default()
-                    .progress
-                    .covered_positions,
+                progress_capacity: work.progress_capacity,
                 evaluator: bare,
                 name: &work.name,
                 clause: found.as_ref().map(|(clause, key)| (clause, key)),
@@ -462,9 +471,7 @@ fn execute_clause(
             let input = model.input();
             fsl_replay::spine::run_package_snapshots(&fsl_replay::spine::PackageSnapshotRequest {
                 sources,
-                progress_capacity: fsl_replay::spine::SpineLimits::default()
-                    .progress
-                    .covered_positions,
+                progress_capacity: work.progress_capacity,
                 package: bare,
                 input: &input,
                 name: &work.name,
@@ -489,18 +496,24 @@ fn selection_not_read(refusal: fsl_replay::spine::PackageSelectionNotRead) -> Ru
     match refusal {
         PackageSelectionNotRead::Selection { member, reason } => invalid(member, reason),
         PackageSelectionNotRead::Run(refusal) => RunCause::SpineRun(refusal),
-        PackageSelectionNotRead::Attribution(failure) => match failure.reason {
+        PackageSelectionNotRead::Attribution(failure) => match &failure.reason {
             fsl_package::occurrence_source::OccurrenceSourceRefusal::UnknownNode
             | fsl_package::occurrence_source::OccurrenceSourceRefusal::UnknownOccurrence
-            | fsl_package::occurrence_source::OccurrenceSourceRefusal::UnknownRegion => {
-                invalid("clause.selection", failure.reason.to_string())
+            | fsl_package::occurrence_source::OccurrenceSourceRefusal::UnknownRegion
+            | fsl_package::occurrence_source::OccurrenceSourceRefusal::MissingRegion
+            | fsl_package::occurrence_source::OccurrenceSourceRefusal::AmbiguousRegion => {
+                RunCause::AnalyzePackage {
+                    code: fsl_foundation::Code::InvalidPackage,
+                    cause: Some("invalid-value".to_owned()),
+                    pointer: Some(failure.pointer),
+                    message: format!("package source attribution: {}", failure.reason),
+                }
             }
-            _ => RunCause::AnalyzePackage {
-                code: fsl_foundation::Code::InvalidPackage,
-                cause: Some("invalid-value".to_owned()),
-                pointer: Some(failure.pointer),
-                message: format!("package source attribution: {}", failure.reason),
-            },
+            fsl_package::occurrence_source::OccurrenceSourceRefusal::Body(_) => {
+                RunCause::ClauseOutput(
+                    fsl_replay::spine::NativeRunResultError::SourceAttributionInvariant(failure),
+                )
+            }
         },
     }
 }

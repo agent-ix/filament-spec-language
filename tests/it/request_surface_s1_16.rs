@@ -3700,7 +3700,7 @@ fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes()
         let package = fsl_package::admit_checked_package(
             &package_bytes,
             &Default::default(),
-            fsl_package::V2ReadLimits::default(),
+            fsl_replay::spine::SpineLimits::default().imports,
         )
         .expect("the genuine package strictly admits");
         let row = package

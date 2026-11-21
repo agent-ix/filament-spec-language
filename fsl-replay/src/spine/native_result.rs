@@ -57,6 +57,9 @@ pub enum NativeRunResultError {
     /// A carried model witness needs the actual request's expansion ceiling.
     #[error("a model counterexample requires its actual model selection")]
     ModelSelectionRequired,
+    /// A body-walk failure reached a boundary that only reads occurrence metadata.
+    #[error("unexpected body-walk attribution at a metadata boundary: {}", .0.reason)]
+    SourceAttributionInvariant(Box<super::clause::PackageAtomAttributionFailure>),
     /// A temporal report's basis is not its verdict's FR-266 Temporal row.
     #[error("temporal basis disagrees with its verdict")]
     TemporalBasis,

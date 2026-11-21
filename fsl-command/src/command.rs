@@ -3976,7 +3976,21 @@ fn prepare_run_bytes_with_sources(
     // FR-100, FR-1039: a selected checked package runs from its own records,
     // refusing every member that would restate them before any file is read.
     if let Some(package) = &request.package {
-        let prepared = package_run::prepare(directory, &request, package, dependent_bytes);
+        let progress_capacity = overrides.limits.map_or_else(
+            || {
+                fsl_replay::spine::SpineLimits::default()
+                    .progress
+                    .covered_positions
+            },
+            |limits| limits.progress.covered_positions,
+        );
+        let prepared = package_run::prepare(
+            directory,
+            &request,
+            package,
+            dependent_bytes,
+            progress_capacity,
+        );
         if let Ok(prepared) = &prepared {
             *admitted_sources = prepared.sources();
         }

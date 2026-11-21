@@ -116,30 +116,30 @@ impl<'a, 'p> Context<'a, 'p> {
     }
 
     fn attribution(&self, atom: usize, reason: OccurrenceSourceRefusal) -> PackageSelectionNotRead {
-        let pointer = self
-            .package
-            .temporal_clause_node(self.key)
-            .ok()
-            .and_then(|id| {
-                fsl_package::checked_views::temporal_subject(self.package.package(), id).ok()
-            })
-            .and_then(|view| {
-                view.formula_graph()
-                    .get(atom)
-                    .map(|entry| entry.node.clone())
-            })
-            .and_then(|id| {
-                self.package
-                    .package()
-                    .resolved_graph()
-                    .nodes
-                    .iter()
-                    .position(|node| node.node_id == id)
-            })
-            .map_or_else(
-                || "/request/package/temporal_clause_names".to_owned(),
-                |index| format!("/request/package/semantic_graph/nodes/{index}/occurrences"),
-            );
+        let pointer =
+            self.package
+                .temporal_clause_node(self.key)
+                .ok()
+                .and_then(|id| {
+                    fsl_package::checked_views::temporal_subject(self.package.package(), id).ok()
+                })
+                .and_then(|view| {
+                    view.formula_graph()
+                        .get(atom)
+                        .map(|entry| entry.node.clone())
+                })
+                .map(|id| {
+                    let rows = self.package.package().source_map();
+                    let index =
+                        rows.iter()
+                            .position(|entry| {
+                                entry.node_id == id
+                    && entry.role == filament_contract_model::CheckedOccurrenceRole::Expression
+                            })
+                            .unwrap_or(rows.len());
+                    format!("/request/package/source_map/{index}/regions")
+                })
+                .unwrap_or_else(|| "/request/package/temporal_clause_names".to_owned());
         Self::failure(&self.claim, Some(atom), reason, pointer)
     }
 
