@@ -15,6 +15,7 @@ mod ample;
 mod check;
 mod concretise;
 pub mod digital;
+pub(crate) mod fair_summary;
 pub(crate) mod fair_walk;
 pub(crate) mod false_extension;
 mod graph;
