@@ -85,16 +85,28 @@ impl Run<'_, '_> {
         let lens = self.slots.iter().map(|slot| lists[*slot].len()).collect();
         let mut represented = BTreeSet::new();
         let mut canonical = BTreeMap::new();
-        for picked in Tuples::over(lens) {
+        for raw in Tuples::over(lens) {
             if let Some(outcome) = self.closed_charge(totals)? {
                 return Ok(Err(outcome));
             }
-            let key = self.closed_tuple_key(&picked, &paths, None)?;
-            if represented.contains(&key) {
+            // Duplicate initial records or transitions can describe the same
+            // concrete path. Keep its first real index and cache orbit members
+            // by these compact indices, rather than copying every state's
+            // encoded bytes into the cache for every tuple.
+            let mut picked = Vec::with_capacity(raw.len());
+            for (component, index) in raw.into_iter().enumerate() {
+                let subject = self.slots[component];
+                let first = lookups[subject]
+                    .get(&paths[subject][index])
+                    .copied()
+                    .ok_or_else(|| fault("an-enumerated-closed-path-has-a-key"))?;
+                picked.push(first);
+            }
+            if represented.contains(&picked) {
                 continue;
             }
+            let mut seen = BTreeSet::from([picked.clone()]);
             let mut orbit = vec![picked];
-            let mut seen = BTreeSet::from([key]);
             let mut next = 0;
             while let Some(member) = orbit.get(next) {
                 let mut found = Vec::new();
@@ -110,8 +122,7 @@ impl Run<'_, '_> {
                         return Err(fault("a-copy-generator-names-two-closed-components"));
                     };
                     exchanged.swap(generator.first, generator.second);
-                    let key = self.closed_tuple_key(&exchanged, &paths, None)?;
-                    if seen.insert(key) {
+                    if seen.insert(exchanged.clone()) {
                         found.push(exchanged);
                     }
                 }
@@ -130,8 +141,7 @@ impl Run<'_, '_> {
                             .ok_or_else(|| fault("a-closed-generator-maps-every-component"))?;
                         renamed.push(image);
                     }
-                    let key = self.closed_tuple_key(&renamed, &paths, None)?;
-                    if seen.insert(key) {
+                    if seen.insert(renamed.clone()) {
                         found.push(renamed);
                     }
                 }
