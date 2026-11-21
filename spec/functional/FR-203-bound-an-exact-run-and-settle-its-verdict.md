@@ -207,11 +207,29 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
   proof accounting SHALL count them as proof.
 - The record SHALL carry FR-242 truth and an FR-243 basis, and no `measured`
   value. For a numeric result, the basis SHALL state the least favourable
-  (initial state, binding) pair; the result SHALL keep one entry per pair
-  with its value or interval and, over every scheduler, whether it is a
-  minimum or a maximum, and, with a fairness set, the set. A certified
-  conditional-vacuity proof SHALL retain the same claim and subject
-  identity through its accepted certificate without numerical entries.
+  (initial state, binding) pair; the result SHALL keep one entry per
+  activating pair with its value or interval and, over every scheduler,
+  whether it is a minimum or a maximum, and, with a fairness set, the set.
+  For a conditional numeric result with at least one activating pair, the
+  independent certificate acceptance SHALL account for every admitted
+  (initial state, binding) pair, either by its checked numeric value or by
+  independently established unreachable activation under FR-201's per-key
+  rule. Settlement SHALL emit exactly one numeric entry for each activating
+  pair and omit every independently checked nonactivating pair, without
+  substituting 0, `0/0` or another numerical placeholder. Entries and the
+  least favourable pair SHALL retain their actual admitted initial-state
+  indices and bindings, including when the only activating index is not 0.
+  An entry for a nonactivating pair, a missing activating entry, a duplicate
+  entry or any mismatch between entries and accepted activating coverage
+  SHALL settle `failed`, diagnostic
+  `runtime_invariant`/`established-invariant-broken`, never `proved`.
+  Coverage SHALL remain part of the independently checked acceptance,
+  derived from the existing certificate values and admitted bindings;
+  it SHALL NOT add an external coverage member or change the certificate
+  wire shape. If no pair activates, settlement SHALL require the accepted
+  `Conditional` `Vacuous` certificate and value-free `Exhaustive` basis
+  above, without numerical entries. A certified conditional-vacuity proof
+  SHALL retain the same claim and subject identity through that acceptance.
 - The obligation identity SHALL bind the subject, the claim, its scheduler or
   `every`, its fairness set and its stated confidence parameters; the
   evidence kind SHALL enter the item's request, not the claim.
@@ -231,6 +249,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | FR-203-AC-9 | A `ValueBounds` proof of FR-1042-AC-2's claim whose claim-side `lower` document `7/16` is accepted and whose counterpart `upper` `7/16` is rejected settles `inconclusive`, `CertificateRejected{InequalityFails, s}`; the same proof handed to settlement with no counterpart and no `exploration: Partial` settles `failed`, `runtime_invariant`/`established-invariant-broken`, category failed; with `exploration: Partial` and upper 1 it settles `proved`, `ValueBounds{7/16, 1, …}`. | Test (TC-3151) |
 | FR-203-AC-10 | The untimed claim `quantile 0.5 of (steps from holds(false) until holds(true) within 4) <= 2`, checked separately under a resolved workload and under every scheduler (with and without an admitted fairness set) has no activating state in the complete reachable product. Native checking independently accepts its `Conditional` `Vacuous` certificate and settlement returns `proved`, `closed-scope`, `Certified`, `Exhaustive`, category success, carrying that certificate with empty `values` and `conditional` exactly `{"mode": "vacuous"}`. The emitted result passes FR-331's contract with basis `{"type": "exhaustive"}` and no numeric value, numeric entries, bounds, counterpart or generic `evidence`; it contains neither `ExactValue` nor a fabricated 0 or `0/0`. | Test |
 | FR-203-AC-11 | Changing AC-10's activation predicate to `holds(true)` makes the offered vacuous certificate reject `InequalityFails` and settle `inconclusive`, `CertificateRejected`, without vacuity acceptance. Offering an otherwise well-shaped `exact`, `ratio` or `optimum` certificate on `exhaustive`, or generic `evidence` with or without its permitted vacuous certificate, refuses the FR-331 result contract. An `exact-value` basis missing its value, using scalar zero or denominator zero refuses; AC-1's ordinary exact result with a valid `Rational` value remains admitted. An engine-only assertion, partial exploration, cancellation before or during checking, or a caller limit reached before checking completes produces no accepted vacuity evidence or proved record; cancellation and limits retain their typed incomplete causes. | Test |
+| FR-203-AC-12 | `Retry` has `Msg.delivered`, terminal when delivered, and the resolved `Steady` workload whose `fast` step delivers with probability `1/2` and whose `slow` weight is 0. With request initial states ordered as index 0 `{delivered: true}` and index 1 `{delivered: false}`, the same admitted binding `m`, and `quantile 0.5 of (steps from holds(not m.delivered) until holds(m.delivered) within 4) <= 2`, the independent conditional certificate check accounts for both pairs: index 0 has unreachable activation with numerator and denominator 0, while index 1 activates immediately with numerator `3/4`, denominator 1 and ratio `3/4`. Settlement is certified `proved`, `ExactValue{3/4}`, with exactly one numeric entry for index 1 and the least favourable activating pair correctly naming index 1; index 0 is omitted without evaluating or emitting `0/0` or a scalar placeholder. Adding an entry for index 0, omitting index 1, duplicating its entry, or substituting index 0 for it settles `failed`, diagnostic `runtime_invariant`/`established-invariant-broken`, instead of proof. Both pairs remain accounted for by checked acceptance and the existing certificate values and binding derivation, without a new external coverage field. | Test |
 
 ## Dependencies
 
