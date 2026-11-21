@@ -160,7 +160,13 @@ pub(super) fn run(
     ) {
         Ok(FhResult::Exact { values, policy }) => (values, policy),
         Ok(_) => return broken(),
-        Err(error) => return document_failure(induction_failure(error, cancel), subject),
+        Err(error) => {
+            eprintln!(
+                "QSL2158_DIAG induction error {:?}",
+                std::mem::discriminant(&error)
+            );
+            return document_failure(induction_failure(error, cancel), subject);
+        }
     };
     for state in &mut product.states {
         let Some(control) = state.monitor else {
@@ -310,6 +316,16 @@ pub(super) fn run(
             cancel,
         )
     })();
+    match &checked {
+        Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) => {
+            eprintln!("QSL2158_DIAG checked rejected {:?}", rejection.rule)
+        }
+        Ok(_) => eprintln!("QSL2158_DIAG checked accepted"),
+        Err(error) => eprintln!(
+            "QSL2158_DIAG checked error {:?}",
+            std::mem::discriminant(error)
+        ),
+    }
     let failed_bound = matches!(&checked, Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) if rejection.rule == ProbabilityCertificateRule::ThresholdMissed || matches!(&claim.form,ProbForm::Quantile { threshold:Bound::AtLeast(_),.. }) && values.get(initial.index()).is_some_and(Rational::is_zero));
     if failed_bound && tamper.is_none() {
         if matches!(claim.form, ProbForm::MeanOfFraction { .. }) {
@@ -488,6 +504,14 @@ fn refute(
     };
     if let Some(issue) = issue {
         return settled(&issue, subject);
+    }
+    match &produced {
+        Ok(Some(_)) => eprintln!("QSL2158_DIAG produced witness"),
+        Ok(None) => eprintln!("QSL2158_DIAG produced none"),
+        Err(error) => eprintln!(
+            "QSL2158_DIAG produced error {:?}",
+            std::mem::discriminant(error)
+        ),
     }
     match produced {
         Ok(Some(produced)) => replay_produced_witness(

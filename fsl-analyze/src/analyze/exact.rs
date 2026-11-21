@@ -259,6 +259,10 @@ fn unbounded_failure(
 }
 
 fn broken() -> EngineReport {
+    let trace = std::backtrace::Backtrace::force_capture().to_string();
+    for line in trace.lines().take(20) {
+        eprintln!("QSL2158_DIAG broken {line}");
+    }
     EngineReport::Refused(Refusal::Failed(BROKEN))
 }
 
@@ -2305,7 +2309,16 @@ fn replay_produced_witness(
     let Some(package) = system.source_package() else {
         return not_yet();
     };
-    match replay_probabilistic_witness(package, system, &item, &witness, limits, cancel) {
+    let replayed = replay_probabilistic_witness(package, system, &item, &witness, limits, cancel);
+    match &replayed {
+        Ok(ProbabilityWitnessReplay::Reproduced(_)) => eprintln!("QSL2158_DIAG replay reproduced"),
+        Ok(ProbabilityWitnessReplay::Parity) => eprintln!("QSL2158_DIAG replay parity"),
+        Err(error) => eprintln!(
+            "QSL2158_DIAG replay error {:?}",
+            std::mem::discriminant(error)
+        ),
+    }
+    match replayed {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let scope = package.graph().scope();
             let quantile_bound;
@@ -2329,6 +2342,12 @@ fn replay_produced_witness(
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
                 &spelled_scheduler,
             );
+            if let Err(error) = &wire {
+                eprintln!(
+                    "QSL2158_DIAG wire error {:?}",
+                    std::mem::discriminant(error)
+                );
+            }
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
         }
         Ok(ProbabilityWitnessReplay::Parity) => {

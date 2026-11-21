@@ -1767,7 +1767,13 @@ fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_ch
     );
 
     let mut model = retry(&claims);
-    model.body = model.body.replace("self.delivered = (lost = 1)", "true");
+    // Keep both post states enabled at later positions so a pending row can
+    // retain a positive contribution from an earlier delivered state.
+    model.body = model
+        .body
+        .replace("self.delivered = (lost = 1)", "true")
+        .replace("not self.delivered", "true")
+        .replace("terminal Done using v on M when { self.delivered };", "");
     let world = World::new(&model);
     let record = settle(&world, "Min", ModelCheckLimits::default());
     assert_eq!(
