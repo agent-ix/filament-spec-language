@@ -1,0 +1,129 @@
+---
+id: SR-202611210022442313144108555
+title: "QSL-2753 IEEE shared operand code and Rust review"
+type: SpecReview
+analysis: code-review
+scope: "agent-ix/filament-spec-language; QSL-2753; fsl-package/src/emit/protocol_locations.rs, fsl-package/src/emit/body_locations.rs, tests/it/spine_run.rs"
+review_set: subset
+relationships:
+  - {target: "ix://agent-ix/filament-spec-language/FR-531", type: references}
+---
+
+## Summary
+
+Independent read-only review of the IEEE same-bound-operand fix and its tests. One scoped trace-binding defect found; production selection logic and behavioral assertions are otherwise sound.
+
+## Verdict
+
+CONDITIONAL: one medium local trace-binding finding requires the narrow normalization requested by the lead. Production behavior and supplied focused execution evidence are sound. This is not a global assurance or root Clippy PASS.
+
+## Findings
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-001 | medium | The new package regression has no computed local FR-531-AC-39 binding: normalize its qualified trace attribute to the extracting trace form. | fsl-package/src/emit/body_locations.rs:336; FR-531-AC-39 |
+
+## Required fix
+
+At body_locations.rs:336 the new fully qualified `#[ix_trace_rs::trace(...)]` attribute is present, and its test is genuinely executed, but the computed coverage output lists the local FR-531-AC-39 as unmatched and the matrix does not bind this symbol. The lead requires importing the same macro and using its unqualified `#[trace(...)]` form only on this newly added test, keeping every assertion and external FSpec ID intact. Existing control attributes remain baseline. This is a supplemental regression for the one-row-per-body-term carrier obligation described by FR-531 and exercised by AC-39; it does not qualify AC-39's specific clause fixture. The actual native reader, shared identity and occurrence/path assertions make the supplemental binding semantically relevant.
+
+## Analysis
+
+The parent context is supplied only by an immediate enclosing claim at the same checked Location. Ancestor applications are excluded from candidates, while prior sibling visits are not globally excluded. The candidate list deduplicates identity only for selection; the walk and visits map retain genuine repeated reaches. Counting earlier siblings in the current candidate set and selecting the nth direct admitted reference preserves duplicate operand positions, including a parent reading one application twice. Resolving this before transitive reach prevents one sibling's descendant from concealing the next direct operand. Fallback still requires one unambiguous outermost application; missing or ambiguous context remains a typed refusal.
+
+The fix changes no parsing, operation lowering, scalar arithmetic, binder identity, checked owner, recorded source locus, package schema or evaluator fallback. Existing occurrence allocation, visit ordering and compact path reconstruction remain in place. The new package test admits the emitted bytes with IR, selects the actual numeric_equal application, asserts its three occurrence/ordinal pairs and seven body-walk paths. The public helper drives the existing request/run seam and compares completed Boolean output, status and stderr; it does not rename a bound operand or skip an invariant. Shared helper reuse found in this file is used, with one new common Boolean assertion helper; no duplicate production implementation or imported fixture tree is added. No new panic, unsafe, wire conversion, recursion or resource ceiling is introduced. CI files and lint allowances are unchanged.
+
+Frozen head: `716f0d44a3d23dfc58e7ec4347ff29fd675f03f5`; base: `5deeba7d06` (#3376). Ticket: QSL-2753; PR: filament-spec-language#3379. Exact diff: three IEEE files, 160 insertions / 30 deletions; no dependency, lock, workflow, or compile-repair edits. Runtime model ID: unknown (not queried or fabricated).
+
+Methods: code-review with rust-review folded into one artifact; gap-analysis separately. No spec/plan change, so spec-review and its subanalyses are not applicable. Tokio is unused in the changed collector. No applicable AssuranceProfile was found. Optional gap semantic fanout was not run; no subagents were permitted. Code-review still checked local intent, tests and implementation.
+
+## Qualification
+
+Inspected retained Titan logs under `/Users/peter/dev/qualification-logs/qsl-2753/`, attributed to this exact frozen head by the dispatch and PR body. `qsl2753-final-run1`: 5 passed, 0 failed/ignored, 1146 filtered. Four exact corpus programs assert Boolean true, exit 0 and empty stderr; the fifth test executes 8 same-bound ordering cases, 8 distinct-name controls and 2 equality controls with their actual expected Booleans. These are 5 tests, not 22 tests. `qsl2753-final-package1`: 7 passed, 0 failed/ignored, 1068 filtered; actual native IR admission, seven lowered terms and three shared-equality occurrence/ordinal pairs, path witnesses, composite/tuple/deep-128 and protocol controls. `qsl2753-clippy-package1`: exit 0. `qsl2753-clippy-run1`: exit 101 in eight unchanged fsl-replay lint failures before the root test binary; root Clippy remains UNQUALIFIED. `git diff 5deeba7d06..HEAD -- fsl-replay .github Cargo.toml Cargo.lock` is empty; this establishes unchanged source, not a globally green baseline.
+
+`qsl2753-red3` at d4dbcbfd3a302113cca0e88a3c249a0b0d8c93b4 compiled and executed four regressions: 0 passed, 4 failed, exit-30 emit/runtime_invariant with missing complete emitted location context (decoded JSON also inspected). Red1/red2 compilation failures are not semantic red evidence. Direct rustfmt --check on the three files and git diff --check passed in this review. No Cargo, full gate, workspace, all-targets, or new runtime build was run. Later main fixture failures and their urgent repair are outside this qualification.
+
+## Scope
+
+Excerpts below are bounded verbatim requirement excerpts where IDs name requirements. Examination of an AC means the changed behavior was checked against it, not that this PR newly qualifies every vector in that AC. The new body regression extends the shared-occurrence carrier contract; it is not the clause fixture of FR-531-AC-39 or the 100,000-node qualification.
+
+```yaml
+scope:
+- id: FSpec-FR-148-AC-1
+  path: "/Users/peter/dev/filament-specification/spec/functional/expressions/FR-148-evaluate-ieee-floating-profiles.md"
+  role: examined
+  excerpt: NaN, infinity and signed-zero vectors produce the selected equality and
+    ordering results.
+- id: FSpec-FR-148-AC-12
+  path: "/Users/peter/dev/filament-specification/spec/functional/expressions/FR-148-evaluate-ieee-floating-profiles.md"
+  role: examined
+  excerpt: 'With `p0` `0x0000000000000000`, `n0` `0x8000000000000000`, `one` `0x3ff0000000000000`,
+    `pinf` `0x7ff0000000000000`, `qnan` `0x7ff8000000000000` and `snan` `0x7ff0000000000001`:
+    `n0 = p0`, `n0 <= p0`, `p0 >= n0`, `one < pinf`, `pinf <= pinf`, `qnan != qnan`
+    and `qnan != one` are true; `n0 < p0`, `p0 > n0`, `qnan = qnan`, `qnan < one`,
+    `qnan <= one`, `one > qnan`, `one >= qnan`, `snan < one` and `snan = snan` are
+    false, with no flag; the binary32 patterns `0x00000000`, `0x80000000`, `0x3f800000`,
+    `0x7f800000`, `0x7fc00000` and `0x7f800001` give the same results.'
+- id: FSpec-FR-322-AC-490
+  path: filament-specification@bca4311db3a4d9d15c6e4e8f9878ce3a3b9a60b1/spec/objects/interfaces/FR-322-checked-package-artifact.md
+  role: examined
+  excerpt: '`checked-term-data-vectors.json` carries `body_locations` vectors over
+    the package of `function f(p: Float64[nearest-even], q: Float64[nearest-even],
+    r: Float64[nearest-even]): Boolean pure { sqrt(p) <= sqrt(q) }` (`r` is declared
+    and never read, so the two `#ieee_operand` `let`s bind at levels 3 and 4). BL-01,
+    the positive package, holds one row per term of `f`''s body walk, each with origin
+    `{kind: "function_body", function: <f''s NodeRef>, name: "f", index: 0}`, the
+    root composition at path `[]`, the first `sqrt` at `[0]` and the second at `[1]`
+    (not `[1, 0]`, its position in the lowered body'
+- id: FSpec-FR-322-AC-510
+  path: filament-specification@bca4311db3a4d9d15c6e4e8f9878ce3a3b9a60b1/spec/objects/interfaces/FR-322-checked-package-artifact.md
+  role: examined
+  excerpt: 'Body locations are relative and linear. In `checked-term-data-vectors.json`,
+    BL-03''s rows for the `+` node''s occurrences 0 and 1 are `{up: 0, down: [0]}`
+    and `{up: 1, down: [1]}` and its root `and` row `{up: 1, down: []}`; BL-R9, BL-01
+    with the second `sqrt` row''s `up` set to `2` (the previous path `[0]` has one
+    entry), refuses `invalid_package`/`invalid-value` at `/checked_term_data/body_locations/8/location/up`;
+    BL-R10, BL-02 with that row written `{up: 1, down: [0]}`, which rebuilds the same
+    path `[0]` with a larger `up` than its least form, refuses the same at the same
+    member; BL-S5, a row'
+- id: FSpec-FR-322-AC-513
+  path: filament-specification@bca4311db3a4d9d15c6e4e8f9878ce3a3b9a60b1/spec/objects/interfaces/FR-322-checked-package-artifact.md
+  role: examined
+  excerpt: 'Composite values preserve the body walk and compact canonicality. In `checked-term-data-vectors.json`,
+    BL-04 references BL-01''s body in both stored record fields `z`, then `a`; BL-05
+    references that body in both tuple positions 0, then 1. Both are admitted with
+    eighteen rows: each application''s first component visit pairs with occurrence
+    0, `term_ordinal` 0, and its second with occurrence 0, `term_ordinal` 1. In component
+    `c` (0 or 1), the two `sqrt` paths are `[c, 0]` and `[c, 1]`, followed by composition
+    paths `[c]`; the composite values have no rows. The first `sqrt` of component
+    1 follows '
+- id: FR-531-AC-39
+  path: spec/functional/FR-531-evaluate-from-a-checked-package-read-from-its-bytes-alone.md
+  role: examined
+  excerpt: 'Over the `Config` domain fixture of `tests/it/dispatch_emission.rs`, the
+    unit holding its three `size` bodies, `pre rootCall using v on Config::ConfigVersion::probe
+    { self.size() > 0 }` (`rootCall`''s call of `size` is what makes `sqrtPre` a clause
+    function: the checker builds a clause function only for an operation a dispatch
+    candidate reaches, and no candidate reaches `probe`) and `pre sqrtPre using v
+    on Config::ConfigVersion::size { filament::value::ieee::sqrt(float64(bits: 0x4000000000000000))
+    <= filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }` emits, for
+    the precondition''s'
+- id: fsl-package/src/emit/protocol_locations.rs
+  path: fsl-package/src/emit/protocol_locations.rs
+  role: examined
+  excerpt: Select the parent's next direct operand before transitive reach pruning;
+    count repeated identity visits.
+- id: fsl-package/src/emit/body_locations.rs
+  path: fsl-package/src/emit/body_locations.rs
+  role: examined
+  excerpt: Inspect all changed assertions and their actual production execution seams.
+- id: tests/it/spine_run.rs
+  path: tests/it/spine_run.rs
+  role: examined
+  excerpt: Inspect all changed assertions and their actual production execution seams.
+```
+
+
+## Publication
+
+Local only under Peter's Linear hold and parent-only central batch. Tracker validation, dedup, posting, label update and read-back remain pending. No GitHub finding comment was posted.

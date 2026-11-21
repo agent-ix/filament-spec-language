@@ -311,6 +311,7 @@ pub(super) fn checked_body_locations(
 mod tests {
     use super::*;
     use filament_contract_model::{read_checked_package, CheckedPackageDispatchResult};
+    use ix_trace_rs::trace;
 
     #[ix_trace_rs::trace("FSpec-FR-322-AC-510")]
     #[test]
@@ -333,7 +334,7 @@ mod tests {
         assert_eq!(paths.delta(ancestor, empty), Some((1, vec![])));
     }
 
-    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510", "FSpec-FR-322-AC-513")]
+    #[trace("FR-531-AC-39", "FSpec-FR-322-AC-510", "FSpec-FR-322-AC-513")]
     #[test]
     fn same_bound_ieee_ordering_keeps_shared_equality_body_visits() {
         let (_, checked) = super::super::tests::package_from_text(
