@@ -4192,12 +4192,19 @@ fn collection_node_type(
         },
         _ => return Err(fault("reader-collection-type-has-one-element").into()),
     };
-    let witness = index
-        .nodes
-        .values()
-        .find(|node| node.semantic_type == *element && node.node_id != *id)
-        .ok_or(TypeError::Unsupported)?;
-    let element = node_value_type(index, &witness.node_id)?;
+    let element = if index
+        .node(element)
+        .is_some_and(|node| has_form(node, WireTag::CompositeType, WireForm::Reference))
+    {
+        reference_node_type(index, element)?
+    } else {
+        let witness = index
+            .nodes
+            .values()
+            .find(|node| node.semantic_type == *element && node.node_id != *id)
+            .ok_or(TypeError::Unsupported)?;
+        node_value_type(index, &witness.node_id)?
+    };
     Ok(ValueType::collection(filament_exact::CollectionType::new(
         kind, element, bound,
     )))
@@ -4813,7 +4820,8 @@ mod order_tests {
                     function maximum using v(p: Population<M::Widget>[18446744073709551615]): Boolean pure { true }\n\
                     function reference using v(p: Reference<M::Widget>): Boolean pure { true }\n\
                     function nested using v(p: Option<Population<M::Widget>[1]>): Boolean pure { true }\n\
-                    function population using v(p: Population<M::Widget>[0]): Population<M::Widget>[0] pure { p }\n";
+                    function population using v(p: Population<M::Widget>[0]): Population<M::Widget>[0] pure { p }\n\
+                    function count using v(p: Population<M::Gadget>[1]): Integer pure { size(allInstances<M::Gadget>(p)) }\n";
         let parsed = fsl_cst::parse(
             fsl_foundation::SourceIdentity::new("agent-ix", "test:population-projection"),
             "population.native",
@@ -4893,6 +4901,11 @@ mod order_tests {
         assert_eq!(
             projection.selected_function().unwrap().result_type,
             &ValueType::Population(Some(0))
+        );
+        let projection = package.project_function("count").unwrap().unwrap();
+        assert_eq!(
+            projection.selected_function().unwrap().result_type,
+            &ValueType::INTEGER
         );
         let projection = package.project_function("reference").unwrap().unwrap();
         assert_eq!(
