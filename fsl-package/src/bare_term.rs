@@ -336,8 +336,7 @@ impl<'p> BarePackage<'p> {
         let package = self.package();
         let (_supply, identities) = self.witness()?;
         let nodes = &package.resolved_graph().nodes;
-        let malformed =
-            || BareSelectionFailure::from(fault("protocol-operation-anchor-is-admitted"));
+        let malformed = || fault("protocol-operation-anchor-is-admitted");
         let graph = wire_graph(package).map_err(|_| malformed())?;
         let anchor_key = graph.key(anchor_id).map_err(|_| malformed())?;
         let anchor = nodes
@@ -388,7 +387,7 @@ impl<'p> BarePackage<'p> {
                 }
                 _ => None,
             })
-            .ok_or_else(|| BareSelectionFailure::from(fault("protocol-role-model-is-selected")))
+            .ok_or_else(|| fault("protocol-role-model-is-selected"))
     }
 
     /// The operation whose frame node key is `frame` (FR-940 "Package forms
