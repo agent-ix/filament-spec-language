@@ -142,4 +142,39 @@ fn an_unsupported_header_selection_outranks_later_syntax_errors() {
         let span = refusal.byte_span().expect("located");
         assert_eq!(&text[span.start..span.end], literal);
     }
+
+    // A non-string token in the slot is malformed syntax, not an unsupported selection.
+    for header in [
+        "language \"ix:native\" edition 1;",
+        "language \"ix:native\" edition ;",
+    ] {
+        let text = format!("{header}\nrecord A {{ x: Integer; }}\n");
+        let parsed = parse(&text);
+        let first = parsed.diagnostics().first().expect("a refusal");
+        assert_eq!(
+            (first.code, first.cause),
+            (CompleteCode::InvalidSyntax, CompleteCause::UnexpectedToken),
+            "{header}: {:?}",
+            parsed.diagnostics()
+        );
+    }
+}
+
+/// FSpec shared-grammar lexical contract (QSL-2683): a parameter named `set`
+/// does not turn `set[e]` into anything else; the constructor wins.
+#[trace("FSpec-FR-339-AC-1")]
+#[test]
+fn a_collection_constructor_wins_over_a_parameter_of_the_same_name() {
+    let text = format!(
+        "{HEADER}function f using v(set: Integer): Boolean pure {{ let ok = set in set[ok] = set[ok] }}"
+    );
+    let parsed = parse(&text);
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let found = parsed
+        .cst()
+        .nodes()
+        .iter()
+        .filter(|node| node.production() == fsl_cst::Production::CollectionValue)
+        .count();
+    assert_eq!(found, 2);
 }

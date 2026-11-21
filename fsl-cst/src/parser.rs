@@ -516,8 +516,13 @@ fn parse_with_declaration_recovery(
                 // FSpec FR-500-AC-1: a language or edition the header names but this
                 // grammar does not admit is the unit's one refusal, ahead of any recovery
                 // that would report the header as malformed syntax.
-                let selection_preflight =
-                    !recovered_any && selection_code(&tokens, failure.position).is_some();
+                // Only a string literal in the slot is an unsupported selection; any
+                // other token there is malformed syntax.
+                let selection_preflight = !recovered_any
+                    && selection_code(&tokens, failure.position).is_some()
+                    && tokens
+                        .get(failure.position)
+                        .is_some_and(|token| matches!(token.kind, Some(Kind::Text(_))));
                 let header_start = if recovered_any || unknown_declaration || selection_preflight {
                     None
                 } else {

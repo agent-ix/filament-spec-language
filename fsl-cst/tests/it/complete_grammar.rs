@@ -829,7 +829,6 @@ fn first_diagnostic(id: &str, bytes: &[u8]) -> (CompleteCode, CompleteCause) {
 
 #[trace("FSpec-TC-047", "FSpec-FR-047-AC-3")]
 #[test]
-#[ignore = "QSL-2681: the invalid-token vector authors the reserved word `value` as a field name, so the first diagnostic is correctly the reserved word at byte 98; see invalid_dollar_token_is_a_lexical_refusal"]
 fn complete_source_diagnostics_carry_their_catalogued_typed_cause() {
     let profile = |identity: &str| {
         format!(
@@ -851,7 +850,7 @@ fn complete_source_diagnostics_carry_their_catalogued_typed_cause() {
         ),
         (
             "invalid-token",
-            source("record Broken { value: Integer; } $").into_bytes(),
+            source("record Broken { datum: Integer; } $").into_bytes(),
             CompleteCode::InvalidSyntax,
             CompleteCause::InvalidToken,
         ),
