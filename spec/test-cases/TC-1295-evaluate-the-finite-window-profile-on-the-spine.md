@@ -3,16 +3,22 @@ id: TC-1295
 title: "Evaluate a temporal clause under the finite-window profile on the spine"
 type: TC
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-283
+    type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-501
     type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-330
+    type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-1039
     type: verifies
 ---
 # TC-1295: Evaluate a temporal clause under the finite-window profile on the spine
 
 ## Description
 
-Verify FR-501-AC-1 to AC-26 and FR-330-AC-9 (the finite-window part): the
+Verify FR-501-AC-1 to AC-26, FR-501-AC-31, FR-501-AC-32,
+FR-283-AC-18, FR-283-AC-19 and
+FR-330-AC-9 (the finite-window part): the
 spine evaluator returns a definite verdict on a closed complete window, pending
 or indeterminate only for a genuinely unresolved obligation, and never refuses
 the profile.
@@ -23,8 +29,9 @@ incomplete input read as closed, an event at the inclusive deadline dropped, a
 watermark that fails to settle a silent window, a result that depends on
 ingestion order, and a repeated order key of one authority ordered by
 observation identity for an order-sensitive operator, plus a package report
-that changes an atom's authored text or obtains it from a source the caller
-did not supply.
+that changes unique authored atom text, invents a per-use locus for a shared
+node, refuses valid differing spellings, or obtains text from a source the
+caller did not supply.
 
 ## Test Procedure
 
@@ -38,12 +45,65 @@ stated, and `p`, `q` are `holds` atoms of the fixture.
 
 For rows 41 and 42, use the source and checked-package run routes with the
 same caller-supplied `sources`, matching each atom region by source reference.
+These are direct byte-only adapter requests after caller provisioning of
+admitted `Source` values. They perform no source-file intake during execution.
 Exercise a `Timestamped` trace, an FR-504 `Progressed` trace and a call carrying
 the corresponding progress ledger; each fixture must produce non-empty
 decision support. The package route receives the emitted checked package and
 does not compile source again. Text comes only from the caller's `sources`,
 including when a package handoff holds other source bytes; no implicit file
 read supplies missing text.
+
+For rows 43 and 44, exercise the command's `native-run/1` wire request with
+`package` and the explicit top-level `sources` array from
+[FR-1039](../functional/FR-1039-run-every-native-run-member-over-a-selected-checked-package.md).
+Use exactly the existing five-field source selections, for example
+`{"file":"unit.native","authority":"example","identity":"unit-1","document":"doc-1","formal_revision":1}`.
+The command explicitly reads those selected files during intake, then passes
+the admitted sources to execution. This file intake is distinct from the
+direct byte-only adapter's absence of file reads. Source-run command controls
+omit `sources` and use their compilation's admitted sources.
+
+For rows 45–47, use the existing valid source fixture
+`tests/corpus/temporal/timestamped-window.native`: `record Pulse { ok: Boolean; }`,
+clause `StampedPulse`, binder `p: Pulse`, clock `sensor`, with its existing
+timestamped-event profile and `timestamp_unit` `ms` selection. Replace only
+the clause body as stated in the row. Supply samples stamped 0, 2, 5 whose
+`ok` values are true, false, true, `W` 5, `C(5)`, scope `Closed`. The body
+is `always[0,5]` over the stated atom or conjunction. Run each through the
+source and emitted-package routes with equal caller sources, then through
+their command routes with row 43's explicit package source selection.
+Check that the shared-node fixtures actually retain multiple `Expression`
+regions for one checked atom, selected by the explicit `Claim` occurrence
+and declaration containment; do not silently replace that condition with
+two distinct checked atoms. Assert exact regions against the admitted
+source map, independently of the rendering helper. `holds(p.ok)` is the
+literal canonical field-read expectation under FR-931's printer (the same
+field-printing rule exercised by `holds(c.versionNumber <= 2)` in
+`tests/it/request_surface_s1_16.rs`); the expected name SHALL be this literal,
+not a call to the implementation's printer.
+
+For rows 48–50 and 52, use the existing `sampled` fixture in
+`fsl-package/src/emit/tests/temporal_aggregate.rs`: `Sample` has
+`v: Int[0, 9]` and `w: Int[0, 9]`, clause `Window` binds `e: Sample` under
+the event-position profile. Put the stated aggregate or conjunction under
+`always[0,0]`, with one sample `{v: 0, w: 1}`. For row 51 use that file's
+`package_window` fixture under the timestamped profile, importing the
+existing `example/config-version` model as `Config`, selecting clock
+`events` in `ix://example/config-version/unit/ms`. Supply one Sample at
+stamp 0, `W` 0 and `C(0)`. Put the stated conjunction under `always[0,0]`.
+This uses the fixture's actual `Config::s`/`Config::ms` normalization,
+not a guessed unit identity. Exercise source and checked-package rendering
+with their actual evaluated records and equal caller sources. The
+record-subject source run is an additional monitor control for
+`InsufficientData`. Verify the shared checked node and all candidate regions
+as in rows 45–47; an equal-body fixture that never creates multiple
+candidates does not satisfy these controls.
+
+All expected aggregate labels below are literal independent oracles for
+FR-283's assembly, not output captured from a printer. These acceptance
+procedures prescribe the rendering behavior; this specification change
+claims no package aggregate evaluator or printer implementation coverage.
 
 | # | Clause (`on origin` unless stated) | Trace and progress | Expected |
 | --- | --- | --- | --- |
@@ -88,14 +148,64 @@ read supplies missing text.
 | 39 | row 1's request with `execution` `Open`, then `Closed` | as row 1 | the same verdict; the premises report `Open`, then `Closed` (FR-501-AC-25) |
 | 40 | row 17's `until` and `release` `on origin`, and its `since` and `triggered` `on each` (the anchor at position 2); then `eventually[0,1] holds(p)` | stamps 0,1,1; positions 1 and 2 both keyed `(A, 1)`, distinct identities (a third atom differs); listed as given, then the two keyed observations reversed | stage `evaluate`, `invalid_runtime_input`/`invalid-value` at position 2 for each of the four operators and both listings; `eventually` evaluates with one outcome and one `result_identity` for both listings (FR-501-AC-26) |
 | 41 | BothRoutesSupportAtomParity: row 28's clauses with the atom authored as `holds( p )` | row 28's timestamped inputs and equivalent FR-504 progressed inputs, with and without a valid ledger; the same caller-supplied sources on both routes | equal decision-support pairs on both routes, with the atom name exactly `holds( p )`, including its internal spaces and the whole `holds` atom; positions remain those of the corresponding trace |
-| 42 | PackageMissingSourceRefusal: row 41's package request | remove the caller-supplied source whose reference matches the atom region; then replace it with a source of another reference; then supply the matching reference with bytes shorter than the span or with a span endpoint inside a UTF-8 scalar | each case preserves FR-283's `SourceNotSupplied` contract: category refusal, `invalid_runtime_input`/`missing-member` naming `sources`, exit 20, with the region's source identity and no clause record; the run refusal stays at stage `call`, as on the source route, without using handoff source bytes, reading a file or compiling source again |
+| 42 | PackageMissingSourceRefusal: row 41's direct byte-only package request after caller provisioning | remove the caller-supplied source whose reference matches the atom region; then replace it with a source of another reference; then supply the matching reference with bytes shorter than the span or with a span endpoint inside a UTF-8 scalar | each case preserves FR-283's `SourceNotSupplied` contract: category refusal, `invalid_runtime_input`/`missing-member` naming `sources`, exit 20, with the region's source identity and no clause record; the run refusal stays at stage `call`, as on the source route, without using handoff source bytes, doing file intake during adapter execution or compiling source again |
+| 43 | PackageCommandSupportAtomParity: row 41 through the command's package route | explicitly select the unit's exact original bytes in `request.sources`; use an authored file path different from the compile path and separately change only valid `document` and `formal_revision`; run timestamped and progressed inputs, with and without the ledger | non-empty support pairs equal the source command control and direct adapter; atom text is exactly `holds( p )`; native reference matching and text do not depend on the valid formal metadata or file path; explicitly selected files are admitted once before execution, no source compilation |
+| 44 | PackageCommandMissingSourceRefusal: row 43 | omit `sources`, use `[]`, replace the native reference, shorten the valid admitted UTF-8 bytes, then move the region endpoint inside a UTF-8 scalar; retain different source bytes in the handoff | each gives row 42's stage `call` refusal and no clause record; the command's explicit source intake is permitted, while the handoff supplies no fallback text; an invalid-UTF-8 source file instead retains FR-001's source/S0 intake refusal, not `SourceNotSupplied` |
+| 45 | UniqueRegionExactText: `always[0,5] holds( p.ok )` | one `Expression` candidate for the atom in `StampedPulse`; the stated samples and progress | both routes name the atom exactly `holds( p.ok )` and use that exact expression region as locus; verdict `Completed(false)`, basis `closed-scope`, support exactly {(position 1, that checked atom)} |
+| 46 | SharedIdenticalText: `always[0,5] (holds( p.ok ) and holds( p.ok ))` | one shared atom with both whole caller texts byte-identical; the stated samples and progress | both routes name it exactly `holds( p.ok )` and use `StampedPulse`'s actual claim declaration region as the coarser locus, never either expression region; original false verdict, basis and support positions retained |
+| 47 | SharedDifferingText: `always[0,5] (holds( p.ok ) and holds(p.ok))` | one shared checked atom with differing caller text bytes; the stated samples and progress | both routes name it exactly `holds(p.ok)` by FR-931 and use `StampedPulse`'s actual claim declaration region as the coarser locus; original false verdict, `closed-scope` basis and position-1 support retained; no attribution refusal or additional result row |
+| 48 | UniqueAggregateText: `count over past[0,9] min_count 2 >= 1` | one aggregate region; the stated Sample | name exactly `count over past[0,9] min_count 2 >= 1` and that exact expression locus; monitor retains `InsufficientData`, position 0, count 1, min_count 2 |
+| 49 | SharedIdenticalAggregateText: two copies of row 48's atom joined by `and` | byte-identical caller text at two regions for one shared checked aggregate | name exactly row 48's caller text; actual `Window` declaration locus, never either expression; original insufficient-data result and counts unchanged |
+| 50 | SharedDefaultAggregateText: `count where holds(e.v > 1) over past[0,9] >= 1` and `count where holds( e.v>1 ) over past[ 0 , 9 ] min_count 1 >= 1`, joined by `and` | differing text but one shared checked aggregate under FR-194's default min_count rule | canonical name exactly `count where holds(e.v > 1) over past[0, 9] min_count 1 >= 1`, actual `Window` declaration locus; monitor retains `InsufficientData`, position 0, count 0, min_count 1; neither authored spelling is selected by rank |
+| 51 | SharedDurationAggregateText: `count where holds(e.v > 1) over past[0 Config::s, 3 Config::s] >= 1` and `count where holds( e.v>1 ) over past[ 0 Config::ms , 3000 Config::ms ] min_count 1 >= 1`, joined by `and` | equivalent duration bounds normalized to selected ms, with differing source bytes and omitted versus explicit min_count | canonical name exactly `count where holds(e.v > 1) over past[rational(0, 1) ix://example/config-version/unit/ms, rational(3000, 1) ix://example/config-version/unit/ms] min_count 1 >= 1`; actual `Window` declaration locus; original result, counts, basis and support positions unchanged; no attribution refusal |
+| 52 | AggregateKindsAndComponents: for each literal label in the following table, use two source spellings differing only in whitespace (and `0.5` versus `rational(1, 2)` for quantile) | same shared-node/candidate checks; one stated Sample; min_count 2 | exact literal label from the following table, actual declaration locus, original insufficient-data count 1 and min_count 2; quantity components follow row 51's literal rule rather than a no-printer refusal |
+
+Row 52's independent labels cover every aggregate kind and optional parts:
+
+| Kind | Exact canonical label |
+| --- | --- |
+| count | `count over past[0, 9] min_count 2 >= 1` |
+| sum | `sum of e.v over past[0, 9] min_count 2 <= 15` |
+| min | `min of e.v over past[0, 9] min_count 2 >= 0` |
+| max | `max of e.v over past[0, 9] min_count 2 <= 9` |
+| fraction | `fraction holds(e.v > 1) over past[0, 9] min_count 2 >= rational(1, 2)` |
+| quantile with filter | `quantile rational(1, 2) of e.v where holds(e.w = 1) over past[0, 9] min_count 2 <= 9` |
 
 ## Expected Results
 
 - Outcomes are asserted as fields (variant, position, deadline, reason), never
   message text.
+- Command-intake controls assert the outer `native-run-result/2.code`:
+  `io-error` for a selected-file failure at stage `file` and
+  `invalid-identifier` for a formal constructor failure at stage `request`,
+  each exit 20. Native diagnostic catalog codes retain their underscore
+  spellings; the constructor's existing `details.code` is `invalid_identifier`.
+  FR-001 source/S0 and `SourceNotSupplied` call refusals are unchanged.
 - No row returns a truth value for a case the table marks `Pending` or
   `Indeterminate`, and no row marked definite returns `Pending` or
   `Indeterminate`.
 - The independent expected values come from the authored stamps and FSpec's
   vectors, never from the evaluator's own output.
+- Rows 45–47 assert both name and locus and equal source/package results.
+  Reversing candidate enumeration changes neither. Distinct checked atoms
+  remain distinct if their printed labels coincide; no test uses label
+  deduplication or source rank as identity. Apply rows 42 and 44's missing,
+  wrong-reference, short-byte and split-UTF-8 controls to the candidate text
+  regions and actual selected declaration locus; canonical printing gives
+  no caller-source fallback. A refused condition retains its original
+  refusal and category under the same attribution rule. These assertions
+  establish no exact per-use attribution for repeated nodes: that remains
+  QSL-2726's later admitted use-to-occurrence work.
+- Rows 48–52 also assert exact names and true loci, retaining all evaluator
+  fields rather than converting an aggregate outcome to a different row.
+  Reverse candidate enumeration and move whitespace between the two
+  candidates: the differing-text canonical result stays equal. Repeat the
+  missing/wrong source, short-byte and split-UTF-8 controls at each candidate
+  and the selected declaration region; each retains `SourceNotSupplied`.
+  Independently change the normalized min_count, one bound, kind, filter or
+  threshold: each semantically different aggregate stays a distinct checked
+  node, even if another printed label coincides. Reformatting source,
+  omitting the default min_count or converting equivalent duration units
+  does not authorize source rank, label deduplication, a synthetic locus or
+  an attribution refusal. FR-931 TL lowering remains unchanged and does not
+  gain an aggregate proposition from these rendering tests.

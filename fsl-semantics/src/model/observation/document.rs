@@ -1183,6 +1183,8 @@ pub(super) struct References<'a> {
     /// Each reference that named no object of the snapshot, with the wire
     /// population it named, in walk order.
     unresolved: Vec<(String, ObjectReference)>,
+    /// Validated data references to declared clock places, never objects.
+    clock_references: Vec<(String, ObjectReference)>,
     /// The declaration key of each selected record value type by its IR
     /// node identity, built on first use.
     record_keys: Option<BTreeMap<String, filament_exact::NodeKey>>,
@@ -1226,6 +1228,7 @@ impl<'a> References<'a> {
             admitted,
             completeness,
             unresolved: Vec::new(),
+            clock_references: Vec::new(),
             record_keys: None,
             variant_keys: None,
         }
@@ -1280,9 +1283,31 @@ impl<'a> References<'a> {
     /// to object fields (SR-750 FND-019). Object fields get this check from
     /// [`check_population_closure`]; this is the same rule for the values
     /// check 10 admits (SR-771 FND-001).
+    #[cfg(test)]
     fn check_closure(&self, raw: &SnapshotValue) -> Result<(), AdmissionRecord> {
         let mut refs = Vec::new();
         collect_references(raw, &mut refs);
+        self.check_named_closure(refs)
+    }
+
+    fn check_typed_closure(
+        &mut self,
+        raw: &SnapshotValue,
+        value_type: &filament_exact::ValueType,
+    ) -> Result<(), AdmissionRecord> {
+        let mut refs = Vec::new();
+        collect_object_references(
+            raw,
+            value_type,
+            self.views,
+            self.types,
+            &mut self.record_keys,
+            &mut refs,
+        );
+        self.check_named_closure(refs)
+    }
+
+    fn check_named_closure(&self, refs: Vec<(String, String)>) -> Result<(), AdmissionRecord> {
         for (population, key) in refs {
             if self
                 .admitted
@@ -1315,6 +1340,12 @@ impl<'a> References<'a> {
         reference: &super::SelectedObject,
         declared: filament_exact::EffectiveId,
     ) -> Result<ObjectReference, AdmissionRecord> {
+        if crate::model::clock_reference::is_clock_type(&declared) {
+            return Err(
+                admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                    .with("reason", "missing-route-neutral-place-identity"),
+            );
+        }
         let wire = (reference.population.as_str(), reference.key.as_str());
         if let Some(target) = self.admitted.get(&wire) {
             return if self.types.conforms(target.object_type().clone(), declared) {
@@ -2352,6 +2383,7 @@ pub fn admit_record_sample(
         admitted: BTreeMap::new(),
         completeness: BTreeMap::new(),
         unresolved: Vec::new(),
+        clock_references: Vec::new(),
         record_keys: Some(BTreeMap::from([(RECORD_SAMPLE.to_owned(), record.clone())])),
         variant_keys: None,
     };
@@ -2838,6 +2870,63 @@ fn collect_references(raw: &SnapshotValue, into: &mut Vec<(String, String)>) {
     }
 }
 
+/// Object references required by a statically typed value. Clock-place
+/// references are authenticated as data and never require a population member.
+fn collect_object_references(
+    raw: &SnapshotValue,
+    value_type: &filament_exact::ValueType,
+    views: &[ModelView],
+    types: &TypeEnvironment,
+    records: &mut Option<BTreeMap<String, filament_exact::NodeKey>>,
+    into: &mut Vec<(String, String)>,
+) {
+    use filament_exact::ValueType;
+    let mut pending = vec![(raw.form(), value_type.clone())];
+    while let Some((form, value_type)) = pending.pop() {
+        match (form, &value_type) {
+            (RawForm::Reference(reference), ValueType::Reference(target)) => {
+                if !crate::model::clock_reference::is_clock_type(target) {
+                    into.push((reference.population.clone(), reference.key.clone()));
+                }
+            }
+            (RawForm::Present(inner), ValueType::Option(payload)) => {
+                pending.push((inner.form(), (**payload).clone()));
+            }
+            (RawForm::Present(inner), value_type) => {
+                pending.push((inner.form(), value_type.clone()));
+            }
+            (RawForm::Collection(_, items), ValueType::Collection(collection)) => {
+                pending.extend(
+                    items
+                        .iter()
+                        .rev()
+                        .map(|item| (item.form(), collection.element().clone())),
+                );
+            }
+            (RawForm::Record(record), ValueType::Composite(_)) => {
+                let keys = records.get_or_insert_with(|| record_keys(views));
+                let Some(declared) = keys
+                    .get(record.type_identity())
+                    .and_then(|key| types.composite(key.clone()))
+                else {
+                    continue;
+                };
+                let filament_semantic_value::declaration::CompositeShape::Record(fields) =
+                    declared.shape()
+                else {
+                    continue;
+                };
+                for (name, value) in record.fields().rev() {
+                    if let Some(field) = fields.iter().find(|field| field.name() == name) {
+                        pending.push((value.form(), field.value_type().clone()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Compute the exact FR-106 check-7 closure rooted at every declared
 /// population. The wire reference's population label is retained at the
 /// occurrence that named it; equal object references do not merge labels.
@@ -2903,6 +2992,7 @@ pub(super) struct PopulationValues<'t> {
     /// Each reference that named no object of this snapshot, with the wire
     /// population it named ([`References`]).
     unresolved: Vec<(String, ObjectReference)>,
+    pub(super) clock_references: Vec<(String, ObjectReference)>,
     /// Each post-state integer admitted outside its declared range, in
     /// walk order.
     out_of_range: Vec<OutOfRange>,
@@ -3508,6 +3598,7 @@ pub(super) fn admit_population_values<'t>(
         facts,
         population_reference_closures,
         unresolved: references.unresolved,
+        clock_references: references.clock_references,
         out_of_range,
         read_contexts,
     })
@@ -3679,7 +3770,14 @@ fn admit_contexts<'t>(
                     .map(|breach| (attribute.identity(), breach)),
             );
             let mut found_references = Vec::new();
-            collect_references(raw, &mut found_references);
+            collect_object_references(
+                raw,
+                value_type,
+                references.views,
+                types,
+                &mut references.record_keys,
+                &mut found_references,
+            );
             context_references.extend(found_references.into_iter().map(|(population, key)| {
                 ContextReference {
                     field: name.to_owned(),
@@ -3792,10 +3890,12 @@ pub(super) fn check_context_closure(
 /// refuses it `dangling_reference`.
 pub(super) fn parameter_populations(
     views: &[ModelView],
+    types: &TypeEnvironment,
     operation: &OperationDeclaration,
     parameters: &[(String, SnapshotValue)],
 ) -> Vec<String> {
     let mut named = Vec::new();
+    let mut records = None;
     for (name, value_type) in operation.parameters() {
         if !holds_references(value_type) {
             continue;
@@ -3804,7 +3904,7 @@ pub(super) fn parameter_populations(
             continue;
         };
         let mut refs = Vec::new();
-        collect_references(raw, &mut refs);
+        collect_object_references(raw, value_type, views, types, &mut records, &mut refs);
         for (population, _) in refs {
             if !named.contains(&population) && find_population(views, &population).is_some() {
                 named.push(population);
@@ -3861,6 +3961,7 @@ fn holds_references(value_type: &filament_exact::ValueType) -> bool {
 /// empty everywhere else.
 pub(super) fn check_population_completeness(
     views: &[ModelView],
+    types: &TypeEnvironment,
     populations: &[RawPopulation],
     completeness: &BTreeMap<String, bool>,
     self_population: Option<&str>,
@@ -3879,6 +3980,7 @@ pub(super) fn check_population_completeness(
         required.insert(name.to_owned());
     }
     required.extend(parameter_populations.iter().cloned());
+    let mut records = None;
     loop {
         let mut grew = false;
         for name in required.clone() {
@@ -3886,9 +3988,30 @@ pub(super) fn check_population_completeness(
                 continue;
             };
             for object in &entry.objects {
-                for (_, raw) in &object.fields {
+                let (view, key) = find_declaration(views, object.type_identity.as_str())
+                    .ok_or_else(|| fault("admitted-object-declaration-missing"))?;
+                let effective = view
+                    .view
+                    .type_identities()
+                    .get(&key)
+                    .ok_or_else(|| fault("admitted-object-type-missing"))?;
+                let declared = types
+                    .attributes(effective.clone())
+                    .ok_or_else(|| fault("admitted-object-attributes-missing"))?;
+                for (name, raw) in &object.fields {
+                    let field = declared
+                        .iter()
+                        .find(|field| field.field().name() == name)
+                        .ok_or_else(|| fault("admitted-object-field-missing"))?;
                     let mut refs = Vec::new();
-                    collect_references(raw, &mut refs);
+                    collect_object_references(
+                        raw,
+                        field.field().value_type(),
+                        views,
+                        types,
+                        &mut records,
+                        &mut refs,
+                    );
                     for (population, _) in refs {
                         if required.insert(population) {
                             grew = true;
@@ -3965,6 +4088,7 @@ pub(super) fn check_population_closure(
     completeness: &BTreeMap<String, bool>,
     keys_by_population: &BTreeMap<String, BTreeSet<String>>,
     extents: &[super::relationships::CheckedExtent],
+    clock_references: &[(String, ObjectReference)],
 ) -> Result<(), AdmissionFailure> {
     for entry in populations {
         for object in &entry.objects {
@@ -3972,6 +4096,14 @@ pub(super) fn check_population_closure(
                 let mut refs = Vec::new();
                 collect_references(raw, &mut refs);
                 for (population, key) in refs {
+                    if clock_references
+                        .iter()
+                        .any(|(declared_population, reference)| {
+                            declared_population == &population && reference.object().as_str() == key
+                        })
+                    {
+                        continue;
+                    }
                     if completeness.get(&population).copied() != Some(true) {
                         continue;
                     }
@@ -4010,12 +4142,18 @@ pub(super) fn finish_populations(
     // list is not tolerated (SR-750 FND-019): every reference other than
     // the tolerated ones must name an admitted object, so the closure check
     // refuses it `dangling_reference`.
-    let tolerated: Vec<ObjectReference> = values
+    let mut tolerated: Vec<ObjectReference> = values
         .unresolved
         .into_iter()
         .filter(|(population, _)| values.completeness.get(population).copied() == Some(false))
         .map(|(_, reference)| reference)
         .collect();
+    tolerated.extend(
+        values
+            .clock_references
+            .into_iter()
+            .map(|(_, reference)| reference),
+    );
     let out_of_range = values.out_of_range;
     // The closure admits each slot against its declared type, which an
     // out-of-range post-state integer breaks by definition. Such a closure
@@ -4213,6 +4351,7 @@ pub(super) fn admit_populations(
     )?;
     check_population_completeness(
         views,
+        types,
         &snapshot.populations,
         &values.completeness,
         self_population,
@@ -4224,6 +4363,7 @@ pub(super) fn admit_populations(
         &values.completeness,
         &values.keys_by_population,
         &values.extents,
+        &values.clock_references,
     )?;
     finish_populations(types, values)
 }
@@ -4276,6 +4416,7 @@ pub(super) fn admit_initial_populations(
         .collect();
     check_population_completeness(
         views,
+        types,
         populations,
         &values.completeness,
         None,
@@ -4287,6 +4428,7 @@ pub(super) fn admit_initial_populations(
         &values.completeness,
         &values.keys_by_population,
         &values.extents,
+        &values.clock_references,
     )?;
     let mut admitted: Vec<(String, AdmittedPopulation)> = Vec::new();
     for entry in populations {
@@ -4353,6 +4495,7 @@ pub(super) fn admit_argument_populations(
     required.extend(named.iter().cloned());
     check_population_completeness(
         views,
+        types,
         &snapshot.populations,
         &values.completeness,
         None,
@@ -4364,6 +4507,7 @@ pub(super) fn admit_argument_populations(
         &values.completeness,
         &values.keys_by_population,
         &values.extents,
+        &values.clock_references,
     )?;
     finish_populations(types, values)
 }
@@ -4476,7 +4620,9 @@ pub(super) fn admit_parameters(
             );
             refuse(record.with("field", name.clone()).with("path", path))
         })?;
-        references.check_closure(raw).map_err(refuse)?;
+        references
+            .check_typed_closure(raw, value_type)
+            .map_err(refuse)?;
         admitted.push((name.clone(), value));
     }
     for (name, _) in parameters {
@@ -4523,7 +4669,9 @@ pub(super) fn admit_result(
             }
             let value = admit_form(references, raw.form(), value_type, None)
                 .map_err(|record| refuse(record.with("field", "result")))?;
-            references.check_closure(raw).map_err(refuse)?;
+            references
+                .check_typed_closure(raw, value_type)
+                .map_err(refuse)?;
             Ok(Some(value))
         }
     }
@@ -4915,6 +5063,7 @@ mod tests {
                     admitted: BTreeMap::new(),
                     completeness: BTreeMap::new(),
                     unresolved: Vec::new(),
+                    clock_references: Vec::new(),
                     record_keys: None,
                     variant_keys: None
                 },

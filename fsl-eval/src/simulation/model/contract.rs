@@ -370,24 +370,21 @@ impl<'a> ModelSystem<'a> {
 
     /// `state` as a pre-state anchored at `anchor`, reached by no step.
     pub fn pre_state(&self, state: ModelState, anchor: SelectedAnchor) -> ModelSimState {
-        ModelSimState {
-            state,
-            anchor,
-            reached_by: None,
-        }
+        ModelSimState::anchored(state, anchor)
     }
 
     /// The anchor a declared pre-state carries: the first initial state's,
     /// else an unnamed initialization. The anchor is no part of a state's
     /// key.
     pub fn declared_anchor(&self) -> SelectedAnchor {
-        self.initial.first().map_or_else(
-            || SelectedAnchor {
+        self.initial
+            .first()
+            .and_then(ModelSimState::anchor)
+            .cloned()
+            .unwrap_or_else(|| SelectedAnchor {
                 kind: AnchorKind::Initialization,
                 name: String::new(),
-            },
-            |initial| initial.anchor.clone(),
-        )
+            })
     }
 
     /// Every declared pre-state of this system over its universes (FSpec

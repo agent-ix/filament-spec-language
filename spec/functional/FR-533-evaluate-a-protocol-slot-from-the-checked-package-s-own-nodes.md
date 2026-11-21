@@ -266,6 +266,18 @@ change, not kept beside it.
 
 ### Types the bytes cannot project
 
+Payload-free selected model enum declarations and all their members SHALL be
+available through the three required identities/5 channels of FR-531. The native
+package-local join authenticates their complete canonical shapes before use,
+including selected declarations no slot reads. Enum literals SHALL retain the
+original variant and its canonical rank; source and bare enum-returning calls SHALL return the
+same value and semantic charge sequence. Enum equality and inequality remain
+unmet until the native equality reader admits held selected-model declaration
+facts independently of their original document package, and the consuming
+operation projection uses those admitted decisions. An unrelated declaration whose runtime
+projection is unsupported SHALL NOT erase an authenticated model enum. Payload-
+bearing model variants, including Clock payloads, remain outside this enum path.
+
 The bare type environment SHALL include source unions from the original selected
 source union rows joined to the admitted structural nodes. It SHALL preserve the
 original type handle, settled declaration and sealed member identities, member
@@ -441,8 +453,8 @@ dependency, not a scope reduction (FR-390), and the bare route substitutes no
 declaration for it:
 
 - **Contract IR's whole-package declaration projection** refuses a package whose
-  selected documents declare a variant (enum) type or a model-owned unit, a
-  package whose checked graph holds an enum node, a compound-unit node or a
+  selected documents declare a model-owned unit, a
+  package whose checked graph holds an unwitnessed source enum node, a compound-unit node or a
   model-owned unit node, and an object field that redefines another. Its
   completeness guarantee covers every ordinary record and object type of a
   selected document, but not a state machine, process or systems interface. Such

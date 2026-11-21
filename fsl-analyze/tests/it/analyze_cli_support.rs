@@ -80,6 +80,9 @@ pub(crate) fn package_selection(ws: &Workspace, request: &Value) -> (Value, Vec<
     if let Some(libraries) = request.get("libraries") {
         compiled["libraries"] = libraries.clone();
     }
+    if let Some(clocks) = request.get("clocks") {
+        compiled["clocks"] = clocks.clone();
+    }
     let compile = json!({"format": "native-compile/1", "request": compiled});
     let compile_path = ws.write("compile.json", compile.to_string().as_bytes());
     let package = fsl_command::command::compile(&compile_path).expect("the program compiles");
@@ -87,14 +90,10 @@ pub(crate) fn package_selection(ws: &Workspace, request: &Value) -> (Value, Vec<
         .expect("the handoff holds its package");
     assert_eq!(written, package, "the handoff holds the compiled package");
     let mut selected = request.clone();
-    selected
-        .as_object_mut()
-        .expect("a request object")
-        .remove("program");
-    selected
-        .as_object_mut()
-        .expect("a request object")
-        .remove("libraries");
+    let members = selected.as_object_mut().expect("a request object");
+    members.remove("program");
+    members.remove("libraries");
+    members.remove("clocks");
     selected["package"] = json!({"directory": HANDOFF});
     (selected, package)
 }

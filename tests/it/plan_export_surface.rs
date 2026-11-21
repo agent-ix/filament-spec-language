@@ -2139,7 +2139,7 @@ fn an_inadmissible_snapshot_or_supplied_premise_is_refused_at_admit() {
 #[test]
 #[trace("TC-2872", "FR-1022-AC-1")]
 #[trace("FSpec-TC-1974", "FSpec-FR-815-AC-1")]
-#[ignore = "QSL-1979: intake of TLA+ and Lean results as trusted evidence is not implemented yet"]
+#[ignore = "QSL-2667: genuine FR-1022 settlement awaits original-package binding and target-result verification contracts"]
 fn a_lean_proof_enters_as_trusted_evidence() {
     let (_, exported) = export(
         &low_unit(),
@@ -2172,7 +2172,7 @@ fn a_lean_proof_enters_as_trusted_evidence() {
 #[test]
 #[trace("TC-2872", "FR-1022-AC-3")]
 #[trace("FSpec-TC-1974", "FSpec-FR-815-AC-3")]
-#[ignore = "QSL-1979: evidence intake refusals are not implemented yet"]
+#[ignore = "QSL-2667: FR-1022 AC3 package-key and record applicability verification is not implemented"]
 fn evidence_for_an_unrepresented_record_is_refused() {
     let (exit, value) = run(
         BRAKING,

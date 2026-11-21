@@ -128,9 +128,13 @@ pub enum Unsupported {
     PackageControl(fsl_package::protocol_view::ControlOperation),
     /// A package control's correlation premises have no executable form yet.
     PackageCorrelation,
+    /// A package repeat's loop proof has no executable package form yet.
+    PackageRepeatProof,
     /// A package protocol declares a replicated role this program does not
     /// step yet.
     PackageReplicatedRole,
+    /// A replicated role has a scope or predicate lifetime without a package form.
+    PackageRoleLifetime,
 }
 
 impl Unsupported {
@@ -141,7 +145,9 @@ impl Unsupported {
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
             Self::PackageControl(_) => "package protocol control",
             Self::PackageCorrelation => "package protocol correlation",
+            Self::PackageRepeatProof => "package repeat proof",
             Self::PackageReplicatedRole => "package replicated role",
+            Self::PackageRoleLifetime => "package replicated role lifetime",
         }
     }
 }
@@ -149,6 +155,16 @@ impl Unsupported {
 /// Why [`ProtocolSystem::new`] built no system (FR-205 "Subject").
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProtocolRefusal {
+    /// A package binder's exact type has its original projection refusal.
+    #[error("package parameter type projection failed at {node:?}: {failure:?}")]
+    PackageParameterType {
+        /// The package whose admitted binder is being read.
+        package: String,
+        /// The admitted binder whose type could not be projected.
+        node: fsl_package::CheckedNodeId,
+        /// The original typed selection or projection refusal.
+        failure: Box<fsl_package::BareSelectionFailure>,
+    },
     /// The request names a protocol that is not a protocol clause of the
     /// package (`invalid_runtime_input`/`invalid-value`).
     #[error("invalid_runtime_input/invalid-value: no protocol {protocol}")]
@@ -225,6 +241,10 @@ impl ProtocolRefusal {
     /// The refusal's catalog code.
     pub fn code(&self) -> Code {
         match self {
+            Self::PackageParameterType { failure, .. } => match &**failure {
+                fsl_package::BareSelectionFailure::Slot(_) => Code::RuntimeInvariant,
+                _ => Code::UnknownRequiredFeature,
+            },
             Self::UnknownProtocol { .. }
             | Self::RoleMapping { .. }
             | Self::OverBinding { .. }
@@ -244,6 +264,10 @@ impl ProtocolRefusal {
     /// The refusal's catalog cause.
     pub fn cause(&self) -> &'static str {
         match self {
+            Self::PackageParameterType { failure, .. } => match &**failure {
+                fsl_package::BareSelectionFailure::Slot(_) => "established-invariant-broken",
+                _ => "unsupported-feature",
+            },
             Self::UnknownProtocol { .. }
             | Self::OverBinding { .. }
             | Self::RolePopulation { .. }
@@ -850,8 +874,9 @@ fn check_attempt_types(
     match ClaimExtent::from_domains(domains) {
         ClaimExtent::Bounded => Ok(()),
         ClaimExtent::Unbounded(domains) => Err(NotSimulated::RequiresBound(RequiresBound {
-            domains,
+            domains: Some(domains),
             capacities: Vec::new(),
+            clock_references: Vec::new(),
         })),
     }
 }
@@ -882,8 +907,24 @@ pub fn check_protocol_bounds(
         }
         other => other,
     };
-    check_requires_bound(&roots(&domains), model.types(), position_limit)
-        .map_err(with_capacities)?;
+    let ordinary = match check_requires_bound(&roots(&domains), model.types(), position_limit) {
+        Ok(()) => None,
+        Err(NotSimulated::RequiresBound(bound)) => bound.domains,
+        Err(other) => return Err(other),
+    };
+    // Retain the complete generic list before collecting the clock sites.
+    // Extent/resource failures above remain immediate; this pass neither
+    // reclassifies the generic roots nor spends another position ceiling.
+    let clock_references = super::model::clock_reference_domains(model, &domains, None);
+    if ordinary.is_some() || !clock_references.is_empty() {
+        return Err(with_capacities(NotSimulated::RequiresBound(
+            RequiresBound {
+                domains: ordinary,
+                capacities: Vec::new(),
+                clock_references,
+            },
+        )));
+    }
     check_attempt_types(model, protocol, evaluator).map_err(with_capacities)?;
     if capacities.unbound().is_empty() {
         Ok(())
@@ -1586,17 +1627,27 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 PackageProgramRefusal::Correlation { .. } => {
                     ProtocolRefusal::Unsupported(Unsupported::PackageCorrelation)
                 }
+                PackageProgramRefusal::RepeatProof { .. } => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageRepeatProof)
+                }
+                PackageProgramRefusal::RoleLifetime { .. } => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageRoleLifetime)
+                }
+                PackageProgramRefusal::ParameterType {
+                    package,
+                    node,
+                    failure,
+                } => ProtocolRefusal::PackageParameterType {
+                    package,
+                    node,
+                    failure,
+                },
                 _ => ProtocolRefusal::fault("a-selected-package-protocol-builds"),
             })?;
         if let Some(binding) = subject.capacities.first() {
             return Err(ProtocolRefusal::Capacity(CapacityRefusal::UnknownName {
                 name: binding.name.clone(),
             }));
-        }
-        if package.roles.iter().any(|role| role.replicated) {
-            return Err(ProtocolRefusal::Unsupported(
-                Unsupported::PackageReplicatedRole,
-            ));
         }
         let mut roles = Vec::new();
         for role in package.roles.iter().filter(|role| !role.replicated) {
@@ -1617,12 +1668,11 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             }
             roles.push((role.name.clone(), binding.model.clone()));
         }
-        if let Some(unknown) = subject.roles.iter().find(|binding| {
-            !package
-                .roles
-                .iter()
-                .any(|role| !role.replicated && role.name == binding.role)
-        }) {
+        if let Some(unknown) = subject
+            .roles
+            .iter()
+            .find(|binding| !package.roles.iter().any(|role| role.name == binding.role))
+        {
             return Err(ProtocolRefusal::RoleMapping {
                 role: unknown.role.clone(),
             });

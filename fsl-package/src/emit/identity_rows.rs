@@ -140,6 +140,37 @@ impl Emission {
             let locus = adapter_locus(index, "identity_record_output");
             records.push(copy_source_record(row, budget, locus)?);
         }
+        let locus = package_locus("identity_tuple_output");
+        charge::items(budget, locus, self.selected_source_tuple_rows.len())?;
+        let mut tuples = Vec::with_capacity(self.selected_source_tuple_rows.len());
+        for (index, row) in self.selected_source_tuple_rows.iter().enumerate() {
+            let locus = adapter_locus(index, "identity_tuple_output");
+            charge::work(budget, locus, 1)?;
+            charge::node(budget, locus, &row.structural_node)?;
+            charge::text(budget, locus, &row.source_authority)?;
+            charge::text(budget, locus, &row.source_identity)?;
+            charge::texts(budget, locus, &row.qualified_declaration)?;
+            charge::items(budget, locus, row.positions.len())?;
+            for position in &row.positions {
+                charge::work(budget, locus, 1)?;
+                if let Some(node) = &position.type_node {
+                    charge::node(budget, locus, node)?;
+                }
+                if let Some(value_type) = &position.value_type {
+                    charge::value_type(budget, locus, value_type)?;
+                }
+                if let Some(rendering) = &position.member_type {
+                    charge::text(budget, locus, rendering)?;
+                }
+                charge::items(budget, locus, position.collections.len())?;
+                for layer in &position.collections {
+                    charge::text(budget, locus, &layer.kind)?;
+                    charge::text(budget, locus, &layer.minimum)?;
+                    charge::text(budget, locus, &layer.maximum)?;
+                }
+            }
+            tuples.push(row.clone());
+        }
         let locus = package_locus("identity_union_output");
         charge::items(budget, locus, self.selected_source_union_rows.len())?;
         let mut unions = Vec::with_capacity(self.selected_source_union_rows.len());
@@ -206,6 +237,31 @@ impl Emission {
             package_locus("identity_package_output"),
             package.name(),
         )?;
+        let locus = package_locus("identity_model_enum_output");
+        charge::items(
+            budget,
+            locus,
+            self.selected_model_enum_declaration_rows.len(),
+        )?;
+        for (index, row) in self.selected_model_enum_declaration_rows.iter().enumerate() {
+            let locus = adapter_locus(index, "identity_model_enum_declaration_output");
+            charge::work(budget, locus, 1)?;
+            charge::node(budget, locus, &row.structural_node)?;
+            charge::text(budget, locus, &row.selected_document)?;
+            charge::text(budget, locus, &row.original_identity)?;
+        }
+        charge::items(budget, locus, self.selected_model_enum_member_rows.len())?;
+        for (index, row) in self.selected_model_enum_member_rows.iter().enumerate() {
+            let locus = adapter_locus(index, "identity_model_enum_member_output");
+            charge::work(budget, locus, 1)?;
+            charge::node(budget, locus, &row.structural_node)?;
+            charge::node(budget, locus, &row.declaration_node)?;
+            charge::text(budget, locus, &row.selected_document)?;
+            charge::text(budget, locus, &row.enum_original_identity)?;
+            charge::text(budget, locus, &row.member_original_identity)?;
+            charge::text(budget, locus, &row.case)?;
+        }
+        let model_enum_shapes = self.selected_ir_model_enum_shape_rows(budget)?;
         Ok(ReadIdentityRows::of_rows_with_source_rows(
             package,
             declarations,
@@ -216,6 +272,12 @@ impl Emission {
             operations,
             source_object_member_facts,
             source_object_operations,
+        )
+        .with_source_tuples(tuples)
+        .with_model_enums(
+            self.selected_model_enum_declaration_rows.clone(),
+            self.selected_model_enum_member_rows.clone(),
+            model_enum_shapes,
         ))
     }
 }

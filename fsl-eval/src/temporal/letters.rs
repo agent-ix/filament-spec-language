@@ -132,6 +132,15 @@ pub trait TemporalLetters {
         self.valuation(atom, position, meter)
     }
 
+    /// The ticks an aggregate atom's window ends before its position, the
+    /// ceiling of its duration window's lower bound (FR-194-AC-16): the
+    /// window reads stamps up to the position's own stamp minus this, so it
+    /// is established only once completeness covers them. `None` for an atom
+    /// that is not a duration-window aggregate.
+    fn aggregate_lag(&self, _atom: FormulaNodeId) -> Option<i128> {
+        None
+    }
+
     /// The atom `atom` stands for under the finite-window profile: nodes that
     /// are the same atom (the same `holds` condition) return one value, a node
     /// index, and share one valuation at a position (FSpec FR-160). The

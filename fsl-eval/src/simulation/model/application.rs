@@ -608,7 +608,7 @@ impl<'a> ModelSystem<'a> {
                 quire_canonical::Limits::new(super::identity_limits().input_bytes),
             )
             .ok()
-            .map(|bytes| (bytes, format!("{:?}", state.anchor)));
+            .map(|bytes| (bytes, format!("{:?}", state.anchor())));
         Observed {
             state,
             identity,
@@ -635,6 +635,10 @@ impl<'a> ModelSystem<'a> {
                 observation: Observation::clone(observation),
                 rows: rows_of(self, &observed.state().state)?,
                 enforcement: None,
+                // Protocol attempts have no timed-profile selector authority.
+                // check_protocol_bounds runs the model's requires-bound
+                // preflight before an attempt can expand frames.
+                clock_selectors: None,
                 post_presence: None,
             }),
             None => walk_of(self, observed.state(), None),
@@ -682,7 +686,7 @@ impl<'a> ModelSystem<'a> {
         let Some(departure) = departure(identities.base, &state.state) else {
             return self.observed(state);
         };
-        let key = (format!("{:?}", state.anchor), departure);
+        let key = (format!("{:?}", state.anchor()), departure);
         if let Some(identity) = identities.known.borrow().get(&key) {
             return Observed {
                 state,

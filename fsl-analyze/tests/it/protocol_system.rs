@@ -1667,7 +1667,13 @@ fn a_protocol_model_check_is_deterministic() {
     let ModelCheckRefusal::RequiresBound(bound) = refusal else {
         panic!("{refusal:?}");
     };
-    let named: Vec<_> = bound.domains.iter().map(|(key, _)| key.clone()).collect();
+    let named: Vec<_> = bound
+        .domains
+        .as_ref()
+        .expect("generic unbounded domains")
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect();
     assert_eq!(
         named,
         [DomainKey::Node {
@@ -1774,7 +1780,13 @@ fn a_finite_field_record_binder_steps_in_domain_order() {
     let ModelCheckRefusal::RequiresBound(bound) = refusal else {
         panic!("{refusal:?}");
     };
-    let named: Vec<_> = bound.domains.iter().map(|(key, _)| key.clone()).collect();
+    let named: Vec<_> = bound
+        .domains
+        .as_ref()
+        .expect("generic unbounded domains")
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect();
     assert_eq!(
         named,
         [DomainKey::Node {

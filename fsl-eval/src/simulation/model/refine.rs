@@ -298,11 +298,7 @@ impl<'a> ModelSystem<'a> {
     ) -> Self {
         self.initial = states
             .into_iter()
-            .map(|(state, anchor)| ModelSimState {
-                state,
-                anchor,
-                reached_by: None,
-            })
+            .map(|(state, anchor)| ModelSimState::anchored(state, anchor))
             .collect();
         self
     }
@@ -397,11 +393,7 @@ impl ModelSystem<'_> {
                 let value = domain.nth(index).ok_or_else(|| stop(BROKEN))?;
                 object.fields.insert(field.clone(), value);
             }
-            let candidate = ModelSimState {
-                state,
-                anchor: anchor.clone(),
-                reached_by: None,
-            };
+            let candidate = ModelSimState::anchored(state, anchor.clone());
             if self.invariant_findings_at(&candidate)?.is_empty() {
                 completed.push(candidate.state);
             }

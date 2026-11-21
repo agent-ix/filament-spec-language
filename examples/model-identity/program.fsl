@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile P = "filament.model.complete/v1";
+model M = "example/identity";
+invariant Correspondence using P on M::Leaf at current {
+  self.inherited = 3 and self.field = 7
+}

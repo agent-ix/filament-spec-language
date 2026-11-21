@@ -1,0 +1,13 @@
+language "ix:native" edition "1-draft";
+domain "example/identity";
+object Base {
+  inherited: Integer;
+  field: Integer;
+}
+object Mid extends Base {
+  field: Integer redefines Base::field;
+}
+object Leaf extends Mid {
+  field: Integer redefines Base::field;
+}
+population leaves: Leaf;

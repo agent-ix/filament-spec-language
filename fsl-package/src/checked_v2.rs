@@ -44,7 +44,7 @@ pub(crate) mod tests;
 mod timed_model;
 
 pub use clause_root::{clause_roots, resolve_clause_root, ClauseRoot, ClauseRootUnresolved};
-pub(crate) use hybrid::float_rounding_type;
+pub(crate) use hybrid::{decimal_range_type, float_rounding_type};
 pub use hybrid::{read_hybrids, HybridRead, HybridReadError, ReadHybridClaim, ReadHybridModel};
 pub use hyper_root::{hyper_roots, resolve_hyper_root, HyperRoot, HyperRootUnresolved};
 pub use schedulability_root::{
@@ -1162,8 +1162,8 @@ impl EvaluationWitnessSupplier for SourceWitnessSupplier {
                 crate::IdentityJoinFailure::Exhausted(denial) => exhausted(*denial),
                 crate::IdentityJoinFailure::Witness(_) => WitnessSupplyFailure::Fault,
             })?;
-        // The complete selection: the model tuples and source units, then the
-        // source tuples and enums the emission carries.
+        // Identity rows already carry source tuples. Complete the selection
+        // with model tuples, source units and source enums.
         let identities = identities
             .with_admitted_type_rows(
                 admitted,
@@ -1171,13 +1171,6 @@ impl EvaluationWitnessSupplier for SourceWitnessSupplier {
                 self.emission.selected_source_unit_rows(),
                 budget,
             )
-            .and_then(|joined| {
-                joined.with_source_tuple_rows(
-                    admitted,
-                    self.emission.selected_source_tuple_rows().iter().cloned(),
-                    budget,
-                )
-            })
             .map_err(exhausted)?;
         let enum_rows = self
             .emission

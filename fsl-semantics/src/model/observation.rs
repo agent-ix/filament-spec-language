@@ -1609,6 +1609,7 @@ impl<'v> RawItems<'v> {
 #[derive(Debug)]
 pub(crate) struct ModelView {
     pub(crate) view: EffectiveView,
+    pub(crate) clock_places: std::sync::Arc<super::clock_reference::DeclaredClockPlaces>,
     by_effective_id: BTreeMap<EffectiveId, DeclarationKey>,
     /// Whether the view is the unit's own source package (FR-569), whose
     /// declarations a snapshot names without an `ix://` scheme.
@@ -1625,6 +1626,7 @@ impl ModelView {
             .collect();
         Self {
             view,
+            clock_places: std::sync::Arc::default(),
             by_effective_id,
             source: false,
         }
@@ -1682,6 +1684,7 @@ impl ModelView {
 pub struct ModelSelections<'a> {
     selections: &'a [DomainPackageRef],
     sources: &'a [DomainPackage],
+    clock_models: &'a [crate::check::TimedModel],
 }
 
 impl<'a> ModelSelections<'a> {
@@ -1692,6 +1695,7 @@ impl<'a> ModelSelections<'a> {
         Self {
             selections,
             sources,
+            clock_models: &[],
         }
     }
 
@@ -1699,6 +1703,14 @@ impl<'a> ModelSelections<'a> {
     #[must_use]
     pub fn selections(&self) -> &'a [DomainPackageRef] {
         self.selections
+    }
+
+    /// Supply the checked graph's run-local clock-place templates for
+    /// observing internally generated typed Clock-reference data.
+    #[must_use]
+    pub fn with_clock_places(mut self, models: &'a [crate::check::TimedModel]) -> Self {
+        self.clock_models = models;
+        self
     }
 
     fn source(&self, identity: &str) -> Option<&'a DomainPackage> {
@@ -1774,6 +1786,12 @@ pub(crate) fn model_views<'a>(
             continue;
         }
         views.push(ModelView::source(normalize_view(source, limits)?));
+    }
+    let clock_places = std::sync::Arc::new(super::clock_reference::DeclaredClockPlaces::new(
+        model_selections.clock_models,
+    ));
+    for view in &mut views {
+        view.clock_places = clock_places.clone();
     }
     Ok(views)
 }
@@ -2720,11 +2738,20 @@ pub(crate) fn observe_protocol_state(
         for object in objects.values() {
             for value in object.fields.values() {
                 for target in population_document::map_references(value, |reference| {
+                    // observe_state authenticated these run-local places above.
+                    // They carry data and create no object-population edge.
+                    if crate::model::clock_reference::is_clock_type(reference.object_type()) {
+                        return Ok(None);
+                    }
                     holders
                         .get(reference)
                         .cloned()
+                        .map(Some)
                         .ok_or_else(|| fault("closed-state-reference-has-a-population"))
-                })? {
+                })?
+                .into_iter()
+                .flatten()
+                {
                     if !targets.contains(&target) {
                         targets.push(target);
                     }
@@ -3172,13 +3199,14 @@ fn admit_invocation_documents(
     let post_self_population = self_object
         .and_then(|object| (!state_machine && post_self).then_some(object.population.as_str()));
     let mut pre_required =
-        document::parameter_populations(views, &operation, &invocation.call.parameters);
+        document::parameter_populations(views, types, &operation, &invocation.call.parameters);
     pre_required.extend(pre_values.read_context_populations());
     pre_required.extend(named.pre.iter().cloned());
     let mut post_required = post_values.read_context_populations();
     post_required.extend(named.post.iter().cloned());
     document::check_population_completeness(
         views,
+        types,
         &pre_snapshot.populations,
         &pre_values.completeness,
         pre_self_population,
@@ -3187,6 +3215,7 @@ fn admit_invocation_documents(
     )?;
     document::check_population_completeness(
         views,
+        types,
         &post_snapshot.populations,
         &post_values.completeness,
         post_self_population,
@@ -3198,12 +3227,14 @@ fn admit_invocation_documents(
         &pre_values.completeness,
         &pre_values.keys_by_population,
         &pre_values.extents,
+        &pre_values.clock_references,
     )?;
     document::check_population_closure(
         &post_snapshot.populations,
         &post_values.completeness,
         &post_values.keys_by_population,
         &post_values.extents,
+        &post_values.clock_references,
     )?;
     document::check_context_closure(&[&pre_values, &post_values])?;
 
@@ -3574,12 +3605,13 @@ fn admit_pre_call(
     let mut required = if context.as_context {
         Vec::new()
     } else {
-        document::parameter_populations(context.views, &operation, input.parameters)
+        document::parameter_populations(context.views, context.types, &operation, input.parameters)
     };
     required.extend(values.read_context_populations());
     required.extend(context.named.iter().cloned());
     document::check_population_completeness(
         context.views,
+        context.types,
         &snapshot.populations,
         &values.completeness,
         input
@@ -3593,6 +3625,7 @@ fn admit_pre_call(
         &values.completeness,
         &values.keys_by_population,
         &values.extents,
+        &values.clock_references,
     )?;
     document::check_context_closure(&[&values])?;
 
