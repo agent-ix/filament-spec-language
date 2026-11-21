@@ -53,7 +53,7 @@ fn a_package_analyze_refuses_request_clocks_before_file_intake() {
     let diagnostic = first_diagnostic(&run);
     assert_eq!(run.exit, 20, "{diagnostic}");
     assert_eq!(diagnostic["code"], "invalid_request");
-    assert_eq!(run.document()["stage"], "request");
+    assert_eq!(run.document()["last_stage"], Value::Null);
     assert!(diagnostic.to_string().contains("clocks"), "{diagnostic}");
 
     let mut empty = unavailable;

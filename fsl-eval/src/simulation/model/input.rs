@@ -467,8 +467,33 @@ impl ProbabilisticParts {
             normalization,
         )
         .map_err(PendingPackageForm::Model)?;
+        let declared = package
+            .supply()
+            .and_then(|supply| supply.equality)
+            .map_or(&[][..], |equality| equality.source_units());
+        let units = world.types().units();
+        let unit_names = units
+            .ids()
+            .filter(|id| declared.iter().any(|row| row.unit_id == *id))
+            .filter_map(|id| {
+                let filament_semantic_value::quantity::QuantityUnit::Declared(unit) =
+                    units.get(id)?
+                else {
+                    return None;
+                };
+                match units
+                    .nominal_node(&unit.key())?
+                    .declaration
+                    .qualified_declaration
+                    .as_slice()
+                {
+                    [name] => Some((name.clone(), id)),
+                    _ => None,
+                }
+            })
+            .collect();
         let operations = model
-            .operation_table(&std::collections::BTreeMap::new())
+            .operation_table(&unit_names)
             .map_err(PendingPackageForm::Operations)?;
         let nodes = package
             .probabilistic()
