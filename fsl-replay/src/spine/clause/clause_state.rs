@@ -689,6 +689,11 @@ impl<'a> ClauseState<'a> {
         cancel: &Cancel,
     ) -> Result<Advance, ClauseRefusal> {
         cancelled(cancel)?;
+        // FR-194: only a timestamped state evaluates absent valuations; any
+        // other kind would drop or fingerprint them without reading them.
+        if !position.absent.is_empty() && self.open.kind != ClauseTraceKind::Timestamped {
+            return Err(fault("absent-valuations-need-a-timestamped-trace"));
+        }
         if self.reading == Reading::Streamed {
             return self.advance_streamed(position, cancel);
         }
@@ -1460,6 +1465,15 @@ impl<'a> ClauseState<'a> {
         let Some(trace) = admission.trace_ref() else {
             return;
         };
+        let absent: Vec<(u64, u64)> = self
+            .seen
+            .iter()
+            .enumerate()
+            .flat_map(|(index, position)| {
+                let index = u64::try_from(index).unwrap_or(u64::MAX);
+                position.absent.iter().map(move |atom| (index, *atom))
+            })
+            .collect();
         let mut meter = Meter::new(self.open.limits.accounting);
         for index in 0..evaluated {
             let Some(position) = self.seen.get(index) else {
@@ -1477,6 +1491,7 @@ impl<'a> ClauseState<'a> {
                         &self.tape,
                         trace,
                         at,
+                        &absent,
                         &mut meter,
                     ) {
                         self.tape
@@ -1967,12 +1982,19 @@ impl<'a> ClauseState<'a> {
                 reference,
                 stamp: position["stamp"].as_u64().ok_or_else(mismatch)?,
                 order_key,
-                absent: position["absent"]
-                    .as_array()
-                    .ok_or_else(mismatch)?
-                    .iter()
-                    .map(|atom| atom.as_u64().ok_or_else(mismatch))
-                    .collect::<Result<_, _>>()?,
+                absent: {
+                    let absent: Vec<u64> = position["absent"]
+                        .as_array()
+                        .ok_or_else(mismatch)?
+                        .iter()
+                        .map(|atom| atom.as_u64().ok_or_else(mismatch))
+                        .collect::<Result<_, _>>()?;
+                    // Written ascending without repeats.
+                    if !absent.windows(2).all(|pair| pair[0] < pair[1]) {
+                        return Err(mismatch());
+                    }
+                    absent
+                },
             });
         }
         let indices = |member: &str| -> Result<Vec<u64>, ClauseRefusal> {

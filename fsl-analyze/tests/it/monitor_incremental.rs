@@ -3004,6 +3004,11 @@ fn spelled_samples(text: &str) -> usize {
 #[trace("TC-2320", "FR-820-AC-1", "FR-643-AC-9", "FR-330-AC-18")]
 fn every_reading_cites_its_samples_by_index() {
     let world = world();
+    // The oracle sees a sample value: one sample spells one.
+    assert_eq!(
+        spelled_samples(&format!("{:?}", spine::sample_position(&text(2)))),
+        1
+    );
     let cancel = Cancel::new();
     let count: u64 = 30;
     let level = |index: u64| i64::try_from(index % 3).expect("a level");
@@ -3897,7 +3902,7 @@ fn admitted_absent(
 fn a_carried_window_member_without_a_valuation_equals_the_batch() {
     let world = world();
     let cancel = Cancel::new();
-    let levels = [1_i64; 8];
+    let levels = [1_i64; 14];
     let open = clause_open(
         &world,
         ClauseTraceKind::Timestamped,
@@ -3920,6 +3925,23 @@ fn a_carried_window_member_without_a_valuation_equals_the_batch() {
             .expect("reads back");
             assert_eq!(state.retained(), before, "a restore holds the same");
             assert_eq!(state.to_bytes().expect("writes"), bytes);
+            // The reader is strict: an absence list is ascending without repeats.
+            let text = String::from_utf8(bytes.clone()).expect("UTF-8");
+            assert!(text.contains(r#""absent":[1]"#), "{text}");
+            for bad in [r#""absent":[1,1]"#, r#""absent":[2,1]"#] {
+                let tampered = text.replace(r#""absent":[1]"#, bad);
+                assert!(
+                    ClauseState::from_bytes(
+                        world.unit.package(),
+                        clause_node(&world, "Twos"),
+                        &open,
+                        tampered.as_bytes(),
+                        &cancel,
+                    )
+                    .is_err(),
+                    "{bad}"
+                );
+            }
         }
         let stamp = index as u64;
         let absent: &[u64] = if index == 1 { &[TWOS_AGGREGATE] } else { &[] };
@@ -4008,4 +4030,23 @@ fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
             "restored {restored}"
         );
     }
+}
+
+/// FR-194: only a `Timestamped` state evaluates absent valuations, so any
+/// other kind refuses a position that names some, before changing anything.
+#[test]
+#[trace("TC-629", "FR-194-AC-17")]
+fn an_absent_valuation_needs_a_timestamped_state() {
+    let world = world();
+    let mut state = finite_state(&world, "Past");
+    let before = state.to_bytes().expect("writes");
+    let refused = state.advance(
+        admitted_absent(&world, "Past", &text(1), 0, &[1]),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(refused, Err(spine::ClauseRefusal::Fault(_))),
+        "{refused:?}"
+    );
+    assert_eq!(state.to_bytes().expect("writes"), before);
 }
