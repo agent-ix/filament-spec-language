@@ -208,6 +208,7 @@ fn row(declaration: &CheckedNodeId, occurrence: u64) -> TemporalBinding {
         clock: ClockConfiguration::EventPosition {
             sequence_authority: "authority".into(),
         },
+        source_unit: None,
         trace: None,
     }
 }

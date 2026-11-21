@@ -7743,30 +7743,80 @@ fn carried_quantity_operands(aggregate: &AggregateTerm) -> Vec<filament_exact::P
     operands
 }
 
-/// An integer interval in canonical text: `steps:0..2`, `steps:0..*` for an
-/// open end, `steps:unbounded` for none.
-fn interval_spelling(interval: Option<fsl_foundation::bound::TemporalInterval>) -> String {
+/// An integer interval in canonical text (FSpec FR-322 "Formula intervals"):
+/// `steps:<lo>..<hi>`, `steps:<lo>..inf` for an open end. An unbounded
+/// operator has no interval operand.
+fn interval_spelling(interval: fsl_foundation::bound::TemporalInterval) -> String {
     use fsl_foundation::bound::TemporalUpper;
-    let Some(interval) = interval else {
-        return "steps:unbounded".to_owned();
-    };
     match interval.upper() {
         TemporalUpper::Finite(upper) => format!("steps:{}..{upper}", interval.lower()),
-        TemporalUpper::Open => format!("steps:{}..*", interval.lower()),
+        TemporalUpper::Open => format!("steps:{}..inf", interval.lower()),
     }
 }
 
-/// A timed interval in canonical text: exact reduced rational bounds, `[`
-/// and `(` for a closed and an open end.
+/// A timed interval in canonical text (FSpec FR-322 "Formula intervals"):
+/// `time:` then `[` or `(`, `<lo>..<hi>`, and `]` or `)`; each bound is its
+/// exact decimal when the expansion terminates and `numerator/denominator`
+/// otherwise; an open upper bound is `inf`.
 fn timed_interval_spelling(timed: &crate::value::member::TimedMember) -> String {
     let lower = if timed.lower_closed { '[' } else { '(' };
-    match &timed.upper {
-        Some(upper) => {
-            let close = if timed.upper_closed { ']' } else { ')' };
-            format!("time:{lower}{},{upper}{close}", timed.lower)
+    let close = if timed.upper_closed { ']' } else { ')' };
+    let upper = timed
+        .upper
+        .as_ref()
+        .map_or_else(|| "inf".to_owned(), exact_decimal_or_ratio);
+    format!(
+        "time:{lower}{}..{upper}{close}",
+        exact_decimal_or_ratio(&timed.lower)
+    )
+}
+
+/// `value` as its terminating decimal (no exponent, no trailing zero after
+/// the point, `0` for zero), else as `numerator/denominator` in lowest terms.
+fn exact_decimal_or_ratio(value: &filament_exact::Rational) -> String {
+    use filament_exact::Integer;
+    let ratio = || value.to_string();
+    let Ok(denominator) = filament_exact::NonZeroInteger::try_from(value.denominator()) else {
+        return ratio();
+    };
+    // Strip the factors 2 and 5; the expansion terminates exactly when 1 remains.
+    let mut rest = denominator.get().clone();
+    let (mut twos, mut fives) = (0_u64, 0_u64);
+    for (factor, count) in [(2_i64, &mut twos), (5_i64, &mut fives)] {
+        let factor = Integer::from(factor);
+        let Ok(divisor) = filament_exact::NonZeroInteger::try_from(&factor) else {
+            return ratio();
+        };
+        loop {
+            let (quotient, remainder) = rest.div_rem_truncating(divisor);
+            if !remainder.is_zero() {
+                break;
+            }
+            rest = quotient;
+            *count += 1;
         }
-        None => format!("time:{lower}{},*)", timed.lower),
     }
+    if rest != Integer::one() {
+        return ratio();
+    }
+    let places = twos.max(fives);
+    let scaled = value
+        .numerator()
+        .mul(&Integer::from(10_i64).pow(&Integer::from(places)));
+    let (digits, _) = scaled.div_rem_truncating(denominator);
+    let negative = digits.is_negative();
+    let mut text = digits.abs().to_string();
+    let places = usize::try_from(places).unwrap_or(usize::MAX);
+    if places > 0 {
+        if text.len() <= places {
+            text = format!("{}{text}", "0".repeat(places + 1 - text.len()));
+        }
+        text.insert(text.len() - places, '.');
+    }
+    if negative {
+        text.insert(0, '-');
+    }
+    text
 }
 
 /// The body-walk operands of [`derived_operands`].
@@ -7914,7 +7964,9 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                 Some(Member::TemporalInterval { interval }) => {
                     // FSpec FR-498: an operator's interval is part of its
                     // identity, so `always[0,2]` and `always[0,3]` are two nodes.
-                    walk.text(&interval_spelling(*interval));
+                    if let Some(interval) = interval {
+                        walk.text(&interval_spelling(*interval));
+                    }
                 }
                 Some(Member::TimedInterval(timed)) => walk.text(&timed_interval_spelling(timed)),
                 // FSpec FR-322 "Named type arguments": an alias is part of

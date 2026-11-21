@@ -129,7 +129,7 @@ fn responses() -> Value {
 
 #[test]
 #[trace("TC-2387", "FR-194-AC-13")]
-#[ignore = "QSL-2338: contract-ir source_owner_for_clause takes a source clock unit's owner from the clause's Boolean semantic_type, so the strict read refuses MissingDeclaration/MissingName at /temporal_bindings/0/clock/timestamp_unit"]
+#[ignore = "QSL-2138: source_unit is emitted and the strict read admits the package, but the run refuses at admit with unsupported-window-aggregate (a window aggregate over a timestamped sample trace is not yet supported)"]
 fn a_quantile_aggregate_reaches_a_verdict_through_run() {
     let directory = tempfile::tempdir().unwrap();
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
@@ -194,7 +194,7 @@ fn model_subject_aggregate_refusal() -> fsl_semantics::check::TemporalCause {
 /// last tick the window holds 20 responses: 18 of 1 ms, then 6 ms and 7 ms.
 #[test]
 #[trace("TC-629", "FR-194-AC-1", "FR-194-AC-2")]
-#[ignore = "QSL-2338: contract-ir source_owner_for_clause takes a source clock unit's owner from the clause's Boolean semantic_type, so the strict read refuses MissingDeclaration/MissingName at /temporal_bindings/0/clock/timestamp_unit"]
+#[ignore = "QSL-2138: source_unit is emitted and the strict read admits the package, but the run refuses at admit with unsupported-window-aggregate (a window aggregate over a timestamped sample trace is not yet supported)"]
 fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
     let directory = tempfile::tempdir().unwrap();
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
