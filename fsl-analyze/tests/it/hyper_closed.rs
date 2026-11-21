@@ -434,8 +434,7 @@ fn a_universe_of_no_selected_model_is_refused_and_one_of_another_model_is_skippe
             Some(alias) => alias_of(&simulation, alias),
             None => ModelSystem::over_model(simulation, &own).map(|_| ()),
         }
-        .err()
-        .expect("the universe is refused");
+        .expect_err("the universe is refused");
         format!("{failure:?}")
     };
 

@@ -1078,6 +1078,16 @@ fn types_consume_value_bits(
     Ok(false)
 }
 
+/// The catalog cause of an analyze refusal of a step's item.
+const fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static str {
+    match refusal {
+        crate::analyze::AnalyzeRefusal::Provision(_) => "missing-member",
+        crate::analyze::AnalyzeRefusal::Binding(_) | crate::analyze::AnalyzeRefusal::Package(_) => {
+            "invalid-value"
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1208,12 +1218,3 @@ mod tests {
     }
 }
 
-/// The catalog cause of an analyze refusal of a step's item.
-const fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static str {
-    match refusal {
-        crate::analyze::AnalyzeRefusal::Provision(_) => "missing-member",
-        crate::analyze::AnalyzeRefusal::Binding(_) | crate::analyze::AnalyzeRefusal::Package(_) => {
-            "invalid-value"
-        }
-    }
-}

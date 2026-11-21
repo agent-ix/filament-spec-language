@@ -443,6 +443,7 @@ impl World {
         )
     }
 
+    #[allow(clippy::too_many_arguments, reason = "the fixture independently selects live objects, declarations, limits, checking mode, and reward evaluator")]
     fn try_build_with_mode_and_evaluator(
         model: &Model,
         keys: &[&str],

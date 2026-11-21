@@ -159,8 +159,7 @@ fn a_holding_relation_is_checked_over_reachable_transition_tuples() {
 fn relation_tuple_limit_and_depth_bound_are_reported() {
     let (package, relation, document) = package_and_relation(Vault::Secure, DETERMINISTIC);
     let (packages, snapshots, initial) = initial_world(&document);
-    let mut limits = ModelCheckLimits::default();
-    limits.max_relation_tuples = 10;
+    let limits = ModelCheckLimits { max_relation_tuples: 10, ..ModelCheckLimits::default() };
     let stopped = check_model_relation(
         ModelRelationCheckRequest {
             relation: &relation,
@@ -209,8 +208,7 @@ fn relation_tuple_limit_and_depth_bound_are_reported() {
 fn state_budget_exhaustion_does_not_settle_holds() {
     let (package, relation, document) = package_and_relation(Vault::Secure, DETERMINISTIC);
     let (packages, snapshots, initial) = initial_world(&document);
-    let mut limits = ModelCheckLimits::default();
-    limits.limits = Limits::default().with_max_states(1);
+    let limits = ModelCheckLimits { limits: Limits::default().with_max_states(1), ..ModelCheckLimits::default() };
     let outcome = check_model_relation(
         ModelRelationCheckRequest {
             relation: &relation,
@@ -259,7 +257,7 @@ fn a_violated_relation_returns_a_replayable_step_tuple() {
     );
     let subject_values = subjects(&package, &packages, &snapshots, &initial);
     let subject = subject_values.first().expect("one alias subject");
-    let systems = vec![
+    let systems = [
         ModelSystem::new(subject.simulation.clone()).expect("a model system"),
         ModelSystem::new(subject.simulation.clone()).expect("a model system"),
     ];
@@ -326,7 +324,7 @@ fn relation_tuple_witness_preserves_coalesced_operation_results() {
 
     let subject_values = subjects(&package, &packages, &snapshots, &initial);
     let subject = subject_values.first().expect("one alias subject");
-    let systems = vec![
+    let systems = [
         ModelSystem::new(subject.simulation.clone()).expect("a model system"),
         ModelSystem::new(subject.simulation.clone()).expect("a model system"),
     ];
@@ -386,7 +384,7 @@ fn an_undefined_relation_tuple_is_replayed_as_undefined() {
 
     let subject_values = subjects(&package, &packages, &snapshots, &initial);
     let subject = subject_values.first().expect("one alias subject");
-    let systems = vec![
+    let systems = [
         ModelSystem::new(subject.simulation.clone()).expect("a model system"),
         ModelSystem::new(subject.simulation.clone()).expect("a model system"),
     ];
@@ -438,7 +436,7 @@ fn an_earlier_false_tuple_wins_over_later_undefined_tuples() {
 
     let subject_values = subjects(&package, &packages, &snapshots, &initial);
     let subject = subject_values.first().expect("one alias subject");
-    let systems = vec![
+    let systems = [
         ModelSystem::new(subject.simulation.clone()).expect("a model system"),
         ModelSystem::new(subject.simulation.clone()).expect("a model system"),
     ];

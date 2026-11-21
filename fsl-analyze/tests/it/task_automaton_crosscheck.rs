@@ -244,6 +244,7 @@ fn cross_check(world: &World, claim: &str, seeds: u64, depth: usize) -> Coverage
             }) {
                 coverage.ties += 1;
             }
+            #[allow(clippy::mutable_key_type, reason = "exact rational ordering is immutable despite the integer representation cache")]
             let fractions: BTreeSet<Rational> = v
                 .iter()
                 .skip(1)
@@ -450,7 +451,7 @@ fn the_lowering_refuses_successors_past_a_deadline_miss() {
     let product = TaskProductSystem::new(timed, "MFp").expect("checked task product");
     let automaton = TaskAutomaton::new(&product);
     let (mut location, mut v) = automaton.initial().expect("initial").remove(0);
-    let mut take = |location: &mut fsl_eval::simulation::model::TaskLocation,
+    let take = |location: &mut fsl_eval::simulation::model::TaskLocation,
                     v: &mut Vec<Rational>,
                     wanted: &dyn Fn(&TaskEdge) -> bool| {
         let edge = automaton
@@ -592,7 +593,7 @@ fn the_automaton_exposes_clocks_subtractions_diagonals_and_templates() {
         .into_iter()
         .find(|edge| matches!(&edge.kind, EdgeKind::Scheduler(t) if t.task == "t1" && t.action == TaskTransitionAction::Dispatch))
         .expect("t1 dispatches first");
-    v = automaton
+    let _ = automaton
         .fire(&dispatch, &v)
         .expect("fire")
         .expect("enabled");

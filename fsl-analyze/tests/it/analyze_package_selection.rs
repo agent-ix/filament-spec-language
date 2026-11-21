@@ -932,10 +932,11 @@ fn a_pending_package_family_refuses_typed_naming_it() {
         "eventually holds(c.value = 3)",
     );
     let unit = crate::counter::unit_text(&format!("{}{fair}", bounded()));
-    for (items, expected) in [(
-        json!([{"claim": "Bounded"}, {"claim": "Fair"}]),
-        "items[1] names a temporal clause whose fairness has no package form yet at",
-    )] {
+    {
+        let (items, expected) = (
+            json!([{"claim": "Bounded"}, {"claim": "Fair"}]),
+            "items[1] names a temporal clause whose fairness has no package form yet at",
+        );
         let (_, package) = both_routes(
             "package-route-pending",
             &unit,

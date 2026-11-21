@@ -335,21 +335,20 @@ impl fsl_analyze::provider::ExternalProvider for Answering {
     }
 }
 
-fn contract_provider(
-    verdict: fsl_analyze::provider::ProviderVerdict,
-) -> (
+type ContractTarget = (
+    fsl_replay::contract_check::ContractForm,
+    fsl_foundation::source::provenance::OccurrenceKey,
+    fsl_replay::contract_check::ContractSubject,
+);
+type ContractProvider = (
     fsl_analyze::analyze::Engine,
     std::sync::Arc<Mutex<Vec<Value>>>,
-    std::sync::Arc<
-        Mutex<
-            Vec<(
-                fsl_replay::contract_check::ContractForm,
-                fsl_foundation::source::provenance::OccurrenceKey,
-                fsl_replay::contract_check::ContractSubject,
-            )>,
-        >,
-    >,
-) {
+    std::sync::Arc<Mutex<Vec<ContractTarget>>>,
+);
+
+fn contract_provider(
+    verdict: fsl_analyze::provider::ProviderVerdict,
+) -> ContractProvider {
     use fsl_semantics::check::Capability::OperationContract;
     let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
     let targets = std::sync::Arc::new(Mutex::new(Vec::new()));
