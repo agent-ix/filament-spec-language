@@ -142,7 +142,7 @@ fn pin_check_accepts_tag_and_full_sha_rev_and_refuses_short_rev() {
             &manifest,
             format!(
                 "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
-                 [dependencies]\nfilament-contract-model = {{ git = \"https://github.com/agent-ix/filament-contract-ir\", {dependency} }}\n"
+                 [dependencies]\nfilament-contract-model = {{ git = \"https://github.com/agent-ix/filament-contract-ir\"{dependency} }}\n"
             ),
         )
         .expect("write scratch manifest");
@@ -153,16 +153,25 @@ fn pin_check_accepts_tag_and_full_sha_rev_and_refuses_short_rev() {
         ])
     };
     let sha = "f5c913bd0123456789abcdef0123456789abcdef";
-    let tag = check("tag = \"v1.2.3\"");
+    let tag = check(", tag = \"v1.2.3\"");
     assert_eq!(tag.status.code(), Some(0), "{}", report(&tag));
-    let full = check(&format!("rev = \"{sha}\""));
+    let full = check(&format!(", rev = \"{sha}\""));
     assert_eq!(full.status.code(), Some(0), "{}", report(&full));
-    for refused in [
-        check(&format!("rev = \"{}\"", &sha[..8])),
-        check(&format!("rev = \"{}z\"", &sha[..39])),
-        check("branch = \"main\""),
+    let short = format!(", rev = \"{}\"", &sha[..8]);
+    let non_hex = format!(", rev = \"{}z\"", &sha[..39]);
+    let both = format!(", tag = \"v1.2.3\", rev = \"{sha}\"");
+    for (dependency, message) in [
+        (short.as_str(), "uses rev that is not a full 40-hex sha"),
+        (non_hex.as_str(), "uses rev that is not a full 40-hex sha"),
+        (", branch = \"main\"", "uses branch"),
+        ("", "missing tag or full-sha rev"),
+        (both.as_str(), "uses both tag and rev"),
     ] {
-        assert_eq!(refused.status.code(), Some(1), "{}", report(&refused));
+        let refused = check(dependency);
+        let text = report(&refused);
+        assert_eq!(refused.status.code(), Some(1), "{text}");
+        assert!(text.contains(message), "{dependency}: {text}");
+        assert!(text.contains("filament-contract-model"), "{text}");
     }
 }
 

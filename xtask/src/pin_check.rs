@@ -166,13 +166,20 @@ fn inspect_dependencies(
         let branch = dependency.get("branch").and_then(toml::Value::as_str);
         let rev = dependency.get("rev").and_then(toml::Value::as_str);
         let full_rev = rev.is_some_and(is_full_sha);
-        if (tag.is_none() && rev.is_none()) || branch.is_some() || (rev.is_some() && !full_rev) {
+        if (tag.is_none() && rev.is_none())
+            || branch.is_some()
+            || (rev.is_some() && !full_rev)
+            || (tag.is_some() && rev.is_some())
+        {
             let mut selectors = Vec::new();
             if tag.is_none() && rev.is_none() {
                 selectors.push("missing tag or full-sha rev".to_owned());
             }
             if branch.is_some() {
                 selectors.push("uses branch".to_owned());
+            }
+            if tag.is_some() && rev.is_some() {
+                selectors.push("uses both tag and rev".to_owned());
             }
             if rev.is_some() && !full_rev {
                 selectors.push("uses rev that is not a full 40-hex sha".to_owned());
