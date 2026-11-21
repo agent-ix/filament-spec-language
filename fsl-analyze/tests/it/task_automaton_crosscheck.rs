@@ -620,7 +620,20 @@ fn jitter_lowers_to_a_pending_phase_and_a_release_edge() {
     let model = world.system();
     let timed = TimedSystem::new(&model, "M").expect("dense timed model");
     let product = TaskProductSystem::new(timed, "JFp").expect("checked task product");
-    let automaton = TaskAutomaton::new(&product);
+    let automaton = TaskAutomaton::new_structural_jitter(&product);
+    assert_eq!(
+        TaskAutomaton::new(&product).certification(),
+        Err(CertificationRefusal::Jitter),
+        "v1 certification is jitter-free"
+    );
+    assert_eq!(
+        TaskAutomaton::new(&product)
+            .successors(&automaton.initial().expect("initial").remove(0).0)
+            .err(),
+        Some(TaskAutomatonRefusal::Uncertified(
+            CertificationRefusal::Jitter
+        ))
+    );
     let (location, v) = automaton.initial().expect("initial").remove(0);
     let successors = automaton.successors(&location).expect("successors");
     let activate = successors

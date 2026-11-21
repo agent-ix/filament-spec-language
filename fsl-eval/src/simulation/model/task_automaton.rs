@@ -40,6 +40,15 @@
 //! [`TaskLocation::key`] is the finite key. Its fields are plain data so the
 //! certificate's `TaskProductKey` can be built from it field by field.
 //!
+//! # Jitter
+//!
+//! FR-418 text covers recomputing release jitter, and the lowering models it
+//! (jitter clocks, a pending phase, a release edge within the window). v1
+//! certification is jitter-free: [`TaskAutomaton::certification`] refuses a set
+//! with nonzero jitter ([`CertificationRefusal::Jitter`]) until
+//! [`TaskProductSystem`] can select a jitter and the cross-check gains a jitter
+//! oracle. [`TaskAutomaton::new_structural_jitter`] is for structural tests only.
+//!
 //! # Deadline misses end the lowering
 //!
 //! A deadline-miss edge targets a terminal location: its [`LocationInfo`] stops
@@ -607,6 +616,11 @@ pub enum CertificationRefusal {
     /// admission rejects.
     #[error("two tasks share a fixed priority")]
     EqualPriorities,
+    /// A task has nonzero release jitter. FR-418 covers jitter recomputation,
+    /// but v1 certification is jitter-free: [`TaskProductSystem`] cannot select
+    /// a jitter, so the cross-check has no oracle for it.
+    #[error("a task has nonzero release jitter")]
+    Jitter,
 }
 
 /// Why the lowering could not produce a location's successors.
@@ -649,6 +663,7 @@ pub struct TaskAutomaton<'t, 's, 'a> {
     source_places: usize,
     arrival: Vec<Option<usize>>,
     slots: Vec<Vec<SlotClocks>>,
+    structural_jitter: bool,
 }
 
 impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
@@ -733,6 +748,26 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
             source_places,
             arrival,
             slots,
+            structural_jitter: false,
+        }
+    }
+
+    /// Lowers `product` admitting nonzero release jitter for structural
+    /// inspection only. [`Self::certification`] still refuses such a set; this
+    /// constructor lets edge queries run so the jitter lowering (pending phase,
+    /// release edge, jitter clocks) can be tested. It has no concrete oracle and
+    /// must never back a certificate.
+    pub fn new_structural_jitter(product: &'t TaskProductSystem<'s, 'a>) -> Self {
+        Self {
+            structural_jitter: true,
+            ..Self::new(product)
+        }
+    }
+
+    fn gate(&self) -> Result<(), CertificationRefusal> {
+        match self.certification() {
+            Err(CertificationRefusal::Jitter) if self.structural_jitter => Ok(()),
+            other => other,
         }
     }
 
@@ -790,6 +825,14 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         }
         if !plan.has_fixed_work_demand() {
             return Err(CertificationRefusal::NotFixedWork);
+        }
+        let jittered = plan
+            .task_set
+            .tasks
+            .iter()
+            .any(|task| !task.jitter.is_zero());
+        if jittered {
+            return Err(CertificationRefusal::Jitter);
         }
         if matches!(
             plan.policy,
@@ -1176,7 +1219,7 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         &self,
         location: &TaskLocation,
     ) -> Result<(Vec<TaskEdge>, Vec<Overflow>), TaskAutomatonRefusal> {
-        self.certification()?;
+        self.gate()?;
         if location.control.missed {
             return Err(TaskAutomatonRefusal::PostMiss);
         }
@@ -1403,7 +1446,7 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         &self,
         location: &TaskLocation,
     ) -> Result<Vec<TaskEdge>, TaskAutomatonRefusal> {
-        self.certification()?;
+        self.gate()?;
         if location.control.missed {
             return Err(TaskAutomatonRefusal::PostMiss);
         }
