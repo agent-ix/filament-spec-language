@@ -466,7 +466,7 @@ fn timed_hidden_fair(guard: &str) -> Refining {
                 .replace(" late = self.late;", "")
                 .replace(
                     "step M::Call::send -> A::Call::send(self);",
-                    "step M::Call::send -> A::Call::send(self);\nensure fair weak A::Call::send;"
+                    "step M::Call::send -> A::Call::send(self);\nassume fair weak M::Call::send;\nensure fair weak A::Call::send;"
                 )
         ),
     )
