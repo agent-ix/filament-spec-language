@@ -4921,12 +4921,20 @@ mod tests {
     fn a_package_without_a_graph_ends_the_run_with_the_typed_emission_cause() {
         use fsl_analyze::analyze::document::HeldIdentityError;
         use fsl_analyze::analyze::GraphUnavailable;
-        let cause = identity_cause(HeldIdentityError::NoGraph(GraphUnavailable::NotEmitted));
+        let cause = identity_cause(HeldIdentityError::NoGraph(GraphUnavailable::EmitRefused(
+            Box::new(fsl_package::EmitRefusal::OutputLimit(
+                fsl_foundation::diagnostic::LimitExceeded::new(
+                    fsl_foundation::Setting::EmitOutputBytes,
+                    1,
+                    2,
+                ),
+            )),
+        )));
         assert!(matches!(
             cause,
-            RunCause::AnalyzeEmission(GraphUnavailable::NotEmitted)
+            RunCause::AnalyzeEmission(GraphUnavailable::EmitRefused(_))
         ));
-        assert_eq!(cause.code(), Code::ResourceExhausted);
+        assert_eq!(cause.code(), Code::StageLimitExceeded);
         assert_ne!(
             cause.category(),
             filament_semantic_value::catalog::Category::InternalFailure

@@ -2,7 +2,7 @@
 //! FR-280's in-process provider boundary over the same admitted analyze request.
 
 use crate::analyze::{
-    analyze_bound, AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
+    analyze.map_err(|_| NotAdmitted::Other(None))?bound, AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
     SourceProvision, SubjectBinding,
 };
 use filament_exact::Cancel;
@@ -1010,8 +1010,8 @@ pub(crate) enum NotAdmitted {
     /// refusal, with the reader's code, cause and pointer.
     Refused(fsl_package::PackageAdmissionRefusal),
     /// The package did not emit, or the read failed for a reason that is no
-    /// admission refusal.
-    Other,
+    /// admission refusal: the emitter's own refusal when it named one.
+    Other(Option<Box<fsl_package::EmitRefusal>>),
 }
 
 /// `package` emitted and read back through the strict reader against
@@ -1045,7 +1045,15 @@ pub(crate) fn read_package<'p>(
             }
             other => other,
         };
-        typed.map_or(NotAdmitted::Other, NotAdmitted::Refused)
+        typed.map_or_else(
+            || {
+                NotAdmitted::Other(match &refusal {
+                    fsl_package::ImportViewRefusal::Emission { refusal, .. } => refusal.clone(),
+                    _ => None,
+                })
+            },
+            NotAdmitted::Refused,
+        )
     })
 }
 

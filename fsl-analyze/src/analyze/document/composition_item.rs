@@ -527,6 +527,15 @@ enum Unavailable {
     /// The package emitted no complete admitted bytes, or they hold no
     /// readable graph.
     Emission(GraphUnavailable),
+    /// The component's package is no dependency of the request's package, so
+    /// there is none to emit.
+    NotDependency,
+}
+
+/// A catalog code FSpec FR-272 gives no cause: the cause is the empty string,
+/// which writes no `cause` member.
+fn without_cause(code: &'static str) -> CatalogCode {
+    CatalogCode::new(code, "")
 }
 
 /// The settled item that reports the typed cause of an unavailable component
@@ -542,16 +551,43 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
                 ProofRefusalCause::InvalidInput
             },
             DeclineCode::Fsl(refusal.code),
-            CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause()),
+            // A reader refusal that names no cause writes none; only a missing
+            // import has a catalog cause of its own (FSpec FR-272).
+            if refusal.cause.is_some() || refusal.code == Code::MissingImport {
+                CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause())
+            } else {
+                without_cause(refusal.code.as_str())
+            },
         ),
+        Unavailable::Emission(GraphUnavailable::EmitRefused(refusal)) => {
+            TerminalRecord::disposition_declined(
+                index,
+                if refusal.code() == Code::StageLimitExceeded {
+                    ProofRefusalCause::IncompleteInput
+                } else {
+                    ProofRefusalCause::InvalidInput
+                },
+                DeclineCode::Fsl(refusal.code()),
+                refusal.cause().map_or_else(
+                    || without_cause(refusal.code().as_str()),
+                    |cause| CatalogCode::new(refusal.code().as_str(), cause),
+                ),
+            )
+        }
         Unavailable::Emission(GraphUnavailable::NotEmitted) => {
             TerminalRecord::disposition_declined(
                 index,
-                ProofRefusalCause::IncompleteInput,
-                DeclineCode::Fsl(Code::ResourceExhausted),
-                CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+                ProofRefusalCause::InvalidInput,
+                DeclineCode::Fsl(Code::InvalidPackage),
+                without_cause("invalid_package"),
             )
         }
+        Unavailable::NotDependency => TerminalRecord::disposition_declined(
+            index,
+            ProofRefusalCause::InvalidInput,
+            DeclineCode::Fsl(Code::MissingImport),
+            CatalogCode::new("missing_import", "missing-selection"),
+        ),
         Unavailable::Emission(GraphUnavailable::Unreadable(_)) => {
             TerminalRecord::disposition_declined(
                 index,
@@ -672,7 +708,7 @@ fn restate(
             Err(ComponentKeyRefusal::IndexOutOfRange { pointer, .. }) => {
                 // FSpec FR-272: `malformed_wire` carries no cause.
                 return Err(refuse(
-                    CatalogCode::new("malformed_wire", ""),
+                    without_cause("malformed_wire"),
                     format!("{key_pointer}{pointer}"),
                 ));
             }
@@ -698,7 +734,7 @@ fn component_graphs(
                 .ok()
                 .and_then(|library| ctx.package.dependencies().get(&library).cloned())
             {
-                None => Err(Unavailable::Emission(GraphUnavailable::NotEmitted)),
+                None => Err(Unavailable::NotDependency),
                 Some(dependency) => {
                     match crate::provider::read_package(
                         &dependency,
@@ -712,13 +748,105 @@ fn component_graphs(
                         Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                             Err(Unavailable::Refused(refusal))
                         }
-                        Err(crate::provider::NotAdmitted::Other) => {
-                            Err(Unavailable::Emission(GraphUnavailable::NotEmitted))
-                        }
+                        Err(crate::provider::NotAdmitted::Other(refusal)) => Err(Unavailable::Emission(
+                            GraphUnavailable::of_not_admitted(refusal),
+                        )),
                     }
                 }
             };
             (package.to_owned(), graph)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fsl_package::{EmitRefusal, PackageAdmissionRefusal};
+    use ix_trace_rs::trace;
+
+    /// The code and cause the item settled with.
+    fn settled(failure: &Unavailable) -> (&'static str, &'static str) {
+        let item = unavailable(RequestIndex::new(0), "Sys", failure);
+        let ResolvedItem::Settled { record, .. } = *item else {
+            panic!("an unavailable graph settles the item");
+        };
+        let code = record.diagnostic().expect("a typed diagnostic");
+        (code.code(), code.cause())
+    }
+
+    fn reader_refusal(code: Code, cause: Option<&str>) -> PackageAdmissionRefusal {
+        PackageAdmissionRefusal {
+            limit: None,
+            code,
+            cause: cause.map(str::to_owned),
+            pointer: None,
+            identity: None,
+        }
+    }
+
+    /// FR-1044-AC-15, no-graph clause: a component package whose emission
+    /// reaches the emit limit settles with the emitter's own
+    /// `stage_limit_exceeded` and the limit kind's cause; no other cause is
+    /// written (FSpec FR-272's `insufficient-next-charge` has a payload the
+    /// record does not carry).
+    #[trace("TC-3155", "FR-1044-AC-15")]
+    #[test]
+    fn a_component_package_over_the_emit_limit_settles_with_the_emitters_limit_cause() {
+        let limit = fsl_foundation::diagnostic::LimitExceeded::new(
+            fsl_foundation::Setting::EmitOutputBytes,
+            1,
+            2,
+        );
+        let kind_cause = limit.kind().catalog_cause();
+        let refusal = EmitRefusal::OutputLimit(limit);
+        let failure = Unavailable::Emission(GraphUnavailable::of_not_admitted(Some(Box::new(
+            refusal.clone(),
+        ))));
+        let (code, cause) = settled(&failure);
+        assert_eq!(code, "stage_limit_exceeded");
+        assert_eq!(cause, kind_cause);
+        assert_eq!(refusal.cause(), Some(kind_cause));
+        assert_ne!(cause, "insufficient-next-charge");
+    }
+
+    /// FR-1044-AC-15: an emission that ended with no refusal of its own is no
+    /// limit stop and writes no cause.
+    #[trace("TC-3155", "FR-1044-AC-15")]
+    #[test]
+    fn an_emission_without_a_refusal_is_no_limit_stop() {
+        let (code, cause) = settled(&Unavailable::Emission(GraphUnavailable::of_not_admitted(
+            None,
+        )));
+        assert_eq!(code, "invalid_package");
+        assert_eq!(cause, "");
+    }
+
+    /// FR-1044-AC-15: a reader refusal that names no cause writes none, never
+    /// the `invalid-value` default; a reader cause is written as read.
+    #[trace("TC-3155", "FR-1044-AC-15")]
+    #[test]
+    fn a_reader_refusal_without_a_cause_writes_no_cause() {
+        let none = reader_refusal(Code::InvalidPackage, None);
+        assert_eq!(
+            settled(&Unavailable::Refused(none)),
+            ("invalid_package", "")
+        );
+        let named = reader_refusal(Code::InvalidPackage, Some("ambiguous-name"));
+        assert_eq!(
+            settled(&Unavailable::Refused(named)),
+            ("invalid_package", "ambiguous-name")
+        );
+    }
+
+    /// FR-1044-AC-15: a component package that is no dependency of the
+    /// request's package is the catalog's `missing_import`/`missing-selection`.
+    #[trace("TC-3155", "FR-1044-AC-15")]
+    #[test]
+    fn a_component_package_that_is_no_dependency_settles_missing_import() {
+        assert_eq!(
+            settled(&Unavailable::NotDependency),
+            ("missing_import", "missing-selection")
+        );
+    }
 }

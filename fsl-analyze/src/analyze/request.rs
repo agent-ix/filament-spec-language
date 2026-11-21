@@ -491,6 +491,7 @@ pub(crate) fn analyze_bound<'a>(
     // typed refusal and never a fault of a later step, and the items share
     // the one read. A package that does not emit has no read, and its items
     // settle as they do without one.
+    let mut own_refusal = None;
     let read = match crate::provider::read_package(package, binding.packages, limits.emit) {
         Ok(read) => Some(read),
         Err(crate::provider::NotAdmitted::Refused(refusal)) => {
@@ -498,7 +499,10 @@ pub(crate) fn analyze_bound<'a>(
                 refusal,
             )));
         }
-        Err(crate::provider::NotAdmitted::Other) => None,
+        Err(crate::provider::NotAdmitted::Other(refusal)) => {
+            own_refusal = refusal;
+            None
+        }
     };
     let simulation = simulation(input, binding, limits);
     fsl_eval::simulation::model::ModelSystem::new(simulation)
@@ -508,7 +512,7 @@ pub(crate) fn analyze_bound<'a>(
     let shared = read.as_ref().map(crate::provider::Shared::of);
     let own = match &read {
         Some(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
-        None => Err(super::GraphUnavailable::NotEmitted),
+        None => Err(super::GraphUnavailable::of_not_admitted(own_refusal)),
     };
     let mut dependency_graphs = BTreeMap::new();
     for dependency in package.dependencies().values().chain(components.values()) {
@@ -523,7 +527,9 @@ pub(crate) fn analyze_bound<'a>(
                     refusal,
                 )));
             }
-            Err(crate::provider::NotAdmitted::Other) => Err(super::GraphUnavailable::NotEmitted),
+            Err(crate::provider::NotAdmitted::Other(refusal)) => {
+                Err(super::GraphUnavailable::of_not_admitted(refusal))
+            }
         };
         dependency_graphs.insert(name, graph);
     }

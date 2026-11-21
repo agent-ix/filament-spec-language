@@ -810,9 +810,17 @@ fn a_package_over_the_emit_limit_reports_the_typed_cause_not_a_nested_id() {
     };
     match run(limited) {
         Err(AnalyzeDocumentError::Identity(HeldIdentityError::NoGraph(
-            GraphUnavailable::NotEmitted,
-        )))
-        | Err(AnalyzeDocumentError::Refused(_)) => {}
+            GraphUnavailable::EmitRefused(refusal),
+        ))) => {
+            // The emitter's own typed code and the limit kind's cause, never
+            // the `insufficient-next-charge` default.
+            assert_eq!(refusal.code(), fsl_foundation::Code::StageLimitExceeded);
+            assert!(
+                refusal.cause().is_some_and(|cause| cause.ends_with("-exceeded")),
+                "{refusal:?}"
+            );
+        }
+        Err(AnalyzeDocumentError::Refused(_)) => {}| Err(AnalyzeDocumentError::Refused(_)) => {}
         other => panic!(
             "the typed cause is reported: {:?}",
             other.map(|run| run.document)
