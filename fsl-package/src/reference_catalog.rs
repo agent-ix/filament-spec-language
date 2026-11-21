@@ -73,9 +73,10 @@ impl ReferenceDeclaration<'_> {
 /// There is no constructor from bare rows, maps or Exact projection output.
 #[derive(Debug)]
 pub struct ReferenceCatalog<'a> {
-    package: &'a CheckedPackageV2,
+    package: Option<&'a CheckedPackageV2>,
     source: Option<&'a CheckedPackage>,
-    model: &'a StateModel,
+    model: Option<&'a StateModel>,
+    selected_models: Option<&'a SelectedModels>,
     declarations: Vec<ReferenceDeclaration<'a>>,
 }
 
@@ -150,7 +151,226 @@ fn object_node_equal(
     Ok(true)
 }
 
+fn insert_declaration<'a>(
+    declarations: &mut Vec<ReferenceDeclaration<'a>>,
+    row: &'a SelectedExactDeclarationRow,
+    actual: &'a EffectiveId,
+    key: &'a DeclarationKey,
+    universe: &'a ObjectUniverse,
+    budget: &mut NativeJoinBudget,
+) -> Result<(), ReferenceCatalogError> {
+    let SelectedExactIdentity::Object(effective) = &row.exact_identity else {
+        return Err(ReferenceCatalogError::ForeignModel);
+    };
+    if !StateModel::reference_identity_equal_with_work(effective, actual, &mut |units| {
+        work(budget, units)
+    })? {
+        return Err(ReferenceCatalogError::ConflictingMapping);
+    }
+    let node = &row.structural_node;
+    let [CheckedNodePathSegment::Name(tag), CheckedNodePathSegment::Name(form), CheckedNodePathSegment::Name(original)] =
+        node.path.as_slice()
+    else {
+        return Err(ReferenceCatalogError::ForeignModel);
+    };
+    if node.ordinal != 0
+        || !text_equal(tag, "model", budget)?
+        || !text_equal(form, "object_type", budget)?
+        || !text_equal(&node.package, &key.package, budget)?
+        || !text_equal(original, &key.node, budget)?
+        || !text_equal(&row.selected_document, &key.package, budget)?
+        || !text_equal(&row.original_identity, &key.node, budget)?
+    {
+        return Err(ReferenceCatalogError::ForeignModel);
+    }
+    let mut duplicate = false;
+    for previous in declarations.iter() {
+        let same_type = StateModel::reference_identity_equal_with_work(
+            previous.effective,
+            actual,
+            &mut |units| work(budget, units),
+        )?;
+        let same_node = text_equal(&previous.key.package, &key.package, budget)?
+            && text_equal(&previous.key.node, &key.node, budget)?;
+        if same_type != same_node {
+            return Err(ReferenceCatalogError::ConflictingMapping);
+        }
+        if same_type {
+            if !text_equal(
+                &previous.universe.model_selection.identity,
+                &universe.model_selection.identity,
+                budget,
+            )? || previous.universe.root_types.len() != universe.root_types.len()
+            {
+                return Err(ReferenceCatalogError::ConflictingMapping);
+            }
+            for (left, right) in previous
+                .universe
+                .root_types
+                .iter()
+                .zip(&universe.root_types)
+            {
+                if !StateModel::reference_identity_equal_with_work(left, right, &mut |units| {
+                    work(budget, units)
+                })? {
+                    return Err(ReferenceCatalogError::ConflictingMapping);
+                }
+            }
+            duplicate = true;
+        }
+    }
+    if !duplicate {
+        charge(
+            budget,
+            NativeJoinChargeKind::Storage,
+            size_of::<ReferenceDeclaration<'a>>(),
+        )?;
+        declarations
+            .try_reserve_exact(1)
+            .map_err(|_| ReferenceCatalogError::Allocation)?;
+        declarations.push(ReferenceDeclaration {
+            row,
+            effective: actual,
+            key,
+            universe,
+        });
+    }
+    Ok(())
+}
+
 impl<'a> ReferenceCatalog<'a> {
+    /// Bind a direct source function call to its checked package and original
+    /// model admission. This route executes S4 directly; it does not claim I2
+    /// byte admission or construct a simulator to supply reference authority.
+    ///
+    /// # Errors
+    /// Refuses a different admission, conflicting complete identities and
+    /// caller work/storage denials. No caller-built row collection is accepted.
+    pub fn from_checked_call(
+        source: &'a CheckedPackage,
+        models: &'a SelectedModels,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Self, ReferenceCatalogError> {
+        let mut declarations = Vec::new();
+        Self::join_call_rows(
+            source.graph().selected_exact_declaration_rows(),
+            models,
+            &mut declarations,
+            budget,
+        )?;
+        Ok(Self {
+            package: None,
+            source: Some(source),
+            model: None,
+            selected_models: Some(models),
+            declarations,
+        })
+    }
+
+    /// Bind a package function call to strict byte admission and the actual
+    /// model-admission rows, without constructing a state simulator.
+    ///
+    /// # Errors
+    /// Preserves the strict structural join and charged identity refusals.
+    pub fn from_admitted_call(
+        package: &'a CheckedPackageV2,
+        models: &'a SelectedModels,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Self, ReferenceCatalogError> {
+        let identities = models.exact_identities(package, budget)?;
+        let mut declarations = Vec::new();
+        for admitted in identities.declaration_rows() {
+            work(budget, 1)?;
+            // Borrow the genuine producer row, not the join's owned copy.
+            for row in models.exact_declaration_rows() {
+                work(budget, 1)?;
+                if row.form != SelectedExactDeclarationForm::ObjectType
+                    || !object_node_equal(&row.structural_node, &admitted.structural_node, budget)?
+                {
+                    continue;
+                }
+                Self::join_call_rows(std::slice::from_ref(row), models, &mut declarations, budget)?;
+            }
+        }
+        Ok(Self {
+            package: Some(package),
+            source: None,
+            model: None,
+            selected_models: Some(models),
+            declarations,
+        })
+    }
+
+    fn join_call_rows(
+        rows: &'a [SelectedExactDeclarationRow],
+        models: &'a SelectedModels,
+        declarations: &mut Vec<ReferenceDeclaration<'a>>,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<(), ReferenceCatalogError> {
+        for row in rows {
+            work(budget, 1)?;
+            if row.form != SelectedExactDeclarationForm::ObjectType {
+                continue;
+            }
+            let SelectedExactIdentity::Object(effective) = &row.exact_identity else {
+                return Err(ReferenceCatalogError::ForeignModel);
+            };
+            let mut admitted_row = false;
+            for admitted in models.exact_declaration_rows() {
+                work(budget, 1)?;
+                if admitted.form != SelectedExactDeclarationForm::ObjectType
+                    || !object_node_equal(&row.structural_node, &admitted.structural_node, budget)?
+                    || !text_equal(&row.selected_document, &admitted.selected_document, budget)?
+                    || !text_equal(&row.original_identity, &admitted.original_identity, budget)?
+                {
+                    continue;
+                }
+                let SelectedExactIdentity::Object(actual) = &admitted.exact_identity else {
+                    return Err(ReferenceCatalogError::ForeignModel);
+                };
+                if !StateModel::reference_identity_equal_with_work(
+                    effective,
+                    actual,
+                    &mut |units| work(budget, units),
+                )? {
+                    return Err(ReferenceCatalogError::ConflictingMapping);
+                }
+                admitted_row = true;
+            }
+            if !admitted_row {
+                return Err(ReferenceCatalogError::ForeignModel);
+            }
+            let mut found = false;
+            for model in models.iter() {
+                work(budget, 1)?;
+                if !text_equal(
+                    &model.view.model_selection().identity,
+                    &row.selected_document,
+                    budget,
+                )? {
+                    continue;
+                }
+                for (key, actual) in model.view.type_identities() {
+                    work(budget, 1)?;
+                    if !text_equal(&key.package, &row.selected_document, budget)?
+                        || !text_equal(&key.node, &row.original_identity, budget)?
+                    {
+                        continue;
+                    }
+                    let universe = model
+                        .view
+                        .object_universe_with_work(key, &mut |units| work(budget, units))?
+                        .ok_or(ReferenceCatalogError::UnknownDeclaration)?;
+                    insert_declaration(declarations, row, actual, key, universe, budget)?;
+                    found = true;
+                }
+            }
+            if !found {
+                return Err(ReferenceCatalogError::UnknownDeclaration);
+            }
+        }
+        Ok(())
+    }
     /// Join rows retained by the source checker to its own admitted emission.
     ///
     /// # Errors
@@ -231,70 +451,19 @@ impl<'a> ReferenceCatalog<'a> {
             else {
                 return Err(ReferenceCatalogError::UnknownDeclaration);
             };
-            if !StateModel::reference_identity_equal_with_work(effective, actual, &mut |units| {
-                work(budget, units)
-            })? {
-                return Err(ReferenceCatalogError::ConflictingMapping);
-            }
-            // This comparison checks an already admitted row. The declaration
-            // recipe alone is never an admission path.
-            let node = &row.structural_node;
-            let [CheckedNodePathSegment::Name(tag), CheckedNodePathSegment::Name(form), CheckedNodePathSegment::Name(original)] =
-                node.path.as_slice()
-            else {
-                return Err(ReferenceCatalogError::ForeignModel);
-            };
-            if node.ordinal != 0
-                || tag.as_ref() != "model"
-                || form.as_ref() != "object_type"
-                || !text_equal(&node.package, &key.package, budget)?
-                || !text_equal(original, &key.node, budget)?
-                || !text_equal(&row.selected_document, &key.package, budget)?
-                || !text_equal(&row.original_identity, &key.node, budget)?
-            {
-                return Err(ReferenceCatalogError::ForeignModel);
-            }
-            let mut duplicate = false;
-            for previous in &declarations {
-                let same_type = StateModel::reference_identity_equal_with_work(
-                    previous.effective,
-                    effective,
-                    &mut |units| work(budget, units),
-                )?;
-                let same_node = text_equal(&previous.key.package, &key.package, budget)?
-                    && text_equal(&previous.key.node, &key.node, budget)?;
-                if same_type != same_node {
-                    return Err(ReferenceCatalogError::ConflictingMapping);
-                }
-                duplicate |= same_type;
-            }
-            if !duplicate {
-                charge(
-                    budget,
-                    NativeJoinChargeKind::Storage,
-                    size_of::<ReferenceDeclaration<'a>>(),
-                )?;
-                declarations
-                    .try_reserve_exact(1)
-                    .map_err(|_| ReferenceCatalogError::Allocation)?;
-                declarations.push(ReferenceDeclaration {
-                    row,
-                    effective,
-                    key,
-                    universe,
-                });
-            }
+            insert_declaration(&mut declarations, row, actual, key, universe, budget)?;
         }
         Ok(Self {
-            package,
+            package: Some(package),
             source,
-            model,
+            model: Some(model),
+            selected_models: None,
             declarations,
         })
     }
 
-    /// The exact admitted package retained by this catalog.
-    pub fn package(&self) -> &CheckedPackageV2 {
+    /// The exact admitted byte package, absent for direct checked source calls.
+    pub fn package(&self) -> Option<&CheckedPackageV2> {
         self.package
     }
 
@@ -303,9 +472,14 @@ impl<'a> ReferenceCatalog<'a> {
         self.source
     }
 
-    /// The actual native model against which every mapping was checked.
-    pub fn model(&self) -> &StateModel {
+    /// The actual simulator model, absent for direct function-call admission.
+    pub fn model(&self) -> Option<&StateModel> {
         self.model
+    }
+
+    /// The original model-admission owner of a direct source function call.
+    pub fn selected_models(&self) -> Option<&SelectedModels> {
+        self.selected_models
     }
 
     /// Borrow the admitted declarations; no unchecked insertion is exposed.
