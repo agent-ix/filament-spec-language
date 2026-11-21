@@ -244,7 +244,25 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                             .ok_or_else(|| ProtocolRefusal::fault("a-choice-has-cases"))?;
                         let mut entered = None;
                         for (case, guard) in cases {
-                            match self.decide(instance, path, node, guard, model)? {
+                            let decision = match guard {
+                                super::program::ChoiceGuard::Source(guard) => {
+                                    self.decide(instance, path, node, guard, model)?
+                                }
+                                super::program::ChoiceGuard::Package(slot) => {
+                                    let frame = self.frame(instance, path, node);
+                                    match self.evaluate_package_slot(slot, frame, model)? {
+                                        Verdict::True => Decision::Value(true),
+                                        Verdict::False => Decision::Value(false),
+                                        Verdict::Undecided(outcome) => {
+                                            Decision::Undecided(Box::new(undetermined(
+                                                self.program.text(node)?,
+                                                outcome,
+                                            )))
+                                        }
+                                    }
+                                }
+                            };
+                            match decision {
                                 Decision::Value(true) => {
                                     if entered.replace(*case).is_some() {
                                         return Err(ProtocolRefusal::fault(
