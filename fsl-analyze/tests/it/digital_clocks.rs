@@ -489,7 +489,7 @@ fn claim_over(name: &str, scheduler: &str, bound: &str, event: &str) -> String {
 /// back to model units: `(clock values, deadline clock)`.
 fn digital_clocks_of(key: &fsl_analyze::exact_probabilistic::ProbKey) -> (Vec<u64>, Option<u64>) {
     let product: serde_json::Value = serde_json::from_slice(&key.model).expect("a product key");
-    let digital = &product[2][1];
+    let digital = &product[4][1];
     assert_eq!(digital[0], "digital");
     let count = |value: &serde_json::Value| -> u64 {
         value

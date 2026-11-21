@@ -91,9 +91,37 @@ pub enum ProbabilitySourceError {
     /// State/model admission failed with its original typed cause.
     #[error("probability certificate subject refused: {0:?}")]
     Subject(AdmissionFailure),
+    /// The emitted package is not a readable package document.
+    #[error("probability certificate package refused: {0}")]
+    Package(String),
+    /// The emitted package does not name exactly one source.
+    #[error("conflicting_identity: probability certificate package names {0} sources")]
+    PackageSources(usize),
+    /// The package the byte provision recompiles to differs from the
+    /// emitted package the request names.
+    #[error("conflicting_identity: probability certificate package")]
+    PackageMismatch,
     /// Certificate admission or independent checking stopped.
     #[error(transparent)]
     Document(#[from] ProbabilityDocumentError),
+}
+
+/// A certificate checked over the package S4 emitted for its source. The
+/// package names the source and the package name; the byte provision
+/// supplies the source and the documents.
+pub struct ProbabilityPackageRequest<'a> {
+    /// The emitted `filament.checked-package/v2` bytes.
+    pub package: &'a [u8],
+    /// Complete source, domain-package and snapshot provision.
+    pub provision: &'a ByteProvision,
+    /// Requested structural claim identity, independent of the certificate.
+    pub item: &'a ObligationIdentity,
+    /// Initial document identities; exactly one is admitted by the profile.
+    pub initial: Vec<DocumentRef>,
+    /// Finite universes keyed by original declaration identities.
+    pub universes: Vec<PopulationUniverse>,
+    /// Exact canonical certificate bytes.
+    pub certificate: &'a [u8],
 }
 
 /// Recompile exact admitted source through S1–S3, construct the production
@@ -101,6 +129,77 @@ pub enum ProbabilitySourceError {
 /// ambient I/O or analyzer implementation enters this path.
 pub fn check_probability_certificate_source(
     request: ProbabilitySourceRequest<'_>,
+    limits: ProbabilitySourceLimits,
+    cancel: &Cancel,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilitySourceError> {
+    check_recompiled(request, None, limits, cancel)
+}
+
+/// Check a certificate over an emitted package: the package names its
+/// source and package name, the byte provision recompiles through S1–S4, and
+/// the recompiled package must be byte-identical to the one named before the
+/// document is checked.
+pub fn check_probability_certificate_package(
+    request: ProbabilityPackageRequest<'_>,
+    limits: ProbabilitySourceLimits,
+    cancel: &Cancel,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilitySourceError> {
+    let ceiling = limits
+        .spine
+        .model
+        .intake
+        .input_bytes
+        .max(limits.observation.document_bytes);
+    let package = crate::ReplayPackage::read(request.package, ceiling)
+        .map_err(|error| ProbabilitySourceError::Package(error.to_string()))?;
+    let (name, sources) = package
+        .name_and_sources()
+        .map_err(|error| ProbabilitySourceError::Package(error.to_string()))?;
+    let [source] = sources.as_slice() else {
+        return Err(ProbabilitySourceError::PackageSources(sources.len()));
+    };
+    let bytes = request
+        .provision
+        .get(source)
+        .ok_or(ProbabilitySourceError::SourceMismatch)?;
+    let identity = SourceIdentity::new(source.authority(), source.identity());
+    let text = Source::read_typed(
+        identity.clone(),
+        source.identity(),
+        bytes,
+        limits.spine.source.source_bytes,
+    )
+    .map_err(|refusal| ProbabilitySourceError::Source {
+        cause: refusal.cause,
+        error: Box::new(refusal.error),
+        byte_bound: limits.spine.source.source_bytes,
+        byte_length: bytes.len(),
+    })?;
+    let expected = SourceComponent {
+        authority: identity.authority,
+        identity: identity.identity,
+        content: text.text().to_owned(),
+    };
+    check_recompiled(
+        ProbabilitySourceRequest {
+            source,
+            expected_source: &expected,
+            package_name: &name,
+            provision: request.provision,
+            item: request.item,
+            initial: request.initial,
+            universes: request.universes,
+            certificate: request.certificate,
+        },
+        Some(request.package),
+        limits,
+        cancel,
+    )
+}
+
+fn check_recompiled(
+    request: ProbabilitySourceRequest<'_>,
+    emitted: Option<&[u8]>,
     limits: ProbabilitySourceLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilitySourceError> {
@@ -198,6 +297,14 @@ pub fn check_probability_certificate_source(
     )
     .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
     .into_value();
+    if let Some(emitted) = emitted {
+        let recompiled = spine::package(&checked, limits.spine.package, cancel)
+            .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
+            .into_value();
+        if recompiled.package().bytes() != emitted {
+            return Err(ProbabilitySourceError::PackageMismatch);
+        }
+    }
     let claims = checked.package().graph().probabilistic_model().claims();
     super::bind_claim(claims, request.item, cancel).map_err(ProbabilityDocumentError::from)?;
     let snapshots = request.provision.snapshots();

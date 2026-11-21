@@ -298,9 +298,9 @@ fn region_document_keeps_fraction_order() {
     let unique: std::collections::BTreeSet<String> =
         keys.iter().map(serde_json::Value::to_string).collect();
     assert_eq!(unique.len(), rows.len());
-    assert!(keys.iter().all(|key| key[2][1][0] == "region"));
+    assert!(keys.iter().all(|key| key[4][1][0] == "region"));
     assert!(keys.iter().all(|key| {
-        key[2][1][4].as_array().is_some_and(|clocks| {
+        key[4][1][4].as_array().is_some_and(|clocks| {
             clocks.iter().all(|clock| {
                 clock
                     .as_array()
@@ -470,7 +470,7 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
         .expect("encoded boundary-region key");
     let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 ProductKey");
     let key: Value = serde_json::from_slice(&bytes).expect("canonical ProductKey");
-    assert_eq!(key[2][1][0], "boundary-region");
+    assert_eq!(key[4][1][0], "boundary-region");
     assert!(accepted(&world, "MeanTime", &doc));
 }
 
@@ -749,7 +749,7 @@ fn a_wrong_clock_cap_is_malformed() {
         let encoded = row["state"].as_str().expect("encoded ProductKey");
         let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 ProductKey");
         let mut key: Value = serde_json::from_slice(&bytes).expect("canonical ProductKey");
-        let clocks = key[2][1][4].as_array_mut().expect("digital clocks");
+        let clocks = key[4][1][4].as_array_mut().expect("digital clocks");
         if let Some(clock) = clocks.iter_mut().find(|clock| clock[0][1] == "x") {
             // FR-196: the cap of `x` is 3; lower it to 2 in the encoded key.
             assert_eq!(clock[2], "3");

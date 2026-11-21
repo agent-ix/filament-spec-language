@@ -557,7 +557,7 @@ fn bounded_altered_horizon_binding_and_rank_never_certify_the_original_claim() {
                 if state[3][1][2][0] == "bounded" {
                     match alteration {
                         "binding" => state[3][1][1][3] = json!([]),
-                        "horizon" => state[3][1][2][1][1] = json!("9"),
+                        "horizon" => state[5][1][2][1][1] = json!("9"),
                         "local-id" => state[3][1] = json!(1),
                         "absent" => state[3] = Value::Null,
                         _ => unreachable!("closed test cases"),

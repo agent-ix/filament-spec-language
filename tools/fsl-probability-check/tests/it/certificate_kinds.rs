@@ -87,7 +87,7 @@ fn accepted_then_rejected(request: &Value, kinds: &[&str]) {
 /// fairness set: an `exact` certificate the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158 open, FR-201-AC-51: an unbounded eventual claim under a fairness set emits no certificate that fsl-probability-check accepts; the exact route proves only the bounded fair form"]
+#[ignore = "QSL-2158: no FR-201 certificate profile exists for an unbounded fair eventual proof (fair end components over a cyclic MDP); analyze settles it unsupported not-yet-implemented"]
 fn an_unbounded_fair_eventual_certificate_is_accepted() {
     let source = likely(
         "inf",
@@ -101,7 +101,7 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
 /// certificates the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158 open, FR-201-AC-51: ADR-028 15.1 at max_rational_bits 1024 must write `lower` and `upper` value-bounds certificates that fsl-probability-check accepts; none is written"]
+#[ignore = "QSL-2158: no FR-201 lower/upper certificate profile exists; at max_rational_bits 2 the exact engine settles Incomplete(LimitReached) and emits no interval certificate"]
 fn value_bounds_certificates_are_accepted() {
     let source = likely(
         "inf",
@@ -119,7 +119,7 @@ fn value_bounds_certificates_are_accepted() {
 /// accepted by the checker.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158 open, FR-201-AC-51: a finite-horizon quantile claim emits no certificate that fsl-probability-check accepts"]
+#[ignore = "QSL-2158: no FR-201 certificate profile exists for a measure or quantile event; analyze settles it unsupported not-yet-implemented"]
 fn a_finite_horizon_quantile_certificate_is_accepted() {
     let source = likely(
         "ev",
@@ -133,15 +133,16 @@ fn a_finite_horizon_quantile_certificate_is_accepted() {
 }
 
 /// The long-run kind: a long-run fraction under a workload is accepted as a
-/// `long-run` certificate.
+/// `long-run` certificate. Every run of the cyclic model ends in the
+/// terminal state where `delivered` is false, so the fraction is 0 and only
+/// the `<=` side is provable.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158 open, FR-201-AC-51: the exact long-run claim over the cyclic Link (ADR-028 15.3) settles not-yet through analyze and writes no certificate of kind `long-run` for fsl-probability-check"]
 fn a_long_run_certificate_is_accepted() {
     let source = likely(
         "inf",
         "Even",
-        "long_run_fraction holds(m.delivered) >= rational(1,2)",
+        "long_run_fraction holds(m.delivered) <= rational(1,2)",
     );
     accepted_then_rejected(
         &certified(&source, ExactProbLimits::default()),
@@ -158,7 +159,6 @@ fn a_long_run_certificate_is_accepted() {
 #[trace("TC-2065", "FR-203-AC-8")]
 #[trace("TC-2065", "FR-282-AC-20")]
 #[test]
-#[ignore = "QSL-2158 open, FR-282-AC-20: the certificate analyze writes is not yet re-checked in a later process over the emitted package, the byte provision and the subject binding"]
 fn an_analyze_certificate_is_accepted_later_over_the_emitted_package() {
     let source = likely(
         "inf",

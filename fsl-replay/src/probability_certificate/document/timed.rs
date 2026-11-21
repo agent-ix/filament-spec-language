@@ -2086,6 +2086,8 @@ fn region_key(
     let product = json!([
         "filament.probability-product-key/v1",
         binding,
+        null,
+        null,
         model,
         ["deadline", "eventually", monitor],
         null,

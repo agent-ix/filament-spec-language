@@ -327,6 +327,20 @@ impl ReplayPackage {
         }
     }
 
+    /// The package name and the source references its lock names.
+    pub fn name_and_sources(
+        &self,
+    ) -> Result<(String, Vec<crate::DefinitionSourceRef>), ReplayRequestRefusal> {
+        let Descriptor { name, sources, .. } = self.descriptor()?;
+        Ok((
+            name,
+            sources
+                .into_iter()
+                .map(crate::DefinitionSourceRef::from_wire)
+                .collect(),
+        ))
+    }
+
     pub(super) fn descriptor(&self) -> Result<Descriptor, ReplayRequestRefusal> {
         let root = self.document.root();
         let name = string(required(root, "name", "/package")?, "/package/name")?.to_owned();

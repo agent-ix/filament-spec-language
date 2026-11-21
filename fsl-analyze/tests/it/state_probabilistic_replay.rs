@@ -369,7 +369,7 @@ fn disjoint_actual_draws_to_one_post_state_count_once_each() {
         let key: serde_json::Value =
             serde_json::from_slice(witness.initial_key.as_bytes()).unwrap();
         assert!(!key[1].is_null());
-        assert!(key[3].is_null() && key[4].is_null() && key[5].is_null());
+        assert!(key[2].is_null() && key[3].is_null() && key[5].is_null() && key[6].is_null() && key[7].is_null());
         let mut missing_binding = key.clone();
         missing_binding[1] = serde_json::Value::Null;
         changed.initial_key = fsl_replay::ProbabilityProductKey::from_canonical_bytes(
@@ -377,7 +377,7 @@ fn disjoint_actual_draws_to_one_post_state_count_once_each() {
         );
         no_token(&world, &changed);
         let mut fake_monitor = key;
-        fake_monitor[3] = serde_json::json!(["formula", 0]);
+        fake_monitor[5] = serde_json::json!(["formula", 0]);
         changed.initial_key = fsl_replay::ProbabilityProductKey::from_canonical_bytes(
             serde_json::to_vec(&fake_monitor).unwrap(),
         );
