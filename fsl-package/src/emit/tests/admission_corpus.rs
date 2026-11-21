@@ -970,7 +970,7 @@ fn read_bytes(emitted: &Emitted, bytes: &[u8]) -> Result<V2Read, StageFailure<V2
 
 /// A selected object declaration remains valid reference data, but cannot
 /// replace the selected model root in a terminal's target role.
-#[trace("FR-411-AC-1", "FR-286-AC-2")]
+#[trace("FSpec-FR-476-AC-4")]
 #[test]
 fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
     let mut emitted = Fixture::Terminal
