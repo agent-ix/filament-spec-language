@@ -1137,16 +1137,16 @@ impl<'a> Program<'a> {
         for control in package.controls.values().filter(|control| {
             control.operation == fsl_package::protocol_view::ControlOperation::Parallel
         }) {
+            let join = control
+                .join
+                .as_ref()
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-parallel-has-its-join"))?;
             joins.insert(
                 control.id,
                 Join {
-                    policy: CheckedJoinPolicy::All,
-                    joined: control
-                        .branches
-                        .iter()
-                        .map(|(label, _)| label.clone())
-                        .collect(),
-                    outstanding: None,
+                    policy: join.policy.clone(),
+                    joined: join.joined.clone(),
+                    outstanding: join.outstanding,
                     branches: control.branches.clone(),
                 },
             );
