@@ -16,7 +16,7 @@ Ticket: QSL-2279. Reviewed frozen PR #3275 at 57a87538bd9df90eda19c4487dc4fdd11c
 
 ## Verdict
 
-CONDITIONAL: no API behavior defect found; remove the three false criterion bindings before merge, and require the delegated focused tests. This is a PR-scoped review, not a repository-wide assurance verdict.
+MERGEABLE after disposition round 1, subject to green delegated focused tests. All three false criterion bindings are removed; production and test bodies are unchanged. This is a PR-scoped review, not a repository-wide assurance verdict.
 
 ## Findings
 
@@ -30,7 +30,7 @@ CONDITIONAL: no API behavior defect found; remove the three false criterion bind
 
 Plan completion: not assessed
 
-Reconciliation: quire matrix (quire 0.52.0, engine 0.62.2) — no run evidence read. The whole-repository static matrix completed exit 0. All five examined criteria are tagged; the new binders were inspected individually. The source-only coverage report also completed exit 0 and reports no untracked symbol from the changed test file. Existing repository-wide untagged/ignored rows, unresolved links and symbol-id-collision diagnostics outside this diff were not converted into new defects of this PR; no repository-wide PASS is claimed. Raw matrix, coverage and stderr are retained beside this artifact. The emitted Rust binding census reports candidates 13192, tagged 12631, bound 12153.
+Reconciliation: quire matrix (quire 0.52.0, engine 0.62.2) — no run evidence read. The whole-repository static matrix completed exit 0. All five examined criteria are tagged; the new binders were inspected individually. The source-only coverage report also completed exit 0 and reports no untracked symbol from the three newly added tests. Existing older tests in that same file do have untracked TC tags; the original review wording incorrectly generalized the new-test result to the whole file and is corrected here. Existing repository-wide untagged/ignored rows, unresolved links and symbol-id-collision diagnostics outside this diff were not converted into new defects of this PR; no repository-wide PASS is claimed. Raw matrix, coverage and stderr are retained beside this artifact. The emitted Rust binding census reports candidates 13192, tagged 12631, bound 12153.
 
 The evidence-backed command `/home/peter/.npm-global/bin/quoin matrix --repo /home/peter/dev/worktrees/qsl-2279-catalog-free-api --json` (quoin 0.36.8) produced no result and was interrupted, exit 130, empty stderr; the documented static fallback was then used, with no binary-version fallback. `/home/peter/.npm-global/bin/quire` reports 0.52.0 / engine 0.62.2. The resolved versions differ from the older release notice; this is an existing recorded environment discrepancy.
 
@@ -172,3 +172,39 @@ bindings:
   ac_id: FR-670-AC-5
   trace: correct
 ```
+
+## Dispositions
+
+Round 1 reviewed frozen head `63f45a37abf9f7f838ca461ba40037315dde38b3`. The only test changes since the reviewed head remove the three incorrect tags. Original findings are preserved above.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The each-law test retains FR-767-AC-1 and removes FR-100-AC-1. |
+| FND-002 | fixed | The no-selection test retains FR-767-AC-4 and removes FR-100-AC-1. |
+| FND-003 | fixed | The no-selection test removes FR-670-AC-5; the actual agreement/conflict test retains it. |
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: '#[trace("FR-767-AC-1")]
+
+    fn catalog_free_integer_division_runs_each_law_without_an_extension_catalog()
+    {'
+- fnd: FND-002
+  outcome: fixed
+  after_excerpt: '#[trace("FR-767-AC-4")]
+
+    fn catalog_free_integer_division_without_a_selection_uses_only_the_header_law()
+    {'
+- fnd: FND-003
+  outcome: fixed
+  after_excerpt: '#[trace("FR-767-AC-4")]
+
+    fn catalog_free_integer_division_without_a_selection_uses_only_the_header_law()
+    {'
+```
+
+## Tool limitation reproduction
+
+Machine: terra, Codex sandbox. Resolved executable `/home/peter/.npm-global/bin/quoin`, actual version 0.36.8. Command: `quoin matrix --repo /home/peter/dev/worktrees/qsl-2279-catalog-free-api --json`, with stdout redirected to `review-3275/matrix.json` and stderr to `review-3275/matrix.stderr`. Expected JSON matrix/evidence output and termination. No explicit timeout was set; the running tool session was interrupted with Ctrl-C after it produced no result while independent inspection continued. Exit 130; stdout and stderr files both zero bytes. Exact elapsed time was not captured and is unavailable. Smallest reproduction: from the reviewed worktree, `/home/peter/.npm-global/bin/quoin matrix --repo . --json`. It was not rerun. Documented static fallback completed exit 0.
