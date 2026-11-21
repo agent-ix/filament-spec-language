@@ -187,6 +187,46 @@ pub fn evaluate_selected_protocol_slot(
     supply: &ProtocolSupply<'_>,
     meter: &mut Meter,
 ) -> Result<ProtocolSlotEvaluation, CallFailure> {
+    evaluate_selected_protocol_slot_with(package, slot, supply, meter, admit_slot_supply)
+}
+
+/// Internal model-engine entry for already generated binders. This is not a
+/// public FR-390 supply port and never manufactures missing origin metadata.
+pub(crate) fn evaluate_generated_package_protocol_slot(
+    package: &BarePackage<'_>,
+    descriptor: &ProtocolSlot,
+    supply: &ProtocolSupply<'_>,
+    meter: &mut Meter,
+) -> Result<ProtocolSlotEvaluation, CallFailure> {
+    let descriptor = ProtocolSlotDescriptor::new(
+        descriptor.node.clone(),
+        descriptor.member.clone(),
+        descriptor.index,
+    );
+    let selected = package
+        .select_protocol_slot(&descriptor)
+        .map_err(|failure| refusal(package, failure))?;
+    evaluate_selected_protocol_slot_with(
+        package,
+        &selected,
+        supply,
+        meter,
+        super::slot_supply::admit_generated_slot_supply,
+    )
+}
+
+fn evaluate_selected_protocol_slot_with(
+    package: &BarePackage<'_>,
+    slot: &BareSlot,
+    supply: &ProtocolSupply<'_>,
+    meter: &mut Meter,
+    admit: impl FnOnce(
+        &dyn SlotHost,
+        &[SourceView<'_>],
+        usize,
+        &ProtocolSupply<'_>,
+    ) -> Result<AdmittedSupply, CallFailure>,
+) -> Result<ProtocolSlotEvaluation, CallFailure> {
     let world = package
         .world()
         .map_err(|failure| refusal(package, failure))?;
@@ -226,7 +266,7 @@ pub fn evaluate_selected_protocol_slot(
         reference_origins,
         unavailable,
         binder_slots,
-    } = admit_slot_supply(&host, &sources, slot.frame_len(), supply)?;
+    } = admit(&host, &sources, slot.frame_len(), supply)?;
     let empty = ObjectEnvironment::default();
     let objects = supply
         .observation
@@ -1278,6 +1318,204 @@ mod tests {
                 .expect("the source-supported package checks"),
         );
         (source, models)
+    }
+
+    /// Public FR-390 supply admission remains strict. The internal engine
+    /// can forward its typed owner value, but absent P never authorizes ref.
+    #[trace("FR-390-AC-23", "TC-3084")]
+    #[test]
+    fn generated_owner_without_population_keeps_public_admission_strict_and_clock_closed() {
+        use super::super::protocol_slot::{ProtocolSuppliedValue, SuppliedValue};
+        use fsl_semantics::model::accounting::ModelNormalizationLimits;
+        let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../../examples/config-version/model.semantic-ir.json"
+        ))
+        .expect("real Model fixture");
+        let fields = document["types"][1]["fields"]
+            .as_array_mut()
+            .expect("ConfigVersion fields");
+        let mut clock = fields[0].clone();
+        clock["identity"] = serde_json::json!("ix://example/config-version/ConfigVersion/x");
+        clock["name"] = serde_json::json!("x");
+        clock["typeRef"] = serde_json::json!("ix://filament/native/Clock");
+        clock["multiplicity"] =
+            serde_json::json!({"lower":1,"upper":1,"ordered":false,"unique":false});
+        clock["origin"]["generated"]["generatorIdentity"] = clock["identity"].clone();
+        fields.push(clock);
+        let document = serde_json::to_vec(&document).expect("JSON");
+        let models =
+            fsl_semantics::model::intake::package_input([document.as_slice()]).expect("Model");
+        let source = "language \"ix:native\" edition \"1-draft\";\n\
+            profile v = \"filament.value.complete/v1\";\n\
+            profile m = \"filament.model.complete/v1\";\n\
+            profile t = \"filament.temporal.complete/v1\";\n\
+            profile p = \"filament.protocol.finite-global/v1\";\n\
+            model M = \"example/config-version\";\n\
+            dimension Time; unit ms : Time = rational(1, 1); time M dense unit ms;\n\
+            protocol Owners using p over (c: M::ConfigVersion) on each (opened: Boolean) when (opened) {\n\
+              capture plain: Reference<M::ConfigVersion> = c;\n\
+              capture place: Reference<Clock> = ref(c.x);\n\
+              role Observer on M::ConfigVersion;\n\
+              run sequence Main { check Ready using v { true }; }\n\
+              finish End as (outcome: Boolean) { true };\n\
+            }";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "generated-origins"),
+            "generated-origins.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("parse");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("forms");
+        let admitted = fsl_semantics::model::intake::admit_unit(
+            &unit.selections().models,
+            &models,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("selection");
+        let source = fsl_package::CheckedPackage::link(
+            PackageDeclarations::assemble(
+                parsed.source().reference().clone(),
+                "generated-origins".to_owned(),
+                unit,
+                admitted,
+                Vec::new(),
+            )
+            .expect("assembly")
+            .with_unwritten_timed_members()
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
+            )
+            .expect("timed check"),
+        );
+        let state = fsl_semantics::model::state::StateModel::new(
+            source.graph().model_inputs(),
+            source.graph().scope().types(),
+            &models,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("model");
+        let owner = state
+            .object_reference(
+                &filament_checked::key::DeclarationKey {
+                    package: "example/config-version".to_owned(),
+                    node: "ix://example/config-version/ConfigVersion".to_owned(),
+                },
+                "c1",
+            )
+            .expect("actual declared owner identity");
+        let keys = source.graph().protocol_node_keys("Owners").expect("keys");
+        let binder = keys
+            .binders
+            .iter()
+            .find(|binder| binder.name == "c")
+            .expect("owner");
+        let supply = ProtocolSupply {
+            binders: vec![(
+                binder.node.clone(),
+                ProtocolSuppliedValue {
+                    value: SuppliedValue::Value(Value::Reference(owner.clone())),
+                    references: Vec::new(),
+                },
+            )],
+            observation: None,
+        };
+        let read = fsl_package::read_evaluation_package(
+            &source,
+            fsl_semantics::library::LibraryName::new("generated-origins").expect("name"),
+            &models,
+            fsl_package::V2ReadLimits::fixture(),
+            fsl_package::EmitLimits::fixture(),
+        )
+        .expect("read");
+        let rows = read
+            .emission()
+            .identity_rows(
+                read.admitted(),
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+            )
+            .expect("rows");
+        let bare = BarePackage::new(read.admitted())
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &rows,
+                    equality: None,
+                },
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+            )
+            .expect("Bare");
+        let slot = |index| ProtocolSlot {
+            node: keys.clause.clone().expect("root"),
+            member: "captures".to_owned(),
+            index: Some(index),
+        };
+        let CallFailure::Admission(failure) = bare
+            .evaluate_protocol_slot(&slot(0), &supply, &mut Meter::new(UNLIMITED))
+            .expect_err("public supply requires P")
+        else {
+            panic!("admission");
+        };
+        let CallAdmissionFailure::Refused(record) = *failure else {
+            panic!("refused");
+        };
+        assert_eq!(
+            record.record.catalog,
+            filament_semantic_value::catalog::CatalogCode::new(
+                "invalid_runtime_input",
+                "missing-member"
+            )
+        );
+        let ProtocolSlotEvaluation::Evaluated(evaluation, _) =
+            evaluate_generated_package_protocol_slot(
+                &bare,
+                &slot(0),
+                &supply,
+                &mut Meter::new(UNLIMITED),
+            )
+            .expect("generated ordinary value")
+        else {
+            panic!("available");
+        };
+        let FamilyOutcome::Evaluated(Outcome::Completed(Value::Reference(actual))) =
+            evaluation.outcome
+        else {
+            panic!("ordinary reference returns unchanged");
+        };
+        assert_eq!(actual, owner);
+        let ProtocolSlotEvaluation::Evaluated(evaluation, _) =
+            evaluate_generated_package_protocol_slot(
+                &bare,
+                &slot(1),
+                &supply,
+                &mut Meter::new(UNLIMITED),
+            )
+            .expect("typed Clock boundary")
+        else {
+            panic!("available");
+        };
+        let FamilyOutcome::FamilyEvaluated(filament_eval::FamilyResult::Refused(cause)) =
+            evaluation.outcome
+        else {
+            panic!("missing P must refuse Clock consumption");
+        };
+        assert_eq!(
+            cause.catalog_code(),
+            filament_semantic_value::catalog::CatalogCode::new(
+                "unknown_required_feature",
+                "unsupported-feature"
+            )
+        );
+        assert_eq!(
+            cause
+                .catalog_fields()
+                .expect("fields")
+                .get("reason")
+                .map(String::as_str),
+            Some("clock-owner-population-authority")
+        );
     }
 
     fn completed_integer(evaluation: Evaluation) -> Integer {
