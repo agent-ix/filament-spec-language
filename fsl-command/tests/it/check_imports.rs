@@ -146,12 +146,10 @@ fn check_dependent_bytes_excludes_source_and_counts_selected_library() {
         function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
     std::fs::write(&library_path, library).unwrap();
     let library_bytes = std::fs::metadata(&library_path).unwrap().len() as usize;
-    let importing_source = format!(
-        "language \"ix:native\" edition \"1-draft\";\n\
+    let importing_source = "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          import \"test/geometry\" as g;\n\
-         function Eligible using v(n: Int[0, 12]): Boolean pure {{ n >= 3 }}\n"
-    );
+         function Eligible using v(n: Int[0, 12]): Boolean pure { n >= 3 }\n".to_owned();
     let selected_library = || CheckInputs {
         libraries: vec![("test/geometry".to_owned(), library_path.clone())],
         dependent_bytes: library_bytes,
