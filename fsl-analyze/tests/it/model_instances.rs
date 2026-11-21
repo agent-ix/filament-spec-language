@@ -1216,7 +1216,7 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
     assert_eq!(evaluation.site.position, 0);
     assert!(matches!(
         evaluation.site.locus,
-        fsl_replay::UndefinedLocus::Atom(_)
+        fsl_replay::UndefinedLocus::Atom(atom) if atom.index() == 1
     ));
     assert_eq!(AtomReading::Undefined(evaluation.cause.clone()), absent_key);
     let undefined_guard = parity(
