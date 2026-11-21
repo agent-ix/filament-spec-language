@@ -6196,18 +6196,19 @@ pub(crate) fn reserved_slot_refusal(
     span: Option<Span>,
     location: &Location,
 ) -> Option<CheckRefusal> {
+    reserved_slot_cause(name, span).map(|cause| refuse(location, cause))
+}
+
+/// [`reserved_slot_refusal`]'s cause, for a site that reports a bare cause.
+pub(crate) fn reserved_slot_cause(name: &str, span: Option<Span>) -> Option<CheckCause> {
     if !filament_contract_model::is_slot_parameter_name(name) {
         return None;
     }
-    let tag = SlotTag::of(name)?;
-    Some(refuse(
-        location,
-        CheckCause::ReservedSlotName(Box::new(ReservedSlotName {
-            name: name.to_owned(),
-            tag,
-            span,
-        })),
-    ))
+    Some(CheckCause::ReservedSlotName(Box::new(ReservedSlotName {
+        name: name.to_owned(),
+        tag: SlotTag::of(name)?,
+        span,
+    })))
 }
 
 /// Check a function signature's declared types and bind its parameters.

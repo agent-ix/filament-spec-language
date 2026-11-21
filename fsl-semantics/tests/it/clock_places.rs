@@ -3364,6 +3364,13 @@ fn a_clock_guard_binder_in_the_reserved_slot_form_is_refused() {
         (cause.name.as_str(), cause.tag.to_string().as_str()),
         ("slot_sx_sy", "slot")
     );
+    let (text, _) = crate::model_operations::config_unit_with_profiles(
+        &document,
+        crate::timed_model::TEMPORAL,
+        &body,
+    );
+    let span = cause.span.expect("the guard's own span");
+    assert_eq!(&text[span.start..span.end], guard);
     let refusal = refusals
         .iter()
         .find(|refusal| {
