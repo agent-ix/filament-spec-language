@@ -7718,7 +7718,10 @@ fn is_map(content: &NodeContent) -> bool {
 /// fairness member's declaration and name, its laws' definition identities,
 /// its operator and result type, and last the node's semantic type. Every
 /// other derived node has no operands: equal content is one node, and a
-/// repeat of its path takes the next producer ordinal.
+/// repeat of its path takes the next producer ordinal. An expression node
+/// keeps every walked operand, repeats included, so expressions that read
+/// the same operands in different positions take different paths and their
+/// identities do not depend on the order they are minted in.
 fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     if content.node_tag == NodeTag::State {
@@ -8030,10 +8033,13 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
         /// `scale_max` of FSpec's `dec_cents`), so only a repeated node is
         /// dropped.
         keep_text_repeats: bool,
+        /// Whether every repeated operand is kept (an expression node).
+        keep_repeats: bool,
     }
     impl Walk {
         fn push(&mut self, segment: PathSegment) {
-            let repeatable = self.keep_text_repeats && matches!(segment, PathSegment::Text(_));
+            let repeatable = self.keep_repeats
+                || (self.keep_text_repeats && matches!(segment, PathSegment::Text(_)));
             if repeatable || self.seen.insert(segment.clone()) {
                 self.operands.push(segment);
             }
@@ -8054,7 +8060,7 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
             let NodeRef::Admitted(key) = node else {
                 return;
             };
-            if !self.seen.insert(PathSegment::Node(key.clone())) {
+            if !self.keep_repeats && !self.seen.insert(PathSegment::Node(key.clone())) {
                 return;
             }
             self.operands
@@ -8114,6 +8120,7 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
         seen: HashSet::new(),
         operands: Vec::new(),
         keep_text_repeats: is_decimal_range(content),
+        keep_repeats: content.node_tag == NodeTag::Expression,
     };
     match &content.body {
         BodyTerm::Leaf(leaf) => walk.leaf(leaf),
