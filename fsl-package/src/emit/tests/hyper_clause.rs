@@ -853,11 +853,15 @@ fn supplied_hyper(
         .emission
         .identity_rows(admitted, &mut budget)
         .expect("the producer identity rows admit");
+    let equality = built
+        .emission
+        .equality_witness(admitted, &mut budget)
+        .expect("the producer equality rows admit");
     let bare = crate::BarePackage::new(admitted)
         .with_supply(
             crate::BareSupply {
                 identities: &identities,
-                equality: None,
+                equality: Some(&equality),
             },
             &mut budget,
         )
