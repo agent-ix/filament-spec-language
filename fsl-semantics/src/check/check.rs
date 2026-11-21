@@ -577,6 +577,9 @@ pub struct PackageDeclarations {
     /// its profile and `over` type resolved, for the `StateGraph` family's
     /// `check`.
     pub state_graph_claims: Vec<super::state_graph_claim::StateGraphDeclaration>,
+    /// FR-754: each bounded synthesis form in declaration order, resolved
+    /// against this package's admitted type environment by `check`.
+    pub synthesis_forms: Vec<fsl_forms::SynthesisForm>,
     /// FR-110, FR-326: the unit's header profile selections the
     /// `TemporalTrace` family's catalog holds, in source order. A clause is
     /// checked under the one of them, or refuses when there is none or
@@ -867,6 +870,7 @@ impl PackageDeclarations {
             composition_lattice: None,
             probabilistic: Vec::new(),
             state_graph_claims: Vec::new(),
+            synthesis_forms: Vec::new(),
             temporal_selections: Vec::new(),
             timed_forms: Vec::new(),
             clock_reading: Vec::new(),

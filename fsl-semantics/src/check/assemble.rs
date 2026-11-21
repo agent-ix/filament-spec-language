@@ -627,11 +627,6 @@ pub enum AssemblyCause {
     /// and no S3 check reads yet (FR-230): `unsupported_construct`/
     /// `not-yet-implemented`, never compiled unchecked.
     TimedNotChecked(super::refusal::TimedConstruct),
-    /// A synthesis form whose FR-754 lowering is not installed yet.
-    SynthesisNotChecked {
-        /// The synthesis declaration's authored name.
-        name: String,
-    },
 }
 
 impl AssemblyCause {
@@ -710,8 +705,7 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => Code::RuntimeInvariant,
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
-            | Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. } => Code::UnsupportedConstruct,
+            | Self::TimedNotChecked(_) => Code::UnsupportedConstruct,
         }
     }
 
@@ -824,7 +818,7 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_) | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
+            Self::TimedNotChecked(_) => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -1035,6 +1029,8 @@ struct Unit {
     /// Verification plan source forms, kept outside the checked clause graph
     /// and checked at S3 (FR-753).
     verification_plans: Vec<fsl_forms::VerificationPlanForm>,
+    /// Each bounded synthesis declaration, in source order (FR-754).
+    syntheses: Vec<fsl_forms::SynthesisForm>,
 }
 
 impl Unit {
@@ -1095,6 +1091,7 @@ impl Unit {
             task_sets: Vec::new(),
             state_graph_claims: Vec::new(),
             verification_plans: Vec::new(),
+            syntheses: Vec::new(),
         };
         unit.timed.extend(
             std::mem::take(&mut clock_forms.positions)
@@ -1236,7 +1233,7 @@ impl Unit {
                             span,
                         });
                 }
-                DeclarationForm::Synthesis(_) => {}
+                DeclarationForm::Synthesis(synthesis) => unit.syntheses.push(*synthesis),
             }
         }
         // The `Clock` type positions were listed first; FR-230's gate reads
@@ -4540,24 +4537,7 @@ impl PackageDeclarations {
         let mut model_selection_units = unit.model_selection_units().to_vec();
         let repeated_model_selection_units = unit.repeated_model_selection_units().to_vec();
         let import_selection_units = unit.import_selection_units().to_vec();
-        let mut errors: Vec<AssemblyError> = unit
-            .forms()
-            .iter()
-            .filter_map(|form| {
-                let cause = match form.form() {
-                    fsl_forms::DeclarationForm::Synthesis(synthesis) => {
-                        Some(AssemblyCause::SynthesisNotChecked {
-                            name: synthesis.name.name.clone(),
-                        })
-                    }
-                    _ => None,
-                }?;
-                Some(AssemblyError {
-                    cause,
-                    span: form.span(),
-                })
-            })
-            .collect();
+        let mut errors: Vec<AssemblyError> = Vec::new();
         let (mut selections, forms) = unit.into_parts();
         // The models and the one meter their admission counted on; checking
         // continues that meter into the conformance stage.
@@ -6206,6 +6186,7 @@ impl PackageDeclarations {
         package.clock_reading = unit.clock_reading;
         package.task_set_forms = unit.task_sets;
         package.verification_plans = unit.verification_plans;
+        package.synthesis_forms = unit.syntheses;
         // FR-451: a declaration is located under its own spaced name.
         declared_type_spans.extend(unit.abstractions.iter().map(|abstraction| {
             (

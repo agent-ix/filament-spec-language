@@ -3036,6 +3036,13 @@ pub enum CheckCause {
         /// The construct's span.
         span: Span,
     },
+    /// FR-754: the synthesis candidate domain has an unbounded component.
+    SynthesisUnboundedDomain {
+        /// The first unbounded component in declaration order.
+        component: String,
+        /// The authored `domain` name.
+        span: Span,
+    },
     /// A completed model conformance stage retains every axis failure.
     ModelConformance(Box<super::model_conformance::ModelConformanceFailure>),
     /// An unfinished model stage exposes its exact five-field denial.
@@ -3822,6 +3829,7 @@ impl CheckCause {
             Self::TerminalWithoutObjectType { .. }
             | Self::RefinementNotEmitted { .. }
             | Self::TimedNotChecked { .. } => Code::UnsupportedConstruct,
+            Self::SynthesisUnboundedDomain { .. } => Code::UnsupportedProjection,
             Self::Refinement(cause) => cause.cause.code(),
             Self::Abstraction(cause) => cause.code(),
             Self::Extension(cause) => cause.code(),
@@ -3913,6 +3921,7 @@ impl CheckCause {
             Self::RefinementNotEmitted { .. } | Self::TimedNotChecked { .. } => {
                 Some("not-yet-implemented")
             }
+            Self::SynthesisUnboundedDomain { .. } => Some("unbounded-extent"),
             Self::Refinement(cause) => cause.cause.cause(),
             Self::Abstraction(cause) => Some(cause.cause()),
             Self::Extension(cause) => Some(cause.cause()),

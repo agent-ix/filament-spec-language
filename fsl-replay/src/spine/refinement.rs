@@ -278,8 +278,7 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::AmbiguousPopulation { .. }
         | AssemblyCause::UnsupportedLayerForm { .. }
         | AssemblyCause::UnselectedModelConstruct(_)
-        | AssemblyCause::TimedNotChecked(_)
-        | AssemblyCause::SynthesisNotChecked { .. } => None,
+        | AssemblyCause::TimedNotChecked(_) => None,
     }
 }
 
@@ -383,6 +382,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::ProtocolReference(_)
         | CheckCause::ProtocolObligation(_)
         | CheckCause::TerminalWithoutObjectType { .. }
+        | CheckCause::SynthesisUnboundedDomain { .. }
         | CheckCause::UntypedMember(_)
         | CheckCause::Abstraction(_)
         | CheckCause::Extension(_)

@@ -199,6 +199,8 @@ mod state_graph_claim;
 mod state_model;
 mod step_simulation;
 mod sum_case;
+mod synthesis;
+pub use synthesis::{CheckedSynthesis, CheckedSynthesisClaim};
 mod task_set;
 mod temporal_clause;
 mod terminal;
@@ -1084,6 +1086,10 @@ pub struct CheckedGraph {
     step_relations: Vec<hyper_clause::CheckedModelRelation>,
     /// FR-165: every checked state-graph claim, in declaration order.
     state_graph_claims: Vec<CheckedStateGraphClaim>,
+    /// FR-1036: source names and declaration spans for emitted synthesis claims.
+    synthesis_claims: Vec<CheckedSynthesisClaim>,
+    /// FR-754: checked synthesis expressions retained for the bounded runner.
+    syntheses: Vec<CheckedSynthesis>,
     /// FR-447: every checked hybrid model, in declaration order.
     hybrid_models: Vec<CheckedHybridModel>,
     /// FR-447: every checked hybrid claim, in declaration order.
@@ -1237,6 +1243,8 @@ impl DebugWith for CheckedGraph {
             hyper_nodes,
             step_relations,
             state_graph_claims,
+            synthesis_claims,
+            syntheses,
             hybrid_models,
             hybrid_claims,
             hybrid_claim_sites,
@@ -1373,6 +1381,8 @@ impl DebugWith for CheckedGraph {
             .field("hyper_nodes", &hyper_nodes)
             .field("step_relations", &Seq(step_relations, table))
             .field("state_graph_claims", &state_graph_claims)
+            .field("synthesis_claims", &synthesis_claims)
+            .field("syntheses", &syntheses)
             .field("hybrid_models", &hybrid_models)
             .field("hybrid_claims", &hybrid_claims)
             .field("hybrid_claim_sites", &hybrid_claim_sites)
@@ -2219,6 +2229,27 @@ fn temporal_declaration_index(origin: &str) -> Option<usize> {
 }
 
 impl PackageDeclarations {
+    fn synthesis_domain_type(&self, name: &str) -> Option<ValueType> {
+        self.aliases
+            .iter()
+            .find_map(|(alias, value_type)| (alias == name).then(|| value_type.clone()))
+            .or_else(|| {
+                self.enums
+                    .iter()
+                    .find(|enumeration| enumeration.name == name)
+                    .map(|enumeration| ValueType::Enum(enumeration.shape()))
+            })
+            .or_else(|| {
+                self.types
+                    .composites()
+                    .find(|composite| composite.name() == name)
+                    .map(|composite| ValueType::Composite(composite.key()))
+            })
+            // The mathematical `Integer` is a builtin no declaration names;
+            // it is the one builtin whose value set has no finite bound.
+            .or_else(|| (name == "Integer").then_some(ValueType::Integer))
+    }
+
     /// Check every function: duplicate names, declared types, typing, static
     /// definedness and termination, in that order. Every refusal is made
     /// before any charge; a reached checking limit is `stage_limit_exceeded`
@@ -2366,6 +2397,21 @@ impl PackageDeclarations {
                 return Err(vec![CheckRefusal {
                     location: root(Origin::Expression),
                     cause: CheckCause::DefinitionCycle { edges },
+                }]);
+            }
+        }
+        for synthesis in &self.synthesis_forms {
+            let Some(domain_type) = self.synthesis_domain_type(&synthesis.domain.name) else {
+                continue;
+            };
+            if let Some(component) = synthesis::first_unbounded_component(&self.types, &domain_type)
+            {
+                return Err(vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::SynthesisUnboundedDomain {
+                        component,
+                        span: synthesis.domain.span,
+                    },
                 }]);
             }
         }
@@ -3156,6 +3202,7 @@ impl PackageDeclarations {
             .select_declared_ieee_profile(&signatures, has_ieee_literal)
             .map_err(|refusal| vec![refusal])?;
         let signatures = Signatures::new(signatures);
+        let checked_syntheses = synthesis::check_forms(&self.synthesis_forms, &scope, &signatures)?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {
             if !seen_operations.insert((operation.receiver_type.clone(), operation.member.clone()))
@@ -6700,6 +6747,29 @@ impl PackageDeclarations {
                 }
             }
         }
+        let mut lowered_syntheses = Vec::with_capacity(checked_syntheses.len());
+        for (index, checked) in checked_syntheses.iter().enumerate() {
+            let location = lowering::synthesis_location(index, &checked.form.name.name);
+            let Origin::TypeDeclaration { name } = &location.origin else {
+                continue;
+            };
+            type_spans.insert(name.clone(), checked.form.span);
+            let satisfies = lowering::synthesis_satisfies_location(index, &checked.form.name.name);
+            if let Origin::TypeDeclaration { name } = satisfies.origin {
+                site_spans.insert(name, checked.form.satisfies.spans.clone());
+            }
+            if let Some(objective) = &checked.form.objective {
+                let objective_site =
+                    lowering::synthesis_objective_location(index, &checked.form.name.name);
+                if let Origin::TypeDeclaration { name } = objective_site.origin {
+                    site_spans.insert(name, objective.expression.spans.clone());
+                }
+            }
+            match lowering.synthesis_request(index, checked) {
+                Ok(key) => lowered_syntheses.push(key),
+                Err(refusal) => refusals.push(refusal),
+            }
+        }
         // FSpec FR-640: the nodes each checked random parameter and
         // workload refers to.
         let lowered_rewards = match lowering.probabilistic_declarations(&probabilistic_model) {
@@ -7368,6 +7438,9 @@ impl PackageDeclarations {
             return Err(unlowered());
         }
         if lowered_state_graph.len() != checked_state_graph_claims.len() {
+            return Err(unlowered());
+        }
+        if lowered_syntheses.len() != checked_syntheses.len() {
             return Err(unlowered());
         }
         let lowered_probabilistic = lowered_probabilistic.ok_or_else(unlowered)?;
@@ -8403,6 +8476,18 @@ impl PackageDeclarations {
             hyper_nodes,
             step_relations: Vec::new(),
             state_graph_claims: state_graph_nodes,
+            synthesis_claims: checked_syntheses
+                .iter()
+                .zip(&lowered_syntheses)
+                .map(|(checked, node)| {
+                    CheckedSynthesisClaim::new(
+                        node.clone(),
+                        checked.form.name.name.clone(),
+                        checked.form.span,
+                    )
+                })
+                .collect(),
+            syntheses: checked_syntheses.clone(),
             hybrid_models: checked_hybrid_models,
             hybrid_claims: checked_hybrid_claim_list,
             hybrid_claim_sites,
@@ -9746,6 +9831,17 @@ impl CheckedGraph {
     /// FR-165: every checked state-graph claim, in declaration order.
     pub fn state_graph_claims(&self) -> &[CheckedStateGraphClaim] {
         &self.state_graph_claims
+    }
+
+    /// FR-1036: each checked synthesis declaration's authored name, whole
+    /// source span and emitted node identity.
+    pub fn synthesis_claims(&self) -> &[CheckedSynthesisClaim] {
+        &self.synthesis_claims
+    }
+
+    /// FR-754: the checked expressions and domain for each synthesis claim.
+    pub fn syntheses(&self) -> &[CheckedSynthesis] {
+        &self.syntheses
     }
 
     /// FR-447: every checked hybrid model, in declaration order.

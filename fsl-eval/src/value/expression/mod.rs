@@ -34,20 +34,21 @@ pub use slot_admission::object_environment_refusal;
 use slot_supply::SourceView;
 mod value_invariants;
 
+pub use bare::evaluate_bare_expression;
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
 pub use bare::{
     evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward,
 };
 pub(crate) use bare::{
-    evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate,
-    evaluate_terminal_predicate as evaluate_bare_terminal_predicate, StateGraphOver,
-};
-pub(crate) use evaluate::reader_source::{
-    package_constraint_reads, package_guard_reads, package_operation_footprint, package_term_reads,
-    ProjectedClause,
+    StateGraphOver, evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate,
+    evaluate_terminal_predicate as evaluate_bare_terminal_predicate,
 };
 use evaluate::Machine;
+pub(crate) use evaluate::reader_source::{
+    ProjectedClause, package_constraint_reads, package_guard_reads, package_operation_footprint,
+    package_term_reads,
+};
 use filament_eval::{Registry, SessionLimits};
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};
 use filament_semantic_value::admission::AdmissionRecord;
@@ -71,9 +72,8 @@ pub use closure::{PackageClosure, PackageTask};
 pub use evaluate::refusal_record;
 pub use family::{InvalidQualifiedName, QualifiedName};
 pub use protocol_slot::{
-    BinderCharges, ChargeAmounts, ProtocolReferenceOccurrence, ProtocolSlot,
-    ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue,
-    BINDER_ACCOUNTING_VERSION,
+    BINDER_ACCOUNTING_VERSION, BinderCharges, ChargeAmounts, ProtocolReferenceOccurrence,
+    ProtocolSlot, ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue,
 };
 pub use s6a::separation::{
     ClauseEvaluation, ClauseRead, ComparisonReport, InvocationBinding, ObservationIdentity,
@@ -253,7 +253,7 @@ impl fsl_semantics::check::RewardEvaluator for S6aRewardEvaluator {
     ) -> Result<Value, fsl_semantics::check::RewardEvaluationFailure> {
         use filament_eval::{FamilyOutcome, FamilyResult};
         use filament_semantic_value::catalog::CatalogCode;
-        use fsl_foundation::diagnostic::{kernel_refusal_record, refusal_record, Code};
+        use fsl_foundation::diagnostic::{Code, kernel_refusal_record, refusal_record};
 
         fn failure(
             diagnostic_code: Code,
