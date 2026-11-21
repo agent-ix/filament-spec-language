@@ -62,6 +62,7 @@ fn property_form(form: &StateGraphForm) -> StateGraphPropertyForm {
 /// The EN-1 item that decides the state-graph claim at `key` over the
 /// binding, with the item's budgets, or `None` when the package holds no
 /// such claim.
+#[allow(clippy::too_many_arguments, reason = "the item binds source provision, subject, request identity, method, and independent budgets")]
 pub(super) fn state_graph_item<'a>(
     analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,

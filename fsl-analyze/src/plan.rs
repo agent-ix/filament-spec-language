@@ -545,7 +545,7 @@ fn model_based_test(
             "initial",
         ));
     }
-    let consumes = |steps: &[String]| steps.iter().any(|step| *step == node.name);
+    let consumes = |steps: &[String]| steps.contains(&node.name);
     let subject = if state_subject {
         let binding = inputs
             .bindings

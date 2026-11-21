@@ -1602,8 +1602,8 @@ fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
         };
         claims.push((at, name, kinds));
     }
-    claims.sort_by(|(left, ..), (right, ..)| left.cmp(right));
-    schedulability.sort_by(|(left, _), (right, _)| left.cmp(right));
+    claims.sort_by_key(|(left, ..)| *left);
+    schedulability.sort_by_key(|(left, _)| *left);
     let item = |name: String, kind: Option<Capability>| ItemSelection {
         claim: Some(name),
         kind: kind.map(|kind| kind.to_wire().to_owned()),

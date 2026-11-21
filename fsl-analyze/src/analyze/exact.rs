@@ -523,20 +523,17 @@ fn mean_time_ranking(
                         &mut choices.last_mut()?.1
                     }
                 };
-                if edge.probability > Rational::from_integer(0_i64.into()) {
-                    if included.get(edge.to.index()).copied().unwrap_or(false) {
-                        if let Some(next_rank) = ranks.get(edge.to.index()).copied().flatten() {
-                            choice.push(next_rank);
-                        }
+                if edge.probability > Rational::from_integer(0_i64.into())
+                    && included.get(edge.to.index()).copied().unwrap_or(false) {
+                    if let Some(next_rank) = ranks.get(edge.to.index()).copied().flatten() {
+                        choice.push(next_rank);
                     }
                 }
             }
             let Some(selected) = policy[index] else {
                 continue;
             };
-            let Some((_, lower)) = choices.get(selected) else {
-                return None;
-            };
+            let (_, lower) = choices.get(selected)?;
             let Some(lower) = lower.iter().copied().min() else {
                 continue;
             };
@@ -570,9 +567,7 @@ fn mean_time_reachable_before_target(product: &ProbProduct, targets: &[bool]) ->
         .map(|(_, _, state)| state.index())
         .collect::<Vec<_>>();
     while let Some(index) = pending.pop() {
-        let Some(seen) = included.get_mut(index) else {
-            return None;
-        };
+        let seen = included.get_mut(index)?;
         if *seen {
             continue;
         }

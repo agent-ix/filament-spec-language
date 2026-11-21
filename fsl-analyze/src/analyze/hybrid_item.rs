@@ -49,6 +49,7 @@ pub(super) struct Spelling<'a> {
 
 /// The item of the hybrid claim at `claim`, or `None` when the package holds
 /// no checked hybrid claim there.
+#[allow(clippy::too_many_arguments, reason = "the item binds the checked claim, provider candidates, spelling, and independent resource limits")]
 pub(super) fn hybrid_item<'a>(
     package: &'a CheckedPackage,
     request_index: RequestIndex,

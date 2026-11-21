@@ -40,7 +40,7 @@ impl Run<'_, '_, '_> {
     ) -> Result<Proof, Halt> {
         let non_zeno = if proofs
             .iter()
-            .any(|proof| has_accepting_cycle_without_divergence(proof))
+            .any(has_accepting_cycle_without_divergence)
         {
             NonZeno::Assumed
         } else {

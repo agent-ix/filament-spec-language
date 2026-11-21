@@ -777,6 +777,7 @@ pub(crate) fn provider_item_over<'a>(
 
 /// An `operation-contract` item at `claim` for an external provider. The
 /// provider request is emitted only after negotiation (FR-968).
+#[allow(clippy::too_many_arguments, reason = "provider negotiation binds request identity, source package, claim selection, and emission limits")]
 pub(crate) fn contract_provider_item_over<'a>(
     index: RequestIndex,
     backend: &BackendId,

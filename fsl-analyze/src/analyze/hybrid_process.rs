@@ -77,6 +77,7 @@ pub(super) struct ProcessCall<'a> {
 }
 
 /// The item's answer, or the report that settles it without one.
+#[allow(clippy::result_large_err, reason = "failure directly settles the item with its existing EngineReport API rather than an intermediate error")]
 pub(super) fn answer(
     call: &ProcessCall<'_>,
     cancel: &filament_exact::Cancel,
@@ -115,6 +116,7 @@ pub(super) fn answer(
 }
 
 /// The FSpec FR-331 request stage for the item.
+#[allow(clippy::result_large_err, reason = "failure directly settles the item with its existing EngineReport API rather than an intermediate error")]
 fn compose(call: &ProcessCall<'_>) -> Result<HybridProcessRequest, EngineReport> {
     let node = call
         .wire
@@ -159,6 +161,7 @@ fn compose(call: &ProcessCall<'_>) -> Result<HybridProcessRequest, EngineReport>
 /// A body that is not an outcome stage is the FR-462 `malformed-body`
 /// failure; an entry or a counterexample of another item or backend is not
 /// the provider's answer to this request, `invalid_result`.
+#[allow(clippy::result_large_err, reason = "failure directly settles the item with its existing EngineReport API rather than an intermediate error")]
 fn item_entry<'a>(
     outcome: &'a Value,
     backend: &BackendId,
