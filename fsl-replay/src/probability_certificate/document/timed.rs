@@ -2434,15 +2434,6 @@ fn next_digital_delay(
 ) -> Result<Option<(ProbabilityProductKey, RegionState)>, ProbabilityDocumentError> {
     let current_key = digital_key(system, timed, binding, current, caps, scale, deadline)?;
     let delta = rational_units(1, scale)?;
-    let limit = caps
-        .iter()
-        .max()
-        .copied()
-        .unwrap_or(0)
-        .saturating_add(1)
-        .saturating_mul(subdivisions)
-        .saturating_add(2);
-    let mut steps = 0_u64;
     let mut state = current.clone();
     while state.elapsed <= deadline {
         if let Some(cause) = cancel.tripped() {
@@ -2867,6 +2858,15 @@ fn next_region_delay(
         deadline,
     )?;
     let delta = rational_units(1, scale)?;
+    let limit = caps
+        .iter()
+        .max()
+        .copied()
+        .unwrap_or(0)
+        .saturating_add(1)
+        .saturating_mul(subdivisions)
+        .saturating_add(2);
+    let mut steps = 0_u64;
     let mut state = current.clone();
     while state.elapsed <= deadline {
         if let Some(cause) = cancel.tripped() {
