@@ -25,20 +25,25 @@
 //! `fsl_replay::replay_hyper_trace_tuple` recomputes either verdict with the
 //! same `fsl-eval` code.
 
+mod reduction;
+
 use std::collections::BTreeSet;
 
 use filament_exact::LimitKind;
 use fsl_eval::hyper::{
-    closed_executions, horizon, judge_closed_tuple, search_partner, ClosedExecution, ClosedInputs,
-    ClosedStop, ClosedVerdict, ParameterBinding, PartnerSearch, Tuples,
+    closed_executions, constrained_closed_executions, horizon, judge_closed_tuple, search_partner,
+    ClosedExecution, ClosedInputs, ClosedStop, ClosedVerdict, ConstrainedClosedStop,
+    ParameterBinding, PartnerSearch, Tuples,
 };
 use fsl_replay::{
-    HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep, HyperTrace,
-    IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark, UndecidedCause,
+    AppliedReduction, HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep,
+    HyperTrace, IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark,
+    UndecidedCause,
 };
 
 use super::{exhausted, fault, stopped, widen, Ending, HyperRefusal, Run, Totals};
 use crate::model_check::ModelCheckRefusal;
+use reduction::Execution;
 
 /// What reading one tuple or searching one universal tuple ended with.
 enum Reading {
@@ -60,6 +65,9 @@ impl Run<'_, '_> {
         let clause = self.request.clause;
         let depth = horizon(clause.body()).ok_or_else(|| fault("a-body-has-a-horizon"))?;
         let limits = self.request.limits;
+        if !self.witness && !self.projected {
+            return self.decide_closed_universal(instances, depth, totals);
+        }
         let mut lists: Vec<Vec<ClosedExecution>> = Vec::with_capacity(self.systems.len());
         for (index, system) in self.systems.iter().enumerate() {
             let skips: BTreeSet<String> = clause
@@ -152,6 +160,195 @@ impl Run<'_, '_> {
             });
         }
         Ok(HyperOutcome::HoldsClosed {
+            stats: totals.stats(),
+        })
+    }
+
+    /// HP-2's finite scope, optionally quotiented by an admitted key group
+    /// and the compiler's copy group. Only genuinely closed paths are read;
+    /// cut predecessors remain boundary evidence, never artificial terminals.
+    fn decide_closed_universal(
+        &self,
+        instances: &[Vec<ParameterBinding>],
+        depth: u64,
+        mut totals: Totals,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let limits = self.request.limits.limits;
+        let selected = self.symmetric || self.request.reductions.constraint.is_some();
+        let mut lists = Vec::with_capacity(self.systems.len());
+        for (subject, system) in self.systems.iter().enumerate() {
+            let found = if let Some(constraint) = &self.request.reductions.constraint {
+                constrained_closed_executions(
+                    system,
+                    depth,
+                    limits.max_states,
+                    &BTreeSet::new(),
+                    constraint,
+                    self.cancel,
+                )
+            } else {
+                closed_executions(
+                    system,
+                    depth,
+                    limits.max_states,
+                    &BTreeSet::new(),
+                    self.cancel,
+                )
+                .map(|complete| fsl_eval::hyper::ConstrainedClosedExecutions {
+                    complete,
+                    boundaries: Vec::new(),
+                })
+                .map_err(ConstrainedClosedStop::Enumeration)
+            };
+            let found = match found {
+                Ok(found) => found,
+                Err(ConstrainedClosedStop::Enumeration(stop)) => {
+                    return self.closed_stop(stop, subject, &totals);
+                }
+                Err(ConstrainedClosedStop::Undefined(cause)) => {
+                    return Err(HyperRefusal::ConstraintUndefined { cause }.into());
+                }
+            };
+            lists.push(
+                found
+                    .complete
+                    .into_iter()
+                    .map(|path| Execution {
+                        path,
+                        boundary: false,
+                    })
+                    .chain(found.boundaries.into_iter().map(|path| Execution {
+                        path,
+                        boundary: true,
+                    }))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        totals.depth = depth;
+        let clause = self.request.clause;
+        let mut matched = false;
+        let mut reductions = Vec::new();
+        let mut boundaries = BTreeSet::new();
+        for instance in instances {
+            let tuples = if selected {
+                match self.closed_quotient(&lists, instance, &mut totals)? {
+                    Ok(tuples) => tuples,
+                    Err(outcome) => return Ok(outcome),
+                }
+            } else {
+                Vec::new()
+            };
+            let inputs = ClosedInputs {
+                clause,
+                instance,
+                letters: self.request.letters,
+                matcher: self.request.matcher,
+                meter: self.request.meter,
+                cancel: self.cancel,
+            };
+            let lens = self.slots.iter().map(|slot| lists[*slot].len()).collect();
+            let ordinary = Tuples::over(lens).map(|picked| reduction::Representative {
+                picked,
+                boundary: None,
+            });
+            let tuples: Box<dyn Iterator<Item = reduction::Representative>> = if selected {
+                Box::new(tuples.into_iter())
+            } else {
+                Box::new(ordinary)
+            };
+            for representative in tuples {
+                if self.cancel.poll() {
+                    return self.cancelled(&totals);
+                }
+                if !selected {
+                    if totals.edges >= widen(limits.max_transitions) {
+                        return Ok(exhausted(
+                            ModelCheckLimit::MaxTransitions,
+                            widen(limits.max_transitions),
+                            &totals,
+                        ));
+                    }
+                    totals.edges += 1;
+                }
+                if let Some(boundary) = representative.boundary {
+                    // Each instance has its own product; identical state bytes
+                    // under two distinct object bindings are distinct boundaries.
+                    boundaries.insert((Self::instance_of(instance), boundary));
+                    totals.boundary = widen(boundaries.len());
+                    continue;
+                }
+                if totals.states >= widen(limits.max_states) {
+                    return Ok(exhausted(
+                        ModelCheckLimit::MaxStates,
+                        widen(limits.max_states),
+                        &totals,
+                    ));
+                }
+                totals.states += 1;
+                let mut tuple = Vec::with_capacity(representative.picked.len());
+                for (variable, index) in representative.picked.iter().enumerate() {
+                    let execution = self
+                        .slots
+                        .get(variable)
+                        .and_then(|slot| lists.get(*slot))
+                        .and_then(|list| list.get(*index))
+                        .ok_or_else(|| fault("a-reduced-closed-representative-is-a-real-tuple"))?;
+                    if execution.boundary {
+                        return Err(fault("a-boundary-prefix-is-never-read-as-a-closed-trace"));
+                    }
+                    tuple.push(&execution.path);
+                }
+                match self.tuple_reading(
+                    judge_closed_tuple(&inputs, &tuple),
+                    &mut matched,
+                    &totals,
+                )? {
+                    Reading::Continue => {}
+                    Reading::Ended(outcome) => return Ok(outcome),
+                    Reading::Refuted(position) => {
+                        return Ok(HyperOutcome::Violated {
+                            counterexample: Box::new(HyperCounterexample {
+                                kind: HyperCounterexampleKind::Closed,
+                                instance: Self::instance_of(instance),
+                                traces: self.closed_traces(&tuple)?,
+                                trace_position: position,
+                            }),
+                            stats: totals.stats(),
+                        });
+                    }
+                }
+            }
+            if self.symmetric {
+                reductions.push(AppliedReduction::Symmetry {
+                    groups: self.keys.classes.clone(),
+                    orbit: self.orbit_of(instance),
+                    stabiliser: self.stabiliser_of(instance).classes,
+                });
+            }
+        }
+        if totals.boundary > 0 {
+            return Ok(Self::constraint_reached(&totals));
+        }
+        if !clause.mu_universal().is_empty() && !matched {
+            return Ok(HyperOutcome::Undecided {
+                cause: UndecidedCause::VacuousMatch,
+                stats: totals.stats(),
+            });
+        }
+        if !selected {
+            return Ok(HyperOutcome::HoldsClosed {
+                stats: totals.stats(),
+            });
+        }
+        if !self.copy.classes.is_empty() {
+            reductions.push(AppliedReduction::CopySwap {
+                classes: self.copy.classes.clone(),
+            });
+        }
+        Ok(HyperOutcome::HoldsReduced {
+            certificates: Vec::new(),
+            scope: fsl_replay::HyperReducedScope::ClosedExecutions,
+            reductions,
             stats: totals.stats(),
         })
     }
