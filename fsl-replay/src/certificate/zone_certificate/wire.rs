@@ -39,6 +39,9 @@ use crate::certificate::zone::{LuBounds, Zone};
 /// Why a certificate has no wire, or a wire no certificate.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ZoneCertificateWireError {
+    /// Matrix layout or its physical allocation could not be represented.
+    #[error(transparent)]
+    Resource(#[from] fsl_eval::simulation::model::ModelKeyError),
     /// The certificate carries a member the task-product wire does not.
     #[error("the certificate carries a member outside the task-product form: {0}")]
     Unsupported(&'static str),
@@ -132,15 +135,34 @@ fn zone_wire(zone: &Zone) -> Result<Value, ZoneCertificateWireError> {
     Ok(Value::Array(rows))
 }
 
-fn read_zone(value: &Value, pointer: &str) -> Result<Zone, TaskProductShapeRefusal> {
+fn read_zone(value: &Value, pointer: &str) -> Result<Zone, ZoneCertificateWireError> {
     let rows = array(value, pointer)?;
     let dim = rows.len();
-    let mut cells = Vec::with_capacity(dim * dim);
+    let count = dim
+        .checked_mul(dim)
+        .ok_or(fsl_eval::simulation::model::ModelKeyError::SizeOverflow)?;
+    // Establish the actual square layout before reserving its quadratic
+    // storage or parsing any arbitrary-precision scalar in a row.
+    for (index, row) in rows.iter().enumerate() {
+        let at = child(pointer, index);
+        if array(row, &at)?.len() != dim {
+            return refuse(&at, TaskProductShapeReason::NotCanonical).map_err(Into::into);
+        }
+    }
+    let bytes = count
+        .checked_mul(size_of::<Option<(Integer, bool)>>())
+        .ok_or(fsl_eval::simulation::model::ModelKeyError::SizeOverflow)?;
+    let mut cells = Vec::new();
+    cells.try_reserve_exact(count).map_err(|_| {
+        fsl_eval::simulation::model::ModelKeyError::Encoding(
+            fsl_eval::simulation::EncodingRefusal::Allocation { requested: bytes },
+        )
+    })?;
     for (i, row) in rows.iter().enumerate() {
         let at = child(pointer, i);
         let row = array(row, &at)?;
         if row.len() != dim {
-            return refuse(&at, TaskProductShapeReason::NotCanonical);
+            return refuse(&at, TaskProductShapeReason::NotCanonical).map_err(Into::into);
         }
         for (j, entry) in row.iter().enumerate() {
             let at = child(&at, j);
@@ -151,12 +173,28 @@ fn read_zone(value: &Value, pointer: &str) -> Result<Zone, TaskProductShapeRefus
             let map = object(entry, &at, &["bound", "strict"], &[])?;
             let bound = integer(member(map, "bound"), &child(&at, "bound"))?;
             let Some(strict) = member(map, "strict").as_bool() else {
-                return refuse(&child(&at, "strict"), TaskProductShapeReason::WrongKind);
+                return refuse(&child(&at, "strict"), TaskProductShapeReason::WrongKind)
+                    .map_err(Into::into);
             };
             cells.push(Some((bound, strict)));
         }
     }
-    Zone::from_matrix(dim, cells).or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical))
+    Zone::from_matrix(dim, cells)
+        .or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical).map_err(Into::into))
+}
+
+#[cfg(test)]
+mod matrix_layout_tests {
+    use super::*;
+
+    /// Trace: FSpec-FR-418-AC-11
+    #[test]
+    fn rejects_ragged_matrix_before_parsing_scalar_payloads() {
+        let wire = json!([[{"bound":"not-an-integer","strict":false},"infinity"],[]]);
+        assert!(
+            matches!(read_zone(&wire, "/zone"), Err(ZoneCertificateWireError::Shape(TaskProductShapeRefusal { pointer, reason: TaskProductShapeReason::NotCanonical })) if pointer == "/zone/1")
+        );
+    }
 }
 
 fn state_wire(key: &StateKey) -> Value {

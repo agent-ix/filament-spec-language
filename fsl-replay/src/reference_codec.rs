@@ -135,6 +135,75 @@ pub struct ReferenceScope<'s, 'c, 'm, 'r> {
 }
 
 impl ReferenceScope<'_, '_, '_, '_> {
+    pub(crate) fn carrier_refusal(&mut self, member: &'static str) -> ReferenceCodecError {
+        ReferenceCodecError::Carrier {
+            cause: crate::CounterexampleWireError::Unspelled(member),
+            pointer: std::mem::take(&mut self.scope.path),
+        }
+    }
+
+    pub(crate) fn work(&mut self, units: usize) -> Result<(), ReferenceCodecError> {
+        self.scope.work(units)
+    }
+
+    pub(crate) fn append(
+        &mut self,
+        values: &mut Vec<Value>,
+        value: Value,
+    ) -> Result<(), ReferenceCodecError> {
+        self.scope.work(1)?;
+        if values.len() == values.capacity() {
+            let capacity = values
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
+            let bytes = capacity
+                .checked_mul(size_of::<Value>())
+                .ok_or_else(|| self.scope.stopped(ModelKeyError::SizeOverflow))?;
+            self.scope.reserve(bytes)?;
+            values
+                .try_reserve_exact(1)
+                .map_err(|_| self.scope.allocation(bytes))?;
+        }
+        values.push(value);
+        Ok(())
+    }
+
+    pub(crate) fn canonical(
+        &mut self,
+        value: &(impl quire_canonical::Encode + ?Sized),
+    ) -> Result<Value, ReferenceCodecError> {
+        let admission = Admission::new(&mut *self.scope.budget, self.scope.cancel);
+        let result = admission.encoded(self.limits, |writer| value.encode_into(writer));
+        let bytes = admission
+            .finish(result)
+            .map_err(|error| self.scope.stopped(error))?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| self.scope.fail(ReferenceFailure::MalformedWire))?;
+        parse_text(text, &mut self.scope)
+    }
+
+    pub(crate) fn typed_value(&mut self, value: &Value) -> Result<Value, ReferenceCodecError> {
+        self.codec.value(value, false, 0, &mut self.scope)
+    }
+
+    pub(crate) fn declaration_text(
+        &mut self,
+        key: &filament_checked::key::DeclarationKey,
+    ) -> Result<String, ReferenceCodecError> {
+        let package = self.text(&key.package)?;
+        let node = self.text(&key.node)?;
+        let value = self.record([("package", package), ("node", node)])?;
+        canonical_text(&value, &mut self.scope, self.limits)
+    }
+
+    pub(crate) fn state(
+        &mut self,
+        key: &fsl_eval::simulation::StateKey,
+    ) -> Result<Value, ReferenceCodecError> {
+        let key = self.opaque_key(key)?;
+        self.record([("key", key)])
+    }
     pub(crate) fn put(
         &mut self,
         object: &mut Value,
@@ -2255,7 +2324,6 @@ mod tests {
     #[test]
     fn call_reference_adapter_uses_checked_admission_and_environment() {
         use super::{reference_fixture, ReferenceCodec};
-        use filament_contract_model::NativeJoinBudget;
         use filament_semantic_value::model_transition::ModelTransition;
         use fsl_eval::execution::{PrepareLimits, SuppliedBackends};
         use fsl_package::ReferenceCatalog;
@@ -2543,6 +2611,151 @@ mod tests {
         let mut denied = Budget::new(0, 1_000_000);
         assert!(matches!(
             codec.encode_reference(native, &mut denied, &cancel, 64),
+            Err(ReferenceCodecError::Key {
+                source: ModelKeyError::Denied,
+                ..
+            })
+        ));
+        assert_eq!(denied.storage_used, 0);
+    }
+
+    /// Trace: FSpec-FR-181, FSpec-FR-364
+    #[test]
+    fn scoped_temporal_retains_genuine_initial_terminal_key_and_original_population() {
+        use super::{reference_fixture, ReferenceCodec};
+        use filament_checked::key::DeclarationKey;
+        use fsl_eval::simulation::model::{
+            ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
+            PopulationUniverse,
+        };
+        use fsl_package::ReferenceCatalog;
+        use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
+        use serde_json::json;
+        use std::collections::BTreeMap;
+        let packages = fsl_semantics::model::intake::package_input([
+            reference_fixture::DOMAIN_PACKAGE.as_bytes(),
+        ])
+        .unwrap();
+        let source = fsl_foundation::SourceIdentity::new("test", "scoped-temporal");
+        let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n", reference_fixture::PACKAGE_IDENTITY);
+        let compiled = crate::spine::compose(
+            source,
+            "temporal.native",
+            text.as_bytes(),
+            &packages,
+            &crate::spine::DependencyInput::default(),
+            crate::spine::SpineLimits::default(),
+        )
+        .unwrap();
+        let checked = &compiled.package;
+        let population = DeclarationKey {
+            package: reference_fixture::PACKAGE_IDENTITY.to_owned(),
+            node: "ix://example/config-version/config_history".to_owned(),
+        };
+        let object_type = DeclarationKey {
+            package: population.package.clone(),
+            node: "ix://example/config-version/ConfigVersion".to_owned(),
+        };
+        let selected = DocumentRef {
+            authority: "test".to_owned(),
+            identity: "temporal-initial".to_owned(),
+        };
+        let snapshot = json!({"format":"filament.state.snapshot/v1","identity":{"authority":selected.authority,"identity":selected.identity},"observation":"current","anchor":{"kind":"initialization","name":"start"},"model":{"identity":reference_fixture::PACKAGE_IDENTITY},"populations":[{"population":population.node,"complete":true,"objects":[{"key":"雪temporal","type":object_type.node,"fields":{"versionNumber":{"integer":"2"},"parent":{"absent":{}}}}]}]});
+        let snapshots =
+            BTreeMap::from([(selected.clone(), serde_json::to_vec(&snapshot).unwrap())]);
+        let system = ModelSystem::new(ModelSimulationRequest {
+            input: ModelCheckInput::source(checked),
+            packages: &packages,
+            normalization: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+            snapshots: &snapshots,
+            initial: vec![selected.clone()],
+            universes: vec![PopulationUniverse {
+                population: population.clone(),
+                keys: vec!["雪temporal".to_owned()],
+            }],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 10000,
+            },
+            meter: crate::spine::default_accounting(1_000_000),
+            emit: fsl_package::EmitLimits::new(16_777_216),
+        })
+        .unwrap();
+        let (initial, _) = system
+            .reference_model()
+            .admit_initial(&snapshots, &selected, ObservationLimits::default())
+            .unwrap();
+        let (_, terminal) = system.state_key_of(&initial).unwrap();
+        let native = system.object_reference(&object_type, "雪temporal").unwrap();
+        let mut budget = Budget::new(10_000_000, 10_000_000);
+        let catalog =
+            ReferenceCatalog::from_checked_model(checked, system.reference_model(), &mut budget)
+                .unwrap();
+        let codec = ReferenceCodec::new(&catalog, &system).unwrap();
+        let cancel = Cancel::new();
+        let mut scope = codec.scope(
+            &mut budget,
+            &cancel,
+            64,
+            quire_canonical::Limits::new(100000),
+        );
+        let mut witness = crate::model_check::counterexample::TemporalCounterexample {
+            initial_state: 0,
+            prefix: Vec::new(),
+            over_binding: Some(fsl_eval::model_subject::ModelInstance {
+                population,
+                key: "雪temporal".to_owned(),
+            }),
+            fairness: Vec::new(),
+            kind: crate::model_check::counterexample::CounterexampleKind::Formula,
+            lasso: Some(crate::model_check::counterexample::Lasso {
+                entry: 0,
+                terminal_stutter: true,
+                terminal_stutter_delay: None,
+            }),
+            blocked: Vec::new(),
+            refinement: None,
+            final_delay: None,
+        };
+        let written = scope
+            .temporal_wire(&witness, Some(&native), None, Some(&terminal))
+            .unwrap();
+        assert!(written["prefix"].as_array().unwrap().is_empty());
+        assert_eq!(
+            written["loop"][0]["transition"],
+            json!({"type":"terminal-stutter"})
+        );
+        assert_eq!(
+            written["loop"][0]["post_state"],
+            crate::state_key_wire(&terminal).unwrap()
+        );
+        assert_eq!(
+            written["over_binding"],
+            scope.encode_reference(&native).unwrap()
+        );
+        assert!(scope
+            .temporal_wire(&witness, Some(&native), None, None)
+            .is_err());
+        witness.over_binding = None;
+        assert!(scope
+            .temporal_wire(&witness, Some(&native), None, Some(&terminal))
+            .unwrap()["over_binding"]
+            .is_null());
+        witness.lasso.as_mut().unwrap().terminal_stutter_delay = Some(
+            filament_exact::Rational::from_integer(filament_exact::Integer::zero()),
+        );
+        assert!(scope
+            .temporal_wire(&witness, None, None, Some(&terminal))
+            .is_err());
+        let mut denied = Budget::new(0, 10_000_000);
+        let mut scope = codec.scope(
+            &mut denied,
+            &cancel,
+            64,
+            quire_canonical::Limits::new(100000),
+        );
+        assert!(matches!(
+            scope.temporal_wire(&witness, None, None, Some(&terminal)),
             Err(ReferenceCodecError::Key {
                 source: ModelKeyError::Denied,
                 ..
