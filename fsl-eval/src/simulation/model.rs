@@ -1470,6 +1470,34 @@ impl<'a> ModelSystem<'a> {
         crate::simulation::key::canonical_bytes(transition, identity_limits())
     }
 
+    /// Expand an HP-1 subject with every satisfying operation result retained.
+    /// Results participate in edge identity even when the operation, arguments
+    /// and post-state coincide. Ordinary [`TransitionSystem::successors`] keeps
+    /// its first-result state-reachability semantics.
+    ///
+    /// # Errors
+    /// Stops on candidate or evaluation exhaustion or cancellation. A stopped
+    /// expansion returns no partial successor set.
+    pub fn relation_successors(
+        &self,
+        state: &ModelSimState,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Expansion<ModelRelationTransition, ModelSimState, ModelFinding>, ExpansionStop>
+    {
+        let expanded = walk::expand_relation_state(self, state, cancel)?;
+        Ok(Expansion {
+            successors: expanded
+                .successors
+                .into_iter()
+                .map(|(transition, state)| {
+                    let result = state.reached_by().and_then(|effect| effect.result.clone());
+                    (ModelRelationTransition { transition, result }, state)
+                })
+                .collect(),
+            findings: expanded.findings,
+        })
+    }
+
     /// FR-187's canonical order key of a scheduled identity: the canonical
     /// bytes of its transition identity without random arguments, the order
     /// of [`Self::actions`]'s identities.

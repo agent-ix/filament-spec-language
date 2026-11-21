@@ -723,6 +723,117 @@ fn hp1_coalesced_results_and_typed_null_remain_distinct() {
         serde_json::to_value(null).expect("typed null result")["result"],
         serde_json::json!({"type":"null"})
     );
+    let outcome = check_model_relation(
+        ModelRelationCheckRequest {
+            relation: &fixture.relation,
+            package: &fixture.package,
+            subjects: fixture.subjects(),
+            limits: ModelCheckLimits::default(),
+            max_depth: None,
+            meter: UNLIMITED,
+        },
+        &Cancel::new(),
+    )
+    .expect("result-sensitive engine run");
+    let ModelRelationOutcome::Refuted { counterexample, .. } = outcome else {
+        panic!("all results must refute result equality");
+    };
+    assert_ne!(
+        counterexample.traces[0].results.last(),
+        counterexample.traces[1].results.last()
+    );
+    let subjects = fixture.subjects();
+    let system = ModelSystem::for_alias(subjects[0].simulation.clone(), "V")
+        .expect("result-bearing replay system");
+    let replay = fsl_replay::replay_model_relation_tuple(
+        &fsl_replay::ModelRelationReplay {
+            relation: &fixture.relation,
+            package: &fixture.package,
+            systems: vec![&system, &system],
+            meter: UNLIMITED,
+            cancel: &Cancel::new(),
+        },
+        &counterexample,
+    )
+    .expect("nonleast result edge replays");
+    assert!(matches!(
+        replay,
+        fsl_replay::ModelTraceSettlement::Reproduced {
+            value: fsl_replay::ModelTraceValue::Truth(false),
+            ..
+        }
+    ));
+}
+
+#[trace("FR-163-AC-12", "FR-179-AC-2")]
+#[test]
+fn hp1_result_expansion_keeps_all_results_and_ordinary_successors_stay_unchanged() {
+    let fixture = Fixture::from_parts(package_and_relation_with_document(
+        step_with_result_document(),
+        Vault::Custom(
+            "post Step using v on V::Vault::step { (result = 0 or result = 1) and self.l = 0 }\n",
+        ),
+        "relation Result using v over (x: V::Vault::step, y: V::Vault::step) { true }",
+    ));
+    let subjects = fixture.subjects();
+    let system =
+        ModelSystem::for_alias(subjects[0].simulation.clone(), "V").expect("result-bearing system");
+    let state = system.initial().remove(0);
+    let ordinary = system.successors(&state).expect("ordinary successors");
+    let all = system
+        .relation_successors(&state, &Cancel::new())
+        .expect("all result successors");
+    assert_eq!(
+        ordinary.successors.len(),
+        2,
+        "one least satisfying result per argument in the ordinary state graph"
+    );
+    assert_eq!(
+        all.successors.len(),
+        4,
+        "two satisfying results per argument are distinct HP-1 edges"
+    );
+    for (transition, post) in &ordinary.successors {
+        let matching: Vec<_> = all
+            .successors
+            .iter()
+            .filter(|(edge, candidate)| {
+                &edge.transition == transition
+                    && system.state_key(candidate).expect("post key").1
+                        == system.state_key(post).expect("ordinary post key").1
+            })
+            .collect();
+        assert_eq!(matching.len(), 2);
+        assert_ne!(matching[0].0.result, matching[1].0.result);
+        assert_eq!(
+            post.reached_by()
+                .expect("ordinary effect")
+                .result
+                .as_deref(),
+            Some(r#"{"type":"integer","value":"0"}"#)
+        );
+    }
+    assert_eq!(
+        system
+            .successors(&state)
+            .expect("ordinary after all-results expansion")
+            .successors
+            .len(),
+        2
+    );
+    let mut denied = subjects[0].simulation.clone();
+    denied.expansion.max_candidates = 2;
+    let denied = ModelSystem::for_alias(denied, "V").expect("bounded result system");
+    assert!(
+        matches!(
+            denied.relation_successors(&state, &Cancel::new()),
+            Err(fsl_eval::simulation::ExpansionStop {
+                limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
+                ..
+            })
+        ),
+        "a partially enumerated result set must stop without returning success"
+    );
 }
 
 #[trace("FR-163-AC-4", "FR-182-AC-17")]

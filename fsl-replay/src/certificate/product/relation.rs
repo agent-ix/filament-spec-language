@@ -6,9 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use base64::Engine as _;
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::simulation::model::{
-    check_model_bounds, ModelRelationTransition, ModelSimState, ModelSystem,
-};
+use fsl_eval::simulation::model::{check_model_bounds, ModelSimState, ModelSystem};
 use fsl_eval::simulation::{ExpansionLimit, StateKey, TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::value::ModelRelationEvaluation;
 use fsl_semantics::check::{CheckedModelRelation, HyperForm};
@@ -209,34 +207,37 @@ fn reconstruct(
             .states
             .get(&key)
             .ok_or(ProductClosureRefusal::Recompute("queued-state"))?;
-        let expansion = system.successors(state).map_err(|stop| match stop.limit {
-            Some(ExpansionLimit::MaxCandidates) => stopped(
-                ModelCheckLimit::MaxCandidates,
-                request.subjects[alias_index]
-                    .simulation
-                    .expansion
-                    .max_candidates,
-            ),
-            Some(ExpansionLimit::EvaluationMeter(counter)) => stopped(
-                ModelCheckLimit::EvaluationMeter { counter },
-                crate::meter_bound(&request.meter, counter),
-            ),
-            None if stop.is_internal_failure() => {
-                ProductClosureRefusal::Recompute("model-expansion")
+        let expansion = system.relation_successors(state, cancel).map_err(|stop| {
+            if let Some(source) = cancel.cause() {
+                return ProductClosureRefusal::Stopped(IncompleteCause::Cancelled { source });
             }
-            None => ProductClosureRefusal::Stopped(IncompleteCause::ResourceExhausted),
+            match stop.limit {
+                Some(ExpansionLimit::MaxCandidates) => stopped(
+                    ModelCheckLimit::MaxCandidates,
+                    request.subjects[alias_index]
+                        .simulation
+                        .expansion
+                        .max_candidates,
+                ),
+                Some(ExpansionLimit::EvaluationMeter(counter)) => stopped(
+                    ModelCheckLimit::EvaluationMeter { counter },
+                    crate::meter_bound(&request.meter, counter),
+                ),
+                None if stop.is_internal_failure() => {
+                    ProductClosureRefusal::Recompute("model-expansion")
+                }
+                None => ProductClosureRefusal::Stopped(IncompleteCause::ResourceExhausted),
+            }
         })?;
         if !expansion.findings.is_empty() && graph.undefined.is_none() {
             graph.undefined = Some(key.clone());
         }
         let mut ordered = Vec::new();
-        for (transition, next) in expansion.successors {
+        for (labelled, next) in expansion.successors {
             poll(cancel)?;
             let (_, target) = system
                 .state_key(&next)
                 .map_err(|_| ProductClosureRefusal::Recompute("successor-key"))?;
-            let result = next.reached_by().and_then(|effect| effect.result.clone());
-            let labelled = ModelRelationTransition { transition, result };
             let order = quire_canonical::to_vec(
                 &labelled,
                 quire_canonical::Limits::new(fsl_foundation::IdentityLimits::default().input_bytes),

@@ -30,6 +30,7 @@ type RelationGraph = RetainedGraph<ModelSimState, RelationTransition, ModelFindi
 /// Model expansion with result-aware transition identities for relation checks.
 struct RelationSystem<'s, 'a> {
     system: &'s ModelSystem<'a>,
+    cancel: &'s Cancel,
 }
 
 impl TransitionSystem for RelationSystem<'_, '_> {
@@ -50,19 +51,7 @@ impl TransitionSystem for RelationSystem<'_, '_> {
         &self,
         state: &Self::State,
     ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop> {
-        let expanded = self.system.successors(state)?;
-        let successors = expanded
-            .successors
-            .into_iter()
-            .map(|(transition, state)| {
-                let result = state.reached_by().and_then(|effect| effect.result.clone());
-                (RelationTransition { transition, result }, state)
-            })
-            .collect();
-        Ok(Expansion {
-            successors,
-            findings: expanded.findings,
-        })
+        self.system.relation_successors(state, self.cancel)
     }
 }
 
@@ -215,7 +204,10 @@ pub fn check_model_relation(
         }
         check_model_bounds(&system, BOUND_POSITIONS)
             .map_err(|refusal| ModelRelationRefusal::Model(not_simulated(refusal)))?;
-        let relation_system = RelationSystem { system: &system };
+        let relation_system = RelationSystem {
+            system: &system,
+            cancel,
+        };
         let graph = retain(
             &relation_system,
             request.limits.limits,
@@ -266,6 +258,13 @@ pub fn check_model_relation(
                 });
             }
             Outcome::Stopped { .. } => {
+                if cancel.cause().is_some() {
+                    return Ok(ModelRelationOutcome::Stopped {
+                        limit: None,
+                        count: None,
+                        stats,
+                    });
+                }
                 return Ok(ModelRelationOutcome::Undecided { stats });
             }
         }
