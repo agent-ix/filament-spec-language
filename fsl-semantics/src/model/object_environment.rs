@@ -472,6 +472,13 @@ impl ObjectEnvironment {
         self.populations.get(&population_id).map(Arc::as_ref)
     }
 
+    /// Borrow the actual admitted bindings retained by this environment.
+    /// Consumers that account traversal charge before advancing the iterator.
+    /// This does not select a population for a reference or reconstruct an id.
+    pub fn population_bindings(&self) -> impl Iterator<Item = &PopulationBinding> {
+        self.populations.values().map(Arc::as_ref)
+    }
+
     /// The binding already admitted for an exact population declaration
     /// identity. This reads the recorded correspondence; it creates no id.
     pub fn population_binding(&self, identity: &str) -> Option<&PopulationBinding> {
