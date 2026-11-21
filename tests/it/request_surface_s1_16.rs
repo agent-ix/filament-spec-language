@@ -3713,7 +3713,7 @@ fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes()
                 expected.1
             );
             assert_eq!(expected.1["basis"], "closed-scope");
-            let models = compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
+            compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
             let package_bytes = std::fs::read(directory.path().join("package.json")).unwrap();
             let package = fsl_package::admit_checked_package(
                 &package_bytes,
