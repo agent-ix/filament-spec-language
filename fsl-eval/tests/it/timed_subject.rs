@@ -1017,7 +1017,7 @@ fn clock_reference_domains_require_a_selector_bound() {
     assert_eq!(&site.clock, q);
     assert_eq!(site.slot, [1]);
     assert!(
-        matches!(&site.member, fsl_foundation::bound::DomainKey::Node { path, .. } if path.first() == Some(&0))
+        matches!(&site.member, fsl_foundation::bound::DomainKey::Node { path, .. } if path == &[0, 4])
     );
     let rendered = NotSimulated::RequiresBound(required.clone()).to_string();
     assert!(rendered.contains(&site.member.to_string()));
