@@ -91,7 +91,7 @@ pub(crate) enum ExactReport {
         /// The claim's one `over` instance, absent without `over`.
         binding: Option<ExactBinding>,
         /// The certificate the record carries.
-        evidence: Box<ExactProbabilityEvidence>,
+        evidence: Option<Box<ExactProbabilityEvidence>>,
     },
     /// A construction overflow or actual allocator refusal exhausted resources.
     ResourceExhausted,
@@ -169,7 +169,7 @@ impl ExactReport {
                 extremum,
                 binding,
             ) {
-                Some(record) => (record, Some(evidence)),
+                Some(record) => (record, evidence),
                 None => (TerminalRecord::failed_with(index, backend, BROKEN), None),
             },
             Self::ResourceExhausted => (
@@ -1304,7 +1304,15 @@ fn checked_report(
                     check,
                     extremum,
                     binding,
-                    evidence,
+                    evidence: Some(evidence),
+                }))
+            }
+            ExactProbabilityCertificateCheck::AcceptedVacuous(_) => {
+                EngineReport::Exact(Box::new(ExactReport::Proved {
+                    check,
+                    extremum: None,
+                    binding: None,
+                    evidence: None,
                 }))
             }
             ExactProbabilityCertificateCheck::Rejected(rejection) => {

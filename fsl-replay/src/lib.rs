@@ -465,7 +465,7 @@ pub use probability_certificate::{
     ProbabilityDocumentError, ProbabilityDocumentIoLimits, ProbabilityDocumentLimit,
     ProbabilityDocumentLimits, ProbabilityKeyAdmission, ProbabilityObjective,
     ProbabilityPackageRequest, ProbabilityProductKey, ProbabilityProofDocument,
-    ProbabilityRewardObjective, ProbabilitySourceError, ProbabilitySourceLimits,
+    ProbabilityRewardObjective, ProbabilityVacuityAcceptance, ProbabilitySourceError, ProbabilitySourceLimits,
     ProbabilitySourceRequest, ProbabilityStateEvent, ProbabilityUndefinedWitness,
     ProbabilityWitnessError, ProbabilityWitnessPath, ProbabilityWitnessReplay,
     ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey, RegionKeyKind,

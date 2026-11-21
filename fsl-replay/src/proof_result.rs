@@ -1685,6 +1685,18 @@ impl TerminalRecord {
         extremum: Option<Extremum>,
         binding: Option<ExactBinding>,
     ) -> Option<Self> {
+        if let crate::ExactProbabilityCertificateCheck::AcceptedVacuous(accepted) = check {
+            let mut record = Self::with_backend(
+                request_index,
+                backend,
+                TerminalValue::Proved {
+                    basis: ProofBasis::Exhaustive,
+                    certification: Certification::Certified,
+                },
+            );
+            record.exact_certificate_document = Some(accepted.document().into());
+            return Some(record);
+        }
         let crate::probability_certificate::ExactProbabilityCertificateCheck::Accepted(accepted) =
             check
         else {

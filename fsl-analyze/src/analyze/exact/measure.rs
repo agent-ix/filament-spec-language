@@ -269,6 +269,9 @@ pub(super) fn run(
                 FhResult::Exact { values, .. } => values,
                 _ => return Err(ProbabilityDocumentError::Unsupported),
             };
+            let vacuous = denominator
+                .get(initial.index())
+                .is_some_and(Rational::is_zero);
             let denominator = measure_probability_certificate_document(
                 &system,
                 claims,
@@ -278,7 +281,11 @@ pub(super) fn run(
                 document_limits,
                 cancel,
             )?;
-            conditional_measure_probability_certificate(numerator, denominator)?
+            if vacuous {
+                numerator.into_vacuous()?
+            } else {
+                conditional_measure_probability_certificate(numerator, denominator)?
+            }
         } else {
             numerator
         };

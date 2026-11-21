@@ -1385,7 +1385,7 @@ impl<'a> ModelSystem<'a> {
     pub fn pending_key_bytes_with_budget(
         &self,
         scheduled: &ScheduledIdentity,
-        random: &[Value],
+        random: &[filament_exact::Value],
         identity: IdentityLimits,
         budget: &mut dyn ModelKeyBudget,
         cancel: &filament_exact::Cancel,

@@ -671,12 +671,32 @@ impl ExactProbabilityAcceptance {
     }
 }
 
+/// A value-free vacuous probability proof accepted by the independent checker.
+/// Its private document can only be obtained by proving activation unreachable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProbabilityVacuityAcceptance {
+    document: Box<[u8]>,
+    side: ProbabilityBoundSide,
+}
+impl ProbabilityVacuityAcceptance {
+    /// The accepted Conditional::Vacuous document's canonical bytes.
+    pub fn document(&self) -> &[u8] {
+        &self.document
+    }
+    /// The authored claim direction, without an invented conditional value.
+    pub fn side(&self) -> ProbabilityBoundSide {
+        self.side
+    }
+}
+
 /// The result of checking an exact-value certificate against a graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExactProbabilityCertificateCheck {
     /// Every value matches the independently evaluated graph and the initial
     /// value satisfies the claim bound.
     Accepted(ExactProbabilityAcceptance),
+    /// Activation is unreachable; this certified proof has no numeric value.
+    AcceptedVacuous(ProbabilityVacuityAcceptance),
     /// The certificate fails a checked condition.
     Rejected(ProbabilityCertificateRejection),
 }

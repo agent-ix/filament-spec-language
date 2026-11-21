@@ -192,6 +192,9 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
                 "numerator": accepted.value().numerator().to_string(), "denominator": accepted.value().denominator().to_string(),
             }})
         }
+        ExactProbabilityCertificateCheck::AcceptedVacuous(accepted) => {
+            json!({"status":"accepted","basis":"exhaustive","vacuous":true,"side":match accepted.side() { fsl_replay::ProbabilityBoundSide::AtLeast=>"at-least",fsl_replay::ProbabilityBoundSide::AtMost=>"at-most" }})
+        }
         ExactProbabilityCertificateCheck::Rejected(rejection) => {
             let rule = match rejection.rule {
                 fsl_replay::ProbabilityCertificateRule::InequalityFails => {

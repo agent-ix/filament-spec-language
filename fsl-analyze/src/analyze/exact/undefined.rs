@@ -347,7 +347,7 @@ fn materialize_inner(
                 ExactProbabilityGraphError::Cancelled(cause),
             ));
         }
-        let (Some(action), Some(draw)) = (&step.action, &step.draw) else {
+        let Some(action) = step.action.as_ref() else {
             return Err(ProbabilityWitnessError::Refused);
         };
         let choice = fsl_replay::ProductAction::Identity(
@@ -376,7 +376,9 @@ fn materialize_inner(
                 continue;
             }
             for candidate_draw in candidate.draws {
-                if !fsl_eval::simulation::model::same_values(&candidate_draw.random, draw) {
+                if step.draw.as_ref().is_some_and(|draw| {
+                    !fsl_eval::simulation::model::same_values(&candidate_draw.random, draw)
+                }) {
                     continue;
                 }
                 for (transition, post) in candidate_draw.successors {
@@ -387,14 +389,17 @@ fn materialize_inner(
                         == step.target.model
                     {
                         if matched.is_some() {
-                            return Err(ProbabilityWitnessError::Refused);
+                            if step.draw.is_some() {
+                                return Err(ProbabilityWitnessError::Refused);
+                            }
+                            continue;
                         }
-                        matched = Some((transition, post));
+                        matched = Some((transition, post, candidate_draw.random.clone()));
                     }
                 }
             }
         }
-        let Some((transition, post)) = matched else {
+        let Some((transition, post, draw)) = matched else {
             return Err(ProbabilityWitnessError::Refused);
         };
         let post_key = key(&step.target)?;
@@ -402,7 +407,7 @@ fn materialize_inner(
             choice,
             action: Some(action.clone()),
             transition: Some(transition),
-            draw: Some(draw.clone()),
+            draw: Some(draw),
             post: post.clone(),
             post_key: post_key.clone(),
             elapsed: Rational::from_integer(0_i64.into()),

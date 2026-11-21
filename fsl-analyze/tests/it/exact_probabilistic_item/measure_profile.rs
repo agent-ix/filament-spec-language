@@ -509,3 +509,221 @@ fn the_independent_measure_checker_preserves_caller_limits_and_cancellation() {
         "{actual:?}"
     );
 }
+
+#[trace("TC-2066", "FR-1043-AC-4", "FR-203-AC-1")]
+#[test]
+fn p95_quantity_ratio_is_accepted_from_its_emitted_package_and_two_ms_refutes() {
+    let claims="probabilistic P95 using ev on M over (s:M::Server) under Steady on origin { quantile 0.95 of (accumulate duration from holds(s.phase = 1) until holds(s.phase = 2) within 10) <= 5 ms }\nprobabilistic TooFast using ev on M over (s:M::Server) under Steady on origin { quantile 0.95 of (accumulate duration from holds(s.phase = 1) until holds(s.phase = 2) within 10) <= 2 ms }";
+    let mut model = prob_world::quantity_service("1 ms:90,3 ms:7,12 ms:3", claims);
+    model.body = model.body.replace(
+        "random Server::attempt(ok) ~ { true: 1 };",
+        "random Server::attempt(ok) ~ { true: 98, false: 2 };",
+    );
+    let world = World::new(&model);
+    let document = proof(&world, "P95", ratio(24233, 25000));
+    let numerator = &document["conditional"]["numerator"];
+    assert_eq!(numerator["objective"]["measure"]["kind"], "accumulate");
+    assert_eq!(numerator["objective"]["measure"]["reward"][1], "duration");
+    assert!(!numerator["objective"]["measure"]["unit"].is_null());
+    let emitted =
+        fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::default()).unwrap();
+    let simulation = world.subject().simulation;
+    let mut documents = vec![model.document(false)];
+    documents.extend(simulation.snapshots.values().cloned());
+    let provision = fsl_replay::ByteProvision::admit(
+        world
+            .provision
+            .entries()
+            .map(|(authority, identity, bytes)| {
+                (authority.to_owned(), identity.to_owned(), bytes.to_vec())
+            })
+            .collect(),
+        documents,
+        std::iter::empty(),
+    )
+    .unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("P95")).unwrap();
+    let limits = fsl_replay::ProbabilitySourceLimits {
+        spine: fsl_replay::spine::SpineLimits::default(),
+        observation: simulation.observation,
+        expansion: simulation.expansion,
+        scalar: simulation.meter,
+        document: fsl_replay::ProbabilityDocumentLimits {
+            bytes: 1_000_000,
+            storage_bytes: 8_000_000,
+            states: 128,
+            edges: 1024,
+            scalar_bits: 128,
+            accounting: fsl_replay::AccountingLimits::default().0,
+        },
+    };
+    let check = |document: &Value| {
+        let bytes = serde_json::to_vec(document).unwrap();
+        fsl_replay::check_probability_certificate_package(
+            fsl_replay::ProbabilityPackageRequest {
+                package: emitted.package().bytes(),
+                package_name: Some("package"),
+                provision: &provision,
+                item: &item,
+                initial: simulation.initial.clone(),
+                universes: simulation.universes.clone(),
+                certificate: &bytes,
+            },
+            limits,
+            &Cancel::new(),
+        )
+    };
+    let checked = check(&document);
+    assert!(
+        matches!(checked, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+        "{checked:?}"
+    );
+    let mut altered = document.clone();
+    altered["conditional"]["numerator"]["values"][0]["value"] =
+        json!({"numerator":"1","denominator":"7"});
+    let checked = check(&altered);
+    assert!(
+        matches!(
+            checked,
+            Ok(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    at: ProbabilityCertificateLocus::ProductPart {
+                        part: fsl_replay::ProbabilityCertificatePart::Numerator,
+                        ..
+                    }
+                }
+            ))
+        ),
+        "{checked:?}"
+    );
+    let too_fast = settle(&world, "TooFast", ModelCheckLimits::default());
+    assert_eq!(
+        too_fast.terminal().unwrap().value(),
+        &TerminalValue::Refuted,
+        "{:?}",
+        too_fast.settlement
+    );
+    assert_eq!(
+        too_fast
+            .probabilistic_counterexample
+            .as_ref()
+            .unwrap()
+            .evidence()
+            .paths
+            .len(),
+        1
+    );
+}
+
+#[trace("TC-3152", "FR-1043-AC-7", "FR-196-AC-13")]
+#[test]
+fn an_undefined_measure_after_merged_draws_replays_a_real_positive_draw() {
+    let source="probabilistic Q using ev on M over (c:M::Coin) under Even on origin { probability >= 0.5 [steps from holds(c.v = 0) until holds(false) within 3 <= 2] }";
+    let mut model = prob_world::coin("");
+    model.operations.push(prob_world::Operation {
+        name: "advance",
+        parameters: vec![("bit", "ix://test/coin/Bit".into())],
+        modifies: vec!["v"],
+        deletes: false,
+    });
+    model.body = model
+        .body
+        .replace(
+            "post Drop using v",
+            "pre CanDrop using v on M::Coin::drop { self.v = 1 }\npost Drop using v",
+        )
+        .replace(
+            "weight Coin::drop = 1;",
+            "weight Coin::drop = 1; weight Coin::advance = 1;",
+        );
+    model.body.push_str("\npre CanAdvance using v on M::Coin::advance { self.v = 0 }\npost Advanced using v on M::Coin::advance { self.v = 1 }\nrandom Coin::advance(bit) ~ { 0:1,1:1 };\n");
+    model.body.push_str(source);
+    let world = World::new(&model);
+    let record = settle(&world, "Q", ModelCheckLimits::default());
+    assert_eq!(
+        record.terminal().unwrap().value(),
+        &TerminalValue::Refuted,
+        "{:?}",
+        record.settlement
+    );
+    let token = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("a native reproduced path");
+    let undefined = token.undefined().unwrap();
+    assert_eq!(undefined.evaluation.site.position, 2);
+    assert_eq!(undefined.path.paths[0].steps.len(), 2);
+    assert!(undefined.path.paths[0].steps[0].draw.is_some());
+    assert_eq!(token.mass(), &ratio(1, 4));
+}
+
+#[trace("TC-3152", "FR-197-AC-4", "FR-1043-AC-7")]
+#[test]
+fn unreachable_workload_activation_has_a_certified_value_free_vacuity_basis() {
+    let world = World::new(&retry(
+        &(claim(
+            "Le",
+            "Steady",
+            "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) <= 2",
+        ) + &claim(
+            "Ge",
+            "Steady",
+            "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) >= 2",
+        )),
+    ));
+    for name in ["Le", "Ge"] {
+        let record = settle(&world, name, ModelCheckLimits::default());
+        let terminal = record
+            .terminal()
+            .unwrap_or_else(|| panic!("{:?}", record.settlement));
+        assert!(
+            matches!(
+                terminal.value(),
+                TerminalValue::Proved {
+                    basis: ProofBasis::Exhaustive,
+                    certification: Certification::Certified
+                }
+            ),
+            "{:?}",
+            terminal.value()
+        );
+        assert!(
+            record.exact_probabilistic.is_none(),
+            "vacuity has no invented exact value"
+        );
+        let document: Value =
+            serde_json::from_slice(terminal.exact_certificate_document().unwrap()).unwrap();
+        assert_eq!(document["kind"], "conditional");
+        assert_eq!(document["conditional"], json!({"mode":"vacuous"}));
+        assert_eq!(document["values"], json!([]));
+        let checked = check(&world, name, &document);
+        assert!(
+            matches!(
+                checked,
+                Ok(ExactProbabilityCertificateCheck::AcceptedVacuous(_))
+            ),
+            "{checked:?}"
+        );
+    }
+    let activated = World::new(&retry(&claim(
+        "Q",
+        "Steady",
+        &format!("quantile 0.5 of ({}) <= 2", steps()),
+    )));
+    let mut forged = proof(&activated, "Q", ratio(3, 4));
+    forged["conditional"] = json!({"mode":"vacuous"});
+    let checked = check(&activated, "Q", &forged);
+    assert!(
+        matches!(
+            checked,
+            Ok(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    ..
+                }
+            ))
+        ),
+        "{checked:?}"
+    );
+}

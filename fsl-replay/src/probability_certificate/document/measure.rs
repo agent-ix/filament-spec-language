@@ -1441,6 +1441,23 @@ pub fn measure_probability_certificate_document(
     })
 }
 
+impl MeasureProbabilityDocument {
+    /// Select value-free vacuity evidence for an unactivated workload quantile.
+    /// This only creates unchecked evidence; the checker still explores activation.
+    pub fn into_vacuous(mut self) -> Result<Self, ProbabilityDocumentError> {
+        if self.payoff != MeasurePayoffKind::Satisfied
+            || self.objective.optimization != ProbabilityObjective::Workload
+            || self.conditional.is_some()
+        {
+            return Err(ProbabilityDocumentError::MalformedMember("mode"));
+        }
+        self.values.clear();
+        self.ranking.clear();
+        self.conditional = Some(Box::new(Conditional::Vacuous));
+        Ok(self)
+    }
+}
+
 /// Combine exact numerator and denominator documents into a workload ratio.
 /// Both parts remain independently checked before any ratio is accepted.
 pub fn conditional_measure_probability_certificate(
@@ -1693,8 +1710,42 @@ pub(super) fn check(
         }
     }
     if let Some(conditional) = &document.conditional {
+        if matches!(conditional.as_ref(), Conditional::Vacuous) {
+            if !matches!(claim.scheduler, ProbScheduler::Workload(_))
+                || !matches!(claim.form, ProbForm::Quantile { .. })
+                || document.payoff != MeasurePayoffKind::Satisfied
+            {
+                return Err(ProbabilityDocumentError::MalformedMember("mode"));
+            }
+            let graph = enumerate(
+                system,
+                claim,
+                &plan,
+                limits,
+                cancel,
+                &mut meter,
+                &mut storage,
+            )?;
+            if graph.states.values().any(|state| state.activated) {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    graph.initial,
+                ));
+            }
+            poll(cancel)?;
+            return Ok(ExactProbabilityCertificateCheck::AcceptedVacuous(
+                ProbabilityVacuityAcceptance {
+                    document: bytes.to_vec().into_boxed_slice(),
+                    side: if plan.strict {
+                        ProbabilityBoundSide::AtLeast
+                    } else {
+                        ProbabilityBoundSide::AtMost
+                    },
+                },
+            ));
+        }
         let Conditional::Ratio(numerator, denominator) = conditional.as_ref() else {
-            return Err(ProbabilityDocumentError::Unsupported);
+            return Err(ProbabilityDocumentError::MalformedMember("mode"));
         };
         if !matches!(claim.scheduler, ProbScheduler::Workload(_))
             || !matches!(claim.form, ProbForm::Quantile { .. })
@@ -1761,30 +1812,29 @@ pub(super) fn check(
                     .clone(),
             );
         }
-        let value = if initial[1].is_zero() {
+        if initial[1].is_zero() {
             if graph.states.values().any(|state| state.activated) {
                 return Ok(rejected(
                     ProbabilityCertificateRule::InequalityFails,
                     graph.initial,
                 ));
             }
-            super::rational(0)
-        } else {
-            arithmetic(
-                filament_exact::RationalArithmetic::Divide(&initial[0], &initial[1]),
-                &mut meter,
-                cancel,
-            )?
-        };
+            // The no-value vacuity settlement needs its specified result carrier.
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
+        let value = arithmetic(
+            filament_exact::RationalArithmetic::Divide(&initial[0], &initial[1]),
+            &mut meter,
+            cancel,
+        )?;
         let threshold = match &plan.bound {
             Bound::AtLeast(value) | Bound::AtMost(value) => value,
         };
-        let holds = initial[1].is_zero()
-            || if plan.strict {
-                value < *threshold
-            } else {
-                value >= *threshold
-            };
+        let holds = if plan.strict {
+            value < *threshold
+        } else {
+            value >= *threshold
+        };
         if !holds {
             return Ok(rejected(
                 ProbabilityCertificateRule::ThresholdMissed,
