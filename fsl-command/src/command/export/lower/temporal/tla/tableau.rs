@@ -3,7 +3,9 @@
 //! monitor run without disabling any transition of the subject.
 
 use super::{conjuncts, fairness, Cond, Ctx, Extra, Iv, Tf};
-use crate::command::export::lower::{bullets, defer_at, define, Definition, Kind, Lower, E};
+use crate::command::export::lower::{
+    bullets, defer_at, define, mangle, Definition, Kind, Lower, E,
+};
 use std::collections::BTreeMap;
 
 /// A row ranges over a Boolean assignment to this finite formula closure.
@@ -168,12 +170,12 @@ impl Closure {
                     } => format!("~({})", ctx.atom(index, false)?),
                     Node::And(left, right) => format!("q[{left}] /\\ q[{right}]"),
                     Node::Or(left, right) => format!("q[{left}] \\/ q[{right}]"),
-                    Node::Next(inner) => format!("following[{inner}]"),
+                    Node::Next(inner) => format!("r[{inner}]"),
                     Node::Until(left, right) => {
-                        format!("q[{right}] \\/ (q[{left}] /\\ following[{at}])")
+                        format!("q[{right}] \\/ (q[{left}] /\\ r[{at}])")
                     }
                     Node::Release(left, right) => {
-                        format!("q[{right}] /\\ (q[{left}] \\/ following[{at}])")
+                        format!("q[{right}] /\\ (q[{left}] \\/ r[{at}])")
                     }
                 };
                 Ok(format!("q[{at}] = ({rhs})"))
@@ -308,12 +310,12 @@ pub(super) fn emit(
     };
     super::emit_ok(ctx, out)?;
     let monitor = &names.monitor;
-    let live = format!("{monitor}_live");
-    let phase = format!("{monitor}_phase");
-    let turn = format!("{monitor}_turn");
-    let row_type = format!("Bits_{}", names.theorem);
-    let equation = format!("Check_{}", names.theorem);
-    let check_turn = format!("Progress_{}", names.theorem);
+    let live = format!("{monitor}_h0");
+    let phase = format!("{monitor}_h1");
+    let turn = format!("{monitor}_c0");
+    let row_type = mangle("F_bits_", &clause.name);
+    let equation = mangle("F_check_", &clause.name);
+    let check_turn = mangle("F_progress_", &clause.name);
     let ids = &names.ids;
     let choices = format!("[{ids} -> {row_type}]");
     emit(
@@ -328,7 +330,11 @@ pub(super) fn emit(
         .collect::<Vec<_>>()
         .join("\n");
     let ok = &names.ok;
-    emit(out, &equation, format!("{equation}({key}, q, following) ==\n  IF {ok}({key})\n  THEN\n{equations}\n  ELSE FALSE"));
+    emit(
+        out,
+        &equation,
+        format!("{equation}({key}, q, r) ==\n  IF {ok}({key})\n  THEN\n{equations}\n  ELSE FALSE"),
+    );
 
     let mut variables = vec![monitor.clone(), live.clone(), phase.clone()];
     let mut types = vec![

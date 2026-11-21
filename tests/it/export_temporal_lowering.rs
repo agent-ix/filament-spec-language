@@ -2978,12 +2978,13 @@ fn tableau_checks_mixed_acceptance_over_the_total_product() {
     assert_eq!(exit, 0, "{tla}");
     let text = tla["export"]["target_text"].as_str().unwrap();
     for fragment in [
-        "m_T \\in [Ids_Counter -> Bits_Th_T]",
-        "m_T' \\in [Ids_Counter -> Bits_Th_T]",
-        "m_T_live' = [o_c \\in Ids_Counter |->",
-        "m_T_live[o_c] /\\ Check_Th_T(o_c, m_T[o_c], m_T'[o_c])",
-        "m_T_phase' = ~m_T_phase",
-        "Progress_Th_T",
+        "m_T \\in [Ids_Counter -> F_bits_T]",
+        "m_T' \\in [Ids_Counter -> F_bits_T]",
+        "F_check_T(o_c, q, r) ==",
+        "m_T_h0' = [o_c \\in Ids_Counter |->",
+        "m_T_h0[o_c] /\\ F_check_T(o_c, m_T[o_c], m_T'[o_c])",
+        "m_T_h1' = ~m_T_h1",
+        "F_progress_T(m_T_c0[o_c], m_T[o_c])",
         "Next_T == (Next \\/ (~ENABLED Next /\\ UNCHANGED vars)) /\\ Mon_T",
         "WF_vars_T(Next_T)",
         "~([]<>accept_T(o_c))",
@@ -2997,13 +2998,23 @@ fn tableau_checks_mixed_acceptance_over_the_total_product() {
     };
     assert_eq!(condition["type"], "nondeterministic-monitor", "{condition}");
     assert_eq!(condition["clause"], "T", "{condition}");
-    let phase = tla["export"]["name_map"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "m_T_phase")
-        .unwrap();
-    assert_eq!(condition["node"], phase["node"], "{condition}");
+    let names = tla["export"]["name_map"].as_array().unwrap();
+    for name in [
+        "m_T",
+        "m_T_h0",
+        "m_T_h1",
+        "m_T_c0",
+        "F_bits_T",
+        "F_check_T",
+        "F_progress_T",
+    ] {
+        let matches: Vec<_> = names.iter().filter(|entry| entry["name"] == name).collect();
+        let [entry] = matches.as_slice() else {
+            panic!("expected one name map entry for {name}: {names:?}");
+        };
+        assert_eq!(condition["node"], entry["node"], "{entry}");
+        assert!(entry.get("binding").is_none(), "{entry}");
+    }
     let (exit, lean) = tableau_export(1, Target::Lean);
     assert_eq!(exit, 0, "{lean}");
     let text = lean["export"]["target_text"].as_str().unwrap();
