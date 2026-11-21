@@ -5,9 +5,12 @@ use std::collections::BTreeMap;
 
 use filament_eval::{Evaluation, FamilyOutcome};
 use filament_exact::{Integer, Meter, ObjectReference, Outcome, ScalarLimits, Value};
-use filament_semantic_value::admission::{AdmissionRecord, PathStep};
+use filament_semantic_value::admission::{AdmissionRecord, ObservationAdmission, PathStep};
 use filament_semantic_value::catalog::CatalogCode;
-use fsl_eval::value::{evaluate_refinement_row, CheckedPackageEvaluation, QualifiedName};
+use fsl_eval::value::{
+    CheckedPackageEvaluation, ProtocolReferenceOccurrence, ProtocolSlot, ProtocolSlotEvaluation,
+    ProtocolSuppliedValue, ProtocolSupply, QualifiedName, SuppliedValue,
+};
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -94,6 +97,15 @@ fn fixture(remove_x: bool) -> Checked {
     let selected = if remove_x { "y" } else { "x" };
     let body = format!(
         "{}\n\
+         profile p = \"filament.protocol.finite-global/v1\";\n\
+         protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{\n\
+           capture chosen: Reference<Clock> = ref(call.{selected});\n\
+           capture used: Integer = count(c in C::calls where ref(c.{selected}) = call.r);\n\
+           capture busy: Boolean = only(c in C::calls where c.n = 2: ref(c.{selected})) = call.r;\n\
+           role Observer on C::Call;\n\
+           run sequence Main {{ check Ready using v {{ true }}; }}\n\
+           finish End as (outcome: Boolean) {{ true }};\n\
+         }}\n\
          invariant Stored using v on C::Call at current {{ self.r = ref(self.{selected}) }}\n\
          function stored using v(c: Reference<C::Call>): Reference<Clock> pure {{ c.r }}\n\
          function maybe_stored using v(c: Reference<C::Call>): Reference<Clock> pure {{ value(c.maybe) }}\n\
@@ -192,25 +204,65 @@ fn owner(environment: &ObjectEnvironment, name: &str) -> ObjectReference {
         .clone()
 }
 
-fn row(
+fn capture(
     package: &CheckedPackage,
-    environment: &ObjectEnvironment,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    snapshots: &BTreeMap<DocumentRef, Vec<u8>>,
     index: usize,
     name: &str,
 ) -> Value {
-    let [refinement] = package.graph().refinements() else {
-        panic!("one refinement")
+    let view = package.evaluation_view();
+    let observation = view.admit_protocol_observation(
+        &fsl_semantics::model::domain_package::DomainPackageRef {
+            identity: CLOCKS.to_owned(),
+        },
+        packages,
+        ModelNormalizationLimits::default(),
+        snapshots,
+        &identity(),
+        ObservationLimits::default(),
+    );
+    let ObservationAdmission::Admitted(admitted) = &observation else {
+        panic!("actual protocol observation admits: {observation:?}")
     };
-    completed(
-        evaluate_refinement_row(
-            package,
-            &refinement.objects()[0].fields[index].expression,
-            environment,
-            vec![Value::Reference(owner(environment, name))],
-            &mut Meter::new(LIMITS),
-        )
-        .expect("actual refinement row"),
-    )
+    let environment = admitted.environment();
+    let keys = package
+        .graph()
+        .protocol_node_keys("Places")
+        .expect("protocol keys");
+    let binder = keys
+        .binders
+        .iter()
+        .find(|binder| binder.name == "call")
+        .expect("owner binder");
+    let supply = ProtocolSupply {
+        binders: vec![(
+            binder.node.clone(),
+            ProtocolSuppliedValue {
+                value: SuppliedValue::Value(Value::Reference(owner(environment, name))),
+                references: vec![ProtocolReferenceOccurrence {
+                    path: Vec::new(),
+                    population: environment
+                        .population_node(&node(CLOCKS, "calls"))
+                        .expect("authenticated population")
+                        .clone(),
+                }],
+            },
+        )],
+        observation: Some(&observation),
+    };
+    let slot = ProtocolSlot {
+        node: keys.clause.clone().expect("protocol root"),
+        member: "captures".to_owned(),
+        index: Some(index),
+    };
+    let ProtocolSlotEvaluation::Evaluated(evaluation, _) = package
+        .evaluate_protocol_slot(&slot, &supply, &mut Meter::new(LIMITS))
+        .expect("actual seeded protocol capture")
+    else {
+        panic!("protocol capture must be available")
+    };
+    completed(evaluation)
 }
 
 fn assert_value(actual: &Value, expected: &Value) {
@@ -306,13 +358,14 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
     let (state, _) = model
         .admit_initial(&seed, &identity(), ObservationLimits::default())
         .expect("declared v2 seed snapshot");
-    let observed = model
+    model
         .observation(&state, identity())
         .expect("admitted state observes");
     let places: Vec<_> = ["c1", "c2"]
         .into_iter()
         .map(|name| {
-            let Value::Reference(reference) = row(&package, &observed.environment, 2, name) else {
+            let Value::Reference(reference) = capture(&package, &checked.packages, &seed, 0, name)
+            else {
                 panic!("Clock producer returns Reference")
             };
             assert_eq!(reference.object().as_str(), expected_place(name, "x"));
@@ -394,11 +447,11 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
         );
         for (index, name) in ["c1", "c2"].into_iter().enumerate() {
             assert_value(
-                &row(&package, &source.environment, 0, name),
+                &capture(&package, &checked.packages, &snapshots, 1, name),
                 &Value::Integer(Integer::from(1_i64)),
             );
             assert_value(
-                &row(&package, &source.environment, 1, name),
+                &capture(&package, &checked.packages, &snapshots, 2, name),
                 &Value::Boolean(index == 1),
             );
             for function in ["stored", "has_maybe", "stored_refs"]
@@ -460,17 +513,14 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
         ModelNormalizationLimits::default(),
     )
     .expect("original model");
+    let seed = snapshot(&expected_place("c1", "x"), &expected_place("c2", "x"), true);
     let (state, _) = model
-        .admit_initial(
-            &snapshot(&expected_place("c1", "x"), &expected_place("c2", "x"), true),
-            &identity(),
-            ObservationLimits::default(),
-        )
+        .admit_initial(&seed, &identity(), ObservationLimits::default())
         .expect("original declared snapshot");
-    let observed = model
+    model
         .observation(&state, identity())
         .expect("original state");
-    let Value::Reference(old_x) = row(&package, &observed.environment, 2, "c1") else {
+    let Value::Reference(old_x) = capture(&package, &checked.packages, &seed, 0, "c1") else {
         panic!("actual old x reference")
     };
     let old_ordinal = package
@@ -537,10 +587,10 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
     let (state, _) = model
         .admit_initial(&valid, &identity(), ObservationLimits::default())
         .expect("retained y admits");
-    let observed = model
+    model
         .observation(&state, identity())
         .expect("changed state");
-    let Value::Reference(y) = row(&next, &observed.environment, 2, "c1") else {
+    let Value::Reference(y) = capture(&next, &changed.packages, &valid, 0, "c1") else {
         panic!("actual y")
     };
     assert_ne!(
