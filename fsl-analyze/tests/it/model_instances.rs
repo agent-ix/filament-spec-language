@@ -1092,7 +1092,8 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
         let bytes_letters = bytes_system
             .package_clause_letters(&clause, &key)
             .expect("package letters");
-        let read = |letters: &dyn ModelLetters,
+        let read = |route: &str,
+                    letters: &dyn ModelLetters,
                     system: &ModelSystem<'_>,
                     clause: &CheckedTemporalClause| {
             let atom = clause
@@ -1115,16 +1116,18 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
                     } else {
                         letters.atom(atom, instance, start, &mut meter)
                     }
-                    .expect("the production letters evaluate");
+                    .unwrap_or_else(|failure| {
+                        panic!("{route}: {activation} {formula}, {instance:?}: {failure:?}")
+                    });
                     // Literals and immediate absent-key stops can consume no work.
-                    // The complete counter trajectory must still equal the source's.
+                    // Every consumed counter must still equal the source's.
                     let charges = filament_exact::LimitKind::ALL.map(|kind| meter.consumed(kind));
                     (reading, charges)
                 })
                 .collect::<Vec<_>>()
         };
-        let from_source = read(&source_letters, &source_system, node.clause());
-        let from_bytes = read(&bytes_letters, &bytes_system, &clause);
+        let from_source = read("source", &source_letters, &source_system, node.clause());
+        let from_bytes = read("package", &bytes_letters, &bytes_system, &clause);
         assert_eq!(
             from_bytes, from_source,
             "readings and charges: {activation} {formula}"
