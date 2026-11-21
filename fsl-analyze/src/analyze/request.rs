@@ -339,6 +339,8 @@ pub struct ProbabilisticItem {
     pub sampler: Option<fsl_foundation::selection::DefinitionRef>,
     /// Maximum sampled witnesses retained.
     pub max_witnesses: Option<u32>,
+    /// Number of workers requested for a statistical run (FR-331), when set.
+    pub workers: Option<std::num::NonZeroU32>,
     /// Declared statistical symmetries.
     pub symmetry: Vec<fsl_route::reductions::SymmetryDeclaration>,
     /// Timed statistical sampling settings.

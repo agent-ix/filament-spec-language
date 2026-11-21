@@ -1108,6 +1108,109 @@ fn undefined(
     }))
 }
 
+/// The FR-410 `where` of an undefined sample: its test, trace, position and
+/// state. FR-364's `locus` is not here: the verdict does not hold the claim.
+pub(super) fn sampled_undefined_wire(
+    undefined: &crate::statistical::SampledUndefined,
+) -> Result<Json, CounterexampleWireError> {
+    let site = &undefined.evaluation.site;
+    Ok(json!({
+        "type": "undefined-evaluation",
+        "where": {
+            "position": site.position,
+            "state_key": state(&site.state_key)?,
+            "test": undefined.test,
+            "trace_index": undefined.trace.to_string(),
+        },
+        "cause": undefined_reason(&undefined.evaluation.cause),
+    }))
+}
+
+/// A `binding` member (FSpec FR-410): the typed reference, or `null`.
+pub(super) fn binding_wire(
+    binding: Option<&ObjectReference>,
+) -> Result<Json, CounterexampleWireError> {
+    binding.map_or(Ok(Json::Null), reference)
+}
+
+/// Why `witness` cannot be written to a verdict's `witnesses`: the first
+/// member with no schema-valid spelling.
+pub(super) fn witness_omission(
+    witness: &crate::statistical::SampledWitness,
+) -> super::WitnessOmission {
+    use crate::statistical::{MeasureValue, WitnessValue};
+    use fsl_eval::simulation::model::TransitionId;
+    if matches!(witness.value, WitnessValue::Measure(MeasureValue::Censored)) {
+        return super::WitnessOmission::CensoredMeasure;
+    }
+    if witness
+        .steps
+        .iter()
+        .any(|step| matches!(step.transition, TransitionId::Stutter))
+    {
+        return super::WitnessOmission::TerminalStutterStep;
+    }
+    super::WitnessOmission::ScheduledIdentityNotSpellable
+}
+
+/// One sampled witness (FSpec FR-410 "Sampled witness"), its drawn values
+/// spelled with the package's declarations. The schema requires each step's
+/// `scheduled` as a `TypedValue` that cannot hold the scheduled identity, so
+/// no witness is spelled yet: the first member with no spelling is the error.
+///
+/// # Errors
+///
+/// [`super::WitnessOmission`] naming why the witness is left out.
+pub fn sampled_witness_wire(
+    witness: &crate::statistical::SampledWitness,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    variants: &[fsl_semantics::check::VariantTypeDeclaration],
+) -> Result<Json, super::WitnessOmission> {
+    use crate::statistical::{MeasureValue, WitnessValue};
+    use fsl_eval::simulation::model::TransitionId;
+    let omitted = |_| witness_omission(witness);
+    let _value = match &witness.value {
+        WitnessValue::Event(holds) => json!({"type": "event", "value": holds}),
+        WitnessValue::Fraction(fraction) | WitnessValue::Measure(MeasureValue::Value(fraction)) => {
+            json!({"type": "measure", "value": {"value": rational(fraction)}})
+        }
+        WitnessValue::Measure(MeasureValue::Censored) => return Err(witness_omission(witness)),
+        WitnessValue::Undefined(evaluation) => {
+            sampled_undefined_wire(&crate::statistical::SampledUndefined {
+                test: witness.test,
+                trace: witness.trace,
+                evaluation: evaluation.clone(),
+            })
+            .map_err(omitted)?
+        }
+    };
+    let mut steps = Vec::with_capacity(witness.steps.len());
+    for step in &witness.steps {
+        let TransitionId::Operation(transition) = &step.transition else {
+            return Err(witness_omission(witness));
+        };
+        let mut random = Vec::with_capacity(step.random.len());
+        for drawn in &step.random {
+            random.push(
+                fsl_eval::simulation::model::typed_value_json(drawn, types, variants)
+                    .ok_or_else(|| witness_omission(witness))?,
+            );
+        }
+        let mut written = json!({
+            "transition": model_transition(transition).map_err(omitted)?,
+            "post_state": state(&step.post_state).map_err(omitted)?,
+            "random": random,
+        });
+        if let Some(delay) = &step.delay {
+            written["delay"] = rational(delay);
+        }
+        steps.push(written);
+    }
+    // `scheduled` has no spelling, so no step is complete.
+    let _ = steps;
+    Err(super::WitnessOmission::ScheduledIdentityNotSpellable)
+}
+
 fn race(race: &Race) -> Result<Json, CounterexampleWireError> {
     Ok(json!({
         "location": location_json(&race.location)

@@ -600,7 +600,7 @@ fn a_rejected_check_builds_no_proved_record() {
 /// settles `refuted` after replay.
 #[trace("TC-638", "FR-203-AC-1")]
 #[test]
-#[ignore = "QSL-2158: FR-203-AC-1's exact P95 settlement through analyze_items not verified yet"]
+#[ignore = "QSL-2158 open, FR-203-AC-1: the exact `quantile 0.95 of accumulate duration` claim P95 through analyze_items must settle proved with ExactValue{24233/25000}, certified, one entry; no run has shown it, and the `Unlikely` refutation after replay is unshown too"]
 fn p95_settles_proved_with_its_exact_value() {
     let claim = "probabilistic P95 using ev on M over (s: M::Server) under Steady on origin \
          { quantile 0.95 of (accumulate duration from holds(s.phase = 1) \
@@ -629,7 +629,7 @@ fn p95_settles_proved_with_its_exact_value() {
 /// `refuted` with its replayed undefined path, whatever the threshold.
 #[trace("TC-641", "FR-203-AC-5")]
 #[test]
-#[ignore = "QSL-2158: FR-203-AC-5's undefined-evaluation refutation through analyze_items not verified yet"]
+#[ignore = "QSL-2158 open, FR-203-AC-5: a claim undefined (`absent-key`) at a positive-probability state must settle refuted with its replayed undefined path whatever the threshold; analyze_items has not been shown to do so"]
 fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
     for threshold in ["0.5", "0.01"] {
         let claim = format!(

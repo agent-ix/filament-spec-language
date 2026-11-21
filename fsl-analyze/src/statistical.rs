@@ -74,6 +74,8 @@ pub struct TestSubject {
     pub initial: u32,
     /// The `over` binding, when the claim has one.
     pub binding: Option<ModelInstance>,
+    /// The reference `binding` names, for the wire (FR-410).
+    pub reference: Option<filament_exact::ObjectReference>,
 }
 
 /// A statistical request at the [`BehaviourSampler`] seam: FR-189's
@@ -852,6 +854,7 @@ fn test_result(
         index,
         initial: subject.initial,
         binding: subject.binding.clone(),
+        reference: subject.reference.clone(),
         decision: decided.decision,
         estimate: decided.estimate,
         interval: decided.interval,
@@ -1049,6 +1052,7 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
             index,
             initial: subject.initial,
             binding: subject.binding.clone(),
+            reference: subject.reference.clone(),
             traces: TraceRange {
                 first: u64::from(index),
                 step: u64::from(tests),

@@ -10,7 +10,10 @@ use fsl_analyze::exact_probabilistic::{
 };
 use fsl_analyze::exact_probabilistic::{DeadlinePhase, MonitorState};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_semantics::check::Bound;
+use fsl_semantics::check::{
+    Bound, BoundedMeasure, CheckCause, Event, ProbForm, ProbabilisticCause, TimeTypeMismatchReason,
+    Weighting,
+};
 use ix_trace_rs::trace;
 use serde_json::json;
 
@@ -1132,4 +1135,113 @@ fn time_forms_over_a_timed_model_check() {
             "{name} checks"
         );
     }
+}
+
+/// FR-186-AC-15/16 (TC-2169): delay weights and elapsed quantiles normalize
+/// over the timed `Retx` subject, including an equivalent seconds threshold.
+#[trace("TC-2169", "FR-186-AC-15", "FR-186-AC-16")]
+#[test]
+fn delay_weighting_and_elapsed_quantiles_check_over_retx() {
+    let claims = "probabilistic DelayLongRun using ev on M over (c: M::Call) under every scheduler on origin \
+         { long_run_fraction holds(c.late) weighted by delay <= 0.5 }\n\
+         probabilistic DelayFraction using ev on M over (c: M::Call) under every scheduler on origin \
+         { probability >= 0.5 [ fraction holds(c.late) over [0, 5 ms] weighted by delay <= rational(1, 2) ] }\n\
+         probabilistic UnweightedLongRun using ev on M over (c: M::Call) under every scheduler on origin \
+         { long_run_fraction holds(c.late) <= 0.5 }\n\
+         probabilistic ElapsedMillis using ev on M over (c: M::Call) under every scheduler on origin \
+         { quantile 0.5 of (elapsed from holds(not c.late) until holds(c.late) within 5 ms) <= 3 ms }\n\
+         probabilistic ElapsedSeconds using ev on M over (c: M::Call) under every scheduler on origin \
+         { quantile 0.5 of (elapsed from holds(not c.late) until holds(c.late) within 5 ms) <= 0.003 s }\n";
+    let world = retx(GUARD, true, "", claims);
+    let model = world.package.graph().probabilistic_model();
+    let long_run = model.claim("DelayLongRun").expect("delay long-run checks");
+    assert!(matches!(
+        &long_run.form,
+        ProbForm::LongRunFraction {
+            weight: Some(Weighting::Delay),
+            ..
+        }
+    ));
+    let unweighted = model
+        .claim("UnweightedLongRun")
+        .expect("unweighted long-run checks");
+    assert_ne!(long_run.normal_form, unweighted.normal_form);
+
+    let fraction = model.claim("DelayFraction").expect("delay fraction checks");
+    assert!(matches!(
+        &fraction.form,
+        ProbForm::Probability {
+            event: Event::Compare {
+                measure: BoundedMeasure::Fraction(measure),
+                ..
+            },
+            ..
+        } if measure.weight == Some(Weighting::Delay)
+    ));
+
+    for name in ["ElapsedMillis", "ElapsedSeconds"] {
+        let claim = model.claim(name).expect("elapsed quantile checks");
+        assert!(
+            matches!(
+                &claim.form,
+                ProbForm::Quantile {
+                    q,
+                    measure: BoundedMeasure::Elapsed { within, .. },
+                    threshold: Bound::AtMost(threshold),
+                } if *q == ratio(1, 2)
+                    && *within == ratio(5, 1)
+                    && *threshold == ratio(3, 1)
+            ),
+            "{name}: {:?}",
+            claim.form
+        );
+    }
+}
+
+/// FR-186-AC-15 (TC-2168): on an untimed Service, `delay` reports the absent
+/// binding while the declared `duration` reward remains resolvable.
+#[trace("TC-2168", "FR-186-AC-15")]
+#[test]
+fn untimed_delay_names_missing_binding_and_duration_stays_a_reward() {
+    let untimed_delay = crate::prob_world::service(
+        "probabilistic Delay using inf on M over (s: M::Server) under Steady on origin \
+         { long_run_fraction holds(s.phase = 1) weighted by delay >= 0.5 }\n",
+    );
+    let Err(refusals) = crate::prob_world::World::try_new(&untimed_delay) else {
+        panic!("delay weighting requires a model-time binding");
+    };
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert!(matches!(
+        &refusals[0].cause,
+        CheckCause::Probabilistic(cause)
+            if matches!(
+                cause.as_ref(),
+                ProbabilisticCause::TimeTypeMismatch {
+                    reason: TimeTypeMismatchReason::MissingTimeBinding,
+                    ..
+                }
+            )
+    ));
+    let rendered = fsl_replay::spine::CompileRefusal::Check {
+        refusals,
+        region: None,
+    }
+    .to_string();
+    assert!(
+        rendered.contains("subject's model declares no time binding"),
+        "{rendered}"
+    );
+
+    let duration = crate::prob_world::service(
+        "probabilistic Duration using inf on M over (s: M::Server) under Steady on origin \
+         { long_run_fraction holds(s.phase = 1) weighted by duration >= 0.5 }\n",
+    );
+    let duration_world = crate::prob_world::World::new(&duration);
+    assert!(matches!(
+        &duration_world.claim("Duration").form,
+        ProbForm::LongRunFraction {
+            weight: Some(Weighting::Reward(name)),
+            ..
+        } if name.as_str() == "duration"
+    ));
 }

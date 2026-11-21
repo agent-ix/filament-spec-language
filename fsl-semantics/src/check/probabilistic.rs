@@ -37,7 +37,7 @@ mod node_key;
 pub use claim::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedTemporalFormula,
     ClaimActivation, ClaimNormalForm, Confidence, Event, FractionMeasure, ModelSubjectRef,
-    OverBinding, ProbForm, ProbScheduler, ReachTarget,
+    OverBinding, ProbForm, ProbScheduler, ReachTarget, Weighting,
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
@@ -506,16 +506,8 @@ pub enum ProbabilisticCause {
         claim: String,
         /// The time position's span.
         span: Span,
-    },
-    /// `weighted by delay` (FR-186 delay weighting): S3 records no
-    /// `Weighting::Delay` yet, and the claim has no emitted spelling for it.
-    /// Interim refusal until QSL-2551. `invalid_probabilistic_model`/
-    /// `delay-weighting-unsupported`.
-    DelayWeightingUnsupported {
-        /// The claim.
-        claim: String,
-        /// The `delay` name's span.
-        span: Span,
+        /// Why the time position is incompatible.
+        reason: TimeTypeMismatchReason,
     },
     /// A claim's `over` parameter whose type is not an object type of the
     /// subject's model. `invalid_probabilistic_model`/`over-not-object-type`
@@ -538,6 +530,15 @@ pub enum ProbabilisticCause {
         /// The operand's span.
         span: Span,
     },
+}
+
+/// The reason a probabilistic time-valued position is ill typed.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TimeTypeMismatchReason {
+    /// The subject's model does not declare a model-time binding.
+    MissingTimeBinding,
+    /// A step count appears where a time quantity is required.
+    IncompatiblePosition,
 }
 
 /// The qualitative property equivalent to a probabilistic threshold of 0 or 1.
@@ -589,7 +590,6 @@ impl ProbabilisticCause {
             | Self::FractionBound { span, .. }
             | Self::ThresholdNotLiteral { span, .. }
             | Self::TimeTypeMismatch { span, .. }
-            | Self::DelayWeightingUnsupported { span, .. }
             | Self::OverNotObjectType { span, .. }
             | Self::NotStatePredicate { span, .. } => Some(*span),
             Self::RandomReadInPrecondition { .. } | Self::NegativeReward { .. } => None,
@@ -632,7 +632,6 @@ impl ProbabilisticCause {
             | Self::ForeignWorkload { .. }
             | Self::FractionBound { .. }
             | Self::OverNotObjectType { .. }
-            | Self::DelayWeightingUnsupported { .. }
             | Self::NotStatePredicate { .. } => Code::InvalidProbabilisticModel,
             Self::InvalidDelay { .. } => Code::InvalidModelBinding,
             Self::UnitMismatch { .. }
@@ -690,7 +689,6 @@ impl ProbabilisticCause {
             Self::UnitMismatch { .. } => "unit-mismatch",
             Self::ThresholdNotLiteral { .. } => "type-mismatch",
             Self::TimeTypeMismatch { .. } => "type-mismatch",
-            Self::DelayWeightingUnsupported { .. } => "delay-weighting-unsupported",
             Self::FractionBound { .. } => "fraction-bound-out-of-range",
             Self::OverNotObjectType { .. } => "over-not-object-type",
             Self::NotStatePredicate { .. } => "not-state-predicate",

@@ -22,6 +22,11 @@ pub(super) fn run(
     let ProbForm::LongRunFraction { bound, weight, .. } = &claim.form else {
         return not_yet();
     };
+    let weight = match weight {
+        Some(fsl_semantics::check::Weighting::Reward(name)) => Some(name),
+        Some(fsl_semantics::check::Weighting::Delay) => return not_yet(),
+        None => None,
+    };
     if !matches!(claim.scheduler, ProbScheduler::Workload(_))
         || !claim.fairness.is_empty()
         || fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
@@ -111,7 +116,7 @@ pub(super) fn run(
     let solution = match decide_long_run_workload(
         &product,
         &predicate,
-        weight.as_ref().map(|name| name.as_str()),
+        weight.map(|name| name.as_str()),
         &limits,
     ) {
         Ok(solution) => solution,

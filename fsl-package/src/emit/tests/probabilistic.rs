@@ -2928,24 +2928,46 @@ fn a_quantity_reward_bound_is_spelled_at_the_reward_unit() {
     assert_ne!(id_for("5 ms"), id_for("6 ms"));
 }
 
-/// FR-186 delay weighting is QSL-2551: a measure weighted by `delay` is a
-/// located refusal at the claim, never a weighting by a reward that happens
-/// to be named `delay`.
+/// TC-1288 (the delay part of FR-498-AC-6), FR-186: a long-run fraction
+/// weighted by `delay` writes `weighting` kind `delay`, binds an empty
+/// `reward` even when a reward is named `delay`, and holds the model's one
+/// `delay_distribution` node in `delays`; changing that delay's weight
+/// changes the claim's identity.
+#[trace("TC-1288", "FR-498-AC-6")]
 #[test]
-fn weighting_by_delay_is_refused_even_when_a_reward_is_named_delay() {
-    let (_, checked) = timed_claims_check(&[
-        "reward delay on ConfigVersion::attemptUpdate = 1;",
-        "probabilistic D using tm on Config under Steady on origin \
-         { long_run_fraction holds(true) weighted by delay >= 0.5 }",
-    ]);
-    match checked {
-        Ok(_) => panic!("a delay weighting is written as a reward weighting"),
-        Err(refusals) => assert!(
-            format!("{refusals:?}").contains("DelayWeightingUnsupported")
-                && !format!("{refusals:?}").contains("InternalFault"),
-            "{refusals:?}"
-        ),
-    }
+fn weighting_by_delay_is_the_delay_weighting_even_when_a_reward_is_named_delay() {
+    let emitted = |weight: u32| {
+        let delay = format!(
+            "delay ConfigVersion::attemptUpdate ~ discrete {{ 1 ms: 90, 3 ms: {weight} }};"
+        );
+        let (document, checked) = timed_claims_check(&[
+            "reward delay on ConfigVersion::attemptUpdate = 1;",
+            &delay,
+            "probabilistic D using tm on Config under Steady on origin \
+             { long_run_fraction holds(true) weighted by delay >= 0.5 }",
+        ]);
+        let package = checked.unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+        let (wire, read) = emit_and_read(&package, &document);
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+        wire
+    };
+    let wire = emitted(10);
+    let claim = claim_named(&wire, "D");
+    let spelled = statement_spelling(&wire, "D").join(" ");
+    assert!(
+        spelled.starts_with("form kind long_run_fraction predicate <node> weighting kind delay"),
+        "{spelled}"
+    );
+    assert!(targets(binding(&claim["body"], "reward")).is_empty());
+    assert_eq!(
+        targets(binding(&claim["body"], "delays")),
+        node_ids(&wire, "probabilistic", "delay_distribution")
+    );
+    let heavier = emitted(20);
+    assert_ne!(
+        resolved_id(&wire, &claim["node_id"], 8),
+        resolved_id(&heavier, &claim_named(&heavier, "D")["node_id"], 8)
+    );
 }
 
 /// FSpec FR-640-AC-3 and FSL FR-498 reordering: a claim under a workload of

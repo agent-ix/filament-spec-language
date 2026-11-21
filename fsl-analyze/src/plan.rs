@@ -897,6 +897,7 @@ fn probabilistic(
             None
         },
         max_witnesses: None,
+        workers: None,
         symmetry: Vec::new(),
         timed_sampling: None,
     })

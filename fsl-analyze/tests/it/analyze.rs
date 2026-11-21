@@ -524,6 +524,7 @@ pub(crate) fn routed_service_item(world: &crate::prob_world::World) -> Negotiate
                 sampler: Some(request.sampler),
                 limits: ProbabilisticLimits::Statistical(request.limits),
                 max_witnesses: Some(request.max_witnesses),
+                workers: None,
                 symmetry: request.symmetry,
                 timed_sampling: Some(request.timed_sampling),
             })),
