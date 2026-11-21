@@ -27,10 +27,13 @@ Scope: FR-940-AC-17 and FR-940-AC-19.
    `ModelEvaluator` on both routes.
 3. Analyze `Equal`, the projection-aligned clause and `Partner` over
    test-only packages the strict reader admits: `Equal`'s `slot_sc_sb`
-   renamed `slot_sc_sz`, `slot_sc_sb` written at level 0, a read rooted in
+   renamed `slot_sc_sz`, a read rooted in
    `slot_sc_sa` and `slot_sc_sb`, and a projection-aligned conjunct slot
    renamed `opx_sa`; also analyze the unmodified projection-aligned clause.
-4. Analyze handoff directories whose package has `Equal`'s `body` binding
+4. Analyze a handoff directory whose package has `Equal`'s `slot_sc_sb`
+   written at level 0 in place of level 1, leaving two atom slot nodes at
+   level 0 and none at level 1; include `Partner` in the request.
+5. Analyze handoff directories whose package has `Equal`'s `body` binding
    referencing the atom's `expression` node, or its `quantifiers` Tuple
    removed.
 
@@ -45,7 +48,13 @@ Scope: FR-940-AC-17 and FR-940-AC-19.
   its `hyperproperty` node key and no verdict; `Partner` and the unmodified
   projection-aligned clause (an atom slot and a conjunct slot both at level
   0) settle as in step 2.
-- Step 4: whole-request refusals at the request stage with the reader's
+- Step 4: a whole-request refusal at the request stage, before
+  `hyper_clause_form` or any item runs, with the reader's
+  `invalid_semantic_graph`, no cause, at
+  `/semantic_graph/nodes/{s}/body/members/1`, where `s` is `slot_sc_sb`'s
+  graph index, `items` `[]`, `last_stage` `null`, exit 20, no source
+  compiled and no `Partner` item settled.
+- Step 5: whole-request refusals at the request stage with the reader's
   code, cause and pointer (`ill_typed`/`operator-ineligible` at the
   `hyperproperty` node for the body case), `items` `[]`, `last_stage` `null`, exit 20, and no
   source compiled.

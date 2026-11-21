@@ -491,6 +491,7 @@ pub use probability_certificate::{
     ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey, RegionKeyKind,
     RegionProductKeyInput, ReproducedProbabilityWitness, TimedProbabilityForm,
     TimedProbabilityObjective, TimedProbabilityRoute, WeightedLongRunProbabilityDocument,
+    WorkloadFreeDelayRefusal,
 };
 #[cfg(feature = "test-support")]
 pub use probability_certificate::{

@@ -178,6 +178,8 @@ pub enum ControlOperation {
     Receive,
     /// An `attempt` control.
     Attempt,
+    /// A side-effect-free `recommend` control.
+    Recommend,
     /// An `effect` control.
     Effect,
     /// An `event` control.
@@ -210,6 +212,7 @@ impl ControlOperation {
             "send" => Self::Send,
             "receive" => Self::Receive,
             "attempt" => Self::Attempt,
+            "recommend" => Self::Recommend,
             "effect" => Self::Effect,
             "event" => Self::Event,
             "commit" => Self::Commit,
@@ -1083,6 +1086,7 @@ impl Derive<'_, '_> {
             | ControlOperation::Check
             | ControlOperation::Send
             | ControlOperation::Attempt
+            | ControlOperation::Recommend
             | ControlOperation::Event
             | ControlOperation::Commit
             | ControlOperation::Fence
@@ -1705,6 +1709,17 @@ pub enum ControlBody<'n> {
         /// The optional constraint expression node.
         constraint: Option<&'n CheckedNodeId>,
     },
+    /// A recommendation's operation call and result-free constraint.
+    Recommend {
+        /// The observing role.
+        role: &'n CheckedNodeId,
+        /// The selected operation anchor.
+        operation: &'n CheckedNodeId,
+        /// The selected contracts, in authored order.
+        contracts: Vec<&'n CheckedNodeId>,
+        /// The result-free constraint expression.
+        constraint: &'n CheckedNodeId,
+    },
     /// An `effect` or domain `event` operation and its enclosing attempt.
     Effect {
         /// The attempt this operation affects.
@@ -1790,6 +1805,12 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
             binder: single(node, "binder")?,
             constraint: Some(single(node, "constraint")?),
         },
+        ControlOperation::Recommend => ControlBody::Recommend {
+            role: single(node, "role")?,
+            operation: single(node, "operation")?,
+            contracts: references(node, "contracts")?,
+            constraint: single(node, "constraint")?,
+        },
         ControlOperation::Effect => ControlBody::Effect {
             attempt: single(node, "of")?,
             binder: single(node, "binder")?,
@@ -1799,8 +1820,12 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
             constraint: Some(single(node, "condition")?),
         },
         ControlOperation::Fence => ControlBody::Fence {
-            ordering: optional_ordering(node, "ordering")?
-                .ok_or_else(|| missing(&node.node_id, "ordering"))?,
+            ordering: ordering_word(
+                node,
+                "ordering",
+                text(required(node, "ordering")?)
+                    .ok_or_else(|| malformed(&node.node_id, "ordering"))?,
+            )?,
         },
         other => ControlBody::Other(other),
     })
@@ -1811,15 +1836,23 @@ fn optional_ordering(
     member: &'static str,
 ) -> Result<Option<fsl_forms::AccessOrdering>, ViewRefusal> {
     optional_text(node, member)?
-        .map(|word| match word {
-            "relaxed" => Ok(fsl_forms::AccessOrdering::Relaxed),
-            "acquire" => Ok(fsl_forms::AccessOrdering::Acquire),
-            "release" => Ok(fsl_forms::AccessOrdering::Release),
-            "acq_rel" => Ok(fsl_forms::AccessOrdering::AcqRel),
-            "seq_cst" => Ok(fsl_forms::AccessOrdering::SeqCst),
-            _ => Err(malformed(&node.node_id, member)),
-        })
+        .map(|word| ordering_word(node, member, word))
         .transpose()
+}
+
+fn ordering_word(
+    node: &Node,
+    member: &'static str,
+    word: &str,
+) -> Result<fsl_forms::AccessOrdering, ViewRefusal> {
+    match word {
+        "relaxed" => Ok(fsl_forms::AccessOrdering::Relaxed),
+        "acquire" => Ok(fsl_forms::AccessOrdering::Acquire),
+        "release" => Ok(fsl_forms::AccessOrdering::Release),
+        "acq_rel" => Ok(fsl_forms::AccessOrdering::AcqRel),
+        "seq_cst" => Ok(fsl_forms::AccessOrdering::SeqCst),
+        _ => Err(malformed(&node.node_id, member)),
+    }
 }
 
 /// Every node the decision facts of the `choice` control `choice` read: the

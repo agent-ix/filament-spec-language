@@ -413,42 +413,70 @@ fn run_timed(
         .collect::<Vec<_>>();
     targets.sort();
     targets.dedup();
-    let optimization = match (&claim.scheduler, bound) {
-        (ProbScheduler::Every, Bound::AtLeast(_)) => ProbabilityObjective::Minimum,
-        (ProbScheduler::Every, Bound::AtMost(_)) => ProbabilityObjective::Maximum,
-        (ProbScheduler::Workload(_), _) => ProbabilityObjective::Workload,
+    // A workload leaves the scheduler no choice when the product is a chain
+    // and the delay choices of FR-204 otherwise; the checker's own graph
+    // decides which the document states, so the other spelling is the one
+    // retry, and only when the checker names the spelling as the mismatch (a
+    // route, unit, scale, form or target mismatch is a different error).
+    let residual = match bound {
+        Bound::AtLeast(_) => ProbabilityObjective::WorkloadMinimum,
+        Bound::AtMost(_) => ProbabilityObjective::WorkloadMaximum,
     };
-    let document = ProbabilityCertificateDocument {
-        cyclic_dtmc: false,
-        identity: identity.clone(),
-        targets,
-        event: None,
-        failures: Vec::new(),
-        reward: None,
-        optimization,
-        timed: Some(TimedProbabilityObjective {
-            route,
-            unit: timed.source().unit_node.clone(),
-            scale: certificate_scale,
-            form: TimedProbabilityForm::Deadline,
-        }),
-        values: certificate.values.clone(),
-        ranking: Vec::new(),
+    let candidates = match &claim.scheduler {
+        ProbScheduler::Every => vec![match bound {
+            Bound::AtLeast(_) => ProbabilityObjective::Minimum,
+            Bound::AtMost(_) => ProbabilityObjective::Maximum,
+        }],
+        ProbScheduler::Workload(_)
+            if product.kind == crate::exact_probabilistic::ProductKind::Dtmc =>
+        {
+            vec![ProbabilityObjective::Workload, residual]
+        }
+        ProbScheduler::Workload(_) => vec![residual, ProbabilityObjective::Workload],
     };
-    let checked = (|| {
-        let bytes = write_probability_certificate(&document, document_limits, cancel)?;
-        check_probability_certificate_document(
-            &system,
-            source_package.graph().probabilistic_model().claims(),
-            &identity,
-            &bytes,
-            document_limits,
-            cancel,
-        )
-    })();
+    let mut optimization = candidates[0];
+    let mut checked = Err(ProbabilityDocumentError::OptimizationMismatch);
+    for candidate in candidates {
+        optimization = candidate;
+        let document = ProbabilityCertificateDocument {
+            cyclic_dtmc: false,
+            identity: identity.clone(),
+            targets: targets.clone(),
+            event: None,
+            failures: Vec::new(),
+            reward: None,
+            optimization,
+            timed: Some(TimedProbabilityObjective {
+                route,
+                unit: timed.source().unit_node.clone(),
+                scale: certificate_scale,
+                form: TimedProbabilityForm::Deadline,
+            }),
+            values: certificate.values.clone(),
+            ranking: Vec::new(),
+        };
+        checked = (|| {
+            let bytes = write_probability_certificate(&document, document_limits, cancel)?;
+            check_probability_certificate_document(
+                &system,
+                source_package.graph().probabilistic_model().claims(),
+                &identity,
+                &bytes,
+                document_limits,
+                cancel,
+            )
+        })();
+        if !matches!(checked, Err(ProbabilityDocumentError::OptimizationMismatch)) {
+            break;
+        }
+    }
     let extremum = match optimization {
-        ProbabilityObjective::Minimum => Some(Extremum::Min),
-        ProbabilityObjective::Maximum => Some(Extremum::Max),
+        ProbabilityObjective::Minimum | ProbabilityObjective::WorkloadMinimum => {
+            Some(Extremum::Min)
+        }
+        ProbabilityObjective::Maximum | ProbabilityObjective::WorkloadMaximum => {
+            Some(Extremum::Max)
+        }
         ProbabilityObjective::Workload => None,
     };
     checked_report(checked, certificate, binding, extremum, subject)
@@ -1384,6 +1412,9 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
         ProbabilityDocumentError::ZeroWeightComponent { .. } => {
             EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT))
         }
+        ProbabilityDocumentError::WorkloadFreeDelays(refusal) => {
+            EngineReport::Refused(Refusal::Unsupported(refusal.code()))
+        }
         ProbabilityDocumentError::MixedInfiniteCoverage => EngineReport::Refused(
             Refusal::Unsupported(filament_semantic_value::catalog::CatalogCode::new(
                 "unsupported_construct",
@@ -1399,6 +1430,7 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
         | ProbabilityDocumentError::Noncanonical
         | ProbabilityDocumentError::IdentityMismatch
         | ProbabilityDocumentError::ObjectiveMismatch
+        | ProbabilityDocumentError::OptimizationMismatch
         | ProbabilityDocumentError::Graph(_) => broken(),
     }
 }
@@ -1505,6 +1537,9 @@ fn build_refusal(refusal: ProductRefusal, subject: SubjectLimits<'_>) -> EngineR
             EngineReport::Refused(Refusal::RequiresBound)
         }
         Err(ProductRefusal::NotStochastic { .. }) => not_yet(),
+        Err(ProductRefusal::WorkloadFreeDelays(refusal)) => {
+            EngineReport::Refused(Refusal::Unsupported(refusal.code()))
+        }
         Err(_) => broken(),
     }
 }
@@ -2447,7 +2482,9 @@ fn canonical_action(
                 delay: *delay,
             }
         }
-        AnalyzerAction::FreeDelays(_) => return Err(()),
+        AnalyzerAction::FreeDelays(rows) => {
+            fsl_replay::ProductAction::free_delays(system, rows).map_err(|_| ())?
+        }
     })
 }
 

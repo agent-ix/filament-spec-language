@@ -11,6 +11,7 @@
 //! with [`filament_contract_model::CheckedPackageV2::term`].
 
 mod graph;
+mod hyper;
 mod mapping;
 pub(crate) mod predicate;
 mod subject;

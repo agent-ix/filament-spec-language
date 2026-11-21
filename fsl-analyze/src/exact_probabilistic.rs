@@ -644,6 +644,10 @@ pub enum ProductRefusal {
         /// The product key of the state.
         state: Box<ProbKey>,
     },
+    /// A workload state where FR-204's `WorkloadResolve` reading and ADR-026
+    /// SD-1 and SD-3 give different verdicts (FR-204 "remaining scope").
+    #[error("workload free delay race: {0:?}")]
+    WorkloadFreeDelays(fsl_replay::WorkloadFreeDelayRefusal),
     /// A budget or a cancellation ended the build.
     #[error("the build stopped: {0:?}")]
     Stopped(ProductStop),

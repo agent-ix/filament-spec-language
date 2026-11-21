@@ -15,6 +15,9 @@ use super::reachability::{lower_with, Lowered};
 use super::*;
 use crate::checked_v2::V2ReadRefusal;
 use filament_contract_model::{CheckedPackageRefusalCause, CheckedPackageRefusalCode};
+use filament_contract_model::{
+    ProtocolCorrelationGroup, ProtocolCorrelationProvenance, ProtocolCorrelationReadError,
+};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
@@ -653,6 +656,429 @@ fn the_event_controls_emit_their_layouts_in_source_order() {
     assert_eq!(ordering["value"], "seq_cst");
 }
 
+/// The existing operation fixture with two ConfigVersion relationships.
+fn correlation_document() -> Vec<u8> {
+    let mut document: Value =
+        serde_json::from_str(config_version_unit::DOMAIN_PACKAGE).expect("the model is JSON");
+    let version = document["types"]
+        .as_array_mut()
+        .expect("model types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == "ix://example/config-version/ConfigVersion")
+        .expect("the ConfigVersion object");
+    let multiplicity = json!({"lower": 0, "upper": 2, "ordered": false, "unique": true});
+    version["relationships"] = Value::Array(
+        ["owns", "other"]
+            .into_iter()
+            .map(|name| {
+                json!({
+                    "identity": format!("ix://example/config-version/relationship/{name}"),
+                    "category": "structural", "composite": false,
+                    "direction": "source-to-target",
+                    "origin": {"source": {
+                        "sourceIdentity": "ix://example/config-version/spec", "path": "model.fspec",
+                        "startLine": 1, "startColumn": 1,
+                    }},
+                    "sourceEnd": {"type": "ix://example/config-version/ConfigVersion",
+                        "role": name, "multiplicity": multiplicity},
+                    "targetEnd": {"type": "ix://example/config-version/ConfigVersion",
+                        "multiplicity": multiplicity},
+                })
+            })
+            .collect(),
+    );
+    wire_bytes(&document).expect("the domain document canonicalizes")
+}
+
+/// Compile actual Source and retain the strict reader result with its graph.
+fn correlation_source(run: &str) -> Lowered {
+    let clauses = format!(
+        "post VersionUnchanged using v on M::ConfigVersion::attemptUpdate {{ 1 < 2 }}\n\
+         protocol Flow using p over (input: M::ConfigVersion) on origin {{\n\
+         role Buyer on M::ConfigVersion;\nrole Seller on M::ConfigVersion;\n\
+         relationship Owns = M::owns;\nrelationship owns = M::owns;\n\
+         relationship Else = M::other;\n\
+         channel Ch from Buyer to Seller carries Boolean ordering unordered \
+         delivery at-least-once capacity 4 overflow block;\n\
+         run sequence Main {{ {run} }}\n\
+         finish End as (outcome: Boolean) {{ true }};\n}}"
+    );
+    let lowered = super::reachability::lower_package(
+        correlation_document(),
+        ("example/config-version", "1.0.0"),
+        PROFILES,
+        &clauses,
+    );
+    assert!(
+        lowered.verified,
+        "the strict I2 read admits {}",
+        lowered.text
+    );
+    assert!(lowered.ir.is_ok(), "{:?}", lowered.ir.as_ref().err());
+    lowered
+}
+
+fn correlation_control(lowered: &Lowered, name: &str) -> CheckedNodeId {
+    serde_json::from_value(run_control(&lowered.raw, name)["node_id"].clone())
+        .expect("the full emitted control id")
+}
+
+fn correlation_identity(
+    lowered: &Lowered,
+) -> Vec<filament_contract_model::CheckedNodeProjectionV2> {
+    lowered
+        .ir
+        .as_ref()
+        .expect("the package admits")
+        .resolved_graph()
+        .nodes
+        .iter()
+        .map(filament_contract_model::CheckedNodeProjectionV2::from)
+        .collect()
+}
+
+/// Read through BarePackage without retaining any Source-side supplied rows.
+fn correlation_group<'a>(
+    admitted: &'a CheckedPackageV2,
+    control: &CheckedNodeId,
+) -> ProtocolCorrelationGroup<'a> {
+    let bare = crate::BarePackage::new(admitted);
+    let ProtocolCorrelationProvenance::Complete(table) =
+        bare.package().protocol_correlation_provenance()
+    else {
+        panic!("Source published complete correlation provenance");
+    };
+    let occurrence = admitted
+        .graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == *control)
+        .expect("the admitted control")
+        .occurrences
+        .iter()
+        .find(|occurrence| occurrence.role == CheckedOccurrenceRole::Declaration)
+        .expect("the recorded declaration occurrence");
+    table
+        .group(control, occurrence.ordinal)
+        .expect("the complete table has this authored group")
+}
+
+fn read_correlation(wire: &Value) -> std::sync::Arc<CheckedPackageV2> {
+    match read_protocol_over(wire, &correlation_document()) {
+        Read::Verified { admitted, .. } => admitted,
+        other => panic!("the strict I2 read admits the package: {other:?}"),
+    }
+}
+
+/// Exercise both production re-encoders on the same strictly admitted input.
+fn assert_correlation_reencodes(lowered: &Lowered, base: &CheckedPackageV2) {
+    let limits = crate::checked::EmitLimits::fixture();
+    let retained = emit_checked(&lowered.package).expect("the authentic source emits");
+    let monitor = super::super::monitor_plan::finish(
+        base,
+        &retained,
+        &[],
+        base.resolved_graph().nodes.clone(),
+        base.source_map().to_vec(),
+        retained.source_map.clone(),
+        limits,
+    )
+    .expect("the monitor's final writer re-encodes the package");
+    let timed = super::super::emit_timed_models(base, &[], limits)
+        .expect("the typed timed writer retains this nontimed graph");
+    for emission in [monitor, timed] {
+        let after = raw_wire(&emission);
+        let admitted = read_correlation(&after);
+        match base.protocol_correlation_provenance() {
+            ProtocolCorrelationProvenance::Complete(table) => {
+                let expected = table
+                    .groups()
+                    .flat_map(|group| group.clauses().iter().cloned())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    after["protocol_correlation_occurrences"],
+                    serde_json::to_value(expected).unwrap()
+                );
+                assert!(matches!(
+                    admitted.protocol_correlation_provenance(),
+                    ProtocolCorrelationProvenance::Complete(_)
+                ));
+            }
+            ProtocolCorrelationProvenance::Unavailable(_) => {
+                assert!(after.get("protocol_correlation_occurrences").is_none());
+                assert!(matches!(
+                    admitted.protocol_correlation_provenance(),
+                    ProtocolCorrelationProvenance::Unavailable(_)
+                ));
+            }
+        }
+    }
+}
+
+/// Every related-bearing Source form publishes rows readable without Source.
+#[trace("FSpec-FR-831-AC-3", "FSpec-FR-831-AC-8")]
+#[test]
+fn protocol_correlation_all_six_source_forms_reach_bare_getters() {
+    let lowered = correlation_source(
+        "send Placed via Ch as (placed: Boolean) related by Owns (input, input) { true };\n\
+         receive Got via Ch of Placed as (got: Boolean) related by Owns (input, input) { true };\n\
+         attempt Update by Buyer on M::ConfigVersion::attemptUpdate contracts [VersionUnchanged] \
+         as (tried: Boolean) related by Owns (input, input) { true };\n\
+         effect Applied of Update as (applied: Boolean) related by Owns (input, input) { true };\n\
+         event Done by Buyer as (done: Boolean) related by Owns (input, input) { true };\n\
+         recommend Advise by Buyer on M::ConfigVersion::attemptUpdate contracts [] \
+         as (advice: Boolean) related by Owns (input, input) { true };",
+    );
+    let admitted = lowered.ir.as_ref().expect("the emitted package admits");
+    let bare = crate::BarePackage::new(admitted);
+    let ProtocolCorrelationProvenance::Complete(table) =
+        bare.package().protocol_correlation_provenance()
+    else {
+        panic!("Source emits a complete table");
+    };
+    assert_eq!(table.len(), 6);
+    for (name, expected_operator) in [
+        ("Placed", "send"),
+        ("Got", "receive"),
+        ("Update", "attempt"),
+        ("Applied", "effect"),
+        ("Done", "event"),
+        ("Advise", "recommend"),
+    ] {
+        assert_eq!(
+            operator(run_control(&lowered.wire, name)),
+            expected_operator
+        );
+        let id = correlation_control(&lowered, name);
+        let group = correlation_group(bare.package(), &id);
+        let [row] = group.clauses() else {
+            panic!("one authored clause of {name}");
+        };
+        assert_eq!(row.control, id);
+        assert_eq!(&row.occurrence, group.occurrence());
+        assert_eq!(row.alias.as_ref(), "Owns");
+        assert_eq!((row.source_ordinal, row.canonical_index), (0, 0));
+        assert_eq!(
+            bare.package().protocol_correlation_clauses(&id).unwrap(),
+            group.clauses()
+        );
+    }
+    assert_correlation_reencodes(&lowered, admitted);
+}
+
+/// Repeated Source clauses and differently cased aliases retain every row.
+#[trace("FSpec-FR-831-AC-2", "FSpec-FR-831-AC-8")]
+#[test]
+fn protocol_correlation_preserves_case_sensitive_aliases_and_trailing_duplicates() {
+    let lowered = correlation_source(
+        "event Done by Buyer as (done: Boolean) \
+         related by Owns (input, input) related by owns (input, input) \
+         related by Owns (input, input) related by Owns (input, input) { true };",
+    );
+    let admitted = lowered.ir.as_ref().unwrap();
+    let group = correlation_group(admitted, &correlation_control(&lowered, "Done"));
+    assert_eq!(
+        group
+            .clauses()
+            .iter()
+            .map(|row| (row.alias.as_ref(), row.source_ordinal, row.canonical_index))
+            .collect::<Vec<_>>(),
+        [
+            ("Owns", 0, 0),
+            ("owns", 1, 0),
+            ("Owns", 2, 0),
+            ("Owns", 3, 0)
+        ],
+    );
+    let control = run_control(&lowered.wire, "Done");
+    let related = argument(
+        control,
+        &["role", "compensation", "binder", "related", "constraint"],
+        "related",
+    );
+    assert_eq!(related["members"].as_array().unwrap().len(), 1);
+    let single = correlation_source(
+        "event Done by Buyer as (done: Boolean) related by Owns (input, input) { true };",
+    );
+    assert_eq!(
+        correlation_identity(&lowered),
+        correlation_identity(&single)
+    );
+    let varied = correlation_source(
+        "event Done by Buyer as (done: M::ConfigVersion) \
+         related by Owns (input, input) related by Owns (done, input) \
+         related by Owns (input, input) { true };",
+    );
+    let varied_group = correlation_group(
+        varied.ir.as_ref().unwrap(),
+        &correlation_control(&varied, "Done"),
+    );
+    let [first, second, third] = varied_group.clauses() else {
+        panic!("three authored clauses of one alias");
+    };
+    assert!(varied_group
+        .clauses()
+        .iter()
+        .all(|row| row.alias.as_ref() == "Owns"));
+    assert_eq!(first.canonical_index, third.canonical_index);
+    assert_ne!(first.canonical_index, second.canonical_index);
+}
+
+/// Authored order changes only the row mapping, preserving canonical facts.
+#[trace("FSpec-FR-831-AC-2", "FSpec-FR-831-AC-8", "FSpec-FR-831-AC-11")]
+#[test]
+fn protocol_correlation_reversing_source_order_preserves_canonical_members() {
+    let source = |first: &str, second: &str| {
+        correlation_source(&format!(
+            "event Done by Buyer as (done: Boolean) related by {first} (input, input) \
+         related by {second} (input, input) {{ true }};"
+        ))
+    };
+    let forward = source("Owns", "Else");
+    let reverse = source("Else", "Owns");
+    assert_eq!(
+        correlation_identity(&forward),
+        correlation_identity(&reverse)
+    );
+    let rows = |lowered: &Lowered| {
+        correlation_group(
+            lowered.ir.as_ref().unwrap(),
+            &correlation_control(lowered, "Done"),
+        )
+        .clauses()
+        .iter()
+        .map(|row| (row.alias.to_string(), row.canonical_index))
+        .collect::<Vec<_>>()
+    };
+    let forward_rows = rows(&forward);
+    let mut reversed_rows = rows(&reverse);
+    reversed_rows.reverse();
+    assert_eq!(forward_rows, reversed_rows);
+    assert_ne!(forward_rows[0].1, forward_rows[1].1);
+
+    let with = read_correlation(&forward.raw);
+    let mut absent = forward.raw.clone();
+    absent
+        .as_object_mut()
+        .unwrap()
+        .remove("protocol_correlation_occurrences");
+    let without = read_correlation(&absent);
+    assert_eq!(with.graph(), without.graph());
+    assert_eq!(with.source_map(), without.source_map());
+    assert_eq!(with.checked_term_data(), without.checked_term_data());
+}
+
+/// Source explicitly publishes complete emptiness, rather than absence.
+#[trace("FSpec-FR-831-AC-1", "FSpec-FR-831-AC-8")]
+#[test]
+fn protocol_correlation_empty_source_emits_complete_empty_table() {
+    let lowered = correlation_source("event Done by Buyer as (done: Boolean) { true };");
+    assert_eq!(lowered.raw["protocol_correlation_occurrences"], json!([]));
+    let bare = crate::BarePackage::new(lowered.ir.as_ref().unwrap());
+    let ProtocolCorrelationProvenance::Complete(table) =
+        bare.package().protocol_correlation_provenance()
+    else {
+        panic!("Some([]) is complete empty provenance");
+    };
+    assert!(table.is_empty());
+    assert_eq!(table.groups().count(), 0);
+    assert!(bare
+        .package()
+        .protocol_correlation_clauses(&correlation_control(&lowered, "Done"))
+        .unwrap()
+        .is_empty());
+    assert_correlation_reencodes(&lowered, bare.package());
+}
+
+/// The native capability borrows the exact full-key entry and every region.
+#[trace("FSpec-FR-831-AC-8", "FSpec-FR-831-AC-9")]
+#[test]
+fn protocol_correlation_group_retains_whole_source_map_entry() {
+    let lowered = correlation_source(
+        "event Done by Buyer as (done: Boolean) related by Owns (input, input) { true };",
+    );
+    let id = correlation_control(&lowered, "Done");
+    let admitted = lowered.ir.as_ref().unwrap();
+    let group = correlation_group(admitted, &id);
+    let entry = admitted
+        .source_map()
+        .iter()
+        .find(|entry| {
+            entry.node_id == id
+                && entry.role == group.occurrence().role
+                && entry.ordinal == group.occurrence().ordinal
+        })
+        .unwrap();
+    assert!(std::ptr::eq(group.source_entry(), entry));
+    assert!(!entry.regions.is_empty());
+
+    let mut multiple = lowered.raw.clone();
+    let entry = multiple["source_map"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| {
+            entry["node_id"] == serde_json::to_value(&id).unwrap()
+                && entry["role"] == "declaration"
+                && entry["ordinal"] == group.occurrence().ordinal
+        })
+        .unwrap();
+    let regions = entry["regions"].as_array_mut().unwrap();
+    let mut additional = regions[0].clone();
+    let start = additional["start"].as_u64().unwrap();
+    assert!(additional["end"].as_u64().unwrap() >= start + 2);
+    regions[0]["end"] = json!(start + 1);
+    additional["start"] = json!(start + 1);
+    regions.push(additional);
+    let admitted = read_correlation(&multiple);
+    let group = correlation_group(&admitted, &id);
+    let entry = admitted
+        .source_map()
+        .iter()
+        .find(|entry| {
+            entry.node_id == id
+                && entry.role == group.occurrence().role
+                && entry.ordinal == group.occurrence().ordinal
+        })
+        .unwrap();
+    assert!(std::ptr::eq(group.source_entry(), entry));
+    assert_eq!(group.source_entry().regions.len(), 2);
+    assert_eq!(group.source_entry().regions, entry.regions);
+}
+
+/// Missing provenance refuses precisely the read that needs authored order.
+#[trace("FSpec-FR-831-AC-1", "FSpec-FR-831-AC-12")]
+#[test]
+fn protocol_correlation_missing_member_is_typed_unavailable_only_when_needed() {
+    for related in ["related by Owns (input, input)", ""] {
+        let lowered = correlation_source(&format!(
+            "event Done by Buyer as (done: Boolean) {related} {{ true }};"
+        ));
+        let id = correlation_control(&lowered, "Done");
+        let mut absent = lowered.raw.clone();
+        absent
+            .as_object_mut()
+            .unwrap()
+            .remove("protocol_correlation_occurrences");
+        let admitted = read_correlation(&absent);
+        let bare = crate::BarePackage::new(&admitted);
+        assert!(matches!(
+            bare.package().protocol_correlation_provenance(),
+            ProtocolCorrelationProvenance::Unavailable(_)
+        ));
+        let clauses = bare.package().protocol_correlation_clauses(&id);
+        if related.is_empty() {
+            assert_eq!(clauses, Ok(&[][..]));
+        } else {
+            let Err(ProtocolCorrelationReadError::Unavailable(unavailable)) = clauses else {
+                panic!("nonempty related requires authored provenance: {clauses:?}");
+            };
+            assert_eq!(unavailable.as_str(), "unavailable_correlation_provenance");
+        }
+        assert_correlation_reencodes(&lowered, bare.package());
+    }
+}
+
 /// FR-218-AC-15: a checked `related by` clause survives S4 as one ordered
 /// relationship record with both checked ends linked into the package.
 #[trace("FR-218-AC-15")]
@@ -771,6 +1197,25 @@ fn a_related_clause_carries_its_relationship_and_both_ends_into_the_package() {
     assert_eq!(held_relationships, 1, "the exact relationship is carried");
     assert_eq!(member(record, "from")["term"], "reference");
     assert_eq!(member(record, "to")["term"], "reference");
+    let raw = raw_wire(&emission);
+    let [row] = raw["protocol_correlation_occurrences"]
+        .as_array()
+        .unwrap()
+        .as_slice()
+    else {
+        panic!("the original Source clause publishes exactly one authored row");
+    };
+    assert_eq!(row["control"], run_control(&raw, "Done")["node_id"]);
+    let occurrence = run_control(&raw, "Done")["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|occurrence| occurrence["role"] == "declaration")
+        .unwrap();
+    assert_eq!(&row["occurrence"], occurrence);
+    assert_eq!(row["alias"], "Owns");
+    assert_eq!(row["canonical_index"], 0);
+    assert_eq!(row["source_ordinal"], 0);
 }
 
 /// FR-383-AC-10, FR-383-AC-9 (FSpec FR-464 "Binders"): a control's binder

@@ -905,13 +905,14 @@ impl Lowering<'_> {
             readable.insert(own.slot);
         }
         let mut records = Vec::new();
-        for related in controls
+        for (source_ordinal, related) in controls
             .protocol
             .checked
             .slots
             .related
             .iter()
             .filter(|related| related.node == node)
+            .enumerate()
         {
             let relationship = controls
                 .protocol
@@ -946,6 +947,7 @@ impl Lowering<'_> {
                     member("to", to),
                 ])),
                 ends,
+                source_ordinal,
             ));
         }
         records.sort_by(|left, right| left.0.cmp(&right.0));
@@ -961,14 +963,19 @@ impl Lowering<'_> {
             .path;
         let protocol = &controls.protocol.form.name.name;
         let mut position = 0;
-        for (index, (order, _, ends)) in records.iter().enumerate() {
+        let mut canonical_positions = vec![0; records.len()];
+        for (index, (order, _, ends, source_ordinal)) in records.iter().enumerate() {
             if index > 0
                 && records
                     .get(index - 1)
-                    .is_some_and(|(held, _, _)| held != order)
+                    .is_some_and(|(held, _, _, _)| held != order)
             {
                 position += 1;
             }
+            let authored = canonical_positions
+                .get_mut(*source_ordinal)
+                .ok_or_else(unchecked)?;
+            *authored = position;
             for (end, side) in ends.iter().zip([RelatedSide::From, RelatedSide::To]) {
                 self.related_renames.push((
                     (*end).clone(),
@@ -976,11 +983,26 @@ impl Lowering<'_> {
                 ));
             }
         }
+        if !canonical_positions.is_empty() {
+            let key = (protocol.clone(), node);
+            if self
+                .related_canonical_positions
+                .get(&key)
+                .is_some_and(|held| held != &canonical_positions)
+            {
+                return Err(unchecked());
+            }
+            self.related_canonical_positions
+                .insert(key, canonical_positions);
+        }
         records.dedup_by(|left, right| left.0 == right.0);
         Ok(MemberTerm::binding(
             "related",
             BindingValue::Tuple(TupleTerm::new(
-                records.into_iter().map(|(_, record, _)| record).collect(),
+                records
+                    .into_iter()
+                    .map(|(_, record, _, _)| record)
+                    .collect(),
             )),
         ))
     }

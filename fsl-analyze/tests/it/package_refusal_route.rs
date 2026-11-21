@@ -60,3 +60,23 @@ fn a_package_the_reader_refuses_settles_the_model_check_route_as_its_own_refusal
     let diagnostic = document.diagnostics().first().expect("one diagnostic");
     assert_eq!(diagnostic.code(), "missing_import");
 }
+
+/// The graph a request reader resolves a document-held id against comes from
+/// the same strict read: a package the reader refuses is that refusal, with
+/// its own code, and never a resource limit.
+#[test]
+#[trace("TC-2700", "FR-960-AC-9")]
+fn the_document_graph_of_a_package_the_reader_refuses_is_the_readers_refusal() {
+    let document = document(false);
+    let checked = package(&document, CONTRACT);
+    let refusal = fsl_analyze::analyze::DocumentGraphs::of_package(
+        &checked,
+        &PackageInput::new(),
+        AnalyzeLimits::unbounded().emit,
+    )
+    .expect_err("the reader refuses the package");
+    let AnalyzeRefusal::Package(refusal) = refusal else {
+        panic!("wrong refusal: {refusal:?}")
+    };
+    assert_eq!(refusal.code, Code::MissingImport);
+}

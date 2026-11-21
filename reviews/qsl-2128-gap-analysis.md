@@ -1,106 +1,52 @@
 ---
-id: SR-202611210022442313144108431
-title: "Gap analysis — QSL-2128 PR #3093 hyper checks through analyze (dc59305f00)"
+id: SR-21282002
+title: "QSL-2128 bounded reader gap analysis"
 type: SpecReview
 analysis: gap-analysis
-scope: "agent-ix/filament-spec-language; PR #3093 at dc59305f00: QSL-2128 acceptance criteria and lead rulings against fsl-analyze/tests/it/{hyper_wire,hyper,closure_certificate,analyze_family_cli,hyper_closed}.rs, fsl-semantics/tests/it/hyper_clauses.rs; FR-631, FR-163, FR-173-AC-6, FR-940-AC-18"
 review_set: subset
-evaluated_revision: "dc59305f00"
+scope: "agent-ix/filament-spec-language; PR3396 eight-file universal hyper reader/constructor slice; repository matrix attempted"
 relationships:
-  - target: ix://agent-ix/filament-spec-language/FR-940
-    type: references
-  - target: ix://agent-ix/filament-spec-language/FR-631
-    type: references
+  - {target: "ix://agent-ix/filament-spec-language/FR-940", type: references}
 ---
 
 ## Summary
 
-Ticket: QSL-2128. Plan completion: not assessed. This is a manual check of each AC against its tests; no full-repo `quoin matrix` run was made. Each tagged test was read and judged on whether it can fail. The PR's tests were run name-filtered at the PR head. Two probes ran in a throwaway worktree:
-- the one ignored test, run with `--ignored`;
-- an event-position HP-5 analyze request.
-
-Squash check: all 13 test files have the same content as the pre-rebase head f1692df174, apart from import order and the new `settle_hyper_check` arguments. No `#[ignore]` was added by the rebase, and no assertion was bent. The one `#[ignore]` (hyper_wire.rs:260) was already in the original PR.
+Ticket: QSL-2128. Gap-analysis procedures ran against frozen c08a0e682f1980f6ec17003422dd5dceba122107. Reverse-gap, stub and test-oracle inspection completed for the eight changed files. Repository-wide engine-backed matrix extraction did not complete, so this artifact cannot certify a full repository audit.
 
 ## Verdict
 
-**NOT MERGEABLE.**
-- AC-1, AC-4 and the AC-7 tags are covered.
-- The lead ruling on this ticket (FR-940 rulings 1-6, merged as spec #3113) is contradicted by a new test (FND-001).
-- AC-5 is unmet and its ignore reason is stale (FND-002).
-- AC-6's finite-trace-set half has no test (FND-003).
-
-## Coverage
-
-| Criterion | Test | Result |
-| --- | --- | --- |
-| AC-1 request item (`claim` only, per the readiness ruling) | hyper_wire.rs, all items | covered |
-| AC-2/AC-3 driver end-to-end over the rover | filament-driver `fsl-cli/tests/frontend_cli.rs` | not in this repo; not assessed |
-| AC-4 forall-exists, projection-aligned and single-existential, each holding and refuted | `analyze_hyper_forall_exists_holds_and_refutes`, `analyze_hyper_projected_holds_and_refutes`, `analyze_hyper_single_existential_holds_and_refutes` | covered (single-model, infinite-trace only; see code-review FND-001/FND-002) |
-| AC-5 step relation through analyze (QSL-2238 is Done) | `hyper_step_relation_through_analyze`, ignored | unmet (FND-002) |
-| AC-6 finite trace set is typed unsupported; copy budget is incomplete | `analyze_hyper_outside_the_admitted_forms_is_a_typed_refusal` (HP-4, not a trace set); `analyze_hyper_witness_budget_is_incomplete` | budget half covered; trace-set half missing (FND-003) |
-| AC-7 tags FR-176-AC-1 / FR-173-AC-2 / FR-163 | hyper.rs:49; hyper_clauses.rs:599; closure_certificate.rs | covered |
-| Lead ruling / FR-940-AC-18 (package route settles `Equal` proved) | `a_package_hyper_item_refuses_without_falling_back_to_source` | contradicted (FND-001) |
+FAIL for audit completeness only: the bounded static matrix attempt timed out. No new implementation defect is asserted by this method beyond code-review SR-21282001. No criterion coverage percentage or repository PASS is claimed.
 
 ## Findings
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-001 | high | A new test pins the refusal the merged spec now forbids. It asserts that the package route returns `unsupported_construct`/`not-yet-implemented` with `items` `[]`, and it is tagged TC-2958/FR-940. FR-940-AC-18 (spec #3113, merged as the ruling on this ticket) requires that same request to settle `Equal` `proved`, and ruling item 6 forbids `not-yet-implemented`. The PR has no FR-940 package-form implementation and no ticket tracks one | fsl-analyze/tests/it/hyper_wire.rs:84-123 |
-| FND-002 | medium | AC-5 is unmet and its ignore reason is stale. `hyper_step_relation_through_analyze` is `#[ignore = "blocked on QSL-2238: ... engine does not exist"]`, but QSL-2238 is Done. Run with `--ignored` at dc59305f00, it fails with "an item with a terminal record: null", so step relations still do not reach `fsl analyze` | fsl-analyze/tests/it/hyper_wire.rs:255-276 |
-| FND-003 | medium | AC-6's "hyperproperties over an explicit finite trace set return the typed unsupported result" has no test. The test cited for it is an HP-4 `exists`/`forall` clause, which is a different refusal path | fsl-analyze/tests/it/hyper_wire.rs:228-253 |
+| FND-001 | high | Repository-wide criterion reconciliation is incomplete because the single bounded quire matrix extraction timed out after 25 seconds with no JSON output. | review/matrix.json; review/matrix.stderr |
 
-## Findings detail
+## Coverage
 
-- **FND-001.** Either implement the FR-940 package hyper form in this PR, as ruled, or drop the FR-940/TC-2958 tag and the forbidden assertion and file a ticket for the remaining work. A test should not certify an outcome that FR-940-AC-18 forbids.
-- **FND-002.** Either wire FR-179 through analyze now that QSL-2238 has landed, or re-point the ignore at a real open ticket and say what is still missing.
-- **FND-003.** Add one analyze request over an explicit finite trace set (QSL-2239's form) asserting the typed unsupported code and cause, or record the trace-set half as deferred to QSL-2239.
+Plan completion: not assessed
 
-## New findings (disposition pass 1)
+Reconciliation attempted: `timeout 25s quire matrix --scope /home/peter/dev/worktrees/QSL-2128-hp1-certificate --format json`; exit 124. matrix.json is empty; matrix.stderr contains module warnings only. The inherited quoin evidence-store refusal/hang is not treated as coverage evidence. No retries, long loops, grep-derived coverage claims or fabricated PASS were used. Static-status and evidence-status totals are unavailable. The reviewer's dispatch explicitly accepts a bounded attempt and honest limitation.
 
-Checked at b11222a44b; see the code-review SR for the test runs.
+Reverse-gap and stub inspection: every changed behavior belongs to FR-940's package hyper form or the existing temporal package arena contract. New tests bind FR-940-AC-16 and FR-940-AC-19 with real trace attributes. No source/test stub, ignored new test, mock-only oracle, warning suppression or lowered threshold was found in the changed slice. Semantic intent-to-test-to-code inspection was explicitly requested by the dispatch and performed within code-review, not expanded into a second repository-wide semantic campaign.
 
-| ID | Severity | Summary | Refs |
-| --- | --- | --- | --- |
-| FND-004 | low | The new `analyze_hyper_over_an_explicit_finite_trace_set_is_a_typed_unsupported_result` is tagged `FR-631-AC-6`, but FR-631 defines only AC-1 to AC-4. The tag points at a criterion that does not exist. The test also pins S3's `unsupported_construct`/`expression-form` compile refusal, which FR-898 (QSL-2239) says S3 SHALL NOT give, so it must flip when QSL-2239 lands | fsl-analyze/tests/it/hyper_wire.rs:367-371 |
+Examined: FR-940's hyper inputs/normal form/malformed-node boundary and the Equal subset of AC-16, unknown-trace/strict-duplicate-level subset of AC-19; all eight files listed in SR-21282001. Context only: full AC-16 and AC-19 remaining cases, AC-18 source-free certificate journey and FSpec FR-402's seven-binding facts. None of those remaining acceptance journeys is claimed complete. PR3395's stale refusal prose is under separate spec review; implementation must preserve the pinned strict duplicate-level refusal.
+
+The matrix limitation is an assurance observation, not a request to change production code, broaden this PR, invent a baseline, or implement the named later AC-18 slice. The lead owns disposition of that limitation and custody of this artifact.
 
 ## Dispositions
 
-| FND | outcome | reason |
-| --- | --- | --- |
-| FND-001 | deferred | The coordinator takes the FR-940 package-form `Equal` settlement to architecture, and no ticket exists yet. The forbidden pin is gone: the tag and the `not-yet-implemented`/`items []` assertions are removed, and the test is renamed `a_package_hyper_item_does_not_fall_back_to_source`. It still asserts `exit != 0` and no `proved` item, which is the opposite of FR-940-AC-18's outcome. So it is a no-source-fallback guard that must be rewritten when AC-18 is implemented. Remaining work: FR-940-AC-18 on the package route |
-| FND-002 | fixed | `hyper_step_relation_through_analyze` is no longer ignored. It routes through the new `hyper_route::relation_item` and has a `proved` case (reset preserves `h`) and a `refuted` case (a step-tuple counterexample that replays). It passes at the head and fails on b845664df0 with `unsupported`. The coder reports that a relation over `V::Vault::step` with a bounded-domain parameter, FR-179-AC-1's own `Det`, fails admission with `invalid_package`/`malformed-declaration`. I did not reproduce that. AC-5 names no particular relation, so it is met; the parameter case is an emission defect outside this ticket and needs its own ticket. See code-review FND-004/FND-005 for the settlement defects this route introduced |
-| FND-003 | fixed | `analyze_hyper_over_an_explicit_finite_trace_set_is_a_typed_unsupported_result` sends a finite-trace-set clause through analyze and asserts the typed `unsupported_construct`/`expression-form` at S3, exit non-zero. Probe: exit 21, `last_stage` `S3`, the locus on the clause, `items` `[]`; a syntax error gives `invalid_syntax` and an undeclared name `missing_declaration`, so the test is not vacuous. As a refusal test it also passes on the old code, as expected. Tag problem recorded as FND-004 |
-
-## Dispositions (round 2)
+Pass 1 examined frozen 6c702fe86e5e4c3f1ba86de57a8a158ffbd57f7a. The original Findings table above is unchanged.
 
 | FND | outcome | reason |
 | --- | --- | --- |
-| FND-004 | fixed | The `#[trace("TC-1591", "FR-631-AC-6")]` tag is removed from `analyze_hyper_over_an_explicit_finite_trace_set_is_a_typed_unsupported_result`. Its doc comment now says it pins today's S3 refusal (FR-898, `HyperCause::FiniteDomain`) and must flip when QSL-2239 lands |
+| FND-001 | deferred | The dispatch explicitly retains the known 25-second matrix timeout as an audit limitation outside this code fix and prohibits a repeat attempt. Repository-wide criterion reconciliation therefore remains uncompleted assurance work; no criterion totals, engine-backed repository PASS or code remediation are asserted. |
 
-## New findings (disposition pass 3)
+Current status: incomplete repository audit, with its limitation retained and explicitly deferred by the lead's bounded-review instruction. Reverse-gap/stub inspection of the fix delta found no new unowned production behavior, stubs, ignored tests or false full-acceptance claim. One new untagged budget regression is reported as code-review SR-21282001 FND-004 rather than duplicated here. No additional gap method finding was added. Plan completion: not assessed.
 
-Checked at `6b084105a37feb1d970a5c84c5d323d58527a009`. Plan completion: not assessed. This is a bounded disposition of the existing manual acceptance-criteria check, not a fresh repository-wide matrix audit. No new matrix computation or semantic-audit claim is made.
+### Disposition pass 2
 
-| ID | Severity | Summary | Refs |
-| --- | --- | --- | --- |
-| FND-005 | low | The replacement finite-population smoke test claims `FR-898-AC-3` without asserting that criterion: AC-3 requires three traces, equality conditioned on equal `in` values, a differing third trace at joint position 1 and a counterexample naming both traces and position 1. The test uses one trace for the proof and two one-position traces for refutation, direct `res` equality, and asserts only the verdict and replay. Retain `TC-2535` alone or implement the full AC-3 fixture and counterexample assertions. | fsl-analyze/tests/it/hyper_wire.rs:383-447 |
+Frozen head: fea9089a83522c4af2ced2edc846ce817bdc25f2. The only new source change is the FR-940-AC-16 trace attribute on the existing encoding-boundary regression. The code-review missing-tag finding is fixed; no new reverse gap, stub or unsupported acceptance-completion claim was introduced. No matrix retry was performed.
 
-## Dispositions (round 3)
-
-No previously unresolved gap finding required a new disposition row: FND-001 is already deferred and FND-002 through FND-004 are fixed in the preserved prior rounds. The current arch ruling explicitly keeps package FR-940-AC-18 open on QSL-2128 until the third pin window; the criterion remains unchanged. The replacement finite-domain test now exercises the delivered population path instead of pinning the obsolete blanket S3 refusal. Its extra AC trace claim is recorded above.
-
-### Current verdict (round 3)
-
-**Not mergeable:** new low FND-005 must be resolved and remote focused validation is pending. No code or test changes were made by this reviewer. The declared no-Cargo/no-Python/no-gate policy was followed.
-
-## Dispositions (round 4)
-
-Checked frozen head `9eee3c3c901bf6f9755596f671d51e98f2b61ac3`. Plan completion: not assessed. This remains the bounded disposition of the original manual acceptance-criteria check.
-
-| FND | outcome | reason |
-| --- | --- | --- |
-| FND-005 | fixed | The finite-population test now carries only `#[trace("TC-2535")]`; the overclaimed `FR-898-AC-3` tag is removed. Its declaration, population, proof, refutation and replay assertions are byte-unchanged from the reviewed candidate. The existing smoke coverage is preserved without claiming the three-trace position-1 criterion. |
-
-### Current verdict (round 4)
-
-**No remaining static blocker:** all original and new gap findings have a latest explicit outcome, and FND-001 remains deferred under arch's third-pin-window ruling. Remote focused validation and specification landings remain pending; this pass claims no running test result. No Cargo, Python or gate ran and no code/test changes were made by this reviewer.
+FND-001's latest outcome remains deferred exactly as recorded in pass 1. It had no still-open or missing disposition at the start of pass 2, so no duplicate outcome row is appended. The marked round-2 comment records an empty dispositions list and preserves the existing audit limitation. Repository-wide criterion reconciliation remains incomplete: no coverage totals or engine-backed repository PASS is claimed. Plan completion: not assessed.

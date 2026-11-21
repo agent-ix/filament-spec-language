@@ -92,7 +92,19 @@ pub(super) fn check(
         }
         (fsl_semantics::check::ProbScheduler::Workload(_), _) => ProbabilityObjective::Workload,
     };
-    if document.optimization != optimization || !document.ranking.is_empty() {
+    let workload_claim = matches!(
+        claim.scheduler,
+        fsl_semantics::check::ProbScheduler::Workload(_)
+    );
+    let optimization_admitted = if workload_claim {
+        workload_objective(document.optimization)
+    } else {
+        document.optimization == optimization
+    };
+    if !optimization_admitted {
+        return Err(ProbabilityDocumentError::OptimizationMismatch);
+    }
+    if !document.ranking.is_empty() {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if document.cyclic_dtmc
@@ -138,14 +150,22 @@ pub(super) fn check(
             &mut BTreeSet::new(),
         )?,
     };
-    if matches!(
-        claim.scheduler,
-        fsl_semantics::check::ProbScheduler::Workload(_)
-    ) && graph.states.values().any(|state| state.choices.len() > 1)
-    {
-        // A workload resolves a choice by its weights; the checker mirrors
-        // only the states that leave the scheduler no choice.
-        return Err(ProbabilityDocumentError::Unsupported);
+    // A workload resolves a tie by its weights and leaves the scheduler only
+    // the delay choices FR-204 names; the checker's own graph says whether
+    // any remain, and the document's objective must say the same.
+    let optimization = if workload_claim {
+        let residual = graph.states.values().any(|state| state.choices.len() > 1);
+        if residual && route == TimedProbabilityRoute::Region {
+            // The region product mirrors only the states that leave the
+            // scheduler no choice.
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
+        workload_objective_for(&bound, residual)
+    } else {
+        optimization
+    };
+    if document.optimization != optimization {
+        return Err(ProbabilityDocumentError::OptimizationMismatch);
     }
     if target_keys(&graph) != document.targets {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
@@ -156,7 +176,7 @@ pub(super) fn check(
     let mut checked = super::super::check_exact_reachability(
         &graph,
         &certificate,
-        optimization,
+        scheduler_objective(optimization),
         &bound,
         super::super::GraphCycles::CollapseNonprogressive,
         cancel,
@@ -378,7 +398,11 @@ fn check_mean_time_values(
         let expected = match objective {
             ProbabilityObjective::Minimum => exits.iter().map(|exit| exit.2.clone()).min(),
             ProbabilityObjective::Maximum => exits.iter().map(|exit| exit.2.clone()).max(),
-            ProbabilityObjective::Workload => return Err(ProbabilityDocumentError::Unsupported),
+            ProbabilityObjective::Workload
+            | ProbabilityObjective::WorkloadMinimum
+            | ProbabilityObjective::WorkloadMaximum => {
+                return Err(ProbabilityDocumentError::Unsupported)
+            }
         }
         .unwrap_or_else(zero);
         for key in members {
@@ -434,7 +458,11 @@ fn check_mean_time_values(
         let mut progress = match objective {
             ProbabilityObjective::Maximum => true,
             ProbabilityObjective::Minimum => false,
-            ProbabilityObjective::Workload => return Err(ProbabilityDocumentError::Unsupported),
+            ProbabilityObjective::Workload
+            | ProbabilityObjective::WorkloadMinimum
+            | ProbabilityObjective::WorkloadMaximum => {
+                return Err(ProbabilityDocumentError::Unsupported)
+            }
         };
         for (choice_index, choice) in state.choices.iter().enumerate() {
             let edge_costs = action_costs
@@ -488,7 +516,9 @@ fn check_mean_time_values(
                 Some(previous) => match objective {
                     ProbabilityObjective::Minimum => previous.min(sum.clone()),
                     ProbabilityObjective::Maximum => previous.max(sum.clone()),
-                    ProbabilityObjective::Workload => {
+                    ProbabilityObjective::Workload
+                    | ProbabilityObjective::WorkloadMinimum
+                    | ProbabilityObjective::WorkloadMaximum => {
                         return Err(ProbabilityDocumentError::Unsupported);
                     }
                 },
@@ -497,7 +527,9 @@ fn check_mean_time_values(
                 ProbabilityObjective::Maximum => progress &= descends,
                 ProbabilityObjective::Minimum if sum == *value => progress |= descends,
                 ProbabilityObjective::Minimum => {}
-                ProbabilityObjective::Workload => {
+                ProbabilityObjective::Workload
+                | ProbabilityObjective::WorkloadMinimum
+                | ProbabilityObjective::WorkloadMaximum => {
                     return Err(ProbabilityDocumentError::Unsupported);
                 }
             }
@@ -1579,7 +1611,63 @@ fn enumerate_digital_deadline(
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         admit_workload(system, claim, &actions)?;
         let enabled = digital_enabled_actions(system, timed, &current.timed, claim, cancel)?;
+        if matches!(watch, Watch::Deadline(_))
+            && matches!(
+                claim.scheduler,
+                fsl_semantics::check::ProbScheduler::Workload(_)
+            )
+        {
+            let run = WorkloadRun {
+                system,
+                timed,
+                claim,
+                watch,
+                binding,
+                caps: &caps,
+                scale: key_scale,
+                deadline,
+                limits,
+                cancel,
+            };
+            let choices = digital_workload_choices(
+                &run,
+                &current,
+                &enabled,
+                meter,
+                storage,
+                &mut reached,
+                &mut pending,
+            )?;
+            edges = edges.saturating_add(
+                choices
+                    .iter()
+                    .map(|choice| u64::try_from(choice.len()).unwrap_or(u64::MAX))
+                    .fold(0_u64, u64::saturating_add),
+            );
+            if edges > u64::try_from(limits.edges).unwrap_or(u64::MAX) {
+                return Err(ProbabilityDocumentError::Limit {
+                    limit: ProbabilityDocumentLimit::Edges,
+                    bound: u64::try_from(limits.edges).unwrap_or(u64::MAX),
+                    actual: edges,
+                });
+            }
+            if choices.is_empty() && current.phase == Phase::Active {
+                return Err(ProbabilityDocumentError::Unsupported);
+            }
+            insert_checker_state(
+                key,
+                CheckerState {
+                    terminal: choices.is_empty().then_some(false),
+                    choices,
+                },
+                &mut states,
+                storage,
+                limits,
+            )?;
+            continue;
+        }
         let delta = rational_units(1, key_scale)?;
+
         let can_delay = timed
             .delay(&current.timed, &delta)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
@@ -1645,49 +1733,24 @@ fn enumerate_digital_deadline(
         }
         let mut choices = Vec::new();
         if given_actions == 0 {
-            if let Some((delayed_key, delayed)) = next_digital_delay(
-                system, timed, watch, binding, &current, &caps, key_scale, deadline, cancel,
+            for choice in digital_time_choices(
+                system,
+                timed,
+                watch,
+                binding,
+                &current,
+                &caps,
+                key_scale,
+                deadline,
+                limits,
+                cancel,
+                meter,
+                storage,
+                &mut reached,
+                &mut pending,
             )? {
-                admit_region_state(
-                    delayed_key.clone(),
-                    delayed,
-                    &mut reached,
-                    &mut pending,
-                    limits,
-                    storage,
-                )?;
-                choices.push(vec![ProbabilityEdge {
-                    target: delayed_key,
-                    probability: one(),
-                }]);
                 edges = edges.saturating_add(1);
-                charge_work(meter, cancel, 1)?;
-            }
-            let invariants = timed
-                .invariants(current.timed.discrete())
-                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-            let urgent = timed
-                .is_urgent(current.timed.discrete())
-                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-            if invariants.is_empty() && !urgent {
-                if let Some((target, idle)) = digital_idle_delay(
-                    system, timed, watch, binding, &current, &caps, key_scale, deadline, cancel,
-                )? {
-                    admit_region_state(
-                        target.clone(),
-                        idle,
-                        &mut reached,
-                        &mut pending,
-                        limits,
-                        storage,
-                    )?;
-                    choices.push(vec![ProbabilityEdge {
-                        target,
-                        probability: one(),
-                    }]);
-                    edges = edges.saturating_add(1);
-                    charge_work(meter, cancel, 1)?;
-                }
+                choices.push(choice);
             }
         }
         let clocked_steps = timed
@@ -2580,6 +2643,145 @@ fn digital_idle_delay(
     Ok(Some((key, state)))
 }
 
+/// Whether `objective` is one of the three workload spellings.
+pub(in crate::probability_certificate) fn workload_objective(
+    objective: ProbabilityObjective,
+) -> bool {
+    matches!(
+        objective,
+        ProbabilityObjective::Workload
+            | ProbabilityObjective::WorkloadMinimum
+            | ProbabilityObjective::WorkloadMaximum
+    )
+}
+
+/// The objective a workload claim's document states: `workload` when the
+/// workload leaves the scheduler no choice, otherwise the extremum of the
+/// bound's direction over the choices it does leave (FR-204, FR-920).
+pub(in crate::probability_certificate) fn workload_objective_for(
+    bound: &Bound,
+    residual: bool,
+) -> ProbabilityObjective {
+    match (residual, bound) {
+        (false, _) => ProbabilityObjective::Workload,
+        (true, Bound::AtLeast(_)) => ProbabilityObjective::WorkloadMinimum,
+        (true, Bound::AtMost(_)) => ProbabilityObjective::WorkloadMaximum,
+    }
+}
+
+/// The scheduler objective the shared graph checks evaluate: a workload's
+/// residual choices are optimised exactly as the scheduler's are.
+fn scheduler_objective(objective: ProbabilityObjective) -> ProbabilityObjective {
+    match objective {
+        ProbabilityObjective::WorkloadMinimum => ProbabilityObjective::Minimum,
+        ProbabilityObjective::WorkloadMaximum => ProbabilityObjective::Maximum,
+        other => other,
+    }
+}
+
+/// The workload weight of `operation`. A weight of zero is refused here: the
+/// workload would never take the operation, so the product cannot be built
+/// from it (`admit_workload` refuses an enabled operation with no positive
+/// weight before a state is expanded, and this refuses it where a weight is
+/// read).
+fn workload_weight(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    operation: &str,
+) -> Result<Rational, ProbabilityDocumentError> {
+    let fsl_semantics::check::ProbScheduler::Workload(name) = &claim.scheduler else {
+        return Err(ProbabilityDocumentError::Unsupported);
+    };
+    let workload = system
+        .source_package()
+        .and_then(|package| package.graph().probabilistic_model().workload(name))
+        .ok_or(ProbabilityDocumentError::Unsupported)?;
+    let weight = workload
+        .weights()
+        .iter()
+        .find(|(weighted, _)| {
+            system.operation_text(weighted.declaring(), weighted.name()) == Some(operation)
+        })
+        .map(|(_, weight)| weight.clone())
+        .ok_or(ProbabilityDocumentError::Unsupported)?;
+    if weight.is_zero() {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    Ok(weight)
+}
+
+/// The share of each of `tied`, in order: its operation's weight over the
+/// total of the distinct operations present, split uniformly over the
+/// identities of that operation (ADR-026 SD-3).
+fn operation_shares(
+    tied: &[(fsl_eval::simulation::model::ScheduledIdentity, Rational)],
+) -> Result<Vec<Rational>, ProbabilityDocumentError> {
+    let mut operations: Vec<(&str, &Rational, u64)> = Vec::new();
+    for (identity, weight) in tied {
+        match operations
+            .iter_mut()
+            .find(|(name, _, _)| *name == identity.operation)
+        {
+            Some((_, _, count)) => *count += 1,
+            None => operations.push((identity.operation.as_str(), weight, 1)),
+        }
+    }
+    let total = operations
+        .iter()
+        .fold(zero(), |sum, (_, weight, _)| sum.add(weight));
+    tied.iter()
+        .map(|(identity, _)| {
+            let (_, weight, count) = operations
+                .iter()
+                .find(|(name, _, _)| *name == identity.operation)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            weight
+                .div(&total)
+                .and_then(|share| share.div(&Rational::from_integer(Integer::from(*count))))
+                .ok_or(ProbabilityDocumentError::Unsupported)
+        })
+        .collect()
+}
+
+/// Every ordering of the tied identities with its probability times
+/// `probability`: drawn without replacement by the operations' weights, and
+/// uniformly within an operation (ADR-026 SD-3).
+fn weighted_orderings(
+    tied: &[(fsl_eval::simulation::model::ScheduledIdentity, Rational)],
+    probability: &Rational,
+    prefix: &mut Vec<fsl_eval::simulation::model::ScheduledIdentity>,
+    out: &mut Vec<(
+        Vec<fsl_eval::simulation::model::ScheduledIdentity>,
+        Rational,
+    )>,
+    limit: usize,
+) -> Result<(), ProbabilityDocumentError> {
+    if tied.is_empty() {
+        if out.len() >= limit {
+            return Err(ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::Edges,
+                bound: u64::try_from(limit).unwrap_or(u64::MAX),
+                actual: u64::try_from(out.len().saturating_add(1)).unwrap_or(u64::MAX),
+            });
+        }
+        out.push((prefix.clone(), probability.clone()));
+        return Ok(());
+    }
+    let shares = operation_shares(tied)?;
+    for (index, ((identity, _), share)) in tied.iter().zip(&shares).enumerate() {
+        let rest: Vec<_> = tied
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| *position != index)
+            .map(|(_, entry)| entry.clone())
+            .collect();
+        prefix.push(identity.clone());
+        weighted_orderings(&rest, &probability.mul(share), prefix, out, limit)?;
+        prefix.pop();
+    }
+    Ok(())
+}
+
 /// Under a workload every operation enabled at a reached state must be
 /// positively weighted. The workload resolves a state by its weights, so an
 /// operation without one cannot be dropped from the product: the checker
@@ -2645,7 +2847,7 @@ fn digital_discrete_delay_choice(
     reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
     pending: &mut VecDeque<ProbabilityProductKey>,
 ) -> Result<(Vec<Vec<ProbabilityEdge>>, u64), ProbabilityDocumentError> {
-    let mut outcomes = Vec::new();
+    let mut draws = Vec::new();
     for (delay, weight) in support {
         poll(cancel)?;
         let ticks = time_units(&delay, scale).ok_or(ProbabilityDocumentError::Unsupported)?;
@@ -2655,23 +2857,17 @@ fn digital_discrete_delay_choice(
         else {
             continue;
         };
-        if state.phase.decided() {
-            outcomes.push((ticks, weight, state));
-            continue;
-        }
-        let available = digital_enabled_actions(system, timed, &state.timed, claim, cancel)?;
-        if !available
-            .iter()
-            .any(|candidate| candidate.identity == action.identity)
-        {
-            continue;
-        }
-        outcomes.push((ticks, weight, state));
+        draws.push((ticks, weight, state));
     }
-    let total = outcomes
-        .iter()
-        .fold(zero(), |sum, (_, weight, _)| sum.add(weight));
-    if total.is_zero() {
+    // The delay is drawn conditioned on its window, as under a workload.
+    let outcomes = condition_on_window(draws, |_, state| {
+        Ok(
+            digital_enabled_actions(system, timed, &state.timed, claim, cancel)?
+                .iter()
+                .any(|candidate| candidate.identity == action.identity),
+        )
+    })?;
+    if outcomes.is_empty() {
         return Ok((Vec::new(), 0));
     }
     let mut choices: Vec<(
@@ -2679,10 +2875,7 @@ fn digital_discrete_delay_choice(
         Vec<ProbabilityEdge>,
     )> = Vec::new();
     let mut edges = 0_u64;
-    for (_, weight, delayed) in outcomes {
-        let delay_probability = weight
-            .div(&total)
-            .ok_or(ProbabilityDocumentError::Unsupported)?;
+    for (_, delay_probability, delayed) in outcomes {
         if delayed.phase.decided() {
             let target = digital_key(system, timed, binding, &delayed, caps, scale, deadline)?;
             admit_region_state(target.clone(), delayed, reached, pending, limits, storage)?;
@@ -2717,62 +2910,10 @@ fn digital_discrete_delay_choice(
                     .filter(|(position, _)| *position != first)
                     .map(|(_, identity)| identity.clone()),
             );
-            let mut branches = vec![(one(), delayed.clone())];
-            for identity in order {
-                let mut next = Vec::new();
-                for (branch_probability, state) in branches {
-                    let available =
-                        digital_enabled_actions(system, timed, &state.timed, claim, cancel)?;
-                    let Some(enabled) = available
-                        .iter()
-                        .find(|candidate| candidate.identity == identity)
-                    else {
-                        next.push((branch_probability, state));
-                        continue;
-                    };
-                    let clocked_steps = timed
-                        .steps(&state.timed)
-                        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-                    for draw in &enabled.draws {
-                        let [(transition, discrete_post)] = draw.successors.as_slice() else {
-                            return Err(ProbabilityDocumentError::Unsupported);
-                        };
-                        let Some((_, timed_post)) = clocked_steps.iter().find(|(step, post)| {
-                            step.transition() == transition
-                                && system
-                                    .state_key(post.discrete())
-                                    .ok()
-                                    .zip(system.state_key(discrete_post).ok())
-                                    .is_some_and(|(left, right)| left.0 == right.0)
-                        }) else {
-                            continue;
-                        };
-                        let post = TimedState::new(
-                            timed_post.discrete().clone(),
-                            ClockValuation::new(quantized_clocks(timed_post, caps, scale)?),
-                        );
-                        let (phase, elapsed) = watch.observe(
-                            system,
-                            binding,
-                            post.discrete(),
-                            state.phase,
-                            state.elapsed,
-                            deadline,
-                            cancel,
-                        )?;
-                        next.push((
-                            branch_probability.mul(&draw.probability),
-                            RegionState {
-                                timed: post,
-                                elapsed,
-                                phase,
-                                tail: DigitalTail::Running,
-                            },
-                        ));
-                    }
-                }
-                branches = next;
-            }
+            let branches = digital_fire_chain(
+                system, timed, claim, watch, binding, &delayed, &order, caps, scale, deadline,
+                cancel,
+            )?;
             for (branch_probability, final_state) in branches {
                 let target =
                     digital_key(system, timed, binding, &final_state, caps, scale, deadline)?;
@@ -2796,6 +2937,716 @@ fn digital_discrete_delay_choice(
         }
     }
     Ok((choices.into_iter().map(|(_, edges)| edges).collect(), edges))
+}
+
+/// Fire `order` one identity after another from `start`: each one that is
+/// still enabled takes every draw of its action, the others are skipped. The
+/// result is each branch's probability and state.
+#[allow(clippy::too_many_arguments)]
+fn digital_fire_chain(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
+    watch: &Watch<'_>,
+    binding: Option<&filament_exact::ObjectReference>,
+    start: &RegionState,
+    order: &[fsl_eval::simulation::model::ScheduledIdentity],
+    caps: &[u64],
+    scale: u64,
+    deadline: u64,
+    cancel: &Cancel,
+) -> Result<Vec<(Rational, RegionState)>, ProbabilityDocumentError> {
+    let mut branches = vec![(one(), start.clone())];
+    for identity in order.iter().cloned() {
+        let mut next = Vec::new();
+        for (branch_probability, state) in branches {
+            let available = digital_enabled_actions(system, timed, &state.timed, claim, cancel)?;
+            let Some(enabled) = available
+                .iter()
+                .find(|candidate| candidate.identity == identity)
+            else {
+                next.push((branch_probability, state));
+                continue;
+            };
+            let clocked_steps = timed
+                .steps(&state.timed)
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            for draw in &enabled.draws {
+                let [(transition, discrete_post)] = draw.successors.as_slice() else {
+                    return Err(ProbabilityDocumentError::Unsupported);
+                };
+                let Some((_, timed_post)) = clocked_steps.iter().find(|(step, post)| {
+                    step.transition() == transition
+                        && system
+                            .state_key(post.discrete())
+                            .ok()
+                            .zip(system.state_key(discrete_post).ok())
+                            .is_some_and(|(left, right)| left.0 == right.0)
+                }) else {
+                    continue;
+                };
+                let post = TimedState::new(
+                    timed_post.discrete().clone(),
+                    ClockValuation::new(quantized_clocks(timed_post, caps, scale)?),
+                );
+                let (phase, elapsed) = watch.observe(
+                    system,
+                    binding,
+                    post.discrete(),
+                    state.phase,
+                    state.elapsed,
+                    deadline,
+                    cancel,
+                )?;
+                next.push((
+                    branch_probability.mul(&draw.probability),
+                    RegionState {
+                        timed: post,
+                        elapsed,
+                        phase,
+                        tail: DigitalTail::Running,
+                    },
+                ));
+            }
+        }
+        branches = next;
+    }
+    Ok(branches)
+}
+
+/// The unit-delay states from `current`, index `k` being the state after `k`
+/// units, and whether the last one repeats forever (ADR-026 TS-2).
+struct DigitalTrajectory {
+    states: Vec<RegionState>,
+    forever: bool,
+}
+
+/// The delays after which one identity is enabled (FR-204's window).
+struct DigitalWindow {
+    identity: fsl_eval::simulation::model::ScheduledIdentity,
+    delays: BTreeSet<u64>,
+    forever: bool,
+    given: Option<Vec<(u64, Rational)>>,
+}
+
+impl DigitalWindow {
+    fn contains(&self, delay: u64, reached: u64) -> bool {
+        self.delays.contains(&delay.min(reached)) && (delay <= reached || self.forever)
+    }
+}
+
+/// Everything a workload state's expansion reads.
+struct WorkloadRun<'a, 'b> {
+    system: &'a ModelSystem<'b>,
+    timed: &'a TimedSystem<'a, 'b>,
+    claim: &'a CheckedProbabilisticClaim,
+    watch: &'a Watch<'a>,
+    binding: Option<&'a filament_exact::ObjectReference>,
+    caps: &'a [u64],
+    scale: u64,
+    deadline: u64,
+    limits: ProbabilityDocumentLimits,
+    cancel: &'a Cancel,
+}
+
+impl WorkloadRun<'_, '_> {
+    fn trajectory(
+        &self,
+        current: &RegionState,
+    ) -> Result<DigitalTrajectory, ProbabilityDocumentError> {
+        let mut states = vec![current.clone()];
+        let mut forever = false;
+        loop {
+            poll(self.cancel)?;
+            if states.len() > self.limits.states {
+                return Err(ProbabilityDocumentError::Limit {
+                    limit: ProbabilityDocumentLimit::States,
+                    bound: u64::try_from(self.limits.states).unwrap_or(u64::MAX),
+                    actual: u64::try_from(states.len()).unwrap_or(u64::MAX),
+                });
+            }
+            let Some(last) = states.last() else {
+                return Err(ProbabilityDocumentError::Malformed);
+            };
+            let next = if last.phase.decided() {
+                // A decided monitor no longer reads the delay, but the
+                // product's windows run on until the clocks stop moving.
+                let delta = rational_units(1, self.scale)?;
+                let Some(delayed) = self
+                    .timed
+                    .delay(&last.timed, &delta)
+                    .map_err(|_| ProbabilityDocumentError::Unsupported)?
+                else {
+                    break;
+                };
+                Some(RegionState {
+                    timed: TimedState::new(
+                        delayed.discrete().clone(),
+                        ClockValuation::new(quantized_clocks(&delayed, self.caps, self.scale)?),
+                    ),
+                    elapsed: last
+                        .elapsed
+                        .saturating_add(1)
+                        .min(self.deadline.saturating_add(1)),
+                    phase: last.phase,
+                    tail: last.tail,
+                })
+            } else {
+                digital_state_after_delay(
+                    self.system,
+                    self.timed,
+                    self.watch,
+                    self.binding,
+                    last,
+                    self.caps,
+                    self.scale,
+                    self.deadline,
+                    1,
+                    self.cancel,
+                )?
+            };
+            let Some(next) = next else {
+                break;
+            };
+            let same = digital_key(
+                self.system,
+                self.timed,
+                self.binding,
+                &next,
+                self.caps,
+                self.scale,
+                self.deadline,
+            )? == digital_key(
+                self.system,
+                self.timed,
+                self.binding,
+                last,
+                self.caps,
+                self.scale,
+                self.deadline,
+            )?;
+            if same {
+                forever = true;
+                break;
+            }
+            states.push(next);
+        }
+        Ok(DigitalTrajectory { states, forever })
+    }
+
+    fn windows(
+        &self,
+        trajectory: &DigitalTrajectory,
+    ) -> Result<Vec<DigitalWindow>, ProbabilityDocumentError> {
+        let mut windows: Vec<DigitalWindow> = Vec::new();
+        for (delay, state) in trajectory.states.iter().enumerate() {
+            let delay = u64::try_from(delay).map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            for action in digital_enabled_actions(
+                self.system,
+                self.timed,
+                &state.timed,
+                self.claim,
+                self.cancel,
+            )? {
+                if let Some(window) = windows
+                    .iter_mut()
+                    .find(|window| window.identity == action.identity)
+                {
+                    window.delays.insert(delay);
+                    continue;
+                }
+                let given = match discrete_delay(self.system, &action.identity.operation) {
+                    Some(support) => Some(
+                        support
+                            .into_iter()
+                            .map(|(delay, weight)| {
+                                time_units(&delay, self.scale)
+                                    .map(|units| (units, weight))
+                                    .ok_or(ProbabilityDocumentError::Unsupported)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ),
+                    None => None,
+                };
+                windows.push(DigitalWindow {
+                    identity: action.identity.clone(),
+                    delays: BTreeSet::from([delay]),
+                    forever: false,
+                    given,
+                });
+            }
+        }
+        if trajectory.forever {
+            let last = u64::try_from(trajectory.states.len().saturating_sub(1))
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            for window in &mut windows {
+                window.forever = window.delays.contains(&last);
+            }
+        }
+        Ok(windows)
+    }
+
+    /// The states one race outcome reaches: the state after `delay` units,
+    /// then the tied identities in each weighted order while enabled.
+    fn race_states(
+        &self,
+        trajectory: &DigitalTrajectory,
+        delay: u64,
+        tied: &[fsl_eval::simulation::model::ScheduledIdentity],
+        probability: &Rational,
+    ) -> Result<Vec<(Rational, RegionState)>, ProbabilityDocumentError> {
+        let last = trajectory.states.len().saturating_sub(1);
+        let index = usize::try_from(delay).unwrap_or(usize::MAX).min(last);
+        let start = trajectory
+            .states
+            .get(index)
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        let weighted = tied
+            .iter()
+            .map(|identity| {
+                Ok((
+                    identity.clone(),
+                    workload_weight(self.system, self.claim, &identity.operation)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, ProbabilityDocumentError>>()?;
+        let mut orders = Vec::new();
+        weighted_orderings(
+            &weighted,
+            probability,
+            &mut Vec::new(),
+            &mut orders,
+            self.limits.edges,
+        )?;
+        let mut reached = Vec::new();
+        for (order, share) in orders {
+            for (branch, state) in digital_fire_chain(
+                self.system,
+                self.timed,
+                self.claim,
+                self.watch,
+                self.binding,
+                start,
+                &order,
+                self.caps,
+                self.scale,
+                self.deadline,
+                self.cancel,
+            )? {
+                reached.push((share.mul(&branch), state));
+            }
+        }
+        Ok(reached)
+    }
+
+    /// `states` as one choice's edges, each target admitted to the graph.
+    fn choice_of(
+        &self,
+        states: Vec<(Rational, RegionState)>,
+        into: &mut Vec<ProbabilityEdge>,
+        reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
+        pending: &mut VecDeque<ProbabilityProductKey>,
+        storage: &mut u64,
+    ) -> Result<(), ProbabilityDocumentError> {
+        for (probability, state) in states {
+            let target = digital_key(
+                self.system,
+                self.timed,
+                self.binding,
+                &state,
+                self.caps,
+                self.scale,
+                self.deadline,
+            )?;
+            admit_region_state(
+                target.clone(),
+                state,
+                reached,
+                pending,
+                self.limits,
+                storage,
+            )?;
+            if let Some(edge) = into.iter_mut().find(|edge| edge.target == target) {
+                edge.probability = edge.probability.add(&probability);
+            } else {
+                into.push(ProbabilityEdge {
+                    target,
+                    probability,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// ADR-026 SD-3: a given delay is drawn conditioned on its window. `draws`
+/// are the support's delays in digital units with their weights and a value
+/// each carries; `inside` says whether the identity is enabled after the
+/// delay. The result keeps the delays inside the window, each weight over the
+/// total weight inside, and is empty when no mass is inside. The
+/// every-scheduler and the workload products both read a given delay here, so
+/// one model has one reading.
+fn condition_on_window<T>(
+    draws: Vec<(u64, Rational, T)>,
+    mut inside: impl FnMut(u64, &T) -> Result<bool, ProbabilityDocumentError>,
+) -> Result<Vec<(u64, Rational, T)>, ProbabilityDocumentError> {
+    let mut kept = Vec::with_capacity(draws.len());
+    for (delay, weight, carried) in draws {
+        if inside(delay, &carried)? {
+            kept.push((delay, weight, carried));
+        }
+    }
+    let total = kept
+        .iter()
+        .fold(zero(), |sum, (_, weight, _)| sum.add(weight));
+    if total.is_zero() {
+        return Ok(Vec::new());
+    }
+    kept.into_iter()
+        .map(|(delay, weight, carried)| {
+            weight
+                .div(&total)
+                .map(|share| (delay, share, carried))
+                .ok_or(ProbabilityDocumentError::Unsupported)
+        })
+        .collect()
+}
+
+/// Whether two distributions over product states are the same.
+fn same_choice(left: &[ProbabilityEdge], right: &[ProbabilityEdge]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(a, b)| a.target == b.target && a.probability == b.probability)
+}
+
+/// FR-204's choices of a running state under a workload, each a distribution
+/// the workload's weights fix: the race of the one identity whose delay a
+/// `discrete` distribution gives (with the scheduler's free delays after the
+/// draw when free identities race too, `FreeDelays`), or, when no given
+/// delay races, the time-passing choices and one resolution of the free
+/// identity enabled now (`WorkloadResolve`).
+///
+/// More than one racing given delay is not mirrored and refuses. So do the two
+/// states where the `WorkloadResolve` reading and ADR-026 SD-1 and SD-3 (the
+/// scheduler picks each free identity's delay inside its window) give
+/// different verdicts, until the standard rules between them: several free
+/// identities enabled now, and a free identity that the unit delay disables.
+#[allow(clippy::too_many_arguments)]
+fn digital_workload_choices(
+    run: &WorkloadRun<'_, '_>,
+    current: &RegionState,
+    enabled: &[fsl_eval::simulation::model::Action],
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+    reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
+    pending: &mut VecDeque<ProbabilityProductKey>,
+) -> Result<Vec<Vec<ProbabilityEdge>>, ProbabilityDocumentError> {
+    let trajectory = run.trajectory(current)?;
+    let windows = run.windows(&trajectory)?;
+    let reach = u64::try_from(trajectory.states.len().saturating_sub(1))
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+    // Each given delay is drawn conditioned on its window; an identity with no
+    // conditioned mass in its window does not race (ADR-026 SD-2, SD-3).
+    let mut racers: Vec<(usize, Vec<(u64, Rational)>)> = Vec::new();
+    for (index, window) in windows.iter().enumerate() {
+        let Some(support) = &window.given else {
+            continue;
+        };
+        let draws = support
+            .iter()
+            .map(|(delay, weight)| (*delay, weight.clone(), ()))
+            .collect();
+        let conditioned =
+            condition_on_window(draws, |delay, ()| Ok(window.contains(delay, reach)))?;
+        if conditioned.is_empty() {
+            continue;
+        }
+        racers.push((
+            index,
+            conditioned
+                .into_iter()
+                .map(|(delay, share, ())| (delay, share))
+                .collect(),
+        ));
+    }
+    let free: Vec<&DigitalWindow> = windows
+        .iter()
+        .filter(|window| window.given.is_none())
+        .collect();
+    if racers.len() > 1 {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let mut choices: Vec<Vec<ProbabilityEdge>> = Vec::new();
+    let Some((racer_index, support)) = racers.pop() else {
+        // The free identities enabled now.
+        let free_now: Vec<&fsl_eval::simulation::model::Action> = enabled
+            .iter()
+            .filter(|action| discrete_delay(run.system, &action.identity.operation).is_none())
+            .collect();
+        // FR-204 reads this state as `UnitDelay` and one weighted
+        // `WorkloadResolve`; ADR-026 SD-1 and SD-3 (and FR-204's own
+        // `FreeDelays` rule) have the scheduler pick each free identity's
+        // delay inside its window. The two readings give different verdicts
+        // where several free identities are enabled now, and where the unit
+        // delay disables one that is enabled now, so neither is decided here.
+        if free_now.len() >= 2 {
+            return Err(ProbabilityDocumentError::WorkloadFreeDelays(
+                WorkloadFreeDelayRefusal::ManyFreeEnabled,
+            ));
+        }
+        if reach >= 1 {
+            for action in &free_now {
+                let closes = windows
+                    .iter()
+                    .find(|window| window.identity == action.identity)
+                    .is_some_and(|window| !window.contains(1, reach));
+                if closes {
+                    return Err(ProbabilityDocumentError::WorkloadFreeDelays(
+                        WorkloadFreeDelayRefusal::ClosesBeforeFiring,
+                    ));
+                }
+            }
+        }
+        choices.extend(digital_time_choices(
+            run.system,
+            run.timed,
+            run.watch,
+            run.binding,
+            current,
+            run.caps,
+            run.scale,
+            run.deadline,
+            run.limits,
+            run.cancel,
+            meter,
+            storage,
+            reached,
+            pending,
+        )?);
+        // The workload resolves the free identity enabled now.
+        let weighted = free_now
+            .iter()
+            .map(|action| {
+                Ok((
+                    action.identity.clone(),
+                    workload_weight(run.system, run.claim, &action.identity.operation)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, ProbabilityDocumentError>>()?;
+        let shares = operation_shares(&weighted)?;
+        let mut resolve = Vec::new();
+        for ((identity, _), share) in weighted.iter().zip(&shares) {
+            let states = digital_fire_chain(
+                run.system,
+                run.timed,
+                run.claim,
+                run.watch,
+                run.binding,
+                current,
+                std::slice::from_ref(identity),
+                run.caps,
+                run.scale,
+                run.deadline,
+                run.cancel,
+            )?
+            .into_iter()
+            .map(|(probability, state)| (share.mul(&probability), state))
+            .collect();
+            run.choice_of(states, &mut resolve, reached, pending, storage)?;
+            charge_work(meter, run.cancel, 1)?;
+        }
+        if !resolve.is_empty() {
+            choices.push(resolve);
+        }
+        return Ok(choices);
+    };
+    let racer = &windows[racer_index].identity;
+    if free.is_empty() {
+        // The racer alone: one race, no scheduler choice.
+        let mut race = Vec::new();
+        for (delay, share) in support {
+            let states =
+                run.race_states(&trajectory, delay, std::slice::from_ref(racer), &share)?;
+            run.choice_of(states, &mut race, reached, pending, storage)?;
+            charge_work(meter, run.cancel, 1)?;
+        }
+        choices.push(race);
+        return Ok(choices);
+    }
+    // FR-204 `FreeDelays`: the scheduler picks every free identity's delay in
+    // its window after the given delay is drawn, so a row is one drawn delay
+    // with its options (one per assignment of the free delays). The action
+    // that picks option `a(g)` at each row `g` is one scheduler choice, and its
+    // value factors by row (`Σ_g P(g) opt_a Q(g, a)`); the options of a row
+    // that are the same distribution are one option.
+    let mut per_draw: Vec<Vec<Vec<ProbabilityEdge>>> = Vec::new();
+    for (draw, share) in support {
+        let mut assignment = vec![0_usize; free.len()];
+        let mut options: Vec<Vec<ProbabilityEdge>> = Vec::new();
+        'assignments: loop {
+            let chosen: Vec<u64> = free
+                .iter()
+                .zip(&assignment)
+                .map(|(window, position)| {
+                    window
+                        .delays
+                        .iter()
+                        .copied()
+                        .nth(*position)
+                        .ok_or(ProbabilityDocumentError::Malformed)
+                })
+                .collect::<Result<_, _>>()?;
+            let least = chosen.iter().copied().fold(draw, u64::min);
+            let mut tied = Vec::new();
+            if draw == least {
+                tied.push(racer.clone());
+            }
+            for (window, delay) in free.iter().zip(&chosen) {
+                if *delay == least {
+                    tied.push(window.identity.clone());
+                }
+            }
+            let states = run.race_states(&trajectory, least, &tied, &share)?;
+            let mut option = Vec::new();
+            run.choice_of(states, &mut option, reached, pending, storage)?;
+            if !options.iter().any(|seen| same_choice(seen, &option)) {
+                options.push(option);
+            }
+            charge_work(meter, run.cancel, 1)?;
+            let mut position = free.len();
+            loop {
+                if position == 0 {
+                    break 'assignments;
+                }
+                position -= 1;
+                assignment[position] += 1;
+                if assignment[position] < free[position].delays.len() {
+                    break;
+                }
+                assignment[position] = 0;
+            }
+        }
+        per_draw.push(options);
+    }
+    // The checker's graph states list their choices, so the scheduler's
+    // choices are listed here: every function from a drawn delay to one of its
+    // options. The edge limit is checked against the edges of the listing
+    // before any choice is built, never against a count of choices.
+    let edge_limit = u64::try_from(run.limits.edges).unwrap_or(u64::MAX);
+    let mut functions = 1_u64;
+    let mut edges_per_function = 0_u64;
+    for options in &per_draw {
+        let count = u64::try_from(options.len()).unwrap_or(u64::MAX);
+        functions = functions.saturating_mul(count);
+        let widest = options.iter().map(Vec::len).max().unwrap_or(0);
+        edges_per_function =
+            edges_per_function.saturating_add(u64::try_from(widest).unwrap_or(u64::MAX));
+    }
+    let edges = functions.saturating_mul(edges_per_function.max(1));
+    if functions > 1 && edges > edge_limit {
+        return Err(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::Edges,
+            bound: edge_limit,
+            actual: edges,
+        });
+    }
+    let mut picked = vec![0_usize; per_draw.len()];
+    let mut listed = 0_u64;
+    loop {
+        poll(run.cancel)?;
+        let mut choice: Vec<ProbabilityEdge> = Vec::new();
+        for (options, position) in per_draw.iter().zip(&picked) {
+            for edge in &options[*position] {
+                if let Some(existing) = choice.iter_mut().find(|e| e.target == edge.target) {
+                    existing.probability = existing.probability.add(&edge.probability);
+                } else {
+                    choice.push(edge.clone());
+                }
+            }
+        }
+        listed = listed.saturating_add(u64::try_from(choice.len()).unwrap_or(u64::MAX));
+        if listed > edge_limit {
+            return Err(ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::Edges,
+                bound: edge_limit,
+                actual: listed,
+            });
+        }
+        choices.push(choice);
+        let mut position = picked.len();
+        loop {
+            if position == 0 {
+                return Ok(choices);
+            }
+            position -= 1;
+            picked[position] += 1;
+            if picked[position] < per_draw[position].len() {
+                break;
+            }
+            picked[position] = 0;
+        }
+    }
+}
+
+/// The time-passing choices of a running state that no identity races from:
+/// the next distinct unit delay and, where the state may idle, the idle
+/// delay.
+#[allow(clippy::too_many_arguments)]
+fn digital_time_choices(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    watch: &Watch<'_>,
+    binding: Option<&filament_exact::ObjectReference>,
+    current: &RegionState,
+    caps: &[u64],
+    key_scale: u64,
+    deadline: u64,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+    reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
+    pending: &mut VecDeque<ProbabilityProductKey>,
+) -> Result<Vec<Vec<ProbabilityEdge>>, ProbabilityDocumentError> {
+    let mut choices = Vec::new();
+    if let Some((delayed_key, delayed)) = next_digital_delay(
+        system, timed, watch, binding, current, caps, key_scale, deadline, cancel,
+    )? {
+        admit_region_state(
+            delayed_key.clone(),
+            delayed,
+            reached,
+            pending,
+            limits,
+            storage,
+        )?;
+        choices.push(vec![ProbabilityEdge {
+            target: delayed_key,
+            probability: one(),
+        }]);
+        charge_work(meter, cancel, 1)?;
+    }
+    let invariants = timed
+        .invariants(current.timed.discrete())
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+    let urgent = timed
+        .is_urgent(current.timed.discrete())
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+    if invariants.is_empty() && !urgent {
+        if let Some((target, idle)) = digital_idle_delay(
+            system, timed, watch, binding, current, caps, key_scale, deadline, cancel,
+        )? {
+            admit_region_state(target.clone(), idle, reached, pending, limits, storage)?;
+            choices.push(vec![ProbabilityEdge {
+                target,
+                probability: one(),
+            }]);
+            charge_work(meter, cancel, 1)?;
+        }
+    }
+    Ok(choices)
 }
 
 fn append_checker_edge(
@@ -3336,13 +4187,15 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         ),
     }
     .map_err(from_document)?;
-    // A workload resolves a choice by its weights, not by a scheduler: only a
-    // product that leaves it no choice is a single chain the paths can lower
-    // bound.
-    if matches!(
-        claim.scheduler,
-        fsl_semantics::check::ProbScheduler::Workload(_)
-    ) && graph.states.values().any(|state| state.choices.len() > 1)
+    // A workload resolves a tie by its weights, so the digital graph holds
+    // only the choices FR-204 leaves the scheduler and the witness selects
+    // among those; the region graph mirrors only states with no choice.
+    if route == TimedProbabilityRoute::Region
+        && matches!(
+            claim.scheduler,
+            fsl_semantics::check::ProbScheduler::Workload(_)
+        )
+        && graph.states.values().any(|state| state.choices.len() > 1)
     {
         return Err(unsupported());
     }

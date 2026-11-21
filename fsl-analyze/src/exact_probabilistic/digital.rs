@@ -2227,7 +2227,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
         if racers.is_empty() && free {
             // Every racing delay is free (FR-204).
-            return self.free_moves(at, state, local, workload);
+            return self.free_moves(at, state, local, workload, (&windows, reached));
         }
         if racers.is_empty() {
             let mut planned = Vec::new();
@@ -2610,11 +2610,38 @@ impl<'c> Builder<'_, '_, 'c> {
         state: &DState,
         local: &Rc<Local>,
         workload: &Workload,
+        reading: (&[Window], u64),
     ) -> Step<Vec<Planned>> {
-        let mut planned = Vec::new();
-        self.running_delays(at, state, local, &mut planned)?;
         let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
         enabled.retain(|action| self.given(&action.identity.operation).is_none());
+        // FR-204 reads this state as `UnitDelay` and one weighted
+        // `WorkloadResolve`; ADR-026 SD-1 and SD-3 have the scheduler pick each
+        // free identity's delay inside its window. The readings differ where
+        // several free identities are enabled now and where the unit delay
+        // disables one, so neither is decided here.
+        let (windows, reached) = reading;
+        if enabled.len() >= 2 {
+            return Err(ProductRefusal::WorkloadFreeDelays(
+                fsl_replay::WorkloadFreeDelayRefusal::ManyFreeEnabled,
+            )
+            .into());
+        }
+        if reached >= 1 {
+            for action in &enabled {
+                let closes = windows
+                    .iter()
+                    .find(|window| window.identity == action.identity)
+                    .is_some_and(|window| !window.contains(1, reached));
+                if closes {
+                    return Err(ProductRefusal::WorkloadFreeDelays(
+                        fsl_replay::WorkloadFreeDelayRefusal::ClosesBeforeFiring,
+                    )
+                    .into());
+                }
+            }
+        }
+        let mut planned = Vec::new();
+        self.running_delays(at, state, local, &mut planned)?;
         let mut operations: BTreeMap<String, (Rational, u64)> = BTreeMap::new();
         for action in &enabled {
             let operation = action.identity.operation.clone();

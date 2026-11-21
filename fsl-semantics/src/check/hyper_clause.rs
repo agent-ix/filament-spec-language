@@ -440,6 +440,8 @@ pub struct CheckedHyperClause {
     identity: HyperIdentity,
     atom_slots: Vec<AtomSlot>,
     atoms: BTreeMap<usize, lowering::AtomCondition>,
+    /// Package atom identities, with no source-checked expression body.
+    package_atoms: BTreeMap<usize, (NodeKey, usize)>,
     /// The object type each object parameter declares, in source order.
     parameter_objects: Vec<EffectiveId>,
     /// The span of each quantifier's written constraint that resolved to
@@ -449,6 +451,67 @@ pub struct CheckedHyperClause {
     /// the package is assembled (FR-488 "Outputs"); `None` for a clause no
     /// package assembled.
     occurrence: Option<OccurrenceKey>,
+}
+
+/// One object parameter of a package hyper form (FR-940).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageHyperParameter {
+    /// The authored parameter name.
+    pub name: String,
+    /// The subject alias that owns its object type.
+    pub alias: String,
+    /// The parameter's declared object type.
+    pub object: EffectiveId,
+    /// The covering population's declared object type.
+    pub population_object: EffectiveId,
+    /// The population's declaration-key ordinal within its model.
+    pub population_ordinal: usize,
+    /// An authored population bound, when present.
+    pub maximum: Option<u64>,
+}
+
+/// A trace quantifier read from a package's ordered quantifier tuple.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageHyperQuantifier {
+    /// The trace variable.
+    pub variable: String,
+    /// Universal or existential.
+    pub kind: QuantifierKind,
+    /// The selected subject alias.
+    pub alias: String,
+    /// Its resolved fairness set, in package order.
+    pub fairness: Vec<FairnessConstraint>,
+}
+
+/// The source-independent facts of a lockstep universal hyper clause.
+/// The reader derives every member from the admitted package (FR-940).
+#[derive(Clone, Debug)]
+pub struct PackageHyperForm {
+    /// Its declaration name and region.
+    pub name: String,
+    /// The complete authored declaration region.
+    pub span: Span,
+    /// The exact claim occurrence.
+    pub occurrence: OccurrenceKey,
+    /// The temporal profile of its body wrapper.
+    pub profile: TemporalProfile,
+    /// Subject aliases, in their package order.
+    pub aliases: Vec<String>,
+    /// Object parameters, in declaration order.
+    pub parameters: Vec<PackageHyperParameter>,
+    /// Trace quantifiers, in declaration order.
+    pub quantifiers: Vec<PackageHyperQuantifier>,
+    /// Atom slots, in level order.
+    pub atom_slots: Vec<AtomSlot>,
+    /// The formula in pre-order, as FR-532 reads it. Each `holds` span is
+    /// the claim row's declaration region, with no expression provenance.
+    pub formula: Vec<super::PackageFormulaNode>,
+    /// Formula arena index, expression node and atom slot count.
+    pub atoms: Vec<(usize, NodeKey, usize)>,
+    /// Copy swaps proved by the package normal form.
+    pub copy_group: CopyGroup,
+    /// The package-normal-form encoding of the body.
+    pub normal_body: Vec<u8>,
 }
 
 /// One quantifier over the request-supplied finite trace population
@@ -552,11 +615,208 @@ impl CheckedFiniteHyperClause {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
 impl CheckedHyperClause {
+    /// Rebuild a source-free lockstep universal clause from its package facts.
+    /// Atom conditions retain only their node keys and slot counts.
+    ///
+    /// # Errors
+    /// Refuses an unsupported profile, malformed arena, unknown alias or
+    /// inconsistent atom slot; it never constructs a partial checked clause.
+    pub fn of_package_form(
+        form: PackageHyperForm,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        position_limit: u64,
+    ) -> Result<Self, super::PackageClauseRefusal> {
+        use super::PackageClauseRefusal::{Domains, Shape};
+        if form.profile != TemporalProfile::InfiniteTrace {
+            return Err(super::PackageClauseRefusal::Profile(form.profile));
+        }
+        if form.aliases.is_empty()
+            || form.normal_body.is_empty()
+            || form.aliases.iter().collect::<BTreeSet<_>>().len() != form.aliases.len()
+            || form
+                .parameters
+                .iter()
+                .map(|p| &p.name)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != form.parameters.len()
+            || form
+                .quantifiers
+                .iter()
+                .map(|q| &q.variable)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != form.quantifiers.len()
+        {
+            return Err(Shape);
+        }
+        let aliases: Vec<ModelAlias> = form.aliases.into_iter().map(ModelAlias).collect();
+        let quantifiers: Vec<CheckedQuantifier> = form
+            .quantifiers
+            .into_iter()
+            .map(|q| CheckedQuantifier {
+                variable: q.variable,
+                kind: q.kind,
+                alias: ModelAlias(q.alias),
+                fairness: q.fairness,
+            })
+            .collect();
+        if quantifiers.is_empty()
+            || quantifiers
+                .iter()
+                .any(|q| !q.is_universal() || !aliases.contains(&q.alias) || !q.fairness.is_empty())
+        {
+            return Err(Shape);
+        }
+        let mut parameters = Vec::with_capacity(form.parameters.len());
+        let mut parameter_objects = Vec::with_capacity(form.parameters.len());
+        for p in form.parameters {
+            let alias = ModelAlias(p.alias);
+            if !aliases.contains(&alias) {
+                return Err(Shape);
+            }
+            parameter_objects.push(p.object);
+            parameters.push(ObjectParameter {
+                name: p.name,
+                alias,
+                population: PopulationDomain {
+                    object: p.population_object,
+                    ordinal: p.population_ordinal,
+                    maximum: p.maximum,
+                },
+            });
+        }
+        if form.atom_slots.iter().any(|slot| {
+            slot.parameter >= parameters.len()
+                || slot.trace >= quantifiers.len()
+                || parameters[slot.parameter].alias != quantifiers[slot.trace].alias
+        }) {
+            return Err(Shape);
+        }
+        let (body, operators) = CheckedFormula::of_package_nodes(&form.formula)?;
+        let mut package_atoms = BTreeMap::new();
+        for (index, node, slots) in form.atoms {
+            if !matches!(
+                body.nodes().get(index),
+                Some(super::FormulaNode::Holds { .. })
+            ) || slots != form.atom_slots.len()
+                || package_atoms.insert(index, (node, slots)).is_some()
+            {
+                return Err(Shape);
+            }
+        }
+        if body.nodes().iter().enumerate().any(|(index, node)| {
+            matches!(node, super::FormulaNode::Holds { .. }) && !package_atoms.contains_key(&index)
+        }) {
+            return Err(Shape);
+        }
+        let atom_count = package_atoms.len();
+        let mut seen = BTreeSet::new();
+        let mut expected = Vec::new();
+        let mut previous_class = None;
+        for class in &form.copy_group.classes {
+            if class.len() < 2 {
+                return Err(Shape);
+            }
+            let mut indices = Vec::with_capacity(class.len());
+            for variable in class {
+                let index = quantifiers
+                    .iter()
+                    .position(|q| &q.variable == variable)
+                    .ok_or(Shape)?;
+                if !seen.insert(index) || indices.last().is_some_and(|last| *last >= index) {
+                    return Err(Shape);
+                }
+                indices.push(index);
+            }
+            let first = indices[0];
+            if previous_class.is_some_and(|previous| previous >= first)
+                || indices
+                    .iter()
+                    .any(|index| quantifiers[*index].alias != quantifiers[first].alias)
+            {
+                return Err(Shape);
+            }
+            previous_class = Some(first);
+            expected.extend(indices.windows(2).map(|pair| (pair[0], pair[1])));
+        }
+        expected.sort_unstable_by_key(|pair| pair.1);
+        if expected.len() != form.copy_group.generators.len() {
+            return Err(Shape);
+        }
+        for (generator, pair) in form.copy_group.generators.iter().zip(expected) {
+            if generator.first >= quantifiers.len()
+                || generator.second >= quantifiers.len()
+                || generator.first == generator.second
+                || (generator.first, generator.second) != pair
+                || generator.atoms.len() != atom_count
+                || generator
+                    .atoms
+                    .iter()
+                    .enumerate()
+                    .any(|(at, other)| generator.atoms.get(*other) != Some(&at))
+            {
+                return Err(Shape);
+            }
+        }
+        let roots: Vec<ValueType> = parameter_objects
+            .iter()
+            .cloned()
+            .map(ValueType::Reference)
+            .collect();
+        let domains = classify_domains(&roots.iter().collect::<Vec<_>>(), types, position_limit)
+            .map_err(|_| Domains)?;
+        let identity = HyperIdentity {
+            aliases: aliases.clone(),
+            parameters: parameters.clone(),
+            prefix: quantifiers
+                .iter()
+                .map(|q| (q.kind, q.alias.clone(), q.fairness.clone()))
+                .collect(),
+            mu_universal: encode_conjuncts(None, &[], Swap(None, None)).0,
+            mu_existential: encode_conjuncts(None, &[], Swap(None, None)).0,
+            align_skip: Vec::new(),
+            body: form.normal_body,
+        };
+        let fairness_spans = vec![Vec::new(); quantifiers.len()];
+        Ok(Self {
+            name: form.name,
+            span: form.span,
+            profile: form.profile,
+            aliases,
+            parameters,
+            quantifiers,
+            match_expression: None,
+            mu_universal: Vec::new(),
+            mu_existential: Vec::new(),
+            align_skip: Vec::new(),
+            operators,
+            body,
+            form: Some(HyperForm::Universal),
+            copy_group: form.copy_group,
+            claim: TemporalClaim::new(domains, true, true),
+            identity,
+            atom_slots: form.atom_slots,
+            atoms: BTreeMap::new(),
+            package_atoms,
+            parameter_objects,
+            fairness_spans,
+            occurrence: Some(form.occurrence),
+        })
+    }
+
+    /// A package atom's node key and slot count, with no source body.
+    pub fn package_atom(&self, atom: FormulaNodeId) -> Option<(&NodeKey, usize)> {
+        self.package_atoms
+            .get(&atom.index())
+            .map(|(node, slots)| (node, *slots))
+    }
+
     /// The clause with every object parameter bound to the model alias
     /// `alias` after S3 (test-support only): a clause no well-formed request
     /// carries when `alias` is no alias of the clause.
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn with_parameter_alias_after_s3(mut self, alias: &str) -> Self {
         for parameter in &mut self.parameters {
@@ -1964,6 +2224,7 @@ fn check_behaviours<'a>(
         identity,
         atom_slots: slots.slots().to_vec(),
         atoms,
+        package_atoms: BTreeMap::new(),
         parameter_objects,
         fairness_spans,
         occurrence: None,

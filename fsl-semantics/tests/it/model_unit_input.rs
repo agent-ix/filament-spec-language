@@ -174,13 +174,48 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         serde_json::from_slice(compiled.bytes()).expect("compiled document is JSON");
     assert_eq!(document["contractVersion"], "2.0.0");
     assert_eq!(document["package"]["identity"], "example/shop");
+    let types = document["types"].as_array().unwrap();
+    assert_eq!(types.len(), 3);
+    let order = types
+        .iter()
+        .find(|node| node["identity"] == "ix://example/shop/Order")
+        .unwrap();
     assert_eq!(
-        document["types"][0]["fields"][0]["origin"]["source"]["sourceIdentity"],
+        order["fields"][0]["origin"]["source"]["sourceIdentity"],
         "ix://agent-ix/test:shop-model"
     );
-    assert_eq!(document["types"].as_array().unwrap().len(), 1);
-    let order = &document["types"][0];
-    assert_eq!(order["identity"], "ix://example/shop/Order");
+    for (index, alias, upper, line, column, end_column) in [
+        (0, "OrderId", "999", 4, 7, 18),
+        (1, "OrderTotal", "100", 5, 10, 21),
+    ] {
+        let identity = format!("ix://example/shop/{alias}");
+        assert_eq!(order["fields"][index]["typeRef"], identity);
+        let scalar = types
+            .iter()
+            .find(|node| node["identity"] == identity)
+            .unwrap();
+        assert_eq!(scalar["kind"]["name"], "value_type");
+        assert_eq!(scalar["scalar"], "integer");
+        let origin = serde_json::json!({"source": {
+            "sourceIdentity": "ix://agent-ix/test:shop-model", "path": "shop.fsl",
+            "startLine": line, "startColumn": column, "endLine": line, "endColumn": end_column,
+        }});
+        assert_eq!(scalar["origin"], origin);
+        let constraints = scalar["constraints"].as_array().unwrap();
+        assert_eq!(constraints.len(), 2);
+        for (constraint, keyword, bound) in [
+            (&constraints[0], "min", "0"),
+            (&constraints[1], "max", upper),
+        ] {
+            assert_eq!(
+                constraint["identity"],
+                format!("ix://example/shop/constraint/{alias}/{keyword}")
+            );
+            assert_eq!(constraint["keyword"], keyword);
+            assert_eq!(constraint["operands"]["value"], bound);
+            assert_eq!(constraint["origin"], origin);
+        }
+    }
     assert_eq!(order["fields"].as_array().unwrap().len(), 2);
     for (index, name) in ["id", "total"].into_iter().enumerate() {
         let field = &order["fields"][index];
@@ -227,6 +262,7 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         constructs,
         std::collections::BTreeSet::from([
             ("object_type", "filament.meaning.model.object-type/v1"),
+            ("value_type", "filament.meaning.model.value-type/v1"),
             ("population", "filament.meaning.model.population/v1"),
         ])
     );
@@ -248,7 +284,12 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
     let admitted_document: serde_json::Value =
         serde_json::from_slice(&admitted["example/shop"]).expect("admitted document is JSON");
     assert_eq!(
-        admitted_document["types"][0]["operations"][0]["name"],
+        admitted_document["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["identity"] == "ix://example/shop/Order")
+            .unwrap()["operations"][0]["name"],
         "pay"
     );
 }
@@ -312,15 +353,21 @@ population nodes: Node;
         .expect("the relationship model compiles");
     let document: serde_json::Value =
         serde_json::from_slice(compiled.bytes()).expect("compiled document is JSON");
+    let node = document["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["identity"] == "ix://example/graph/Node")
+        .unwrap();
     assert_eq!(
-        document["types"][0]["relationships"][0]["identity"],
+        node["relationships"][0]["identity"],
         "ix://example/graph/relationship/Node-next-Node"
     );
     assert_eq!(
-        document["types"][0]["relationships"][0]["targetEnd"]["multiplicity"]["lower"],
+        node["relationships"][0]["targetEnd"]["multiplicity"]["lower"],
         0
     );
-    let relationship = &document["types"][0]["relationships"][0];
+    let relationship = &node["relationships"][0];
     assert_eq!(relationship["sourceEnd"]["role"], "next");
     assert!(relationship["targetEnd"].get("role").is_none());
     assert_eq!(relationship["sourceEnd"]["multiplicity"]["lower"], 0);
@@ -1085,4 +1132,377 @@ population orders: Order;
     };
     assert_eq!(bounds.lower().to_string(), "0");
     assert_eq!(bounds.upper().to_string(), "3");
+}
+
+/// Inline ranges use the existing constrained-field alias identity and reach
+/// the same exact checked domain as an authored named bounded type.
+#[test]
+#[trace("FR-710-AC-1", "FR-710-AC-5", "FSpec-FR-154")]
+fn inline_integer_fields_retain_exact_admitted_bounds_and_origins() {
+    use filament_exact::{Integer, Value, ValueType};
+    let mut admitted_types = Vec::new();
+    for (declaration, field_type) in [("", "Int[-2,3]"), ("type Amount = Int[-2,3];\n", "Amount")] {
+        let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\n{declaration}object Order {{ total: {field_type}; }}\npopulation orders: Order;\n");
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "inline-bounds"),
+            "inline.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+            .expect("a valid declared range compiles");
+        assert_eq!(
+            compiled,
+            compile_model_unit(&parsed, ModelNormalizationLimits::default()).unwrap(),
+            "compilation is deterministic"
+        );
+        let document: serde_json::Value = serde_json::from_slice(compiled.bytes()).unwrap();
+        let definitions = document["types"].as_array().unwrap();
+        let order = definitions
+            .iter()
+            .find(|node| node["identity"] == "ix://example/shop/Order")
+            .unwrap();
+        let reference = order["fields"][0]["typeRef"].as_str().unwrap();
+        let scalar = definitions
+            .iter()
+            .find(|node| node["identity"] == reference)
+            .unwrap();
+        assert_eq!(scalar["kind"]["name"], "value_type");
+        assert_eq!(scalar["roles"], serde_json::json!([]));
+        assert_eq!(scalar["scalar"], "integer");
+        assert_eq!(scalar["constraints"][0]["operands"]["value"], "-2");
+        assert_eq!(scalar["constraints"][1]["operands"]["value"], "3");
+        assert_eq!(
+            scalar["origin"]["source"]["sourceIdentity"],
+            "ix://test/inline-bounds"
+        );
+        assert_eq!(scalar["origin"]["source"]["path"], "inline.native");
+        assert_eq!(
+            order["fields"][0]["origin"]["source"]["path"],
+            "inline.native"
+        );
+        if declaration.is_empty() {
+            assert_eq!(reference, "ix://example/shop/OrderTotal");
+            assert_eq!(
+                scalar["constraints"][0]["identity"],
+                "ix://example/shop/constraint/OrderTotal/min"
+            );
+            assert_eq!(scalar["origin"]["source"]["startLine"], 3);
+            assert_eq!(scalar["origin"]["source"]["startColumn"], 23);
+        }
+        let packages = package_input([compiled.bytes()]).unwrap();
+        checked_domain_package("example/shop", &packages);
+        let mut declarations = selected_unit_declarations("example/shop", &packages).unwrap();
+        declarations
+            .link_dispatch(ModelNormalizationLimits::default())
+            .unwrap();
+        let graph = declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::reward_evaluator::ZeroRewardEvaluator,
+            )
+            .unwrap();
+        let types = graph.scope().types();
+        let order = types
+            .object_types()
+            .find(|object| object.name() == "M::Order")
+            .unwrap();
+        let total = types
+            .attributes(order.key())
+            .unwrap()
+            .iter()
+            .find(|attribute| attribute.field().name() == "total")
+            .unwrap();
+        let value_type = total.field().value_type();
+        let ValueType::Int(bounds) = value_type else {
+            panic!("the actual admitted field must stay bounded: {value_type:?}");
+        };
+        assert_eq!(
+            (bounds.lower().to_string(), bounds.upper().to_string()),
+            ("-2".to_owned(), "3".to_owned())
+        );
+        for (value, expected) in [(-3_i64, false), (-2, true), (3, true), (4, false)] {
+            assert_eq!(
+                value_type.admits(&Value::Integer(Integer::from(value))),
+                expected,
+                "admission of {value} under {field_type}"
+            );
+        }
+        admitted_types.push(value_type.clone());
+    }
+    assert_eq!(admitted_types[0], admitted_types[1]);
+}
+
+/// Invalid intervals reuse the scalar reader's refusals at the authored
+/// inline type, rather than emitting an unbounded field or a broken document.
+#[test]
+#[trace("FR-710-AC-3", "FSpec-FR-154")]
+fn inline_integer_fields_refuse_invalid_intervals_at_the_authored_type() {
+    for interval in [
+        "Int[3,0]",
+        "Int[-170141183460469231731687303715884105729,3]",
+    ] {
+        let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nobject Order {{ total: {interval}; }}\npopulation orders: Order;\n");
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "invalid-inline-bounds"),
+            "inline.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+            &parsed,
+            ModelNormalizationLimits::default(),
+        )
+        .expect_err("the same scalar bounds owner refuses the invalid interval");
+        let [diagnostic] = diagnostics.as_slice() else {
+            panic!("one located bound refusal: {diagnostics:?}");
+        };
+        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidModelBinding);
+        assert_eq!(diagnostic.cause.as_str(), "malformed-declaration");
+        let span = parsed
+            .source()
+            .render(diagnostic.region.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(&source[span.start.byte..span.end.byte], interval);
+    }
+}
+
+/// Generated constrained-field identities participate in the existing global
+/// declaration collision rules, without reserving an invented source name.
+#[test]
+#[trace("FR-710-AC-3", "FSpec-FR-154")]
+fn inline_integer_fields_refuse_constrained_alias_identity_collisions() {
+    for declarations in [
+        "type OrderTotal = Int[0,9]; object Order { total: Int[0,3]; }",
+        "object Order { total: Int[0,3]; } type OrderTotal = Int[0,9];",
+        "object Order { total: Int[0,3]; } object OrderTotal {}",
+        "object Holder { Maybe: Option<Integer>; } object Option_Holder_ { maybe: Int[0,3]; }",
+        "object A { bC: Int[0,3]; } object AB { c: Int[0,3]; }",
+    ] {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\"; domain \"example/shop\"; {declarations}"
+        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "inline-collision"),
+            "inline.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+            &parsed,
+            ModelNormalizationLimits::default(),
+        )
+        .expect_err("the constrained alias cannot shadow an authored declaration");
+        let [diagnostic] = diagnostics.as_slice() else {
+            panic!("one collision refusal: {diagnostics:?}");
+        };
+        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::AmbiguousDeclaration);
+        assert_eq!(diagnostic.cause.as_str(), "ambiguous-name");
+        let span = parsed
+            .source()
+            .render(diagnostic.region.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(&source[span.start.byte..span.end.byte], "Int[0,3]");
+    }
+}
+
+/// Machine and process fields retain the generated scalar through document
+/// admission, including both endpoints and the field-to-scalar binding.
+#[test]
+#[trace("FR-710-AC-3", "TC-1942", "FSpec-FR-154")]
+fn inline_integer_machine_and_process_fields_preserve_admitted_intervals() {
+    use fsl_semantics::model::domain_package::{DomainPackageRecord, ScalarValueDomain};
+    for (declaration, kind, meaning) in [
+        (
+            "machine Level { number: Int[-2,3]; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle; }",
+            "machine",
+            "filament.meaning.model.state-machine/v1",
+        ),
+        (
+            "process Level { number: Int[-2,3]; operation go(); step start: begin; }",
+            "process",
+            "filament.meaning.model.process/v1",
+        ),
+    ] {
+        let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/bounded\";\n{declaration}\n");
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "bounded-owners"),
+            "bounded.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
+        let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+            .expect("bounded model compiles");
+        let packages = package_input([compiled.bytes()]).unwrap();
+        let document: serde_json::Value =
+            serde_json::from_slice(&packages["example/bounded"]).unwrap();
+        // States, transitions and steps are nested members; only the owner
+        // and its generated scalar use custom kinds in these documents.
+        let constructs = document["constructs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["kind"]["name"].as_str().unwrap(),
+                    entry["construct"]["meaning"].as_str().unwrap(),
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            constructs,
+            std::collections::BTreeSet::from([
+                (kind, meaning),
+                ("value_type", "filament.meaning.model.value-type/v1")
+            ])
+        );
+        let types = document["types"].as_array().unwrap();
+        let owner = types
+            .iter()
+            .find(|node| node["identity"] == "ix://example/bounded/Level")
+            .unwrap();
+        assert_eq!(
+            owner["fields"][0]["typeRef"],
+            "ix://example/bounded/LevelNumber"
+        );
+        let scalar = types
+            .iter()
+            .find(|node| node["identity"] == "ix://example/bounded/LevelNumber")
+            .unwrap();
+        let start = declaration.find("Int[-2,3]").unwrap() + 1;
+        let origin = serde_json::json!({"source": {
+            "sourceIdentity": "ix://test/bounded-owners", "path": "bounded.native",
+            "startLine": 3, "startColumn": start, "endLine": 3, "endColumn": start + "Int[-2,3]".len(),
+        }});
+        assert_eq!(scalar["origin"], origin);
+        for bound in scalar["constraints"].as_array().unwrap() {
+            assert_eq!(bound["origin"], scalar["origin"]);
+        }
+        let (_, admitted) = admit(
+            "example/bounded",
+            &packages,
+            ModelNormalizationLimits::default().intake,
+        )
+        .unwrap();
+        let records = read_records("example/bounded", &admitted)
+            .expect("the generated value type and owner are admitted together");
+        let scalars: Vec<_> = records
+            .iter()
+            .filter_map(|record| match record {
+                DomainPackageRecord::ScalarType(scalar) => Some(scalar),
+                _ => None,
+            })
+            .collect();
+        let [scalar] = scalars.as_slice() else {
+            panic!("one admitted bounded scalar: {scalars:?}");
+        };
+        assert_eq!(
+            scalar.domain,
+            ScalarValueDomain::Integer {
+                lower: -2,
+                upper: 3
+            }
+        );
+        let fields: Vec<_> = records
+            .iter()
+            .filter_map(|record| match record {
+                DomainPackageRecord::FieldMember(field) => Some(field),
+                _ => None,
+            })
+            .collect();
+        let [field] = fields.as_slice() else {
+            panic!("one admitted field: {fields:?}");
+        };
+        assert_eq!(field.value_type.as_package(), Some(&scalar.key));
+    }
+}
+
+/// Both non-object owners reject invalid scalar intervals at the inline type.
+#[test]
+#[trace("FR-710-AC-3", "TC-1942", "FSpec-FR-154")]
+fn inline_integer_machine_and_process_fields_refuse_invalid_intervals() {
+    for (kind, body) in [
+        (
+            "machine",
+            "operation toggle(); states (Open, Shut); transition Open -> Shut on toggle;",
+        ),
+        ("process", "operation go(); step start: begin;"),
+    ] {
+        for interval in [
+            "Int[3,0]",
+            "Int[-170141183460469231731687303715884105729,3]",
+        ] {
+            let source = format!("language \"ix:native\" edition \"1-draft\"; domain \"example/bounded\"; {kind} Level {{ number: {interval}; {body} }}");
+            assert_inline_integer_refusal(
+                &source,
+                fsl_cst::CompleteCode::InvalidModelBinding,
+                "malformed-declaration",
+                interval,
+            );
+        }
+    }
+}
+
+/// Authored declarations cannot replace generated machine/process scalar
+/// identities, in either source order, and generated identities cannot overlap.
+#[test]
+#[trace("FR-710-AC-3", "TC-1942", "FSpec-FR-154")]
+fn inline_integer_machine_and_process_fields_refuse_identity_collisions() {
+    for (kind, body) in [
+        (
+            "machine",
+            "operation toggle(); states (Open, Shut); transition Open -> Shut on toggle;",
+        ),
+        ("process", "operation go(); step start: begin;"),
+    ] {
+        let bounded = format!("{kind} Level {{ number: Int[0,3]; {body} }}");
+        for declarations in [
+            format!("type LevelNumber = Int[0,9]; {bounded}"),
+            format!("{bounded} type LevelNumber = Int[0,9];"),
+            format!("{kind} A {{ bC: Int[0,3]; {body} }} {kind} AB {{ c: Int[0,3]; {body} }}"),
+        ] {
+            let source = format!("language \"ix:native\" edition \"1-draft\"; domain \"example/bounded\"; {declarations}");
+            assert_inline_integer_refusal(
+                &source,
+                fsl_cst::CompleteCode::AmbiguousDeclaration,
+                "ambiguous-name",
+                "Int[0,3]",
+            );
+        }
+    }
+}
+
+fn assert_inline_integer_refusal(
+    source: &str,
+    code: fsl_cst::CompleteCode,
+    cause: &str,
+    inline_type: &str,
+) {
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "inline-owner-refusal"),
+        "inline.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .unwrap();
+    let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+        &parsed,
+        ModelNormalizationLimits::default(),
+    )
+    .expect_err("the invalid inline type must write no document");
+    let [diagnostic] = diagnostics.as_slice() else {
+        panic!("one located inline refusal: {diagnostics:?}");
+    };
+    assert_eq!(diagnostic.code, code);
+    assert_eq!(diagnostic.cause.as_str(), cause);
+    let span = parsed
+        .source()
+        .render(diagnostic.region.as_ref().unwrap())
+        .unwrap();
+    assert_eq!(&source[span.start.byte..span.end.byte], inline_type);
 }

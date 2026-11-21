@@ -57,8 +57,15 @@ item's identity from one outcome into the next request.
 - `options`: a map of the named backend's option names to string values
   (FSpec FR-196). It applies with `backend` and is accepted only beside it.
 - `items`: an array of closed objects, each `{claim, backend?, options?}`:
-  - `claim`: `{node, occurrence}` in FSpec FR-331's claim spelling, naming one
-    item of the call;
+  - `claim`: `{node, occurrence}` naming one item of the call, in FSpec
+    FR-331's structural spelling or in the document-held form a run outcome
+    reports (FSL FR-621 "Node ids in an item"), whose path operands are index
+    segments `{"node": i}` into the graph of the request's package. A held claim
+    is resolved against that package's graph before it is compared, because the
+    outcome writes the identity of an item in that form and the caller copies it
+    into the next request. It names its item only in a request over the package
+    the outcome was written against, as FR-621 says: "A reader resolves an id
+    back to its structural key with the same graph";
   - `backend` and `options`: as above, for that item alone, in place of the
     call-level members.
 
@@ -101,10 +108,21 @@ computed.
   non-empty string spelling a `BackendId`; `options` without a `backend` in
   the same object, or with a value that is not a string; an `items` entry that
   is not a closed object with a `claim`; and two entries naming the same claim.
+  Two entries that name one claim in the
+  two spellings are found once the package graph exists, after the source is
+  compiled, and refuse the same way at the later entry. A held claim's index
+  segment that is no index of the package graph (a number the graph has no
+  node for, or no non-negative integer) refuses the same way, at
+  `/call/requirements/items/N/claim/node/path/K/node`: the member is wrong and
+  the package is valid, as for the replay request's unresolvable held id. A held
+  claim over a package the strict reader refuses, or that emits no admitted
+  bytes, refuses as the analyze route refuses that package (the reader's own
+  code), never as a limit that was not reached.
 - **Unknown claim.** An `items` entry whose `claim` names no item of the call
   SHALL refuse the request at stage `call` with `missing_declaration` and
   `details` `{"claim": {"node": N, "occurrence": O}}`, exit 20, before any
-  item is negotiated. A claim of another function's item is not an item of
+  item is negotiated. The `details` name the claim as the caller supplied it. A claim of another
+  function's item is not an item of
   the call (FR-395), so it refuses the same way.
 - **Identity.** The named backend and options are members of each item's
   FSpec FR-331 request identity, so the same call naming two backends is two
@@ -116,8 +134,13 @@ computed.
 |----|----------|--------------|
 | FR-960-AC-1 | A run of `sq using v(x: Int[0, 9]): Integer pure { (x + 1) * (x + 1) }` with `x = 3` and `call.requirements` `{}`, through `command::run` and FR-961's linked registry, returns the completed value `{"integer": "16"}` and one settled entry per item of `sq` (three, in FR-395's package order), each with no named backend and `value-checker` as its one candidate; the same call without `requirements` returns the same value and no `requirements` member. | Test (TC-2700) |
 | FR-960-AC-2 | The same call with `call.requirements` `{"backend": "value-checker"}` gives each item request `backend` `value-checker`; with `{"backend": "fsl.absent"}` every item settles `invalid-request` `invalid_capability`/`unknown-backend` naming `fsl.absent`; with `{"backend": "fsl.absent", "items": [{"claim": C, "backend": "value-checker"}]}`, `C` the first item's claim, the first item settles on `value-checker`, its request naming `backend` `value-checker` and the other two settle `unknown-backend`. | Test (TC-2700) |
-| FR-960-AC-3 | Negative: `requirements` `[]`, `{"backend": ""}`, `{"options": {"k": "v"}}`, `{"backend": "value-checker", "options": {"k": 1}}`, `{"extra": 1}`, an `items` entry without `claim`, and two entries naming one claim each refuse at stage `request` with `invalid-request` naming the member's JSON pointer, exit 20, before any source is compiled; an entry whose `claim` names no item of `sq` refuses at stage `call` with `missing_declaration` and `details` naming that claim, exit 20, and no item is negotiated. | Test (TC-2700) |
+| FR-960-AC-3 | Negative: `requirements` `[]`, `{"backend": ""}`, `{"options": {"k": "v"}}`, `{"backend": "value-checker", "options": {"k": 1}}`, `{"extra": 1}`, an `items` entry without `claim`, and two entries naming one claim each refuse at stage `request` with `invalid-request` naming the member's JSON pointer, exit 20, before any source is compiled (a duplicate across the two spellings, AC-6, is found after the compile, once the package graph exists); an entry whose `claim` names no item of `sq` refuses at stage `call` with `missing_declaration` and `details` naming that claim, exit 20, and no item is negotiated. | Test (TC-2700) |
 | FR-960-AC-4 | An option name `value-checker`'s manifest does not publish, given as `{"backend": "value-checker", "options": {"unknown": "1"}}`, settles each item `invalid-request` `invalid_capability`/`unknown-option` with its `request_index`, `backend` `value-checker` and `option` `unknown`, never `invalid_runtime_input`, calls no engine for it, and leaves the call's completed value unchanged. | Test (TC-2700) |
+| FR-960-AC-5 | The claim of the first item as the AC-1 run reports it (held form) and the same claim resolved to FSpec FR-331's structural spelling each name that item in `{"backend": "fsl.absent", "items": [{"claim": C, "backend": "value-checker"}]}`, which settles it on `value-checker` and the other two on `unknown-backend`; a held entry for the first item beside a structural entry for the second settles each on `value-checker`. | Test (TC-2700) |
+| FR-960-AC-6 | Two entries naming the first item's claim, one held and one structural, refuse at stage `request` with `invalid-request` naming `/call/requirements/items/1`, exit 20. | Test (TC-2700) |
+| FR-960-AC-7 | A held claim of the first item with one index segment replaced by `{"node": 999999}`, `{"node": "3"}` or `{"node": -1}` refuses at stage `request` with `invalid-request` naming `/call/requirements/items/0/claim/node/path/K/node`, `K` the segment's position, exit 20, and no item is negotiated. | Test (TC-2700) |
+| FR-960-AC-8 | A held claim of the first item whose occurrence ordinal is 99 resolves and names no item, so it refuses at stage `call` with `missing_declaration` and `details` `claim` equal to the claim as supplied, exit 20. | Test (TC-2700) |
+| FR-960-AC-9 | A held claim over a package the strict reader refuses (a domain package left out of the binding, `missing_import`) refuses with the reader's own code, as the analyze route does, and never `resource_exhausted`. | Test (TC-2700) |
 
 ## Dependencies
 

@@ -388,7 +388,13 @@ fn slot_term<'n>(
         (Op::Repeat, "guard") => (arg("guard")?, Site::Spanned(control())),
         (Op::Check, "condition") => (arg("condition")?, exact(ProtocolSite::ControlBody(&path))),
         (
-            Op::Send | Op::Receive | Op::Attempt | Op::Effect | Op::Event | Op::Commit,
+            Op::Send
+            | Op::Receive
+            | Op::Attempt
+            | Op::Recommend
+            | Op::Effect
+            | Op::Event
+            | Op::Commit,
             "constraint",
         ) => (arg("constraint")?, exact(ProtocolSite::ControlBody(&path))),
         (

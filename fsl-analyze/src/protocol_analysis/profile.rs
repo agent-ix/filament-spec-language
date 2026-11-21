@@ -133,6 +133,7 @@ pub fn unsupported_construct_for_profile(
             }
             ControlOperation::Check
             | ControlOperation::Attempt
+            | ControlOperation::Recommend
             | ControlOperation::Effect
             | ControlOperation::Event
             | ControlOperation::Commit

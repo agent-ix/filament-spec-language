@@ -46,6 +46,7 @@ pub fn settle_product_refusal(
             member,
         }),
         request @ ProductRefusal::NotStochastic { .. } => return Err(request),
+        request @ ProductRefusal::WorkloadFreeDelays(_) => return Err(request),
         ProductRefusal::NotSimulated(
             refusal @ (NotSimulated::Extent(_)
             | NotSimulated::GeneratorMismatch { .. }
