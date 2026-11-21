@@ -760,7 +760,19 @@ pub fn resolved_package_value(bytes: &[u8]) -> Result<serde_json::Value, String>
     Ok(wire)
 }
 
-fn foreign_id_container(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+/// Whether `value` is a node id object whose path holds a nested node id: the
+/// structural form an engine builds before the graph order is known.
+fn is_nested_structural(value: &serde_json::Value) -> bool {
+    value
+        .get("path")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|path| path.iter().any(|segment| segment.get("package").is_some()))
+}
+
+/// Whether `object` is a foreign id container, `{package, node}` or a
+/// `dependency_reference`: it names a node of another package by string, and
+/// no id walk converts what it holds.
+pub fn foreign_id_container(object: &serde_json::Map<String, serde_json::Value>) -> bool {
     (object.len() == 2
         || (object.len() == 3
             && object.get("term").and_then(serde_json::Value::as_str)
@@ -1066,6 +1078,20 @@ impl WireGraph {
         self.identity_value(value, Some(holder), IdentityView::Document)
     }
 
+    /// `value`, a JSON value a result document holds, with every node id in
+    /// it written in this document's held form: each nested operand id of a
+    /// structural id becomes the index segment `{"node": i}` of this graph's
+    /// node. A foreign `{package, node}` or `dependency_reference` container
+    /// is left as it is, as every other id walk leaves it.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an id that is no structural key or names an operand outside
+    /// this graph.
+    pub fn document_value(&self, value: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.identity_value(value, None, IdentityView::Document)
+    }
+
     fn identity_value(
         &self,
         value: &serde_json::Value,
@@ -1092,6 +1118,12 @@ impl WireGraph {
                     && object.contains_key("ordinal")
             });
             if is_id {
+                if matches!(view, IdentityView::Document) && is_nested_structural(current) {
+                    let key = fsl_foundation::node_wire::node_key_from_json(current)
+                        .map_err(|error| error.to_string())?;
+                    *current = self.wire_value(&key).map_err(|error| error.to_string())?;
+                    continue;
+                }
                 let id = id_of_value(current)?;
                 let id = match holder {
                     Some(holder) => self

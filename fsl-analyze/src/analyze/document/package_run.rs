@@ -535,6 +535,10 @@ pub fn settle_package_run(
             counterexamples,
             details,
             protocol_conformance,
+            graphs: super::super::DocumentGraphs {
+                own: super::super::DocumentGraphs::of_bytes(package_bytes),
+                dependencies: BTreeMap::new(),
+            },
         },
         &settled,
         &echoes,

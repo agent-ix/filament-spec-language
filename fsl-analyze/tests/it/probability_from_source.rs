@@ -14,7 +14,9 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{replay_probabilistic_witness, ExactProbLimits, ModelCheckLimits};
 
-use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+use crate::analyze_cli_support::{
+    analyze, assert_no_nested_node_ids, label, request_over, Workspace,
+};
 
 const LINK_UNIT: &str =
     include_str!("../../../tools/fsl-probability-check/tests/fixtures/link.native");
@@ -1164,11 +1166,13 @@ fn assert_valid(compiled: &jsonschema::JSONSchema, instance: &Value, what: &str)
     }
 }
 
-/// FR-410, FR-741: a real statistical `measured` item's `verdict` validates
-/// against FSpec's backend-provider schema (`StatisticalVerdict`); the exact
-/// `proved` item's certificate carries the members FR-621 names, and its
-/// schema validation is an open spelling gap (see the comments below).
+/// FR-410, FR-741, FR-322: a real statistical `measured` item's `verdict`
+/// validates against FSpec's backend-provider schema (`StatisticalVerdict`), and
+/// the exact `proved` item's certificate identity and document validate as
+/// `CertificateIdentity` and `ProbabilityCertificate`: each node id is written
+/// in the document-held index form with the owning model named.
 #[trace("TC-2066", "FR-741-AC-1", "FR-741-AC-2")]
+#[trace("TC-3154", "FR-621-AC-16")]
 #[test]
 fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
     let measured = run(
@@ -1204,18 +1208,66 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
     );
     let item = &proved["items"][0];
     assert_eq!(label(item), "proved", "{item}");
-    // `identity.node_id` nests structural node ids as objects where the
-    // schema's `NodeId` path takes another spelling: the same open gap as
-    // EN-1's identity (FR-621-AC-8), so its members are checked here.
-    let identity = &item["certificate"]["identity"];
-    assert!(identity["node_id"].is_object(), "{item}");
-    assert!(identity["model"].is_string(), "{item}");
-    assert!(identity["ordinal"].is_number(), "{item}");
-    // The certificate document does not validate against
-    // `ProbabilityCertificate` either: its `identity.model` is null and its
-    // nested node ids use the same spelling as above. Open gap, so only its
-    // kind is checked.
-    assert_eq!(item["certificate"]["document"]["kind"], "exact", "{item}");
+    let certificate = &item["certificate"];
+    assert_valid(
+        &provider_definition("CertificateIdentity"),
+        &certificate["identity"],
+        "the proved item's certificate identity",
+    );
+    assert_valid(
+        &provider_definition("ProbabilityCertificate"),
+        &certificate["document"],
+        "the proved item's certificate document",
+    );
+    assert_eq!(
+        certificate["document"]["identity"], certificate["identity"],
+        "{item}"
+    );
+    assert_valid(
+        &provider_definition("Locus"),
+        &item["request"]["claim"],
+        "the proved item's claim locus",
+    );
+    assert_eq!(
+        certificate["identity"]["node_id"], item["request"]["claim"]["node"],
+        "{item}"
+    );
+}
+
+/// FR-322, FR-331: a real `refuted` item's claim locus is a schema-valid
+/// `Locus` whose node id holds index segments, never a nested node id.
+#[trace("TC-3154", "FR-621-AC-16")]
+#[test]
+fn a_refuted_item_names_its_claim_in_the_document_held_form() {
+    let refuted = run(
+        "schema-refuted",
+        TOO_LIKELY,
+        json!([{"claim": "TooLikely", "probabilistic": {"evidence": "exact"}}]),
+    );
+    let item = &refuted["items"][0];
+    assert_eq!(label(item), "refuted", "{item}");
+    assert_valid(
+        &provider_definition("Locus"),
+        &item["request"]["claim"],
+        "the refuted item's claim locus",
+    );
+    // The counterexample's typed `reference` values spell `object_type` as an
+    // object where the schema's `TypedValue` spells a `NodeId`: the open
+    // spelling gap `measured_and_proved_items_validate_against_the_backend_provider_schema`
+    // records for a verdict's `binding`. Its node paths hold no nested id.
+    assert_no_nested_node_ids(&item["counterexample"]);
+    assert_no_nested_node_ids(&refuted);
+    let path = item["request"]["claim"]["node"]["path"]
+        .as_array()
+        .expect("a node path");
+    assert!(
+        path.iter().any(|segment| segment.get("node").is_some()),
+        "{item}"
+    );
+    assert!(
+        path.iter().all(|segment| segment.get("package").is_none()),
+        "{item}"
+    );
 }
 
 /// FR-410: a `measured` verdict spells each test's `over` binding as a typed
