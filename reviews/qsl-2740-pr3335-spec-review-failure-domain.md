@@ -43,3 +43,15 @@ Library `admit` order checked at baa30aa5 src/lib.rs:593-824. FR-106 snapshot re
 | FND-002 | fixed | fixed at 1cfcdac6 |
 | FND-003 | fixed | fixed at 1cfcdac6 |
 | FND-004 | fixed | fixed at 1cfcdac6 |
+| FND-001 | fixed | fixed at 64c6b654 (round 2) |
+| FND-005 | fixed | fixed at 64c6b654 (round 2) |
+| FND-006 | fixed | fixed at 64c6b654 (round 2) |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | Inputs, the FR-100 refusal row and FR-106-AC-74 still treat every snapshot relationship instance as a correlation candidate | spec/functional/FR-1045-admit-native-run-relationships-through-the-observation-resolver.md:54-55 |
+| FND-008 | medium | AC-12 cannot fail an implementation that still checks or passes unmapped entries, and omits the unmapped-required-slot outcome | spec/functional/FR-1045-admit-native-run-relationships-through-the-observation-resolver.md:503 |
+| FND-009 | low | "before the snapshot is used" leaves the mapping refusal unordered against the snapshot read | spec/functional/FR-1045-admit-native-run-relationships-through-the-observation-resolver.md:126-129 |
+| FND-010 | low | A mapping to a declaration with swapped endpoint types returns ReversedEndpoints, not WrongEndpointKind | spec/functional/FR-1045-admit-native-run-relationships-through-the-observation-resolver.md:105-107 |
