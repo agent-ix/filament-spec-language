@@ -232,6 +232,7 @@ fn an_inverted_delivery_interval_refuses_type_mismatch_at_the_interval() {
     let Err(error) = command::compile_outcome(&path) else {
         panic!("an inverted interval does not compile");
     };
+    assert_eq!(error.category().exit_code(), 20, "{error:?}");
     let command::RunCause::Spine(failure) = &error.cause else {
         panic!("a compiler check refusal: {:?}", error.cause);
     };
@@ -263,7 +264,10 @@ fn an_inverted_delivery_interval_refuses_type_mismatch_at_the_interval() {
     assert_eq!(failure.refusal.code().as_str(), "ill_typed");
     let start = unit.find("[4, 3]").expect("the interval") as u64;
     let region = region.as_ref().expect("the refusal has a subject region");
-    assert_eq!((region.start(), region.end()), (start, start + "[4, 3]".len() as u64));
+    assert_eq!(
+        (region.start(), region.end()),
+        (start, start + "[4, 3]".len() as u64)
+    );
 
     let directory = tempfile::tempdir().unwrap();
     let path = request(directory.path(), &delivery_unit("[3, 3]"));
@@ -307,6 +311,7 @@ fn the_filed_handover_example_with_an_inverted_interval_refuses_type_mismatch() 
     let Err(error) = command::compile_outcome(&path) else {
         panic!("an inverted interval does not compile");
     };
+    assert_eq!(error.category().exit_code(), 20, "{error:?}");
     let command::RunCause::Spine(failure) = &error.cause else {
         panic!("a compiler check refusal: {:?}", error.cause);
     };
