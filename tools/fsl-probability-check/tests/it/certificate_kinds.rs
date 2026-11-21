@@ -87,7 +87,7 @@ fn accepted_then_rejected(request: &Value, kinds: &[&str]) {
 /// fairness set: an `exact` certificate the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158: analyze settles an unbounded eventual claim under a fairness set not-yet-implemented; no code writes the fair-end-component Exact document from decide_fair_reachability, and the checker's cyclic-MDP profile reads only an empty fairness set"]
+#[ignore = "QSL-2158: waits for the FR-201/FR-202 closed profile from spec batch 5 (FSL #3263): unbounded fair eventual"]
 fn an_unbounded_fair_eventual_certificate_is_accepted() {
     let source = likely(
         "inf",
@@ -101,7 +101,7 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
 /// certificates the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158: at a tight max_rational_bits the exact route settles Incomplete(LimitReached) instead of falling back to interval iteration; no writer emits a Lower or Upper document and the checker reads only kind exact"]
+#[ignore = "QSL-2158: waits for the FR-201/FR-202 closed profile from spec batch 5 (FSL #3263): lower/upper value bounds"]
 fn value_bounds_certificates_are_accepted() {
     let source = likely(
         "inf",
@@ -119,7 +119,7 @@ fn value_bounds_certificates_are_accepted() {
 /// accepted by the checker.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2158: the exact route builds certificates only for formula events, so a quantile of a steps measure settles not-yet-implemented; no code writes the XF-2 shifted-reward Upper certificate and the checker has no reader for a measure objective"]
+#[ignore = "QSL-2158: waits for the FR-201/FR-202 closed profile from spec batch 5 (FSL #3263): finite-horizon quantile; the claim is false as written (quantile 0.5 <= 3 on link: Pr(M<=3) = 13/27 < 1/2) and must change when implemented"]
 fn a_finite_horizon_quantile_certificate_is_accepted() {
     let source = likely(
         "ev",
