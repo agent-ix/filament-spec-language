@@ -2226,7 +2226,16 @@ fn package_parallel_send_preserves_weak_model_reads() {
                     &format!("observed_payload.n <= {binder}.v")
                 ),
             );
-            let model = serde_json::from_slice(&crate::fill::document()).expect("Fill model");
+            let mut model: Value =
+                serde_json::from_slice(&crate::fill::document()).expect("Fill model");
+            // Keep the writer operations while using the admitted bounded payload type.
+            let payload = model["types"]
+                .as_array_mut()
+                .expect("model types")
+                .iter_mut()
+                .find(|node| node["identity"] == "ix://test/fill/Attempt")
+                .expect("the payload record");
+            payload["fields"][0]["typeRef"] = json!("ix://test/fill/Level");
             let path = channel_request(
                 &ws,
                 model,
@@ -2252,50 +2261,8 @@ fn package_parallel_send_preserves_weak_model_reads() {
             let source = analyze(&path);
             assert!(
                 source.item(0).get("record").is_some(),
-                "Source weak fixture {memory}/{capture}: {}; emitted node 56: {}",
+                "Source weak fixture {memory}/{capture}: {}",
                 source.document(),
-                {
-                    // This diagnostic runs only when Source admission failed.
-                    // Keep its native identity, package namespace and files
-                    // exactly those of the actual analyze request.
-                    let request: Value =
-                        serde_json::from_slice(&std::fs::read(&path).expect("request bytes"))
-                            .expect("actual analyze request");
-                    let selected = &request["request"]["program"]["source"];
-                    let authority = selected["authority"].as_str().expect("Source authority");
-                    let identity = selected["identity"].as_str().expect("Source identity");
-                    let file = selected["file"].as_str().expect("Source path");
-                    assert_eq!(
-                        (authority, identity, file),
-                        ("test", "analyze-unit", "program.fsl")
-                    );
-                    let unit = std::fs::read(ws.path(file)).expect("actual Source bytes");
-                    let model_file = request["request"]["models"][0]["source"]["file"]
-                        .as_str()
-                        .expect("model path");
-                    let model = std::fs::read(ws.path(model_file)).expect("actual model bytes");
-                    let emitted = fsl_replay::compile_package(
-                        fsl_replay::CompileUnit {
-                            source: fsl_foundation::SourceIdentity::new(authority, identity),
-                            package_name: identity.to_owned(),
-                            path: file,
-                            bytes: &unit,
-                        },
-                        [model.as_slice()],
-                        &fsl_replay::spine::DependencyInput::default(),
-                        fsl_replay::StageLimits::default(),
-                        fsl_replay::ReplayLimits::default(),
-                    )
-                    .expect("authentic Source emission before strict admission");
-                    let package: Value =
-                        serde_json::from_slice(emitted.bytes()).expect("emitted JSON");
-                    package["semantic_graph"]["nodes"]
-                        .as_array()
-                        .expect("emitted nodes")
-                        .get(56)
-                        .expect("the refused node exists")
-                        .clone()
-                }
             );
             assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
             let expected = if capture { 2 } else { 1 };
