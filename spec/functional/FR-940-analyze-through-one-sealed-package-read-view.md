@@ -653,6 +653,76 @@ hyper engines produce, and leaves S3 and S4 unchanged.
   `unsupported-requested-capability` at negotiation (FR-173) on both
   routes, because the classification reads the same form.
 
+### Package form of an HP-1 model relation
+
+This section governs the model claim of a `claim`/`step_relation` node
+(FR-179), independently of the temporal `hyperproperty` form above. It
+adds no code-claim route (FR-180) or temporal-hyper implementation.
+The existing HP-1 engine and FR-163 independent checker retain
+their traversal, tuple order and certificate rules.
+
+- `AnalysisView::model_relation_form(occurrence)` SHALL return a typed
+  `PackageModelRelationForm` from the occurrence's admitted
+  `claim`/`step_relation` node. Both view implementations SHALL derive the
+  form only from their admitted package. The form SHALL carry the claim
+  occurrence, display name and source span when recorded, the Boolean
+  body node, the model capability's requirement
+  record, and the following facts of `step_relation_body()` and its
+  referenced nodes:
+  - the distinct used aliases in the package's model alias declaration
+    order, resolved to their selected domain package identities;
+  - execution variables in binding order, with their alias, operation
+    anchor, parameter node identities and value types, effective pre- and
+    postconditions, and each subject's invariant clauses;
+  - each execution's receiver, optional result and operation-argument slots
+    in FR-341 order, including each slot's level and value type, and each
+    body model read's execution index and pre/post observation.
+- The distinct alias order SHALL follow the package's model declaration
+  order, rather than the `subjects` field's first-named order or the
+  execution-binding order (FR-163). Two aliases selecting the same domain
+  package SHALL remain distinct subjects. The form SHALL retain every
+  execution binding, including two executions over the same alias.
+- The package route SHALL resolve the item through `claim_name` and read
+  its model relation form through `AnalysisView`. It SHALL build each
+  subject from the selected package, the request's domain documents,
+  initial snapshots and universes, using the existing package model input.
+  It SHALL NOT construct a `CheckedPackage`, `CheckedGraph`, source body
+  or source arena from the form. The source route MAY retain its checked
+  relation for source evaluation; the engine and checker SHALL receive a
+  common relation descriptor holding the form's execution and alias facts
+  without requiring a source body.
+- `ModelEvaluator` SHALL provide relation-tuple evaluation keyed by that
+  claim occurrence, taking the labelled transitions and typed results,
+  their pre/post object environments and the caller's meter. The source
+  implementation SHALL evaluate the corresponding checked relation body;
+  the package implementation SHALL evaluate the admitted Boolean body
+  through the existing package expression evaluator, binding receiver,
+  result and argument slots to the same values, and routing model reads to
+  the named execution's pre- or post-environment. Each tuple SHALL give
+  equal Boolean value, undefined cause, refusal and charge log on both
+  routes. No missing result SHALL be fabricated.
+- `ModelRelationCheckRequest`, relation counterexample replay and the
+  HP-1 branch of `ProductClosureRequest` SHALL use the common relation
+  descriptor and the route's evaluator. The engine SHALL use its existing
+  FR-179 exploration and tuple enumeration. The checker SHALL use its
+  existing FR-163 reconstruction from the original subjects and certificate,
+  independently of the engine's retained graph. It SHALL evaluate every
+  required tuple through that evaluator and apply FR-184's fresh checker
+  tuple allowance. Neither pass SHALL substitute the other's search result.
+- A package-route model relation SHALL settle with the source route's
+  record, certificate or counterexample and reproduced replay for the same
+  inputs and budgets, including a tuple stop's complete first unpaid tuple.
+  A source file's absence or contents SHALL have no effect on package-route
+  analysis, replay or certificate checking. No fact above SHALL cause an
+  `unsupported_construct`/`not-yet-implemented` refusal.
+- Strict-reader refusals SHALL retain FR-850's whole-request admission
+  behavior. If an admitted relation cannot be projected because its body
+  slots lack a unique contiguous binding to the execution members, or a
+  model read cannot be assigned to exactly one declared execution and
+  pre/post observation, projection SHALL return `MalformedNode` naming
+  the relation node; the item SHALL settle `failed` without a verdict.
+  This is a writer defect, never a fabricated value or a successful proof.
+
 ### A refused read of the compiled package
 
 The source route reads the package it compiled through the same strict
@@ -736,6 +806,11 @@ step.
 | FR-940-AC-20 | AC-4's Counter unit, extended with a record field `pos` and a sequence field `log` and with the function `f`, declares six two-trace universal clauses under the infinite-trace profile. The first three use only forms S3 normalizes through: `Called`, `always holds(f(c.value @ a) = f(c.value @ b))` (call); `Selected`, `always holds(c.pos.x @ a = c.pos.x @ b)` (field select); and `Indexed`, `always holds(c.log[0] @ a = c.log[0] @ b)` (index). Each has the copy-group class `[a, b]` in S3's record and in the clause rebuilt from the package. A `program` request and a `package` request with copy-swap `symmetry` settle each `proved` with basis `reduced`, certification `certified` and equal certificates. `LetBound`, `always holds((let v = c.value @ a in v <= 3) and (let w = c.value @ b in w <= 3))`, and `CaseBound`, the same body with each conjunct a `case` over a union field, have an empty copy group in S3's record and in the rebuilt clause, and settle `proved` with basis `exhaustive` on both routes. `Converted`, `always holds(convert(c.value @ a) = convert(c.value @ b))` with an explicit rational conversion, has an empty copy group in S3's record and the class `[a, b]` in the rebuilt clause, and settles `proved` with basis `reduced` and equal certificates on both routes. A test-only package normal form that treats `filament.op.function.call` as opaque gives `Called` an empty copy group, so the comparison can fail. | Test (TC-3126) |
 | FR-940-AC-21 | The Counter unit, which selects the domain package `test/counter`, analyzed from source with a subject binding whose `packages` supply no document for `test/counter` and with no items, refuses the run with the strict reader's typed refusal before any item runs: code `missing_import`, cause `missing-selection`, the typed refusal's identity `test/counter`, `details.path` a pointer beginning `/semantic_graph/nodes/`, a message naming `test/counter`, category refusal, `items` `[]`, `last_stage` `S4`, exit `20`; the document is never `runtime_invariant` and never exit `30`. The same request with `test/counter` supplied is not refused and completes with category success, exit `0`. | Test (TC-2958) |
 | FR-940-AC-22 | AC-4's Counter request over source with the items `Bounded` and `AtMostTwo`, run with `replay.input_bytes` set below the length of the package's emission (the up-front read-back is bounded by `i2.input_bytes` and admits the package), settles `AtMostTwo` `inconclusive` with cause `replay_refused` carrying `stage_limit_exceeded`/`input-bytes-exceeded` naming `replay.input_bytes`, never `refuted`, never `failed` with `analyze`/`package-emission`, and settles `Bounded` `proved` as without the setting; the document's category and exit follow its items (category inconclusive, never `internal-failure` or exit `30`), it carries both items, and it is not a whole-run refusal. The same `package` request over AC-4's handoff directory with the same `replay.input_bytes` settles `AtMostTwo` the same way, never `failed` with `analyze`/`package-bytes`. With the same setting, the state-graph claim `ReachThree` of FR-940-AC-11, whose witness replay reads the package the same way, settles `inconclusive`, cause `replay_refused` carrying the same code, never `proved`, on both routes. The source request with a test-only emitter that fails at the replay's emission, over the package the checker admitted, settles `AtMostTwo` `failed` with the internal fault `analyze`/`package-emission`. | Test (TC-2958) |
+
+| FR-940-AC-23 | For FR-179-AC-1's secure-vault `Det`, `model_relation_form` returns equal facts over the `AdmittedPackageRead` and the `BarePackage` of its emission: claim occurrence, name, recorded span, model requirement, body, alias identities, execution order, operation anchors, receiver/result/argument slots and pre/post reads. A two-alias variant declares `A` before `B` but binds `B`'s execution first: both forms retain aliases `[A, B]` and execution order `[B, A]`; two aliases selecting the same domain document remain separate. A test-only projection that swaps an execution's pre/post read differs from the source tuple evaluation, so the comparison can fail. | Test |
+| FR-940-AC-24 | Source and package requests for FR-179-AC-1's secure `Det` both settle `proved`, certification `certified`, with equal terminal records and HP-1 certificates accepted by FR-163's independent checker. FR-179-AC-2's nondeterministic variant gives equal violated tuple paths and reproduced replay; FR-179-AC-4's undefined body gives equal undefined cause and replay. Evaluating their tuples on both routes gives equal charge logs. The requests with `max_relation_tuples` 63 stop at count 64 with the same first unpaid tuple; those with 64 complete; the depth-1 variant has equal bounded outcome. No package item is `unsupported` or `not-yet-implemented`. | Test |
+| FR-940-AC-25 | AC-24's package requests still produce the same proved, refuted, undefined and budget-stopped records after the source unit is overwritten with invalid bytes and the handoff's `sources/` is deleted. With no source present, FR-163's checker accepts the secure certificate, rejects variants that omit a reachable state, omit an applicable edge or alter its typed result, and under tuple allowance 63 stops at count 64 identifying the first unpaid tuple. Checking twice under 64 accepts twice, with fresh checker counters. | Test |
+| FR-940-AC-26 | Variants of AC-23's package with a duplicate or missing execution parameter level, an argument parameter with the wrong type, or an invalid step-relation body reference refuse the whole request before an engine runs, retaining the strict reader's code, cause and pointer. A test-only projection with a body model read assigned to no declared execution returns `MalformedNode` naming the relation node; its item has no verdict and a sibling valid item is unaffected. Neither case loads source or becomes a proved relation. | Test |
 
 ## Dependencies
 
