@@ -375,7 +375,7 @@ impl<'p> EvidencePackage<'p> {
                 budget,
             )?)
         };
-        let time_unit_scales = collect_time_unit_scales(package, &rows, None, Some(bare));
+        let time_unit_scales = collect_time_unit_scales(bare.package(), &rows, None, Some(bare));
         Ok(Self::assemble(
             bare.package(),
             bare.canonical_bytes(),
