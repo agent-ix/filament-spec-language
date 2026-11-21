@@ -515,26 +515,21 @@ fn validate_protocol_bindings(
                 .collect::<Vec<_>>()
                 .join("::");
             required_protocols.insert(protocol_name.to_owned());
-            let Some(binding) = request
+            let Some((binding_index, binding)) = request
                 .protocols
                 .iter()
-                .find(|binding| binding.protocol == protocol_name)
+                .enumerate()
+                .find(|(_, binding)| binding.protocol == protocol_name)
             else {
                 return Err(RunCause::ExportRequest {
-                    path: format!(
-                        "/request/export/protocols/{}",
-                        super::request::pointer_token(&protocol_name)
-                    ),
+                    path: "/request/export/protocols".to_owned(),
                     cause: "wrong-role-mapping",
                     reason: format!("the required protocol `{protocol_name}` has no binding"),
                 });
             };
             if binding.over.is_none() {
                 return Err(RunCause::ExportRequest {
-                    path: format!(
-                        "/request/export/protocols/{}/over",
-                        super::request::pointer_token(&protocol_name)
-                    ),
+                    path: format!("/request/export/protocols/{binding_index}/over"),
                     cause: "wrong-role-mapping",
                     reason: "the required protocol binding has no `over` selection".to_owned(),
                 });
@@ -561,8 +556,7 @@ fn validate_protocol_bindings(
                 {
                     return Err(RunCause::ExportRequest {
                         path: format!(
-                            "/request/export/protocols/{}/roles/{role_path}",
-                            super::request::pointer_token(&protocol_name)
+                            "/request/export/protocols/{binding_index}/roles/{role_path}"
                         ),
                         cause: "unsupported-selection",
                         reason: "replicated protocol roles are outside the lowered subset"
@@ -577,8 +571,7 @@ fn validate_protocol_bindings(
                 {
                     return Err(RunCause::ExportRequest {
                         path: format!(
-                            "/request/export/protocols/{}/roles/{role_path}",
-                            super::request::pointer_token(&protocol_name)
+                            "/request/export/protocols/{binding_index}/roles/{role_path}"
                         ),
                         cause: "wrong-role-mapping",
                         reason: format!(
@@ -593,10 +586,7 @@ fn validate_protocol_bindings(
                 .any(|role| !required_roles.contains(role))
             {
                 return Err(RunCause::ExportRequest {
-                    path: format!(
-                        "/request/export/protocols/{}/roles",
-                        super::request::pointer_token(&protocol_name)
-                    ),
+                    path: format!("/request/export/protocols/{binding_index}/roles"),
                     cause: "wrong-role-mapping",
                     reason:
                         "the protocol binding names a role that is not declared by the protocol"

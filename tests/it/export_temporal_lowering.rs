@@ -2413,11 +2413,8 @@ fn a_protocol_subject_with_an_unbound_static_role_refuses_wrong_role_mapping() {
     assert_eq!(exit, 20, "{value}");
     assert_eq!(value["code"], "invalid_runtime_input", "{value}");
     assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
-    assert!(
-        value["details"]["path"]
-            .as_str()
-            .unwrap()
-            .ends_with("/roles/a"),
+    assert_eq!(
+        value["details"]["path"], "/request/export/protocols/0/roles/a",
         "{value}"
     );
 }

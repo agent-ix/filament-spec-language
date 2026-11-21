@@ -468,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    #[trace("FSpec-FR-1015-AC-17")]
+    #[trace("FR-1015-AC-17")]
     fn protocol_and_universe_bindings_use_the_analyze_reader_shapes() {
         let request = read(&member(), &Default::default()).expect("the analyze subject shape");
         assert_eq!(request.protocols.len(), 1);
@@ -484,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    #[trace("FSpec-FR-1015-AC-17")]
+    #[trace("FR-1015-AC-17")]
     fn protocol_bindings_reject_unknown_members_like_analyze_reader() {
         let mut member = member();
         member["protocols"][0]["unexpected"] = json!(true);
