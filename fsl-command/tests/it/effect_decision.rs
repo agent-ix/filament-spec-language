@@ -26,6 +26,10 @@ impl Fixture {
     }
 
     fn with_input(source: &str, model: &[u8]) -> Self {
+        Self::with_item(source, model, None)
+    }
+
+    fn with_item(source: &str, model: &[u8], item: Option<Value>) -> Self {
         let case = Case::new();
         case.write("workflow.native", source.as_bytes());
         case.write("counter.json", model);
@@ -35,6 +39,9 @@ impl Fixture {
         ))
         .unwrap();
         request["request"]["models"][0]["source"]["file"] = json!("counter.json");
+        if let Some(item) = item {
+            request["request"]["items"][0] = item;
+        }
         let baseline = analyze(&case.json("analyze.json", &request));
         assert_eq!(baseline.exit, 10, "genuine baseline: {}", baseline.document);
         let item = &baseline.document["items"][0];
@@ -43,6 +50,12 @@ impl Fixture {
             .as_array()
             .unwrap()
             .iter()
+            .chain(
+                item["counterexample"]["loop"]
+                    .as_array()
+                    .into_iter()
+                    .flatten(),
+            )
             .map(|step| &step["transition"]["recommendation"])
             .find(|record| record["type"] == "protocol-recommendation")
             .unwrap()
@@ -104,6 +117,90 @@ impl Fixture {
             bound.document
         );
     }
+}
+
+fn unbounded_recommendation_lasso(stem: bool) -> Fixture {
+    let header = SOURCE.split_once("protocol Review").unwrap().0;
+    let advice = |name: &str| {
+        format!(
+            "recommend {name} by Auditor on M::Counter::inc contracts [SpaceAvailable] \
+         as (advice: Boolean) {{ true }};"
+        )
+    };
+    let initial = if stem {
+        advice("Advise")
+    } else {
+        String::new()
+    };
+    let repeated = advice(if stem { "OtherAdvice" } else { "Advise" });
+    let source = format!(
+        r#"{header}
+profile T = "filament.temporal.infinite-trace/v1";
+protocol Review using P over (view: M::Counter) on origin {{
+  observe role Auditor on M::Counter;
+  role Seller on M::Counter;
+  run sequence Main {{
+    {initial}
+    repeat Again by Seller visible () while {{ true }} sequence Body {{ {repeated} }}
+  }}
+  finish Closed as (closed: Boolean) {{ true }};
+}}
+temporal Live using T over (view: M::Counter) clock "model-steps" on origin {{
+  always eventually holds(view.value = 1)
+}}
+"#
+    );
+    Fixture::with_item(
+        &source,
+        MODEL,
+        Some(json!({"claim": "Live", "kind": "temporal-satisfaction"})),
+    )
+}
+
+#[test]
+#[trace("FR-1046-AC-4")]
+fn a_single_native_lasso_cycle_recommendation_is_ambiguous() {
+    let mut fixture = unbounded_recommendation_lasso(false);
+    let trace = &fixture.baseline.document["items"][0]["counterexample"];
+    let prefix = trace["prefix"].as_array().unwrap();
+    let cycle = trace["loop"]
+        .as_array()
+        .expect("real native nonterminal lasso cycle");
+    assert!(!cycle.is_empty(), "{trace}");
+    let matched =
+        |step: &&Value| step["transition"]["recommendation"] == fixture.receipt["decision"];
+    assert_eq!(prefix.iter().filter(matched).count(), 0, "{trace}");
+    assert_eq!(cycle.iter().filter(matched).count(), 1, "{trace}");
+    fixture.select("cycle", &fixture.receipt.clone());
+    refused(
+        &fixture.run(),
+        "invalid-value",
+        "ambiguous-decision",
+        "/decision",
+    );
+}
+
+#[test]
+#[trace("FR-1046-AC-4", "FR-1046-AC-1")]
+fn a_unique_stem_recommendation_with_an_unrelated_native_cycle_binds() {
+    let mut fixture = unbounded_recommendation_lasso(true);
+    let trace = &fixture.baseline.document["items"][0]["counterexample"];
+    let prefix = trace["prefix"].as_array().unwrap();
+    let cycle = trace["loop"]
+        .as_array()
+        .expect("real native nonterminal lasso cycle");
+    assert!(!cycle.is_empty(), "{trace}");
+    let matched =
+        |step: &&Value| step["transition"]["recommendation"] == fixture.receipt["decision"];
+    assert_eq!(prefix.iter().filter(matched).count(), 1, "{trace}");
+    assert_eq!(cycle.iter().filter(matched).count(), 0, "{trace}");
+    assert!(
+        cycle
+            .iter()
+            .any(|step| step["transition"].get("recommendation").is_some()),
+        "{trace}"
+    );
+    fixture.valid();
 }
 
 fn refused(outcome: &Outcome, cause: &str, reason: &str, pointer: &str) {

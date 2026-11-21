@@ -370,6 +370,7 @@ fn run_package(
         .map_err(|failure| match failure {
             AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
             AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+            AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
         })?;
     Ok(RunResult {
         exit_code: settled.exit_code,
