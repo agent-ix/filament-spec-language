@@ -4031,24 +4031,31 @@ fn refuse_transfer_selection_conflict(request: &wire::Request) -> Result<()> {
     if request.refinement_transfer.is_none() {
         return Ok(());
     }
-    let selections = [
-        ("package", request.package.is_some()),
-        ("call", request.call.is_some()),
-        ("clause", request.clause.is_some()),
-        ("items", request.items.is_some()),
-        ("tl_lowering", request.tl_lowering.is_some()),
-        ("model_based_test", request.model_based_test.is_some()),
-        ("verification_plan", request.verification_plan.is_some()),
-        ("synthesis", request.synthesis.is_some()),
-    ];
-    let present: Vec<_> = selections
+    let present: Vec<_> = TRANSFER_EXCLUSIVE
         .into_iter()
-        .filter_map(|(name, is_present)| is_present.then_some(name))
+        .filter(|name| transfer_member_present(request, name))
         .collect();
     if present.is_empty() {
         return Ok(());
     }
     Err(transfer_conflict(&present))
+}
+
+/// Whether the typed `request` carries the `TRANSFER_EXCLUSIVE` member
+/// `name`. `export_evidence` is read from the raw request body, never from
+/// the typed request, so it is never present here.
+fn transfer_member_present(request: &wire::Request, name: &str) -> bool {
+    match name {
+        "package" => request.package.is_some(),
+        "call" => request.call.is_some(),
+        "clause" => request.clause.is_some(),
+        "items" => request.items.is_some(),
+        "tl_lowering" => request.tl_lowering.is_some(),
+        "model_based_test" => request.model_based_test.is_some(),
+        "verification_plan" => request.verification_plan.is_some(),
+        "synthesis" => request.synthesis.is_some(),
+        _ => false,
+    }
 }
 
 /// The refusal of `refinement_transfer` beside the selection members

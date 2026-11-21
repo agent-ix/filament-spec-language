@@ -1857,7 +1857,6 @@ fn a_liveness_clause_transfers_over_the_abstract_stutter_closure() {
 /// with the unimplied constraint, before any premise is read; `ThirdRefinesSpec`
 /// declares no fairness and `EventuallyTwo` needs weak `each` fairness of `inc`.
 #[test]
-#[trace("TC-2920", "FR-1030-AC-4")]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-4")]
 fn an_unimplied_clause_fairness_is_not_preserving() {
     let (exit, value) = transfer_run(
