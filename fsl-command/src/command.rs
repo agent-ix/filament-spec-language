@@ -1433,6 +1433,7 @@ impl RunError {
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     match &self.cause {
                         RunCause::IntegerDivisionLaw { .. } => Some("unsupported-selection"),
+                        RunCause::UnknownExtensionCapability(_) => Some("unknown-feature"),
                         _ => None,
                     },
                     self.cause.code().as_str(),

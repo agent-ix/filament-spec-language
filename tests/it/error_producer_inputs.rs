@@ -1558,6 +1558,12 @@ fn an_unknown_request_capability_keeps_the_required_feature_classification() {
         CompleteCode::UnknownRequiredFeature,
         "{refusal:?}"
     );
+    assert_eq!(refusal.category().exit_code(), 21);
+    let outcome = refusal.outcome_document(fsl_replay::Operation::Package);
+    let [diagnostic] = outcome.diagnostics() else {
+        panic!("one diagnostic: {outcome:?}");
+    };
+    assert_eq!(diagnostic.cause(), Some("unknown-feature"));
     assert!(DOCUMENTATION.contains("| unknown_required_feature |"));
 }
 

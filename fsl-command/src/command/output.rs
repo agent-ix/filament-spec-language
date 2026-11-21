@@ -436,6 +436,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             }
             RunCause::TlClause { .. } => Some("missing-name"),
             RunCause::TlSubject(record) => Some(record.catalog.cause()),
+            RunCause::UnknownExtensionCapability(_) => Some("unknown-feature"),
             _ => None,
         },
         message: error.to_string(),
