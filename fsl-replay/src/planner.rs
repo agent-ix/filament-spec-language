@@ -47,8 +47,8 @@ mod transfer_tests;
 
 pub use compose::{DischargeEntry, DischargeRecord, DischargeSource, Relation};
 pub use declaration::{
-    ClauseFacts, ClauseForm, DerivedSlot, EnvSupplies, EnvironmentMember, ItemRole,
-    PlannerDeclaration, SchedulingPremise, SlotBacking, SlotRole,
+    strength_implies, ClauseFacts, ClauseForm, DerivedSlot, EnvSupplies, EnvironmentMember,
+    ItemRole, PlannerDeclaration, SchedulingPremise, SlotBacking, SlotRole,
 };
 pub use entry::{
     read_result_entry, EntryCause, EntryOrigin, LimitFacts, ResultEntry, ResultEntryRefusal,

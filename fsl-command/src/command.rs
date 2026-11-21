@@ -23,13 +23,13 @@ mod transfer;
 mod wire;
 
 pub use analyze::{
-    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
-    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
+    analyze_with_providers_and_limits, prepare_analyze,
 };
 pub use flow::{FlowAnalyzeError, analyze_flow_report};
 pub use monitor::{MonitorEvent, MonitorProviders, MonitorSummary, monitor};
 pub use output::NativeResult;
-pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -4010,6 +4010,20 @@ fn prepare_run_bytes_with_sources(
     *admitted_sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     prepared
 }
+
+/// The request members FR-1031's first row names beside `export`, in the
+/// order a refusal lists them.
+const TRANSFER_EXCLUSIVE: [&str; 9] = [
+    "package",
+    "call",
+    "clause",
+    "items",
+    "tl_lowering",
+    "model_based_test",
+    "verification_plan",
+    "synthesis",
+    "export_evidence",
+];
 
 /// FR-1031's first row: `refinement_transfer` beside any other selection
 /// member refuses at `request`, naming every selection member present.

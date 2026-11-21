@@ -130,6 +130,15 @@ The run outcome's `refinement_transfer` member:
   operator, and each fragment clause settles as any other transfer.
 - Settling one transfer SHALL leave every other transfer of the request
   unchanged.
+- An abstract premise whose proof FR-127 cannot settle `proved` is a typed
+  unproved slot 1, never `proved`: a past or interval (TP-3) clause no core
+  checker certifies settles `failed`, and a liveness clause whose only
+  violating loop is the abstract stutter closure's own self-loop settles
+  `unsupported` (`ClosureStutterLoop`), which is sound and not a refutation.
+  Each transfer settles `inconclusive`, `premise-unproved` naming slot 1 with
+  that result (architecture rulings of 2026-11-21 on QSL-2247; certifying the
+  TP-3 forms and replaying a closure-only loop as `refuted` remain scope of
+  QSL-2247).
 
 ## Acceptance Criteria
 

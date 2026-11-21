@@ -56,3 +56,23 @@ package at `compile`, Impl invalid-value naming Third).
 - Runtime evidence: none (Draco TEST-RUN pending; compile-only checks reported by
   the coder).
 - Plan completion: not assessed
+
+## Dispositions
+
+Round 1 — head c410fe3190700371f7a5dc2c5da261e90c7ea938, matrix recomputed with `quire matrix --scope /home/peter/dev/worktrees/qsl-2247` (quire 0.52.0). Measured runtime exists for eec1d1c35d only: root 24 pass / 4 fail (two transfer failures plus two compile_command cases reproduced identically on parent 37824e, so inherited), replay lib 4, semantics it (test-support) 31, semantics lib 26, analyze it 57 pass / 1 fail (empty certificate). The c410 runtime batch is pending.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-1031-AC-4 is now `tagged` by `an_inadmissible_snapshot_or_supplied_premise_is_refused_at_admit` (stage `admit`, `invalid-value`, the claims pointer, no `refinement_transfer` member). Its input is a wrong-slot identity rather than "another abstract package", but both go through the same `slot_key` mismatch branch. It also adds the FR-106 snapshot row. Runtime pending. |
+| FND-002 | still-open | The `CanInc` and `OverThird` assertions now match the code (transfer.rs:430-466). FR-1031-AC-3's bounded-profile temporal clause case still has no test. The code path exists (transfer.rs:437-444), the fixture needs one `temporal … using <bounded profile>` declaration, and no ruling authorizes deferring it. |
+| FND-003 | fixed | FR-1030-AC-5 asserts `cause.result` and `slots[1].value` `refuted` (plan_export_surface.rs:1727-1728). FR-1030-AC-3 now distinguishes consumption: a supplied `refuted` refinement premise gives slot 0 `refuted` where in-process would give `proved` (1799-1809). The AC-1 certification concern is gone with the fallback, and the empty-certificate test guards it. |
+| FND-004 | still-open | Fixed: the FSpec-FR-820-AC-1 test now seeds `certified` and asserts `fairness.implied` and `premise_form`, and AC-4 now covers `unsupported`, `incomplete` and `refuted` at slot 1. Still missing: rule 2's `transfer-not-preserving{fairness}` reason; FR-820-AC-2's `any` row; a command-level test that `step_for_step_fact` emits `time: dense` (`a_dense_time_refinement_is_not_step_for_step_before_any_row` hand-writes the fact and only shows the planner echoing it). |
+| FND-005 | fixed | The NotTranslated arm is removed. Analyze acceptance of `stutter_closure` belongs to FR-529's member, which FR-1030 Inputs cites. |
+| FND-006 | fixed | Draco ran the feature-enabled `refinement_declarations` on eec1d1c35d: 31 passed. The coder's fix1 TEST-RUN command 3 carries `--features test-support`. |
+
+## New findings (disposition pass 1)
+
+| ID      | Severity | Summary | Refs |
+| ------- | -------- | ------- | ---- |
+| FND-007 | medium | FR-1030-AC-1 and FR-1020-AC-1 are now `tagged-by-ignored-test`: their only binder, `a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved`, is `#[ignore]`d because no core checker certifies TP-3 past/interval forms. Arch ruling A keeps certifying them in scope on QSL-2247, which stays open. Both ACs are unmet on this PR; the expected disposition is `deferred: QSL-2247 remaining scope (ruling A)`, and the ticket must not be closed. | tests/it/plan_export_surface.rs:1634-1641 |
+| FND-008 | medium | The negative oracles are too weak to catch the regressions they guard. PrevSafe and SoonTwo (plan_export_surface.rs:1703) and StuckTwo (1858) assert only `cause.result != "proved"`, not the typed outcome ruling A requires (`failed` for the uncertifiable TP-3 premise, `unsupported` from `ClosureStutterLoop`). No test feeds `check_components_over_stutter_closure` a component certificate that is valid over the plain graph but not over the closure (e.g. `Trivial` at a non-terminal state). Reverting code-review FND-002's checker to plain-graph checking would still pass every test, because EventuallyTwo stays `certified` either way. | tests/it/plan_export_surface.rs:1696-1704, 1830-1859; fsl-replay/src/certificate/closure.rs:322-341 |

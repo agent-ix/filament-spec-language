@@ -139,7 +139,14 @@ pub(super) fn run_bytes(
     };
     // FR-1031: an export beside a transfer is a selection conflict.
     if body.contains_key("refinement_transfer") {
-        return Err(super::transfer_conflict(&["export"]));
+        let present: Vec<&str> = std::iter::once("export")
+            .chain(
+                super::TRANSFER_EXCLUSIVE
+                    .into_iter()
+                    .filter(|name| body.contains_key(*name)),
+            )
+            .collect();
+        return Err(super::transfer_conflict(&present));
     }
     let package_selection = body.get("package").cloned();
     let given = overrides

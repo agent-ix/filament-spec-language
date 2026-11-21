@@ -2702,9 +2702,10 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 .filter(|edge| edge.transition == ProductTransition::TerminalStutter)
                 .count();
             let terminal_stutter = terminal_stutters > 0;
-            if edges
-                .iter()
-                .all(|edge| edge.transition == ProductTransition::StutterClosure)
+            if !edges.is_empty()
+                && edges
+                    .iter()
+                    .all(|edge| edge.transition == ProductTransition::StutterClosure)
             {
                 return Err(LiftStop::from(ModelCheckRefusal::from(
                     LivenessRefusal::ClosureStutterLoop,

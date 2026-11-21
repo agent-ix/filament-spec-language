@@ -161,8 +161,8 @@ pub use certificate::closed_form::task_set::{
     TaskSetRefusal, TimeMember, Wcet,
 };
 pub use certificate::closure::{
-    check_closure, check_components, check_protocol_closure, check_protocol_components,
-    CertificateRejection, CertificateRequest, ClosureCertificate, ClosureRefusal, ProductStateRef,
+    check_closure, check_components, check_components_over_stutter_closure,
+    check_protocol_closure, check_protocol_components, CertificateRejection, CertificateRequest, ClosureCertificate, ClosureRefusal, ProductStateRef,
     ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
@@ -342,8 +342,8 @@ pub use model_check::replay::{
 };
 pub use model_check::settle::{
     settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,
-    CertificateChecker, Execution, ModelCheckRecord,
-    RecordWarning, ResultLabel, Truth, EXPLICIT_STATE, K_INDUCTION,
+    CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel, Truth,
+    EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{
     encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,

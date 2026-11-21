@@ -857,9 +857,7 @@ impl CheckedTemporalClause {
                 Some(CheckedInterval::Steps(interval)) => {
                     match (interval.lower(), interval.upper()) {
                         (0, TemporalUpper::Open) => None,
-                        (lower, TemporalUpper::Finite(upper)) => {
-                            Some(format!("[{lower},{upper}]"))
-                        }
+                        (lower, TemporalUpper::Finite(upper)) => Some(format!("[{lower},{upper}]")),
                         (lower, TemporalUpper::Open) => Some(format!("[{lower},*]")),
                     }
                 }

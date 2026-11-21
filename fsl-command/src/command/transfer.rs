@@ -7,14 +7,14 @@ use std::path::PathBuf;
 use filament_exact::ValueType;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use fsl_analyze::analyze::document::{
-    analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, DocumentSelection,
-    ItemSelection, ResolvedItem, SubjectSelection,
+    AnalyzeDocumentError, AnalyzeRun, DocumentSelection, ItemSelection, ResolvedItem,
+    SubjectSelection, analyze_document, resolve_items,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, SourceProvision};
 use fsl_foundation::Code;
 use fsl_replay::planner::{
-    read_premise_item, read_result_entry, EntryOrigin, ItemKey, TransferFacts,
-    TransferPremiseValue, TransferSettlement,
+    EntryOrigin, ItemKey, TransferFacts, TransferPremiseValue, TransferSettlement,
+    read_premise_item, read_result_entry, strength_implies,
 };
 use fsl_replay::spine::CheckedUnit;
 use fsl_replay::{Certification, ItemLabel};
@@ -23,13 +23,13 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
-    document_reference, AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits,
+    AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits, document_reference,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::{
-    check_sources, intake_with_bytes, package_name, wire, FileCounts, FormalSource, NativeResult,
-    Result, RunCause, RunResult, Settle,
+    FileCounts, FormalSource, NativeResult, Result, RunCause, RunResult, Settle, check_sources,
+    intake_with_bytes, package_name, wire,
 };
 
 /// The request and its program source, admitted without compiling or
@@ -169,7 +169,7 @@ impl Transfer<'_> {
         let selected = self.select(graph)?;
         let refinement = selected.refinement;
         let subjects = self.subjects()?;
-        self.admit_snapshots(&subjects)?;
+        self.admit_snapshots(refinement, &subjects)?;
 
         let mut registry = fsl_route::Registry::new();
         for descriptor in self.settle.engines.registrations() {
@@ -526,11 +526,19 @@ impl Transfer<'_> {
 
     /// FR-1031's `initial` row: FR-106 admits each initial snapshot of each
     /// subject for its model before any premise or transfer settles.
-    fn admit_snapshots(&self, subjects: &Subjects) -> Result<()> {
+    fn admit_snapshots(&self, refinement: &CheckedRefinement, subjects: &Subjects) -> Result<()> {
         let package = self.checked.package();
-        for (side, subject) in [
-            ("abstract", &subjects.abstract_subject),
-            ("concrete", &subjects.concrete),
+        for (side, subject, model) in [
+            (
+                "abstract",
+                &subjects.abstract_subject,
+                &refinement.abstract_model_selection().identity,
+            ),
+            (
+                "concrete",
+                &subjects.concrete,
+                &refinement.concrete_model_selection().identity,
+            ),
         ] {
             let binding = subject.binding(self.packages, &subjects.documents);
             for (index, initial) in binding.initial.iter().enumerate() {
@@ -548,7 +556,9 @@ impl Transfer<'_> {
                     meter: AnalyzeLimits::unbounded().accounting,
                     emit: AnalyzeLimits::unbounded().emit,
                 };
-                match fsl_eval::simulation::model::ModelSystem::new(request) {
+                // Admitted over the subject's own model, so a snapshot of another
+                // selected model is refused here and not read as a premise.
+                match fsl_eval::simulation::model::ModelSystem::over_model(request, model) {
                     Ok(_) => {}
                     Err(
                         AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record),
@@ -742,48 +752,54 @@ fn require_selected_model(
 }
 
 fn step_for_step_fact(refinement: &CheckedRefinement, dense: bool) -> Value {
-    if refinement.is_step_for_step(dense) {
+    step_for_step_value(refinement.is_step_for_step(dense), dense, || {
+        let row = refinement.steps().iter().find(|row| {
+            !matches!(&row.class, StepClass::Operation(_))
+                || !matches!(&row.target, StepTarget::Abstract { .. })
+        })?;
+        let operation = row.concrete_operation().map(|(ty, name)| {
+            let node = ty.original().node();
+            format!(
+                "{}::{}::{name}",
+                refinement.concrete_model(),
+                node.rsplit('/').next().unwrap_or(node)
+            )
+        });
+        let arm = match &row.target {
+            StepTarget::Stutter => "stutter",
+            StepTarget::Any => "any",
+            StepTarget::Node { .. } => "node",
+            StepTarget::Abstract { .. } => "abstract",
+        };
+        Some(json!({"operation": operation, "arm": arm}))
+    })
+}
+
+/// FSpec FR-820's `step_for_step` fact: `holds`, and when it does not, the
+/// dense `time` reason before any row is read, else the first offending
+/// `row`.
+fn step_for_step_value(holds: bool, dense: bool, row: impl FnOnce() -> Option<Value>) -> Value {
+    if holds {
         return json!({"holds": true});
     }
-    // FSpec FR-820: a dense concrete subject is not step-for-step before any
-    // row is read.
     if dense {
         return json!({"holds": false, "time": "dense"});
     }
-    let row = refinement.steps().iter().find(|row| {
-        !matches!(&row.class, StepClass::Operation(_))
-            || !matches!(&row.target, StepTarget::Abstract { .. })
-    });
-    let Some(row) = row else {
-        return json!({"holds": false});
-    };
-    let operation = row.concrete_operation().map(|(ty, name)| {
-        let node = ty.original().node();
-        format!(
-            "{}::{}::{name}",
-            refinement.concrete_model(),
-            node.rsplit('/').next().unwrap_or(node)
-        )
-    });
-    let arm = match &row.target {
-        StepTarget::Stutter => "stutter",
-        StepTarget::Any => "any",
-        StepTarget::Node { .. } => "node",
-        StepTarget::Abstract { .. } => "abstract",
-    };
-    json!({"holds": false, "row": {"operation": operation, "arm": arm}})
+    match row() {
+        Some(row) => json!({"holds": false, "row": row}),
+        None => json!({"holds": false}),
+    }
 }
 
+/// FSpec FR-380 "Fairness implication": the refinement's abstract fairness
+/// supplies a constraint on the same operation that implies `needed`.
 fn fairness_implies(refinement: &CheckedRefinement, needed: &FairnessConstraint) -> bool {
     refinement.abstract_operation_fairness().any(|supplied| {
         supplied.operation() == needed.operation()
-            && (supplied.kind() == filament_semantic_value::fairness::FairnessKind::Strong
-                || needed.kind() == filament_semantic_value::fairness::FairnessKind::Weak)
-            && (supplied.granularity() == needed.granularity()
-                || (needed.granularity()
-                    == filament_semantic_value::fairness::FairnessGranularity::Whole
-                    && supplied.granularity()
-                        == filament_semantic_value::fairness::FairnessGranularity::Each))
+            && strength_implies(
+                (supplied.kind(), supplied.granularity()),
+                (needed.kind(), needed.granularity()),
+            )
     })
 }
 
@@ -963,5 +979,41 @@ fn type_mismatch(member: &str, kind: &str, profile: Option<&str>) -> RunCause {
         code: Code::IllTyped,
         message,
         details: Map::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::step_for_step_value;
+
+    /// FSpec FR-820-AC-2: a dense concrete subject is not step-for-step
+    /// before any row is read, so the command writes the `time` reason and
+    /// never consults the step rows.
+    #[ix_trace_rs::trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
+    #[test]
+    fn a_dense_subject_writes_the_time_reason_before_any_row() {
+        let fact = step_for_step_value(false, true, || panic!("no row is read"));
+        assert_eq!(fact, json!({"holds": false, "time": "dense"}));
+    }
+
+    /// FSpec FR-820-AC-2: a decided fact names the row only when it fails.
+    #[ix_trace_rs::trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
+    #[test]
+    fn a_step_for_step_fact_names_the_offending_row_only_when_it_fails() {
+        let row = json!({"operation": "Third::Counter::inc", "arm": "any"});
+        assert_eq!(
+            step_for_step_value(true, false, || panic!("no row is read")),
+            json!({"holds": true})
+        );
+        assert_eq!(
+            step_for_step_value(false, false, || Some(row.clone())),
+            json!({"holds": false, "row": row})
+        );
+        assert_eq!(
+            step_for_step_value(false, false, || None),
+            json!({"holds": false})
+        );
     }
 }

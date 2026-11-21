@@ -34,3 +34,11 @@ valid; no hash, digest, pin or tracking-record antipattern.
 | ID      | Severity | Summary | Refs |
 | ------- | -------- | ------- | ---- |
 | FND-001 | medium | FR-1030-AC-5 does not pin what the ruling pins. Ruling ef6f2f49 item 2 says the PrevStutter row asserts `premise-unproved` "with the stutter witness"; the AC requires only `premise-unproved` naming slot 1, so an abstract premise that settled `failed`, `incomplete` or `inconclusive` (not the refuted terminal-stutter witness) satisfies it. State the slot-1 result (`refuted`) and the witness shape. | spec/functional/FR-1030-request-a-refinement-transfer-from-a-native-run.md:140 |
+
+## Dispositions
+
+Round 1 — head c410fe3190700371f7a5dc2c5da261e90c7ea938.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-1030-AC-5 now requires `premise-unproved` naming slot 1 with `result` `refuted` and the slot's own record showing `refuted`. A refuted result needs a replayed terminal-stutter counterexample, which pins the witness the ruling names. |
