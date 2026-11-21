@@ -977,6 +977,31 @@ impl<'a> Program<'a> {
         _model: &ModelSystem<'_>,
         package: &super::PackageProtocolProgram<'_>,
     ) -> Result<Self, ProtocolRefusal> {
+        // A control's text spells the structural branch between a parallel and
+        // its body, as the source checker's does: the package path has no
+        // branch segment.
+        let mut by_depth: Vec<_> = package.controls.values().collect();
+        by_depth.sort_by_key(|control| control.path.len());
+        let mut texts: BTreeMap<ProtocolNodeId, String> = BTreeMap::new();
+        for control in by_depth {
+            let text = match control.parent.and_then(|parent| {
+                package.controls.get(&parent).zip(texts.get(&parent))
+            }) {
+                Some((parent, parent_text)) => {
+                    let own = control.path.last().map_or("", String::as_str);
+                    match parent
+                        .branches
+                        .iter()
+                        .find(|(_, body)| *body == control.id)
+                    {
+                        Some((label, _)) => format!("{parent_text}/{label}/{own}"),
+                        None => format!("{parent_text}/{own}"),
+                    }
+                }
+                None => control.path.join("/"),
+            };
+            texts.insert(control.id, text);
+        }
         let mut controls = BTreeMap::new();
         for control in package.controls.values() {
             let step = match control.operation {
@@ -994,7 +1019,7 @@ impl<'a> Program<'a> {
                 Control {
                     step,
                     name: control.name.clone(),
-                    text: control.path.join("/"),
+                    text: texts[&control.id].clone(),
                     parent: control.parent,
                     children: control.children.clone(),
                 },
@@ -1027,7 +1052,7 @@ impl<'a> Program<'a> {
                     Control {
                         step: ControlStep::Branch,
                         name: label.clone(),
-                        text: format!("{}/{}", parallel.path.join("/"), label),
+                        text: format!("{}/{}", texts[&parallel.id], label),
                         parent: Some(parallel.id),
                         children: vec![*body],
                     },

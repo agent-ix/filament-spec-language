@@ -101,7 +101,8 @@ fn the_tso_race_freedom_item_has_source_and_package_route_parity() {
 }
 
 /// FR-850-AC-11: the same SB protocol with no request memory member uses its
-/// source `sc` default on both analyze routes.
+/// source `sc` default on both analyze routes, under which the litmus claim
+/// holds.
 #[trace("TC-3050", "FR-850-AC-11")]
 #[test]
 fn the_default_sc_litmus_claim_has_source_and_package_route_parity() {
@@ -113,14 +114,9 @@ fn the_default_sc_litmus_claim_has_source_and_package_route_parity() {
         request_without_memory(json!([{"claim": "NoBothZero"}])),
     );
     let source = analyze(&source_request);
-    assert_eq!(source.item(0)["replay"]["reproduced"], true);
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
 
     let package = package_run(&ws, &source_request);
+    assert_eq!(label(&package.item(0)), "proved", "{}", package.document());
     assert_eq!(package.item(0)["record"], source.item(0)["record"]);
-    assert_eq!(
-        package.item(0)["counterexample"],
-        source.item(0)["counterexample"]
-    );
-    assert_eq!(package.item(0)["replay"], source.item(0)["replay"]);
-    assert_eq!(package.item(0)["replay"]["reproduced"], true);
 }
