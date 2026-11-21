@@ -1027,8 +1027,8 @@ fn protocol_correlation_group_retains_whole_source_map_entry() {
     let mut additional = regions[0].clone();
     let start = additional["start"].as_u64().unwrap();
     assert!(additional["end"].as_u64().unwrap() >= start + 2);
+    regions[0]["end"] = json!(start + 1);
     additional["start"] = json!(start + 1);
-    additional["end"] = json!(start + 2);
     regions.push(additional);
     let admitted = read_correlation(&multiple);
     let group = correlation_group(&admitted, &id);
