@@ -393,7 +393,13 @@ pub(super) fn relation_item<'a>(
                     ModelRelationCheckRequest {
                         relation,
                         package,
-                        subjects: subjects.clone(),
+                        subjects: subjects
+                            .iter()
+                            .map(|subject| ModelSubject {
+                                simulation: subject.simulation.clone(),
+                                proof_bounds: subject.proof_bounds.clone(),
+                            })
+                            .collect(),
                         limits: form.limits,
                         max_depth: form.max_depth,
                         meter: limits.accounting,

@@ -63,7 +63,10 @@ impl Fixture {
         self.relation
             .aliases()
             .iter()
-            .map(|_| subject.clone())
+            .map(|_| fsl_eval::model_subject::ModelSubject {
+                simulation: subject.simulation.clone(),
+                proof_bounds: subject.proof_bounds.clone(),
+            })
             .collect()
     }
 
