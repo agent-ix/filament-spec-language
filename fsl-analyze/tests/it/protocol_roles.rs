@@ -2503,7 +2503,6 @@ fn no_required_construct_settles_unsupported() {
             Unsupported::PackageControl(_)
             | Unsupported::PackageCorrelation
             | Unsupported::PackageRepeatProof
-            | Unsupported::PackageAwaitClockSelection
             | Unsupported::PackageReplicatedRole => false,
         }
     }

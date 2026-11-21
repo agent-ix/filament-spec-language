@@ -701,6 +701,7 @@ fn drive(
                             checked.package(),
                             &packages,
                             std::iter::once(&program).chain(libraries.iter().copied()),
+                            selections,
                             routed,
                             &settle,
                         )

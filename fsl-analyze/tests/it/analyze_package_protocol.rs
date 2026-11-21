@@ -413,7 +413,7 @@ fn await_event_request(
 ) -> std::path::PathBuf {
     let controls = await_controls(event, then, timeout);
     let ordering = format!("ordering unordered delivery {delivery} capacity 4 overflow block");
-    channel_request_with_profiles(
+    let path = channel_request_with_profiles(
         ws,
         finite_channel_model(),
         &ordering,
@@ -421,9 +421,17 @@ fn await_event_request(
         "closing",
         concat!(
             "profile pp = \"filament.protocol.finite-global/v1\";\n",
-            "profile t0 = \"filament.temporal.infinite-trace/v1\";\n"
+            "profile t0 = \"filament.temporal.event-position.false-extension/v1\";\n"
         ),
-    )
+    );
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the Await request"))
+            .expect("the request is JSON");
+    document["request"]["clocks"] = json!({"line-clock": {
+        "kind": "event_position", "sequence_authority": "caller-events"
+    }});
+    std::fs::write(&path, document.to_string()).expect("retain the supplied Await clock");
+    path
 }
 
 fn await_controls(event: &str, then: &str, timeout: &str) -> String {
@@ -725,72 +733,6 @@ fn package_await_ineligible_matches_refuse_in_both_routes() {
             "{invalid_package}"
         );
         assert_eq!(invalid_package["items"], json!([]), "{invalid_package}");
-    }
-}
-
-/// Configured clocks retain their binding facts and refuse before execution.
-#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5")]
-#[test]
-fn package_await_configured_clock_names_the_transport_refusal() {
-    use fsl_eval::simulation::model::PackageModelInput;
-    use fsl_eval::simulation::protocol::{PackageProgramRefusal, PackageProtocolProgram};
-    use fsl_package::{ClockConfiguration, TemporalClockSelection};
-    let model = serde_json::to_vec(&finite_channel_model()).expect("the finite model");
-    let controls = await_controls(
-        &receive_fifo_receive("Inspected", "Handed", "seen", "seen.n = handed.n"),
-        "sequence InTime {}",
-        "sequence TooSlow {}",
-    );
-    let body = channel_body(
-        "ordering unordered delivery exactly-once-premise capacity 4 overflow block",
-        &controls,
-        "closing",
-    );
-    let checked = crate::fill::package_over(
-        model.clone(),
-        "analyze-unit",
-        crate::fill::PROTOCOL_PROFILE,
-        &body,
-    );
-    let awaited = &checked
-        .graph()
-        .protocol("Flow")
-        .expect("the source protocol")
-        .awaits[0];
-    let clock = ClockConfiguration::EventPosition {
-        sequence_authority: "protocol-events".into(),
-    };
-    let selection = TemporalClockSelection::new(
-        checked.graph().source().clone(),
-        awaited.span,
-        clock.clone(),
-    );
-    let packages =
-        fsl_semantics::model::intake::package_input([model.as_slice()]).expect("the model admits");
-    let handoff =
-        crate::model_check_input::handoff_with_selections(&checked, &packages, &[selection]);
-    let bindings = handoff
-        .admitted
-        .temporal_bindings()
-        .expect("the actual binding rows");
-    assert_eq!(bindings.len(), 1);
-    assert_eq!(bindings[0].clock_name.as_ref(), "line-clock");
-    assert_eq!(bindings[0].clock, clock);
-    let bare = crate::model_check_input::bare(&handoff);
-    let input = PackageModelInput::of(
-        &bare,
-        &packages,
-        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
-    )
-    .expect("the admitted model input");
-    let input = input.input();
-    match PackageProtocolProgram::new(&input, "Flow", &[]) {
-        Err(PackageProgramRefusal::AwaitClockSelection { node, clock }) => {
-            assert_eq!(node, bindings[0].declaration);
-            assert_eq!(clock, "line-clock");
-        }
-        Err(other) => panic!("the clock transport must be named: {other:?}"),
-        Ok(_) => panic!("configured Await transport remains unsupported"),
     }
 }
 

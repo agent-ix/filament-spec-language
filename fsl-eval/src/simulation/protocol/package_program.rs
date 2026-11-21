@@ -336,14 +336,6 @@ pub enum PackageProgramRefusal {
         /// The admitted repeat whose proof is nonempty.
         node: fsl_package::CheckedNodeId,
     },
-    /// A configured Await clock has no package clock-selection transport yet.
-    #[error("unsupported_construct/not-yet-implemented: package Await clock selection {clock} at {node:?}")]
-    AwaitClockSelection {
-        /// The admitted Await control.
-        node: fsl_package::CheckedNodeId,
-        /// The clock name retained by its admitted temporal binding.
-        clock: String,
-    },
     /// A node referenced by the control tree has no package execution entry.
     #[error("the package control tree references an absent control")]
     UnknownControl,
@@ -398,21 +390,6 @@ impl<'a> PackageProtocolProgram<'a> {
                 .ok_or_else(|| PackageProgramRefusal::UnknownProtocol {
                     name: form.name.clone(),
                 })?;
-        for control in &form.controls {
-            if control.operation == ControlOperation::Await {
-                if let Some(binding) = admitted
-                    .temporal_bindings()
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|binding| binding.declaration == control.node.node_id)
-                {
-                    return Err(PackageProgramRefusal::AwaitClockSelection {
-                        node: control.node.node_id.clone(),
-                        clock: binding.clock_name.to_string(),
-                    });
-                }
-            }
-        }
         let channels = channels(input, &form)?;
         // A branch's source-local numeric node indices are not admitted
         // package identities. Message keys and weak send footprints need a

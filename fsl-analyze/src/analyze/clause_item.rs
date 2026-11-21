@@ -28,12 +28,12 @@ use fsl_eval::simulation::Limits;
 use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    replay_model_trace, replay_protocol_trace_from_package, CertificateRequest, EnvelopeSource,
-    ModelCheckItem, ModelCheckLimits, ModelTraceReplayResult, ModelTraceSubject,
-    PackageReadRefusal, ProtocolCertificateRequest, ProtocolTraceSubject, QualifiedName,
-    ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers,
-    RequestTargetWire, StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope,
-    WitnessPacket,
+    replay_model_trace_with_temporal_selections, replay_protocol_trace_from_package,
+    CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits, ModelTraceReplayResult,
+    ModelTraceSubject, PackageReadRefusal, ProtocolCertificateRequest, ProtocolTraceSubject,
+    QualifiedName, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplaySource,
+    ReplayTargetMembers, RequestTargetWire, StateEnvironment, TemporalCounterexample, Witness,
+    WitnessEnvelope, WitnessPacket,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
@@ -174,7 +174,7 @@ impl<'a> ClauseSubject<'a> {
             run,
             proof_bounds,
             temporal: None,
-            selections: model_selections(package),
+            selections: clock_selections(package, provision),
         })
     }
 
@@ -439,7 +439,7 @@ pub(super) fn replay_over(
     letters: &dyn fsl_eval::model_subject::ModelLetters,
 ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
     let (wire, envelope) = replay_wire(inputs, shape, payload)?;
-    replay_model_trace(
+    replay_model_trace_with_temporal_selections(
         wire,
         &ModelTraceSubject {
             timed: inputs.timed.clone(),
@@ -451,6 +451,7 @@ pub(super) fn replay_over(
         },
         &envelope,
         letters,
+        &clock_selections(inputs.package, inputs.provision),
         inputs.limits.replay,
     )
 }
@@ -507,6 +508,25 @@ pub(super) fn model_selections(
     fsl_replay::spine::RequestClocks::model_selections(package).unwrap_or_default()
 }
 
+/// Preserve the checked acquisition's selections, deriving only model-owned rows
+/// not already supplied by that acquisition.
+pub(super) fn clock_selections(
+    package: &CheckedPackage,
+    provision: &super::SourceProvision,
+) -> Vec<fsl_package::TemporalClockSelection> {
+    let mut selections = provision.temporal_selections().to_vec();
+    for derived in model_selections(package) {
+        if !selections.iter().any(|held| {
+            held.source == derived.source
+                && held.declaration_span == derived.declaration_span
+                && held.trace == derived.trace
+        }) {
+            selections.push(derived);
+        }
+    }
+    selections
+}
+
 /// FR-128's replay request and witness envelope for `payload`, the
 /// counterexample of the item `shape` names.
 pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
@@ -523,7 +543,7 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
     let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
     let emission = fsl_package::emit_checked_with_temporal_selections(
         inputs.package,
-        &model_selections(inputs.package),
+        &clock_selections(inputs.package, inputs.provision),
         inputs.limits.emit,
     )
     .map_err(|_| fault("package-emission"))?;
@@ -668,7 +688,7 @@ pub(crate) fn replay_protocol_over(
     } = shape;
     let emission = fsl_package::emit_checked_with_temporal_selections(
         inputs.package,
-        &model_selections(inputs.package),
+        &clock_selections(inputs.package, inputs.provision),
         inputs.limits.emit,
     )
     .map_err(|_| fault("package-emission"))?;
@@ -715,11 +735,12 @@ pub(crate) fn replay_protocol_over(
         inputs.limits.replay,
     )
     .map_err(|error| envelope_refusal(error, fault("envelope")))?;
-    fsl_replay::replay_protocol_trace(
+    fsl_replay::replay_protocol_trace_with_temporal_selections(
         wire,
         &inputs.subject,
         &envelope,
         letters,
+        &clock_selections(inputs.package, inputs.provision),
         inputs.limits.replay,
     )
 }
@@ -1125,20 +1146,9 @@ impl<'a> PackageProtocolWork<'a> {
                     Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Unsupported(_)) => {
                         return unsupported();
                     }
-                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::AwaitClockSelection { node, clock }) => {
-                        let mut detail = serde_json::Map::new();
-                        detail.insert("fact".to_owned(), serde_json::json!("await-clock-selection-transport"));
-                        detail.insert("node".to_owned(), serde_json::json!(node));
-                        detail.insert("clock".to_owned(), serde_json::json!(clock));
-                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
-                            filament_semantic_value::catalog::CatalogCode::new(
-                                "unsupported_construct",
-                                "not-yet-implemented",
-                            ),
-                            detail,
-                        ));
-                    }
-                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Correlation { node }) => {
+                    Err(fsl_eval::simulation::protocol::PackageProgramRefusal::Correlation {
+                        node,
+                    }) => {
                         let mut detail = serde_json::Map::new();
                         detail.insert("fact".to_owned(), serde_json::json!("correlation"));
                         detail.insert("node".to_owned(), serde_json::json!(node));
