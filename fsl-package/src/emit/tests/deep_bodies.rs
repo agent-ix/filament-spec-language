@@ -12,6 +12,8 @@ use filament_semantic_value::checking::CheckMode;
 use fsl_semantics::check::CheckedBody;
 use std::fmt::{self, Write};
 
+mod explicit_limit;
+
 /// Counts complete debug output without retaining its bytes.
 #[derive(Default)]
 struct DebugByteCount {
