@@ -661,6 +661,22 @@ pub struct SubjectBinding<'a> {
     pub universes: Vec<PopulationUniverse>,
 }
 
+impl SubjectBinding<'_> {
+    /// Formal replay premises exclude descriptive effect-decision receipts.
+    /// The original provision remains available for item-local receipt binding.
+    fn replay_documents(&self) -> Result<Vec<Vec<u8>>, fsl_replay::ReplayRefusal> {
+        let mut documents: Vec<_> = self.packages.values().cloned().collect();
+        for bytes in self.snapshots.values() {
+            if !document::effect_decision::is_receipt(bytes)
+                .map_err(document::effect_decision::ReceiptError::into_replay_error)?
+            {
+                documents.push(bytes.clone());
+            }
+        }
+        Ok(documents)
+    }
+}
+
 /// The caller's shared accounting, observation, normalization and deadline
 /// limits for one analyze request (FR-277, FR-281).
 ///
@@ -995,6 +1011,12 @@ impl ItemDetail {
 /// Why analyze could not admit a shared subject binding.
 #[derive(Debug, thiserror::Error)]
 pub enum AnalyzeRefusal {
+    /// FR-1046 canonical receipt admission refused the selected document.
+    #[error(transparent)]
+    EffectDecision(document::effect_decision::ReceiptRefusal),
+    /// A document reader or encoder failed before subject binding.
+    #[error("the analyze document could not be admitted: {0}")]
+    Document(AdmissionFailure),
     /// FR-120 did not admit the subject binding.
     #[error("the analyze subject binding did not admit: {0:?}")]
     Binding(AdmissionFailure),
@@ -1144,6 +1166,26 @@ impl AnalyzeRefusal {
 
     fn refusal_document(&self) -> OutcomeDocument {
         match self {
+            Self::EffectDecision(refusal) => {
+                OutcomeDocument::new(Operation::Analyze, None, Category::Refusal)
+                    .with_diagnostics(vec![refusal.diagnostic()])
+            }
+            Self::Document(failure) => {
+                // A reader/encoder stop is a native command outcome, not an
+                // O-17 evaluation refusal record. In particular allocation
+                // failure is incomplete (22), even though category_of files
+                // resource_exhausted refusal records under Refusal (20).
+                let category = match failure {
+                    AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => {
+                        fsl_foundation::Code::from_code(record.catalog.code())
+                            .map_or(Category::InternalFailure, |code| code.category())
+                    }
+                    AdmissionFailure::Fault(fault) => fault.category(),
+                };
+                let document = refusal_document(Operation::Analyze, failure, failure.to_string());
+                OutcomeDocument::new(Operation::Analyze, None, category)
+                    .with_diagnostics(document.diagnostics().to_vec())
+            }
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
                     .with_last_stage(Some(OutcomeStage::S4))
@@ -1818,6 +1860,8 @@ pub(crate) struct FiniteHyperReport {
 
 /// The FR-281 "Engine refusals" table's rows.
 pub(crate) enum Refusal {
+    /// A replay-document allocator stopped this item before replay settlement.
+    Allocation(usize),
     /// `declined`, with the refusal's cause, `DeclineCode` and full
     /// diagnostic.
     Declined(ProofRefusalCause, DeclineCode, CatalogCode),
@@ -3302,6 +3346,10 @@ fn settle(
         }
         EngineReport::Refused(Refusal::Incomplete(cause)) => record(
             terminal(TerminalRecord::incomplete(index, backend, cause)),
+            None,
+        ),
+        EngineReport::Refused(Refusal::Allocation(requested)) => record(
+            terminal(TerminalRecord::allocation_failed(index, backend, requested)),
             None,
         ),
         EngineReport::Refused(Refusal::Failed(code)) => record(

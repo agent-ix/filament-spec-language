@@ -91,6 +91,10 @@ pub fn run(
         }
         Err(failure) => {
             let (cause, diagnostic) = match failure {
+                StageFailure::Refused(AnalyzeRefusal::EffectDecision(refusal)) => (
+                    Some(ProofRefusalCause::InvalidInput),
+                    CatalogCode::new("invalid_runtime_input", refusal.cause().as_str()),
+                ),
                 StageFailure::Refused(AnalyzeRefusal::Provision(refusal)) => (
                     Some(ProofRefusalCause::IncompleteInput),
                     refusal.catalog_code(),
@@ -103,7 +107,9 @@ pub fn run(
                     }),
                     CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause()),
                 ),
-                StageFailure::Refused(AnalyzeRefusal::Binding(failure)) => match failure {
+                StageFailure::Refused(
+                    AnalyzeRefusal::Binding(failure) | AnalyzeRefusal::Document(failure),
+                ) => match failure {
                     fsl_semantics::model::observation::AdmissionFailure::Refused(record) => {
                         (Some(ProofRefusalCause::InvalidInput), record.catalog)
                     }

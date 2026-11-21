@@ -37,6 +37,8 @@ use super::{
 };
 use fsl_eval::simulation::model::PopulationUniverse;
 
+pub mod effect_decision;
+
 /// The request document format FR-620 reads.
 pub const REQUEST_FORMAT: &str = "native-analyze/1";
 
@@ -810,6 +812,9 @@ pub struct ItemSelection {
     /// A `global-conformance` item's supplied FR-737 recording.
     #[serde(default)]
     pub recording: Option<DocumentSelection>,
+    /// FR-1046 receipt selectors, validated before document intake.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub effect_decisions: Option<Value>,
     /// The activated population used to close a recording's fan-out scope.
     #[serde(default, deserialize_with = "present_json_value")]
     pub population: Option<Value>,
@@ -853,6 +858,8 @@ struct ItemSelectionWire {
     traces: Option<DocumentSelection>,
     #[serde(default)]
     recording: Option<DocumentSelection>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    effect_decisions: Option<Value>,
     #[serde(default, deserialize_with = "present_json_value")]
     population: Option<Value>,
     #[serde(default)]
@@ -909,6 +916,7 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
             trace: wire.trace,
             traces: wire.traces,
             recording: wire.recording,
+            effect_decisions: wire.effect_decisions,
             population: wire.population,
             simulation: wire.simulation,
         })

@@ -1079,8 +1079,18 @@ fn types_consume_value_bits(
 }
 
 /// The catalog cause of an analyze refusal of a step's item.
-const fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static str {
+fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static str {
     match refusal {
+        crate::analyze::AnalyzeRefusal::EffectDecision(refusal) => refusal.cause().as_str(),
+        crate::analyze::AnalyzeRefusal::Document(failure) => match failure {
+            fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+            | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
+                record.catalog.cause()
+            }
+            fsl_semantics::model::observation::AdmissionFailure::Fault(_) => {
+                "established-invariant-broken"
+            }
+        },
         crate::analyze::AnalyzeRefusal::Provision(_) => "missing-member",
         crate::analyze::AnalyzeRefusal::Binding(_) | crate::analyze::AnalyzeRefusal::Package(_) => {
             "invalid-value"

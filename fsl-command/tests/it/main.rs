@@ -2,12 +2,13 @@
 //! External consumers of the non-core request-file owner.
 
 mod check_imports;
-mod dependency_handoff;
 mod check_source_identity;
 mod cli_contract;
 mod compile_limits;
 #[path = "../../../examples/config-version/spine_corpus.rs"]
 pub mod config_version_spine;
+mod dependency_handoff;
+mod effect_decision;
 mod export_selection;
 mod extraction_request_refusals;
 mod inspect_handoff_locus;
@@ -19,8 +20,8 @@ mod negotiation;
 mod package_run;
 mod prepared_command;
 mod probabilistic_package_locus;
-mod protocol_refusal_names;
 mod protocol_recommendation;
+mod protocol_refusal_names;
 mod protocol_refusal_text;
 mod quantity_scaling;
 mod reaches_optional_reference;
