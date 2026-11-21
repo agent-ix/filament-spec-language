@@ -32,3 +32,18 @@ Changes requested (medium findings FND-001 to FND-004). Checked and clean: the r
 - FR-488 "Reserved slot names" (spec/functional/FR-488-emit-a-checked-hyper-clause-as-a-v2-hyperproperty-node.md:301-324): examined.
 - TC-3082 (spec/test-cases/TC-3082-a-source-identifier-in-the-reserved-slot-form-is-refused.md): examined.
 - FSpec FR-402-AC-12: context only, through contract-ir `is_slot_parameter_name` at rev 7b76c8b.
+
+## Dispositions
+
+Disposition round 1, independently inspected at head `87cdd77465a665b8b80b798ee1e54e61a2a6124c` against original review head `6eae944d71`. The original findings above are preserved verbatim. No cargo or build command ran in this pass; focused execution evidence is supplied separately by draco:QSL:code.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `clock_places::a_clock_guard_binder_in_the_reserved_slot_form_is_refused` supplies a `Sequence<Timer>` field and `pre ... using` guard, asserts the reserved name, tag, quantifier span, code and cause. Both timed guard and time-invariant checking paths now call `reserved_slot_cause`. |
+| FND-002 | fixed | The fsl-package near-miss test emits all seven names and requires a `parameter` node with the supplied name. |
+| FND-003 | accepted-no-change | Arch explicitly accepts the declaring binding form as the smallest region carried today, including no available model-operation parameter region under FR-103. Commit `87cdd77465` states this fallback as system behaviour in FR-488. Exact binder-identifier spans remain scope on open QSL-2581 with binder-link work QSL-2728. |
+| FND-004 | fixed | The two incorrect bare FR-402-AC-12 tags are removed; new and retained tests use TC-3082 and FR-488-AC-29. |
+| FND-005 | fixed | The reserved protocol binder pass associates declaration, capture and compensation binders with their respective ProtocolSite values while preserving each DeclaredName span. |
+| FND-006 | fixed | ReservedSlotName.tag is SlotTag, an explicit closed enum of Slot, Op, Rcv and Arg, with Display returning the wire spelling; the upstream decoder remains the authority for reserved-set membership. |
+
+The reviewed fixes introduce no further finding. The added FR-488 conditional sentence is a precise exception to the preceding general region rule; it does not promise a source region when none is carried. Code-review disposition is mergeable under the arch ruling, subject to the lead's separate focused test result. QSL-2581 remains open for exact identifier spans with QSL-2728.
