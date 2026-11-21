@@ -26,12 +26,6 @@ const PICK_MIN: &str = "synthesis Pick using p grammar Digit domain Digit \
 const PICK_MAX: &str = "synthesis Pick using p grammar Digit domain Digit \
      maximize Pick satisfies { Pick <= 7 };";
 
-/// The one declaration form S2 builds for `declaration`, rendered by its
-/// `Debug` form, or the S1/S2 refusal rendered the same way.
-fn built(declaration: &str) -> Result<String, String> {
-    built_form(declaration).map(|form| format!("{form:?}"))
-}
-
 /// The one declaration form S2 builds for `declaration`, or the S1/S2
 /// refusal rendered by its `Debug` form.
 fn built_form(declaration: &str) -> Result<DeclarationForm, String> {
