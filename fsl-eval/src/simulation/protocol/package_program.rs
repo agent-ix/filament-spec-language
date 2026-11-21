@@ -34,7 +34,7 @@ pub struct PackageControl {
     pub parent: Option<ProtocolNodeId>,
     /// The structural children in execution order.
     pub children: Vec<ProtocolNodeId>,
-    /// Branch labels for a `parallel`, in package order.
+    /// Labels and body nodes of a parallel's branches or a choice's cases.
     pub branches: Vec<(String, ProtocolNodeId)>,
     pub(super) join: Option<PackageJoin>,
     /// The resolved source default, for a `parallel`.
@@ -136,6 +136,8 @@ pub struct PackageProtocolProgram<'a> {
     pub(super) channels: Vec<PackageChannel>,
     /// Repeat continuations and bounds read from admitted control members.
     pub(super) loops: BTreeMap<ProtocolNodeId, super::program::Loop<'a>>,
+    /// Choice cases and their admitted guard slots, in case-label order.
+    pub(super) choices: BTreeMap<ProtocolNodeId, Vec<(ProtocolNodeId, ProtocolSlot)>>,
     /// Await continuations derived from the admitted causal relation.
     pub(super) awaits: BTreeMap<ProtocolNodeId, super::program::Await>,
     /// The admitted protocol name.
@@ -655,6 +657,7 @@ impl<'a> PackageProtocolProgram<'a> {
                 .max_by_key(|candidate| candidate.path.len())
                 .map(|candidate| candidate.id)
         };
+        let mut choices = BTreeMap::new();
         let mut controls = BTreeMap::new();
         for control in &form.controls {
             let name = control.path.last().cloned().unwrap_or_default();
@@ -725,6 +728,50 @@ impl<'a> PackageProtocolProgram<'a> {
                 ordering,
                 contracts,
             ) = match &control.body {
+                ControlBody::Choice { owner, cases } => {
+                    let branches = cases
+                        .iter()
+                        .map(|(label, body)| {
+                            id_by_node
+                                .get(*body)
+                                .copied()
+                                .map(|id| ((*label).to_owned(), id))
+                                .ok_or(PackageProgramRefusal::UnknownControl)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let guards = branches
+                        .iter()
+                        .enumerate()
+                        .map(|(index, (_, body))| {
+                            let guard = input
+                                .evaluator
+                                .package_protocol_slot(
+                                    &control.node.node_id,
+                                    "cases.guard",
+                                    Some(index),
+                                )
+                                .ok_or_else(|| {
+                                    PackageProgramRefusal::MissingIdentity(
+                                        control.node.node_id.clone(),
+                                    )
+                                })?;
+                            Ok((*body, guard))
+                        })
+                        .collect::<Result<Vec<_>, PackageProgramRefusal>>()?;
+                    choices.insert(control.id, guards);
+                    (
+                        branches.iter().map(|(_, body)| *body).collect(),
+                        branches,
+                        Some((*owner).clone()),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Vec::new(),
+                    )
+                }
                 ControlBody::Sequence { children } => (
                     children
                         .iter()
@@ -1015,6 +1062,7 @@ impl<'a> PackageProtocolProgram<'a> {
             captures,
             channels,
             loops,
+            choices,
             awaits,
             name: form.name.clone(),
             root,
@@ -1053,6 +1101,17 @@ impl<'a> PackageProtocolProgram<'a> {
         self.evaluator
             .evaluate_package_protocol_slot(slot, supply, meter)
             .map(Some)
+    }
+
+    /// Evaluate one admitted predicate slot using the existing package evaluator.
+    pub(super) fn evaluate_slot(
+        &self,
+        slot: &ProtocolSlot,
+        supply: &ProtocolSupply<'_>,
+        meter: &mut Meter,
+    ) -> Result<ProtocolSlotEvaluation, CallFailure> {
+        self.evaluator
+            .evaluate_package_protocol_slot(slot, supply, meter)
     }
 
     /// Evaluate the admitted package `finish` expression when present in the

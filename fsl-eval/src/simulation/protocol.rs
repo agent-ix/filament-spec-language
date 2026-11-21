@@ -2887,15 +2887,26 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let Some(slot) = control.constraint.as_ref() else {
             return Ok(None);
         };
+        self.evaluate_package_slot(slot, frame, state).map(Some)
+    }
+
+    /// Evaluate an admitted package predicate, including a choice case guard.
+    pub(super) fn evaluate_package_slot(
+        &self,
+        slot: &crate::value::ProtocolSlot,
+        frame: Vec<Option<Value>>,
+        state: &ModelSimState,
+    ) -> Result<Verdict, ExpansionStop> {
+        let package = self.package_program.as_ref().ok_or_else(broken)?;
         let observation = self.package_observation(state)?;
         let binders = self.package_binder_values(frame, &observation, slot)?;
         let supply = package
             .supply_for_slot(slot, binders, Some(&observation))
             .map_err(|_| broken())?;
         let result = package
-            .evaluate_control_constraint(node, &supply, &mut Meter::new(self.model.meter()))
+            .evaluate_slot(slot, &supply, &mut Meter::new(self.model.meter()))
             .map_err(|_| broken())?;
-        package_slot_verdict(result).map(Some)
+        package_slot_verdict(Some(result))
     }
 
     /// Evaluate the package finish constraint over its finish record.
