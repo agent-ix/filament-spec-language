@@ -1373,6 +1373,7 @@ pub fn analyze_item(
         if let Counterexample::ProtocolAnalysis(native) = &found.counterexample {
             if record.backend() != Some(&found.backend)
                 || record.protocol_analysis_key() != Some(native.key())
+                || record.protocol_analysis_root() != Some(&native.separating_witness().value_path)
             {
                 return Err(OutcomeItemError::CounterexampleAssociation);
             }

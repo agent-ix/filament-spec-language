@@ -253,8 +253,8 @@ pub enum OutcomeItemError {
     /// A `refuted` record arrived without its one `ItemCounterexample`.
     #[error("a refuted record needs its one counterexample")]
     MissingCounterexample,
-    /// A protocol counterexample's request, backend or analysis key differs
-    /// from the original terminal record.
+    /// A protocol counterexample's request, backend, analysis key or assessed
+    /// root differs from the original terminal record.
     #[error("protocol counterexample does not belong to the original item")]
     CounterexampleAssociation,
     /// A protocol counterexample's supplied body differs from its native evidence.
