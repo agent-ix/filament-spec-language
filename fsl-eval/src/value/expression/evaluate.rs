@@ -2402,17 +2402,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         }
     }
 
-    /// FR-046-AC-6: a source query over an explicit population view cannot
-    /// return an aggregate from only the members currently listed in an
-    /// incomplete snapshot. Keep this check beside the function-query path;
-    /// named model populations use `named_members` below.
-    fn require_complete_population(&self, population: &DeclarationKey) -> Result<(), Halt> {
-        let objects = match self.anchor {
-            Anchor::Post => self.objects,
-            Anchor::Pre => self
-                .pre_objects
-                .ok_or_else(|| invariant("pre-population-observation-present"))?,
-        };
+    /// FR-106 check 7 / FR-046-AC-6: no population query may return a
+    /// successful value from a snapshot that does not establish complete
+    /// membership. Both explicit function arguments and named model
+    /// populations apply this rule to their own selected observation.
+    fn require_complete_population(
+        objects: &ObjectEnvironment,
+        population: &DeclarationKey,
+    ) -> Result<(), Halt> {
         let listed = objects
             .population_completeness()
             .contains_key(&population.node);
@@ -4072,7 +4069,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 };
                 let binding = self.resolve_population(population_id, *maximum)?;
                 let binding = self.select_anchor(binding)?;
-                self.require_complete_population(binding.population_key())?;
+                let objects = self.objects_for(node)?;
+                Self::require_complete_population(objects, binding.population_key())?;
                 self.log_membership_read(binding, None);
                 evaluate_all_instances(binding, collection_type, self.meter)?
             }
@@ -4462,15 +4460,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         population: &DeclarationKey,
     ) -> Result<&'a [ObjectReference], Halt> {
         let objects = self.objects_for(node)?;
-        let listed = objects.population_completeness().get(&population.node);
-        if listed != Some(&true) {
-            return Err(Halt::Family(FamilyResult::Refused(Box::new(
-                NamedPopulationIncomplete {
-                    population: population.node.clone(),
-                    listed: listed.is_some(),
-                },
-            ))));
-        }
+        Self::require_complete_population(objects, population)?;
         objects
             .population_members(&population.node)
             .ok_or_else(|| invariant("named-population-unobserved"))

@@ -14,6 +14,8 @@ const REFUND: &str = "ix://test/workflow-aggregates/Refund";
 const ORDERS: &str = "ix://test/workflow-aggregates/orders";
 const RESERVATIONS: &str = "ix://test/workflow-aggregates/reservations";
 const REFUNDS: &str = "ix://test/workflow-aggregates/refunds";
+const DELIVERY_RECEIPT: &str = "ix://test/workflow-aggregates/DeliveryReceipt";
+const DELIVERY_RECEIPTS: &str = "ix://test/workflow-aggregates/delivery_receipts";
 
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.model.complete/v1\";\n\
@@ -99,8 +101,18 @@ fn workflow_model() -> Value {
     };
     let reservation = workflow_type("Reservation", RESERVATION);
     let refund = workflow_type("Refund", REFUND);
+    let mut delivery_receipt = workflow_type("DeliveryReceipt", DELIVERY_RECEIPT);
+    let mut effect = delivery_receipt["fields"][0].clone();
+    let effect_id = format!("{DELIVERY_RECEIPT}/effect");
+    effect["identity"] = json!(effect_id);
+    effect["name"] = json!("effect");
+    effect["typeRef"] = json!(REFUND);
+    effect["origin"]["generated"]["generatorIdentity"] = json!(effect_id);
+    effect["origin"]["generated"]["inputIdentities"] = json!([effect_id]);
+    delivery_receipt["fields"] = json!([effect]);
     types.push(reservation);
     types.push(refund);
+    types.push(delivery_receipt);
 
     let populations = model["populations"]
         .as_array_mut()
@@ -108,6 +120,7 @@ fn workflow_model() -> Value {
     let mut orders = populations[0].clone();
     let mut reservations = orders.clone();
     let mut refunds = orders.clone();
+    let mut delivery_receipts = orders.clone();
     reservations["identity"] = json!(RESERVATIONS);
     reservations["displayName"] = json!(RESERVATIONS);
     reservations["members"] = json!([RESERVATION]);
@@ -118,9 +131,14 @@ fn workflow_model() -> Value {
     refunds["members"] = json!([REFUND]);
     refunds["origin"]["generated"]["generatorIdentity"] = json!(REFUNDS);
     refunds["origin"]["generated"]["inputIdentities"] = json!([REFUNDS]);
+    delivery_receipts["identity"] = json!(DELIVERY_RECEIPTS);
+    delivery_receipts["displayName"] = json!(DELIVERY_RECEIPTS);
+    delivery_receipts["members"] = json!([DELIVERY_RECEIPT]);
+    delivery_receipts["origin"]["generated"]["generatorIdentity"] = json!(DELIVERY_RECEIPTS);
+    delivery_receipts["origin"]["generated"]["inputIdentities"] = json!([DELIVERY_RECEIPTS]);
     orders["members"] = json!([ORDER]);
     populations.clear();
-    populations.extend([orders, reservations, refunds]);
+    populations.extend([orders, reservations, refunds, delivery_receipts]);
     model
 }
 
@@ -162,7 +180,15 @@ fn workflow_snapshot(complete_refunds: bool, add_contradictory_refund: bool) -> 
                 {"key": "s3", "type": RESERVATION, "fields": {
                     "amount": {"integer": "7"}, "order": related_order("o2")}}
             ]},
-            {"population": REFUNDS, "complete": complete_refunds, "objects": refund_objects}
+            {"population": REFUNDS, "complete": complete_refunds, "objects": refund_objects},
+            {"population": DELIVERY_RECEIPTS, "complete": true, "objects": [
+                {"key": "d1", "type": DELIVERY_RECEIPT, "fields": {
+                    "effect": {"reference": {"population": REFUNDS, "key": "r1"}}}},
+                {"key": "d2", "type": DELIVERY_RECEIPT, "fields": {
+                    "effect": {"reference": {"population": REFUNDS, "key": "r1"}}}},
+                {"key": "d3", "type": DELIVERY_RECEIPT, "fields": {
+                    "effect": {"reference": {"population": REFUNDS, "key": "r2"}}}}
+            ]}
         ]
     })
 }
@@ -213,8 +239,17 @@ fn outcome(output: &Output) -> Value {
 // These are the external filament-specification criteria. The FSpec prefix
 // distinguishes their identifiers from same-numbered criteria in this repo.
 #[test]
-#[trace("FSpec-FR-180-AC-5", "FSpec-FR-049-AC-8", "FSpec-FR-046-AC-6")]
-fn source_aggregates_group_reservations_and_duplicate_refunds_by_order() {
+#[trace(
+    "FSpec-FR-180-AC-5",
+    "FSpec-FR-049-AC-2",
+    "FSpec-FR-049-AC-8",
+    "FSpec-FR-046-AC-6"
+)]
+fn source_aggregates_count_effects_not_duplicate_delivery_receipts() {
+    // r1 has two delivery receipts, while r2 is a distinct second effect
+    // with the same amount. The recovery aggregate must count r1 and r2
+    // once each: receipt rows would total 6, while value-based deduplication
+    // would total 2; reservations and effects both total 4.
     let output = run(true, false);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document = outcome(&output);
