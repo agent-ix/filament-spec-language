@@ -591,10 +591,6 @@ pub enum ProbabilityCertificatePart {
     Numerator,
     /// The activation denominator.
     Denominator,
-    /// The value after first activation.
-    Post,
-    /// The proper waiting-state reset process.
-    Reset,
 }
 impl ProbabilityCertificatePart {
     /// Canonical published part spelling.
@@ -602,8 +598,6 @@ impl ProbabilityCertificatePart {
         match self {
             Self::Numerator => "numerator",
             Self::Denominator => "denominator",
-            Self::Post => "post",
-            Self::Reset => "reset",
         }
     }
 }

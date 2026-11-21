@@ -455,6 +455,7 @@ fn enumerate(
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
+    named: Option<&BTreeSet<ProbabilityProductKey>>,
 ) -> Result<Graph, ProbabilityDocumentError> {
     let binding = claim_binding(system, claim)?;
     let binding = binding.as_ref().map(|binding| &binding.reference);
@@ -552,6 +553,21 @@ fn enumerate(
             )
             .unwrap_or(u64::MAX),
         )?;
+        if named.is_some_and(|named| !named.contains(&key)) {
+            // A lower certificate assigns zero to this frontier key. Its
+            // descendants and terminal payoff are outside the named proof.
+            states.insert(
+                key,
+                State {
+                    terminal: None,
+                    rank: 0,
+                    choices: Vec::new(),
+                    actions: Vec::new(),
+                    activated: false,
+                },
+            );
+            continue;
+        }
         let terminal = plan
             .payoff
             .terminal(control, &accumulator, meter)
@@ -625,20 +641,7 @@ fn enumerate(
                         ))
                     })?;
                 if actions.is_empty() {
-                    let rewards = system
-                        .input()
-                        .probabilistic
-                        .rewards()
-                        .iter()
-                        .filter(|reward| reward.operation().model() == claim.subject.alias)
-                        .map(|reward| {
-                            Ok((
-                                filament_exact::Identifier::new(reward.name())
-                                    .map_err(|_| ProbabilityDocumentError::Malformed)?,
-                                filament_exact::Value::Integer(Integer::zero()),
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, ProbabilityDocumentError>>()?;
+                    let rewards = system.zero_rewards();
                     action_labels.push(Some(crate::ProductAction::TerminalStutter));
                     vec![vec![Successor::Position(
                         rational(1),
@@ -1488,6 +1491,7 @@ pub fn measure_probability_certificate_document(
         cancel,
         &mut meter,
         &mut storage,
+        None,
     )?;
     Ok(MeasureProbabilityDocument {
         identity: item.clone(),
@@ -1795,6 +1799,7 @@ pub(super) fn check(
                 cancel,
                 &mut meter,
                 &mut storage,
+                None,
             )?;
             if graph.states.values().any(|state| state.activated) {
                 return Ok(rejected(
@@ -1834,6 +1839,7 @@ pub(super) fn check(
             cancel,
             &mut meter,
             &mut storage,
+            None,
         )?;
         let mut initial = Vec::new();
         for (part, part_name) in [
@@ -1860,6 +1866,7 @@ pub(super) fn check(
                 cancel,
                 &mut meter,
                 &mut storage,
+                None,
             )?;
             let values = match checked_values(part, &graph_part, limits, cancel, &mut meter)? {
                 Ok(values) => values,
@@ -1937,6 +1944,7 @@ pub(super) fn check(
         cancel,
         &mut meter,
         &mut storage,
+        None,
     )?;
     if matches!(claim.form, ProbForm::Quantile { .. })
         && !graph.states.values().any(|state| state.activated)
@@ -2238,6 +2246,7 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
         cancel,
         &mut meter,
         &mut storage,
+        None,
     )?;
     let values = match checked_values(&document, &graph, limits, cancel, &mut meter)? {
         Ok(values) => values,
@@ -2303,7 +2312,11 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
             } else {
                 return Ok(MeanRefutationCheck::PolicyParity);
             };
-            for edge in &state.choices[index] {
+            for edge in state
+                .choices
+                .get(index)
+                .ok_or(ProbabilityDocumentError::Malformed)?
+            {
                 if !edge.probability.is_zero() && seen.insert(edge.target.clone()) {
                     charge(
                         &mut storage,

@@ -96,19 +96,7 @@ pub(super) fn replay<T>(
         {
             return Err(ProbabilityWitnessError::Refused);
         }
-        let rewards = system
-            .input()
-            .probabilistic
-            .rewards()
-            .iter()
-            .map(|reward| {
-                Ok((
-                    filament_exact::Identifier::new(reward.name())
-                        .map_err(|_| ProbabilityWitnessError::Refused)?,
-                    SemanticValue::Integer(Integer::zero()),
-                ))
-            })
-            .collect::<Result<Vec<_>, ProbabilityWitnessError>>()?;
+        let rewards = system.zero_rewards();
         let Some(projected) = project(state, &rewards, meter, storage)? else {
             return Err(ProbabilityWitnessError::Refused);
         };

@@ -303,6 +303,11 @@ pub(super) fn check(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     validate_ranges(&document, limits, cancel, &mut meter)?;
+    let named = document
+        .values
+        .iter()
+        .map(|row| row.state.clone())
+        .collect::<BTreeSet<_>>();
     let graph = enumerate(
         system,
         claim,
@@ -311,6 +316,7 @@ pub(super) fn check(
         cancel,
         &mut meter,
         &mut storage,
+        lower.then_some(&named),
     )?;
     let rejection = |rule, key| {
         MeanRefutationCheck::Rejected(ProbabilityCertificateRejection {
@@ -374,11 +380,23 @@ pub(super) fn check(
             .states
             .get(key)
             .ok_or(ProbabilityDocumentError::MalformedMember("values"))?;
+        if lower {
+            meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge).work(
+                        Integer::from(
+                            usize::BITS.saturating_sub(document.ranking.len().leading_zeros()),
+                        ),
+                    ),
+                )
+                .map_err(|error| ProbabilityDocumentError::Accounting(Box::new(error)))?;
+        }
         if lower
             && document
                 .ranking
-                .iter()
-                .find(|row| &row.0 == key)
+                .binary_search_by(|row| row.0.cmp(key))
+                .ok()
+                .and_then(|index| document.ranking.get(index))
                 .map(|row| row.1)
                 != Some(state.rank)
         {

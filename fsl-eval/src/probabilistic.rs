@@ -177,6 +177,7 @@ pub enum MeasureError {
 }
 
 /// The finite control selected from an untimed checked claim.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MeasurePlan<'c> {
     /// An `accumulate` or `steps` measure.
     Measure {
@@ -570,6 +571,122 @@ fn arithmetic(
     ))
 }
 
+/// The comparison encoded by a checked bounded measure claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MeasureComparison {
+    /// Amount at most the finite threshold.
+    Le,
+    /// Amount strictly below the finite threshold.
+    Lt,
+    /// Amount at least the finite threshold.
+    Ge,
+}
+
+/// A terminal payoff over the shared measure product.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MeasurePayoff {
+    /// A measure comparison event, with unactivated paths valued zero.
+    Event(MeasureComparison, Rational),
+    /// The numerator of an activation-conditioned quantile.
+    Satisfied(MeasureComparison, Rational),
+    /// The denominator of an activation-conditioned quantile.
+    Activated,
+    /// The every-scheduler quantile transform.
+    Shifted(MeasureComparison, Rational, Rational),
+    /// The completed fraction.
+    Fraction,
+}
+
+impl MeasurePayoff {
+    /// Compute a decided state's payoff from its complete control and sums.
+    /// An undecided state returns `None`.
+    ///
+    /// # Errors
+    /// Mismatched control, zero fraction denominator, or caller arithmetic denial.
+    pub fn terminal(
+        &self,
+        control: MonitorState,
+        accumulator: &Accumulator,
+        meter: &mut Meter,
+    ) -> Result<Option<Rational>, MeasureError> {
+        tick(meter)?;
+        if !control.is_decided() {
+            return Ok(None);
+        }
+        let one = Rational::from_integer(Integer::one());
+        let fraction = || match accumulator {
+            Accumulator::CountFraction {
+                true_count,
+                position_count,
+            } => Ok((
+                Rational::from_integer(Integer::from(*true_count)),
+                Rational::from_integer(Integer::from(*position_count)),
+            )),
+            Accumulator::WeightedFraction {
+                true_sum,
+                total_sum,
+            } => Ok((true_sum.clone(), total_sum.clone())),
+            _ => Err(MeasureError::Broken("fraction-payoff-holds-fraction")),
+        };
+        if matches!(self, Self::Fraction) {
+            let (numerator, denominator) = fraction()?;
+            return arithmetic(RationalArithmetic::Divide(&numerator, &denominator), meter)
+                .map(Some);
+        }
+        let (activated, amount) = match accumulator {
+            Accumulator::Steps { activated, amount }
+            | Accumulator::Reward { activated, amount } => (*activated, Some(amount)),
+            Accumulator::CountFraction { .. } | Accumulator::WeightedFraction { .. } => {
+                (true, None)
+            }
+        };
+        if matches!(self, Self::Activated) {
+            return Ok(Some(if activated { one } else { zero() }));
+        }
+        if !activated {
+            return Ok(Some(zero()));
+        }
+        let (comparison, threshold) = match self {
+            Self::Event(comparison, threshold)
+            | Self::Satisfied(comparison, threshold)
+            | Self::Shifted(comparison, threshold, _) => (*comparison, threshold),
+            Self::Activated | Self::Fraction => {
+                return Err(MeasureError::Broken("comparison-payoff"))
+            }
+        };
+        let operator = match comparison {
+            MeasureComparison::Le => filament_exact::OrderingOperator::LessOrEqual,
+            MeasureComparison::Lt => filament_exact::OrderingOperator::Less,
+            MeasureComparison::Ge => filament_exact::OrderingOperator::GreaterOrEqual,
+        };
+        let satisfied = match amount {
+            Some(Amount::Exact(value)) => completed(filament_exact::order_numbers(
+                operator,
+                filament_exact::OrderedOperands::Rationals(value, threshold),
+                meter,
+            ))?,
+            Some(Amount::AboveBound | Amount::Censored) => comparison == MeasureComparison::Ge,
+            None => {
+                let (numerator, denominator) = fraction()?;
+                let value =
+                    arithmetic(RationalArithmetic::Divide(&numerator, &denominator), meter)?;
+                completed(filament_exact::order_numbers(
+                    operator,
+                    filament_exact::OrderedOperands::Rationals(&value, threshold),
+                    meter,
+                ))?
+            }
+        };
+        let indicator = if satisfied { one } else { zero() };
+        Ok(Some(match self {
+            Self::Shifted(_, _, level) => {
+                arithmetic(RationalArithmetic::Subtract(&indicator, level), meter)?
+            }
+            _ => indicator,
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,121 +843,5 @@ mod tests {
             .initial_control(&mut Meter::new(limits))
             .unwrap_err();
         assert!(matches!(error, MeasureError::Accounting(_)), "{error:?}");
-    }
-}
-
-/// The comparison encoded by a checked bounded measure claim.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MeasureComparison {
-    /// Amount at most the finite threshold.
-    Le,
-    /// Amount strictly below the finite threshold.
-    Lt,
-    /// Amount at least the finite threshold.
-    Ge,
-}
-
-/// A terminal payoff over the shared measure product.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MeasurePayoff {
-    /// A measure comparison event, with unactivated paths valued zero.
-    Event(MeasureComparison, Rational),
-    /// The numerator of an activation-conditioned quantile.
-    Satisfied(MeasureComparison, Rational),
-    /// The denominator of an activation-conditioned quantile.
-    Activated,
-    /// The every-scheduler quantile transform.
-    Shifted(MeasureComparison, Rational, Rational),
-    /// The completed fraction.
-    Fraction,
-}
-
-impl MeasurePayoff {
-    /// Compute a decided state's payoff from its complete control and sums.
-    /// An undecided state returns `None`.
-    ///
-    /// # Errors
-    /// Mismatched control, zero fraction denominator, or caller arithmetic denial.
-    pub fn terminal(
-        &self,
-        control: MonitorState,
-        accumulator: &Accumulator,
-        meter: &mut Meter,
-    ) -> Result<Option<Rational>, MeasureError> {
-        tick(meter)?;
-        if !control.is_decided() {
-            return Ok(None);
-        }
-        let one = Rational::from_integer(Integer::one());
-        let fraction = || match accumulator {
-            Accumulator::CountFraction {
-                true_count,
-                position_count,
-            } => Ok((
-                Rational::from_integer(Integer::from(*true_count)),
-                Rational::from_integer(Integer::from(*position_count)),
-            )),
-            Accumulator::WeightedFraction {
-                true_sum,
-                total_sum,
-            } => Ok((true_sum.clone(), total_sum.clone())),
-            _ => Err(MeasureError::Broken("fraction-payoff-holds-fraction")),
-        };
-        if matches!(self, Self::Fraction) {
-            let (numerator, denominator) = fraction()?;
-            return arithmetic(RationalArithmetic::Divide(&numerator, &denominator), meter)
-                .map(Some);
-        }
-        let (activated, amount) = match accumulator {
-            Accumulator::Steps { activated, amount }
-            | Accumulator::Reward { activated, amount } => (*activated, Some(amount)),
-            Accumulator::CountFraction { .. } | Accumulator::WeightedFraction { .. } => {
-                (true, None)
-            }
-        };
-        if matches!(self, Self::Activated) {
-            return Ok(Some(if activated { one } else { zero() }));
-        }
-        if !activated {
-            return Ok(Some(zero()));
-        }
-        let (comparison, threshold) = match self {
-            Self::Event(comparison, threshold)
-            | Self::Satisfied(comparison, threshold)
-            | Self::Shifted(comparison, threshold, _) => (*comparison, threshold),
-            Self::Activated | Self::Fraction => {
-                return Err(MeasureError::Broken("comparison-payoff"))
-            }
-        };
-        let operator = match comparison {
-            MeasureComparison::Le => filament_exact::OrderingOperator::LessOrEqual,
-            MeasureComparison::Lt => filament_exact::OrderingOperator::Less,
-            MeasureComparison::Ge => filament_exact::OrderingOperator::GreaterOrEqual,
-        };
-        let satisfied = match amount {
-            Some(Amount::Exact(value)) => completed(filament_exact::order_numbers(
-                operator,
-                filament_exact::OrderedOperands::Rationals(value, threshold),
-                meter,
-            ))?,
-            Some(Amount::AboveBound | Amount::Censored) => comparison == MeasureComparison::Ge,
-            None => {
-                let (numerator, denominator) = fraction()?;
-                let value =
-                    arithmetic(RationalArithmetic::Divide(&numerator, &denominator), meter)?;
-                completed(filament_exact::order_numbers(
-                    operator,
-                    filament_exact::OrderedOperands::Rationals(&value, threshold),
-                    meter,
-                ))?
-            }
-        };
-        let indicator = if satisfied { one } else { zero() };
-        Ok(Some(match self {
-            Self::Shifted(_, _, level) => {
-                arithmetic(RationalArithmetic::Subtract(&indicator, level), meter)?
-            }
-            _ => indicator,
-        }))
     }
 }
