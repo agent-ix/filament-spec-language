@@ -532,6 +532,67 @@ fn fair_clause_readback_preserves_constraints_and_key_fairness() {
         source.identity(),
         filament_exact::Origin::new(filament_exact::Role::new("claim"), named.occurrence.ordinal),
     );
+    // The production metadata seam indexes this authentic owner once and
+    // expands only the requested clause through the existing formula walker.
+    let body_projection = |budget: &mut NativeJoinBudget| {
+        let bodies = crate::checked_views::ClauseBodies::new(read.admitted(), budget)?;
+        bodies.body(&named.declaration, budget)
+    };
+    let before_bodies = budget.consumed();
+    let body = body_projection(&mut budget).expect("charged owner body");
+    let after_bodies = budget.consumed();
+    let body_work = after_bodies.work - before_bodies.work;
+    let body_storage = after_bodies.storage - before_bodies.storage;
+    let old_view = crate::checked_views::temporal_subject(read.admitted(), &named.declaration)
+        .expect("legacy subject");
+    assert_eq!(body.formula, old_view.formula_graph());
+    assert_eq!(body.over, old_view.over());
+    assert_eq!(body.profile, old_view.profile());
+    assert!(matches!(
+        body.clock.literal_read().map(|r| r.value),
+        Some(filament_contract_model::CheckedLiteralValue::Text(
+            "model-steps"
+        ))
+    ));
+    assert_eq!(&body.activation, old_view.activation());
+    assert_eq!(body.captures, old_view.captures());
+    assert_eq!(body.capture_names, old_view.capture_names());
+    let mut exact_body_budget = NativeJoinBudget::new(body_work, body_storage);
+    assert_eq!(
+        body_projection(&mut exact_body_budget)
+            .expect("exact body allowance")
+            .formula,
+        body.formula
+    );
+    for (work, storage, kind) in [
+        (
+            body_work - 1,
+            1_000_000,
+            filament_contract_model::NativeJoinChargeKind::Work,
+        ),
+        (
+            1_000_000,
+            body_storage - 1,
+            filament_contract_model::NativeJoinChargeKind::Storage,
+        ),
+    ] {
+        let mut short = NativeJoinBudget::new(work, storage);
+        let Err(crate::checked_views::ClauseBodyRefusal::Native(error)) =
+            body_projection(&mut short)
+        else {
+            panic!("the original first unpaid body charge remains typed");
+        };
+        assert_eq!(error.denied(), short.first_unpaid());
+        assert_eq!(error.denied().expect("unpaid").kind, kind);
+        assert_eq!(error.locus(), short.first_unpaid_locus());
+        assert_eq!(
+            error.configured_bound(),
+            Some(match kind {
+                filament_contract_model::NativeJoinChargeKind::Work => work,
+                filament_contract_model::NativeJoinChargeKind::Storage => storage,
+            })
+        );
+    }
     let before = budget.consumed();
     let fairness = bare
         .temporal_clause_fairness_with_budget(&named.declaration, &mut budget)
