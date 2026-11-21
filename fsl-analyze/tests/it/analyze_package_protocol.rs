@@ -56,6 +56,409 @@ fn package_run(ws: &Workspace, request_path: &std::path::Path) -> Run {
     analyze(&package_request(ws, request_path).0)
 }
 
+fn channel_send_request(
+    ws: &Workspace,
+    capacity: u64,
+    overflow: &str,
+    delivery: &str,
+    sends: &str,
+    finish: &str,
+) -> std::path::PathBuf {
+    let body = format!(
+        "protocol Flow using pp over (k: M::Cell) on origin {{
+            role Planning on M::Cell;
+            role Machining on M::Cell;
+            channel Release from Planning to Machining carries M::Attempt
+                ordering unordered delivery {delivery} capacity {capacity} overflow {overflow};
+            run sequence Main {{ {sends} }}
+            finish Over as (closing: Boolean) {{ {finish} }};
+        }}"
+    );
+    let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
+    let mut model: Value =
+        serde_json::from_slice(&crate::fill::document()).expect("the Fill model is JSON");
+    // The record's field ranges over Level so the three sent payloads can
+    // distinguish which queue entry a head or tail policy displaced.
+    model["types"]
+        .as_array_mut()
+        .expect("model types")
+        .retain(|node| {
+            matches!(
+                node["identity"].as_str(),
+                Some(
+                    "ix://test/fill/Level"
+                        | "ix://test/fill/Cell"
+                        | "ix://test/fill/Idle"
+                        | "ix://test/fill/Attempt"
+                )
+            )
+        });
+    let payload = model["types"]
+        .as_array_mut()
+        .expect("model types")
+        .iter_mut()
+        .find(|node| node["identity"] == "ix://test/fill/Attempt")
+        .expect("the payload record");
+    payload["fields"][0]["typeRef"] = json!("ix://test/fill/Level");
+    model["constructs"]
+        .as_array_mut()
+        .expect("model constructs")
+        .retain(|construct| {
+            matches!(
+                construct["kind"]["name"].as_str(),
+                Some("value_type" | "object_type" | "population" | "record_value_type")
+            )
+        });
+    let model = serde_json::to_vec(&model).expect("the channel model serializes");
+    let mut documents = crate::fill::Documents::new();
+    documents.start("s0", &[("c", 0)]);
+    let snapshots: Vec<Vec<u8>> = documents.snapshots.values().cloned().collect();
+    crate::analyze_cli_support::request_over(
+        ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Flow", "kind": "temporal-satisfaction",
+        "temporal": {"item_kind": "deadlock-freedom", "subject": {"protocol": {
+            "protocol": "Flow",
+            "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
+            "roles": {
+                "Planning": {"type": "model-binding", "selection": "test/fill"},
+                "Machining": {"type": "model-binding", "selection": "test/fill"}
+            }
+        }}}}]}),
+    )
+}
+
+fn channel_send(name: &str, binder: &str, constraint: &str) -> String {
+    format!("send {name} via Release as ({binder}: M::Attempt) {{ {constraint} }};")
+}
+
+fn channel_send_parity(ws: &Workspace, path: &std::path::Path, expected: &str) -> Value {
+    let source = analyze(path);
+    assert!(
+        source.item(0).get("record").is_some(),
+        "source channel analysis: {}",
+        source.document()
+    );
+    assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+    let (package_path, _) = package_request(ws, path);
+    std::fs::remove_file(ws.path("program.fsl"))
+        .expect("remove source before package analysis and replay");
+    let package = analyze(&package_path);
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.exit, source.exit);
+    if expected == "refuted" {
+        assert_eq!(package.item(0)["replay"]["reproduced"], true);
+    }
+    source.item(0)
+}
+
+/// The complete loss-head example's single constrained send uses model payloads.
+#[trace("TC-2958", "FR-940-AC-6", "FR-383-AC-4", "FR-383-AC-7")]
+#[test]
+fn package_channel_send_runs_the_complete_loss_head_body() {
+    let ws = Workspace::new("package-channel-send-complete");
+    let path = channel_send_request(
+        &ws,
+        2,
+        "loss head",
+        "at-most-once",
+        &channel_send("Released", "order", "order.n = k.v"),
+        "closing",
+    );
+    let item = channel_send_parity(&ws, &path, "proved");
+    let states = item["exploration"]["states"]
+        .as_str()
+        .expect("the explored state count")
+        .parse::<u64>()
+        .expect("a natural count");
+    assert!(states > 2, "the send and finish were explored: {item}");
+}
+
+/// Every unordered overflow policy preserves the recorded payload and displacement.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-7", "FR-206-AC-12")]
+#[test]
+fn package_channel_send_preserves_unordered_overflow_records() {
+    let sends = channel_send("First", "sent_a", "sent_a.n = k.v")
+        + &channel_send("Second", "sent_b", "sent_b.n = sent_a.n + 1")
+        + &channel_send("Third", "sent_c", "sent_c.n = sent_b.n + 1");
+    for (overflow, outcome, displaced) in [
+        ("reject", "rejected", None),
+        ("loss new", "lost", None),
+        ("loss head", "accepted", Some("0")),
+        ("loss tail", "accepted", Some("1")),
+    ] {
+        let ws = Workspace::new(&format!("package-channel-send-{overflow}"));
+        let path = channel_send_request(&ws, 2, overflow, "exactly-once-premise", &sends, "false");
+        let item = channel_send_parity(&ws, &path, "refuted");
+        let records: Vec<_> = item["counterexample"]["prefix"]
+            .as_array()
+            .expect("a deadlock prefix")
+            .iter()
+            .filter_map(|step| step.get("send_record"))
+            .collect();
+        assert_eq!(records.len(), 3, "three sends are reached: {item}");
+        for record in &records {
+            assert_eq!(record["channel"], "Flow::Release");
+        }
+        assert_eq!(records[0]["outcome"], "accepted");
+        assert_eq!(records[1]["outcome"], "accepted");
+        assert_eq!(records[2]["outcome"], outcome);
+        assert_eq!(records[2]["payload"]["fields"][0]["value"]["value"], "2");
+        match displaced {
+            Some(value) => {
+                assert_eq!(records[2]["displaced"]["type"], "queue-entry");
+                assert_eq!(
+                    records[2]["displaced"]["payload"]["fields"][0]["value"]["value"], value,
+                    "{item}"
+                );
+            }
+            None => assert_eq!(records[2]["displaced"], Value::Null, "{item}"),
+        }
+    }
+}
+
+/// A send's constraint is checked before capacity, including in blocked evidence.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-4", "FR-211-AC-5")]
+#[test]
+fn package_channel_send_preserves_capacity_and_constraint_causes() {
+    for (name, overflow, constraint, expected, cause) in [
+        (
+            "full",
+            "block",
+            "sent_b.n = 1",
+            "refuted",
+            Some("full-queue"),
+        ),
+        (
+            "constraint",
+            "block",
+            "false",
+            "refuted",
+            Some("constraint"),
+        ),
+        ("loss", "loss head", "sent_b.n = 1", "proved", None),
+    ] {
+        let ws = Workspace::new(&format!("package-channel-send-{name}"));
+        let sends = channel_send("First", "sent_a", "sent_a.n = 0")
+            + &channel_send("Second", "sent_b", constraint);
+        let path =
+            channel_send_request(&ws, 1, overflow, "exactly-once-premise", &sends, "closing");
+        let item = channel_send_parity(&ws, &path, expected);
+        if let Some(cause) = cause {
+            let blocked = item["counterexample"]["blocked"]
+                .as_array()
+                .expect("the blocked send");
+            assert_eq!(blocked.len(), 1, "{item}");
+            assert_eq!(blocked[0]["rest"]["node"], "Main/Second");
+            assert_eq!(blocked[0]["cause"]["type"], cause, "{item}");
+        }
+    }
+}
+
+/// Refused replay of a full queue preserves the typed limit code and cause.
+#[trace("TC-2958", "FR-940-AC-22", "FR-206-AC-4")]
+#[test]
+fn package_channel_send_preserves_replay_refusal_code_and_cause() {
+    let ws = Workspace::new("package-channel-send-replay-bound");
+    let sends = channel_send("First", "sent_a", "sent_a.n = 0")
+        + &channel_send("Second", "sent_b", "sent_b.n = 1");
+    let path = channel_send_request(&ws, 1, "block", "exactly-once-premise", &sends, "closing");
+    let (package_path, bytes) = package_request(&ws, &path);
+    let below = u64::try_from(bytes.len() / 2).expect("the package length");
+    let source = crate::analyze_cli_support::analyze_under_replay_bytes(&path, below);
+    assert!(
+        source.item(0).get("record").is_some(),
+        "{}",
+        source.document()
+    );
+    assert_eq!(
+        label(&source.item(0)),
+        "inconclusive",
+        "{}",
+        source.document()
+    );
+    let cause = &source.item(0)["record"]["cause"];
+    assert_eq!(cause["kind"], "replay-refused");
+    assert_eq!(cause["code"], "stage_limit_exceeded");
+    assert_eq!(cause["cause"], "input-bytes-exceeded");
+    std::fs::remove_file(ws.path("program.fsl"))
+        .expect("remove source before package analysis and replay");
+    let package = crate::analyze_cli_support::analyze_under_replay_bytes(&package_path, below);
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.exit, source.exit);
+}
+
+/// Extra or malformed capacity bindings refuse with identical typed records.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn package_channel_send_invalid_capacity_records_match_source() {
+    for (name, value, cause) in [
+        ("negative", "-1", "invalid-value"),
+        ("unknown", "1", "unknown-member"),
+    ] {
+        let ws = Workspace::new(&format!("package-channel-send-capacity-{name}"));
+        let path = channel_send_request(
+            &ws,
+            1,
+            "block",
+            "exactly-once-premise",
+            &channel_send("Only", "only", "only.n = 0"),
+            "closing",
+        );
+        let mut document: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("request JSON");
+        document["request"]["items"][0]["temporal"]["subject"]["protocol"]["capacities"] =
+            json!({"extra": value});
+        std::fs::write(&path, document.to_string()).expect("write malformed capacity selection");
+        let source = analyze(&path);
+        let item = source.item(0);
+        assert_eq!(item["category"], "refusal", "{}", source.document());
+        assert_eq!(
+            item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+            "{item}"
+        );
+        assert_eq!(item["record"]["diagnostic"]["cause"], cause, "{item}");
+        if name == "unknown" {
+            assert_eq!(
+                item["record"]["diagnostic"]["detail"]["capacity"], "extra",
+                "{item}"
+            );
+        }
+        let (package_path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package refusal");
+        let package = analyze(&package_path);
+        assert_eq!(package.item(0), item, "{}", package.document());
+        assert_eq!(package.exit, source.exit);
+    }
+}
+
+/// Mixed parallel/send bodies retain a typed refusal until their message
+/// identities and weak constraint footprints have a package-native form.
+#[trace("TC-2958", "FR-940", "FR-894", "FR-205")]
+#[test]
+fn package_channel_send_parallel_combinations_refuse_before_execution() {
+    for memory in ["sc", "tso"] {
+        for position in ["inside", "after"] {
+            let ws = Workspace::new(&format!("package-channel-send-{memory}-{position}"));
+            let send = channel_send("Only", "only", "only.n = 0");
+            let (inside, after) = if position == "inside" {
+                (send.as_str(), "")
+            } else {
+                ("", send.as_str())
+            };
+            let run = format!(
+                "parallel Both memory {memory} {{
+                    branch left sequence Left {{ {inside} }}
+                    branch right sequence Right {{ }}
+                }} join all [left, right]; {after}"
+            );
+            let path =
+                channel_send_request(&ws, 1, "block", "exactly-once-premise", &run, "closing");
+            let source = analyze(&path);
+            assert!(
+                source.item(0).get("record").is_some(),
+                "{}",
+                source.document()
+            );
+            assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+            let (package_path, _) = package_request(&ws, &path);
+            std::fs::remove_file(ws.path("program.fsl"))
+                .expect("remove source before package refusal");
+            let package = analyze(&package_path);
+            let item = package.item(0);
+            assert_eq!(package.exit, 21, "{}", package.document());
+            assert_eq!(item["category"], "unsupported", "{}", package.document());
+            assert_eq!(
+                item["record"]["diagnostic"]["code"], "unsupported_construct",
+                "{item}"
+            );
+            assert_eq!(
+                item["record"]["diagnostic"]["cause"], "not-yet-implemented",
+                "{item}"
+            );
+            assert!(item.get("exploration").is_none(), "{item}");
+            assert!(item.get("counterexample").is_none(), "{item}");
+        }
+    }
+}
+
+/// A nonempty admitted correlation group is named and refused before package execution.
+#[trace("TC-2958", "FR-940", "FR-731-AC-1")]
+#[test]
+fn package_channel_send_related_premises_refuse_before_execution() {
+    for (related, expected) in [(false, "refuted"), (true, "proved")] {
+        let ws = Workspace::new(&format!("package-channel-send-related-{related}"));
+        let path = channel_send_request(
+            &ws,
+            1,
+            "block",
+            "exactly-once-premise",
+            "send Correlated via Release as (sent: M::Attempt) related by Owns (k, k) { sent.n = 0 };",
+            "closing",
+        );
+        let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("the source unit");
+        std::fs::write(
+            ws.path("program.fsl"),
+            unit.replace(
+                "channel Release",
+                "relationship Owns = M::owns; channel Release",
+            ),
+        )
+        .expect("select the relationship premise");
+        let mut model: Value =
+            serde_json::from_slice(&std::fs::read(ws.path("model.json")).expect("model document"))
+                .expect("model JSON");
+        crate::related_by::add_owns_relationship(&mut model);
+        std::fs::write(ws.path("model.json"), model.to_string()).expect("write the related model");
+        let mut snapshot: Value = serde_json::from_slice(
+            &std::fs::read(ws.path("snapshot-0.json")).expect("the initial snapshot"),
+        )
+        .expect("snapshot JSON");
+        let object = json!({"population": "ix://test/fill/cells", "key": "c"});
+        let instances = if related {
+            vec![json!({"source": object, "target": object})]
+        } else {
+            Vec::new()
+        };
+        snapshot["relationships"] = json!([{
+            "relationship": "ix://test/fill/relationship/owns", "complete": true,
+            "instances": instances
+        }]);
+        std::fs::write(ws.path("snapshot-0.json"), snapshot.to_string())
+            .expect("write the relationship instances");
+        let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "{}",
+            source.document()
+        );
+        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+        let (package_path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl"))
+            .expect("remove source before package correlation refusal");
+        let package = analyze(&package_path);
+        let item = package.item(0);
+        assert_eq!(package.exit, 21, "{}", package.document());
+        assert_eq!(item["category"], "unsupported", "{}", package.document());
+        let diagnostic = &item["record"]["diagnostic"];
+        assert_eq!(diagnostic["code"], "unsupported_construct", "{item}");
+        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{item}");
+        assert_eq!(diagnostic["detail"]["fact"], "correlation", "{item}");
+        assert_eq!(
+            diagnostic["detail"]["node"]["path"]
+                .as_array()
+                .expect("the refused admitted node's path")
+                .last(),
+            Some(&json!("Correlated")),
+            "{item}"
+        );
+        assert!(item.get("exploration").is_none(), "{item}");
+        assert!(item.get("counterexample").is_none(), "{item}");
+    }
+}
+
 fn parallel_request(ws: &Workspace, run: &str) -> std::path::PathBuf {
     let body = format!(
         "{}{}",

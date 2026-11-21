@@ -2,6 +2,7 @@
 //! The operation-owned request boundary shared by analyze and the provider.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::{BackendId, RequestIndex};
@@ -95,6 +96,8 @@ pub struct ItemOptions {
     pub max_cases: Option<std::num::NonZeroU64>,
     /// EN-6's work bound for release-backed task-product search (FR-415).
     pub max_task_product_work: Option<std::num::NonZeroU64>,
+    /// FR-418's checker work limit, `zone_check.max_check_work` (FR-461).
+    pub max_check_work: Option<std::num::NonZeroU64>,
     /// The provisioned document a `finite-replay` item replays.
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The provisioned FR-739 finite trace population for a finite hyper item.
@@ -237,6 +240,16 @@ pub enum ItemForm {
     Hybrid(HybridItem),
     /// A checked FR-898 clause over a request-supplied finite trace population.
     FiniteHyper(FiniteHyperItem),
+    /// A component composition and its derived premise slots (FSL FR-1044).
+    Composition(CompositionItem),
+}
+
+/// A `composition` item's request members beside its claim's.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompositionItem {
+    /// The derived premise slots, each `{role, key}` (FSpec FR-331
+    /// `premises`).
+    pub premises: Vec<serde_json::Value>,
 }
 
 /// The checked finite-hyper clause selected by a temporal-satisfaction item.
@@ -287,6 +300,8 @@ pub struct TemporalItem {
     pub max_depth: Option<usize>,
     /// The model search and automaton budgets.
     pub limits: fsl_replay::ModelCheckLimits,
+    /// Model-check budgets explicitly supplied by the caller.
+    pub requested_limits: Vec<fsl_replay::ModelCheckLimit>,
     /// The most successor candidates one expansion enumerates.
     pub max_candidates: u64,
     /// The qualified checker's SMT encoding budgets.
@@ -343,6 +358,7 @@ impl Default for TemporalItem {
             stutter_closure: None,
             max_depth: None,
             limits: fsl_replay::ModelCheckLimits::default(),
+            requested_limits: Vec::new(),
             max_candidates: super::clause_item::DEFAULT_MAX_CANDIDATES,
             smt_encoding: None,
             reductions: fsl_route::reductions::Reductions::default(),
@@ -419,17 +435,22 @@ pub fn analyze(
         &request.binding,
         &request.provision,
         &request.items,
+        &BTreeMap::new(),
         engines,
         limits,
         cancel,
     )
 }
 
+/// [`analyze`] over `analysis`, where an item of `components` is analyzed
+/// over its own checked package (FR-1044: a clause of a component of a
+/// composition) instead of the run's.
 pub(crate) fn analyze_bound<'a>(
     analysis: &super::RunInput<'a>,
     binding: &super::SubjectBinding<'_>,
     provision: &SourceProvision,
     requested: &[NegotiatedItem],
+    components: &BTreeMap<RequestIndex, Arc<fsl_package::CheckedPackage>>,
     engines: &super::Engines,
     limits: &super::AnalyzeLimits,
     cancel: &filament_exact::Cancel,
@@ -460,9 +481,16 @@ pub(crate) fn analyze_bound<'a>(
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let shared = read.as_ref().map(crate::provider::Shared::of);
+    let component_runs: BTreeMap<RequestIndex, super::RunInput<'_>> = components
+        .iter()
+        .map(|(index, package)| (*index, super::RunInput::source(package)))
+        .collect();
     let items = requested
         .iter()
-        .map(|item| work(analysis, binding, provision, item, engines, limits, shared))
+        .map(|item| match component_runs.get(&item.item.request_index) {
+            Some(component) => work(component, binding, provision, item, engines, limits, None),
+            None => work(analysis, binding, provision, item, engines, limits, shared),
+        })
         .collect::<Vec<_>>();
     let requirements = items
         .iter()
@@ -789,7 +817,12 @@ fn work<'a>(
     let item = &negotiated.item;
     let temporal_kind = match &item.form {
         Some(ItemForm::Temporal(form)) => form.item_kind,
-        Some(ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_))
+        Some(
+            ItemForm::FiniteHyper(_)
+            | ItemForm::Probabilistic(_)
+            | ItemForm::Hybrid(_)
+            | ItemForm::Composition(_),
+        )
         | None => ItemKind::Formula,
     };
     let family = if item.kind == Capability::GlobalConformance {
@@ -905,6 +938,24 @@ fn work<'a>(
                     .any(|clause| clause.assembled_occurrence() == Some(&item.claim)) =>
         {
             super::hyper_route::hyper_item(
+                analysis,
+                binding,
+                *limits,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
+                && package
+                    .graph()
+                    .step_relations()
+                    .iter()
+                    .any(|relation| relation.occurrence() == Some(&item.claim)) =>
+        {
+            super::hyper_route::relation_item(
                 analysis,
                 binding,
                 *limits,
@@ -1208,7 +1259,10 @@ fn work<'a>(
             let form = match &item.form {
                 Some(ItemForm::Temporal(form)) => form.clone(),
                 Some(
-                    ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_),
+                    ItemForm::FiniteHyper(_)
+                    | ItemForm::Probabilistic(_)
+                    | ItemForm::Hybrid(_)
+                    | ItemForm::Composition(_),
                 )
                 | None => TemporalItem::default(),
             };
@@ -1277,6 +1331,7 @@ fn work<'a>(
                     binding,
                     *limits,
                     item.options.max_task_product_work,
+                    item.options.max_check_work,
                     &item.claim,
                     item.request_index,
                 )
@@ -1284,6 +1339,40 @@ fn work<'a>(
             } else {
                 super::schedule_item::schedule_item(package, item.request_index, &item.claim)
                     .unwrap_or_else(absent)
+            }
+        }
+        Some(ItemForm::Composition(form)) if item.kind == Capability::Composition => {
+            // FSpec FR-348-AC-3: a composition negotiated to a registered
+            // provider is sent to it with its derived premises; FSL registers
+            // no composition engine of its own.
+            let provider = negotiated.disposition.target().filter(|backend| {
+                engines
+                    .get(backend.id())
+                    .is_some_and(|engine| engine.provider().is_some())
+            });
+            match provider {
+                Some(backend) => {
+                    let routed = crate::provider::routed_composition_item(
+                        engines.registrations(),
+                        item.request_index,
+                        &item.claim,
+                        item.backend.as_ref(),
+                    )
+                    .map(|routed| routed.with_options(item.options.backend_options.clone()));
+                    crate::provider::composition_provider_item_over(
+                        item.request_index,
+                        backend.id(),
+                        package,
+                        binding.packages,
+                        (routed, limits.emit),
+                        crate::provider::CompositionTarget::new(
+                            item.claim.clone(),
+                            form.premises.clone(),
+                        ),
+                        shared,
+                    )
+                }
+                None => absent(),
             }
         }
         _ => absent(),
@@ -1328,7 +1417,7 @@ fn work<'a>(
             EvidenceKind::Exact => Some(crate::exact_probabilistic::manifest::BACKEND_ID),
             EvidenceKind::Statistical => Some(crate::statistical::manifest::BACKEND_ID),
         },
-        Some(ItemForm::Hybrid(_)) => None,
+        Some(ItemForm::Hybrid(_) | ItemForm::Composition(_)) => None,
         None if item.kind == Capability::Schedulability => {
             negotiated.disposition.target().map(|backend| {
                 if backend.id().as_str() == crate::zone_check::manifest::BACKEND_ID {

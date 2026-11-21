@@ -21,7 +21,7 @@ use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
-use fsl_replay::{OutcomeAxes, TerminalRecord, TerminalValue};
+use fsl_replay::{InconclusiveCause, OutcomeAxes, TerminalRecord, TerminalValue};
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::routing::Disposition;
 use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
@@ -559,6 +559,7 @@ count_members! {
     read_max_candidates => "temporal.limits.max_candidates",
     read_max_clocks => "temporal.limits.max_clocks",
     read_max_task_product_work => "temporal.limits.max_task_product_work",
+    read_max_check_work => "temporal.limits.max_check_work",
     read_max_store_buffer => "temporal.limits.max_store_buffer",
     read_max_messages => "temporal.limits.max_messages",
     read_max_live_instances => "temporal.limits.max_live_instances",
@@ -635,6 +636,10 @@ pub struct TemporalLimitsSelection {
     /// `max_task_product_work` (FSpec FR-415).
     #[serde(default, deserialize_with = "read_max_task_product_work")]
     pub max_task_product_work: Option<NonZeroU64>,
+    /// `max_check_work`, FSpec FR-418's checker work limit (setting
+    /// `zone_check.max_check_work`, FR-461).
+    #[serde(default, deserialize_with = "read_max_check_work")]
+    pub max_check_work: Option<NonZeroU64>,
     /// `max_store_buffer` (FSpec FR-439).
     #[serde(default, deserialize_with = "read_max_store_buffer")]
     pub max_store_buffer: Option<NonZeroU64>,
@@ -914,18 +919,23 @@ impl ItemSelection {
     /// Whether the item carries a member whose in-process route `analyze`
     /// does not build yet, so the item settles `unsupported` on its own.
     fn unrouted(&self) -> bool {
-        self.unrouted_routing_options(false)
+        self.unrouted_routing_options(false, false)
     }
 
     /// [`Self::unrouted`] for an item whose `options` are negotiated against
     /// its candidates' published values (FR-243, FR-635) when it names no
     /// backend, as a temporal claim's `method` is; `options_negotiated`
     /// false sends an option only to the backend the item names (FR-967).
-    fn unrouted_routing_options(&self, options_negotiated: bool) -> bool {
+    fn unrouted_routing_options(
+        &self,
+        options_negotiated: bool,
+        reads_witness_sampling: bool,
+    ) -> bool {
         self.unrouted_members(options_negotiated)
-            || self.temporal.as_ref().is_some_and(|temporal| {
-                temporal.witness_samples.is_some() || temporal.seed.is_some()
-            })
+            || (!reads_witness_sampling
+                && self.temporal.as_ref().is_some_and(|temporal| {
+                    temporal.witness_samples.is_some() || temporal.seed.is_some()
+                }))
     }
 
     /// [`Self::unrouted`] without the witness sampling members, which a
@@ -975,7 +985,10 @@ impl ItemSelection {
                         .is_some_and(|kind| kind != Capability::Schedulability.to_wire())
                         && temporal
                             .limits
-                            .is_some_and(|limits| limits.max_task_product_work.is_some()))
+                            .is_some_and(|limits| {
+                                limits.max_task_product_work.is_some()
+                                    || limits.max_check_work.is_some()
+                            }))
             })
     }
 }
@@ -1222,6 +1235,8 @@ pub enum ResolvedItem {
     /// A `simulation` item (FR-634), which settles no claim and is not
     /// negotiated.
     Simulation(Box<super::SimulationItem>),
+    /// A composition item or one of its premise items (FSL FR-1044).
+    Composition(Box<CompositionClaim>),
     /// An item settled without running: its terminal record.
     Settled {
         /// The declared name the item used, when it named one.
@@ -1401,6 +1416,13 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .claims()
             .iter()
             .filter_map(|claim| Some((claim.name.clone(), claim.occurrence()?.node().clone()))),
+    );
+    // FR-1044: a component composition is named by its declared name.
+    names.extend(
+        graph
+            .compositions()
+            .iter()
+            .map(|composition| (composition.name().to_owned(), composition.node().clone())),
     );
     // FR-630: a refinement is named by its declared name and keyed at the
     // node of its requirement record (FR-144).
@@ -1622,25 +1644,42 @@ pub fn resolve_items(
     limits: &AnalyzeLimits,
 ) -> Vec<ResolvedItem> {
     match selections {
-        Some(selections) => selections
-            .iter()
-            .enumerate()
-            .map(|(position, selection)| {
-                resolve_one(
-                    package,
-                    subject,
-                    RequestIndex::new(position),
-                    selection,
-                    registry,
-                    binding,
-                )
-            })
-            .collect(),
+        Some(selections) => {
+            let compositions = composition_item::Context {
+                package,
+                subject,
+                registry,
+                binding,
+            };
+            let mut resolved = Vec::with_capacity(selections.len());
+            let mut premises = Vec::new();
+            for (position, selection) in selections.iter().enumerate() {
+                let index = RequestIndex::new(position);
+                match composition_item::resolve(&compositions, index, selection) {
+                    Some(selected) => {
+                        resolved.push(selected.item);
+                        premises.push((index, selected.premises));
+                    }
+                    None => resolved.push(resolve_one(
+                        package, subject, index, selection, registry, binding,
+                    )),
+                }
+            }
+            // FR-1044: the premise items follow the caller's items.
+            let first = resolved.len();
+            let derived =
+                composition_item::premise_items(&compositions, premises, &mut resolved, first);
+            resolved.extend(derived);
+            resolved
+        }
         None => default_items(package, subject, registry, units, binding, limits),
     }
 }
 
+mod composition_item;
 mod package_run;
+
+pub use composition_item::CompositionClaim;
 
 pub use package_run::{
     settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
@@ -1729,6 +1768,7 @@ fn resolve_call_item(
             required: true,
             max_cases: None,
             max_task_product_work: None,
+            max_check_work: None,
             trace: None,
             traces: None,
             recording: None,
@@ -2113,7 +2153,7 @@ fn resolve_one(
                 }
             }
             (Some(_), _) if protocol_analysis_kind => {
-                return invalid_member(index, name, "temporal.subject.protocol");
+                return invalid_member(index, name, "temporal.subject.protocol")
             }
             (Some(_), _) => return invalid_value(index, name, "temporal.subject.protocol"),
             (None, _) => None,
@@ -2192,6 +2232,13 @@ fn resolve_one(
         None
     };
     let claim_reads_time = claim_timed(package, &claim, binding);
+    let single_existential = package.graph().hyper_clauses().iter().any(|clause| {
+        clause.assembled_occurrence() == Some(&claim)
+            && matches!(
+                clause.form(),
+                Some(fsl_semantics::check::HyperForm::SingleExistential)
+            )
+    });
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -2205,6 +2252,7 @@ fn resolve_one(
             max_task_product_work: temporal
                 .limits
                 .and_then(|limits| limits.max_task_product_work),
+            max_check_work: temporal.limits.and_then(|limits| limits.max_check_work),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
             traces: selection.traces.as_ref().map(DocumentSelection::reference),
             recording: selection
@@ -2241,9 +2289,12 @@ fn resolve_one(
                 hybrid: None,
                 ..selection.clone()
             }
-            .unrouted_routing_options(true)
+            .unrouted_routing_options(true, false)
         } else {
-            selection.unrouted_routing_options(kind == Capability::TemporalSatisfaction)
+            selection.unrouted_routing_options(
+                kind == Capability::TemporalSatisfaction,
+                single_existential,
+            )
         } || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
             || reads_no_clocks(claim_reads_time, &temporal)
             || (!protocol_bound
@@ -2348,9 +2399,10 @@ fn resolve_derived(
             {
                 Some(claim)
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
-                None
-            }
+            ResolvedItem::Claim(_)
+            | ResolvedItem::Composition(_)
+            | ResolvedItem::Settled { .. }
+            | ResolvedItem::Simulation(_) => None,
         });
     let Some(mut claim) = derived else {
         return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
@@ -2381,6 +2433,7 @@ fn resolve_derived(
         required: selection.required.unwrap_or(true),
         max_cases: None,
         max_task_product_work: None,
+        max_check_work: None,
         trace: None,
         traces: None,
         recording: None,
@@ -2469,6 +2522,11 @@ fn resolve_schedule_claim(
                     .as_ref()
                     .and_then(|temporal| temporal.limits)
                     .and_then(|limits| limits.max_task_product_work),
+                max_check_work: selection
+                    .temporal
+                    .as_ref()
+                    .and_then(|temporal| temporal.limits)
+                    .and_then(|limits| limits.max_check_work),
                 trace: None,
                 traces: None,
                 recording: None,
@@ -2650,6 +2708,7 @@ fn resolve_protocol_freedom(
                 required: selection.required.unwrap_or(true),
                 max_cases: None,
                 max_task_product_work: None,
+                max_check_work: None,
                 trace: None,
                 traces: selection.traces.as_ref().map(DocumentSelection::reference),
                 recording: None,
@@ -2863,6 +2922,23 @@ fn temporal_settings(selection: &TemporalSelection) -> TemporalItem {
         ..TemporalItem::default()
     };
     if let Some(limits) = &selection.limits {
+        use fsl_replay::ModelCheckLimit;
+        item.requested_limits = [
+            (limits.max_states, ModelCheckLimit::MaxStates),
+            (limits.max_transitions, ModelCheckLimit::MaxTransitions),
+            (
+                limits.max_automaton_states,
+                ModelCheckLimit::MaxAutomatonStates,
+            ),
+            (limits.max_witness_set, ModelCheckLimit::MaxWitnessSet),
+            (
+                limits.max_relation_tuples,
+                ModelCheckLimit::MaxRelationTuples,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(value, limit)| value.map(|_| limit))
+        .collect();
         let set = |value: Option<NonZeroU64>, slot: &mut u64| {
             if let Some(value) = value {
                 *slot = value.get();
@@ -2920,7 +2996,21 @@ fn default_items(
             nodes.push(record.node().clone());
         }
     }
+    // FR-1044: a `compose` declaration is a default item beside the claims.
+    for composition in graph.compositions() {
+        if !nodes.contains(composition.node()) {
+            nodes.push(composition.node().clone());
+        }
+    }
     let position = |node: &filament_exact::NodeKey| -> (usize, u64) {
+        if let Some(composition) = composition_item::composition_at(package, node) {
+            let unit = units
+                .iter()
+                .position(|candidate| candidate == graph.source())
+                .unwrap_or(usize::MAX);
+            let start = u64::try_from(composition.spans().declaration.start).unwrap_or(u64::MAX);
+            return (unit, start);
+        }
         let region = claim_occurrence(package, &records, node, None)
             .and_then(|occurrence| {
                 graph.occurrence_region(occurrence.node().clone(), occurrence.origin())
@@ -2950,10 +3040,36 @@ fn default_items(
     // place after those with one.
     nodes.sort_by_cached_key(|node| position(node));
     let mut resolved = Vec::new();
+    let compositions = composition_item::Context {
+        package,
+        subject,
+        registry,
+        binding,
+    };
+    let mut premises = Vec::new();
     for node in &nodes {
         let Some(name) = declared_name(package, node) else {
             continue;
         };
+        if let Some(composition) = composition_item::composition_at(package, node) {
+            // FSpec FR-290 gives an `assume-guarantee` declaration no item.
+            if composition.rule() != fsl_semantics::check::CompositionRule::AssumeGuarantee {
+                let selection = ItemSelection {
+                    claim: Some(name),
+                    kind: Some(Capability::Composition.to_wire().to_owned()),
+                    ..ItemSelection::default()
+                };
+                let index = RequestIndex::new(resolved.len());
+                match composition_item::resolve(&compositions, index, &selection) {
+                    Some(selected) => {
+                        resolved.push(selected.item);
+                        premises.push((index, selected.premises));
+                    }
+                    None => resolved.push(composition_item::failed(index, composition.name())),
+                }
+            }
+            continue;
+        }
         let kinds: Vec<Capability> = records
             .iter()
             .filter(|record| record.node() == node)
@@ -3012,6 +3128,9 @@ fn default_items(
         )
     };
     resolved.extend(derived);
+    let first = resolved.len();
+    let written = composition_item::premise_items(&compositions, premises, &mut resolved, first);
+    resolved.extend(written);
     resolved
 }
 
@@ -3053,9 +3172,10 @@ fn derived_items(
             {
                 Some(claim.item.claim.clone())
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
-                None
-            }
+            ResolvedItem::Claim(_)
+            | ResolvedItem::Composition(_)
+            | ResolvedItem::Settled { .. }
+            | ResolvedItem::Simulation(_) => None,
         })
         .collect();
     let requirements = fsl_semantics::family::Requirements::new(
@@ -3134,6 +3254,7 @@ fn derived_claim(
                 required: true,
                 max_cases: None,
                 max_task_product_work: None,
+                max_check_work: None,
                 trace: None,
                 traces: None,
                 recording: None,
@@ -3191,9 +3312,10 @@ fn protocol_derived_items(
             {
                 Some(claim.item.claim.clone())
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
-                None
-            }
+            ResolvedItem::Claim(_)
+            | ResolvedItem::Composition(_)
+            | ResolvedItem::Settled { .. }
+            | ResolvedItem::Simulation(_) => None,
         })
         .collect();
     let requirements = fsl_semantics::family::Requirements::new(
@@ -3317,6 +3439,12 @@ impl ClaimItem {
                 item.insert("options".to_owned(), json!(hybrid.options));
             }
         }
+        if let Some(ItemForm::Composition(composition)) = &self.form {
+            item.insert("premises".to_owned(), json!(composition.premises));
+            if !self.options.backend_options.is_empty() {
+                item.insert("options".to_owned(), json!(self.options.backend_options));
+            }
+        }
         if let Some(protocol) = &self.options.protocol_analysis {
             if let Some(root) = &protocol.assessed_root {
                 item.insert("assessed_root".to_owned(), root.clone());
@@ -3395,11 +3523,15 @@ impl ClaimItem {
             );
             item.insert("temporal".to_owned(), Value::Object(member));
         } else if self.kind == Capability::Schedulability {
+            let mut limits = Map::new();
             if let Some(max_work) = self.options.max_task_product_work {
-                item.insert(
-                    "temporal".to_owned(),
-                    json!({"limits": {"max_task_product_work": max_work.get()}}),
-                );
+                limits.insert("max_task_product_work".to_owned(), json!(max_work.get()));
+            }
+            if let Some(max_work) = self.options.max_check_work {
+                limits.insert("max_check_work".to_owned(), json!(max_work.get()));
+            }
+            if !limits.is_empty() {
+                item.insert("temporal".to_owned(), json!({"limits": limits}));
             }
         }
         if let Some(ItemForm::Probabilistic(probabilistic)) = &self.form {
@@ -3604,6 +3736,8 @@ pub fn settle_run(
     } = run;
     let source_input = fsl_eval::simulation::model::ModelCheckInput::source(package);
     let Negotiation {
+        components,
+        gates,
         negotiated,
         unrouted_items,
         settled,
@@ -3618,11 +3752,12 @@ pub fn settle_run(
             family: &|kind, claim| crate::claim_family::claim_family(package, kind, claim),
         },
     )?;
-    let outcome = super::request::analyze_bound(
+    let mut outcome = super::request::analyze_bound(
         &super::RunInput::source(package),
         &binding,
         &provision,
         &negotiated,
+        &components,
         engines,
         &limits,
         cancel,
@@ -3634,6 +3769,7 @@ pub fn settle_run(
         _ => AnalyzeDocumentError::Fault,
     })?
     .into_value();
+    gate_compositions(&mut outcome.records, &gates);
     let (targets, routes) = negotiated_routes(&negotiated, &unrouted_items, engines);
     // FR-634: each simulation item's document at its request index; it
     // settles no claim, so it is no aggregate gap, and its category ranks
@@ -3668,6 +3804,131 @@ pub fn settle_run(
     )
 }
 
+/// FR-1044: a routed composition's `proved` stands only when it has
+/// component-guarantee items and every one of them settled `proved` in this
+/// request. The items are the ones its slot keys identified at resolution, by
+/// request index, so a guarantee checked under other peers is never read as
+/// this one; an item absent from `records` settled by disposition, before any
+/// engine ran, and is not `proved`. A composition with no such item has
+/// nothing to establish its proof, so its `proved` fails closed too. A
+/// provider's `proved` that fails the check settles `inconclusive` with
+/// `replay-refused`, the nearest existing core-only cause, and the code of an
+/// unsupported capability. A `proved` record that names no backend is a
+/// broken invariant and settles `failed`.
+fn gate_compositions(
+    records: &mut [TerminalRecord],
+    gates: &BTreeMap<RequestIndex, Vec<RequestIndex>>,
+) {
+    let proved: std::collections::BTreeSet<RequestIndex> = records
+        .iter()
+        .filter(|record| matches!(record.value(), TerminalValue::Proved { .. }))
+        .map(TerminalRecord::request_index)
+        .collect();
+    for record in records.iter_mut() {
+        let index = record.request_index();
+        let Some(required) = gates.get(&index) else {
+            continue;
+        };
+        if !matches!(record.value(), TerminalValue::Proved { .. })
+            || (!required.is_empty() && required.iter().all(|premise| proved.contains(premise)))
+        {
+            continue;
+        }
+        *record = match record.backend().cloned() {
+            Some(backend) => TerminalRecord::inconclusive(
+                index,
+                backend,
+                InconclusiveCause::ReplayRefused(fsl_foundation::Code::UnsupportedProjection),
+            ),
+            None => TerminalRecord::disposition_failed(
+                index,
+                filament_semantic_value::catalog::InternalFault::new(
+                    "composition-gate",
+                    "proved-without-backend",
+                )
+                .catalog_code(),
+            ),
+        };
+    }
+}
+
+#[cfg(test)]
+mod composition_gate_tests {
+    use std::collections::BTreeMap;
+
+    use fsl_foundation::{BackendId, RequestIndex};
+    use fsl_replay::{Certification, InconclusiveCause, TerminalRecord, TerminalValue};
+
+    use super::gate_compositions;
+
+    fn index(position: usize) -> RequestIndex {
+        RequestIndex::new(position)
+    }
+
+    fn proved(position: usize) -> TerminalRecord {
+        TerminalRecord::proved_by_provider(
+            index(position),
+            BackendId::new("provider"),
+            Certification::Trusted,
+        )
+    }
+
+    /// FR-1044 Behavior: a composition's `proved` over component guarantees
+    /// that all settled `proved` stands.
+    #[test]
+    fn a_proof_over_proved_guarantees_stands() {
+        let mut records = vec![proved(0), proved(1), proved(2)];
+        let gates = BTreeMap::from([(index(0), vec![index(1), index(2)])]);
+        gate_compositions(&mut records, &gates);
+        assert!(matches!(records[0].value(), TerminalValue::Proved { .. }));
+    }
+
+    /// FR-1044 Behavior: a guarantee that is not `proved`, or that has no
+    /// record because it settled by disposition, refuses the proof.
+    #[test]
+    fn a_proof_over_an_unproved_or_missing_guarantee_is_refused() {
+        for guarantees in [vec![index(1), index(2)], vec![index(1), index(5)]] {
+            let mut records = vec![
+                proved(0),
+                proved(1),
+                TerminalRecord::failed(index(2), BackendId::new("en-1")),
+            ];
+            let gates = BTreeMap::from([(index(0), guarantees)]);
+            gate_compositions(&mut records, &gates);
+            assert!(
+                matches!(
+                    records[0].value(),
+                    TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
+                ),
+                "{:?}",
+                records[0].value()
+            );
+        }
+    }
+
+    /// FR-1044 Behavior: a composition with no component-guarantee item has
+    /// nothing that establishes its proof, so a provider's `proved` fails
+    /// closed rather than stand on the provider's answer alone.
+    #[test]
+    fn a_proof_with_no_guarantee_to_check_is_refused() {
+        let mut records = vec![proved(0)];
+        let gates = BTreeMap::from([(index(0), Vec::new())]);
+        gate_compositions(&mut records, &gates);
+        assert!(matches!(
+            records[0].value(),
+            TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
+        ));
+    }
+
+    /// A record of an item that is no composition is never read.
+    #[test]
+    fn a_record_with_no_gate_is_untouched() {
+        let mut records = vec![proved(0)];
+        gate_compositions(&mut records, &BTreeMap::new());
+        assert!(matches!(records[0].value(), TerminalValue::Proved { .. }));
+    }
+}
+
 /// What a run reads of its package while it negotiates its items: the
 /// source route reads its checked package, the package route (FR-850) the
 /// package forms of its items' claims.
@@ -3685,6 +3946,12 @@ struct ItemReads<'r> {
 /// items negotiation ran for that no route reads, the items settled
 /// without running, each claim item's echo and the simulation items.
 struct Negotiation {
+    /// The checked package each component item is analyzed over (FR-1044).
+    components: BTreeMap<RequestIndex, std::sync::Arc<CheckedPackage>>,
+    /// Each routed composition's component-guarantee items (FR-1044): its
+    /// provider's `proved` stands only when every one of them settled
+    /// `proved`.
+    gates: BTreeMap<RequestIndex, Vec<RequestIndex>>,
     negotiated: Vec<NegotiatedItem>,
     unrouted_items: Vec<RequestIndex>,
     settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)>,
@@ -3706,104 +3973,135 @@ fn negotiate_items(
     let mut settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)> = BTreeMap::new();
     let mut echoes: BTreeMap<RequestIndex, Echo> = BTreeMap::new();
     let mut simulations: Vec<super::SimulationItem> = Vec::new();
+    let mut components = BTreeMap::new();
+    let mut gates = BTreeMap::new();
     for resolved in items {
-        match resolved {
-            ResolvedItem::Simulation(item) => simulations.push(*item),
+        let (claim, owner, before, required) = match resolved {
+            ResolvedItem::Simulation(item) => {
+                simulations.push(*item);
+                continue;
+            }
             ResolvedItem::Settled { claim_name, record } => {
                 settled.insert(record.request_index(), (claim_name, *record));
+                continue;
             }
-            ResolvedItem::Claim(claim) => {
-                let ResolvedClaim {
-                    mut item,
-                    claim_name,
-                    candidates,
-                    subject,
-                    unrouted,
-                } = *claim;
-                let admitted = (reads.admit)(&mut item);
-                let echo = item
-                    .request_item_wire(&subject)
-                    .map_err(|_| AnalyzeDocumentError::Fault)?;
-                let identity = (reads.owner)(&item.claim)
-                    .map(|model| fsl_replay::certificate_identity_wire(&item.claim, &model))
-                    .transpose()
-                    .map_err(|_| AnalyzeDocumentError::Fault)?;
-                echoes.insert(
-                    item.request_index,
-                    Echo {
-                        claim_name,
-                        request: echo,
-                        locus: fsl_replay::claim_locus_wire(&item.claim).ok(),
-                        identity,
-                        required: item.options.required,
-                        scoped: has_activation_scope(item.kind),
-                    },
-                );
-                if let Err(refused) = admitted {
-                    let record = match refused {
-                        super::reduction_item::ReductionIssue::UnknownConstraint(name) => {
-                            let mut detail = Map::new();
-                            detail.insert("name".to_owned(), json!(name));
-                            TerminalRecord::disposition_invalid_request(
-                                item.request_index,
-                                CatalogCode::new("invalid_runtime_input", "invalid-value"),
-                                detail,
-                            )
-                        }
-                        super::reduction_item::ReductionIssue::Malformed(_) => {
-                            TerminalRecord::disposition_declined(
-                                item.request_index,
-                                fsl_replay::ProofRefusalCause::InvalidInput,
-                                fsl_replay::DeclineCode::Fsl(
-                                    fsl_foundation::Code::InvalidRuntimeInput,
-                                ),
-                                CatalogCode::new("invalid_runtime_input", "invalid-value"),
-                            )
-                        }
-                    };
-                    settled.insert(item.request_index, (None, record));
-                    continue;
-                }
-                let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
-                // A member no route reads settles `unsupported`, except where
-                // negotiation refused the item as invalid first: a kind its
-                // claim's family does not admit (FR-507, FR-627-AC-4).
-                let temporal_kind = match &item.form {
-                    Some(ItemForm::Temporal(form)) => form.item_kind,
-                    _ => ItemKind::Formula,
-                };
-                let inapplicable = (reads.family)(temporal_kind, &item.claim)
-                    .is_none_or(|family| !item.kind.applies_to_declaration(family));
-                if unrouted
-                    && !inapplicable
-                    && !matches!(disposition, fsl_route::routing::Disposition::InvalidRequest)
-                {
-                    let mut detail = Map::new();
-                    detail.insert("kind".to_owned(), json!(item.kind.to_wire()));
-                    unrouted_items.push(item.request_index);
-                    settled.insert(
-                        item.request_index,
-                        (
-                            None,
-                            TerminalRecord::disposition_unsupported(
-                                item.request_index,
-                                fsl_route::NegotiationOutcome::UnsupportedRequestedCapability
-                                    .code(),
-                                detail,
-                            ),
-                        ),
-                    );
-                    continue;
-                }
-                negotiated.push(NegotiatedItem {
-                    item,
-                    disposition,
-                    diagnostic,
-                });
+            ResolvedItem::Claim(claim) => (*claim, None, None, Vec::new()),
+            ResolvedItem::Composition(derived) => {
+                let CompositionClaim {
+                    claim,
+                    package,
+                    settled,
+                    required,
+                } = *derived;
+                (claim, package, settled, required)
             }
+        };
+        let ResolvedClaim {
+            mut item,
+            claim_name,
+            candidates,
+            subject,
+            unrouted,
+        } = claim;
+        let admitted = (reads.admit)(&mut item);
+        let echo = item
+            .request_item_wire(&subject)
+            .map_err(|_| AnalyzeDocumentError::Fault)?;
+        let owning = match &owner {
+            Some(package) => owning_model(package, &item.claim).map(str::to_owned),
+            None => (reads.owner)(&item.claim),
+        };
+        let identity = owning
+            .map(|model| fsl_replay::certificate_identity_wire(&item.claim, &model))
+            .transpose()
+            .map_err(|_| AnalyzeDocumentError::Fault)?;
+        echoes.insert(
+            item.request_index,
+            Echo {
+                claim_name,
+                request: echo,
+                locus: fsl_replay::claim_locus_wire(&item.claim).ok(),
+                identity,
+                required: item.options.required,
+                scoped: has_activation_scope(item.kind),
+            },
+        );
+        if let Some(record) = before {
+            // FR-1044: settled before negotiation, with its echo.
+            settled.insert(item.request_index, (None, *record));
+            continue;
         }
+        if let Err(refused) = admitted {
+            let record = match refused {
+                super::reduction_item::ReductionIssue::UnknownConstraint(name) => {
+                    let mut detail = Map::new();
+                    detail.insert("name".to_owned(), json!(name));
+                    TerminalRecord::disposition_invalid_request(
+                        item.request_index,
+                        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                        detail,
+                    )
+                }
+                super::reduction_item::ReductionIssue::Malformed(_) => {
+                    TerminalRecord::disposition_declined(
+                        item.request_index,
+                        fsl_replay::ProofRefusalCause::InvalidInput,
+                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                    )
+                }
+            };
+            settled.insert(item.request_index, (None, record));
+            continue;
+        }
+        let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
+        // A member no route reads settles `unsupported`, except where
+        // negotiation refused the item as invalid first: a kind its
+        // claim's family does not admit (FR-507, FR-627-AC-4).
+        let temporal_kind = match &item.form {
+            Some(ItemForm::Temporal(form)) => form.item_kind,
+            _ => ItemKind::Formula,
+        };
+        let family = match &owner {
+            Some(package) => crate::claim_family::claim_family(package, temporal_kind, &item.claim),
+            None => (reads.family)(temporal_kind, &item.claim),
+        };
+        let inapplicable = family.is_none_or(|family| !item.kind.applies_to_declaration(family));
+        if unrouted
+            && !inapplicable
+            && !matches!(disposition, fsl_route::routing::Disposition::InvalidRequest)
+        {
+            let mut detail = Map::new();
+            detail.insert("kind".to_owned(), json!(item.kind.to_wire()));
+            unrouted_items.push(item.request_index);
+            settled.insert(
+                item.request_index,
+                (
+                    None,
+                    TerminalRecord::disposition_unsupported(
+                        item.request_index,
+                        fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                        detail,
+                    ),
+                ),
+            );
+            continue;
+        }
+        if let Some(package) = owner {
+            components.insert(item.request_index, package);
+        }
+        if item.kind == Capability::Composition {
+            gates.insert(item.request_index, required);
+        }
+        negotiated.push(NegotiatedItem {
+            item,
+            disposition,
+            diagnostic,
+        });
     }
     Ok(Negotiation {
+        components,
+        gates,
         negotiated,
         unrouted_items,
         settled,
@@ -4265,6 +4563,16 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             if let Some(document) = certificate_document {
                 if let Some(certificate) = certificate.as_object_mut() {
                     certificate.insert("document".to_owned(), document);
+                }
+            }
+            // FSpec FR-418: a proved task-product item carries the certificate's
+            // `task_product` part beside FR-621's `{identity, checker, accepted}`.
+            if let Some(part) = detail
+                .as_ref()
+                .and_then(|detail| detail.task_certificate.clone())
+            {
+                if let Some(certificate) = certificate.as_object_mut() {
+                    certificate.insert("task_product".to_owned(), part);
                 }
             }
             item.insert("certificate".to_owned(), certificate);

@@ -57,9 +57,9 @@ mod timed_item;
 pub(crate) use request::analyze_bound;
 
 pub use request::{
-    analyze, ClaimItem, ClaimRefusal, FiniteHyperItem, HybridItem, ItemForm, ItemOptions,
-    NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal, SourceProvision,
-    TemporalItem,
+    analyze, ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm,
+    ItemOptions, NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal,
+    SourceProvision, TemporalItem,
 };
 
 use filament_exact::{Cancel, ObjectReference, ScalarLimits};
@@ -519,9 +519,7 @@ impl Engine {
 /// [`Engine::hybrid`] was given a descriptor that is no hybrid provider's
 /// (FR-750): `invalid_capability`/`invalid-dynamics`.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error(
-    "invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction"
-)]
+#[error("invalid-dynamics: {backend:?} does not publish `hybrid` dynamics for temporal-satisfaction")]
 pub struct NotHybrid {
     /// The backend whose descriptor was refused.
     pub backend: BackendId,
@@ -753,6 +751,9 @@ pub struct ItemDetail {
     /// A bounded task-product stop's FSpec FR-331 `task_search` frontier
     /// evidence, without its `identity`.
     pub task_search: Option<serde_json::Value>,
+    /// The `task_product` part of the FSpec FR-418 certificate the checker
+    /// accepted, for a proved task-product item.
+    pub task_certificate: Option<serde_json::Value>,
 }
 
 /// FR-941: what a `finite-replay` item reports of a protocol claim beyond its
@@ -776,10 +777,37 @@ impl ItemDetail {
             request_index: record.request_index,
             exploration: model
                 .and_then(|model| model.exploration)
+                .or_else(|| {
+                    record
+                        .hyper_check
+                        .as_ref()
+                        .and_then(|hyper| hyper.exploration)
+                })
                 .or_else(|| protocol.and_then(|protocol| protocol.exploration))
                 .or_else(|| record.state_graph.as_ref().map(|graph| graph.exploration)),
             checker: model
                 .and_then(|model| model.checker)
+                .or_else(|| {
+                    record
+                        .task_product
+                        .as_deref()
+                        .and_then(|report| report.proof.as_ref())
+                        .filter(|proof| {
+                            matches!(
+                                proof.verdict,
+                                task_product_item::ProofVerdict::Checked(
+                                    fsl_replay::ZoneCertificateVerdict::Accepted
+                                )
+                            )
+                        })
+                        .map(|_| fsl_replay::CertificateChecker::Zone)
+                })
+                .or_else(|| {
+                    record.hyper_check.as_ref().and_then(|hyper| {
+                        (!hyper.certificates.is_empty())
+                            .then_some(fsl_replay::CertificateChecker::ProductClosure)
+                    })
+                })
                 .or_else(|| record.state_graph.as_ref().and_then(|graph| graph.checker))
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
             replayed_steps: record.replayed_steps,
@@ -794,6 +822,17 @@ impl ItemDetail {
                 .task_product
                 .as_deref()
                 .and_then(|report| report.task_search.clone()),
+            task_certificate: record.task_product.as_deref().and_then(|report| {
+                let proof = report.proof.as_ref()?;
+                matches!(
+                    proof.verdict,
+                    task_product_item::ProofVerdict::Checked(
+                        fsl_replay::ZoneCertificateVerdict::Accepted
+                    )
+                )
+                .then_some(())?;
+                proof.certificate.as_ref()?.get("task_product").cloned()
+            }),
         }
     }
 }
@@ -1603,6 +1642,8 @@ pub(crate) enum Refusal {
     Incomplete(fsl_replay::IncompleteCause),
     /// `unsupported` with the refusal's own diagnostic.
     Unsupported(CatalogCode),
+    /// `unsupported` with structured details naming the unavailable package fact.
+    UnsupportedWithDetail(CatalogCode, serde_json::Map<String, serde_json::Value>),
     /// `failed` with the refusal's diagnostic.
     Failed(CatalogCode),
     /// `failed` with the refusal's diagnostic and its detail (FR-750
@@ -2900,6 +2941,18 @@ fn settle(
                     report.temporal_counterexample.as_deref(),
                 )
                 .unwrap_or_else(|_| TerminalRecord::failed(index, backend.clone()))
+            } else if let Some(value) = report
+                .proof
+                .as_ref()
+                .and_then(|proof| proof_value(proof, &report.outcome))
+            {
+                TerminalRecord::of_model_settlement(
+                    index,
+                    backend.clone(),
+                    value,
+                    report.temporal_counterexample.as_deref(),
+                )
+                .unwrap_or_else(|_| TerminalRecord::failed(index, backend.clone()))
             } else {
                 // FSpec FR-235 V-7, FR-331: a work-budget stop is `limit-reached`
                 // for `max_task_product_work`; an open choice with its frontier
@@ -3006,9 +3059,7 @@ fn settle(
             None,
         ),
         EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
-            terminal(
-                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail),
-            ),
+            terminal(TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail)),
             None,
         ),
         EngineReport::Refused(Refusal::UnsupportedConstruct(mut detail)) => {
@@ -3025,6 +3076,10 @@ fn settle(
         EngineReport::Refused(Refusal::Unsupported(code)) => {
             disposed(DispositionKind::Unsupported, Diagnostic::new(code), backend)
         }
+        EngineReport::Refused(Refusal::UnsupportedWithDetail(code, detail)) => record(
+            terminal(TerminalRecord::disposition_unsupported(index, code, detail)),
+            None,
+        ),
         EngineReport::Refused(Refusal::NotEmitted) => {
             let diagnostic = Diagnostic {
                 code: CatalogCode::new(
@@ -4073,5 +4128,173 @@ mod tests {
             &Cancel::new(),
         );
         assert_eq!(records[0].terminal(), expected[0].terminal());
+    }
+}
+
+/// FR-418 and FR-235: the terminal value a task-product proof attempt
+/// settles. `proved` only when the checker accepted the emitted certificate.
+fn proof_value(
+    proof: &task_product_item::TaskProof,
+    outcome: &crate::zone_check::TaskProductSearchOutcome,
+) -> Option<TerminalValue> {
+    use task_product_item::ProofVerdict;
+    let closed = matches!(
+        outcome,
+        crate::zone_check::TaskProductSearchOutcome::Stopped {
+            cause: crate::zone_check::TaskProductSearchStop::RegionClosureRequired,
+            ..
+        }
+    );
+    Some(match &proof.verdict {
+        ProofVerdict::Checked(fsl_replay::ZoneCertificateVerdict::Accepted) => {
+            TerminalValue::Proved {
+                basis: fsl_replay::ProofBasis::ZoneCertified,
+                certification: fsl_replay::Certification::Certified,
+            }
+        }
+        ProofVerdict::Checked(fsl_replay::ZoneCertificateVerdict::Rejected(rejection)) => {
+            TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::CertificateRejected {
+                rule: rejection.rule,
+                at: rejection.at.clone(),
+            })
+        }
+        ProofVerdict::Checked(fsl_replay::ZoneCertificateVerdict::Stopped(cause)) => {
+            TerminalValue::Incomplete(cause.clone())
+        }
+        // The symbolic pass's own stops and faults settle only where the
+        // concrete search did not decide, or closed.
+        ProofVerdict::Stopped(cause) if closed => TerminalValue::Incomplete(cause.clone()),
+        ProofVerdict::Fault if closed => TerminalValue::Failed,
+        ProofVerdict::Stopped(_) | ProofVerdict::Fault | ProofVerdict::Uncertified => return None,
+    })
+}
+
+#[cfg(test)]
+mod proof_value_tests {
+    use super::task_product_item::{ProofVerdict, TaskProof};
+    use super::{proof_value, TerminalValue};
+    use crate::zone_check::{TaskProductSearchOutcome, TaskProductSearchStop};
+    use filament_exact::CancelCause;
+    use fsl_replay::{
+        CertificateLocus, CertificateRejection, CertificateRule, IncompleteCause,
+        InconclusiveCause, ModelCheckLimit, ZoneCertificateVerdict,
+    };
+
+    fn proof(verdict: ProofVerdict) -> TaskProof {
+        TaskProof {
+            verdict,
+            certificate: None,
+        }
+    }
+
+    /// The concrete search's outcome: closed (`RegionClosureRequired`), or
+    /// stopped at its work limit.
+    fn outcome(closed: bool) -> TaskProductSearchOutcome {
+        TaskProductSearchOutcome::Stopped {
+            cause: if closed {
+                TaskProductSearchStop::RegionClosureRequired
+            } else {
+                TaskProductSearchStop::WorkLimit(5)
+            },
+            frontier: Vec::new(),
+            expanded: 0,
+            transitions: 0,
+        }
+    }
+
+    fn limit() -> IncompleteCause {
+        IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::ZoneMaxCheckWork,
+            value: 7,
+        }
+    }
+
+    /// FR-418: `proved` only for an accepted certificate, whatever the
+    /// concrete search did.
+    #[test]
+    fn an_accepted_certificate_settles_proved() {
+        for closed in [true, false] {
+            assert!(matches!(
+                proof_value(
+                    &proof(ProofVerdict::Checked(ZoneCertificateVerdict::Accepted)),
+                    &outcome(closed)
+                ),
+                Some(TerminalValue::Proved { .. })
+            ));
+        }
+    }
+
+    /// A rejected certificate settles `inconclusive` with the checker's rule
+    /// and locus; the checker's own stop settles `incomplete` with its cause.
+    #[test]
+    fn a_rejection_and_a_checker_stop_settle_with_the_checkers_cause() {
+        let at = CertificateLocus::ZoneNode { node: 3 };
+        let rejected = ZoneCertificateVerdict::Rejected(CertificateRejection {
+            rule: CertificateRule::SuccessorMissing,
+            at: at.clone(),
+        });
+        for closed in [true, false] {
+            assert_eq!(
+                proof_value(
+                    &proof(ProofVerdict::Checked(rejected.clone())),
+                    &outcome(closed)
+                ),
+                Some(TerminalValue::Inconclusive(
+                    InconclusiveCause::CertificateRejected {
+                        rule: CertificateRule::SuccessorMissing,
+                        at: at.clone(),
+                    }
+                ))
+            );
+            assert_eq!(
+                proof_value(
+                    &proof(ProofVerdict::Checked(ZoneCertificateVerdict::Stopped(
+                        limit()
+                    ))),
+                    &outcome(closed)
+                ),
+                Some(TerminalValue::Incomplete(limit()))
+            );
+        }
+    }
+
+    /// The symbolic pass's own stop (a work limit or a cancel) and its fault
+    /// settle only once the concrete search has closed; before that the
+    /// concrete search's own result stands.
+    #[test]
+    fn a_pass_stop_or_fault_settles_only_when_the_search_closed() {
+        let cancelled = IncompleteCause::Cancelled {
+            source: CancelCause::Requested,
+        };
+        for stop in [limit(), cancelled] {
+            assert_eq!(
+                proof_value(&proof(ProofVerdict::Stopped(stop.clone())), &outcome(true)),
+                Some(TerminalValue::Incomplete(stop.clone()))
+            );
+            assert_eq!(
+                proof_value(&proof(ProofVerdict::Stopped(stop)), &outcome(false)),
+                None
+            );
+        }
+        assert_eq!(
+            proof_value(&proof(ProofVerdict::Fault), &outcome(true)),
+            Some(TerminalValue::Failed)
+        );
+        assert_eq!(
+            proof_value(&proof(ProofVerdict::Fault), &outcome(false)),
+            None
+        );
+    }
+
+    /// A set no certificate covers leaves the concrete search's result (the
+    /// closed gate settles `certificate-unchecked` elsewhere).
+    #[test]
+    fn an_uncertified_set_leaves_the_concrete_result() {
+        for closed in [true, false] {
+            assert_eq!(
+                proof_value(&proof(ProofVerdict::Uncertified), &outcome(closed)),
+                None
+            );
+        }
     }
 }

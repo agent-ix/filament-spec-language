@@ -29,8 +29,8 @@ use crate::model_check::counterexample::TemporalCounterexample;
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
 use crate::model_check::outcome::{MemoryCause, ModelCheckOutcome, ReductionCause, RunStats};
 use crate::model_check::replay::{
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, StrongFairnessHint,
-    no_value_cause,
+    no_value_cause, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
+    StrongFairnessHint,
 };
 use crate::proof_result::{
     Certification, IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound,
@@ -43,8 +43,8 @@ use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::model::ProtocolDefinition;
 use fsl_eval::simulation::protocol::{
-    PackageProtocolProgram, ProtocolRefusal, ProtocolTransition, SubjectMemory, WeakAccessShape,
     activates_on_each, live_instance_bound, load_buffering_shapes, package_load_buffering_shapes,
+    PackageProtocolProgram, ProtocolRefusal, ProtocolTransition, SubjectMemory, WeakAccessShape,
 };
 use fsl_eval::simulation::{ExpansionStop, SubjectTransition};
 
@@ -199,6 +199,8 @@ pub struct ModelCheckRecord<T: SubjectTransition = ModelTransition> {
 /// A qualified-core certificate checker of an EN-1 proof (FR-282).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CertificateChecker {
+    /// The independent hyper product-closure and component checker.
+    ProductClosure,
     /// The EN-1 closure checker of a safety claim (ADR-018 PC-3).
     Closure,
     /// The SCC and ranking checker of a liveness claim (ADR-018 PC-4).
@@ -213,6 +215,7 @@ impl CertificateChecker {
     /// The checker's FR-621 `certificate.checker` spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ProductClosure => "product-closure",
             Self::Closure => "en-1-closure",
             Self::Component => "scc-ranking",
             Self::Zone => "zone-certificate",
@@ -348,9 +351,11 @@ pub fn settle_protocol_check(
             .model
             .simulation
             .input
-            .evaluator
-            .protocol(&certificate.subject.protocol)
-            .is_some_and(|protocol| !protocol.channels.is_empty())
+            .protocol_definition(&certificate.subject.protocol)
+            .is_some_and(|definition| match definition {
+                ProtocolDefinition::Source(protocol) => !protocol.channels.is_empty(),
+                ProtocolDefinition::Package(form) => !form.channels.is_empty(),
+            })
             .then_some(MemoryBound {
                 member: MemoryBoundMember::MaxMessages,
                 value: certificate
