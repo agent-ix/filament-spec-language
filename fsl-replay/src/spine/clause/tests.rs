@@ -3841,6 +3841,7 @@ fn s4_emits_exactly_the_fr_105_state_nodes() {
     let fsl_semantics::check::MemberTerm::Binding(fsl_semantics::check::Binding {
         name: context_name,
         value: context_value,
+        binder: _,
     }) = context
     else {
         panic!("operation_anchor's first member is a binding");
@@ -3951,6 +3952,7 @@ fn s4_emits_exactly_the_fr_105_state_nodes() {
     let fsl_semantics::check::MemberTerm::Binding(fsl_semantics::check::Binding {
         name: frame_name,
         value: frame_value,
+        binder: _,
     }) = frame_ref
     else {
         panic!("operation_anchor's third member is a binding");
@@ -4458,6 +4460,7 @@ fn clause_parameters(
                                     ..
                                 },
                             ),
+                        binder: _,
                     }) if name == "name" => Some(text.clone()),
                     _ => None,
                 })
@@ -5114,6 +5117,7 @@ fn s4_pre_clauses_via_config_version_and_sub_share_one_anchor_at_config_version(
     let Some(fsl_semantics::check::MemberTerm::Binding(fsl_semantics::check::Binding {
         name,
         value,
+        binder: _,
     })) = members.first()
     else {
         panic!("operation_anchor's first member is the context binding: {members:?}");
