@@ -3444,7 +3444,7 @@ fn package_remainder_caller_source_carrier_refuses_before_file_io() {
         let raw = format!("{{\"format\":\"native-run/1\",\"request\":{{\"models\":[],\"package\":{{\"file\":\"unavailable-package.json\"}},{members},\"tl_lowering\":{{\"clause\":\"Low\"}}}}}}");
         let path = directory.path().join("raw.json");
         std::fs::write(&path, raw).unwrap();
-        let refusal = fsl_command::command::run(&path, |_, _| {})
+        let refusal = fsl_command::command::run(&path, &crate::negotiation::Fr290)
             .err()
             .expect("malformed carrier refuses");
         let value = refusal.value().unwrap();
@@ -3585,7 +3585,13 @@ fn package_remainder_caller_sources_share_intake_limits_at_the_boundary() {
         .err()
         .expect("65 files stops intake");
     assert_eq!(refusal.category().exit_code(), 22, "{refusal}");
-    assert!(refusal.to_string().contains("64"), "{refusal}");
+    assert!(
+        refusal.value().unwrap()["message"]
+            .as_str()
+            .unwrap()
+            .contains("64"),
+        "{refusal}"
+    );
     request["request"]["sources"] = json!([]);
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     prepare_run(&path, RunLimits::default()).expect("the next invocation has fresh budgets");

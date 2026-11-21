@@ -2695,6 +2695,10 @@ fn check_formula<S: SubjectSystem>(
 /// behaviour supplied as a request, not as a counterexample to settle.
 #[derive(Debug)]
 pub struct ModelTraceRun {
+    /// The typed reference actually bound in the admitted initial state.
+    pub bound_over: Option<filament_exact::ObjectReference>,
+    /// The actual final state's canonical key, including an initial terminal state.
+    pub terminal_state: fsl_eval::simulation::StateKey,
     /// The original package call failure, before the letter engine boundary.
     pub call_failure: Option<filament_eval::CallFailure>,
     /// What the FR-329 (or FR-328, for a finite prefix) evaluator returned.
@@ -2787,7 +2791,27 @@ pub fn evaluate_model_trace(
         }
         _ => None,
     };
+    let initial = positions
+        .first()
+        .ok_or_else(|| fault("a-replayed-initial-state-exists"))?;
+    let bound_over = payload
+        .over_binding
+        .as_ref()
+        .map(|instance| {
+            letters
+                .over_reference(instance, &system.atom_state(&initial.state))
+                .map_err(|_| fault("the-replayed-clause-binding-is-readable"))
+        })
+        .transpose()?
+        .flatten();
+    let terminal_state = positions
+        .last()
+        .ok_or_else(|| fault("a-replayed-final-state-exists"))?
+        .state_key
+        .clone();
     Ok(ModelTraceEnd::Evaluated(Box::new(ModelTraceRun {
+        bound_over,
+        terminal_state,
         call_failure: letters.take_call_failure(),
         outcome,
         decisive,

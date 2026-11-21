@@ -201,7 +201,8 @@ pub use certificate::zone_certificate::{
     FairnessMember, ItemIdentity, NonZeno, ProductMark, QuotientEdge, QuotientIdentity,
     QuotientInitial, QuotientStop, QuotientVertex, RefinementIdentity, RefinementPart, SilentMove,
     StateGraphCertificateForm, StateGraphPart, TaskProductQuotient, ZoneCertificate,
-    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict, ZoneCertificateWireError,
+    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
+    ZoneCertificateWireError,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -274,10 +275,11 @@ pub use identity::{
 };
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{
-    undefined_finding, ClaimPredicate, CounterexampleKind, Lasso, LoopProofCounterexample,
-    LoopProofFailure, LoopProofObligation, MappingSite, ModelStep, ObservedTemporalCounterexample,
-    ObservedTemporalKind, ObservedTemporalStep, Race, TemporalCounterexample, TimedPoint,
-    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    undefined_finding, ClaimPredicate, ClauseRunCounterexample, CounterexampleKind, Lasso,
+    LoopProofCounterexample, LoopProofFailure, LoopProofObligation, MappingSite,
+    ModelClauseCounterexample, ModelStep, ObservedTemporalCounterexample, ObservedTemporalKind,
+    ObservedTemporalStep, Race, TemporalCounterexample, TimedPoint, UndefinedEvaluation,
+    UndefinedLocus, UndefinedSite,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
 pub use model_check::existential_settle::{settle_existential, ExistentialRecord};
@@ -342,15 +344,14 @@ pub use model_check::refinement_settle::{
 #[doc(hidden)]
 pub use model_check::replay::replay_timed_counterexample;
 pub use model_check::replay::{
-    behaviour_valuations, evaluate_model_trace, evaluate_protocol_trace, replay_model_trace,
-    replay_checked_source_model_trace,
-    replay_model_trace_from_package, replay_model_trace_with_temporal_selections,
-    replay_protocol_trace, replay_protocol_trace_from_package,
-    replay_protocol_trace_with_temporal_selections, BehaviourValuationEnd,
-    BehaviourValuations, DelayBar, HandoffSupply, ModelTraceEnd, ModelTraceRefusal,
-    ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement, ModelTraceSubject,
-    ModelTraceValue, ProtocolTraceEnd, ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint,
-    TimedReplay,
+    behaviour_valuations, evaluate_model_trace, evaluate_protocol_trace,
+    replay_checked_source_model_trace, replay_model_trace, replay_model_trace_from_package,
+    replay_model_trace_with_temporal_selections, replay_protocol_trace,
+    replay_protocol_trace_from_package, replay_protocol_trace_with_temporal_selections,
+    BehaviourValuationEnd, BehaviourValuations, DelayBar, HandoffSupply, ModelTraceEnd,
+    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
+    ModelTraceSubject, ModelTraceValue, ProtocolTraceEnd, ProtocolTraceRun, ProtocolTraceSubject,
+    StrongFairnessHint, TimedReplay,
 };
 pub use model_check::settle::{
     settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,

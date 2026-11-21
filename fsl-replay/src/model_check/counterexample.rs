@@ -398,6 +398,38 @@ pub struct ObservedTemporalCounterexample {
     pub trace_position: TemporalPosition,
 }
 
+/// A clause run's refutation, retaining the trace arm it actually evaluated.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClauseRunCounterexample {
+    /// A supplied snapshot or record-sample trace.
+    Observed(ObservedTemporalCounterexample),
+    /// A re-executed and validated model behaviour.
+    Model(ModelClauseCounterexample),
+}
+
+impl From<ObservedTemporalCounterexample> for ClauseRunCounterexample {
+    fn from(value: ObservedTemporalCounterexample) -> Self {
+        Self::Observed(value)
+    }
+}
+
+/// FSpec FR-364's existing model payload beside the native clause report's
+/// actual activation position and interval. No reconstructed state becomes
+/// an observed document.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelClauseCounterexample {
+    /// The model behaviour already re-executed by the owning replay engine.
+    pub behaviour: TemporalCounterexample,
+    /// The actual reference bound to the authored clause.
+    pub over: filament_exact::ObjectReference,
+    /// The last replayed state's key, including for an empty prefix.
+    pub terminal_state: StateKey,
+    /// The failing activation, independently of the decisive atom position.
+    pub trace_position: TemporalPosition,
+    /// The first step-bounded operator's interval, under the native contract.
+    pub interval: Option<TemporalInterval>,
+}
+
 impl FamilyPayload for ObservedTemporalCounterexample {
     fn measured_bytes(&self) -> usize {
         std::mem::size_of_val(self)

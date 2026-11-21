@@ -523,6 +523,17 @@ impl ClauseLetters<'_, '_> {
             }))
     }
 
+    /// The actual typed object reference bound to this clause instance in
+    /// an admitted state, without copying its observation environment.
+    pub fn over_reference(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+    ) -> Result<Option<ObjectReference>, AtomStop> {
+        let observed = self.observe(state)?;
+        Ok(self.bound(&observed.rows, instance))
+    }
+
     /// How many states these letters have observed: a state read again, by
     /// another atom or instance, is not observed again.
     pub fn observations(&self) -> u64 {
