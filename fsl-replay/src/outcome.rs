@@ -606,24 +606,27 @@ pub(super) struct TaskSourceTransitionWire {
     arguments: Vec<serde_json::Value>,
 }
 
+/// Select the existing task-source operation spelling without copying it.
+pub(crate) fn task_source_operation<'a>(
+    operation: &'a serde_json::Value,
+    text: &'a str,
+) -> &'a str {
+    // Keep a checked operation's node as the task-source string spelling;
+    // other canonical identities retain their original text.
+    operation
+        .as_str()
+        .or_else(|| operation.get("name").and_then(serde_json::Value::as_str))
+        .or_else(|| operation.get("node").and_then(serde_json::Value::as_str))
+        .unwrap_or(text)
+}
+
 impl From<&filament_semantic_value::model_transition::ModelTransition>
     for TaskSourceTransitionWire
 {
     fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
         let operation: serde_json::Value = serde_json::from_str(identity.operation())
             .expect("canonical source operation identity");
-        let operation = operation
-            .as_str()
-            .or_else(|| operation.get("name").and_then(serde_json::Value::as_str))
-            // Checked model transitions carry the canonical node identity,
-            // not the authored operation spelling. FR-364's source arm
-            // keeps that stable identity as its operation string.
-            .or_else(|| operation.get("node").and_then(serde_json::Value::as_str))
-            .map(str::to_owned)
-            // ModelTransition validates canonical JSON, not a particular
-            // operation-identity object shape. Preserve any other valid
-            // canonical identity instead of panicking on it.
-            .unwrap_or_else(|| identity.operation().to_owned());
+        let operation = task_source_operation(&operation, identity.operation()).to_owned();
         let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
         Self {
             kind: "transition",
