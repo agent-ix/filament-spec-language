@@ -559,6 +559,7 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
     let bytes = tree::read(directory, "checked-package.json", package_ceiling)?;
     let inputs = selection
         .inputs(|file| tree::read(directory, file, fsl_foundation::source::MAX_SOURCE_BYTES))?;
+    let named_selections = inputs.temporal_selections.clone();
     let compiled = emit_checked_v2::compile_inputs(inputs)?;
     if compiled.emitted.package().bytes() != bytes.as_slice() {
         return Err(Error::ReadBackDiffers {
@@ -570,7 +571,9 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
     selection
         .check(&admitted)
         .map_err(Error::SelectionMismatch)?;
-    let mut sources = fsl_analyze::analyze::SourceProvision::default();
+    let mut sources = fsl_analyze::analyze::SourceProvision::default().with_temporal_selections(
+        emit_checked_v2::clock_selections(&compiled.checked, &named_selections)?,
+    );
     let unit_source = compiled.checked.source().identity();
     let unit_ref = fsl_foundation::source::provenance::RawSourceRef::new(
         unit_source.authority.clone(),

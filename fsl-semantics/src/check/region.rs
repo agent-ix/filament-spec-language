@@ -43,6 +43,9 @@ use filament_semantic_value::location::{
 struct SpanMemo {
     reached: RefCell<HashMap<(usize, usize), Option<SpanId>>>,
     held: RefCell<Vec<Location>>,
+    /// When set, [`Self::at`] answers with the `n`th binder name token the
+    /// reached node declares instead of the node's own span.
+    binder: Option<usize>,
     /// The ancestry links `reach` has visited, so a test can bound the work.
     #[cfg(test)]
     visited: std::cell::Cell<usize>,
@@ -78,7 +81,11 @@ impl SpanMemo {
 
     /// The span `location`'s path reaches in `spans`.
     fn at(&self, spans: &ExpressionSpans, location: &Location) -> Option<Span> {
-        spans.span(self.reach(spans, location)?)
+        let node = self.reach(spans, location)?;
+        match self.binder {
+            Some(ordinal) => spans.binder_spans(node).get(ordinal).copied(),
+            None => spans.span(node),
+        }
     }
 }
 
@@ -315,8 +322,22 @@ impl DeclarationRegions {
     /// FR-096: the region `location` names, by the same rule as
     /// [`PackageDeclarations::region`] over the declarations taken.
     pub fn region(&self, location: &Location) -> Option<SourceRegion> {
+        self.region_in(&SpanMemo::default(), location)
+    }
+
+    /// The region of the `ordinal`th binder name token of the expression
+    /// node `location` names.
+    fn binder_region(&self, location: &Location, ordinal: usize) -> Option<SourceRegion> {
+        let memo = SpanMemo {
+            binder: Some(ordinal),
+            ..SpanMemo::default()
+        };
+        self.region_in(&memo, location)
+    }
+
+    fn region_in(&self, memo: &SpanMemo, location: &Location) -> Option<SourceRegion> {
         resolve(
-            &SpanMemo::default(),
+            memo,
             Document {
                 source: &self.source,
                 embedding: self.embedding.as_deref(),
@@ -376,6 +397,11 @@ impl DeclarationRegions {
             }
             CheckCause::ReservedSlotName(cause) if cause.span.is_some() => {
                 region(&self.source, self.embedding.as_deref(), cause.span?)
+            }
+            CheckCause::ReservedSlotName(cause) if cause.binder.is_some() => {
+                let (node, ordinal) = cause.binder.as_ref()?;
+                self.binder_region(node, *ordinal)
+                    .or_else(|| self.region(&refusal.location))
             }
             CheckCause::EmptyReferenceLiteralKey { span } => {
                 region(&self.source, self.embedding.as_deref(), *span)

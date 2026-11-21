@@ -48,10 +48,10 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
     RecordSlot, Visit,
 };
-use fsl_foundation::Span;
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
 };
+use fsl_foundation::Span;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -72,8 +72,8 @@ use super::refusal::{
     IdentityObserving, KeyFault, Obligation, ReservedSlotName, SlotTag, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
-use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
-use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
+use crate::value::definition::{admit_ieee_profile, AdmittedIeeeProfile, DefinitionRole};
+use crate::value::enumeration::{mint_variant_id, AdmittedEnumDeclaration};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_exact::EffectiveId;
@@ -90,8 +90,8 @@ use filament_exact::{Value, ValueType};
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration, TypeEnvironment,
-    admits_equality_conversion,
+    admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
+    FieldDeclaration, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -99,8 +99,8 @@ use filament_semantic_value::location::{
 };
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
-    IdentifiedUnit, QuantityOperation, QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
-    check_comparable, evaluate_quantity_unit, result_unit,
+    check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
+    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -3186,7 +3186,10 @@ impl<'a> Typer<'a> {
     /// node, never as its checked interval.
     fn equality_operand_lowers_as_integer(&self, operand: &TypedOperand) -> bool {
         operand.conversion_target.is_none()
-            && matches!(operand.node.value_type, ValueType::Int(_) | ValueType::Integer)
+            && matches!(
+                operand.node.value_type,
+                ValueType::Int(_) | ValueType::Integer
+            )
             && self.lowers_as_integer(&operand.node)
     }
 
@@ -3438,7 +3441,24 @@ impl<'a> Typer<'a> {
         location: &Location,
         kind: LocalKind,
     ) -> Result<Slot, CheckRefusal> {
-        if let Some(refusal) = reserved_slot_refusal(name, None, location) {
+        self.bind_declared(name, value_type, location, kind, None)
+    }
+
+    /// [`Self::bind`] for a binder whose name token is the `ordinal`th binder
+    /// of the expression node at `site`, so a reserved name is refused at the
+    /// identifier itself.
+    pub(crate) fn bind_declared(
+        &mut self,
+        name: &str,
+        value_type: ValueType,
+        location: &Location,
+        kind: LocalKind,
+        site: Option<(&Location, usize)>,
+    ) -> Result<Slot, CheckRefusal> {
+        if let Some(mut refusal) = reserved_slot_refusal(name, None, location) {
+            if let CheckCause::ReservedSlotName(cause) = &mut refusal.cause {
+                cause.binder = site.map(|(node, ordinal)| (node.clone(), ordinal));
+            }
             return Err(refusal);
         }
         if kind == LocalKind::Bound
@@ -6193,11 +6213,12 @@ impl<'a> Typer<'a> {
             return Err(mismatch(location));
         };
         let source_type = source_type.clone();
-        let slot = self.bind(
+        let slot = self.bind_declared(
             binder,
             source_type.element().clone(),
             location,
             LocalKind::Bound,
+            Some((location, 0)),
         )?;
         Ok((slot, source_type))
     }
@@ -6359,13 +6380,19 @@ impl<'a> Typer<'a> {
         if form == Accumulation::Reduce && source_type.element() != value_type {
             return Err(mismatch(location));
         }
-        let accumulator_slot =
-            self.bind(accumulator, value_type.clone(), location, LocalKind::Bound)?;
-        let binder_slot = self.bind(
+        let accumulator_slot = self.bind_declared(
+            accumulator,
+            value_type.clone(),
+            location,
+            LocalKind::Bound,
+            Some((location, 0)),
+        )?;
+        let binder_slot = self.bind_declared(
             binder,
             source_type.element().clone(),
             location,
             LocalKind::Bound,
+            Some((location, 1)),
         )?;
         Ok((accumulator_slot, binder_slot, source_type))
     }
@@ -6572,6 +6599,7 @@ pub(crate) fn reserved_slot_cause(name: &str, span: Option<Span>) -> Option<Chec
         name: name.to_owned(),
         tag: SlotTag::of(name)?,
         span,
+        binder: None,
     })))
 }
 

@@ -1004,7 +1004,7 @@ impl<'a> Program<'a> {
         Ok(program)
     }
 
-    /// Build the sequence/parallel/attempt/send/receive/repeat program from the admitted
+    /// Build the sequence/parallel/attempt/send/receive/repeat/await program from the admitted
     /// package form. Package execution keeps expression slots out of the
     /// source `CheckedBody` fields; callers evaluate them through the package
     /// evaluator.
@@ -1043,6 +1043,7 @@ impl<'a> Program<'a> {
                 fsl_package::protocol_view::ControlOperation::Send => ControlStep::Send,
                 fsl_package::protocol_view::ControlOperation::Receive => ControlStep::Receive,
                 fsl_package::protocol_view::ControlOperation::Repeat => ControlStep::Repeat,
+                fsl_package::protocol_view::ControlOperation::Await => ControlStep::Await,
                 operation => {
                     return Err(ProtocolRefusal::Unsupported(
                         super::Unsupported::PackageControl(operation),
@@ -1310,7 +1311,20 @@ impl<'a> Program<'a> {
                 })
                 .collect(),
             choices: BTreeMap::new(),
-            awaits: BTreeMap::new(),
+            awaits: package
+                .awaits
+                .iter()
+                .map(|(node, awaited)| {
+                    (
+                        *node,
+                        Await {
+                            event: awaited.event,
+                            then: awaited.then,
+                            timeout: awaited.timeout,
+                        },
+                    )
+                })
+                .collect(),
             checks: BTreeMap::new(),
             fences: BTreeMap::new(),
             events: BTreeMap::new(),

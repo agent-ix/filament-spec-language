@@ -104,6 +104,12 @@ pub enum Error {
         /// The selected clause name.
         clause: String,
     },
+    /// One clock selector names more than one checked declaration.
+    #[error("clock selection {clause:?} is ambiguous")]
+    AmbiguousClause {
+        /// The selector that must identify exactly one declaration.
+        clause: String,
+    },
     /// Two temporal clock selections name one clause.
     #[error("clock selection {clause:?} is given more than once")]
     DuplicateClause {
@@ -126,6 +132,7 @@ impl Error {
             | Self::Points { .. }
             | Self::Clocks { .. }
             | Self::UnknownClause { .. }
+            | Self::AmbiguousClause { .. }
             | Self::DuplicateClause { .. } => None,
         };
         code.map_or(Category::Refusal.exit_code(), |code| {
@@ -625,35 +632,43 @@ pub(crate) fn clock_selections(
                 clause: selection.clause.clone(),
             });
         }
-        let span = match clauses
+        let graph = checked.package().graph();
+        let mut spans = clauses
             .iter()
-            .find(|node| node.clause().name() == selection.clause)
-        {
-            Some(node) => node.clause().span(),
-            // A hyper clause is selected by its clause name (FR-488 "Clause
-            // names and clock bindings"); a `compensate` template reads a
-            // clock too and is selected by its template name.
-            None => checked
-                .package()
-                .graph()
-                .hyper_clauses()
-                .iter()
-                .find(|hyper| hyper.name() == selection.clause)
-                .map(|hyper| hyper.span())
-                .or_else(|| {
-                    checked
-                        .package()
-                        .graph()
-                        .protocols()
-                        .iter()
-                        .flat_map(|protocol| &protocol.obligations.compensations)
-                        .find(|template| template.name == selection.clause)
-                        .map(|template| template.span)
-                })
-                .ok_or_else(|| Error::UnknownClause {
-                    clause: selection.clause.clone(),
-                })?,
-        };
+            .filter(|node| node.clause().name() == selection.clause)
+            .map(|node| node.clause().span())
+            .chain(
+                graph
+                    .hyper_clauses()
+                    .iter()
+                    .filter(|hyper| hyper.name() == selection.clause)
+                    .map(|hyper| hyper.span()),
+            )
+            .chain(
+                graph
+                    .protocols()
+                    .iter()
+                    .flat_map(|protocol| &protocol.obligations.compensations)
+                    .filter(|template| template.name == selection.clause)
+                    .map(|template| template.span),
+            )
+            .chain(graph.protocols().iter().flat_map(|protocol| {
+                protocol
+                    .awaits
+                    .iter()
+                    .filter(move |awaited| {
+                        format!("await {}::{}", protocol.name, awaited.name) == selection.clause
+                    })
+                    .map(|awaited| awaited.span)
+            }));
+        let span = spans.next().ok_or_else(|| Error::UnknownClause {
+            clause: selection.clause.clone(),
+        })?;
+        if spans.next().is_some() {
+            return Err(Error::AmbiguousClause {
+                clause: selection.clause.clone(),
+            });
+        }
         if let Some(hyper) = checked
             .package()
             .graph()

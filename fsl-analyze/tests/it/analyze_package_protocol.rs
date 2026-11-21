@@ -388,6 +388,387 @@ fn package_repeat_proof_refuses_before_execution() {
     assert!(item.get("exploration").is_none(), "{item}");
 }
 
+fn await_request(
+    ws: &Workspace,
+    delivery: &str,
+    matched: &str,
+    then: &str,
+    timeout: &str,
+) -> std::path::PathBuf {
+    await_event_request(
+        ws,
+        delivery,
+        &receive_fifo_receive("Inspected", "Handed", "seen", matched),
+        then,
+        timeout,
+    )
+}
+
+fn await_event_request(
+    ws: &Workspace,
+    delivery: &str,
+    event: &str,
+    then: &str,
+    timeout: &str,
+) -> std::path::PathBuf {
+    let controls = await_controls(event, then, timeout);
+    let ordering = format!("ordering unordered delivery {delivery} capacity 4 overflow block");
+    let path = channel_request_with_profiles(
+        ws,
+        finite_channel_model(),
+        &ordering,
+        &controls,
+        "closing",
+        concat!(
+            "profile pp = \"filament.protocol.finite-global/v1\";\n",
+            "profile t0 = \"filament.temporal.event-position.false-extension/v1\";\n"
+        ),
+    );
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the Await request"))
+            .expect("the request is JSON");
+    document["request"]["clocks"] = json!({"line-clock": {
+        "kind": "event_position", "sequence_authority": "caller-events"
+    }});
+    std::fs::write(&path, document.to_string()).expect("retain the supplied Await clock");
+    path
+}
+
+fn await_controls(event: &str, then: &str, timeout: &str) -> String {
+    channel_send("Handed", "handed", "handed.n = k.v")
+        + &format!(
+            "await Wait after Handed using t0 clock \"line-clock\" within [0, 120]
+                match {event}
+                then {then}
+                timeout {timeout}"
+        )
+}
+
+/// The complete await body explores both the receive and timeout continuations.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-383-AC-7")]
+#[test]
+fn package_await_runs_the_complete_matched_receive_body() {
+    for delivery in ["exactly-once-premise", "at-least-once"] {
+        let ws = Workspace::new(&format!("package-await-complete-{delivery}"));
+        let path = await_request(
+            &ws,
+            delivery,
+            "seen.n = handed.n",
+            "sequence InTime {}",
+            "sequence TooSlow {}",
+        );
+        let item = channel_send_parity(&ws, &path, "proved");
+        if delivery == "exactly-once-premise" {
+            // The two continuations reach different finish states: timeout
+            // retains the queued entry, while the match consumes it.
+            assert_eq!(item["exploration"]["states"], "5", "{item}");
+            assert_eq!(item["exploration"]["transitions"], "5", "{item}");
+        } else {
+            let transitions = item["exploration"]["transitions"]
+                .as_str()
+                .expect("the explored transition count")
+                .parse::<u64>()
+                .expect("a natural count");
+            assert!(transitions > 5, "duplicate delivery is explored: {item}");
+        }
+    }
+}
+
+/// A blocked timeout continuation retains its counterexample and replay refusals.
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FR-940-AC-22",
+    "FR-206-AC-5",
+    "FR-517-AC-33"
+)]
+#[test]
+fn package_await_timeout_deadlock_preserves_replay_and_refusal() {
+    let timeout = format!(
+        "sequence TooSlow {{ {} }}",
+        receive_fifo_receive("Never", "Handed", "late", "false")
+    );
+    let request = |ws: &Workspace| {
+        await_request(
+            ws,
+            "exactly-once-premise",
+            "seen.n = handed.n",
+            "sequence InTime {}",
+            &timeout,
+        )
+    };
+    let ws = Workspace::new("package-await-timeout-deadlock");
+    let path = request(&ws);
+    let item = channel_send_parity(&ws, &path, "refuted");
+    let prefix = item["counterexample"]["prefix"]
+        .as_array()
+        .expect("the timeout deadlock prefix");
+    let timed_out = prefix
+        .iter()
+        .find(|step| step["transition"]["step"] == "timeout")
+        .expect("the timeout continuation was taken");
+    assert_eq!(timed_out["transition"]["node"], "Main/Wait", "{item}");
+    assert!(
+        prefix
+            .iter()
+            .all(|step| step["transition"]["step"] != "receive"),
+        "the matched receive leads to the healthy continuation: {item}"
+    );
+    let blocked = item["counterexample"]["blocked"]
+        .as_array()
+        .expect("the blocked timeout receive");
+    assert_eq!(blocked.len(), 1, "{item}");
+    assert_eq!(
+        blocked[0]["rest"]["node"], "Main/Wait/TooSlow/Never",
+        "{item}"
+    );
+    assert_eq!(blocked[0]["cause"]["type"], "constraint", "{item}");
+
+    let bounded_ws = Workspace::new("package-await-replay-bound");
+    let bounded_path = request(&bounded_ws);
+    let (package_path, bytes) = package_request(&bounded_ws, &bounded_path);
+    let below = u64::try_from(bytes.len() / 2).expect("the package length");
+    let source_limited =
+        crate::analyze_cli_support::analyze_under_replay_bytes(&bounded_path, below);
+    assert!(
+        source_limited.item(0).get("record").is_some(),
+        "{}",
+        source_limited.document()
+    );
+    assert_eq!(
+        label(&source_limited.item(0)),
+        "inconclusive",
+        "{}",
+        source_limited.document()
+    );
+    let cause = &source_limited.item(0)["record"]["cause"];
+    assert_eq!(cause["kind"], "replay-refused", "{cause}");
+    assert_eq!(cause["code"], "stage_limit_exceeded", "{cause}");
+    assert_eq!(cause["cause"], "input-bytes-exceeded", "{cause}");
+    std::fs::remove_file(bounded_ws.path("program.fsl"))
+        .expect("remove source before package replay refusal");
+    let package_limited =
+        crate::analyze_cli_support::analyze_under_replay_bytes(&package_path, below);
+    assert_eq!(
+        package_limited.item(0),
+        source_limited.item(0),
+        "{}",
+        package_limited.document()
+    );
+    assert_eq!(package_limited.exit, source_limited.exit);
+}
+
+/// A false match keeps timeout enabled and never enters the blocked success arm.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-211-AC-5")]
+#[test]
+fn package_await_false_match_keeps_timeout_enabled() {
+    let ws = Workspace::new("package-await-false-match");
+    let then = format!(
+        "sequence InTime {{ {} }}",
+        receive_fifo_receive("Never", "Handed", "early", "false")
+    );
+    let path = await_request(
+        &ws,
+        "exactly-once-premise",
+        "not (seen.n = handed.n)",
+        &then,
+        "sequence TooSlow {}",
+    );
+    let item = channel_send_parity(&ws, &path, "proved");
+    assert_eq!(item["exploration"]["states"], "4", "{item}");
+    assert_eq!(item["exploration"]["transitions"], "3", "{item}");
+}
+
+/// Source checking and strict package admission reject ineligible Await matches.
+#[trace("TC-2958", "FR-218-AC-35", "FR-383-AC-7", "FR-850")]
+#[test]
+fn package_await_ineligible_matches_refuse_in_both_routes() {
+    use filament_contract_model::{
+        CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedProtocolRefusalDetail,
+    };
+    let attempt = crate::fill::attempt("Template", "touch", "", "attempted", "true")
+        .replace(" by w ", " by Machining ");
+    for kind in ["send", "attempt"] {
+        let ws = Workspace::new(&format!("package-await-ineligible-{kind}"));
+        let then = format!("sequence InTime {{ {attempt} }}");
+        let path = await_request(
+            &ws,
+            "exactly-once-premise",
+            "seen.n = handed.n",
+            &then,
+            "sequence TooSlow {}",
+        );
+        let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "{}",
+            source.document()
+        );
+        assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+        let (package_path, bytes) = package_request(&ws, &path);
+        let baseline = analyze(&package_path);
+        assert_eq!(baseline.item(0), source.item(0), "{}", baseline.document());
+        assert_eq!(baseline.exit, source.exit);
+        let mut wire: Value = serde_json::from_slice(&bytes).expect("the emitted package");
+        let original = wire.clone();
+        fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+            .expect("resolve node-held IDs through their actual operand rows");
+        let mut roundtrip = wire.clone();
+        fsl_semantics::check::wire_id::write_operand_rows(&mut roundtrip);
+        assert_eq!(
+            roundtrip, original,
+            "the official conversion preserves every unedited wire fact"
+        );
+        let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire)
+            .expect("the emitted identities");
+        let nodes = wire["semantic_graph"]["nodes"]
+            .as_array_mut()
+            .expect("nodes");
+        let position = |name: &str| {
+            nodes
+                .iter()
+                .position(|node| {
+                    node["semantic_form"] == "control"
+                        && node["declaration"]["qualified_name"]
+                            .as_array()
+                            .and_then(|path| path.last())
+                            == Some(&json!(name))
+                })
+                .unwrap_or_else(|| panic!("the {name} control"))
+        };
+        let inspected = position("Inspected");
+        let template = position("Template");
+        if kind == "send" {
+            let control = &mut nodes[inspected];
+            control["body"]["operation"]["member"]["operator"] = json!("send");
+            let arguments = control["body"]["arguments"]
+                .as_array_mut()
+                .expect("arguments");
+            let of = arguments
+                .iter()
+                .position(|arg| arg["name"] == "of")
+                .expect("the receive's send reference");
+            let send = arguments.remove(of)["value"]["target"].clone();
+            control["dependencies"]
+                .as_array_mut()
+                .expect("dependencies")
+                .retain(|target| target != &send);
+        } else {
+            // Change only untrusted wire. Keep the declared event identity,
+            // sidecars and every other node exactly as emitted.
+            let mut body = nodes[template]["body"].clone();
+            let mut dependencies = nodes[template]["dependencies"]
+                .as_array()
+                .expect("template dependencies")
+                .clone();
+            for name in ["binder", "related", "constraint"] {
+                let original = nodes[inspected]["body"]["arguments"]
+                    .as_array()
+                    .expect("receive arguments")
+                    .iter()
+                    .find(|arg| arg["name"] == name)
+                    .expect("the receive member")
+                    .clone();
+                let member = body["arguments"]
+                    .as_array_mut()
+                    .expect("attempt arguments")
+                    .iter_mut()
+                    .find(|arg| arg["name"] == name)
+                    .expect("the attempt member");
+                if let Some(target) = member["value"].get("target") {
+                    dependencies.retain(|dependency| dependency != target);
+                }
+                if let Some(target) = original["value"].get("target") {
+                    dependencies.push(target.clone());
+                }
+                *member = original;
+            }
+            nodes[inspected]["body"] = body;
+            nodes[inspected]["dependencies"] = json!(dependencies);
+        }
+        nodes[inspected]["dependencies"]
+            .as_array_mut()
+            .expect("dependencies")
+            .sort_by_key(|target| graph.key_of_value(target).expect("an emitted identity"));
+        fsl_semantics::check::wire_id::write_operand_rows(&mut wire);
+        let event = if kind == "send" {
+            channel_send("Inspected", "seen", "seen.n = handed.n")
+        } else {
+            crate::fill::attempt("Inspected", "touch", "", "attempted", "true")
+                .replace(" by w ", " by Machining ")
+        };
+        let invalid_path = await_event_request(
+            &ws,
+            "exactly-once-premise",
+            &event,
+            "sequence InTime {}",
+            "sequence TooSlow {}",
+        );
+        let invalid_source = analyze(&invalid_path).document();
+        assert_eq!(
+            invalid_source["diagnostics"][0]["code"], "unsupported_construct",
+            "{invalid_source}"
+        );
+        assert_eq!(
+            invalid_source["diagnostics"][0]["cause"], "declaration-form",
+            "{invalid_source}"
+        );
+        assert_eq!(invalid_source["items"], json!([]), "{invalid_source}");
+        std::fs::write(
+            ws.path("handoff/checked-package.json"),
+            serde_json::to_vec(&wire).expect("the edited untrusted wire"),
+        )
+        .expect("replace the package input");
+        std::fs::remove_file(ws.path("program.fsl")).expect("source is absent");
+        let refusal = fsl_command::checked_handoff::verify(&ws.path("handoff"))
+            .expect_err("the strict reader rejects the ineligible event");
+        let fsl_command::checked_handoff::Error::ReaderRefused(refusal) = refusal else {
+            panic!("the strict protocol reader must decide: {refusal:?}");
+        };
+        assert_eq!(
+            refusal.code,
+            CheckedPackageRefusalCode::UnsupportedConstruct
+        );
+        assert_eq!(
+            refusal.cause,
+            Some(CheckedPackageRefusalCause::DeclarationForm)
+        );
+        assert!(
+            matches!(refusal.protocol_detail.as_deref(),
+                Some(CheckedProtocolRefusalDetail::AwaitedEvent { form, .. })
+                    if form.as_ref() == kind),
+            "{refusal:?}"
+        );
+        let native_path = refusal
+            .loci
+            .first()
+            .and_then(|locus| locus.path.as_ref())
+            .expect("the native refusal names its Await control")
+            .as_str();
+        let package_run = analyze(&package_path);
+        assert_eq!(package_run.exit, 20);
+        let invalid_package = package_run.document();
+        // Source checking and the native reader retain their semantic refusal.
+        // FR-850's artifact boundary classifies rejected package bytes while
+        // preserving that reader's cause and original pointer.
+        assert_eq!(invalid_package["category"], "refusal", "{invalid_package}");
+        assert_eq!(
+            invalid_package["diagnostics"][0]["code"], "invalid_package",
+            "{invalid_package}"
+        );
+        assert_eq!(
+            invalid_package["diagnostics"][0]["cause"], "declaration-form",
+            "{invalid_package}"
+        );
+        assert_eq!(
+            invalid_package["diagnostics"][0]["details"]["path"], native_path,
+            "{invalid_package}"
+        );
+        assert_eq!(invalid_package["items"], json!([]), "{invalid_package}");
+        assert_eq!(invalid_package["registry"], json!([]), "{invalid_package}");
+    }
+}
+
 fn receive_fifo_request(
     ws: &Workspace,
     key: &str,
@@ -738,7 +1119,18 @@ fn channel_request(
     controls: &str,
     finish: &str,
 ) -> std::path::PathBuf {
-    let body = format!(
+    channel_request_with_profiles(
+        ws,
+        model,
+        ordering,
+        controls,
+        finish,
+        crate::fill::PROTOCOL_PROFILE,
+    )
+}
+
+fn channel_body(ordering: &str, controls: &str, finish: &str) -> String {
+    format!(
         "protocol Flow using pp over (k: M::Cell) on origin {{
             role Planning on M::Cell;
             role Machining on M::Cell;
@@ -747,8 +1139,18 @@ fn channel_request(
             run sequence Main {{ {controls} }}
             finish Over as (closing: Boolean) {{ {finish} }};
         }}"
-    );
-    let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
+    )
+}
+
+fn channel_request_with_profiles(
+    ws: &Workspace,
+    model: Value,
+    ordering: &str,
+    controls: &str,
+    finish: &str,
+    profiles: &str,
+) -> std::path::PathBuf {
+    let unit = crate::fill::unit_text_with(profiles, &channel_body(ordering, controls, finish));
     let model = serde_json::to_vec(&model).expect("the channel model serializes");
     let snapshots = channel_snapshots(&[("c", 0)]);
     crate::analyze_cli_support::request_over(
