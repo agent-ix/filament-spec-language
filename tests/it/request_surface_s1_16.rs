@@ -4123,7 +4123,6 @@ fn package_remainder_condition_refusal_keeps_caller_source_locus() {
         type Zero = Int[0, 0];\n\
         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         type Total = Int[0, 4000];\n\
-
         temporal C using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
         { always[0,5] holds(size(allInstances<Config::ConfigVersion>(Config::config_history)) >= 0) }\n\
         temporal Other using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
