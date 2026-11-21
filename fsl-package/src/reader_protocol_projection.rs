@@ -18,8 +18,9 @@ use filament_checked::node::{
     NodeKind, OrderedKind, RecordField, RecordSlot, Visit,
 };
 use filament_contract_model::{
-    CheckedBodyLocationOrigin, CheckedNodeId, CheckedPackageV2, CheckedProtocolLocation,
-    CheckedProtocolSemanticLocation, CheckedSemanticNodeV2, CheckedTerm, OperationModeKind,
+    CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedNodeId, CheckedPackageV2,
+    CheckedProtocolLocation, CheckedProtocolSemanticLocation, CheckedSemanticNodeV2, CheckedTerm,
+    OperationModeKind,
 };
 use filament_exact::{
     admit_text, ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload,
@@ -3903,12 +3904,14 @@ fn reconstructed_body_locations(
     let mut cursor = admitted
         .body_locations(function, work_limit)
         .map_err(|_| fault("admitted-body-locations-reconstruct"))?;
+    let mut previous = Location::root(Origin::Expression);
     while let Some(view) = cursor
         .next_location()
         .map_err(|_| fault("admitted-body-locations-reconstruct"))?
     {
-        let location = body_location(&view.row.location.origin, view.path)
+        let location = body_location(&view.row.location, &previous)
             .ok_or_else(|| fault("body-location-coordinates-fit"))?;
+        previous = location.clone();
         rows.entry(view.row.application.clone())
             .or_default()
             .push(location);
@@ -4011,25 +4014,27 @@ fn body_location_allowance(admitted: &CheckedPackageV2, function: &CheckedNodeId
 }
 
 /// The checker's location of a function-body term, as its row captured it.
-fn body_location(
-    origin: &CheckedBodyLocationOrigin,
-    path: &[filament_contract_model::CheckedKeyOrdinal],
-) -> Option<Location> {
-    let CheckedBodyLocationOrigin::FunctionBody { name, index, .. } = origin;
+fn body_location(admitted: &CheckedBodyLocation, previous: &Location) -> Option<Location> {
+    let CheckedBodyLocationOrigin::FunctionBody { name, index, .. } = &admitted.origin;
     let origin = Origin::Body {
         function: name.to_string(),
         index: usize::try_from(*index).ok()?,
     };
-    let path = path
-        .iter()
-        .map(|ordinal| match ordinal {
+    let mut location = previous.clone();
+    for _ in 0..admitted.up {
+        location = location.parent()?;
+    }
+    location.origin = origin;
+    for ordinal in &admitted.down {
+        let index = match ordinal {
             filament_contract_model::CheckedKeyOrdinal::Safe(value) => usize::try_from(*value).ok(),
             filament_contract_model::CheckedKeyOrdinal::BeyondSafe(value) => {
                 value.parse::<usize>().ok()
             }
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some(Location::at(origin, &path))
+        }?;
+        location = location.child(index);
+    }
+    Some(location)
 }
 
 /// The name of a function node: its declared name, or empty for a clause

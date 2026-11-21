@@ -351,9 +351,13 @@ mod tests {
             paths.push(view.path.to_vec());
         }
         assert_eq!(paths.len(), 2);
-        assert_ne!(
-            paths[0], paths[1],
-            "each reach retains its captured checker position"
+        assert_eq!(
+            paths,
+            vec![
+                vec![CheckedKeyOrdinal::Safe(1)],
+                vec![CheckedKeyOrdinal::Safe(0)]
+            ],
+            "stored record field order retains each source field's captured position"
         );
         let wire: serde_json::Value = serde_json::from_slice(emission.package().bytes()).unwrap();
         for row in wire["checked_term_data"]["body_locations"]
@@ -364,5 +368,91 @@ mod tests {
             assert!(row["location"].get("up").is_some());
             assert!(row["location"].get("down").is_some());
         }
+    }
+    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
+    #[test]
+    fn compact_tuple_body_walks_two_distinct_record_parents() {
+        let (_, checked) = super::super::tests::package_from_text(
+            "record Cell { value: Integer; tag: Integer; }\n\
+             tuple Pair(Cell, Cell);\n\
+             function pair using v(x: Integer): Pair pure { Pair(Cell { value: x - 1, tag: 0 }, Cell { value: x - 1, tag: 1 }) }\n",
+        );
+        let emission =
+            super::super::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let package = match read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("nested composite bodies must retain both reaches: {other:?}"),
+        };
+        let rows = &package.checked_term_data().unwrap().body_locations;
+        assert_eq!(
+            rows.len(),
+            2,
+            "neither the tuple nor its records contributes a row"
+        );
+        assert_eq!(rows[0].application, rows[1].application);
+        assert_eq!(
+            package
+                .resolved_graph()
+                .nodes
+                .iter()
+                .filter(|node| has_form(node, WireTag::Value, WireForm::RecordValue))
+                .count(),
+            2,
+            "different tags keep two genuine record-value parents"
+        );
+        assert_eq!(
+            package
+                .resolved_graph()
+                .nodes
+                .iter()
+                .filter(|node| has_form(node, WireTag::Value, WireForm::TupleValue))
+                .count(),
+            1
+        );
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &rows[0].location.origin;
+        let mut cursor = package.body_locations(function, 10_000).unwrap();
+        let mut paths = Vec::new();
+        while let Some(view) = cursor.next_location().unwrap() {
+            paths.push(view.path.to_vec());
+        }
+        assert_eq!(
+            paths,
+            vec![
+                vec![CheckedKeyOrdinal::Safe(0), CheckedKeyOrdinal::Safe(0)],
+                vec![CheckedKeyOrdinal::Safe(1), CheckedKeyOrdinal::Safe(0)]
+            ]
+        );
+    }
+    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
+    #[test]
+    fn compact_deep_body_stores_linear_delta_entries() {
+        const TERMS: usize = 128;
+        let (_, checked) = super::super::tests::package_from_text(&format!(
+            "function f using v(x: Integer): Integer pure {{ {}x }}\n",
+            "x + ".repeat(TERMS),
+        ));
+        let emission =
+            super::super::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let package = match read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the compact deep body must read: {other:?}"),
+        };
+        let rows = &package.checked_term_data().unwrap().body_locations;
+        assert_eq!(rows.len(), TERMS);
+        let entries: usize = rows.iter().map(|row| row.location.down.len()).sum();
+        assert_eq!(
+            entries,
+            TERMS - 1,
+            "each nested checker link is stored once"
+        );
+        assert!(rows.iter().all(|row| row.location.up == 0));
     }
 }

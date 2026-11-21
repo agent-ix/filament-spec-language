@@ -119,7 +119,18 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
         &Cancel::new(),
     )
     .expect("the authentic monitor emits");
-    let package = admitted(&root);
+    let read_limits = CheckedPackageReadLimits {
+        work: 1_000_000,
+        ..LIMITS
+    };
+    let package = match read_checked_package(
+        root.emission().package().bytes(),
+        read_limits,
+        root.emission().evidence(),
+    ) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => package,
+        other => panic!("the complete monitor must read within one million work units: {other:?}"),
+    };
     let plan = package.monitor_plans().next().expect("one authentic plan");
     let entries = [
         plan.init().node_id().clone(),
@@ -195,7 +206,7 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
     stale["checked_term_data"]["body_locations"][row_index]["location"]["origin"]["function"] =
         serde_json::to_value(old_function).unwrap();
     let stale_bytes = serde_json::to_vec(&stale).unwrap();
-    match read_checked_package(&stale_bytes, LIMITS, root.emission().evidence()) {
+    match read_checked_package(&stale_bytes, read_limits, root.emission().evidence()) {
         CheckedPackageDispatchResult::Refused(refusal) => {
             assert_eq!(
                 refusal.code,

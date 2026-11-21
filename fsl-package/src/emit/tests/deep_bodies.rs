@@ -64,7 +64,7 @@ const STACK: usize = 512 * 1024;
 /// How many terms, branches or bindings each body has.
 const DEEP: usize = 100_000;
 
-/// A depth whose body-location rows still fit the output limit.
+/// A moderate body for the separate read-back lifecycle check.
 const MODERATE: usize = 2_000;
 
 /// The header every deep unit starts with.
@@ -144,38 +144,29 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
                     )
                     .unwrap_or_else(|refusals| panic!("{label}: checks: {refusals:?}"));
                 let package = CheckedPackage::link(graph);
-                // Each term of the sum is a body-location row carrying its path
-                // from the root, so the rows of a 100,000-deep sum cost the
-                // square of its depth: emission is refused at the output
-                // limit before they are built (FR-264 Behavior 5). The
-                // `else if` and `let` bodies hold no term rows.
                 let emitted = crate::emit::emit_checked(
                     &package,
                     crate::EmitLimits::new(if label == "sum" { 1 << 27 } else { 1 << 32 }),
                 );
+                let emission = emitted.unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));
+                let wire = wire(&emission);
                 if label == "sum" {
-                    let Err(EmitRefusal::OutputLimit(limit)) = &emitted else {
-                        panic!("{label}: refused at the output limit: {emitted:?}");
-                    };
-                    assert_eq!(
-                        emitted.as_ref().expect_err("refused").code(),
-                        Code::StageLimitExceeded
+                    let bytes = emission.package().bytes().len();
+                    assert!(bytes <= 1 << 27, "compact sum bytes remain within the original 128 MiB allowance: {bytes}");
+                    let rows = wire["checked_term_data"]["body_locations"].as_array().unwrap();
+                    assert_eq!(rows.len(), DEEP - 1);
+                    let down: usize = rows.iter().map(|row| row["location"]["down"].as_array().unwrap().len()).sum();
+                    assert_eq!(down, DEEP - 2, "the deep sum writes one delta entry per nested checker link");
+                    assert!(rows.iter().all(|row| row["location"]["up"] == 0 && row["location"].get("path").is_none()));
+                    eprintln!("compact {label}: bytes={bytes}, rows={}, down_entries={down}, allowance={}", rows.len(), 1 << 27);
+                }
+                let written = nodes(&wire);
+                assert!(written.len() >= DEEP, "{label}: one node per level");
+                for node in written {
+                    assert!(
+                        fsl_semantics::check::stratum::is_stratified_body(&node["body"]),
+                        "{label}: a written body is in the five-stratum grammar"
                     );
-                    assert_eq!(limit.setting(), fsl_foundation::Setting::EmitOutputBytes);
-                    assert_eq!(limit.configured_bound(), 1 << 27);
-                    assert!(limit.actual() > 1 << 27, "{label}: {limit}");
-                } else {
-                    let emission =
-                        emitted.unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));
-                    let written = wire(&emission);
-                    let written = nodes(&written);
-                    assert!(written.len() >= DEEP, "{label}: one node per level");
-                    for node in written {
-                        assert!(
-                            fsl_semantics::check::stratum::is_stratified_body(&node["body"]),
-                            "{label}: a written body is in the five-stratum grammar"
-                        );
-                    }
                 }
                 // The checked package: every checked function body (the
                 // arena a deep expression nests in) and the lowered graph
@@ -210,8 +201,7 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
     }
 }
 
-/// FR-264-AC-1: a 2,000-term sum (a 100,000-term sum is refused at the output
-/// limit for its body-location rows), emitted under limits raised to fit it,
+/// FR-264-AC-1: a 2,000-term sum, emitted under limits raised to fit it,
 /// reads back through the I2 read with `i2.*` raised to fit it and verifies at
 /// its emitted package. The `V2Read` clones, compares equal to its clone,
 /// formats for debug and drops, all on a 512 KiB stack.
