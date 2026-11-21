@@ -91,11 +91,19 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
 
 ### Workers
 
+The worker-execution contract below applies to routes that execute worker
+threads. The native model probability route currently executes serially,
+as [FR-741](FR-741-request-and-report-probability-items-through-analyze.md)
+states; retaining a requested worker count does not establish parallel
+execution. The cumulative logical admission order below also applies to
+serial execution.
+
 - A request SHALL carry `workers: usize` (`StatisticalRequest.workers`,
   FR-189), the number of threads that may draw samples at once, setting
   `statistical.workers`, default 1. It is not a budget and enters neither
-  the obligation identity nor the provenance. Every sampler and subject SHALL support
-  `workers` above 1.
+  the obligation identity nor the provenance. On a route that executes
+  workers, every admitted sampler and subject SHALL support `workers`
+  above 1.
 - `workers` 0 SHALL return `StatisticalRefusal::Workers`, catalog code
   `invalid_runtime_input`/`invalid-value`, before any sample is drawn.
 - A sample is a function of the seed, the sampler and its trace index

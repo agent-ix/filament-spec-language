@@ -170,6 +170,13 @@ bindings, each with its own test row or entry.
   cancellation or deadline cause and reports what it reached.
 - **Reproducibility.** Two runs of one request with one seed SHALL give equal
   item results, whatever `workers` is (FR-191).
+- **Native model execution (current).** The native model probability route
+  executes serially today, without a worker pool. It retains and reports
+  the request's `workers` value but does not forward it to the model
+  sampler; it does not coerce the input to 1. Serial execution follows
+  [FR-191](FR-191-bound-and-reproduce-a-statistical-run.md)'s logical
+  admission order directly. Equal results for requested worker counts do
+  not establish multiworker execution on this route.
 - **Refusals.** A claim `under every scheduler`, an exact-only form, or a
   claim with no confidence parameters given `statistical` evidence settles
   `unsupported` with `every-scheduler`, `exact-only-form` or
