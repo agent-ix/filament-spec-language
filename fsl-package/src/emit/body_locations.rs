@@ -335,6 +335,57 @@ mod tests {
 
     #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510", "FSpec-FR-322-AC-513")]
     #[test]
+    fn same_bound_ieee_ordering_keeps_shared_equality_body_visits() {
+        let (_, checked) = super::super::tests::package_from_text(
+            "function f using v(): Boolean pure {\n\
+             let one: Float64[nearest-even] = float64(bits: 0x3ff0000000000000) in one <= one }",
+        );
+        let emission =
+            super::super::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let package = match read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("shared IEEE ordering must admit: {other:?}"),
+        };
+        let rows = &package.checked_term_data().unwrap().body_locations;
+        assert_eq!(rows.len(), 7, "each lowered term retains its visit");
+        let equality = package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(&node.body, CheckedTerm::Application { operation, .. }
+                if operation.identity() == Some("filament.op.ieee.numeric_equal"))
+            })
+            .expect("the three equality checks share one application");
+        let equality_rows: Vec<_> = rows
+            .iter()
+            .filter(|row| row.application == equality.node_id)
+            .collect();
+        assert_eq!(equality_rows.len(), 3);
+        assert_eq!(
+            equality_rows
+                .iter()
+                .map(|row| (&row.occurrence, row.term_ordinal))
+                .collect::<BTreeSet<_>>()
+                .len(),
+            3,
+            "the shared identity keeps each genuine occurrence"
+        );
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &rows[0].location.origin;
+        let mut cursor = package.body_locations(function, 10_000).unwrap();
+        let mut paths = Vec::new();
+        while let Some(view) = cursor.next_location().unwrap() {
+            paths.push(view.path.to_vec());
+        }
+        assert_eq!(paths, vec![vec![CheckedKeyOrdinal::Safe(1)]; 7]);
+    }
+
+    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510", "FSpec-FR-322-AC-513")]
+    #[test]
     fn compact_composite_bodies_keep_each_shared_application_reach() {
         let (_, checked) = super::super::tests::package_from_text(
             "record Pair { left: Integer; right: Integer; }\n\

@@ -448,6 +448,28 @@ fn term_application<'c>(
     if let [only] = keys[..] {
         return Ok(Some(only));
     }
+    // A shared descendant can be read by several sibling parts of one
+    // lowering. The parent's direct operand order identifies this visit
+    // before transitive reach through another sibling can hide it. Count
+    // visits rather than distinct keys: both operands may name one node.
+    if let Some((parent, earlier)) = under {
+        if let Some(parent) = graph.semantic_graph().node(parent.clone()) {
+            let seen = earlier.iter().filter(|key| keys.contains(key)).count();
+            let named = parent
+                .body()
+                .leaves()
+                .into_iter()
+                .filter_map(|leaf| match leaf {
+                    LeafTerm::Reference { target } => target.admitted(),
+                    LeafTerm::Literal { .. } | LeafTerm::DependencyReference { .. } => None,
+                })
+                .filter(|operand| keys.contains(operand))
+                .nth(seen);
+            if let Some(key) = named.and_then(|operand| keys.iter().find(|key| **key == operand)) {
+                return Ok(Some(*key));
+            }
+        }
+    }
     // A recursive call reaches its own application again: only another
     // application at the position makes one an operand.
     let reach: Vec<HashSet<NodeKey>> = keys
