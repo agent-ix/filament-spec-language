@@ -398,7 +398,7 @@ impl TerminalRecord {
             InconclusiveCause::ReplayParity(_) => Err(PluginResultRefusal::FslOnlyCause(
                 FslOnlyCause::ReplayParity,
             )),
-            InconclusiveCause::ReplayRefused(_) => Err(PluginResultRefusal::FslOnlyCause(
+            InconclusiveCause::ReplayRefused(_) | InconclusiveCause::ReplayRefusedAtBound { .. } => Err(PluginResultRefusal::FslOnlyCause(
                 FslOnlyCause::ReplayRefused,
             )),
             InconclusiveCause::PremiseUnproved { .. } => Err(PluginResultRefusal::FslOnlyCause(

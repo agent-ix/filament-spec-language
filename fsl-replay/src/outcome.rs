@@ -999,6 +999,15 @@ impl ItemCause {
             ReportedInconclusiveCause::Cause(InconclusiveCause::ReplayRefused(code)) => {
                 item.code = Some(code.as_str().to_owned());
             }
+            ReportedInconclusiveCause::Cause(InconclusiveCause::ReplayRefusedAtBound {
+                code,
+                cause,
+                setting,
+            }) => {
+                item.code = Some(code.as_str().to_owned());
+                item.cause = Some((*cause).to_owned());
+                item.setting = Some(setting);
+            }
             ReportedInconclusiveCause::Cause(InconclusiveCause::StaleDependency {
                 requested,
                 recompiled,

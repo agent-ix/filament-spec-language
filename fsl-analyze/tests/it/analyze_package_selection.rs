@@ -1311,6 +1311,16 @@ fn a_replay_over_the_input_bytes_bound_settles_replay_refused_on_both_routes() {
                 "stage_limit_exceeded",
                 "{route} {index}: {item}"
             );
+            assert_eq!(
+                item["record"]["cause"]["cause"],
+                "input-bytes-exceeded",
+                "{route} {index}: {item}"
+            );
+            assert_eq!(
+                item["record"]["cause"]["setting"],
+                "replay.input_bytes",
+                "{route} {index}: {item}"
+            );
         }
         assert_eq!(document["category"], "inconclusive", "{route}: {document}");
         assert_ne!(run.exit, 30, "{route}: {document}");
