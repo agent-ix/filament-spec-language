@@ -78,7 +78,10 @@ fn a_function_parameter_in_the_reserved_slot_form_is_refused_at_the_identifier()
         assert_eq!(reserved, [found(name, tag, name)], "{name}");
     }
     let (reserved, _) = reserved(&function("arg_sa_sb_sc_sd"));
-    assert_eq!(reserved, [found("arg_sa_sb_sc_sd", "arg", "arg_sa_sb_sc_sd")]);
+    assert_eq!(
+        reserved,
+        [found("arg_sa_sb_sc_sd", "arg", "arg_sa_sb_sc_sd")]
+    );
 }
 
 /// FR-488-AC-29: a quantifier binder in the reserved form refuses, naming
@@ -92,7 +95,10 @@ fn a_quantifier_binder_in_the_reserved_slot_form_is_refused() {
     let [found] = reserved.as_slice() else {
         panic!("one refusal, got {reserved:?}");
     };
-    assert_eq!((found.name.as_str(), found.tag.as_str()), ("slot_sx_sy", "slot"));
+    assert_eq!(
+        (found.name.as_str(), found.tag.as_str()),
+        ("slot_sx_sy", "slot")
+    );
     let region = found.region.as_deref().expect("a region");
     assert!(region.contains("slot_sx_sy"), "{region}");
 }
@@ -129,13 +135,7 @@ fn protocol_binders_in_the_reserved_slot_form_are_refused_at_the_identifier() {
 #[test]
 fn a_near_miss_of_the_reserved_slot_form_is_admitted() {
     for name in [
-        "slot_sv",
-        "op_sa_sb",
-        "rcv_s",
-        "op_sa_x4",
-        "op_s_xC3",
-        "op_s_xc3",
-        "slotted",
+        "slot_sv", "op_sa_sb", "rcv_s", "op_sa_x4", "op_s_xC3", "op_s_xc3", "slotted",
     ] {
         let (reserved, refusals) = reserved(&function(name));
         assert!(reserved.is_empty(), "{name}: {reserved:?}");

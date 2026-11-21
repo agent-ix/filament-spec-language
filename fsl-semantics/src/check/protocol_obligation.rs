@@ -585,14 +585,17 @@ impl Checker<'_, '_> {
             .iter()
             .map(|binder| &binder.name)
             .chain(activation)
-            .chain(protocol.captures.iter().map(|capture| &capture.parameter.name))
+            .chain(
+                protocol
+                    .captures
+                    .iter()
+                    .map(|capture| &capture.parameter.name),
+            )
             .chain(templates);
         let location = protocol_location(&protocol.name.name, ProtocolSite::ActivationGuard);
         let before = self.refusals.len();
         for name in names {
-            if let Some(refusal) =
-                reserved_slot_refusal(&name.name, Some(name.span), &location)
-            {
+            if let Some(refusal) = reserved_slot_refusal(&name.name, Some(name.span), &location) {
                 self.refusals.push((name.span, refusal));
             }
         }
