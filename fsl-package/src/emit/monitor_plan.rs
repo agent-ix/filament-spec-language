@@ -1336,6 +1336,12 @@ fn finish(
         .collect::<Vec<_>>()
     });
     let rekey = Rekey(changes);
+    let mut checked_term_data = base.checked_term_data().cloned();
+    if let Some(data) = &mut checked_term_data {
+        for (old, new) in changes {
+            super::replace_term_data_node(data, old, new);
+        }
+    }
     let operation_bodies = base.operation_body_rows().map(|rows| {
         let mut rows = rows.to_vec();
         for row in &mut rows {
@@ -1364,7 +1370,7 @@ fn finish(
                 refinement_step_rows: base.refinement_step_rows(),
             },
             CheckedPackageSidecarsRef {
-                checked_term_data: base.checked_term_data(),
+                checked_term_data: checked_term_data.as_ref(),
                 temporal_bindings: base.temporal_bindings(),
                 temporal_clause_names: base.temporal_clause_names(),
                 claim_names: base.claim_names(),
