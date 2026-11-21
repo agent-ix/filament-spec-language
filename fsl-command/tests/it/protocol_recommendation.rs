@@ -16,13 +16,58 @@ fn run(source: &str) -> crate::cli_contract::Outcome {
 }
 
 fn run_with_snapshot(source: &str, snapshot: &[u8]) -> crate::cli_contract::Outcome {
+    run_with_model(source, snapshot, MODEL)
+}
+
+fn run_with_model(source: &str, snapshot: &[u8], model: &[u8]) -> crate::cli_contract::Outcome {
     let case = Case::new();
     case.write("workflow.native", source.as_bytes());
     case.write("start.json", snapshot);
-    case.write("counter.json", MODEL);
+    case.write("counter.json", model);
     let mut request: Value = serde_json::from_str(REQUEST).expect("example request");
     request["request"]["models"][0]["source"]["file"] = json!("counter.json");
     analyze(&case.json("analyze.json", &request))
+}
+
+/// Finite argument domains are filtered by the selected precondition and
+/// the surviving arguments appear in parameter order in the record.
+#[test]
+#[trace("FSpec-FR-822-AC-3")]
+fn a_recommendation_carries_its_precondition_enabled_arguments() {
+    let mut model: Value = serde_json::from_slice(MODEL).expect("counter model");
+    let counter = &mut model["types"][1];
+    let mut parameter = counter["fields"][0].clone();
+    let identity = "ix://test/counter/Counter/inc/allowed";
+    parameter["identity"] = json!(identity);
+    parameter["name"] = json!("allowed");
+    parameter["typeRef"] = json!("ix://filament/native/Boolean");
+    parameter["origin"]["generated"]["generatorIdentity"] = json!(identity);
+    parameter["origin"]["generated"]["inputIdentities"] = json!([identity]);
+    counter["operations"][0]["params"] = json!([parameter]);
+    let source = SOURCE.replace("self.value < 2", "self.value < 2 and allowed");
+    let outcome = run_with_model(
+        &source,
+        SNAPSHOT,
+        &serde_json::to_vec(&model).expect("model bytes"),
+    );
+    assert_eq!(outcome.exit, 10, "{}", outcome.document);
+    let item = &outcome.document["items"][0];
+    let prefix = &item["counterexample"]["prefix"];
+    assert_eq!(
+        prefix[0]["transition"]["recommendation"]["arguments"],
+        json!([true]),
+        "{item}"
+    );
+    assert_eq!(
+        prefix[1]["transition"]["arguments"],
+        json!([true]),
+        "{item}"
+    );
+    assert_eq!(
+        item["exploration"]["transitions"], "2",
+        "one enabled argument vector at each step: {item}"
+    );
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// The selected precondition disables the advisory call at capacity.
