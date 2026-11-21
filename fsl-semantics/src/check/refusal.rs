@@ -4164,7 +4164,7 @@ mod tests {
     fn reference_literal_refusal_preserves_display_equality_and_payload() {
         use filament_exact::ValueType;
         use filament_semantic_value::location::ExpressionLocation;
-        use filament_semantic_value::Origin;
+        use filament_semantic_value::location::ExpressionOwner as Origin;
         use fsl_forms::NameForm;
         use fsl_foundation::Span;
         use std::hash::{DefaultHasher, Hash, Hasher};
@@ -4186,18 +4186,25 @@ mod tests {
                 refusal.location
             )
         );
-        assert_eq!(refusal, refusal.clone());
+        let equivalent = super::CheckRefusal {
+            location: refusal.location.clone(),
+            cause: CheckCause::ReferenceLiteralTypeMismatch {
+                name,
+                actual: Box::new(ValueType::Boolean),
+            },
+        };
+        assert_eq!(refusal, equivalent);
         let CheckCause::ReferenceLiteralTypeMismatch { actual: stored, .. } = &refusal.cause else {
             unreachable!("the reference-literal cause")
         };
         assert_eq!(stored.as_ref(), &actual);
         assert_eq!(serde_json::to_vec(stored).unwrap(), serde_json::to_vec(&actual).unwrap());
-        let hash = |value: &dyn Fn(&mut DefaultHasher)| {
+        fn hash(value: &impl Hash) -> u64 {
             let mut state = DefaultHasher::new();
-            value(&mut state);
+            value.hash(&mut state);
             state.finish()
-        };
-        assert_eq!(hash(&|state| stored.hash(state)), hash(&|state| actual.hash(state)));
+        }
+        assert_eq!(hash(stored), hash(&actual));
     }
 
     /// Every `CheckingLimitKind` reports `stage_limit_exceeded`
