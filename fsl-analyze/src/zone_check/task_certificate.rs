@@ -59,7 +59,11 @@ pub fn no_release_task_product_certificate(
             return Err(super::ZoneCheckRefusal::Fault("source-closure-outcome"));
         }
     };
-    for edge in run.edges.clone() {
+    for index in 0..run.edges.len() {
+        if cancel.poll() {
+            return Err(super::ZoneCheckRefusal::Stopped(super::ZoneStop::Cancelled));
+        }
+        let edge = run.edges[index].clone();
         if let Some((step, _)) = edge.step {
             let steps = match run.steps_of(edge.from) {
                 Ok(steps) => steps,

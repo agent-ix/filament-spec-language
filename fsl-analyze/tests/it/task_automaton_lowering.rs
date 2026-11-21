@@ -373,6 +373,37 @@ fn run_bare() -> Value {
     .item(0)
 }
 
+/// The request remains release-backed even when its checked release cannot
+/// occur; its proof uses the source closure rather than fixed-work regions.
+#[trace("TC-371", "FR-418-AC-14")]
+#[test]
+fn an_unreachable_checked_release_proves_with_the_source_certificate() {
+    let declarations = format!(
+        "taskset N {{ task t periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+         schedulable NFp on N under fixed_priority;\n\
+         pre Blocked using v on M::Call::fire_t {{ self.phase = 3 }}\n{}",
+        sources("N", &["t"])
+    );
+    let run = run(
+        "unreachable-task-release",
+        &["t"],
+        &declarations,
+        json!([{"claim":"NFp", "backend":"en-6"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(
+        item["certificate"]["task_product"]["time_progress"]["method"],
+        "closed-no-release-product/v1",
+        "{item}"
+    );
+    assert!(item["record"].get("task_search").is_none(), "{item}");
+    let bare = run_bare();
+    assert_eq!(bare["request"]["candidates"]["backends"], json!([]));
+    assert_eq!(label(&bare), "unsupported", "{bare}");
+}
+
 fn reduced_agreement(third: u32, policy: &str, want: &str) {
     let declarations = task_set_b(third)
         .replace("taskset B", "taskset BReduced")

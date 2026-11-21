@@ -320,10 +320,9 @@ pub(crate) fn stop_cause(cause: ZoneStop, cancel: &Cancel) -> Option<IncompleteC
             };
             Some(IncompleteCause::LimitReached { limit, value })
         }
-        ZoneStop::Cancelled => match cancel.cause() {
-            Some(source) => Some(IncompleteCause::Cancelled { source }),
-            None => None,
-        },
+        ZoneStop::Cancelled => cancel
+            .cause()
+            .map(|source| IncompleteCause::Cancelled { source }),
     }
 }
 

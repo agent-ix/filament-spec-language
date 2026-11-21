@@ -18,7 +18,7 @@ relationships:
 
 Verify that the lowered task-product subject carries the declared periods
 and deadlines, that EN-6's verdict on a task automaton equals EN-7's
-response-time verdict on the three-task set `B`, that an unschedulable set
+response-time verdict on the retimed three-task set `BReduced`, that an unschedulable set
 yields a replayed counterexample whose first deadline miss is exact, and
 that a non-positive period is refused at check. Scope: FR-249-AC-7 to
 FR-249-AC-10.
@@ -30,16 +30,28 @@ task set `Pair` (`a` periodic 4 ms, deadline 3 ms, work 1, priority 1; `b`
 sporadic 6 ms, deadline 5 ms, work 2, priority 2); task set `B` with
 `(C, T = D)` of `t1 (1, 4)`, `t2 (2, 6)`, `t3 (3, 10)` ms and the variant
 with `t3` work 4; each task bound by `release S.τ on M::o;`. Every task has
-`bcet` equal to `wcet`.
+`bcet` equal to `wcet`. `BReduced` keeps these three LO tasks, their work,
+priorities 1 to 3, zero jitter and blocking, and separate always-enabled
+release operations, but retimes periods and deadlines to `(6, 6, 8)` ms.
+
+This retiming minimizes the maximum period in the integer-ms domain with
+unchanged work and all four policy/work outcomes preserved: if every period
+were at most 7, work-4 EDF utilization would be at least `7/7`; equality
+requires all three periods to be 7, where fixed priority also proves, losing
+the required refutation. Maximum period 8 is therefore minimal. The
+hyperperiod is 24 ms versus the original 60 ms. This is retiming, not uniform
+or componentwise period downscaling; no smaller region quotient is assumed.
 
 1. Analyze `schedulable PairFp on Pair under fixed_priority;` unnamed and
    with `backend` `en-6`; read both candidate sets, its certificate's
    `task_product.queue_bounds` and the lowered subject's task-timing rows.
    Repeat with the `release` declarations removed, naming `en-6`.
 2. Analyze `schedulable BFp on B under fixed_priority;` and
-   `schedulable BEdf on B under edf;` once on EN-7 and once with `backend`
-   `en-6`; repeat for the work-4 variant.
-3. Read the refuted EN-6 item of the work-4 variant under
+   `schedulable BEdf on B under edf;` on EN-7; repeat for the work-4 variant.
+   Run only the original work-3 fixed-priority baseline on EN-6 at defaults
+   and read its typed first exhausted bound. Analyze the corresponding
+   `BReduced` claims on both EN-7 and EN-6 for both work variants.
+3. Read the refuted EN-6 item of the original `B` work-4 variant under
    `fixed_priority`: its counterexample prefix, `trace_position`, `loop`,
    `queue_growth` and replay through the FR-237 `ModelTrace` entry. Replay
    each variant: the miss step's `deadline` 11; its `demand` 3; `deadline`
@@ -67,9 +79,18 @@ Tag tests `#[trace("TC-3008", "FR-249-AC-7")]` to
   item naming `en-6` has an empty candidate set and settles `unsupported`.
 - Step 2: EN-7 returns `Schedulable` with fixpoints `(1, 3, 10)` (`t3`
   iterating `3, 6, 7, 9, 10, 10`) and, under EDF, utilization `53/60`;
-  EN-6 proves both. For the variant EN-7 returns `Miss` for `t3`, job 0,
-  iterates `4, 7, 10, 11`, and EDF `Schedulable` at `59/60`; EN-6 refutes
-  `fixed_priority` and proves `edf`. Each EN-6 label equals EN-7's.
+  the original work-3 fixed-priority EN-6 baseline at default limits settles
+  typed `incomplete` / `limit-reached` naming the first exhausted bound
+  `max_check_work`, setting `zone_check.max_check_work`, with no certificate
+  and no full verdict claimed. For original work 4 EN-7 returns `Miss` for
+  `t3`, job 0, iterates `4, 7, 10, 11`, and EDF `Schedulable` at `59/60`.
+  On `BReduced`, work 3 has fixed-priority fixpoints `(1, 3, 6)`, `t3`
+  iterates `3, 6, 6`, and EDF utilization `7/8`; both EN-6 claims prove.
+  Work 4 has fixed-priority `Miss` for `t3`, job 0, iterates `4, 7, 10`
+  exceeding deadline 8, and EDF `Schedulable` at utilization 1; EN-6 refutes
+  fixed priority and proves EDF. The four `BReduced` EN-6 labels equal the
+  respective EN-7 labels; the original work-4 fixed-priority refutation in
+  step 3 remains a valid early concrete refutation.
 - Step 3: `prefix[trace_position]` is the earliest miss of the product:
   `deadline-miss` of `t3`, job 0, `demand` 4, `deadline` 10, at time 10
   with completed service 3, every task activated at 0, and no other
