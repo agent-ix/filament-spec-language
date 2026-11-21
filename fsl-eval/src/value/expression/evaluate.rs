@@ -560,13 +560,17 @@ fn sum_admits(value_type: &ValueType, value: &Value) -> bool {
     }
 }
 
+/// Immutable sparse authority shared by reads and call frames. Ordinary
+/// values have no backing allocation.
+pub(super) type ReferenceOrigins = Option<Arc<[ProtocolReferenceOccurrence]>>;
+
 /// The arguments a call popped, with whether each forwards the absent-key
 /// parameter and the binder each derives from.
 struct PoppedArguments {
     values: Vec<Value>,
     provenance: Vec<bool>,
     owners: Vec<Owner>,
-    reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
+    reference_origins: Vec<ReferenceOrigins>,
 }
 
 /// One live occurrence for the call frame plus all occurrences retained by
@@ -772,7 +776,7 @@ struct DispatchGuard<N> {
     node: N,
     /// The owner of each dispatched argument, receiver first.
     owners: Vec<Owner>,
-    reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
+    reference_origins: Vec<ReferenceOrigins>,
 }
 
 /// Which population an `allInstances`/`lookup` reads: the ambient post
@@ -877,15 +881,15 @@ pub(crate) struct Machine<'a, 'm, N> {
     dispatch_tables: &'a [DispatchTable],
     values: Vec<Value>,
     /// Explicit admitted population origins, parallel to the value stack.
-    value_reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
+    value_reference_origins: Vec<ReferenceOrigins>,
     /// Root binder origins supplied by admission, consumed by its first frame.
-    root_reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
+    root_reference_origins: Vec<ReferenceOrigins>,
     /// FR-125: whether each stack value is still the absent-key parameter
     /// being forwarded as a reference, rather than read by an operation.
     value_guard_provenance: Vec<bool>,
     frames: Vec<Vec<Option<Value>>>,
     /// Explicit occurrence origins parallel to every frame and slot.
-    frame_reference_origins: Vec<Vec<Vec<ProtocolReferenceOccurrence>>>,
+    frame_reference_origins: Vec<Vec<ReferenceOrigins>>,
     /// Live occurrence charge retained for each call frame while it is on
     /// the stack; ordinary clause and expression roots retain zero or their
     /// separately admitted expression-root charge.
@@ -1223,10 +1227,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 
     /// Retain the population metadata already validated beside root values.
     /// An empty list means no explicit origin, never an inferred population.
-    pub(crate) fn with_reference_origins(
-        mut self,
-        origins: Vec<Vec<ProtocolReferenceOccurrence>>,
-    ) -> Self {
+    pub(crate) fn with_reference_origins(mut self, origins: Vec<ReferenceOrigins>) -> Self {
         self.root_reference_origins = origins;
         self
     }
@@ -1561,7 +1562,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             tracked.push_frame(Vec::new(), frame.len());
         }
         let mut origins = std::mem::take(&mut self.root_reference_origins);
-        origins.resize_with(frame.len(), Vec::new);
+        origins.resize(frame.len(), None);
         self.frame_reference_origins.push(origins);
         self.frames.push(frame);
         self.frame_guard_provenance.push(provenance);
@@ -1574,7 +1575,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         frame: Vec<Option<Value>>,
         mut provenance: Vec<bool>,
         owners: Vec<Owner>,
-        mut reference_origins: Vec<Vec<ProtocolReferenceOccurrence>>,
+        mut reference_origins: Vec<ReferenceOrigins>,
         next_charge: Integer,
         enforce_limit: bool,
     ) -> Result<(), Halt> {
@@ -1603,7 +1604,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             (occurrences, total.unwrap_or(u64::MAX))
         };
         provenance.resize(frame.len(), false);
-        reference_origins.resize_with(frame.len(), Vec::new);
+        reference_origins.resize(frame.len(), None);
         if let Some(tracked) = self.owners.as_mut() {
             tracked.push_frame(owners, frame.len());
         }
@@ -1926,9 +1927,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         Ok((value, owner))
     }
 
-    fn pop_owned_with_origins(
-        &mut self,
-    ) -> Result<(Value, Owner, Vec<ProtocolReferenceOccurrence>), Halt> {
+    fn pop_owned_with_origins(&mut self) -> Result<(Value, Owner, ReferenceOrigins), Halt> {
         let value = self
             .values
             .pop()
@@ -1950,7 +1949,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 
     /// Pop a value while preserving whether it forwards the absent-key
     /// parameter through a let binding, lookup reference, or helper argument.
-    fn pop_forwarded(&mut self) -> Result<(Value, bool, Vec<ProtocolReferenceOccurrence>), Halt> {
+    fn pop_forwarded(&mut self) -> Result<(Value, bool, ReferenceOrigins), Halt> {
         let value = self
             .values
             .pop()
@@ -1987,14 +1986,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     }
 
     fn push_value(&mut self, value: Value, provenance: bool) {
-        self.push_value_with_origins(value, provenance, Vec::new());
+        self.push_value_with_origins(value, provenance, None);
     }
 
     fn push_value_with_origins(
         &mut self,
         value: Value,
         provenance: bool,
-        origins: Vec<ProtocolReferenceOccurrence>,
+        origins: ReferenceOrigins,
     ) {
         self.values.push(value);
         self.value_guard_provenance.push(provenance);
@@ -2052,14 +2051,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     fn pop_many_owned_with_origins(
         &mut self,
         count: usize,
-    ) -> Result<
-        (
-            Vec<Value>,
-            Vec<Owner>,
-            Vec<Vec<ProtocolReferenceOccurrence>>,
-        ),
-        Halt,
-    > {
+    ) -> Result<(Vec<Value>, Vec<Owner>, Vec<ReferenceOrigins>), Halt> {
         let PoppedArguments {
             values,
             provenance,
@@ -2278,7 +2270,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         value: Value,
         provenance: bool,
     ) -> Result<(), Halt> {
-        self.bind_with_origins(slot, value, provenance, Vec::new())
+        self.bind_with_origins(slot, value, provenance, None)
     }
 
     fn bind_with_origins(
@@ -2286,7 +2278,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         slot: Slot,
         value: Value,
         provenance: bool,
-        origins: Vec<ProtocolReferenceOccurrence>,
+        origins: ReferenceOrigins,
     ) -> Result<(), Halt> {
         if let Some(trail) = self.trail.as_mut() {
             trail.element_paths.remove(&slot);
