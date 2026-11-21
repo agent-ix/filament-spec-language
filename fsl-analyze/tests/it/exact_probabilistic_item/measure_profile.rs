@@ -658,74 +658,171 @@ fn an_undefined_measure_after_merged_draws_replays_a_real_positive_draw() {
     assert_eq!(token.mass(), &ratio(1, 4));
 }
 
-#[trace("TC-3152", "FR-197-AC-4", "FR-1043-AC-7")]
+#[trace("FR-1043-AC-10", "FR-203-AC-10", "FR-203-AC-11")]
 #[test]
-fn unreachable_workload_activation_has_a_certified_value_free_vacuity_basis() {
-    let world = World::new(&retry(
-        &(claim(
-            "Le",
-            "Steady",
-            "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) <= 2",
-        ) + &claim(
-            "Ge",
-            "Steady",
-            "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) >= 2",
-        )),
-    ));
-    for name in ["Le", "Ge"] {
-        let record = settle(&world, name, ModelCheckLimits::default());
-        let terminal = record
-            .terminal()
-            .unwrap_or_else(|| panic!("{:?}", record.settlement));
-        assert!(
-            matches!(
-                terminal.value(),
-                TerminalValue::Proved {
-                    basis: ProofBasis::Exhaustive,
-                    certification: Certification::Certified
-                }
-            ),
-            "{:?}",
-            terminal.value()
-        );
-        assert!(
-            record.exact_probabilistic.is_none(),
-            "vacuity has no invented exact value"
-        );
-        let document: Value =
-            serde_json::from_slice(terminal.exact_certificate_document().unwrap()).unwrap();
-        assert_eq!(document["kind"], "conditional");
-        assert_eq!(document["conditional"], json!({"mode":"vacuous"}));
-        assert_eq!(document["values"], json!([]));
-        let checked = check(&world, name, &document);
+fn unreachable_activation_has_a_certified_value_free_vacuity_basis_for_each_scheduler() {
+    for scheduler in [
+        "Steady",
+        "every scheduler",
+        "every scheduler fair weak Msg::fast",
+    ] {
+        let world = World::new(&retry(
+            &(claim(
+                "Le",
+                scheduler,
+                "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) <= 2",
+            ) + &claim(
+                "Ge",
+                scheduler,
+                "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) >= 2",
+            )),
+        ));
+        let system = ModelSystem::new(world.subject().simulation).unwrap();
+        for name in ["Le", "Ge"] {
+            let record = settle(&world, name, ModelCheckLimits::default());
+            let terminal = record
+                .terminal()
+                .unwrap_or_else(|| panic!("{:?}", record.settlement));
+            assert!(
+                matches!(
+                    terminal.value(),
+                    TerminalValue::Proved {
+                        basis: ProofBasis::Exhaustive,
+                        certification: Certification::Certified
+                    }
+                ),
+                "{scheduler}/{name}: {:?}",
+                terminal.value()
+            );
+            assert!(
+                record.exact_probabilistic.is_none(),
+                "vacuity has no invented exact value"
+            );
+            let document: Value =
+                serde_json::from_slice(terminal.exact_certificate_document().unwrap()).unwrap();
+            assert_eq!(document["kind"], "conditional");
+            assert_eq!(document["conditional"], json!({"mode":"vacuous"}));
+            assert_eq!(document["values"], json!([]));
+            let checked = check(&world, name, &document);
+            assert!(
+                matches!(
+                    checked,
+                    Ok(ExactProbabilityCertificateCheck::AcceptedVacuous(_))
+                ),
+                "{checked:?}"
+            );
+            let item = fsl_replay::probabilistic_claim_identity(world.claim(name)).unwrap();
+            let claims = world.package.graph().probabilistic_model().claims();
+            let zero_document = |payoff| {
+                let mut document = fsl_replay::measure_probability_certificate_document(
+                    &system,
+                    claims,
+                    &item,
+                    &ExactProbabilityCertificate { values: Vec::new() },
+                    payoff,
+                    document_limits(),
+                    &Cancel::new(),
+                )
+                .unwrap();
+                document.values = document
+                    .ranking
+                    .iter()
+                    .map(|(state, _)| fsl_replay::ExactProbabilityValue {
+                        state: state.clone(),
+                        value: ratio(0, 1),
+                    })
+                    .collect();
+                document
+            };
+            // These are complete, mathematically exact zero vectors. The
+            // refusal must be the vacuity role, rather than invalid setup.
+            let numeric = if scheduler == "Steady" {
+                fsl_replay::conditional_measure_probability_certificate(
+                    zero_document(fsl_replay::MeasurePayoffKind::Satisfied),
+                    zero_document(fsl_replay::MeasurePayoffKind::Activated),
+                )
+                .unwrap()
+            } else {
+                zero_document(fsl_replay::MeasurePayoffKind::Shifted)
+            };
+            let numeric: Value = serde_json::from_slice(
+                &fsl_replay::write_measure_probability_certificate(
+                    &numeric,
+                    document_limits(),
+                    &Cancel::new(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let checked = check(&world, name, &numeric);
+            assert!(
+                matches!(
+                    checked,
+                    Ok(ExactProbabilityCertificateCheck::Rejected(
+                        ProbabilityCertificateRejection {
+                            rule: ProbabilityCertificateRule::InequalityFails,
+                            at: ProbabilityCertificateLocus::ProductState(_)
+                        }
+                    ))
+                ),
+                "numeric no-activation {scheduler}/{name}: {checked:?}"
+            );
+        }
+    }
+    for scheduler in [
+        "Steady",
+        "every scheduler",
+        "every scheduler fair weak Msg::fast",
+    ] {
+        let activated = World::new(&retry(&claim(
+            "Q",
+            scheduler,
+            &format!("quantile 0.4 of ({}) <= 2", steps()),
+        )));
+        let expected = if scheduler == "Steady" {
+            ratio(3, 4)
+        } else {
+            ratio(3, 80)
+        };
+        let numeric = proof(&activated, "Q", expected);
+        assert_ne!(numeric["conditional"]["mode"], "vacuous");
+        let system = ModelSystem::new(activated.subject().simulation).unwrap();
+        let item = fsl_replay::probabilistic_claim_identity(activated.claim("Q")).unwrap();
+        let forged = fsl_replay::measure_probability_certificate_document(
+            &system,
+            activated.package.graph().probabilistic_model().claims(),
+            &item,
+            &ExactProbabilityCertificate { values: Vec::new() },
+            fsl_replay::MeasurePayoffKind::Satisfied,
+            document_limits(),
+            &Cancel::new(),
+        )
+        .unwrap()
+        .into_vacuous()
+        .unwrap();
+        let forged: Value = serde_json::from_slice(
+            &fsl_replay::write_measure_probability_certificate(
+                &forged,
+                document_limits(),
+                &Cancel::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let checked = check(&activated, "Q", &forged);
         assert!(
             matches!(
                 checked,
-                Ok(ExactProbabilityCertificateCheck::AcceptedVacuous(_))
+                Ok(ExactProbabilityCertificateCheck::Rejected(
+                    ProbabilityCertificateRejection {
+                        rule: ProbabilityCertificateRule::InequalityFails,
+                        ..
+                    }
+                ))
             ),
-            "{checked:?}"
+            "{scheduler}: {checked:?}"
         );
     }
-    let activated = World::new(&retry(&claim(
-        "Q",
-        "Steady",
-        &format!("quantile 0.5 of ({}) <= 2", steps()),
-    )));
-    let mut forged = proof(&activated, "Q", ratio(3, 4));
-    forged["conditional"] = json!({"mode":"vacuous"});
-    let checked = check(&activated, "Q", &forged);
-    assert!(
-        matches!(
-            checked,
-            Ok(ExactProbabilityCertificateCheck::Rejected(
-                ProbabilityCertificateRejection {
-                    rule: ProbabilityCertificateRule::InequalityFails,
-                    ..
-                }
-            ))
-        ),
-        "{checked:?}"
-    );
 }
 
 fn document_limits() -> fsl_replay::ProbabilityDocumentLimits {

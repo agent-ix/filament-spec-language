@@ -97,6 +97,46 @@ pub(super) fn run(
         return not_yet();
     };
     let initial = *initial;
+    if matches!(claim.form, ProbForm::Quantile { .. })
+        && !product.states.iter().any(|state| {
+            matches!(
+                state.accumulator.as_ref(),
+                Some(
+                    crate::exact_probabilistic::Accumulator::Steps {
+                        activated: true,
+                        ..
+                    } | crate::exact_probabilistic::Accumulator::Reward {
+                        activated: true,
+                        ..
+                    }
+                )
+            )
+        })
+    {
+        let empty = ExactProbabilityCertificate { values: Vec::new() };
+        let checked = (|| {
+            let document = measure_probability_certificate_document(
+                &system,
+                claims,
+                &item,
+                &empty,
+                MeasurePayoffKind::Satisfied,
+                document_limits,
+                cancel,
+            )?
+            .into_vacuous()?;
+            let bytes = write_measure_probability_certificate(&document, document_limits, cancel)?;
+            check_probability_certificate_document(
+                &system,
+                claims,
+                &item,
+                &bytes,
+                document_limits,
+                cancel,
+            )
+        })();
+        return checked_report(checked, empty, binding, None, subject);
+    }
     let terminal = match product
         .states
         .iter()

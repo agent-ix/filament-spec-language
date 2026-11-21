@@ -1472,13 +1472,10 @@ pub fn measure_probability_certificate_document(
 }
 
 impl MeasureProbabilityDocument {
-    /// Select value-free vacuity evidence for an unactivated workload quantile.
+    /// Select value-free vacuity evidence for an unactivated quantile.
     /// This only creates unchecked evidence; the checker still explores activation.
     pub fn into_vacuous(mut self) -> Result<Self, ProbabilityDocumentError> {
-        if self.payoff != MeasurePayoffKind::Satisfied
-            || self.objective.optimization != ProbabilityObjective::Workload
-            || self.conditional.is_some()
-        {
+        if self.payoff != MeasurePayoffKind::Satisfied || self.conditional.is_some() {
             return Err(ProbabilityDocumentError::MalformedMember("mode"));
         }
         self.values.clear();
@@ -1741,8 +1738,7 @@ pub(super) fn check(
     }
     if let Some(conditional) = &document.conditional {
         if matches!(conditional.as_ref(), Conditional::Vacuous) {
-            if !matches!(claim.scheduler, ProbScheduler::Workload(_))
-                || !matches!(claim.form, ProbForm::Quantile { .. })
+            if !matches!(claim.form, ProbForm::Quantile { .. })
                 || document.payoff != MeasurePayoffKind::Satisfied
             {
                 return Err(ProbabilityDocumentError::MalformedMember("mode"));
@@ -1843,14 +1839,10 @@ pub(super) fn check(
             );
         }
         if initial[1].is_zero() {
-            if graph.states.values().any(|state| state.activated) {
-                return Ok(rejected(
-                    ProbabilityCertificateRule::InequalityFails,
-                    graph.initial,
-                ));
-            }
-            // The no-value vacuity settlement needs its specified result carrier.
-            return Err(ProbabilityDocumentError::Unsupported);
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                graph.initial,
+            ));
         }
         let value = arithmetic(
             filament_exact::RationalArithmetic::Divide(&initial[0], &initial[1]),
@@ -1896,6 +1888,14 @@ pub(super) fn check(
         &mut meter,
         &mut storage,
     )?;
+    if matches!(claim.form, ProbForm::Quantile { .. })
+        && !graph.states.values().any(|state| state.activated)
+    {
+        return Ok(rejected(
+            ProbabilityCertificateRule::InequalityFails,
+            graph.initial,
+        ));
+    }
     let values = match checked_values(&document, &graph, limits, cancel, &mut meter)? {
         Ok(values) => values,
         Err(rejection) => return Ok(rejection),
