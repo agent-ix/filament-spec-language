@@ -6,6 +6,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use super::*;
+use crate::ExactProbLimits;
 
 pub(super) mod measure;
 pub use measure::{

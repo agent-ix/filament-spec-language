@@ -4,7 +4,7 @@
 use super::*;
 use filament_exact::OrderingOperator as Order;
 use fsl_eval::probabilistic::{
-    Accumulator, MeasureComparison, MeasureError, MeasurePayoff, MeasurePlan, MonitorState,
+    Accumulator, MeasureComparison, MeasurePayoff, MeasurePlan, MonitorState,
 };
 use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, PredicateReading};
 use fsl_semantics::check::{BoundedMeasure, CheckedPredicate, Event, Weighting};
