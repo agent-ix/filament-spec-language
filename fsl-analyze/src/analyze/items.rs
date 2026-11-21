@@ -1105,9 +1105,18 @@ pub(super) fn package_parameter_type_refusal(
     node: &fsl_package::CheckedNodeId,
     failure: &fsl_package::BareSelectionFailure,
 ) -> Refusal {
+    package_projection_refusal(package, "parameter-type", serde_json::json!(node), failure)
+}
+
+fn package_projection_refusal(
+    package: &str,
+    fact: &str,
+    node: serde_json::Value,
+    failure: &fsl_package::BareSelectionFailure,
+) -> Refusal {
     let mut detail = serde_json::Map::new();
-    detail.insert("fact".to_owned(), serde_json::json!("parameter-type"));
-    detail.insert("node".to_owned(), serde_json::json!(node));
+    detail.insert("fact".to_owned(), serde_json::json!(fact));
+    detail.insert("node".to_owned(), node);
     match failure.clone().into_view(package) {
         Ok(view) => {
             let (code, cause) = view.catalog();
@@ -1234,6 +1243,16 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
             node,
             failure,
         }) => package_parameter_type_refusal(package, node, failure),
+        ModelCheckRefusal::Protocol(ProtocolRefusal::PackageNodeFootprint {
+            package,
+            node,
+            failure,
+        }) => package_projection_refusal(
+            package,
+            "protocol-node-footprint",
+            serde_json::json!(node),
+            failure,
+        ),
         // Engine defects, and refusals whose types name no catalog code
         // (a spec point for STD-444's follow-up): `failed` with the
         // broken-invariant diagnostic.

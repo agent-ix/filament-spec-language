@@ -316,3 +316,22 @@ pub(crate) fn package_guard_reads(
         literals: fsl_semantics::check::footprint::reference_literals_of(root),
     })
 }
+
+/// MA-1 reads of an admitted protocol constraint. `receivers` contains only
+/// frame slots whose binder is the protocol's actual `over` parameter.
+pub(crate) fn package_node_reads(
+    projection: &fsl_package::ReaderProtocolProjection,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    model: &fsl_semantics::model::state::StateModel,
+    name: &str,
+    parameters: &[(String, ValueType)],
+    receivers: &[usize],
+) -> Result<BodyReads, fsl_semantics::check::footprint::FootprintRefusal> {
+    let root = ReaderNode::root(projection);
+    Ok(BodyReads {
+        reads: fsl_semantics::check::footprint::derive_node_reads_over(
+            types, model, name, parameters, receivers, root,
+        )?,
+        literals: fsl_semantics::check::footprint::reference_literals_of(root),
+    })
+}

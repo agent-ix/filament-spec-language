@@ -698,14 +698,45 @@ impl<'a> ModelSystem<'a> {
         body: &fsl_semantics::check::CheckedBody,
         over: Option<&ObjectReference>,
     ) -> Result<Option<BTreeSet<Location>>, FootprintError> {
-        let mut symbolic =
+        let symbolic = self
+            .evaluator()
+            .node_reads(&self.model, name, parameters, body.root())?;
+        Ok(self.node_read_locations(
+            BodyReads {
+                reads: symbolic,
+                literals: reference_literals_of(body.root()),
+            },
+            over,
+        ))
+    }
+
+    /// MA-1 over the package's native projected constraint and binder frame.
+    pub(crate) fn package_node_reads(
+        &self,
+        name: &str,
+        slot: &crate::value::ProtocolSlot,
+        over_key: &NodeKey,
+        over: Option<&ObjectReference>,
+    ) -> Result<Option<BTreeSet<Location>>, super::ProtocolNodeReadError> {
+        let reads =
             self.evaluator()
-                .node_reads(&self.model, name, parameters, body.root())?;
-        self.add_reference_literal_memberships(body.root(), &mut symbolic);
+                .package_protocol_node_reads(&self.model, name, slot, over_key)?;
+        Ok(self.node_read_locations(reads, over))
+    }
+
+    fn node_read_locations(
+        &self,
+        BodyReads {
+            reads: mut symbolic,
+            literals,
+        }: BodyReads,
+        over: Option<&ObjectReference>,
+    ) -> Option<BTreeSet<Location>> {
+        self.add_literal_memberships(&literals, &mut symbolic);
         if over.is_none() && !symbolic.is_empty() {
-            return Ok(None);
+            return None;
         }
-        Ok(Some(
+        Some(
             symbolic
                 .iter()
                 .filter_map(|location| {
@@ -728,7 +759,7 @@ impl<'a> ModelSystem<'a> {
                     other => vec![other],
                 })
                 .collect(),
-        ))
+        )
     }
 
     /// FR-156 "Atom footprints": the symbolic locations the `holds` atom

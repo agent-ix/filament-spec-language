@@ -403,20 +403,6 @@ impl<'a> PackageProtocolProgram<'a> {
                     name: form.name.clone(),
                 })?;
         let channels = channels(input, &form)?;
-        // A branch's source-local numeric node indices are not admitted
-        // package identities. Message keys and weak send footprints need a
-        // shared representation before mixed parallel/send programs execute.
-        if form
-            .controls
-            .iter()
-            .any(|control| matches!(&control.body, ControlBody::Parallel { .. }))
-            && form
-                .controls
-                .iter()
-                .any(|control| matches!(&control.body, ControlBody::Send { .. }))
-        {
-            return Err(PackageProgramRefusal::Unsupported(ControlOperation::Send));
-        }
         if !form.protocol.compensations().is_empty() {
             return Err(PackageProgramRefusal::Unsupported(
                 ControlOperation::Compensate,
