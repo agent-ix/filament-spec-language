@@ -31,3 +31,10 @@ quoin matrix binds tests to every AC from FR-710-AC-1 to AC-9. The AC-1..5 binde
 ## Verdict
 
 AC-1, 3, 4 and 5 are covered by tests whose oracles can fail. AC-2's evaluation clause is weakly covered.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The reaches test now runs non-reflexive queries over the one-way chain a->b->c, and its oracle depends on direction (model_unit_request.rs:585-672) |
+| FND-002 | fixed | End roles, source-end multiplicity and an inverse end are asserted (model_unit_input.rs:323-345) |

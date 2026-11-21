@@ -46,3 +46,14 @@ Rust lane: no panics on the changed paths (`?` on token lookups inside an `Optio
 ## Verdict
 
 The compile-path fixes are faithful to FR-154/FR-208, and the fixture edits are genuine defects, not weakened assertions. FND-001 is a regression introduced by this diff, and FND-002 leaves the role and direction fix without a sound oracle. Both need fixing in this PR. FND-003 and FND-004 were already in the code but sit in the edited functions, and FND-005 and FND-006 are low.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 48aee5b858: `target_role` is `None` without `inverse`, and `targetEnd.role` is set only when an inverse is written (model_unit.rs:1084-1110); asserted absent in model_unit_input.rs:325 |
+| FND-002 | fixed | 48aee5b858: the snapshot is now a one-way chain a->b->c with ranks. Forward(a), Forward(b) hold; Forward(c), Backward(c), Backward(b) fail; swapped ends or a reversed traversal would make Forward(a) false (model_unit_request.rs:585-672) |
+| FND-003 | fixed | 48aee5b858: type_ref maps UUID, String, Decimal, Bytes, Duration, JsonObject and Clock (model_unit.rs:2535-2541); a_model_unit_names_every_native_type admits all but Clock, which is mapped the same way and admitted as a field typeRef by FR-154 |
+| FND-004 | fixed | 48aee5b858/ee47203e3b: the inverse multiplicity now goes on sourceEnd. Without an inverse, sourceEnd is {lower 0, no upper}, i.e. [0, *]. The schema's multiplicity has an optional `upper` (absent means unbounded), and FR-154/FR-322 put no constraint on an unnamed reverse end beyond its presence, so [0, *] claims nothing and is admissible. The previous [1, 1] was the wrong claim. Tests: model_unit_input.rs:326-327, 341-344 |
+| FND-005 | fixed | 48aee5b858: FR-710 Grammar now lists population, interface and part as keywords only in their declaration position |
+| FND-006 | fixed | 48aee5b858/ee47203e3b: asserts sourceEnd.role = next, targetEnd.role absent and source multiplicity in the no-inverse test, plus a_relationship_inverse_names_and_bounds_the_source_end for role prev and bounds [0, 2] |
