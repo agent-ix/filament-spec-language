@@ -3546,7 +3546,8 @@ fn admit_contexts<'t>(
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "unknown-member")
                     .with("document", document.identity.clone())
-                    .with("field", "contexts"),
+                    .with("field", "contexts")
+                    .with("path", "/contexts"),
             ));
         }
         RawContexts::Malformed(record) => {
@@ -3608,7 +3609,8 @@ fn admit_contexts<'t>(
                 return Err(named(
                     admission_record(Code::InvalidRuntimeInput, "missing-member")
                         .with("machine", machine.to_owned())
-                        .with("field", name.to_owned()),
+                        .with("field", name.to_owned())
+                        .with("path", context_field_path(entry, None)),
                     entry,
                 ));
             }
@@ -3621,7 +3623,8 @@ fn admit_contexts<'t>(
                 return Err(named(
                     admission_record(Code::InvalidRuntimeInput, "unknown-member")
                         .with("machine", machine.to_owned())
-                        .with("field", name.clone()),
+                        .with("field", name.clone())
+                        .with("path", context_field_path(entry, Some(&*name))),
                     entry,
                 ));
             }
@@ -3639,7 +3642,8 @@ fn admit_contexts<'t>(
                 return Err(named(
                     admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                         .with("machine", machine.to_owned())
-                        .with("field", name.to_owned()),
+                        .with("field", name.to_owned())
+                        .with("path", context_field_path(entry, Some(&*name))),
                     entry,
                 ));
             }
@@ -3650,10 +3654,16 @@ fn admit_contexts<'t>(
             };
             let value = admit_object_field(references, raw, value_type, presence, witness)
                 .map_err(|record| {
+                    let path = format!(
+                        "{}{}",
+                        context_field_path(entry, Some(&*name)),
+                        pointer_of(&refusal_steps(raw.form(), &record))
+                    );
                     named(
                         record
                             .with("machine", machine.to_owned())
-                            .with("field", name.to_owned()),
+                            .with("field", name.to_owned())
+                            .with("path", path),
                         entry,
                     )
                 })?;
@@ -3688,6 +3698,25 @@ fn admit_contexts<'t>(
         }
     }
     Ok(read)
+}
+
+/// The RFC 6901 pointer to a context entry's `fields` object, or to its field
+/// `field` (FR-663): the document spelling of the refusal's locus.
+fn context_field_path(entry: usize, field: Option<&str>) -> String {
+    match field {
+        Some(field) => format!("/contexts/{entry}/fields/{}", json_pointer_segment(field)),
+        None => format!("/contexts/{entry}/fields"),
+    }
+}
+
+/// The RFC 6901 pointer to an invocation's `parameters` object, or to its
+/// parameter `name`: a parameter's nested typed steps hang below it exactly as
+/// a snapshot field's do (FR-106-AC-15, FR-106-AC-21).
+fn parameter_path(name: Option<&str>) -> String {
+    match name {
+        Some(name) => format!("/parameters/{}", json_pointer_segment(name)),
+        None => "/parameters".to_owned(),
+    }
 }
 
 /// The read context of `snapshot` for a clause of the state machine `machine`
@@ -4422,17 +4451,25 @@ pub(super) fn admit_parameters(
             }
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "missing-member")
-                    .with("field", name.clone()),
+                    .with("field", name.clone())
+                    .with("path", parameter_path(None)),
             ));
         };
         if !field_kind_matches(raw, value_type) {
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
-                    .with("field", name.clone()),
+                    .with("field", name.clone())
+                    .with("path", parameter_path(Some(&*name))),
             ));
         }
-        let value = admit_form(references, raw.form(), value_type, None)
-            .map_err(|record| refuse(record.with("field", name.clone())))?;
+        let value = admit_form(references, raw.form(), value_type, None).map_err(|record| {
+            let path = format!(
+                "{}{}",
+                parameter_path(Some(&*name)),
+                pointer_of(&refusal_steps(raw.form(), &record))
+            );
+            refuse(record.with("field", name.clone()).with("path", path))
+        })?;
         references.check_closure(raw).map_err(refuse)?;
         admitted.push((name.clone(), value));
     }
@@ -4444,7 +4481,8 @@ pub(super) fn admit_parameters(
         {
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "unknown-member")
-                    .with("field", name.clone()),
+                    .with("field", name.clone())
+                    .with("path", parameter_path(Some(&*name))),
             ));
         }
     }
