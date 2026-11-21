@@ -312,6 +312,14 @@ fn check_refinement_with_time_source<S>(
     } else {
         None
     };
+    if auxiliary_timed.is_some()
+        && refinement
+            .objects()
+            .iter()
+            .any(|object| !object.hidden.is_empty())
+    {
+        return Err(ZoneCheckRefusal::HiddenFieldTimedAbstract.into());
+    }
     let mut run = Run::new(
         &timed,
         Judged::Refinement,

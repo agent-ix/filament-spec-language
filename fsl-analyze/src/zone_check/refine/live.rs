@@ -294,7 +294,14 @@ impl Product<'_, '_> {
                 }
                 if hidden {
                     match self.candidate_loop_has_fair_run(run, live, &cycle, class.constraint())? {
-                        Ok(true) => continue,
+                        // The fair run answers for the whole component only
+                        // when the component is that one loop; another loop
+                        // through it may still violate, so decide nothing.
+                        Ok(true) if single_loop(&model, &members) => continue,
+                        Ok(true) => {
+                            not_concretised = true;
+                            continue;
+                        }
                         Ok(false) => {}
                         Err(ends) => return Ok(Lived::Ends(ends)),
                     }
@@ -1302,4 +1309,19 @@ fn fairness(run: &Run<'_, '_, '_>, error: FairnessError) -> Halt {
         FairnessError::Cancelled => run.stop(crate::zone_check::search::ZoneStop::Cancelled),
         _ => ZoneCheckRefusal::Fault("fairness-graph").into(),
     }
+}
+
+/// Whether every vertex of `members` has exactly one edge staying inside
+/// `members`, so the component's only loop is its one cycle. Edges the
+/// filter removed are counted, which only makes a component fail this test.
+fn single_loop(model: &FairModel, members: &BTreeSet<Vertex>) -> bool {
+    members.iter().all(|vertex| {
+        model
+            .graph
+            .edges_from(*vertex)
+            .iter()
+            .filter(|edge| members.contains(&edge.target))
+            .count()
+            == 1
+    })
 }

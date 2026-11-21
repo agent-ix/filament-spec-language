@@ -580,6 +580,12 @@ pub enum ZoneCheckRefusal {
     /// collection-valued write yet.
     #[error("the refinement checker does not map carried clock places")]
     CarriedClocks,
+    /// The abstract side has timed clocks and the refinement leaves an
+    /// abstract field unmapped: which abstract clock guards and resets apply
+    /// then depends on the hidden valuation, which the product does not
+    /// track.
+    #[error("the refinement checker does not decide a timed abstract side with a hidden field")]
+    HiddenFieldTimedAbstract,
     /// A symmetry declaration does not admit (FR-151).
     #[error(transparent)]
     Symmetry(SymmetryRefusal),
