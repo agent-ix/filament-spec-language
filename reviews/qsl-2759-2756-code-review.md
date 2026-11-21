@@ -129,3 +129,22 @@ Examined files:
 Existing exact-head evidence inspected: 21 named regression logs passed, including trace parity, original 2000ms cyclic trap, storage fallback, cancellation, unreadable predicates, explicit/default selection and protocol/axes controls. Named-crate all-targets check passed. fsl-eval no-deps clippy passed; combined lint remains blocked by 12 untouched analyze diagnostics (dependency-inclusive: 15 untouched replay diagnostics). No CI, feature, dependency, default limit, warning or qualification gate changed. No new cargo run during this static review; root owns final rebased exact-head gate.
 
 Whole-repository quoin/quire matrix, coverage and advise are unavailable due to the inherited hanging commands documented in the dispatch; the lead explicitly directed no retry. No engine coverage counts or full-repository PASS are asserted. Manual changed-surface inventory is provisional and is not a grep fallback or an engine matrix. Plan completion: not assessed. Optional semantic review skipped. No applicable AssuranceProfile found in spec/. No stubs, mocked production seams, copied algorithm, untraced changed behavior, unsafe code or new wire vocabulary identified.
+
+## Dispositions
+
+Round 1, inspected frozen head `00e0b65a96f5e4a924d1ebd105daaf945ea8fdcc` rebased on `dab8c60624b4427e2290efe7ebaa3827f5ae0842`. Original finding rows remain unchanged.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Removed the FR-626-AC-2 binding; the regression retains only TC-1586 and FR-626-AC-1. |
+| FND-002 | fixed | Removed the FSpec-FR-366-AC-4 binding; assertions and production behavior are unchanged. |
+
+### Round 1 verdict
+
+Both findings are fixed; no new finding. Reviewed code is mergeable subject to the lead's final exact-head named-crate gate and unchanged-main policy. Inherited computed-matrix and untouched lint limitations remain; no full-repository matrix PASS is asserted. No runtime rerun required for this tag-only fix.
+
+After excerpt for both fixed findings:
+
+```rust
+#[trace("TC-1586", "FR-626-AC-1")]
+```
