@@ -267,6 +267,23 @@ item's `Counterexample`.
   at which the transition is enabled as a finite union of intervals with
   real algebraic ends, and SHALL read the constraint's weak or strong
   condition over the periodic behaviour from that set.
+- For that enabledness decision, exact replay SHALL decide the full rational
+  semialgebraic class of FR-447's admitted expressions after nonrecursive
+  expansion: polynomial comparisons over the free post-jump variables and
+  dwell time, Boolean combinations and conditionals, and rational expressions
+  where their denominators are defined. Defined-denominator valuations form
+  the quantifier-elimination domain; this does not replace the existing
+  `UndefinedEvaluation` result for an expression evaluated on the replayed
+  trace with a zero divisor. The decision SHALL have no fixed
+  polynomial-degree or variable-count cutoff; the caller's
+  `accounting.work_units` bound limits its work. Coupled free variables
+  SHALL NOT cause `NotExact`.
+- Before each projection, elimination, root-isolation or algebraic-sign
+  step, exact replay SHALL charge the caller's `HybridReplayMeter` for the
+  work of that step. When a charge is denied, replay SHALL return
+  `HybridReplayRefusal::ResourceExhausted { counter: WorkUnits }` before
+  taking the step, with the incomplete settlement below; no approximation,
+  verdict or unchecked continuation substitutes for the denied step.
 - A trace exact replay does not decide is `NotExact` exactly when it is not
   a point trace, dwells in a mode without a polynomial flow, or would
   evaluate a recursive call (FSpec FR-193 "Exact replay"); no other claim
@@ -398,6 +415,52 @@ item's `Counterexample`.
 | FR-450-AC-11 | Over FSpec FR-652-AC-3's `Grow`, whose flow `v' = 1 - 1 / (1 + v * v)` is not a polynomial flow so its point trace from `v = 1` gives `NotExact`, a provider's `refuted` entry carrying that trace with FR-652-AC-3's nine-step `validated-witness`, which FR-751 accepts, settles `refuted` with the trace as its `HybridCounterexample` of kind `Formula` and one `counterexamples` entry; the same entry with the witness cut after its step at `[28, 32]`, which FR-751 rejects `witness-violation`, settles `inconclusive`, `ReplayParity(DisagreementCause::HybridTrace(NotExact{counterexample}))` as FR-450-AC-9 states, with no `counterexamples` entry. | Test (TC-1221) |
 | FR-450-AC-12 | Over FR-750-AC-12's `Shuttle` and its point lasso `L` (`loop_to` 0, period 1), under `model-time`, exact replay never returns `NotExact` for these `on each` claims and decides: (a) `on each (q: Shuttle) when (q.v > 0) { capture v0: Rational[0, 1; 1, 2] = q.v + 1/2; eventually [0, 1] holds(h.v + 1/2 >= v0) }`, whose capture value `τ + 1/2` is outside its type's value range `[0, 1]` exactly for the activation instants in `(1/2, 1)` of each period and is `1`, in range, at `τ = 1/2`, an open set with no earliest instant, returns `Reproduced` with kind `UndefinedEvaluation`, cause `outside-capture-range`, `where.position` 0 and `where.time` the point interval `[1/2, 1/2]`, the infimum; a provider `refuted` entry of that kind with `where.time` `[1/2, 1/2]` settles `refuted`, and one with `where.time` `[3/4, 3/4]`, which does not hold the reproduced instant, gives `NotReproduced` at check 5; (b) `on each (q: Shuttle) when (q.v > 0) { historically holds(h.v > 0) }` reproduces with kind `Formula`, because `historically` reads from position 0, where `v = 0`, so every obligation is false, while `on each (q: Shuttle) when (q.v > 0) { once holds(h.v = 0) }`, true at every activation for the same reason, gives `NotReproduced` at check 5; (c) `on each (q: Shuttle) when (q.v > 0 and q.v <= 1/2) { not once holds(h.v > 3/4) }`, true at every activation instant of the first period (its history up to `τ <= 1/2` never exceeds `1/2`) and false at every activation instant of the second and later periods (their history holds the first period's `v` in `(3/4, 1)`), reproduces with kind `Formula`: its past reach is one period, so replay decides the first two periods, and a replay that decided only the first period would return `NotReproduced`; (d) over the model `hybrid Phase using p { initial { mode Warm when { x = 0 and w = 1 }; } mode Warm invariant { x >= 0 and x <= 1 } flow { x' = 1; w' = 0; } transition to Cold when { x = 1 } reset { x = 0 and w = 0 }; mode Cold invariant { x >= 0 and x <= 1 } flow { x' = 1; w' = 0; } transition to Cold when { x = 1 } reset { x = 0 and w = 0 }; }` and its point lasso from `(Warm, x = 0, w = 1)` at time 0 by transition 0 (`before` `(time 1, x = 1, w = 1)`) to `(Cold, x = 0, w = 0)` at time 1 and by `Cold`'s transition (`before` `(time 2, x = 1, w = 0)`) to `(Cold, x = 0, w = 0)` at time 2 with `loop_to` 1 (prefix `[0, 1)` on which `w = 1`, period `P = 1` on which `w = 0`), the claim `on each (q: Phase) { once [0, 1] once [0, 1] holds(h.w = 1) }` has past reach `R = 2`: its obligations hold at every activation instant at most 3 and fail at every activation instant after 3, replay decides the prefix and three periods, and the provider `refuted` trace reproduces with kind `Formula` and settles `refuted`; a replay that decided only the prefix and two periods would return `NotReproduced`. | Test (TC-1221) |
 | FR-450-AC-13 | Over FSpec FR-652-AC-3's `Grow` and its point trace from `v = 1`: a provider's `refuted` entry of kind `Formula` carrying the nine-step witness settles `refuted` with one `counterexamples` entry and replay settlement `reproduced-with-validated-witness`, reached through `HybridVerdict::Refuted` and not only through `solver-inconclusive`; the same entry claiming kind `UndefinedEvaluation` settles `inconclusive`, `ReplayParity(HybridTrace(NotExact{counterexample}))`, with no `counterexamples` entry; the same `Formula` entry under a `work_units` bound that lets static and exact replay finish but stops the witness check settles `incomplete`, `LimitReached{work_units, value, accounting.work_units}`, with `certificate-rejected{work-limit}` recorded and no counterexample. Over FSpec FR-193-AC-17's `Braking` point trace, which exact replay reproduces, a provider's `refuted` entry carrying a structurally valid witness that FR-751 would reject settles `refuted` by exact replay, its witness recorded unchecked. | Test (TC-1221) |
+| FR-450-AC-14 | For the `Coupled` source and point lasso `L` below, `Run::Gone` is enabled exactly for local dwell instants `[0, 1/sqrt(2)]`. `Weak` replays `Reproduced` with kind `Formula`; `Strong` replays `NotReproduced` at check `Claim`. Neither returns `NotExact`. | Test |
+| FR-450-AC-15 | Change only AC-14's `Run::Gone` guard to `2 * v * v = 1`. With target invariant `v * w <= 1/2`, its enabled set is the single algebraic instant `1/sqrt(2)` each period, so `Strong` gives `NotReproduced` at check `Claim`. Changing the target comparison to `v * w < 1/2` makes the enabled set empty, so `Strong` gives `Reproduced` with kind `Formula`. Neither returns `NotExact`; a point-only enabled set is not discarded and a strict comparison does not include its boundary. | Test |
+| FR-450-AC-16 | Extend AC-14's model by variable `z`, initially 0, with rate 0 in both modes and `z = 0` added to `Run`'s invariant; add `z >= v` to `Run::Gone`'s reset and replace `Gone`'s invariant by `v * w * z <= 1/2`. Extend each point of `L` with `z = 0`. The three free post-jump variables have a joint solution exactly for local instants `[0, cubert(1/2)]`; `Weak` gives `Reproduced` with kind `Formula`, and `Strong` gives `NotReproduced` at check `Claim`, never `NotExact`. | Test |
+| FR-450-AC-17 | Replace only AC-14's `Run::Gone` reset by `v >= 1 and v < 0 and w >= 0`. No post-jump state satisfies the reset at any instant. The enabled set is empty; both `Weak` and `Strong` replay `Reproduced` with kind `Formula`, never `NotExact`, rather than treating the contradictory bounds as independent witnesses. | Test |
+| FR-450-AC-18 | For AC-14's reset and lasso, the target invariant `(if v * w <= 1/2 then true else false)` has the same enabled set and both replay outcomes as AC-14. Each target invariant `v * w != 1/2`, `v * w < 1/2 or v * w > 1/2`, and `v * w / (1 + w * w) > 1` is feasible at every local instant, so both fairness claims give `NotReproduced` at check `Claim`. The denominator `1 + w * w` is strictly positive over the reals. None of these admitted Boolean, conditional, disequality or rational expressions returns `NotExact`. | Test |
+| FR-450-AC-19 | Replace only AC-14's `Weak` body with `always holds(1 / (h.v - h.w) > 0)`. On `L` its divisor is 0 at local time 0 and positive afterward. Exact replay returns `Reproduced` with kind `UndefinedEvaluation`, cause `division-by-zero`, `where.position` 0, `where.time` the point interval `[0, 0]`, and the division's source locus, never kind `Formula` or `NotExact`. From `solver-inconclusive`, or a provider's `refuted` entry claiming that same undefined kind, position, time, locus and cause, settlement is `refuted` with cause `UndefinedEvaluation{where, cause}` and one matching counterexample, never a decided formula verdict or an unsatisfiable-reset result. | Test |
+| FR-450-AC-20 | Run AC-14's exact replay of `Weak` twice with fresh meters and a bound sufficient to complete; the result and consumed work `W > 0` are equal. A fresh bound `W` completes with that result; a fresh bound `W - 1` returns `HybridReplayRefusal::ResourceExhausted { counter: WorkUnits }`, never a replay verdict or `NotExact`. Settlement from either a provider's `refuted` entry or `solver-inconclusive` is `incomplete`, `Incomplete(LimitReached{limit: work_units, value: W - 1, setting: accounting.work_units})`, with no verdict or counterexample. A denied projection or elimination charge is propagated by that same path before the step executes. | Test |
+
+### FR-450-AC-14
+
+The common source for AC-14 to AC-20 is:
+
+```text
+language "ix:native" edition "1-draft";
+profile p = "filament.temporal.infinite-trace/v1";
+hybrid Coupled using p {
+  initial { mode Run when { v = 0 and w = 0 }; }
+  mode Run invariant { v >= 0 and v <= 1 and w = 0 }
+    flow { v' = 1; w' = 0; }
+    transition to Run when { v = 1 } reset { v = 0 };
+    transition to Gone when { true } reset { v >= v and w >= v };
+  mode Gone invariant { v * w <= 1/2 }
+    flow { v' = 0; w' = 0; }
+}
+temporal Weak using p over (h: Coupled) clock "model-time" on origin {
+  fair weak Run::Gone;
+  always holds(h.v >= 1)
+}
+temporal Strong using p over (h: Coupled) clock "model-time" on origin {
+  fair strong Run::Gone;
+  always holds(h.v >= 1)
+}
+```
+
+The point lasso `L` has `delta` absent, start `(Run, time 0, v = 0,
+w = 0)`, one jump by transition 0 with `before` `(time 1, v = 1,
+w = 0)` to `(Run, time 1, v = 0, w = 0)`, `loop_to` 0 and no `end`.
+Every state interval and time interval is a point. The exit to `Gone` is
+never taken. Each reset right side reads the pre-jump state, so at local
+time `t` its post-jump constraints are `v >= t` and `w >= t`. Since
+`0 <= t <= 1`, the smallest post-jump product is `t^2`; the algebraic
+boundary is the positive root of `2*t^2 - 1`, not a floating-point
+approximation. In AC-16 the smallest product is `t^3` and the boundary is
+the positive root of `2*t^3 - 1`. Weak fairness permits an exit disabled
+during part of every period; strong fairness sees an enabled instant
+recurring in every period, including an isolated algebraic point.
 
 ## Dependencies
 
