@@ -227,7 +227,7 @@ pub use execute::{
     replay_with_temporal_selections, settle_verified_shadow, value_parity_obligation, BoundEntries,
     DependencySelectionsCause, Domain, FrameIdentityMismatch, FrameReplayResult,
     IdentityEncodeError, LimitAboveReader, MalformedOperationReason, ParityArgument,
-    ParityBoundRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch, ValueParityArgument,
+    ParityBoundRefusal, PackageReadRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch, ValueParityArgument,
     ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{

@@ -948,6 +948,19 @@ pub enum InconclusiveCause {
     /// ([`ReplayRefusal::code`]). A fault is never this cause: it settles
     /// [`TerminalValue::Failed`].
     ReplayRefused(Code),
+    /// `replay_refused` for a replay read refused by the run's
+    /// `replay.input_bytes` bound: the refusal's code
+    /// (`stage_limit_exceeded`), its cause (`input-bytes-exceeded`) and the
+    /// setting that raises the bound (`replay.input_bytes`), as
+    /// [`Self::LimitReached`] names its limit (FR-940-AC-22).
+    ReplayRefusedAtBound {
+        /// The refusal's catalog code.
+        code: Code,
+        /// The refusal's catalog cause.
+        cause: &'static str,
+        /// The setting that raises the bound.
+        setting: &'static str,
+    },
     /// A requested package or refinement identity differs from the current
     /// package or refinement identity (FR-149, FR-282, FR-331).
     StaleDependency {
@@ -1181,6 +1194,22 @@ pub struct StatedMemoryBound {
 }
 
 impl InconclusiveCause {
+    /// The cause of a refused replay: `replay_refused` with the refusal's
+    /// code, naming the cause and the setting when the run's
+    /// `replay.input_bytes` bound refused it (FR-940-AC-22).
+    pub fn from_replay_refusal(refusal: &ReplayRefusal) -> Self {
+        match refusal {
+            ReplayRefusal::Request(crate::ReplayRequestRefusal::BoundExceeded(_)) => {
+                Self::ReplayRefusedAtBound {
+                    code: refusal.code(),
+                    cause: "input-bytes-exceeded",
+                    setting: "replay.input_bytes",
+                }
+            }
+            _ => Self::ReplayRefused(refusal.code()),
+        }
+    }
+
     /// The cause's FR-331 wire spelling.
     pub const fn as_str(&self) -> &'static str {
         match self {
@@ -1202,7 +1231,7 @@ impl InconclusiveCause {
             Self::ProtocolAssumptionNotEstablished(_) => "protocol-assumption-not-established",
             Self::CertificateRejected { .. } => "certificate-rejected",
             Self::ReplayParity(_) => REPLAY_PARITY_KIND,
-            Self::ReplayRefused(_) => REPLAY_REFUSED_KIND,
+            Self::ReplayRefused(_) | Self::ReplayRefusedAtBound { .. } => REPLAY_REFUSED_KIND,
             Self::StaleDependency { .. } => "stale-dependency",
             Self::ScalarAgrees(_) => "scalar-agrees",
             Self::SolverInconclusive { .. } => "solver-inconclusive",
@@ -1279,7 +1308,7 @@ impl InconclusiveCause {
             }
             Self::WellDefinednessUnchecked { .. } => 0,
             Self::ReplayParity(cause) => cause.measured_bytes(),
-            Self::ReplayRefused(_) => 0,
+            Self::ReplayRefused(_) | Self::ReplayRefusedAtBound { .. } => 0,
             Self::ScalarAgrees(agreement) => agreement.measured_bytes(),
         }
     }
@@ -1462,7 +1491,7 @@ impl TerminalValue {
             ReplayRefusal::Fault(_) | ReplayRefusal::Admission(AdmissionFailure::Fault(_)) => {
                 Self::Failed
             }
-            _ => Self::Inconclusive(InconclusiveCause::ReplayRefused(refusal.code())),
+            _ => Self::Inconclusive(InconclusiveCause::from_replay_refusal(refusal)),
         }
     }
 
