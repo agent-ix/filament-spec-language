@@ -169,21 +169,10 @@ impl ReaderProtocolProjection {
         for function in &has_rows {
             let work_limit = body_location_allowance(admitted, function)
                 .ok_or_else(|| fault("body-location-reconstruction-size-fits"))?;
-            let mut cursor = admitted
-                .body_locations(function, work_limit)
-                .map_err(|_| fault("admitted-body-locations-reconstruct"))?;
-            while let Some(view) = cursor
-                .next_location()
-                .map_err(|_| fault("admitted-body-locations-reconstruct"))?
-            {
-                let location = body_location(&view.row.location.origin, view.path)
-                    .ok_or_else(|| fault("body-location-coordinates-fit"))?;
-                rows.entry(function.clone())
-                    .or_default()
-                    .entry(view.row.application.clone())
-                    .or_default()
-                    .push(location);
-            }
+            rows.insert(
+                function.clone(),
+                reconstructed_body_locations(admitted, function, work_limit)?,
+            );
         }
         let mut located = Vec::new();
         for function in &self.functions {
@@ -202,9 +191,9 @@ impl ReaderProtocolProjection {
                         .and_then(|group| group.get(*visit));
                     *visit += 1;
                     if node.term.as_ref() == Some(application) {
-                        if let Some(location) = row {
-                            located.push((position, location.clone()));
-                        }
+                        let location =
+                            row.ok_or_else(|| fault("projected-body-term-has-captured-location"))?;
+                        located.push((position, location.clone()));
                     }
                 }
             }
@@ -3902,6 +3891,31 @@ fn location(admitted: &CheckedProtocolLocation) -> Option<Location> {
     Some(Location::at(origin, &path))
 }
 
+/// Reconstruct through the admitted lending cursor. An exhausted cursor or an
+/// unrepresentable coordinate fails the whole function before any projection
+/// node receives a location.
+fn reconstructed_body_locations(
+    admitted: &CheckedPackageV2,
+    function: &CheckedNodeId,
+    work_limit: u64,
+) -> Result<BTreeMap<CheckedNodeId, Vec<Location>>, InternalFault> {
+    let mut rows: BTreeMap<CheckedNodeId, Vec<Location>> = BTreeMap::new();
+    let mut cursor = admitted
+        .body_locations(function, work_limit)
+        .map_err(|_| fault("admitted-body-locations-reconstruct"))?;
+    while let Some(view) = cursor
+        .next_location()
+        .map_err(|_| fault("admitted-body-locations-reconstruct"))?
+    {
+        let location = body_location(&view.row.location.origin, view.path)
+            .ok_or_else(|| fault("body-location-coordinates-fit"))?;
+        rows.entry(view.row.application.clone())
+            .or_default()
+            .push(location);
+    }
+    Ok(rows)
+}
+
 /// This projection predates a caller-owned work meter. Bound reconstruction
 /// from the admitted DAG instead: count lending-cursor tasks with memoized
 /// subtree costs, retaining multiplicity at shared references. No full paths
@@ -3927,7 +3941,7 @@ fn body_location_allowance(admitted: &CheckedPackageV2, function: &CheckedNodeId
     })?;
     let mut pending = Vec::new();
     if let CheckedTerm::Reference { target } = start {
-        if target.package == admitted.name() {
+        if target.package.as_ref() == admitted.name() {
             pending.push((target, false));
         }
     }
@@ -4339,6 +4353,83 @@ mod order_tests {
         assert!(
             projection.has_unrepresented_types(&types),
             "accepting the earlier reference must not hide a later unrepresented composite under wrappers"
+        );
+    }
+
+    /// Real emitted bytes exercise the consumer's lending-cursor boundary;
+    /// exhaustion returns a typed fault instead of a partly located function.
+    #[trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
+    #[test]
+    fn compact_body_projection_reconstructs_paths_and_refuses_exhaustion() {
+        let (_, checked) = crate::emit::tests::package_from_text(
+            "function f using v(x: Integer): Integer pure { (x + 1) * (x - 2) }\n",
+        );
+        let emission =
+            crate::emit::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let package = match filament_contract_model::read_checked_package(
+            emission.package().bytes(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the authentic emitted body must read: {other:?}"),
+        };
+        let rows = &package.checked_term_data().unwrap().body_locations;
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &rows[0].location.origin;
+        let allowance =
+            body_location_allowance(&package, function).expect("a finite DAG allowance");
+        let locations = reconstructed_body_locations(&package, function, allowance).unwrap();
+        let mut paths: Vec<_> = locations.values().flatten().map(Location::path).collect();
+        paths.sort();
+        assert_eq!(paths, vec![vec![], vec![0], vec![1]]);
+        assert!(
+            reconstructed_body_locations(&package, function, 0).is_err(),
+            "an unpaid cursor must fail the whole projection boundary"
+        );
+        let mut cursor = package.body_locations(function, allowance).unwrap();
+        while cursor.next_location().unwrap().is_some() {}
+        let consumed = cursor.work_consumed();
+        assert!(consumed <= allowance);
+        assert!(
+            reconstructed_body_locations(&package, function, consumed - 1).is_err(),
+            "late exhaustion must discard every reconstructed partial row"
+        );
+        assert_eq!(
+            reconstructed_body_locations(&package, function, consumed)
+                .unwrap()
+                .len(),
+            locations.len()
+        );
+    }
+
+    #[trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
+    #[test]
+    fn compact_body_projection_refuses_a_captured_coordinate_that_cannot_fit() {
+        let (_, checked) = crate::emit::tests::package_from_text(
+            "function f using v(x: Integer): Integer pure { x + 1 }\n",
+        );
+        let emission =
+            crate::emit::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let mut wire: serde_json::Value =
+            serde_json::from_slice(emission.package().bytes()).unwrap();
+        wire["checked_term_data"]["body_locations"][0]["location"]["down"] =
+            serde_json::json!(["18446744073709551616"]);
+        let package = match filament_contract_model::read_checked_package(
+            &serde_json::to_vec(&wire).unwrap(),
+            crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+            emission.evidence(),
+        ) {
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => {
+                panic!("the reader retains arbitrary producer-selected coordinates: {other:?}")
+            }
+        };
+        let row = &package.checked_term_data().unwrap().body_locations[0];
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+        let allowance = body_location_allowance(&package, function).unwrap();
+        assert!(
+            reconstructed_body_locations(&package, function, allowance).is_err(),
+            "native usize projection must not drop or truncate a captured coordinate"
         );
     }
 
