@@ -219,3 +219,7 @@ scope:
 ## Disposition round 1 verification
 
 No gap findings required disposition. Fix-only inspection at 9b91fdd454bf140f1ff40e3cdbe9f34815885d51 found no additional gap in typed-locus retention or the new focused regression. The original scoped matrix limitations and partial-delivery boundaries remain; no matrix rerun or global assurance PASS is claimed. No Cargo or gates ran in this reviewer.
+
+## Final test-oracle verification
+
+Verified 9b91fdd..b6015b50b4388fe80ddb20b99b0b72d318189ea2: only the focused regression changed. Code/cause/fields/locus assertions now read the actual clause-report path `disposition.refusal`; typed-failure equality, stage and strict-reader assertions remain. Production behavior is unchanged, so FND-001 remains fixed in disposition round 1. The initial run failed because the test looked for root-level `refusal`; the corrected regression passed 1 test, 0 failed, 0 ignored, as observed in `/tmp/qsl-2726-selections-admission-locus-fix.log`. No reviewer Cargo/gates ran. Lead-owned final focused TEST-RUN remains pending.

@@ -225,3 +225,7 @@ scope:
 ## Disposition round 1 verification
 
 Current scoped verdict: PASS for the reviewed fix; no unresolved findings and no new findings. Inspected only 777e1c..9b91fdd and the necessary classification/serialization consumers. The new regression exercises Package, Node and Member loci for both Refused and Incomplete, checks equality of the retained typed failure, stage, code/cause/fields, absent wire locus and reader acceptance. Its execution is pending in the lead-owned shared build lane; this reviewer ran no Cargo or gates. The lead reports the prior frozen 777e five selections passed 5/0 and observed-undefined wire regression passed 1/0. Final focused TEST-RUN remains with the lead. Original review text and finding are unchanged.
+
+## Final test-oracle verification
+
+Verified 9b91fdd..b6015b50b4388fe80ddb20b99b0b72d318189ea2: only the focused regression changed. Code/cause/fields/locus assertions now read the actual clause-report path `disposition.refusal`; typed-failure equality, stage and strict-reader assertions remain. Production behavior is unchanged, so FND-001 remains fixed in disposition round 1. The initial run failed because the test looked for root-level `refusal`; the corrected regression passed 1 test, 0 failed, 0 ignored, as observed in `/tmp/qsl-2726-selections-admission-locus-fix.log`. No reviewer Cargo/gates ran. Lead-owned final focused TEST-RUN remains pending.
