@@ -783,6 +783,24 @@ pub enum NativeCandidateVisit {
     Stopped,
 }
 
+/// A probability system's structural admission failure or original scalar
+/// stop while checking the rewards against its run allowance (FR-120).
+#[derive(Debug, thiserror::Error)]
+pub enum ProbabilityAdmissionFailure {
+    /// The ordinary structural or reward-sign admission failure.
+    #[error("model admission failed: {0:?}")]
+    Admission(AdmissionFailure),
+    /// The owner's unchanged scalar stop while admitting a scoped reward.
+    #[error("probability reward accounting stopped: {0:?}")]
+    Evaluation(filament_exact::Incomplete),
+}
+
+impl From<AdmissionFailure> for ProbabilityAdmissionFailure {
+    fn from(failure: AdmissionFailure) -> Self {
+        Self::Admission(failure)
+    }
+}
+
 /// FR-120: the transition system of a checked package's state family.
 pub struct ModelSystem<'a> {
     /// The identity of the one domain package this system is over, when it
@@ -1200,14 +1218,17 @@ impl<'a> ModelSystem<'a> {
     /// including reward admission before any initial-state or claim reads.
     ///
     /// # Errors
-    /// The same admission failures as [`Self::new_with_cancel`].
+    /// Ordinary admission failures, or the original scalar stop from a
+    /// reward read admitted against the probability item's work scope.
     pub fn new_with_work_scope(
         request: ModelSimulationRequest<'a>,
         scope: filament_exact::WorkScope,
         cancel: &filament_exact::Cancel,
-    ) -> Result<Self, AdmissionFailure> {
+    ) -> Result<Self, ProbabilityAdmissionFailure> {
         let selections = request.input.model_inputs();
-        Self::over_scoped(request, selections, Some(cancel), &[], Some(scope))
+        let system = Self::over_scoped(request, selections, Some(cancel), &[], Some(scope))?;
+        system.check_rewards_metered(Some(cancel))?;
+        Ok(system)
     }
 
     /// The model system's selected populations in ascending declaration-key
@@ -1318,7 +1339,9 @@ impl<'a> ModelSystem<'a> {
         cancel: Option<&filament_exact::Cancel>,
         other_models: &[DeclarationKey],
     ) -> Result<Self, AdmissionFailure> {
-        Self::over_scoped(request, selections, cancel, other_models, None)
+        let system = Self::over_scoped(request, selections, cancel, other_models, None)?;
+        system.check_rewards_with_cancel(cancel)?;
+        Ok(system)
     }
 
     fn over_scoped(
@@ -1642,7 +1665,6 @@ impl<'a> ModelSystem<'a> {
         // population beside each clock-owner candidate. Refuse those actual
         // data domains before reward or frame probing can enumerate them.
         system.check_clock_reference_enumeration()?;
-        system.check_rewards_with_cancel(cancel)?;
         Ok(system)
     }
 

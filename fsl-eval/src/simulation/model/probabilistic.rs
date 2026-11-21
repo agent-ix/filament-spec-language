@@ -556,6 +556,21 @@ impl ModelSystem<'_> {
         arguments: Vec<Value>,
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<Value, ExpansionStop> {
+        self.reward_read_with_cancel(reward, arguments, cancel)
+            .map_err(|failure| match failure {
+                super::ProbabilityAdmissionFailure::Evaluation(incomplete) => {
+                    exhausted(ExpansionLimit::EvaluationMeter(incomplete.limit_kind))
+                }
+                super::ProbabilityAdmissionFailure::Admission(_) => stop(BROKEN),
+            })
+    }
+
+    fn reward_read_with_cancel(
+        &self,
+        reward: DeclaredReward<'_>,
+        arguments: Vec<Value>,
+        cancel: Option<&filament_exact::Cancel>,
+    ) -> Result<Value, super::ProbabilityAdmissionFailure> {
         let mut meter = self.evaluation_meter();
         if let Some(cancel) = cancel {
             meter = meter.with_cancel(cancel.clone());
@@ -571,17 +586,17 @@ impl ModelSystem<'_> {
                 .ok_or(InternalFault::new("FR-187", "reward-is-projected"))
                 .and_then(|reward| reward.evaluate(projected.world(), arguments, &mut meter)),
         }
-        .map_err(|_| stop(BROKEN))?;
+        .map_err(|_| super::fault("reward-evaluation"))?;
         if let filament_eval::FamilyOutcome::Evaluated(Outcome::Completed(value)) =
             &evaluation.outcome
         {
             return Ok(value.clone());
         }
         match verdict(&evaluation.outcome) {
-            Verdict::Undecided(ClauseOutcome::Incomplete(incomplete)) => Err(exhausted(
-                ExpansionLimit::EvaluationMeter(incomplete.limit_kind),
-            )),
-            _ => Err(stop(BROKEN)),
+            Verdict::Undecided(ClauseOutcome::Incomplete(incomplete)) => {
+                Err(super::ProbabilityAdmissionFailure::Evaluation(incomplete))
+            }
+            _ => Err(super::fault("reward-evaluation").into()),
         }
     }
 
@@ -635,6 +650,25 @@ impl ModelSystem<'_> {
         &self,
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<(), AdmissionFailure> {
+        self.check_rewards_metered(cancel)
+            .map_err(|failure| match failure {
+                super::ProbabilityAdmissionFailure::Admission(failure) => failure,
+                super::ProbabilityAdmissionFailure::Evaluation(_) => {
+                    AdmissionFailure::Incomplete(Box::new(super::record(
+                        Code::ResourceExhausted,
+                        "insufficient-next-charge",
+                        &[("limit", "evaluation_meter".to_owned())],
+                    )))
+                }
+            })
+    }
+
+    /// Check the same rewards while preserving the owner's original scalar
+    /// stop for the probability constructor's existing engine settlement.
+    pub(super) fn check_rewards_metered(
+        &self,
+        cancel: Option<&filament_exact::Cancel>,
+    ) -> Result<(), super::ProbabilityAdmissionFailure> {
         let mut budget = 0u64;
         for reward in self.declared_rewards() {
             let operation = reward.operation();
@@ -662,7 +696,8 @@ impl ModelSystem<'_> {
                         Code::ResourceExhausted,
                         "insufficient-next-charge",
                         &[("limit", "max_candidates".to_owned())],
-                    ))));
+                    )))
+                    .into());
                 }
                 let arguments = domains
                     .iter()
@@ -672,18 +707,7 @@ impl ModelSystem<'_> {
                     .ok_or_else(|| super::fault("reward-domain"))?;
                 // A reward that does not complete on a vector refuses
                 // admission: its sign there is unknown.
-                let value = self
-                    .reward_value_with_cancel(reward, arguments.clone(), cancel)
-                    .map_err(|stop| match stop.limit {
-                        Some(ExpansionLimit::EvaluationMeter(_)) => {
-                            AdmissionFailure::Incomplete(Box::new(super::record(
-                                Code::ResourceExhausted,
-                                "insufficient-next-charge",
-                                &[("limit", "evaluation_meter".to_owned())],
-                            )))
-                        }
-                        _ => super::fault("reward-evaluation"),
-                    })?;
+                let value = self.reward_read_with_cancel(reward, arguments.clone(), cancel)?;
                 if is_negative(&value) {
                     let rendered = reward
                         .parameters()
@@ -704,7 +728,8 @@ impl ModelSystem<'_> {
                             ("reward", reward.name().to_owned()),
                             ("arguments", rendered.join(", ")),
                         ],
-                    ));
+                    )
+                    .into());
                 }
             }
         }

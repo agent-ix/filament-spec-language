@@ -127,7 +127,22 @@ fn build_configured(
             if let Some(cause) = cancel.tripped() {
                 ProductRefusal::Stopped(ProductStop::Cancelled(cause))
             } else {
-                ProductRefusal::Admission(failure)
+                match failure {
+                    fsl_eval::simulation::model::ProbabilityAdmissionFailure::Admission(
+                        failure,
+                    ) => ProductRefusal::Admission(failure),
+                    fsl_eval::simulation::model::ProbabilityAdmissionFailure::Evaluation(
+                        incomplete,
+                    ) => ProductRefusal::Expansion(fsl_eval::simulation::ExpansionStop {
+                        cause: filament_semantic_value::catalog::CatalogCode::new(
+                            "resource_exhausted",
+                            "insufficient-next-charge",
+                        ),
+                        limit: Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+                            incomplete.limit_kind,
+                        )),
+                    }),
+                }
             }
         })?;
     match TimedSystem::new(&system, &claim.subject.alias) {

@@ -148,8 +148,19 @@ pub fn check_statistical(
         .source_package()
         .ok_or_else(|| fault("the-statistical-check-reads-source-forms"))?;
     let scope = filament_exact::WorkScope::new(scalar_limits);
-    let system = ModelSystem::new_with_work_scope(subject.simulation, scope, cancel)
-        .map_err(|failure| StatisticalRefusal::Admission(Box::new(failure)))?;
+    let system =
+        ModelSystem::new_with_work_scope(subject.simulation, scope, cancel).map_err(|failure| {
+            match failure {
+                fsl_eval::simulation::model::ProbabilityAdmissionFailure::Admission(failure) => {
+                    StatisticalRefusal::Admission(Box::new(failure))
+                }
+                fsl_eval::simulation::model::ProbabilityAdmissionFailure::Evaluation(
+                    incomplete,
+                ) => StatisticalRefusal::PredicateRefused(
+                    fsl_eval::simulation::model::ClauseOutcome::Incomplete(incomplete),
+                ),
+            }
+        })?;
     let group = if symmetry.is_empty() {
         None
     } else {

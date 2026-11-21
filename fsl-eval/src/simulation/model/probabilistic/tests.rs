@@ -357,6 +357,99 @@ fn probability_clause_factory_preserves_precondition_short_circuit_and_whole_set
     });
 }
 
+#[trace("FR-120-AC-35", "FR-120-AC-36")]
+#[test]
+fn probability_reward_admission_preserves_owner_incomplete_and_cancellation() {
+    use super::super::{ModelCheckInput, ModelSystem, ProbabilityAdmissionFailure};
+    use filament_exact::{Cancel, CancelCause, LimitKind, WorkScope};
+    use std::sync::{Arc, OnceLock};
+    let mut model = world::link();
+    model.operations.truncate(1);
+    model.operations[0].parameters.clear();
+    model.body = "reward alpha on Msg::send_a = 1;\n".to_owned();
+    let one = World::new(&model);
+    let limits = one.system().meter_limits();
+    let scope = WorkScope::new(limits);
+    ModelSystem::new_with_work_scope(
+        one.request_input(ModelCheckInput::source(&one.package), 1_000_000),
+        scope.clone(),
+        &Cancel::new(),
+    )
+    .expect("one valid constant reward admits");
+    let prefix = scope.consumed_work();
+    assert!(prefix > 0);
+    model.body.push_str("reward beta on Msg::send_a = 1;\n");
+    let two = World::new(&model);
+    let exercise = |input: ModelCheckInput<'_>| {
+        let mut first_denial = None;
+        for bound in [0, prefix] {
+            let mut request = two.request_input(input.clone(), 1_000_000);
+            request.meter.work_units = bound;
+            let scope = WorkScope::new(request.meter);
+            let failed = ModelSystem::new_with_work_scope(request, scope.clone(), &Cancel::new());
+            let ProbabilityAdmissionFailure::Evaluation(denied) =
+                failed.err().expect("reward admission stops")
+            else {
+                panic!("the scalar stop must retain its typed owner record")
+            };
+            assert_eq!(denied.limit_kind, LimitKind::WorkUnits);
+            assert_eq!(denied.limit, bound);
+            assert_eq!(denied.consumed, bound);
+            assert_eq!(scope.consumed_work(), bound);
+            assert!(denied.next_charge > Integer::from(0));
+            if let Some((point, amount)) = &first_denial {
+                assert_eq!(
+                    denied.charge_point, *point,
+                    "the next reward reaches the same real charge point"
+                );
+                assert_eq!(&denied.next_charge, amount);
+            } else {
+                first_denial = Some((denied.charge_point, denied.next_charge));
+            }
+        }
+        let request = two.request_input(input.clone(), 1_000_000);
+        let scope = WorkScope::new(request.meter);
+        let observed = scope.clone();
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let cancel = Cancel::observing(move || {
+            if observed.consumed_work() >= prefix {
+                weak.upgrade()
+                    .unwrap()
+                    .get()
+                    .unwrap()
+                    .cancel(CancelCause::Requested);
+            }
+        });
+        slot.set(cancel.clone()).unwrap();
+        let failed = ModelSystem::new_with_work_scope(request, scope.clone(), &cancel);
+        let ProbabilityAdmissionFailure::Evaluation(denied) =
+            failed.err().expect("cancelled reward admission stops")
+        else {
+            panic!("typed cancellation prefix")
+        };
+        assert_eq!(cancel.tripped(), Some(CancelCause::Requested));
+        assert_eq!(denied.limit_kind, LimitKind::WorkUnits);
+        assert_eq!(denied.consumed, prefix);
+        assert_eq!(
+            denied.limit, prefix,
+            "owner cancellation records the admitted prefix"
+        );
+        assert_eq!(scope.consumed_work(), prefix);
+        let mut ordinary = two.request_input(input, 1_000_000);
+        ordinary.meter.work_units = 0;
+        assert!(
+            matches!(
+                ModelSystem::new(ordinary),
+                Err(AdmissionFailure::Incomplete(_))
+            ),
+            "ordinary unscoped admission retains its original failure type"
+        );
+    };
+    exercise(ModelCheckInput::source(&two.package));
+    through_the_wire(&two, exercise);
+}
+
 #[trace("TC-636", "FR-201-AC-22", "FR-202-AC-22", "FR-282-AC-17")]
 #[test]
 fn caller_cancellation_enters_qualified_contract_and_state_predicate_meters() {

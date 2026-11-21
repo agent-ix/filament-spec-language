@@ -1197,6 +1197,167 @@ fn native_probability_items_share_work_across_expansions_and_start_fresh_per_ite
     assert_eq!(items[2]["request"]["probabilistic"]["workers"], 4);
 }
 
+#[trace("TC-2066", "FR-120-AC-35", "FR-192-AC-1", "FR-203-AC-13")]
+#[test]
+fn native_probability_reward_admission_preserves_accounting_stop() {
+    use fsl_analyze::statistical::{check_statistical, StatisticalRequest};
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod, StatisticalRefusal};
+    let claims = format!("{DELIVERED}\n{EVENTUALLY}");
+    let mut one_model = prob_world::link(&claims);
+    one_model.body = one_model
+        .body
+        .replace("reward cost on Msg::send_b = 1;\n", "");
+    let one = World::new(&one_model);
+    let request = one.subject().simulation;
+    let scope = filament_exact::WorkScope::new(request.meter);
+    ModelSystem::new_with_work_scope(request, scope.clone(), &Cancel::new())
+        .expect("the first reward's vectors admit");
+    let prefix = scope.consumed_work();
+    assert!(prefix > 0);
+    let world = World::new(&prob_world::link(&claims));
+    for bound in [0, prefix] {
+        let mut subject = world.subject();
+        subject.simulation.meter.work_units = bound;
+        let raw_statistical = check_statistical(
+            StatisticalRequest {
+                subject,
+                claim: world.claim("Delivered"),
+                method: StatisticalMethod::Okamoto,
+                seed: 7,
+                sampler: DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1").unwrap(),
+                limits: StatisticalLimits::default(),
+                max_witnesses: 0,
+                symmetry: Vec::new(),
+                timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+            },
+            &Cancel::new(),
+        );
+        let Err(StatisticalRefusal::PredicateRefused(
+            fsl_eval::simulation::model::ClauseOutcome::Incomplete(denied),
+        )) = raw_statistical
+        else {
+            panic!("the EN-4 existing typed incomplete route must receive the reward stop: {raw_statistical:?}")
+        };
+        assert_eq!(denied.limit_kind, filament_exact::LimitKind::WorkUnits);
+        assert_eq!(denied.limit, bound);
+        assert_eq!(denied.consumed, bound);
+        let mut request = world.request("Eventually", ModelCheckLimits::default());
+        request.subject.simulation.meter.work_units = bound;
+        let raw = fsl_analyze::exact_probabilistic::build_product(request, &Cancel::new());
+        assert!(
+            matches!(
+                raw,
+                Err(fsl_analyze::exact_probabilistic::ProductRefusal::Expansion(
+                    fsl_eval::simulation::ExpansionStop {
+                        limit: Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+                            filament_exact::LimitKind::WorkUnits
+                        )),
+                        ..
+                    }
+                ))
+            ),
+            "reward admission must enter the existing EN-5 scalar-stop route: {raw:?}"
+        );
+        let ws = Workspace::new(&format!("probability-reward-admission-{bound}"));
+        let request = request_over(
+            &ws,
+            &unit(&claims),
+            LINK_MODEL,
+            &[LINK_START.to_vec()],
+            json!({
+                "items": [
+                    {"claim": "Delivered", "probabilistic": {"evidence": "statistical"}},
+                    {"claim": "Eventually", "probabilistic": {"evidence": "exact"}}
+                ],
+                "limits": {"accounting": {"work_units": bound}}
+            }),
+        );
+        let document = analyze(&request).document();
+        let items = document["items"]
+            .as_array()
+            .expect("both native results settle");
+        assert_eq!(items.len(), 2, "{document}");
+        for (item, backend) in items.iter().zip(["en-4", "en-5"]) {
+            assert_eq!(label(item), "incomplete", "{item}");
+            assert_eq!(item["record"]["settled_by"], "result", "{item}");
+            assert_eq!(item["record"]["backend"], backend, "{item}");
+            assert_eq!(item["record"]["cause"]["kind"], "limit-reached", "{item}");
+            assert_eq!(item["record"]["cause"]["limit"], "work_units", "{item}");
+            assert_eq!(item["record"]["cause"]["value"], bound, "{item}");
+            assert_eq!(
+                item["record"]["cause"]["setting"], "accounting.work_units",
+                "{item}"
+            );
+            assert!(item["record"].get("truth").is_none(), "{item}");
+            assert!(item["record"].get("decision").is_none(), "{item}");
+            assert!(item.get("verdict").is_none(), "{item}");
+        }
+    }
+}
+
+#[trace("TC-2066", "FR-120-AC-36", "FR-192-AC-1", "FR-203-AC-13")]
+#[test]
+fn native_probability_reward_admission_cancellation_keeps_its_cause() {
+    use filament_exact::CancelCause;
+    use fsl_analyze::analyze::statistical_item;
+    use fsl_analyze::statistical::StatisticalRequest;
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod};
+    use fsl_replay::{IncompleteCause, TerminalValue};
+    use std::sync::{Arc, OnceLock};
+    let world = World::new(&prob_world::link(&format!("{DELIVERED}\n{EVENTUALLY}")));
+    let engines = Engines::fsl().unwrap();
+    for exact in [false, true] {
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let cancel = Cancel::observing(move || {
+            weak.upgrade()
+                .unwrap()
+                .get()
+                .unwrap()
+                .cancel(CancelCause::Requested);
+        });
+        slot.set(cancel.clone()).unwrap();
+        let item = if exact {
+            exact_probabilistic_item(
+                RequestIndex::new(0),
+                world.request("Eventually", ModelCheckLimits::default()),
+            )
+        } else {
+            statistical_item(
+                RequestIndex::new(0),
+                StatisticalRequest {
+                    subject: world.subject(),
+                    claim: world.claim("Delivered"),
+                    method: StatisticalMethod::Okamoto,
+                    seed: 7,
+                    sampler: DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
+                        .unwrap(),
+                    limits: StatisticalLimits::default(),
+                    max_witnesses: 0,
+                    symmetry: Vec::new(),
+                    timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+                },
+            )
+        };
+        let records = analyze_items(&engines, vec![item], &cancel);
+        assert_eq!(cancel.tripped(), Some(CancelCause::Requested));
+        let terminal = records[0].terminal().expect("native cancellation settles");
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Incomplete(IncompleteCause::Cancelled {
+                source: CancelCause::Requested
+            })
+        );
+        let wire = serde_json::to_value(fsl_replay::outcome::OutcomeItem::from_terminal(terminal))
+            .unwrap();
+        assert_eq!(wire["result"], "incomplete", "{wire}");
+        assert!(wire.get("truth").is_none(), "{wire}");
+        assert!(wire.get("decision").is_none(), "{wire}");
+    }
+}
+
 /// FR-741 request members: an absent method of a long-run fraction is
 /// `regenerative` with `min_cycles` 100, of a bounded form `okamoto`; FSL
 /// writes every budget the caller leaves out at its published default.
