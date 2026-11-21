@@ -111,6 +111,14 @@ pub enum NativeRunReadError {
         /// The cumulative working bytes including the refused growth.
         required: u64,
     },
+    /// The allocator refused a checked, bounded reader reservation.
+    #[error("cannot allocate {requested} diagnostic entries for {member}")]
+    Allocation {
+        /// Member whose allocation failed.
+        member: &'static str,
+        /// Number of entries requested after the working-budget check.
+        requested: usize,
+    },
     /// A report member contradicts another report member.
     #[error("invalid member {member}: {reason}")]
     Invalid {
@@ -2665,15 +2673,7 @@ pub fn read_outcome_diagnostics(
             reason: "a diagnostic array is required",
         });
     };
-    for entry in entries.clone() {
-        let details = entry.get("details");
-        if !details.is_some_and(|details| matches!(details.node(), Node::Object(_) | Node::Null)) {
-            return Err(NativeRunReadError::Invalid {
-                member: "diagnostics.details",
-                reason: "an object or null is required",
-            });
-        }
-    }
+    let count = entries.len();
     budget.charge(
         u64::try_from(entries.len())
             .unwrap_or(u64::MAX)
@@ -2681,21 +2681,35 @@ pub fn read_outcome_diagnostics(
                 u64::try_from(core::mem::size_of::<OutcomeDiagnosticRead>()).unwrap_or(u64::MAX),
             ),
     )?;
-    let encoded = budget
-        .canonical(&diagnostics)
-        .map_err(|_| budget.copy_failure("diagnostics", "cannot copy diagnostics"))?;
-    budget.charge(u64::try_from(encoded.len()).unwrap_or(u64::MAX))?;
-    let decoded: Vec<OutcomeDiagnosticRead> =
-        read_typed(&encoded).map_err(|error| match error {
-            NativeRunReadError::MalformedMember { member, source } => {
-                NativeRunReadError::MalformedMember {
-                    member: format!("diagnostics{member}"),
-                    source,
-                }
-            }
-            other => other,
+    let mut decoded = Vec::new();
+    decoded
+        .try_reserve_exact(count)
+        .map_err(|_| NativeRunReadError::Allocation {
+            member: "diagnostics",
+            requested: count,
         })?;
-    for diagnostic in &decoded {
+    for (index, entry) in entries.enumerate() {
+        let details = entry.get("details");
+        if !details.is_some_and(|details| matches!(details.node(), Node::Object(_) | Node::Null)) {
+            return Err(NativeRunReadError::Invalid {
+                member: "diagnostics.details",
+                reason: "an object or null is required",
+            });
+        }
+        let encoded = budget
+            .canonical(&entry)
+            .map_err(|_| budget.copy_failure("diagnostics", "cannot copy a diagnostic"))?;
+        budget.charge(u64::try_from(encoded.len()).unwrap_or(u64::MAX))?;
+        let diagnostic: OutcomeDiagnosticRead =
+            read_typed(&encoded).map_err(|error| match error {
+                NativeRunReadError::MalformedMember { member, source } => {
+                    NativeRunReadError::MalformedMember {
+                        member: format!("diagnostics[{index}].{member}"),
+                        source,
+                    }
+                }
+                other => other,
+            })?;
         if diagnostic.cause.is_none() || diagnostic.locus.is_none() || diagnostic._details.is_none()
         {
             return Err(NativeRunReadError::Invalid {
@@ -2712,6 +2726,7 @@ pub fn read_outcome_diagnostics(
                 other => other,
             })?;
         }
+        decoded.push(diagnostic);
     }
     Ok(decoded)
 }
