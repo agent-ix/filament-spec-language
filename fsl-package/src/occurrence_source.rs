@@ -83,10 +83,12 @@ pub(crate) fn occurrence_source(
     occurrence: &CheckedOccurrence,
     selected: Option<&SourceRegion>,
 ) -> Result<OccurrenceSource, OccurrenceSourceRefusal> {
-    let position = package
-        .position_of(application)
+    let node = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == *application)
         .ok_or(OccurrenceSourceRefusal::UnknownNode)?;
-    let node = &package.resolved_graph().nodes[position];
     if application.package.as_ref() != package.name() {
         return Err(OccurrenceSourceRefusal::UnknownNode);
     }

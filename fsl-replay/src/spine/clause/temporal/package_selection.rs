@@ -18,7 +18,8 @@ use filament_exact::{Meter, NodeKey, ScalarLimits, ValueType};
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
 };
-use fsl_eval::temporal::{evaluate_package_positions_decisive, DecisiveStop, PackagePositions};
+use fsl_eval::temporal::{evaluate_package_positions_decisive, DecisiveAtom, PackagePositions};
+use fsl_eval::value::{CheckedPackageEvaluation, HoldsAtom, HoldsBinders, ObservationIdentity};
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNode};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
@@ -76,18 +77,6 @@ pub struct PackageSnapshotRequest<'a, 'p> {
 
 fn report(disposition: ClauseDisposition, usage: ClauseRunUsage) -> ClauseRunReport {
     *super::disposition_report(disposition, usage)
-}
-
-/// What the package route lacks to report the decisive atom of a violation:
-/// the source route reads it from the checked condition tree, which a package
-/// carries as evaluator nodes with no locations to key a decision by.
-fn decisive_not_read() -> PackageSelectionNotRead {
-    PackageSelectionNotRead {
-        member: "clause.selection",
-        reason: "the decisive atom of a violated clause is read from the checked condition, \
-                 which a package does not carry; its verdict is not reported without it"
-            .to_owned(),
-    }
 }
 
 /// The declaration identities of the populations the clause's `holds` atoms
@@ -311,35 +300,40 @@ pub fn run_package_snapshots(
     );
     let (disposition, counterexample) =
         with_counterexample(clause, trace, disposition, observed.undefined);
-    let disposition = match (violated, decisive) {
-        (false, _) | (true, None | Some(Ok(None))) => disposition,
-        (true, Some(Ok(Some(atom)))) => {
-            if matches!(
-                clause.formula().nodes().get(atom.atom.index()),
-                Some(FormulaNode::Holds { .. })
-            ) {
-                return Err(decisive_not_read());
-            }
-            disposition
-        }
-        (true, Some(Err(DecisiveStop::Incomplete(incomplete)))) => {
-            return Ok(finished(
-                ClauseDisposition::Temporal(TemporalVerdict::Incomplete(incomplete)),
-                (&meter, admitted),
-                None,
-                None,
-            ));
-        }
-        (true, Some(Err(DecisiveStop::Fault(fault)))) => {
-            return Ok(finished(
-                ClauseDisposition::EvaluateFault(fault),
-                (&meter, admitted),
-                None,
-                None,
-            ));
-        }
-    };
+    let (disposition, counterexample, decisive) = super::with_decisive_by(
+        violated.then_some(decisive).flatten(),
+        disposition,
+        counterexample,
+        |atom, meter| {
+            let slot = usize::try_from(atom.position.index())
+                .ok()
+                .and_then(|at| super::observation_slot(trace, at))
+                .ok_or_else(|| decisive_fault("decisive-position-has-an-observation"))?;
+            let document = trace
+                .documents()
+                .nth(slot)
+                .ok_or_else(|| decisive_fault("decisive-position-has-a-document"))?;
+            let objects = environments
+                .get(slot)
+                .ok_or_else(|| decisive_fault("decisive-position-has-an-environment"))?;
+            decisive_over(
+                package,
+                clause,
+                key,
+                atom,
+                &resolved,
+                objects,
+                ObservationIdentity {
+                    authority: document.authority.clone(),
+                    identity: document.identity.clone(),
+                },
+                meter,
+            )
+        },
+        &mut meter,
+    );
     let mut finished = finished(disposition, (&meter, admitted), counterexample, refused_at);
+    finished.decisive = decisive;
     finished.authenticated_temporal_selection = authenticated;
     Ok(finished)
 }
@@ -385,7 +379,10 @@ fn run_model(
         max_candidates,
     } = trace
     else {
-        return Err(decisive_not_read());
+        return Err(PackageSelectionNotRead {
+            member: "clause.selection.trace",
+            reason: "a model trace is required".to_owned(),
+        });
     };
     let mut admitted = AdmissionUsage::default();
     let stopped = |disposition, admitted| {
@@ -492,7 +489,8 @@ fn run_model(
         call_failure,
         outcome,
         decisive,
-        meter,
+        mut meter,
+        observation,
         ..
     } = evaluated;
     if let Some(failure) = call_failure {
@@ -508,21 +506,102 @@ fn run_model(
         disposition,
         ClauseDisposition::Temporal(TemporalVerdict::Violated { .. })
     );
-    let disposition = match (violated, decisive) {
-        (false, _) | (true, None | Some(Ok(None))) => disposition,
-        (true, Some(Ok(Some(atom)))) => {
-            if matches!(
-                clause.formula().nodes().get(atom.atom.index()),
-                Some(FormulaNode::Holds { .. })
-            ) {
-                return Err(decisive_not_read());
-            }
-            disposition
-        }
-        (true, Some(Err(DecisiveStop::Incomplete(incomplete)))) => {
-            ClauseDisposition::Temporal(TemporalVerdict::Incomplete(incomplete))
-        }
-        (true, Some(Err(DecisiveStop::Fault(fault)))) => ClauseDisposition::EvaluateFault(fault),
+    let (disposition, _, decisive) = super::with_decisive_by(
+        violated.then_some(decisive).flatten(),
+        disposition,
+        None,
+        |atom, meter| {
+            let observed = observation
+                .as_ref()
+                .ok_or_else(|| decisive_fault("decisive-atom-has-an-observation"))?;
+            decisive_over(
+                request.package,
+                clause,
+                key,
+                atom,
+                &observed.over,
+                &observed.environment,
+                ObservationIdentity {
+                    authority: observed.identity.authority.clone(),
+                    identity: observed.identity.identity.clone(),
+                },
+                meter,
+            )
+        },
+        &mut meter,
+    );
+    let mut report = finished(disposition, (&meter, admitted), None, None);
+    report.decisive = decisive;
+    Ok(report)
+}
+
+fn decisive_fault(invariant: &'static str) -> Box<ClauseDisposition> {
+    Box::new(ClauseDisposition::EvaluateFault(
+        filament_semantic_value::catalog::InternalFault::new("temporal", invariant),
+    ))
+}
+
+/// Re-evaluate the selected false atom with the witness channel, then follow
+/// the actual short-circuit decisions through its admitted expression.
+#[allow(clippy::too_many_arguments)]
+fn decisive_over(
+    package: &fsl_package::BarePackage<'_>,
+    clause: &CheckedTemporalClause,
+    key: &NodeKey,
+    atom: DecisiveAtom,
+    over: &filament_exact::ObjectReference,
+    objects: &fsl_semantics::model::object_environment::ObjectEnvironment,
+    observation: ObservationIdentity,
+    meter: &mut Meter,
+) -> Result<Option<crate::TemporalDecisive>, Box<ClauseDisposition>> {
+    use filament_eval::FamilyOutcome;
+    use filament_exact::{Outcome, Value};
+    if !matches!(
+        clause.formula().nodes().get(atom.atom.index()),
+        Some(FormulaNode::Holds { .. })
+    ) {
+        return Ok(None);
+    }
+    let named = HoldsAtom {
+        clause: key.clone(),
+        position: atom.atom.index(),
     };
-    Ok(finished(disposition, (&meter, admitted), None, None))
+    let evaluation = package
+        .evaluate_holds_traced(
+            &named,
+            HoldsBinders {
+                over,
+                captures: &[],
+            },
+            objects,
+            observation,
+            meter,
+        )
+        .map_err(|failure| Box::new(super::package_call_disposition(failure)))?;
+    match &evaluation.evaluation.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(false))) => {}
+        FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
+            return Err(Box::new(ClauseDisposition::Temporal(
+                TemporalVerdict::Incomplete(incomplete.clone()),
+            )))
+        }
+        FamilyOutcome::Evaluated(_) | FamilyOutcome::FamilyEvaluated(_) => {
+            return Err(decisive_fault("decisive-atom-reads-false-again"))
+        }
+    }
+    let term = package
+        .project_holds(key, atom.atom.index())
+        .map_err(|_| decisive_fault("decisive-atom-has-a-condition"))?;
+    let stop = crate::witness::decisive_package_stop(term.projection(), &evaluation)
+        .map_err(|internal| Box::new(ClauseDisposition::EvaluateFault(internal)))?;
+    let decisive = match stop {
+        Some(report) => crate::TemporalDecisive::from_stop(report),
+        None => crate::TemporalDecisive::undecided(
+            evaluation
+                .receiver_path()
+                .cloned()
+                .ok_or_else(|| decisive_fault("decisive-atom-has-a-root-path"))?,
+        ),
+    };
+    Ok(Some(decisive.at_position(atom.position.index())))
 }
