@@ -320,6 +320,8 @@ pub(super) struct Program<'a> {
     /// Each event step's relationship premises, in source order.
     pub(super) related: BTreeMap<ProtocolNodeId, Vec<Related<'a>>>,
     pub(super) messages: BTreeMap<ProtocolNodeId, Message<'a>>,
+    /// Execution lookup for a message's route-independent declaration path.
+    message_nodes: BTreeMap<String, ProtocolNodeId>,
     pub(super) channels: Vec<Channel<'a>>,
     pub(super) finish: Finish<'a>,
     /// Each binder slot's node, `None` for the `over` input.
@@ -944,6 +946,7 @@ impl<'a> Program<'a> {
             events,
             related,
             messages,
+            message_nodes: BTreeMap::new(),
             channels,
             finish,
             slots,
@@ -979,6 +982,7 @@ impl<'a> Program<'a> {
             captures,
             capture_slots,
         };
+        program.index_message_nodes()?;
         program.spans = program.spans()?;
         program.loop_of = program.enclosing_loops()?;
         // An effect keeps its attempt's binder as a reader does: its ST-2
@@ -1329,6 +1333,7 @@ impl<'a> Program<'a> {
             fences: BTreeMap::new(),
             events: BTreeMap::new(),
             messages,
+            message_nodes: BTreeMap::new(),
             channels,
             finish,
             slots,
@@ -1377,6 +1382,7 @@ impl<'a> Program<'a> {
             captures,
             capture_slots,
         };
+        program.index_message_nodes()?;
         for (index, role) in program.replicated.iter().enumerate() {
             for node in &role.owns {
                 program.acting.insert(*node, index);
@@ -1411,6 +1417,23 @@ impl<'a> Program<'a> {
             return Ok(&self.finish.text);
         }
         Ok(&self.control(node)?.text)
+    }
+
+    fn index_message_nodes(&mut self) -> Result<(), ProtocolRefusal> {
+        for node in self.messages.keys() {
+            let path = self.text(*node)?.to_owned();
+            if self.message_nodes.insert(path, *node).is_some() {
+                return Err(ProtocolRefusal::fault(
+                    "a-message-declaration-path-is-unique",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve a message identity's static path within this execution program.
+    pub(super) fn message_node(&self, path: &str) -> Option<ProtocolNodeId> {
+        self.message_nodes.get(path).copied()
     }
 
     /// The control `node`'s parent, `None` for the `run` root.

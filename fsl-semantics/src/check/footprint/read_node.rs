@@ -228,7 +228,9 @@ pub fn derive_slot_reads_over<'a, N: ReadNode<'a>>(
         .collect())
 }
 
-/// [`super::derive_node_reads`] over a body of any [`ReadNode`] source.
+/// [`super::derive_node_reads`] over a body of any [`ReadNode`] source,
+/// with the actual receiver slots of that source's binder frame. A compact
+/// package frame may place its `over` binder at any slot, or omit it.
 ///
 /// # Errors
 ///
@@ -238,11 +240,16 @@ pub fn derive_node_reads_over<'a, N: ReadNode<'a>>(
     model: &'a StateModel,
     name: &str,
     parameters: &[(String, ValueType)],
+    receivers: &[usize],
     body: N,
 ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
     let reader = Reader::new(types, model)?;
+    let scope = BodyScope {
+        receivers,
+        ..unobserved(name, parameters)
+    };
     Ok(reader
-        .body_reads(&unobserved(name, parameters), body)?
+        .body_reads(&scope, body)?
         .into_iter()
         .map(|(location, _)| match location {
             SymbolicLocation::Field {

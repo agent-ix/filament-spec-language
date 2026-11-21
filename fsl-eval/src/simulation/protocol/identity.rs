@@ -181,13 +181,13 @@ impl ThreadPath {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MessageOccurrence {
     instance: u64,
-    node: ProtocolNodeId,
+    node: String,
     path: ThreadPath,
     ordinal: u64,
 }
 
 impl MessageOccurrence {
-    pub(crate) fn new(instance: u64, node: ProtocolNodeId, path: ThreadPath, ordinal: u64) -> Self {
+    pub(crate) fn new(instance: u64, node: String, path: ThreadPath, ordinal: u64) -> Self {
         Self {
             instance,
             node,
@@ -202,8 +202,8 @@ impl MessageOccurrence {
     }
 
     /// The send node's static declaration path.
-    pub fn node(&self) -> ProtocolNodeId {
-        self.node
+    pub fn node(&self) -> &str {
+        &self.node
     }
 
     /// The sending thread's path.
@@ -219,7 +219,7 @@ impl MessageOccurrence {
     pub(crate) fn with_ordinal(&self, ordinal: u64) -> Self {
         Self {
             instance: self.instance,
-            node: self.node,
+            node: self.node.clone(),
             path: self.path.clone(),
             ordinal,
         }
@@ -230,7 +230,7 @@ impl MessageOccurrence {
             "message-occurrence",
             vec![
                 ("instance", Enc::text(self.instance.to_string())),
-                ("node", Enc::text(self.node.0.to_string())),
+                ("node", Enc::text(self.node.clone())),
                 ("path", self.path.enc()),
                 ("ordinal", Enc::text(self.ordinal.to_string())),
             ],
@@ -2083,8 +2083,8 @@ mod occurrence_identity_tests {
     #[test]
     fn distinct_static_nodes_keep_distinct_occurrences() {
         let path = ThreadPath::root(3);
-        let first_message = MessageOccurrence::new(3, ProtocolNodeId(10), path.clone(), 0);
-        let second_message = MessageOccurrence::new(3, ProtocolNodeId(11), path.clone(), 0);
+        let first_message = MessageOccurrence::new(3, "Main/First".to_owned(), path.clone(), 0);
+        let second_message = MessageOccurrence::new(3, "Main/Second".to_owned(), path.clone(), 0);
         assert_ne!(first_message, second_message);
         assert_ne!(first_message.enc(), second_message.enc());
 
