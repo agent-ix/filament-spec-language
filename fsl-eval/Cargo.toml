@@ -38,6 +38,7 @@ unicode-normalization = "0.1.25"
 # ADR-011 X-8: the simulation state key and the pinned sampler's draw
 # preimage encode through the one RFC 8785 implementation (FR-101).
 quire-canonical = { workspace = true }
+sha2 = "0.10.9"
 # The pinned sampler's draw preimage and the simulation-state typed
 # canonical form fixtures are `Serialize` (FR-101; ADR-011 X-8).
 serde = { version = "1.0.228", features = ["derive"] }
@@ -53,6 +54,8 @@ thiserror = "2.0.20"
 test-support = []
 
 [dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 filament-specification = { workspace = true }
 # The evaluator's tests build `PackageDeclarations` from layer-2 parsed forms
 # (`Expression`, `FunctionDeclaration`, `TypeForm`): `check` takes forms as its
@@ -81,8 +84,6 @@ filament-exact = { workspace = true, features = ["test-support"] }
 # `SuppliedRun::with_reservation_permit`, the test-only reservation permit of
 # the supplied-value run (FR-403). Only this dev-dependency enables it.
 filament-semantic-value = { workspace = true, features = ["test-support"] }
-sha2 = "0.10.9"
-
 [[test]]
 name = "it"
 path = "tests/it/main.rs"

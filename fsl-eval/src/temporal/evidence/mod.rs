@@ -19,16 +19,19 @@ mod counters;
 mod identity;
 mod ledger;
 mod limits;
+mod owner;
 mod package;
+mod producer;
+pub use producer::producer_bundle;
 mod request;
 mod trigger;
 mod work;
 
 pub use super::facts::{ClauseFacts, ClauseFormula};
 pub use activation::{
-    activate, scope_disposition, Activation, ActivationFault, ActivationInput, ActivationStop,
-    ClauseShape, Completeness, Contradiction, Disposition, ExecutionDisposition, FaultKind,
-    FaultSubject, Instance, InstanceState, SurplusCapture, UnknownKind,
+    activate, Activation, ActivationFault, ActivationInput, ActivationStop, ClauseShape,
+    Completeness, Contradiction, Disposition, ExecutionDisposition, FaultKind, FaultSubject,
+    Instance, InstanceState, SurplusCapture, UnknownKind,
 };
 pub use binding::{
     authenticate_clock, AuthenticatedBinding, BindingMismatch, ClauseSelection,
@@ -49,9 +52,10 @@ pub use package::{
     PackageRows,
 };
 pub use request::{
-    ActivationRow, ActivationState, CompletenessRecord, EvidenceIncomplete, EvidencePosition,
-    EvidenceRef, EvidenceRequest, EvidenceResult, EvidenceSubject, Indeterminate, NonValue,
-    NonValueKind, Relation, ResultSubject, Settlement, SubjectOccurrence, SupportRef, Truth,
+    ActivationRow, ActivationState, ClockScale, CompletenessRecord, EvidenceIncomplete,
+    EvidencePosition, EvidenceRef, EvidenceRequest, EvidenceResult, EvidenceSubject, Indeterminate,
+    NonValue, NonValueKind, Relation, ResultSubject, Settlement, SubjectOccurrence, SupportRef,
+    Truth,
 };
 pub use trigger::{
     CaptureFact, CapturedValue, EmptyIdentity, Evicted, ExecutionOrigin, Payload, Receipt,

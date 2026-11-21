@@ -822,6 +822,7 @@ pub(super) fn run_bytes(
         .equality_witness(&admitted, &mut budget)
         .map_err(|failure| refused("/request/synthesis", format!("equality rows: {failure:?}")))?;
     let bare = fsl_package::BarePackage::new(&admitted)
+        .with_canonical_bytes(emission.package().bytes())
         .with_supply(
             fsl_package::BareSupply {
                 identities: &identities,

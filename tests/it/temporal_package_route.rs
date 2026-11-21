@@ -481,6 +481,12 @@ fn emit(
 
 /// The package of recipe R of `kind`, compiled as the handoff writer does.
 pub(super) fn recipe(kind: &str) -> Built {
+    recipe_naming(kind, None)
+}
+
+/// The package of recipe R of `kind` whose clocks all name the unit `clock_unit`,
+/// when given.
+pub(super) fn recipe_naming(kind: &str, clock_unit: Option<&str>) -> Built {
     let emit_request = handoff_request(kind, Corpus::None).emit;
     let read = |path: &Path| std::fs::read(path).expect("a recipe file");
     let source = read(&emit_request.source);
@@ -509,6 +515,10 @@ pub(super) fn recipe(kind: &str) -> Built {
         .temporal_selections
         .into_iter()
         .map(|selection| (selection.clause, selection.clock))
+        .collect();
+    let clocks: Vec<_> = clocks
+        .into_iter()
+        .map(|(clause, clock)| (clause, with_unit(clock, clock_unit)))
         .collect();
     emit(unit, &clocks, packages)
 }
@@ -604,7 +614,12 @@ pub(super) fn run(
 ) -> (Result<EvidenceResult, CallFailure>, Vec<String>) {
     let mut meter = unlimited();
     let result = package
-        .evaluate_temporal_evidence(clause, asked, &mut meter)
+        .evaluate_temporal_evidence(
+            &crate::support::observation_producer(),
+            clause,
+            asked,
+            &mut meter,
+        )
         .map(|issued| issued.result().clone());
     (result, charges(&meter))
 }
@@ -871,7 +886,10 @@ fn the_call_gives_equal_results_over_both_routes_and_any_replaced_input_differs(
             let call = |changed: &fsl_eval::temporal::evidence::EvidenceSubject<'_>| {
                 let mut meter = unlimited();
                 let result = fsl_eval::temporal::evidence::evaluate_temporal_evidence(
-                    changed, &asked, &mut meter,
+                    &crate::support::observation_producer(),
+                    changed,
+                    &asked,
+                    &mut meter,
                 )
                 .map(|issued| issued.result().clone());
                 (result, charges(&meter))
@@ -938,7 +956,12 @@ fn each_clause_pairs_with_its_own_clock_row() {
             foreign.occurrence = None;
             let mut meter = unlimited();
             let refused = package
-                .evaluate_temporal_evidence(clause, &foreign, &mut meter)
+                .evaluate_temporal_evidence(
+                    &crate::support::observation_producer(),
+                    clause,
+                    &foreign,
+                    &mut meter,
+                )
                 .map(|issued| issued.result().clone());
             assert_eq!(
                 cause(&refused.expect_err("another clause's row")),
@@ -1126,7 +1149,12 @@ fn twins_pair_their_rows_by_key_over_the_read_back_route() {
         };
         let mut meter = unlimited();
         let refused = back
-            .evaluate_temporal_evidence(&node, &asked, &mut meter)
+            .evaluate_temporal_evidence(
+                &crate::support::observation_producer(),
+                &node,
+                &asked,
+                &mut meter,
+            )
             .map(|issued| issued.result().clone());
         assert_eq!(
             cause(&refused.expect_err("the other row")),
@@ -1143,7 +1171,12 @@ fn twins_pair_their_rows_by_key_over_the_read_back_route() {
     asked.occurrence = None;
     let mut meter = unlimited();
     let refused = back
-        .evaluate_temporal_evidence(&node, &asked, &mut meter)
+        .evaluate_temporal_evidence(
+            &crate::support::observation_producer(),
+            &node,
+            &asked,
+            &mut meter,
+        )
         .map(|issued| issued.result().clone());
     assert_eq!(
         cause(&refused.expect_err("no selector")),
@@ -1153,7 +1186,12 @@ fn twins_pair_their_rows_by_key_over_the_read_back_route() {
     asked.occurrence = Some(claim(5));
     let mut meter = unlimited();
     let refused = back
-        .evaluate_temporal_evidence(&node, &asked, &mut meter)
+        .evaluate_temporal_evidence(
+            &crate::support::observation_producer(),
+            &node,
+            &asked,
+            &mut meter,
+        )
         .map(|issued| issued.result().clone());
     assert_eq!(cause(&refused.expect_err("unknown")), "occurrence-unknown");
     assert!(meter.admitted_charges().is_empty());
@@ -1299,7 +1337,8 @@ pub(super) fn same_named_clauses() -> Built {
 fn twins_pair_their_rows_by_key_over_the_bytes_only_route() {
     let built = twins();
     let read = built.read(&built.emission);
-    let bare = fsl_package::BarePackage::new(read.admitted());
+    let bare =
+        fsl_package::BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     let back = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1355,7 +1394,12 @@ fn twins_pair_their_rows_by_key_over_the_bytes_only_route() {
         };
         let mut meter = unlimited();
         let refused = back
-            .evaluate_temporal_evidence(&node, &asked, &mut meter)
+            .evaluate_temporal_evidence(
+                &crate::support::observation_producer(),
+                &node,
+                &asked,
+                &mut meter,
+            )
             .map(|issued| issued.result().clone());
         assert_eq!(
             cause(&refused.expect_err("the other row")),
@@ -1372,7 +1416,12 @@ fn twins_pair_their_rows_by_key_over_the_bytes_only_route() {
     asked.occurrence = None;
     let mut meter = unlimited();
     let refused = back
-        .evaluate_temporal_evidence(&node, &asked, &mut meter)
+        .evaluate_temporal_evidence(
+            &crate::support::observation_producer(),
+            &node,
+            &asked,
+            &mut meter,
+        )
         .map(|issued| issued.result().clone());
     assert_eq!(
         cause(&refused.expect_err("no selector")),
@@ -1382,7 +1431,12 @@ fn twins_pair_their_rows_by_key_over_the_bytes_only_route() {
     asked.occurrence = Some(claim(5));
     let mut meter = unlimited();
     let refused = back
-        .evaluate_temporal_evidence(&node, &asked, &mut meter)
+        .evaluate_temporal_evidence(
+            &crate::support::observation_producer(),
+            &node,
+            &asked,
+            &mut meter,
+        )
         .map(|issued| issued.result().clone());
     assert_eq!(cause(&refused.expect_err("unknown")), "occurrence-unknown");
     assert!(meter.admitted_charges().is_empty());
@@ -1421,7 +1475,8 @@ fn each_clause_pairs_with_its_own_clock_row_over_the_bytes_only_route() {
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the emission");
-    let bare = fsl_package::BarePackage::new(read.admitted());
+    let bare =
+        fsl_package::BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
     let back = EvidencePackage::from_package(
         &bare,
         &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
@@ -1439,7 +1494,12 @@ fn each_clause_pairs_with_its_own_clock_row_over_the_bytes_only_route() {
             foreign.occurrence = None;
             let mut meter = unlimited();
             let refused = package
-                .evaluate_temporal_evidence(clause, &foreign, &mut meter)
+                .evaluate_temporal_evidence(
+                    &crate::support::observation_producer(),
+                    clause,
+                    &foreign,
+                    &mut meter,
+                )
                 .map(|issued| issued.result().clone());
             assert_eq!(
                 cause(&refused.expect_err("another clause's row")),
@@ -1535,5 +1595,23 @@ fn clause_name_rows_carry_the_whole_declaration_region() {
                 .map(|path| path.as_str()),
             Some("/temporal_clause_names/0/declaration_region")
         );
+    }
+}
+
+/// `clock` naming `unit` as its time unit, when one is given.
+fn with_unit(clock: ClockConfiguration, unit: Option<&str>) -> ClockConfiguration {
+    let Some(unit) = unit else {
+        return clock;
+    };
+    match clock {
+        ClockConfiguration::FixedSample { epoch, period, .. } => ClockConfiguration::FixedSample {
+            epoch,
+            period,
+            unit: unit.into(),
+        },
+        ClockConfiguration::TimestampedEvent { .. } => ClockConfiguration::TimestampedEvent {
+            timestamp_unit: unit.into(),
+        },
+        other => other,
     }
 }

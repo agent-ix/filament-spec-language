@@ -216,3 +216,187 @@ fn the_complete_through_rule_accepts_and_refuses_as_fr_944_states() {
         "a retained Incomplete refuses nothing"
     );
 }
+
+fn bundle_global_lines(source: &str) -> Vec<usize> {
+    use syn::visit::Visit;
+    struct BundleType(bool);
+    impl<'ast> Visit<'ast> for BundleType {
+        fn visit_type_path(&mut self, node: &'ast syn::TypePath) {
+            self.0 |= node.path.segments.iter().any(|segment| {
+                segment.ident == "StaticProducerBundle" || segment.ident == "AdmittedStaticBundle"
+            });
+            syn::visit::visit_type_path(self, node);
+        }
+    }
+    struct Globals(Vec<usize>);
+    impl<'ast> Visit<'ast> for Globals {
+        fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+            if node.attrs.iter().any(|attribute| matches!(&attribute.meta,
+                syn::Meta::List(list) if list.path.is_ident("cfg") && list.tokens.to_string() == "test")) {
+                return;
+            }
+            syn::visit::visit_item_mod(self, node);
+        }
+        fn visit_item_static(&mut self, node: &'ast syn::ItemStatic) {
+            if node.attrs.iter().any(|attribute| matches!(&attribute.meta,
+                syn::Meta::List(list) if list.path.is_ident("cfg") && list.tokens.to_string() == "test")) {
+                return;
+            }
+            let mut bundle = BundleType(false);
+            bundle.visit_type(&node.ty);
+            if bundle.0 {
+                self.0.push(node.ident.span().start().line);
+            }
+        }
+        fn visit_field(&mut self, node: &'ast syn::Field) {
+            let mut bundle = BundleType(false);
+            bundle.visit_type(&node.ty);
+            struct Lock(bool);
+            impl<'ast> Visit<'ast> for Lock {
+                fn visit_type_path(&mut self, node: &'ast syn::TypePath) {
+                    self.0 |= node
+                        .path
+                        .segments
+                        .iter()
+                        .any(|segment| segment.ident == "Mutex" || segment.ident == "RwLock");
+                    syn::visit::visit_type_path(self, node);
+                }
+            }
+            let mut lock = Lock(false);
+            lock.visit_type(&node.ty);
+            if bundle.0 && lock.0 {
+                use syn::spanned::Spanned;
+                self.0.push(node.span().start().line);
+            }
+        }
+        fn visit_macro(&mut self, node: &'ast syn::Macro) {
+            fn bundle(tokens: proc_macro2::TokenStream) -> bool {
+                tokens.into_iter().any(|token| match token {
+                    proc_macro2::TokenTree::Ident(ident) => {
+                        ident == "StaticProducerBundle" || ident == "AdmittedStaticBundle"
+                    }
+                    proc_macro2::TokenTree::Group(group) => bundle(group.stream()),
+                    proc_macro2::TokenTree::Punct(_) | proc_macro2::TokenTree::Literal(_) => false,
+                })
+            }
+            if (node.path.is_ident("lazy_static") || node.path.is_ident("thread_local"))
+                && bundle(node.tokens.clone())
+            {
+                use syn::spanned::Spanned;
+                self.0.push(node.span().start().line);
+            }
+        }
+    }
+    let parsed = syn::parse_file(source).expect("Rust source");
+    let mut globals = Globals(Vec::new());
+    globals.visit_file(&parsed);
+    globals.0
+}
+
+#[test]
+#[trace("TC-3036", "FR-944-AC-15")]
+fn observation_producers_are_caller_owned_without_global_storage() {
+    assert_eq!(
+        bundle_global_lines("static B: OnceLock<AdmittedStaticBundle> = OnceLock::new();"),
+        vec![1]
+    );
+    assert_eq!(
+        bundle_global_lines("struct Host { bundle: Mutex<StaticProducerBundle> }"),
+        vec![1]
+    );
+    assert!(bundle_global_lines(
+        "#[cfg(test)] mod tests { static B: OnceLock<AdmittedStaticBundle> = OnceLock::new(); }"
+    )
+    .is_empty());
+    assert!(bundle_global_lines(
+        "const NAME: &str = \"static B: OnceLock<AdmittedStaticBundle>\";"
+    )
+    .is_empty());
+    let mut files = Vec::new();
+    sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    let findings: Vec<_> = files
+        .iter()
+        .flat_map(|path| {
+            let text = std::fs::read_to_string(path).expect("source");
+            bundle_global_lines(&text)
+                .into_iter()
+                .map(|line| format!("{}:{line}", path.display()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(findings.is_empty(), "producer globals: {findings:?}");
+}
+
+#[test]
+#[trace("TC-2624", "FR-944-AC-14")]
+fn evidence_calls_consume_optional_activation_views_for_scopes_and_instances() {
+    use crate::temporal_activation as fixture;
+    use fsl_eval::temporal::evidence::{ActivationState, NonValueKind, TriggerEvidence, Truth};
+    use fsl_eval::temporal::{ProgressClosure, Valuation};
+    let env = fixture::env(fixture::GUARDED, "eventually[0,2] holds(p)");
+    let atom = env.atom("p");
+    // This low-level checked-facts fixture supplies the same opaque package
+    // selection bytes as the owner unit fixtures; source/reader parity is separate.
+    let mut subject = env.subject(&[]);
+    subject.canonical_package_bytes = Some(b"{}");
+    subject.time_unit_scale = fsl_eval::temporal::evidence::ClockScale::PerSecond(
+        filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"),
+    );
+    let mut request = fixture::request(&env, fixture::at_t0(&[(atom, Valuation::True)]));
+    request.trigger = Some(fixture::id("t1"));
+    let mut delivery = fixture::delivery("t1", "r1", "payload", &[]);
+    delivery.guard = Some(false);
+    request.deliveries.push(delivery);
+    let inactive = fixture::call(&env, &subject, &request).expect("owner inactive");
+    assert_eq!(inactive.activation, ActivationState::Inactive);
+    assert!(inactive.instances.is_empty());
+    assert_eq!(
+        inactive.non_value.expect("inactive detail").kind,
+        NonValueKind::Inactive
+    );
+    for (closure, evidence, kind) in [
+        (
+            ProgressClosure::Open,
+            TriggerEvidence::Admitted,
+            "trigger-scope-open",
+        ),
+        (
+            ProgressClosure::Closed,
+            TriggerEvidence::Missing,
+            "trigger-evidence-missing",
+        ),
+        (
+            ProgressClosure::Closed,
+            TriggerEvidence::Refused,
+            "trigger-evidence-refused",
+        ),
+    ] {
+        let mut unknown = request.clone();
+        unknown.trigger_scope = closure;
+        unknown.trigger_evidence = evidence;
+        let result = fixture::call(&env, &subject, &unknown).expect("owner unknown");
+        assert_eq!(result.activation, ActivationState::Unknown);
+        assert_eq!(result.non_value.expect("unknown detail").code, kind);
+    }
+    let env = fixture::env(fixture::EACH, fixture::ONE_CAPTURE);
+    let atom = env.atom("p");
+    let mut subject = env.subject(&[]);
+    subject.canonical_package_bytes = Some(b"{}");
+    subject.time_unit_scale = fsl_eval::temporal::evidence::ClockScale::PerSecond(
+        filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"),
+    );
+    let mut request = fixture::request(&env, fixture::at_t0(&[(atom, Valuation::True)]));
+    request.trigger = Some(fixture::id("t1"));
+    request.deliveries = vec![
+        fixture::delivery("t1", "r1", "one", &["5"]),
+        fixture::delivery("t2", "r2", "two", &["5"]),
+    ];
+    let result = fixture::call(&env, &subject, &request)
+        .expect("two instance-specific activation histories");
+    assert_eq!(result.activation, ActivationState::Active);
+    assert_eq!(result.truth, Some(Truth::True));
+    assert_eq!(result.instances.len(), 2);
+}
