@@ -67,7 +67,7 @@ fn reads_false(entry: Option<&TapeEntry>) -> bool {
             .atoms()
             .iter()
             .any(|(_, reading)| *reading == TapeReading::False),
-        Some(TapeEntry::Held(_) | TapeEntry::Object(_)) | None => false,
+        Some(TapeEntry::Held(_) | TapeEntry::Anchored(..) | TapeEntry::Object(_)) | None => false,
     }
 }
 

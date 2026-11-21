@@ -876,6 +876,11 @@ fn same_entry(left: Option<&ProgressLedgerEntry>, right: Option<&ProgressLedgerE
 }
 
 impl CarriedAdmission {
+    /// The finite-window trace the last run admitted.
+    pub(super) fn trace_ref(&self) -> Option<&TimestampedTrace> {
+        self.trace.as_ref()
+    }
+
     /// The admission as it is now, for [`Self::restore`].
     pub(crate) fn mark(&self) -> AdmissionMark {
         AdmissionMark {

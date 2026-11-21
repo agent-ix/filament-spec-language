@@ -121,7 +121,8 @@ impl<'a> Held<'a> {
         match self {
             Self::Listed(samples) => samples.get(slot),
             Self::Tape(tape) => match tape.entries().get(slot)? {
-                super::tape::TapeEntry::Held(sample) => Some(sample),
+                super::tape::TapeEntry::Held(sample)
+                | super::tape::TapeEntry::Anchored(sample, _) => Some(sample),
                 super::tape::TapeEntry::Read(_) | super::tape::TapeEntry::Object(_) => None,
             },
         }

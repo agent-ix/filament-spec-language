@@ -3602,3 +3602,158 @@ fn a_carried_timestamped_state_reads_a_window_aggregate_as_the_one_shot_run() {
         assert!(seen_violation, "{name}: the trace violates the clause");
     }
 }
+
+/// The `Timestamped` batch trace of `levels` stamped 0, 1, 2 and so on, under
+/// `progress`.
+fn stamped_levels(levels: &[i64], progress: ProgressAssertion) -> TraceInput {
+    TraceInput::Timestamped {
+        observations: levels
+            .iter()
+            .enumerate()
+            .map(|(stamp, level)| TimestampedObservation {
+                document: spine::sample_position(&text(*level)),
+                stamp: stamp as u64,
+                order_key: None,
+            })
+            .collect(),
+        progress,
+        window: Box::new(TimestampedWindow {
+            binding: Some(stamped_binding()),
+            authoritative_origin: true,
+            cover: None,
+            missing_valuations: Vec::new(),
+            late: spine::LateInputs::default(),
+        }),
+    }
+}
+
+/// FR-820 "Summarized positions", QSL-2138: over a long closed timestamped
+/// stream a carried window-aggregate state holds a sample by value only while
+/// a window can still read it, so `retained()` is bounded by the window
+/// (an open `always[0,5]` activation reads 5 further positions, each its
+/// `past[0 ms, 3 ms]`: stamps `T - 8` to `T`), not the trace, and its report
+/// still equals the batch report at every position, with and without a
+/// `from_bytes` restore taken mid-stream. A restored state holds the same
+/// samples as the uninterrupted one.
+#[test]
+#[trace("TC-2320", "FR-820-AC-2", "FR-194-AC-1")]
+fn a_long_carried_timestamped_stream_holds_only_its_windows() {
+    let world = world();
+    let cancel = Cancel::new();
+    let levels: Vec<i64> = (0..60).map(|index| (index * 7 + index / 3) % 5).collect();
+    for name in ["Twos", "Median"] {
+        let open = clause_open(
+            &world,
+            ClauseTraceKind::Timestamped,
+            Some(stamped_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        );
+        let mut state = ClauseState::open(world.unit.package(), clause_node(&world, name), &open)
+            .expect("opens");
+        let mut peak = 0;
+        for (index, level) in levels.iter().enumerate() {
+            if index == 30 {
+                let bytes = state.to_bytes().expect("writes");
+                let before = state.retained();
+                state = ClauseState::from_bytes(
+                    world.unit.package(),
+                    clause_node(&world, name),
+                    &open,
+                    &bytes,
+                    &cancel,
+                )
+                .expect("reads back");
+                assert_eq!(state.retained(), before, "{name}: a restore holds the same");
+            }
+            let stamp = index as u64;
+            state
+                .advance(admitted(&world, name, &text(*level), stamp), &cancel)
+                .expect("advances");
+            let advance = state
+                .assert_progress(&progress(stamp), &cancel)
+                .expect("progress");
+            let batch = batch_over(
+                &world,
+                name,
+                &stamped_levels(&levels[..=index], progress(stamp)),
+            );
+            assert_eq!(
+                members(&advance.report),
+                members(&batch),
+                "{name} at {index}"
+            );
+            peak = peak.max(state.retained());
+        }
+        assert!(
+            peak <= 11,
+            "{name}: retained {peak} samples over 60 positions, the horizon and windows hold 10"
+        );
+    }
+}
+
+/// The carried report and the batch report of `Twos` over `levels` with
+/// completeness asserted only through 2 and the watermark at 5.
+fn twos_complete_through_two(levels: &[i64]) -> (std::sync::Arc<ClauseRunReport>, ClauseRunReport) {
+    let world = world();
+    let cancel = Cancel::new();
+    let incomplete = ProgressAssertion {
+        watermark: 5,
+        completeness: ProgressCompleteness::Complete { through: 2 },
+        scope: ProgressClosure::Open,
+        execution: ProgressClosure::Open,
+    };
+    let mut state = ClauseState::open(
+        world.unit.package(),
+        clause_node(&world, "Twos"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Timestamped,
+            Some(stamped_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+    )
+    .expect("opens");
+    for (index, level) in levels.iter().enumerate() {
+        state
+            .advance(
+                admitted(&world, "Twos", &text(*level), index as u64),
+                &cancel,
+            )
+            .expect("advances");
+    }
+    let advance = state
+        .assert_progress(&incomplete, &cancel)
+        .expect("progress");
+    let batch = batch_over(&world, "Twos", &stamped_levels(levels, incomplete));
+    (advance.report, batch)
+}
+
+/// FR-194-AC-16, carried route: with completeness asserted only through 2 and
+/// the watermark at 5, the carried report equals the batch report.
+#[test]
+#[trace("TC-629", "FR-194-AC-16", "FR-820-AC-1")]
+fn a_carried_window_not_asserted_complete_equals_the_batch() {
+    let (carried, batch) = twos_complete_through_two(&[2, 0, 2, 2, 1, 1]);
+    assert_eq!(members(&carried), members(&batch));
+}
+
+/// FR-194-AC-16: the atom at stamp 3 reaches stamps the completeness through 2
+/// does not cover, so a later event could still enter its window and the
+/// result is never a final `violated`. The engine does not yet implement the
+/// two-valued rule on this route: the batch run reports `Violated`.
+#[test]
+#[ignore = "QSL-2138: FR-194-AC-16 incomplete-window rule"]
+#[trace("TC-629", "FR-194-AC-16")]
+fn a_window_not_asserted_complete_is_never_a_final_violation() {
+    let (carried, batch) = twos_complete_through_two(&[2, 0, 2, 2, 1, 1]);
+    for report in [&*carried, &batch] {
+        assert!(
+            !matches!(
+                report.disposition,
+                spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Violated { .. })
+            ),
+            "{:?}",
+            report.disposition
+        );
+    }
+}

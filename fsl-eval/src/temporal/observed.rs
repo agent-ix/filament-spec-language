@@ -840,7 +840,7 @@ impl<'a> ObservedLetters<'a> {
             }
         };
         match tape.entry(index.checked_add(from)?)? {
-            TapeEntry::Read(letter) => Some(letter),
+            TapeEntry::Read(letter) | TapeEntry::Anchored(_, letter) => Some(letter),
             TapeEntry::Held(_) | TapeEntry::Object(_) => None,
         }
     }
@@ -907,7 +907,9 @@ impl ObservedLetters<'_> {
             ObservedPositions::Tape(tape) => slot
                 .and_then(|slot| tape.entries().get(slot))
                 .and_then(|entry| match entry {
-                    TapeEntry::Held(sample) => Some((&self.empty, sample.clone())),
+                    TapeEntry::Held(sample) | TapeEntry::Anchored(sample, _) => {
+                        Some((&self.empty, sample.clone()))
+                    }
                     TapeEntry::Read(_) | TapeEntry::Object(_) => None,
                 }),
             ObservedPositions::ObjectTape { tape, over, from } => slot
@@ -917,7 +919,7 @@ impl ObservedLetters<'_> {
                     TapeEntry::Object(environment) => {
                         Some((&**environment, Value::Reference(over.clone())))
                     }
-                    TapeEntry::Read(_) | TapeEntry::Held(_) => None,
+                    TapeEntry::Read(_) | TapeEntry::Held(_) | TapeEntry::Anchored(..) => None,
                 }),
         };
         found.ok_or_else(|| {
@@ -1050,6 +1052,7 @@ impl TemporalLetters for ObservedLetters<'_> {
         if self.windows.is_some()
             && self.clause.aggregate_conditions(atom).is_some()
             && !self.is_silent(position)
+            && self.taped(position).is_none()
         {
             // FR-501 "Verdicts": an aggregate is an atom, so a valuation
             // absent from the admitted observation is `MissingValuation`.
@@ -1837,4 +1840,51 @@ pub fn letters_valuation<L: TemporalLetters>(
         activations,
         trace,
     })
+}
+
+/// FR-820 "Summarized positions": the letter of the position `at` of a carried
+/// timestamped clause state, read while the samples of the position's window
+/// are still held: each `holds` atom and each window aggregate atom, the
+/// aggregate read against the stamps of `trace`. `None` for a clause with a
+/// guard or captures, and for a reading that does not reduce to a letter (an
+/// undefined atom or a refused condition), which keep the sample.
+pub fn read_anchor_letter(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    tape: &super::tape::LetterTape,
+    trace: &TimestampedTrace,
+    at: u64,
+    meter: &mut Meter,
+) -> Option<TapeLetter> {
+    let checked = clause.clause();
+    if checked.captures().len() != 0
+        || matches!(
+            checked.activation(),
+            fsl_semantics::check::Activation::Each { guarded: true }
+        )
+    {
+        return None;
+    }
+    let mut letters = ObservedLetters::over(
+        package,
+        clause,
+        ObservedPositions::Tape(tape),
+        TemporalTrace::Finite {
+            len: u64::try_from(trace.len()).ok()?,
+        },
+    );
+    letters.windows = Some(trace.timed_window_trace().ok()?);
+    let formula = checked.formula();
+    let mut atoms = Vec::new();
+    for (index, node) in formula.nodes().iter().enumerate() {
+        if matches!(
+            node,
+            FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. }
+        ) {
+            let id = formula.node_id(index)?;
+            let reading = letters.atom(id, TemporalPosition::new(at), meter).ok()?;
+            atoms.push((index, super::tape::TapeReading::of(&reading)?));
+        }
+    }
+    Some(TapeLetter::new(atoms, None, false))
 }
