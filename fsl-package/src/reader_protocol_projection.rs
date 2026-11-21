@@ -4320,7 +4320,8 @@ fn literal_value(
             Value::Timestamp(Timestamp::from_canonical_text(&value.to_string()).ok()?)
         }
         Literal::Enum(case) => {
-            let ValueType::Enum(ref shape) = project_literal_type(type_id, index)? else {
+            let projection = index.projections.get(type_id)?.as_ref().ok()?;
+            let ValueType::Enum(shape) = projection.value_type() else {
                 return None;
             };
             let (rank, variant) = shape
