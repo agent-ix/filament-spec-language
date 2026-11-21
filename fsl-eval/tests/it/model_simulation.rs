@@ -1183,6 +1183,8 @@ fn an_unbounded_population_requires_a_bound() {
     assert!(
         bound
             .domains
+            .as_ref()
+            .expect("generic unbounded domains")
             .iter()
             .any(|(key, _)| *key == root_key(&counters())),
         "the population root is its structural population node"

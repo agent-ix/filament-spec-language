@@ -1853,6 +1853,8 @@ fn requires_bound(attempts: &str) -> Vec<(Vec<u32>, DomainKind)> {
     match refused {
         Err(ModelCheckRefusal::RequiresBound(bound)) => bound
             .domains
+            .as_ref()
+            .expect("generic unbounded domains")
             .iter()
             .map(|(key, kind)| match key {
                 DomainKey::Node { path, .. } => (path.clone(), kind),
@@ -1949,6 +1951,8 @@ fn an_attempt_type_is_bound_at_its_own_templates_node() {
     };
     let nodes: Vec<_> = bound
         .domains
+        .as_ref()
+        .expect("generic unbounded domains")
         .iter()
         .map(|(key, _)| match key {
             DomainKey::Node { node, path } => (node.clone(), path.clone()),
