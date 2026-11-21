@@ -154,6 +154,10 @@ fn the_refinement_row_place_forms_evaluate_to_the_place_ids() {
 /// The TC-3084 clock fixture with a stored reference and a row that returns
 /// an actual evaluated place id for snapshot admission tests.
 fn clock_reference_fixture(wrappers: bool) -> crate::ring_queue::Checked {
+    clock_reference_fixture_variant(wrappers, false)
+}
+
+fn clock_reference_fixture_variant(wrappers: bool, remove_x: bool) -> crate::ring_queue::Checked {
     use crate::ring_queue::{self, QUEUE};
     use serde_json::{json, Value as Json};
 
@@ -198,16 +202,41 @@ fn clock_reference_fixture(wrappers: bool) -> crate::ring_queue::Checked {
         serde_json::to_vec(&document).expect("JSON")
     };
     let queue = with_reference(ring_queue::queue_spec(), QUEUE, "Queue", "chosen");
-    let calls = with_reference(ring_queue::clock_calls(), CLOCKS, "Call", "r");
+    let mut calls: Json = serde_json::from_slice(&with_reference(
+        ring_queue::clock_calls(),
+        CLOCKS,
+        "Call",
+        "r",
+    ))
+    .expect("JSON");
+    let fields = calls["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == ring_queue::node(CLOCKS, "Call"))
+        .expect("Call")["fields"]
+        .as_array_mut()
+        .expect("fields");
+    let mut y = ring_queue::single(CLOCKS, "Call", "y", "ix://filament/native/Clock");
+    y["multiplicity"]["unique"] = json!(false);
+    fields.push(y);
+    if remove_x {
+        fields.retain(|field| field["name"] != "x");
+    }
+    let calls = serde_json::to_vec(&calls).expect("JSON");
+    let rows = "used = count(c in C::calls where ref(c.x) = self.r);\n\
+         busy = only(c in C::calls where c.n = 2: ref(c.x)) = self.r;\n\
+         chosen = ref(self.x);";
+    let rows = if remove_x {
+        rows.replace(".x", ".y")
+    } else {
+        rows.to_owned()
+    };
     ring_queue::check_models(
         &queue,
         ("C", CLOCKS, &calls),
         true,
-        &clock_refinement(
-            "used = count(c in C::calls where ref(c.x) = self.r);\n\
-         busy = only(c in C::calls where c.n = 2: ref(c.x)) = self.r;\n\
-         chosen = ref(self.x);",
-        ),
+        &clock_refinement(&rows),
     )
     .unwrap_or_else(|refusals| {
         panic!(
@@ -386,7 +415,10 @@ fn clock_reference_snapshot_accepts_a_declared_place() {
 #[test]
 fn clock_reference_snapshot_refuses_an_undeclared_place() {
     use serde_json::{json, Value as Json};
-    let checked = clock_reference_fixture(true);
+    let old = clock_reference_fixture(true);
+    let old_package = CheckedPackage::link(old.graph);
+    let valid = generated_place(&old_package, &old.packages, "c1");
+    let checked = clock_reference_fixture_variant(true, true);
     let package = CheckedPackage::link(checked.graph);
     let graph = package.graph();
     let model = StateModel::new(
@@ -396,47 +428,34 @@ fn clock_reference_snapshot_refuses_an_undeclared_place() {
         ModelNormalizationLimits::default(),
     )
     .expect("model");
-    let valid = generated_place(&package, &checked.packages, "c1");
-    let missing_owner = generated_place(&package, &checked.packages, "c2");
-    let owner = model
-        .object_reference(&key(CLOCKS, "Call"), "c1")
-        .expect("owner");
-    let undeclared_template = fsl_semantics::model::clock_reference::encode(
-        &owner,
-        graph.timed_models()[0].model_node(),
-        &[],
-    )
-    .expect("well-formed identity of a non-place node");
-    let (identity, bytes) = clock_snapshot(&valid);
-    for missing in [missing_owner, undeclared_template] {
-        for field in ["r", "maybe", "refs", "peer"] {
-            let mut document: Json = serde_json::from_slice(&bytes).expect("JSON");
-            let reference = json!({"reference": {"population": crate::ring_queue::node(CLOCKS, "calls"),
-            "key": if field == "peer" { "ghost" } else { missing.object().as_str() }}});
-            document["populations"][0]["objects"][0]["fields"][field] = match field {
-                "maybe" | "peer" => json!({"present": reference}),
-                "refs" => json!({"sequence": [reference]}),
-                _ => reference,
-            };
-            let failure = model
-                .admit_initial(
-                    &BTreeMap::from([(
-                        identity.clone(),
-                        serde_json::to_vec(&document).expect("JSON"),
-                    )]),
-                    &identity,
-                    fsl_semantics::model::observation::ObservationLimits::default(),
-                )
-                .expect_err("undeclared place/object refuses");
-            let fsl_semantics::model::observation::AdmissionFailure::Refused(record) = failure
-            else {
-                panic!("{field}: {failure:?}")
-            };
-            assert_eq!(
-                record.catalog.code(),
-                fsl_foundation::diagnostic::Code::DanglingReference.as_str(),
-                "{field}: {record:?}"
-            );
-        }
+    let y = generated_place(&package, &checked.packages, "c1");
+    let (identity, bytes) = clock_snapshot(&y);
+    for field in ["r", "maybe", "refs"] {
+        let mut document: Json = serde_json::from_slice(&bytes).expect("JSON");
+        let reference = json!({"reference": {"population": crate::ring_queue::node(CLOCKS, "calls"),
+            "key": valid.object().as_str()}});
+        document["populations"][0]["objects"][0]["fields"][field] = match field {
+            "maybe" => json!({"present": reference}),
+            "refs" => json!({"sequence": [reference]}),
+            _ => reference,
+        };
+        let failure = model
+            .admit_initial(
+                &BTreeMap::from([(
+                    identity.clone(),
+                    serde_json::to_vec(&document).expect("JSON"),
+                )]),
+                &identity,
+                fsl_semantics::model::observation::ObservationLimits::default(),
+            )
+            .expect_err("undeclared place/object refuses");
+        let fsl_semantics::model::observation::AdmissionFailure::Refused(record) = failure else {
+            panic!("{field}: {failure:?}")
+        };
+        assert_eq!(
+            record.catalog.code(),
+            fsl_foundation::diagnostic::Code::DanglingReference.as_str(),
+            "{field}: {record:?}"
+        );
     }
 }

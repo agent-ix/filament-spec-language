@@ -40,6 +40,7 @@ impl DeclaredClockPlaces {
                         .clocks()
                         .iter()
                         .zip(model.place_nodes())
+                        .filter(|(clock, _)| !clock.slots().any(|shape| shape.map))
                         .map(|(clock, node)| {
                             let slots = clock
                                 .path()

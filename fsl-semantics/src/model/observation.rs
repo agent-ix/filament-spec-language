@@ -3190,13 +3190,14 @@ fn admit_invocation_documents(
     let post_self_population = self_object
         .and_then(|object| (!state_machine && post_self).then_some(object.population.as_str()));
     let mut pre_required =
-        document::parameter_populations(views, &operation, &invocation.call.parameters);
+        document::parameter_populations(views, types, &operation, &invocation.call.parameters);
     pre_required.extend(pre_values.read_context_populations());
     pre_required.extend(named.pre.iter().cloned());
     let mut post_required = post_values.read_context_populations();
     post_required.extend(named.post.iter().cloned());
     document::check_population_completeness(
         views,
+        types,
         &pre_snapshot.populations,
         &pre_values.completeness,
         pre_self_population,
@@ -3205,6 +3206,7 @@ fn admit_invocation_documents(
     )?;
     document::check_population_completeness(
         views,
+        types,
         &post_snapshot.populations,
         &post_values.completeness,
         post_self_population,
@@ -3594,12 +3596,13 @@ fn admit_pre_call(
     let mut required = if context.as_context {
         Vec::new()
     } else {
-        document::parameter_populations(context.views, &operation, input.parameters)
+        document::parameter_populations(context.views, context.types, &operation, input.parameters)
     };
     required.extend(values.read_context_populations());
     required.extend(context.named.iter().cloned());
     document::check_population_completeness(
         context.views,
+        context.types,
         &snapshot.populations,
         &values.completeness,
         input

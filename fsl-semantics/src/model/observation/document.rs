@@ -1283,9 +1283,24 @@ impl<'a> References<'a> {
     /// to object fields (SR-750 FND-019). Object fields get this check from
     /// [`check_population_closure`]; this is the same rule for the values
     /// check 10 admits (SR-771 FND-001).
+    #[cfg(test)]
     fn check_closure(&self, raw: &SnapshotValue) -> Result<(), AdmissionRecord> {
         let mut refs = Vec::new();
         collect_references(raw, &mut refs);
+        self.check_named_closure(refs)
+    }
+
+    fn check_typed_closure(
+        &self,
+        raw: &SnapshotValue,
+        value_type: &filament_exact::ValueType,
+    ) -> Result<(), AdmissionRecord> {
+        let mut refs = Vec::new();
+        collect_object_references(raw, value_type, self.views, self.types, &mut refs);
+        self.check_named_closure(refs)
+    }
+
+    fn check_named_closure(&self, refs: Vec<(String, String)>) -> Result<(), AdmissionRecord> {
         for (population, key) in refs {
             if self
                 .admitted
@@ -2873,6 +2888,63 @@ fn collect_references(raw: &SnapshotValue, into: &mut Vec<(String, String)>) {
     }
 }
 
+/// Object references required by a statically typed value. Clock-place
+/// references are authenticated as data and never require a population member.
+fn collect_object_references(
+    raw: &SnapshotValue,
+    value_type: &filament_exact::ValueType,
+    views: &[ModelView],
+    types: &TypeEnvironment,
+    into: &mut Vec<(String, String)>,
+) {
+    use filament_exact::ValueType;
+    let mut pending = vec![(raw.form(), value_type.clone())];
+    let mut records = None;
+    while let Some((form, value_type)) = pending.pop() {
+        match (form, value_type) {
+            (RawForm::Reference(reference), ValueType::Reference(target)) => {
+                if !crate::model::clock_reference::is_clock_type(&target) {
+                    into.push((reference.population.clone(), reference.key.clone()));
+                }
+            }
+            (RawForm::Present(inner), ValueType::Option(payload)) => {
+                pending.push((inner.form(), (*payload).clone()));
+            }
+            (RawForm::Present(inner), value_type) => {
+                pending.push((inner.form(), value_type));
+            }
+            (RawForm::Collection(_, items), ValueType::Collection(collection)) => {
+                pending.extend(
+                    items
+                        .iter()
+                        .rev()
+                        .map(|item| (item.form(), collection.element().clone())),
+                );
+            }
+            (RawForm::Record(record), ValueType::Composite(_)) => {
+                let keys = records.get_or_insert_with(|| record_keys(views));
+                let Some(declared) = keys
+                    .get(record.type_identity())
+                    .and_then(|key| types.composite(key.clone()))
+                else {
+                    continue;
+                };
+                let filament_semantic_value::declaration::CompositeShape::Record(fields) =
+                    declared.shape()
+                else {
+                    continue;
+                };
+                for (name, value) in record.fields().rev() {
+                    if let Some(field) = fields.iter().find(|field| field.name() == name) {
+                        pending.push((value.form(), field.value_type().clone()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Compute the exact FR-106 check-7 closure rooted at every declared
 /// population. The wire reference's population label is retained at the
 /// occurrence that named it; equal object references do not merge labels.
@@ -3716,7 +3788,13 @@ fn admit_contexts<'t>(
                     .map(|breach| (attribute.identity(), breach)),
             );
             let mut found_references = Vec::new();
-            collect_references(raw, &mut found_references);
+            collect_object_references(
+                raw,
+                value_type,
+                references.views,
+                types,
+                &mut found_references,
+            );
             context_references.extend(found_references.into_iter().map(|(population, key)| {
                 ContextReference {
                     field: name.to_owned(),
@@ -3829,6 +3907,7 @@ pub(super) fn check_context_closure(
 /// refuses it `dangling_reference`.
 pub(super) fn parameter_populations(
     views: &[ModelView],
+    types: &TypeEnvironment,
     operation: &OperationDeclaration,
     parameters: &[(String, SnapshotValue)],
 ) -> Vec<String> {
@@ -3841,7 +3920,7 @@ pub(super) fn parameter_populations(
             continue;
         };
         let mut refs = Vec::new();
-        collect_references(raw, &mut refs);
+        collect_object_references(raw, value_type, views, types, &mut refs);
         for (population, _) in refs {
             if !named.contains(&population) && find_population(views, &population).is_some() {
                 named.push(population);
@@ -3898,6 +3977,7 @@ fn holds_references(value_type: &filament_exact::ValueType) -> bool {
 /// empty everywhere else.
 pub(super) fn check_population_completeness(
     views: &[ModelView],
+    types: &TypeEnvironment,
     populations: &[RawPopulation],
     completeness: &BTreeMap<String, bool>,
     self_population: Option<&str>,
@@ -3923,9 +4003,29 @@ pub(super) fn check_population_completeness(
                 continue;
             };
             for object in &entry.objects {
-                for (_, raw) in &object.fields {
+                let (view, key) = find_declaration(views, &object.type_identity)
+                    .ok_or_else(|| fault("admitted-object-declaration-missing"))?;
+                let effective = view
+                    .view
+                    .type_identities()
+                    .get(&key)
+                    .ok_or_else(|| fault("admitted-object-type-missing"))?;
+                let declared = types
+                    .attributes(effective.clone())
+                    .ok_or_else(|| fault("admitted-object-attributes-missing"))?;
+                for (name, raw) in &object.fields {
+                    let field = declared
+                        .iter()
+                        .find(|field| field.field().name() == name)
+                        .ok_or_else(|| fault("admitted-object-field-missing"))?;
                     let mut refs = Vec::new();
-                    collect_references(raw, &mut refs);
+                    collect_object_references(
+                        raw,
+                        field.field().value_type(),
+                        views,
+                        types,
+                        &mut refs,
+                    );
                     for (population, _) in refs {
                         if required.insert(population) {
                             grew = true;
@@ -4265,6 +4365,7 @@ pub(super) fn admit_populations(
     )?;
     check_population_completeness(
         views,
+        types,
         &snapshot.populations,
         &values.completeness,
         self_population,
@@ -4329,6 +4430,7 @@ pub(super) fn admit_initial_populations(
         .collect();
     check_population_completeness(
         views,
+        types,
         populations,
         &values.completeness,
         None,
@@ -4407,6 +4509,7 @@ pub(super) fn admit_argument_populations(
     required.extend(named.iter().cloned());
     check_population_completeness(
         views,
+        types,
         &snapshot.populations,
         &values.completeness,
         None,
@@ -4531,7 +4634,9 @@ pub(super) fn admit_parameters(
             );
             refuse(record.with("field", name.clone()).with("path", path))
         })?;
-        references.check_closure(raw).map_err(refuse)?;
+        references
+            .check_typed_closure(raw, value_type)
+            .map_err(refuse)?;
         admitted.push((name.clone(), value));
     }
     for (name, _) in parameters {
@@ -4578,7 +4683,9 @@ pub(super) fn admit_result(
             }
             let value = admit_form(references, raw.form(), value_type, None)
                 .map_err(|record| refuse(record.with("field", "result")))?;
-            references.check_closure(raw).map_err(refuse)?;
+            references
+                .check_typed_closure(raw, value_type)
+                .map_err(refuse)?;
             Ok(Some(value))
         }
     }
