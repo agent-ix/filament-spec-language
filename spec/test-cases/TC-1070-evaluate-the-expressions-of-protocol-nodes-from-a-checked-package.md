@@ -13,8 +13,8 @@ relationships:
 Verify that S6a evaluates each expression slot of a protocol node of a checked
 package over the sources the caller supplies, that a capture slot returns a
 frozen value which later slots read only when the caller supplies it, and that
-the two templates of one effect stay apart. Scope: FR-390-AC-1 to FR-390-AC-3, FR-390-AC-23 and FR-390-AC-28 to
-FR-390-AC-67. The E-P procedure below verifies FR-390-AC-23 without
+the two templates of one effect stay apart. Scope: FR-390-AC-1 to FR-390-AC-3, FR-390-AC-23, FR-390-AC-28 to
+FR-390-AC-67 and FR-390-AC-75. The E-P procedure below verifies FR-390-AC-23 without
 changing fixture E or rows 1 to 33.
 
 Catches a retry relation or recovery predicate that recomputes a capture from
@@ -247,6 +247,23 @@ slot, and its binder `m` or `choice` is shared with no other slot.
 | C15 | every slot of fixtures E, E-C and L, selected on the source route and on the bytes route | the slot's supply | the same triple (node, member, index), root, binders and origin; the bytes descriptor carries no span; `Decide.visible[0]` and `Decide.cases.guard[1]` select distinct origins (AC-65) |
 | C16 | a bare package with no supply, with identity rows of another package, with rows naming no identity; a missing node; a missing member | any | the three witness refusals report `CallAdmissionLocus::Package` and the in-process view the `Package` locus of `UnsupportedView`; the node and member refusals report `Node` and `Member`; no witness refusal reports `Node` or `Binder` (AC-66) |
 | C17 | a package with unsupported projections of several reasons at once | any | the first by locus (`Package` before `Node`), then node key, then reason order: `ForeignIdentityWitness` over a `Node` `MissingTypeRepresentation`; `MissingEqualityWitness` over a `Node` `MissingLiteralProjection`; `ForeignIdentityWitness` over `MissingEqualityWitness`; the three equality reasons in the order Missing, Unknown, Foreign; no charge (AC-67) |
+
+## Rational literal and division reader vectors
+
+These rows run over the emitted-and-admitted package of fixture E, with only the
+activation guard of `Refunds` replaced, and with the profile `v`
+(`filament.value.complete/v1`) and the declarations shown ahead of the protocol.
+Each runs the source route first and requires `Completed(true)` before the
+reader view is built, then compares value, outcome, losses and charge log with
+the reader view. The supply is `opened = Tick(ready true, count 2)`. They
+verify FR-390-AC-75 only.
+
+| Row | Declarations | Guard | Catches |
+|---|---|---|---|
+| R1 | `function between using v(x: Rational[0, 20; 1, 2], lo: Rational[0, 20; 1, 2], hi: Rational[0, 20; 1, 2]): Boolean pure { lo < x and x < hi }` | `opened.ready and between(rational(1, 2), rational(0, 1), rational(1, 1))` | a bounded `Rational` literal the reader refuses or truncates |
+| R2 | `function half using v(x: Rational[0, 20; 1, 2], d: Rational[2, 2; 1, 1]): Rational[-100, 100; 1, 4] pure { x / d }` | `opened.ready and half(rational(1, 1), rational(2, 1)) = rational(1, 2)` | Rational operands of `filament.op.rational.div` read as integers |
+| R3 | `function inv using v(x: Int[1, 9]): Rational[0, 1; 1, 9] pure { 1 / x }` | `opened.ready and inv(2) = rational(1, 2)` | integer operands under a Rational expected type read as Rational |
+| R4 | `profile d = "filament.value.integer-division.truncating/v1";` and `function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }` | `opened.ready and q(7, 2) = 3 and q(-7, 2) = -3` | integer `div` outcome or charge drift |
 
 ## Fixture E-P: reference-population provenance extension
 
