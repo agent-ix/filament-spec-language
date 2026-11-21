@@ -180,6 +180,7 @@ pub(crate) fn declare(
     named: &NamedScope,
     form: &fsl_forms::SynthesisForm,
     grammar: &EffectiveId,
+    lengths: &ValueType,
     location: &Location,
 ) -> Result<CheckedPlan, CheckRefusal> {
     let types = scope.types();
@@ -328,7 +329,7 @@ pub(crate) fn declare(
         step.clone(),
         "step",
         CompositeShape::Record(vec![
-            FieldDeclaration::new("index", ValueType::Integer, Presence::Required),
+            FieldDeclaration::new("index", lengths.clone(), Presence::Required),
             FieldDeclaration::new(
                 "operation",
                 ValueType::Enum(operation_enum.shape()),
@@ -356,7 +357,7 @@ pub(crate) fn declare(
         plan.clone(),
         "plan",
         CompositeShape::Record(vec![
-            FieldDeclaration::new("length", ValueType::Integer, Presence::Required),
+            FieldDeclaration::new("length", lengths.clone(), Presence::Required),
             FieldDeclaration::new(
                 "final",
                 ValueType::Composite(state.clone()),
@@ -406,7 +407,7 @@ fn operation_enum(name: &str, synthesis: &str, cases: Vec<String>) -> Option<Enu
     let owners = OwnerSelection::new([NodeOwner::Definition(subject.clone())]);
     let preimage = EnumDeclarationPreimage::new(
         NodeOwner::Definition(subject),
-        vec![synthesis.to_owned(), name.to_owned()],
+        vec![synthesis.to_owned(), "Op".to_owned()],
         false,
         cases.clone(),
     )

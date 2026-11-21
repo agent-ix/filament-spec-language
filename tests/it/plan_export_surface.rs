@@ -1368,9 +1368,12 @@ fn probabilistic_plans_compute_exact_probabilities() {
 fn plan_requests_refuse_at_admission() {
     let unit = format!(
         "{}type Digit = Int[0, 9];\n\
-         synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 7 }};\n\
-         profile p = \"filament.temporal.infinite-trace/v1\";\n{}",
-        plan_unit("Int[0, 3]", "", "Reach.length >= 1"),
+         synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 7 }};\n{}",
+        plan_unit("Int[0, 3]", "", "Reach.length >= 1").replacen(
+            MODEL_HEADER,
+            &format!("{MODEL_HEADER}profile p = \"filament.temporal.infinite-trace/v1\";\n"),
+            1
+        ),
         BRAKING
             .split_once("hybrid")
             .map(|(_, rest)| format!("hybrid{rest}"))
