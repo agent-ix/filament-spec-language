@@ -903,9 +903,13 @@ fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
     };
     let mut doc = document(&settle(&world("under every scheduler"), "W"));
     doc["objective"]["optimization"] = json!("workload");
-    eprintln!("DOCID {}", doc["identity"]);
-    let b = world("under Both");
-    eprintln!("BOTHID {:?}", fsl_replay::probabilistic_claim_identity(b.package.graph().probabilistic_model().claim("W").unwrap()));
+    // The claim identity names its scheduler, so it names the workload too.
+    let workload = r#"{"ordinal":0,"package":"package","path":["probabilistic","workload",{"ordinal":0,"package":"test/timed","path":["model","object_type","ix://test/timed/Call"]},"Both","send*1,tick*0"]}"#;
+    doc["identity"] = serde_json::from_str(&doc["identity"].to_string().replace(
+        r#""scheduler","every""#,
+        &format!(r#""scheduler",{workload}"#),
+    ))
+    .expect("identity JSON");
     let result = check(&world("under Both"), "W", &doc);
     assert!(
         matches!(result, Err(ProbabilityDocumentError::Unsupported)),
