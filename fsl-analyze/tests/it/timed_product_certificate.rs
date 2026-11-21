@@ -909,8 +909,8 @@ fn witness_mass(record: &AnalyzeRecord) -> Rational {
 }
 
 /// `tick` is free and guarded `self.x >= 1 ms` (window 1 to 2 ms) while `send`
-/// is given 2 ms, under `Both`: the scheduler picks tick at 1 (it wins) or at
-/// 2 (the tie), so the minimum `21/40` is below the maximum `1`.
+/// is given 1 or 2 ms, under `Both`: the scheduler picks tick at 1 or at 2, so
+/// the minimum `8641/32000` is below the maximum `7876923/10240000`.
 fn free_tick_world() -> World {
     let claim = |name: &str, bound: &str| {
         format!(
@@ -922,16 +922,16 @@ fn free_tick_world() -> World {
         &[("send", &["late", "x"]), ("tick", &["retried"])],
         GUARD,
         true,
-        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+        "delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };\n\
          pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 1 ms }\n\
          post Ticked using v on M::Call::tick { self.retried = true }\n\
          workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
         &format!(
             "{}{}{}{}",
-            claim("AtLeastMin", ">= 0.525"),
-            claim("AtMostMax", "<= 1"),
-            claim("AtLeastBetween", ">= 0.8"),
-            claim("AtMostBetween", "<= 0.8"),
+            claim("AtLeastMin", ">= 0.27003125"),
+            claim("AtMostMax", "<= 0.76923076171875"),
+            claim("AtLeastBetween", ">= 0.5"),
+            claim("AtMostBetween", "<= 0.5"),
         ),
     )
 }
@@ -945,11 +945,11 @@ fn free_tick_world() -> World {
 fn a_workload_with_a_delay_choice_is_decided_on_its_extremum() {
     let world = free_tick_world();
     let least = settle(&world, "AtLeastMin");
-    assert_eq!(proved_value(&least), ratio(21, 40));
+    assert_eq!(proved_value(&least), ratio(8641, 32000));
     assert_eq!(spelling(&least), "workload-minimum");
     assert!(accepted(&world, "AtLeastMin", &document(&least)));
     let most = settle(&world, "AtMostMax");
-    assert_eq!(proved_value(&most), ratio(1, 1));
+    assert_eq!(proved_value(&most), ratio(7_876_923, 10_240_000));
     assert_eq!(spelling(&most), "workload-maximum");
     assert!(accepted(&world, "AtMostMax", &document(&most)));
     // The other spellings are not the checker's own.
@@ -965,20 +965,20 @@ fn a_workload_with_a_delay_choice_is_decided_on_its_extremum() {
             "{other}"
         );
     }
-    // `>= 0.8` lies above the minimum: the minimising scheduler fails it with
-    // the mass of not retrying, `19/40`.
+    // `>= 0.5` lies above the minimum: the minimising scheduler fails it with
+    // the mass of not retrying, `1 - 8641/32000`.
     let below = settle(&world, "AtLeastBetween");
     assert!(is_refuted(&below), "{below:#?}");
-    assert_eq!(witness_mass(&below), ratio(19, 40));
-    // `<= 0.8` lies below the maximum: the maximising scheduler fails it with
+    assert_eq!(witness_mass(&below), ratio(23_359, 32_000));
+    // `<= 0.5` lies below the maximum: the maximising scheduler fails it with
     // the maximum mass.
     let above = settle(&world, "AtMostBetween");
     assert!(is_refuted(&above), "{above:#?}");
-    assert_eq!(witness_mass(&above), ratio(1, 1));
+    assert_eq!(witness_mass(&above), ratio(7_876_923, 10_240_000));
 }
 
-/// FR-920-AC-4: a witness that picks the other extremum's choice (tick at 2)
-/// cannot refute the bound the maximum fails.
+/// FR-920-AC-4: a witness of the minimising choice cannot refute the bound
+/// the maximum fails.
 #[trace("TC-2489", "FR-920-AC-4")]
 #[test]
 fn a_witness_of_the_other_extremum_settles_parity() {
@@ -1058,9 +1058,9 @@ fn several_free_identities_enabled_now_are_refused_not_decided() {
     let world = |scheduler: &str| {
         retx_with(
             &[("send", &["late", "x"]), ("tick", &["retried"])],
-            " and not self.retried",
+            " and self.x >= 1 ms and not self.retried",
             true,
-            "pre Tick using v on M::Call::tick { not self.late and not self.retried }\n\
+            "pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 1 ms }\n\
              post Ticked using v on M::Call::tick { self.retried = true }\n\
              workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
             &format!(
@@ -1501,33 +1501,5 @@ fn proved_value_of(record: &AnalyzeRecord) -> Option<Rational> {
             ..
         } => Some(value.value().clone()),
         _ => None,
-    }
-}
-
-#[test]
-fn zz_probe() {
-    for delays in ["{ 2 ms: 1 }", "{ 1 ms: 1, 2 ms: 1 }", "{ 2 ms: 1, 3 ms: 1 }"] {
-        let claim = |name: &str, bound: &str| {
-            format!(
-                "probabilistic {name} using ev on M over (c: M::Call) under Both on origin \
-                 {{ probability {bound} [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
-            )
-        };
-        let world = retx_with(
-            &[("send", &["late", "x"]), ("tick", &["retried"])],
-            GUARD,
-            true,
-            &format!("delay M::Call::send ~ discrete {delays};\n\
-             pre Tick using v on M::Call::tick {{ not self.late and not self.retried and self.x >= 1 ms }}\n\
-             post Ticked using v on M::Call::tick {{ self.retried = true }}\n\
-             workload Both on M {{ weight Call::send = 1; weight Call::tick = 1; }}\n"),
-            &format!("{}{}", claim("Lo", ">= 0.001"), claim("Hi", "<= 0.999")),
-        );
-        for name in ["Lo", "Hi"] {
-            let r = settle(&world, name);
-            eprintln!("PROBE {delays} {name}: {:?} refuted={}", proved_value_of(&r), is_refuted(&r));
-            if let Some(t) = r.terminal() { eprintln!("PROBE   {:?}", std::mem::discriminant(t.value())); }
-            if let Settlement::Disposed(d) = &r.settlement { eprintln!("PROBE   disposed {:?}", d.diagnostic.as_ref().map(|x| x.code.cause().to_owned())); }
-        }
     }
 }
