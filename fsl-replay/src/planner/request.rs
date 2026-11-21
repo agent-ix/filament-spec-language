@@ -1122,6 +1122,7 @@ mod held_slot_tests {
             relation_sources: Vec::new(),
             relation_node: None,
             environment: Vec::new(),
+            mismatch: None,
             slots: vec![slot(PRODUCER, "Sends", 0), slot(CONSUMER, "Done", 10)],
             supplies: Vec::new(),
         }
