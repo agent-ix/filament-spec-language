@@ -1731,6 +1731,124 @@ mod tests {
         }
     }
 
+    /// A stored clock reference ranges over real owners' declared places,
+    /// including both potential positions of a bounded clock collection.
+    #[trace("TC-3084", "FR-1040-AC-8")]
+    #[test]
+    fn checked_clock_reference_domains_visit_each_owner_and_bounded_slot() {
+        use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+        use fsl_semantics::model::accounting::ModelNormalizationLimits;
+        use fsl_semantics::model::intake::{admit_unit, package_input};
+        use fsl_semantics::model::state::StateModel;
+
+        let source = "language \"ix:native\" edition \"1-draft\";\n\
+            profile v = \"filament.model.complete/v1\";\n\
+            profile t = \"filament.temporal.complete/v1\";\n\
+            dimension Time; unit ms : Time = rational(1, 1); time Call dense unit ms;\n\
+            object Call { q: Sequence<Clock>[0, 2]; x: Clock; }\n";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "clock-reference-domain"),
+            "clock-domain.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("source parses");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("forms build");
+        let packages =
+            package_input(std::iter::empty::<&[u8]>()).expect("source-only package input");
+        let models = admit_unit(
+            &unit.selections().models,
+            &packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("model selections");
+        let graph = fsl_semantics::check::PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "clock-reference-domain".to_owned(),
+            unit,
+            models,
+            Vec::new(),
+        )
+        .expect("declarations assemble")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("source clock model checks: {refusals:?}"));
+        let [timed] = graph.timed_models() else {
+            panic!("one checked timed model")
+        };
+        let templates: Vec<_> = timed.clocks().iter().zip(timed.place_nodes()).collect();
+        let [(collection, q), (scalar, x)] = templates.as_slice() else {
+            panic!("q and x templates")
+        };
+        assert_eq!(
+            collection
+                .slots()
+                .map(|shape| shape.max)
+                .collect::<Vec<_>>(),
+            [Some(2)]
+        );
+        assert_eq!(scalar.slots().count(), 0);
+        let model = StateModel::new(
+            graph.model_inputs(),
+            graph.scope().types(),
+            &packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("checked source model");
+        let owner_type = model
+            .type_key(collection.owner())
+            .expect("declared owner type");
+        let c1 = model
+            .object_reference(owner_type, "c1")
+            .expect("first owner");
+        let c2 = model
+            .object_reference(owner_type, "c2")
+            .expect("second owner");
+        let place = |owner: &ObjectReference, template: &NodeKey, slots: &[u64]| {
+            let selectors: Vec<_> = slots
+                .iter()
+                .map(|index| Value::Integer(Integer::from(*index)))
+                .collect();
+            fsl_semantics::model::clock_reference::encode(owner, template, &selectors)
+                .expect("declared place id")
+        };
+        let expected = [
+            place(&c1, q, &[0]),
+            place(&c1, q, &[1]),
+            place(&c2, q, &[0]),
+            place(&c2, q, &[1]),
+            place(&c1, x, &[]),
+            place(&c2, x, &[]),
+        ];
+        let value_type = ValueType::Reference(expected[0].object_type().clone());
+        let domain = Domain::of_bounded_with_clock_places(
+            &value_type,
+            &[c1, c2],
+            graph.scope().types(),
+            &RecordOrders::new(),
+            None,
+            graph.timed_models(),
+        )
+        .expect("finite clock-reference domain");
+        assert_eq!(domain.len(), 6);
+        for (index, expected) in expected.iter().enumerate() {
+            let Some(Value::Reference(actual)) = domain.nth(index as u128) else {
+                panic!("clock-reference value at {index}")
+            };
+            assert_eq!(actual.universe(), expected.universe());
+            assert_eq!(actual.object_type(), expected.object_type());
+            assert_eq!(actual.object(), expected.object());
+        }
+        assert!(
+            domain.nth(6).is_none(),
+            "iteration ends after both owners' exact six place ids"
+        );
+    }
+
     /// FR-120 "Applications": an `Int[lower, upper]` domain is every integer
     /// in the range, ascending, and `Option<T>` is absent then each value.
     #[trace("TC-471", "FR-120-AC-2")]
