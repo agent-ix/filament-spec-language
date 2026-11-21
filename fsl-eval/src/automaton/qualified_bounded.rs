@@ -24,7 +24,8 @@ pub enum QualifiedBoundedError {
     Key(#[from] KeyRefusal),
 }
 
-/// An origin-activated event-position `eventually[0,h] holds(P)` monitor.
+/// An origin-activated event-position `eventually[0,h] holds(P)` or
+/// `always[0,h] holds(P)` monitor.
 /// Its keys and ranks are projected from the reached automaton's real debt,
 /// with no separately advanced horizon counter. The caller owns the checked
 /// occurrence and binding in `StateContext` and supplies P's truth letters.
@@ -35,8 +36,9 @@ pub struct QualifiedBoundedMonitor {
 }
 
 impl QualifiedBoundedMonitor {
-    /// Whether this formula and profile have the qualified single-event
-    /// representation. Binding and occurrence admission remain contextual.
+    /// Whether the defined-value probability certificate path admits this
+    /// formula. Observation replay additionally admits bounded always through
+    /// [`Self::supports_observations`]. Binding admission remains contextual.
     pub fn supports(formula: &CheckedFormula, profile: TemporalProfile) -> bool {
         profile == TemporalProfile::EventPositionFalseExtension
             && matches!(
@@ -45,31 +47,61 @@ impl QualifiedBoundedMonitor {
             )
     }
 
-    /// Retain a producer's already reached monitor without copying its
+    /// Whether the qualified control can replay observations of this formula,
+    /// including an undefined read of a bounded always obligation.
+    pub fn supports_observations(formula: &CheckedFormula, profile: TemporalProfile) -> bool {
+        profile == TemporalProfile::EventPositionFalseExtension
+            && matches!(
+                super::bounded::bounded_formula_shape(formula),
+                Some((BoundedKind::Eventually | BoundedKind::Always, _, _))
+            )
+    }
+
+    /// Retain a defined-value eventual producer monitor without copying its
     /// cache. Its complete translation identity must match the checked
     /// formula before any local handle can be projected into a key.
     pub fn from_monitor(
         formula: &CheckedFormula,
         context: &StateContext,
-        mut monitor: Monitor<PropertyAutomaton>,
+        monitor: Monitor<PropertyAutomaton>,
         max_states: u64,
     ) -> Result<Self, QualifiedBoundedError> {
-        let mut expected = Self::new(formula, context, max_states)?;
+        Self::retain(Self::new(formula, context, max_states)?, monitor)
+    }
+
+    /// Retain a producer monitor for undefined observation replay, including
+    /// bounded always. Defined certificate callers use [`Self::from_monitor`].
+    pub fn from_observation_monitor(
+        formula: &CheckedFormula,
+        context: &StateContext,
+        monitor: Monitor<PropertyAutomaton>,
+        max_states: u64,
+    ) -> Result<Self, QualifiedBoundedError> {
+        Self::retain(
+            Self::for_observations(formula, context, max_states)?,
+            monitor,
+        )
+    }
+
+    fn retain(
+        mut expected: Self,
+        mut monitor: Monitor<PropertyAutomaton>,
+    ) -> Result<Self, QualifiedBoundedError> {
         let initial = monitor.viable_initial()?.ok_or(AutomatonError::Invariant {
-            invariant: "qualified-eventually-viable-root",
+            invariant: "qualified-bounded-viable-root",
         })?;
         let root = expected
             .monitor
             .viable_initial()?
             .ok_or(AutomatonError::Invariant {
-                invariant: "qualified-eventually-viable-root",
+                invariant: "qualified-bounded-viable-root",
             })?;
         let bytes = fsl_foundation::IdentityLimits::default().input_bytes;
         if monitor.automaton().state_key(initial, bytes)?
             != expected.monitor.automaton().state_key(root, bytes)?
         {
             return Err(AutomatonError::Invariant {
-                invariant: "qualified-eventually-matching-translation",
+                invariant: "qualified-bounded-matching-translation",
             }
             .into());
         }
@@ -77,17 +109,29 @@ impl QualifiedBoundedMonitor {
         Ok(expected)
     }
 
-    /// Build the actual formula monitor and its FR-338 context. Other
-    /// profiles, operators and activations are explicitly refused.
+    /// Build an origin event-position eventual monitor for defined values.
+    /// Bounded always is admitted only by [`Self::for_observations`].
+    /// Other profiles, operators and activations are explicitly refused.
     pub fn new(
         formula: &CheckedFormula,
         context: &StateContext,
         max_states: u64,
     ) -> Result<Self, QualifiedBoundedError> {
+        if !Self::supports(formula, context.profile) {
+            return Err(TranslationRefusal::NotTranslated(NotTranslated).into());
+        }
+        Self::for_observations(formula, context, max_states)
+    }
+
+    /// Build control for replaying possibly undefined bounded observations.
+    /// Unlike the defined certificate constructor, this admits bounded always.
+    pub fn for_observations(
+        formula: &CheckedFormula,
+        context: &StateContext,
+        max_states: u64,
+    ) -> Result<Self, QualifiedBoundedError> {
         let translation = BoundedTranslation::formula(formula, context)?;
-        if context.profile != TemporalProfile::EventPositionFalseExtension
-            || translation.kind() != BoundedKind::Eventually
-        {
+        if context.profile != TemporalProfile::EventPositionFalseExtension {
             return Err(TranslationRefusal::NotTranslated(NotTranslated).into());
         }
         let automaton = translate_body(formula, context.profile, max_states)?;
@@ -100,6 +144,13 @@ impl QualifiedBoundedMonitor {
     /// The checked `holds` atom whose truth supplies each observation.
     pub fn atom(&self) -> FormulaNodeId {
         self.translation.atom()
+    }
+
+    /// Canonical control before the first observation, for an undefined read.
+    pub fn unread_key(&self) -> Result<AutomatonStateKey, QualifiedBoundedError> {
+        Ok(self.translation.key(BoundedState::Open {
+            remaining: self.translation.horizon(),
+        })?)
     }
 
     /// Read position zero. The returned handle is local storage, never a
@@ -135,7 +186,7 @@ impl QualifiedBoundedMonitor {
             let debt = self.monitor.automaton().bounded_deadline(*member)?;
             if remaining.is_some_and(|previous| previous != debt) {
                 return Err(AutomatonError::Invariant {
-                    invariant: "qualified-eventually-one-debt",
+                    invariant: "qualified-bounded-one-debt",
                 }
                 .into());
             }
@@ -145,7 +196,7 @@ impl QualifiedBoundedMonitor {
             .map(|remaining| BoundedState::Open { remaining })
             .ok_or_else(|| {
                 AutomatonError::Invariant {
-                    invariant: "qualified-eventually-has-debt",
+                    invariant: "qualified-bounded-has-debt",
                 }
                 .into()
             })
@@ -180,13 +231,6 @@ impl QualifiedBoundedMonitor {
     /// Close a terminal model position by the profile's false extension,
     /// without enumerating artificial stutter positions.
     pub fn terminal(&self, state: StateId) -> Result<BoundedState, QualifiedBoundedError> {
-        self.monitor
-            .bounded_eventually_terminal(state)?
-            .ok_or_else(|| {
-                AutomatonError::Invariant {
-                    invariant: "qualified-eventually-terminal-shape",
-                }
-                .into()
-            })
+        Ok(self.translation.terminal(self.state(state)?))
     }
 }

@@ -1785,7 +1785,6 @@ pub fn task_transition_wire(
         .map_err(|_| CounterexampleWireError::Unspelled("task transition"))
 }
 
-
 /// Spell a replayed hyper trace tuple using FSpec FR-400's wire form.
 ///
 /// # Errors
@@ -2053,6 +2052,33 @@ pub fn probabilistic_wire(
             .collect::<Result<Vec<_>, CounterexampleWireError>>()?;
         written["scheduler"] = json!({"entries": entries});
     }
+    Ok(written)
+}
+
+/// Spell a checked-subject undefined path with its complete pre-read product key.
+/// This writes untrusted evidence; only semantic replay can reproduce it.
+pub fn probabilistic_undefined_wire(
+    witness: &crate::ProbabilityUndefinedWitness,
+    claim: &OccurrenceKey,
+    bound: &fsl_semantics::check::Bound,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    state_key: &dyn Fn(
+        &fsl_eval::simulation::model::ModelSimState,
+    ) -> Option<fsl_eval::simulation::StateKey>,
+    scheduler: &[(
+        fsl_eval::simulation::StateKey,
+        fsl_eval::simulation::model::ScheduledIdentity,
+    )],
+) -> Result<Json, CounterexampleWireError> {
+    use base64::Engine;
+    let mut written =
+        probabilistic_wire(&witness.path, bound, types, variants, state_key, scheduler)?;
+    let paths = written["evidence"]["paths"].take();
+    let mut evaluation = undefined(&witness.evaluation, Some(claim))?;
+    evaluation["where"]["product_state"] = json!({"key": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(witness.product_state.as_bytes())});
+    written["evidence"] =
+        json!({"type": "undefined-path", "path": paths[0], "undefined": evaluation});
     Ok(written)
 }
 
