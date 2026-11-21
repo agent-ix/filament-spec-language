@@ -9,7 +9,7 @@ use base64::Engine as _;
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
     analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
-    Engines,
+    DispositionKind, Engines, Settlement,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
@@ -792,8 +792,16 @@ fn a_workload_resolves_a_timed_tie_by_its_weights() {
     // spelling of the objective.
     let doc = document(&record);
     let optimization = doc["objective"]["optimization"].as_str().expect("text");
-    assert!(optimization.starts_with("workload"), "{optimization}");
+    // The tie leaves the scheduler a choice (free tick against send, then
+    // unit against idle delay), so a `<=` bound is spelled by the maximum.
+    assert_eq!(optimization, "workload-maximum");
     assert!(accepted(&world, "Weighted", &doc));
+    for other in ["workload", "workload-minimum"] {
+        assert!(
+            objective_mismatch(&world, "Weighted", &relabelled(&doc, other)),
+            "{other}"
+        );
+    }
 }
 
 /// The FR-923-AC-3 world with a workload claim of bound `bound`.
@@ -865,6 +873,264 @@ fn an_altered_workload_witness_is_not_refuted() {
     });
     assert!(!is_refuted(&record), "{record:#?}");
     assert!(record.probabilistic_counterexample.is_none());
+}
+
+/// `doc` with its optimization spelled `spelling`.
+fn relabelled(doc: &Value, spelling: &str) -> Value {
+    let mut altered = doc.clone();
+    altered["objective"]["optimization"] = json!(spelling);
+    altered
+}
+
+/// Whether the checker rejects `doc` as an objective mismatch.
+fn objective_mismatch(world: &World, claim: &str, doc: &Value) -> bool {
+    matches!(
+        check(world, claim, doc),
+        Err(ProbabilityDocumentError::ObjectiveMismatch)
+    )
+}
+
+/// The spelling a proof's document states.
+fn spelling(record: &AnalyzeRecord) -> String {
+    document(record)["objective"]["optimization"]
+        .as_str()
+        .expect("text")
+        .to_owned()
+}
+
+/// The mass of a refutation's witness.
+fn witness_mass(record: &AnalyzeRecord) -> Rational {
+    record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .mass()
+        .clone()
+}
+
+/// `tick` is free and guarded `self.x >= 1 ms` (window 1 to 2 ms) while `send`
+/// is given 2 ms, under `Both`: the scheduler picks tick at 1 (it wins) or at
+/// 2 (the tie), so the minimum `21/40` is below the maximum `1`.
+fn free_tick_world() -> World {
+    let claim = |name: &str, bound: &str| {
+        format!(
+            "probabilistic {name} using ev on M over (c: M::Call) under Both on origin \
+             {{ probability {bound} [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
+        )
+    };
+    retx_with(
+        &[("send", &["late", "x"]), ("tick", &["retried"])],
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 1 ms }\n\
+         post Ticked using v on M::Call::tick { self.retried = true }\n\
+         workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
+        &format!(
+            "{}{}{}{}",
+            claim("AtLeastMin", ">= 0.525"),
+            claim("AtMostMax", "<= 1"),
+            claim("AtLeastBetween", ">= 0.8"),
+            claim("AtMostBetween", "<= 0.8"),
+        ),
+    )
+}
+
+/// FR-920-AC-4: over a workload that leaves the scheduler a delay choice, a
+/// `>=` bound is spelled and decided by the minimum, a `<=` bound by the
+/// maximum, and a bound strictly between them is refuted with the mass of the
+/// extremum's scheduler.
+#[trace("TC-2489", "FR-920-AC-4")]
+#[test]
+fn a_workload_with_a_delay_choice_is_decided_on_its_extremum() {
+    let world = free_tick_world();
+    let least = settle(&world, "AtLeastMin");
+    assert_eq!(proved_value(&least), ratio(21, 40));
+    assert_eq!(spelling(&least), "workload-minimum");
+    assert!(accepted(&world, "AtLeastMin", &document(&least)));
+    let most = settle(&world, "AtMostMax");
+    assert_eq!(proved_value(&most), ratio(1, 1));
+    assert_eq!(spelling(&most), "workload-maximum");
+    assert!(accepted(&world, "AtMostMax", &document(&most)));
+    // The other spellings are not the checker's own.
+    for other in ["workload", "workload-maximum"] {
+        assert!(
+            objective_mismatch(&world, "AtLeastMin", &relabelled(&document(&least), other)),
+            "{other}"
+        );
+    }
+    for other in ["workload", "workload-minimum"] {
+        assert!(
+            objective_mismatch(&world, "AtMostMax", &relabelled(&document(&most), other)),
+            "{other}"
+        );
+    }
+    // `>= 0.8` lies above the minimum: the minimising scheduler fails it with
+    // the mass of not retrying, `19/40`.
+    let below = settle(&world, "AtLeastBetween");
+    assert!(is_refuted(&below), "{below:#?}");
+    assert_eq!(witness_mass(&below), ratio(19, 40));
+    // `<= 0.8` lies below the maximum: the maximising scheduler fails it with
+    // the maximum mass.
+    let above = settle(&world, "AtMostBetween");
+    assert!(is_refuted(&above), "{above:#?}");
+    assert_eq!(witness_mass(&above), ratio(1, 1));
+}
+
+/// FR-920-AC-4: a witness that picks the other extremum's choice (tick at 2)
+/// cannot refute the bound the maximum fails.
+#[trace("TC-2489", "FR-920-AC-4")]
+#[test]
+fn a_witness_of_the_other_extremum_settles_parity() {
+    let world = free_tick_world();
+    let low = settle(&world, "AtLeastBetween")
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .evidence()
+        .clone();
+    let transplanted = settle_witness_tampered(&world, "AtMostBetween", |witness| {
+        let item = witness.item.clone();
+        *witness = low.clone();
+        witness.item = item;
+    });
+    assert!(transplanted.probabilistic_counterexample.is_none());
+    assert!(
+        matches!(
+            transplanted.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_)))
+        ),
+        "{transplanted:#?}"
+    );
+}
+
+/// FR-920-AC-4: a workload whose product has one choice at every state is
+/// spelled `workload`, and a residual spelling is not its own.
+#[trace("TC-2489", "FR-920-AC-4")]
+#[test]
+fn a_workload_with_no_choice_is_spelled_workload() {
+    let world = retx_with(
+        &[("send", &["late", "x"])],
+        GUARD,
+        true,
+        TWO_DELAYS,
+        &format!(
+            "workload Both on M {{ weight Call::send = 1; }}\n{}",
+            deadline("Chain", "under Both", ">= 0.5")
+        ),
+    );
+    let record = settle(&world, "Chain");
+    let doc = document(&record);
+    assert_eq!(spelling(&record), "workload");
+    assert!(accepted(&world, "Chain", &doc));
+    for other in ["workload-minimum", "workload-maximum"] {
+        assert!(
+            objective_mismatch(&world, "Chain", &relabelled(&doc, other)),
+            "{other}"
+        );
+    }
+}
+
+/// The unsupported cause an item settled with.
+fn unsupported_cause(record: &AnalyzeRecord) -> String {
+    let Settlement::Disposed(disposed) = &record.settlement else {
+        panic!("expected a disposition, got {record:#?}");
+    };
+    assert_eq!(disposed.kind, DispositionKind::Unsupported);
+    disposed
+        .diagnostic
+        .as_ref()
+        .expect("a cause")
+        .code
+        .cause()
+        .to_owned()
+}
+
+/// FR-204 remaining scope: free `send` and `tick` are both enabled now and
+/// `tick` disables `send`. FR-204 read literally (a unit delay and one
+/// weighted resolution) proves `<= 0.6` with maximum 1/2; ADR-026 SD-3 (the
+/// scheduler picks each free delay) refutes it with maximum 1. The engine
+/// refuses, naming the cause, and the checker does the same on a document it
+/// is given.
+#[trace("TC-2492")]
+#[test]
+fn several_free_identities_enabled_now_are_refused_not_decided() {
+    let world = |scheduler: &str| {
+        retx_with(
+            &[("send", &["late", "x"]), ("tick", &["retried"])],
+            " and not self.retried",
+            true,
+            "pre Tick using v on M::Call::tick { not self.late and not self.retried }\n\
+             post Ticked using v on M::Call::tick { self.retried = true }\n\
+             workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
+            &format!(
+                "probabilistic W using ev on M over (c: M::Call) {scheduler} on origin \
+                 {{ probability <= 0.6 [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n"
+            ),
+        )
+    };
+    let record = settle(&world("under Both"), "W");
+    assert_eq!(unsupported_cause(&record), "workload-free-delays-race");
+    assert!(record.terminal().is_none());
+    // The checker, given a document of the same claim under the workload.
+    let mut doc = document(&settle(&world("under every scheduler"), "W"));
+    doc["objective"]["optimization"] = json!("workload-maximum");
+    let workload = r#"{"ordinal":0,"package":"package","path":["probabilistic","workload",{"ordinal":0,"package":"test/timed","path":["model","object_type","ix://test/timed/Call"]},"Both","send*1,tick*1"]}"#;
+    doc["identity"] = serde_json::from_str(&doc["identity"].to_string().replace(
+        r#""scheduler","every""#,
+        &format!(r#""scheduler",{workload}"#),
+    ))
+    .expect("identity JSON");
+    let result = check(&world("under Both"), "W", &doc);
+    assert!(
+        matches!(
+            result,
+            Err(ProbabilityDocumentError::WorkloadFreeDelays(
+                fsl_replay::WorkloadFreeDelayRefusal::ManyFreeEnabled
+            ))
+        ),
+        "{result:?}"
+    );
+}
+
+/// FR-204 remaining scope: the one free identity enabled now is disabled by
+/// the unit delay, which FR-204's resolution and ADR-026 SD-3 read differently.
+#[trace("TC-2492")]
+#[test]
+fn a_free_identity_the_unit_delay_disables_is_refused_not_decided() {
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("tick", &["retried"])],
+        GUARD,
+        true,
+        "pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x <= 0 ms }\n\
+         post Ticked using v on M::Call::tick { self.retried = true }\n\
+         workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
+        "probabilistic W using ev on M over (c: M::Call) under Both on origin \
+         { probability <= 0.6 [ eventually[0 ms, 4 ms] holds(c.retried) ] }\n",
+    );
+    let record = settle(&world, "W");
+    assert_eq!(
+        unsupported_cause(&record),
+        "workload-free-delay-window-closes"
+    );
+}
+
+/// FR-204: one free identity that stays enabled through the unit delay is
+/// still decided, by the minimum over its choices.
+#[trace("TC-2492")]
+#[test]
+fn one_free_identity_that_stays_enabled_is_decided() {
+    let world = retx_with(
+        &[("send", &["late", "x"])],
+        GUARD,
+        true,
+        "workload Both on M { weight Call::send = 1; }\n",
+        &deadline("Free", "under Both", ">= 0.5"),
+    );
+    let record = settle(&world, "Free");
+    assert!(proved_value_of(&record).is_some(), "{record:#?}");
+    assert_eq!(spelling(&record), "workload-minimum");
+    assert!(accepted(&world, "Free", &document(&record)));
 }
 
 // --- FR-924 (TC-2493) -------------------------------------------------------
@@ -1188,9 +1454,9 @@ fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
 
 /// FR-923: a workload resolves a state by its weights, so an operation it
 /// weighs at zero cannot be dropped from the checker's product. The engine
-/// emits no workload document for a timed deadline (and faults on a zero-weight
-/// race), so the document is the `every scheduler` one of the same model and
-/// claim name with its optimization relabelled `workload`; the checker, given
+/// faults on a zero-weight race and retains no document for it, so the
+/// document is the `every scheduler` one of the same model and claim name
+/// with its optimization relabelled `workload`; the checker, given
 /// the claim under the workload, must refuse the product as `Unsupported`
 /// rather than check one without `tick`.
 #[trace("TC-2492")]

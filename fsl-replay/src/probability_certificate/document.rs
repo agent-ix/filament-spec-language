@@ -241,6 +241,33 @@ impl ProbabilityDocumentLimits {
     }
 }
 
+/// The two workload states EN-5 refuses until the standard rules between FR-204's
+/// `UnitDelay` plus one weighted `WorkloadResolve` and ADR-026 SD-1 and SD-3
+/// (the scheduler picks each free identity's delay inside its window).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkloadFreeDelayRefusal {
+    /// No given delay races and two or more free identities are enabled now.
+    ManyFreeEnabled,
+    /// A free identity enabled now is disabled after the unit delay.
+    ClosesBeforeFiring,
+}
+
+impl WorkloadFreeDelayRefusal {
+    /// The catalog code the refusal travels under.
+    pub const fn code(self) -> filament_semantic_value::catalog::CatalogCode {
+        match self {
+            Self::ManyFreeEnabled => filament_semantic_value::catalog::CatalogCode::new(
+                "unsupported_construct",
+                "workload-free-delays-race",
+            ),
+            Self::ClosesBeforeFiring => filament_semantic_value::catalog::CatalogCode::new(
+                "unsupported_construct",
+                "workload-free-delay-window-closes",
+            ),
+        }
+    }
+}
+
 /// A document never becomes accepted evidence when one of these occurs.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProbabilityDocumentError {
@@ -268,12 +295,20 @@ pub enum ProbabilityDocumentError {
         /// First complete key of the independently computed zero-weight component.
         state: ProbabilityProductKey,
     },
+    /// A workload state where FR-204's `WorkloadResolve` reading and ADR-026
+    /// SD-1 and SD-3 give different verdicts (see [`WorkloadFreeDelayRefusal`]).
+    #[error("unsupported: workload free delay race ({0:?})")]
+    WorkloadFreeDelays(WorkloadFreeDelayRefusal),
     /// Structural identity differs from the requested checked claim.
     #[error("conflicting_identity: probability certificate")]
     IdentityMismatch,
     /// Targets or optimization differ from the independently checked claim.
     #[error("invalid_runtime_input: probability certificate objective mismatch")]
     ObjectiveMismatch,
+    /// The timed document's route, unit, scale, form or targets differ from the
+    /// checker's own derivation (not its optimization spelling).
+    #[error("invalid_runtime_input: timed probability certificate objective mismatch")]
+    TimedObjectiveMismatch,
     /// A caller byte, row or arithmetic ceiling was reached.
     #[error("probability certificate limit reached: {} ({actual} > {bound})", limit.setting())]
     Limit {

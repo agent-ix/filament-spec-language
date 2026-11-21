@@ -79,7 +79,8 @@ pub(crate) enum ExactReport {
     ReplayRefused,
     /// The core rejected a probability value at a complete product state.
     Rejected {
-        rule: CertificateRule,
+                | ProbabilityDocumentError::TimedObjectiveMismatch
+rule: CertificateRule,
         at: CertificateLocus,
     },
     /// The checker accepted the solver's certificate.
@@ -1411,6 +1412,9 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
         ProbabilityDocumentError::ZeroWeightComponent { .. } => {
             EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT))
         }
+        ProbabilityDocumentError::WorkloadFreeDelays(refusal) => {
+            EngineReport::Refused(Refusal::Unsupported(refusal.code()))
+        }
         ProbabilityDocumentError::MixedInfiniteCoverage => EngineReport::Refused(
             Refusal::Unsupported(filament_semantic_value::catalog::CatalogCode::new(
                 "unsupported_construct",
@@ -1532,6 +1536,9 @@ fn build_refusal(refusal: ProductRefusal, subject: SubjectLimits<'_>) -> EngineR
             EngineReport::Refused(Refusal::RequiresBound)
         }
         Err(ProductRefusal::NotStochastic { .. }) => not_yet(),
+        Err(ProductRefusal::WorkloadFreeDelays(refusal)) => {
+            EngineReport::Refused(Refusal::Unsupported(refusal.code()))
+        }
         Err(_) => broken(),
     }
 }
