@@ -87,3 +87,13 @@ Fix heads: FSL #3263 `9fa94a75d3696ee520548c61dc74bf72a13177d0`, FSpec #779 `f29
 | FND-008 | fixed | FR-202:372-377 limits the repeated-key ReplayParity to every scheduler and admits repeats under a workload; AC-26 tests both. |
 | FND-009 | fixed | FR-1041-AC-3 and TC-3150 now list `g` 1 and `f` 0 at rank 0. |
 | FND-010 | fixed | FR-201:172-173 restores "Other temporal forms remain unsupported by this profile." |
+| FND-011 | fixed | Round 2: FR-1042:177-185 marks a partial-product `lower` `exploration: Partial` with `upper` set to the base's least upper bound (1, `1 − level`, 1 for `fraction`, `+∞` written `"infinity"` for rewards); the schema keys the counterpart exemption on `basis.exploration` (requiring `certificate.kind` `lower`, forbidding `counterpart`) and admits `"infinity"` only with the marker; FR-331, FR-411, FR-412, FR-203 (`upper: ExtRational`, `exploration`) and FR-741 agree; FR-331-AC-59, FR-1042-AC-11 and FR-203-AC-9 cover it; the existing vector (positive/21, lower 99/100, upper 1) now carries the marker and satisfies the rule. |
+| FND-012 | fixed | Round 2: FR-203:113-114 adds the rejected-counterpart row (`inconclusive`, `unsettled`, `CertificateRejected`) and the missing-counterpart-without-marker row (`failed`, `runtime_invariant`/`established-invariant-broken`), matching the existing internal-fault and rejected-certificate rows. |
+
+## New findings (disposition pass 2)
+
+Fix heads: FSL #3263 `9424c06b16129a02c0fb1d0643eb9d97b78a3024`, FSpec #779 `0bb2dea90ffd248a9f8cd2ae1300d037c018a1e7`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | low | The `exploration` marker is not written into every place that lists the value-bounds basis. FSpec FR-331:352's proof-basis catalogue still reads `value-bounds{lower, upper, method, reductions}`, with no `exploration` and no `"infinity"` upper. The FSpec least-upper-bound lists (FR-331:656-661, FR-411:267-271, schema description) name probability, shifted and reward bases but not the `fraction`/mean payoff, which FR-1042 gives 1. FSL FR-203:111's `proved` `ValueBounds` row names only the two-document case, not the partial-product `lower` that AC-9 settles `proved`. Fix: add `exploration` and the `"infinity"` upper to FR-331:352, add the fraction payoff (1) to the FSpec lists, and add "or a partial-product `lower` (`exploration: Partial`)" to FR-203:111. | FSpec spec/objects/interfaces/FR-331-backend-provider-envelope.md:352, 656-661; FSpec spec/functional/analysis/FR-411-settle-probabilistic-claims-exactly.md:267-271; spec/functional/FR-203-bound-an-exact-run-and-settle-its-verdict.md:111 |

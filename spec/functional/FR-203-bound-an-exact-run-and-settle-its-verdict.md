@@ -109,7 +109,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | Outcome | FR-331 value | FR-243 basis | `TerminalValue` | O-16 category |
 | --- | --- | --- | --- | --- |
 | Exact value on the claim's side, certificate accepted | `proved` | `closed-scope` | `Proved{basis: ExactValue{…}, certification: Certified}` | success |
-| Sound interval on the claim's side, its `lower` and `upper` documents accepted (FR-1042) | `proved` | `closed-scope` | `Proved{basis: ValueBounds{…}, certification: Certified}` | success |
+| Sound interval on the claim's side, its `lower` and `upper` documents accepted, or a `lower` proof found on a partial product with `exploration: Partial` and the objective's least upper bound, its one document accepted (FR-1042) | `proved` | `closed-scope` | `Proved{basis: ValueBounds{…}, certification: Certified}` | success |
 | `ValueBounds` whose claim-side document is accepted and whose counterpart is rejected (FR-1042) | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected{rule, at})` with the counterpart's rule and locus | inconclusive |
 | `ValueBounds` that reaches settlement with no counterpart and without `exploration: Partial` (FR-1042) | `failed`, diagnostic `runtime_invariant`/`established-invariant-broken` | `unavailable` | `Failed` | failed (ADR-013 O-16 internal failure) |
 | Bound fails, witness replays | `refuted` | `decisive-counterexample` | `Refuted` | violation |
