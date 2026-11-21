@@ -170,7 +170,7 @@ fn unsupported_operation_parameters_are_named_before_search() {
         .replace("operation pay()", "operation pay(amount: Boolean)")
         .replace(
             "population orders:",
-            "object Other { operation change(amount: Int[0,3]): Boolean; }\npopulation orders:",
+            "type OtherAmount = Int[0,3];\nobject Other { operation change(amount: OtherAmount): Boolean; }\npopulation orders:",
         );
     let refusal = check_model(&model, "Int[0,1]", "", "true")
         .expect_err("conflicting argument fields cannot be silently omitted");
@@ -262,11 +262,31 @@ fn mixed_operation_receivers_use_a_sealed_typed_union() {
         &model,
         "Int[1,1]",
         "",
-        "forall(s in Reach.steps: s.receiver = s.receiver and present(s.outcome_ordinal))",
+        "forall(s in Reach.steps: s.receiver = s.receiver and s.operation = M::Op::pay and present(s.outcome_ordinal))",
     )
     .expect("the receiver and optional ordinal are source-readable");
     let plan = checked.plan().unwrap();
     let shape = plan.shape();
+    assert_eq!(
+        shape
+            .operations
+            .iter()
+            .map(|operation| operation.name.as_str())
+            .collect::<Vec<_>>(),
+        ["pay", "idle"],
+        "native invocation order remains declaration order"
+    );
+    assert!(!shape.operation_enum.declaration.declaration().is_ordered());
+    assert_eq!(
+        shape
+            .operation_enum
+            .members
+            .iter()
+            .map(|member| member.case())
+            .collect::<Vec<_>>(),
+        ["idle", "pay"],
+        "unordered nominal cases use FR141 canonical order"
+    );
     let handle = shape
         .receiver_union
         .as_ref()

@@ -17,6 +17,7 @@ use fsl_analyze::plan_search::{
     PlanSearchLimits, PlanSearchRequest, PlanStatus, PlanStep, PlanStopCause, PlanView, RuleStop,
 };
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use ix_trace_rs::trace;
 use serde_json::json;
 
