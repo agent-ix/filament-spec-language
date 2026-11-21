@@ -43,7 +43,7 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex,
 };
 use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
@@ -64,6 +64,12 @@ use fsl_replay::{
 use fsl_semantics::check::CheckedRefinement;
 
 use super::check::{fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
+use super::fair_summary::{
+    compose_candidate_relations, compose_fair_labels, concrete_label_is_fair,
+    idempotent_has_fair_candidate, idempotent_has_fair_candidate_in, insert_relation_label,
+    insert_walk_summary, neutral_label, CandidateRelation, FairLabel, FairMark, FairScope,
+    WalkSummary,
+};
 use super::fair_walk::{fairness_constraints, FairModel};
 
 /// One refinement safety run (FR-142 Inputs).
@@ -151,26 +157,6 @@ struct CandidateEnabled {
     key: Vec<u8>,
     protocol: Option<fsl_replay::ProtocolCandidate>,
     transitions: Vec<ModelTransition>,
-}
-
-/// One transition-label summary component: taken on some edge, enabled at
-/// some source, and enabled at every source.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct FairMark {
-    taken: bool,
-    enabled_somewhere: bool,
-    enabled_everywhere: bool,
-}
-
-type FairLabel = Vec<FairMark>;
-type CandidatePair = (Vec<u8>, Vec<u8>);
-type CandidateRelation = BTreeMap<CandidatePair, Vec<FairLabel>>;
-
-/// The concrete and candidate-path summaries of one retained walk.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct WalkSummary {
-    concrete: FairLabel,
-    candidates: CandidateRelation,
 }
 
 /// One retained lasso edge, as its source product node and canonical edge
@@ -3441,49 +3427,6 @@ impl Run<'_, '_> {
     }
 }
 
-fn neutral_label(constraints: usize) -> FairLabel {
-    vec![
-        FairMark {
-            taken: false,
-            enabled_somewhere: false,
-            enabled_everywhere: true,
-        };
-        constraints
-    ]
-}
-
-fn compose_fair_labels(left: &[FairMark], right: &[FairMark]) -> FairLabel {
-    left.iter()
-        .zip(right)
-        .map(|(left, right)| FairMark {
-            taken: left.taken || right.taken,
-            enabled_somewhere: left.enabled_somewhere || right.enabled_somewhere,
-            enabled_everywhere: left.enabled_everywhere && right.enabled_everywhere,
-        })
-        .collect()
-}
-
-fn at_least_as_fair(left: &[FairMark], right: &[FairMark]) -> bool {
-    left.iter().zip(right).all(|(left, right)| {
-        (!right.taken || left.taken)
-            && (!left.enabled_somewhere || right.enabled_somewhere)
-            && (!left.enabled_everywhere || right.enabled_everywhere)
-    })
-}
-
-fn insert_relation_label(relation: &mut CandidateRelation, pair: CandidatePair, label: FairLabel) {
-    let labels = relation.entry(pair).or_default();
-    if labels
-        .iter()
-        .any(|existing| at_least_as_fair(existing, &label))
-    {
-        return;
-    }
-    labels.retain(|existing| !at_least_as_fair(&label, existing));
-    labels.push(label);
-    labels.sort();
-}
-
 fn candidate_identity_relation<'a>(
     candidates: impl Iterator<Item = &'a CandidateEnabled>,
     classes: usize,
@@ -3497,139 +3440,6 @@ fn candidate_identity_relation<'a>(
         );
     }
     relation
-}
-
-fn compose_candidate_relations(
-    left: &CandidateRelation,
-    right: &CandidateRelation,
-) -> (CandidateRelation, usize) {
-    let mut composed = CandidateRelation::new();
-    let mut work = 0_usize;
-    for ((start, middle), left_labels) in left {
-        for ((next_middle, end), right_labels) in right {
-            if middle != next_middle {
-                continue;
-            }
-            for left_label in left_labels {
-                for right_label in right_labels {
-                    work = work.saturating_add(1);
-                    insert_relation_label(
-                        &mut composed,
-                        (start.clone(), end.clone()),
-                        compose_fair_labels(left_label, right_label),
-                    );
-                }
-            }
-        }
-    }
-    (composed, work)
-}
-
-fn relation_subsumes(left: &CandidateRelation, right: &CandidateRelation) -> bool {
-    left.iter().all(|(pair, left_labels)| {
-        right.get(pair).is_some_and(|right_labels| {
-            left_labels.iter().all(|left_label| {
-                right_labels
-                    .iter()
-                    .any(|right_label| at_least_as_fair(right_label, left_label))
-            })
-        })
-    })
-}
-
-fn walk_summary_subsumes(left: &WalkSummary, right: &WalkSummary) -> bool {
-    at_least_as_fair(&left.concrete, &right.concrete)
-        && relation_subsumes(&left.candidates, &right.candidates)
-}
-
-fn insert_walk_summary(summaries: &mut Vec<WalkSummary>, summary: WalkSummary) -> bool {
-    if summaries
-        .iter()
-        .any(|existing| walk_summary_subsumes(existing, &summary))
-    {
-        return false;
-    }
-    summaries.retain(|existing| !walk_summary_subsumes(&summary, existing));
-    summaries.push(summary);
-    true
-}
-
-fn concrete_label_is_fair(label: &[FairMark], constraints: &[Constraint]) -> bool {
-    label
-        .iter()
-        .zip(constraints)
-        .all(|(mark, constraint)| match constraint.strength() {
-            Strength::Weak => mark.taken || !mark.enabled_everywhere,
-            Strength::Strong => mark.taken || !mark.enabled_somewhere,
-        })
-}
-
-/// The abstract constraints a candidate run must satisfy: the first
-/// `through + 1` of them jointly, or one alone.
-#[derive(Clone, Copy)]
-enum FairScope {
-    Through(usize),
-    Only(usize),
-}
-
-impl FairScope {
-    fn covers(self, constraint: usize) -> bool {
-        match self {
-            Self::Through(last) => constraint <= last,
-            Self::Only(only) => constraint == only,
-        }
-    }
-}
-
-fn candidate_label_is_fair(
-    label: &[FairMark],
-    classes: &[AbstractClass],
-    fairness: &[FairnessConstraint],
-    scope: FairScope,
-) -> bool {
-    label.iter().zip(classes).all(|(mark, class)| {
-        if !scope.covers(class.constraint()) {
-            return true;
-        }
-        match fairness
-            .get(class.constraint())
-            .map(FairnessConstraint::kind)
-        {
-            Some(FairnessKind::Weak) => mark.taken || !mark.enabled_everywhere,
-            Some(FairnessKind::Strong) => mark.taken || !mark.enabled_somewhere,
-            None => false,
-        }
-    })
-}
-
-fn idempotent_has_fair_candidate(
-    relation: &CandidateRelation,
-    classes: &[AbstractClass],
-    fairness: &[FairnessConstraint],
-) -> bool {
-    idempotent_has_fair_candidate_in(
-        relation,
-        classes,
-        fairness,
-        FairScope::Through(fairness.len().saturating_sub(1)),
-    )
-}
-
-fn idempotent_has_fair_candidate_in(
-    relation: &CandidateRelation,
-    classes: &[AbstractClass],
-    fairness: &[FairnessConstraint],
-    scope: FairScope,
-) -> bool {
-    relation.iter().any(|((_, middle), _)| {
-        relation
-            .get(&(middle.clone(), middle.clone()))
-            .is_some_and(|labels| {
-                labels
-                    .iter()
-                    .any(|label| candidate_label_is_fair(label, classes, fairness, scope))
-            })
-    })
 }
 
 #[cfg(test)]

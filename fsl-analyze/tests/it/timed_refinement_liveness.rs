@@ -617,25 +617,18 @@ fn the_timed_liveness_half_honours_strong_abstract_fairness() {
 }
 
 /// FR-899-AC-9: with free initial `h`, the candidate with `h = true` has
-/// `send` disabled, so the weak fairness obligation has a coherent fair run.
-/// The dense product's fair component holds more than one loop (a delay and a
-/// poll leave each position), and a fair candidate run on one loop answers
-/// only for a component that is that one loop, so the half is undecided, not
-/// `Holds`: the exact per-component check of FR-899-AC-9 is not yet built
-/// (QSL-2243), and this test makes no claim that the AC is met.
-#[trace("TC-2536", "FR-899")]
+/// `send` disabled, so every concrete fair loop of the dense product, a poll
+/// or a delay out of each position, has a fair candidate run: the half holds.
+#[trace("TC-2536", "FR-899-AC-9")]
 #[test]
-fn timed_hidden_free_initial_valuation_with_a_multi_loop_component_is_undecided() {
+fn timed_hidden_free_initial_valuation_holds_over_every_fair_loop() {
     let outcome = check(&hidden_timed_world(&[false, true], "weak", false));
     assert!(matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }));
     assert!(
         matches!(
             outcome.liveness,
             Some(TimedLivenessHalf::Checked(
-                TimedLivenessOutcome::Undecided {
-                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
-                    ..
-                }
+                TimedLivenessOutcome::Holds { .. }
             ))
         ),
         "{:?}",
@@ -682,23 +675,18 @@ fn timed_hidden_strong_send_without_invariant_is_violated() {
 }
 
 /// FR-899-AC-9: the invariant bounds the non-taking loop to zero delay, so
-/// strong fairness has no time-divergent hidden-unfair witness. The exact
-/// per-component check that would settle `Holds` is not yet built (QSL-2243):
-/// the half is undecided and is never a violation. This test makes no claim
-/// that the AC is met.
-#[trace("TC-2536", "FR-899")]
+/// strong fairness has no time-divergent hidden-unfair witness and the half
+/// holds.
+#[trace("TC-2536", "FR-899-AC-9")]
 #[test]
-fn timed_hidden_strong_send_with_invariant_is_not_decided_to_hold() {
+fn timed_hidden_strong_send_with_invariant_holds() {
     let outcome = check(&hidden_timed_world(&[false], "strong", true));
     assert!(matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }));
     assert!(
         matches!(
             outcome.liveness,
             Some(TimedLivenessHalf::Checked(
-                TimedLivenessOutcome::Undecided {
-                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
-                    ..
-                }
+                TimedLivenessOutcome::Holds { .. }
             ))
         ),
         "{:?}",
@@ -1002,5 +990,143 @@ fn the_item_keeps_the_safety_record_unless_safety_is_proved() {
             rule: rejection.rule,
             at: rejection.at.clone(),
         })
+    );
+}
+
+/// FR-899-AC-7 over a timed subject: abstract `send` is enabled only at
+/// `h = false` and `idle` only at `h = true`, with `ensure fair weak` for
+/// each. Concrete `poll` maps to a stutter and, with `tock`, `tock` takes
+/// `idle`. A loop of `tock` has the `h = true` candidate fair for both
+/// constraints, and a loop of `poll` has none, so one fair loop hides the
+/// other: a check of a single chosen loop of the component settles by
+/// whichever it picks.
+fn two_loop_world(with_poll: bool) -> Refining {
+    let mut abstract_document: serde_json::Value = serde_json::from_slice(&document(
+        &[],
+        &[("send", &["inflight"]), ("idle", &["inflight"])],
+    ))
+    .expect("abstract package JSON");
+    abstract_document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("abstract object fields")
+        .push(crate::timed_world::wire_field(
+            "h",
+            "ix://filament/native/Boolean",
+        ));
+    let abstract_document =
+        renamed_package(&abstract_document.to_string().into_bytes(), "test/req");
+    let operations: &[(&str, &[&str])] = if with_poll {
+        &[("send", &["inflight"]), ("poll", &["x"]), ("tock", &["x"])]
+    } else {
+        &[("send", &["inflight"]), ("tock", &["x"])]
+    };
+    let concrete = document(&["x"], operations);
+    let poll_row = if with_poll {
+        "step M::Call::poll -> stutter;\n"
+    } else {
+        ""
+    };
+    let poll_contracts = if with_poll {
+        "pre MPoll using v on M::Call::poll { not self.inflight }\n\
+         post MPolled using v on M::Call::poll { self.x = 0 ms }\n"
+    } else {
+        ""
+    };
+    let contracts = format!(
+        "pre ASendable using v on A::Call::send {{ not self.inflight and not self.h }}\n\
+         post ASend using v on A::Call::send {{ self.inflight }}\n\
+         pre AIdleable using v on A::Call::idle {{ self.h }}\n\
+         post AIdled using v on A::Call::idle {{ self.inflight = pre(self.inflight) }}\n\
+         pre MSend using v on M::Call::send {{ not self.inflight }}\n\
+         post MSent using v on M::Call::send {{ self.inflight }}\n\
+         {poll_contracts}\
+         pre MTock using v on M::Call::tock {{ not self.inflight }}\n\
+         post MTocked using v on M::Call::tock {{ self.x = 0 ms }}\n"
+    );
+    let body = refinement("self.inflight").replace(
+        "step M::Call::send -> A::Call::send(self);",
+        &format!(
+            "step M::Call::send -> A::Call::send(self);\n{poll_row}\
+             step M::Call::tock -> A::Call::idle(self);\n\
+             ensure fair weak A::Call::send;\nensure fair weak A::Call::idle;"
+        ),
+    );
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!("{DENSE}{contracts}{body}"),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true])
+}
+
+/// FR-899-AC-7 and FR-899-AC-9: the `poll` loop is fair to no candidate and
+/// is found although a `tock` loop of the same component has a fair candidate
+/// run; the half is violated, never undecided, and the lasso replays.
+#[trace("TC-2536", "FR-899-AC-7", "FR-899-AC-9")]
+#[test]
+fn a_fair_loop_of_a_timed_component_does_not_hide_an_unfair_one() {
+    let world = two_loop_world(true);
+    let counterexample = violation(check(&world));
+    assert!(names(&counterexample).iter().all(|name| name == "poll"));
+    assert_eq!(
+        counterexample.prefix[0].delay,
+        Some(Rational::from_integer(Integer::one()))
+    );
+    assert_eq!(hidden_unfair_name(&counterexample), "idle");
+    assert!(matches!(
+        replay(&world, &counterexample),
+        RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::HiddenUnfair { .. },
+            ..
+        }
+    ));
+}
+
+/// FR-899-AC-9: with only the `tock` loop, every concrete fair loop has the
+/// `h = true` candidate fair for both constraints, so the half holds over a
+/// component of several loops.
+#[trace("TC-2536", "FR-899-AC-9")]
+#[test]
+fn every_loop_of_a_timed_component_with_a_fair_candidate_run_holds() {
+    let outcome = check(&two_loop_world(false));
+    assert!(matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }));
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Holds { .. }
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
+}
+
+/// FR-899 "Timed subjects": the walk-summary search is charged against
+/// `max_symbolic_transitions`. A budget that admits the liveness product but
+/// not the search stops the half, and never holds.
+#[trace("TC-2536", "FR-899")]
+#[test]
+fn the_exact_loop_search_stops_at_its_budget_and_never_holds() {
+    let world = two_loop_world(false);
+    let Some(TimedLivenessHalf::Checked(TimedLivenessOutcome::Holds { stats, .. })) =
+        check(&world).liveness
+    else {
+        panic!("the unbudgeted half holds");
+    };
+    let mut request = safety_request(&world);
+    request.limits.max_symbolic_transitions = stats.retained_edges + 1;
+    let outcome =
+        check_timed_refinement(request, &Cancel::new()).expect("EN-6 takes the refinement");
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Stopped { .. }
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
     );
 }

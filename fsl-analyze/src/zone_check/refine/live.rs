@@ -40,9 +40,12 @@ use fsl_replay::{
 };
 use num_bigint::BigInt;
 
+mod fair_loops;
+
 use super::{
     Judgement, Product, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
 };
+use crate::model_check::fair_summary::FairScope;
 use crate::model_check::fair_walk::{fairness_constraints, FairModel};
 use crate::zone_check::concretise::{concretise, Stage, Target};
 use crate::zone_check::liveness::{next_cell, Cells, Sign};
@@ -300,12 +303,39 @@ impl Product<'_, '_> {
                         &cycle,
                         FairScope::Through(class.constraint()),
                     )? {
-                        // The fair run answers for the whole component only
-                        // when the component is that one loop; another loop
-                        // through it may still violate, so decide nothing.
-                        Ok(true) if single_loop(&model.graph, &members) => continue,
                         Ok(true) => {
-                            not_concretised = true;
+                            // Another loop of the component may still have no
+                            // fair candidate run: decide every one of them.
+                            let view = fair_loops::ComponentView {
+                                model: &model,
+                                kept: &kept,
+                                members: &members,
+                                removed: component.removed(),
+                            };
+                            let found = self.unfair_candidate_loop(
+                                run,
+                                live,
+                                &view,
+                                &classes,
+                                &abstract_fairness,
+                            )?;
+                            let Some(found) = (match found {
+                                Ok(found) => found,
+                                Err(ends) => return Ok(Lived::Ends(ends)),
+                            }) else {
+                                continue;
+                            };
+                            let named =
+                                match self.first_unfair_constraint(run, live, &found.cycle)? {
+                                    Ok(index) => index,
+                                    Err(ends) => return Ok(Lived::Ends(ends)),
+                                };
+                            match self.lasso(run, live, class, named, found.entry, &found.cycle)? {
+                                Some(counterexample) => {
+                                    return Ok(Lived::Violated(Box::new(counterexample)));
+                                }
+                                None => not_concretised = true,
+                            }
                             continue;
                         }
                         Ok(false) => {
@@ -1354,67 +1384,5 @@ fn fairness(run: &Run<'_, '_, '_>, error: FairnessError) -> Halt {
     match error {
         FairnessError::Cancelled => run.stop(crate::zone_check::search::ZoneStop::Cancelled),
         _ => ZoneCheckRefusal::Fault("fairness-graph").into(),
-    }
-}
-
-/// Which abstract fairness constraints a candidate-run check demands: the
-/// first `through + 1` jointly, or one alone.
-#[derive(Clone, Copy)]
-enum FairScope {
-    Through(usize),
-    Only(usize),
-}
-
-impl FairScope {
-    fn covers(self, constraint: usize) -> bool {
-        match self {
-            Self::Through(last) => constraint <= last,
-            Self::Only(only) => constraint == only,
-        }
-    }
-}
-
-/// Whether every vertex of `members` has exactly one edge staying inside
-/// `members`, so the component's only loop is its one cycle. Edges the
-/// filter removed are counted, which only makes a component fail this test.
-fn single_loop(graph: &Graph, members: &BTreeSet<Vertex>) -> bool {
-    members.iter().all(|vertex| {
-        graph
-            .edges_from(*vertex)
-            .iter()
-            .filter(|edge| members.contains(&edge.target))
-            .count()
-            == 1
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ix_trace_rs::trace;
-
-    /// FR-899 "Timed subjects": a fair candidate run on one greedy loop
-    /// answers for a component only when the component is that one loop. A
-    /// ring is one loop; a ring with a second loop through one of its
-    /// vertices is a component whose other loop is not examined.
-    #[trace("TC-2536")]
-    #[test]
-    fn only_a_component_that_is_one_loop_is_answered_by_its_greedy_loop() {
-        let mut graph = Graph::new();
-        let first = graph.add_vertex([]);
-        let second = graph.add_vertex([]);
-        graph
-            .add_edge(first, second, EdgeLabel::Stutter)
-            .expect("known vertices");
-        graph
-            .add_edge(second, first, EdgeLabel::Stutter)
-            .expect("known vertices");
-        let members: BTreeSet<Vertex> = [first, second].into_iter().collect();
-        assert!(single_loop(&graph, &members));
-
-        graph
-            .add_edge(first, first, EdgeLabel::Stutter)
-            .expect("known vertices");
-        assert!(!single_loop(&graph, &members));
     }
 }
