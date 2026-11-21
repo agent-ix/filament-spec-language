@@ -325,6 +325,8 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     ConstructionCause::NullForRequiredField => serde_json::json!({"cause": "null-for-required-field"}),
                     ConstructionCause::WrongArity { declared, supplied } => serde_json::json!({"cause": "wrong-arity", "declared": declared, "supplied": supplied}),
                     ConstructionCause::TypeMismatch => serde_json::json!({"cause": "type-mismatch"}),
+                    ConstructionCause::MissingAdmissionAuthority => serde_json::json!({"cause": "missing-admission-authority"}),
+                    ConstructionCause::DuplicateMember => serde_json::json!({"cause": "duplicate-member"}),
                     ConstructionCause::UuidNoncanonical => serde_json::json!({"cause": "uuid-noncanonical"}),
                     ConstructionCause::TimestampNoncanonical => serde_json::json!({"cause": "timestamp-noncanonical"}),
                     ConstructionCause::TimestampOutOfDomain => serde_json::json!({"cause": "timestamp-out-of-domain"}),

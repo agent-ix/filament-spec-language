@@ -673,7 +673,7 @@ impl Requested {
             }
         }
         super::plan_request::PlanRequest::read(&early, "/request/synthesis").map_err(
-            |refusal| RunCause::SynthesisRequest {
+            |refusal| super::RunCause::SynthesisRequest {
                 reason: refusal.to_string(),
                 path: refusal.pointer,
                 code: Code::InvalidRuntimeInput,

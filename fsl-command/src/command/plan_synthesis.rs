@@ -198,7 +198,11 @@ pub(super) fn run(
             // is denied rather than borrowing a planner work counter.
             expansion: ExpansionLimits { max_candidates: 0 },
             meter: limits,
-            emit: fsl_package::EmitLimits::new(intake.remaining),
+            emit: fsl_package::EmitLimits::new(u64::try_from(intake.remaining).map_err(|_| {
+                method_failure(
+                    "the source intake byte allowance exceeds the native emit limit representation",
+                )
+            })?),
         },
         model_identity,
     )
