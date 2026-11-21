@@ -23,7 +23,7 @@ use fsl_semantics::model::observation::{admit_trace_snapshot, AdmissionUsage};
 use serde::Deserialize;
 
 use super::temporal::{decisive_over, observed_disposition, refused, OverObject, TraceInput};
-use super::trace_refusal::ClauseSite;
+use super::trace_refusal::{ClauseSite, TraceSite};
 use super::{ClauseDisposition, ClauseRunUsage, CompiledRun};
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::{CounterexampleKind, Lasso, TemporalCounterexample};
@@ -68,7 +68,7 @@ struct ObjectRead {
 /// FSpec FR-520's universes: one per complete population the universe
 /// snapshots declare, its keys the union of their objects' keys in reference
 /// order. `None` when an admitted snapshot is not there to read.
-fn universes(
+pub(super) fn universes(
     snapshots: &fsl_semantics::model::observation::DocumentProvision,
     documents: &[crate::DocumentRef],
 ) -> Option<Vec<PopulationUniverse>> {
@@ -100,6 +100,35 @@ fn universes(
             .map(|(population, (keys, _))| PopulationUniverse { population, keys })
             .collect(),
     )
+}
+
+/// The behaviour a model-arm trace supplies, as the counterexample payload
+/// the replay re-executes: the loop's steps follow the prefix's, and a
+/// terminal stutter loop lists no step of its own (ADR-018 SM-4).
+pub(super) fn behaviour_payload(
+    prefix: &[crate::ModelStep],
+    repeat: &[crate::ModelStep],
+    terminal_stutter: bool,
+    instance: fsl_eval::model_subject::ModelInstance,
+) -> TemporalCounterexample {
+    let entry = prefix.len();
+    let mut steps = prefix.to_vec();
+    steps.extend(repeat.iter().cloned());
+    TemporalCounterexample {
+        initial_state: 0,
+        prefix: steps.clone(),
+        over_binding: Some(instance),
+        fairness: Vec::new(),
+        kind: CounterexampleKind::Formula,
+        lasso: Some(Lasso {
+            entry: if terminal_stutter { steps.len() } else { entry },
+            terminal_stutter,
+            terminal_stutter_delay: None,
+        }),
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+    }
 }
 
 /// FR-330 "Admit" and "Evaluate" for `TraceInput::Model`.
@@ -216,33 +245,12 @@ pub(super) fn run_model(
     };
     let letters = match system.clause_letters(node) {
         Ok(letters) => letters,
+        Err(fsl_eval::simulation::model::LettersRefusal::ReferenceBindingsAdmission(failure)) => {
+            return stopped(ClauseDisposition::Admit(failure), admitted);
+        }
         Err(_) => return fault("model-clause-has-letters"),
     };
-    // The loop's steps follow the prefix's; a terminal stutter loop lists no
-    // step of its own (ADR-018 SM-4).
-    let entry = prefix.len();
-    let mut steps = prefix.clone();
-    steps.extend(repeat.iter().cloned());
-    let lasso = Lasso {
-        entry: if *terminal_stutter {
-            steps.len()
-        } else {
-            entry
-        },
-        terminal_stutter: *terminal_stutter,
-        terminal_stutter_delay: None,
-    };
-    let payload = TemporalCounterexample {
-        initial_state: 0,
-        prefix: steps,
-        over_binding: Some(instance.clone()),
-        fairness: Vec::new(),
-        kind: CounterexampleKind::Formula,
-        lasso: Some(lasso),
-        blocked: Vec::new(),
-        refinement: None,
-        final_delay: None,
-    };
+    let payload = behaviour_payload(prefix, repeat, *terminal_stutter, instance);
     let evaluated = match evaluate_model_trace(&system, &payload, clause, &letters, run.accounting)
     {
         Ok(ModelTraceEnd::Evaluated(evaluated)) => *evaluated,
@@ -250,7 +258,7 @@ pub(super) fn run_model(
             return stopped(
                 expansion_stop(&stop, run.accounting, *max_candidates),
                 admitted,
-            )
+            );
         }
         Err(refusal) => return stopped(replay_refusal(refusal), admitted),
     };
@@ -483,7 +491,7 @@ pub fn run_package_behaviours(
 /// replayed (FR-203, FR-126): the bound it reached, or the `accounting.*`
 /// counter, and its value in the run. A stop that names no bound is a fault,
 /// never a completed run.
-fn expansion_stop(
+pub(super) fn expansion_stop(
     stop: &ExpansionStop,
     accounting: filament_exact::ScalarLimits,
     max_candidates: u64,
@@ -503,7 +511,7 @@ fn expansion_stop(
                     "temporal",
                     "model-expansion-stops-at-a-named-limit",
                 ),
-            )
+            );
         }
     };
     ClauseDisposition::Temporal(TemporalVerdict::ExpansionLimitReached(reached))
@@ -521,7 +529,7 @@ fn fault(invariant: &'static str) -> ModelRun {
 
 /// The disposition of a refused model-arm re-execution: the subject's own
 /// admission failure, or `invalid_runtime_input`/`invalid-value` naming why.
-fn replay_refusal(refusal: ReplayRefusal) -> ClauseDisposition {
+pub(super) fn replay_refusal(refusal: ReplayRefusal) -> ClauseDisposition {
     match refusal {
         ReplayRefusal::Admission(failure) => ClauseDisposition::Admit(failure),
         other => refused(

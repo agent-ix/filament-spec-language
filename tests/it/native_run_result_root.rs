@@ -2,11 +2,11 @@
 //! FR-535: the bounded `native-run-result/2` boundary, through crate-root names only.
 
 use fsl_replay::{
-    ClauseDisposition, ClauseRunReport, NativeRunLimits, NativeRunReadError, NativeRunResult,
-    SettlementBasis, read_native_run_result_bounded, write_clause_run_result,
+    read_native_run_result_bounded, write_clause_run_result, ClauseDisposition, ClauseRunReport,
+    NativeRunLimits, NativeRunReadError, NativeRunResult, SettlementBasis,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn report() -> ClauseRunReport {
     ClauseRunReport {

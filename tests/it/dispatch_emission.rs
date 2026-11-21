@@ -721,7 +721,7 @@ const SQRT_PRECONDITION_UNIT: &str = "body sizeA using v on Config::ConfigVersio
 #[test]
 fn a_clause_function_body_carries_its_location_rows() {
     let (bytes, _) = emit_with_capture(SQRT_PRECONDITION_UNIT);
-    admitted(&bytes);
+    let package = admitted(&bytes);
     let wire: Value = serde_json::from_slice(&bytes).unwrap();
     let rows = wire["checked_term_data"]["body_locations"]
         .as_array()
@@ -731,11 +731,23 @@ fn a_clause_function_body_carries_its_location_rows() {
             .to_string()
             .contains("float64.sqrt")
     };
-    let sqrt_paths: Vec<Value> = rows
-        .iter()
-        .filter(|row| is_sqrt(row))
-        .map(|row| row["location"]["path"].clone())
-        .collect();
+    let function: filament_contract_model::CheckedNodeId = serde_json::from_value(
+        rows.iter().find(|row| is_sqrt(row)).unwrap()["location"]["origin"]["function"].clone(),
+    )
+    .unwrap();
+    let mut cursor = package.body_locations(&function, 100_000).unwrap();
+    let mut sqrt_paths = Vec::new();
+    let mut second_sqrt = None;
+    while let Some(view) = cursor.next_location().unwrap() {
+        let row = serde_json::to_value(view.row).unwrap();
+        if is_sqrt(&row) {
+            let path = serde_json::to_value(view.path).unwrap();
+            if path == json!([1]) {
+                second_sqrt = Some(row);
+            }
+            sqrt_paths.push(path);
+        }
+    }
     assert_eq!(
         sqrt_paths,
         vec![json!([0]), json!([1])],
@@ -785,7 +797,7 @@ fn a_clause_function_body_carries_its_location_rows() {
         .as_array()
         .unwrap()
         .iter()
-        .position(|row| is_sqrt(row) && row["location"]["path"] == json!([1]))
+        .position(|row| Some(row) == second_sqrt.as_ref())
         .unwrap();
     without_second["checked_term_data"]["body_locations"]
         .as_array_mut()

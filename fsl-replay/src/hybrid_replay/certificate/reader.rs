@@ -11,8 +11,8 @@ use fsl_semantics::check::{CheckedGraph, CheckedHybridModel, CompareOp};
 
 use super::super::expand::Exp;
 use super::super::flow::{poly_of, Flow};
-use super::super::poly::Poly;
 use super::super::interval::{Interval, Tri};
+use super::super::poly::Poly;
 use super::super::{HybridReplayMeter, HybridReplayRefusal};
 use super::flowpipe::narrowed_over;
 use super::machine::{self, Machine, ModelX, Stop};
@@ -190,9 +190,7 @@ impl<'g, 'w> ModelReader<'g, 'w> {
         ap: &HybridBox,
         h: &Rational,
     ) -> Read<bool> {
-        Ok(self
-            .machine
-            .picard_holds(&self.mx.modes[mode], bx, ap, h)?)
+        Ok(self.machine.picard_holds(&self.mx.modes[mode], bx, ap, h)?)
     }
 
     /// Whether every rate and the invariant of `mode` are definitely
@@ -268,12 +266,7 @@ impl<'g, 'w> ModelReader<'g, 'w> {
     /// # Errors
     ///
     /// [`ReadStop`] when the meter stops the read.
-    pub fn guard_reading(
-        &mut self,
-        mode: usize,
-        transition: usize,
-        bx: &HybridBox,
-    ) -> Read<Tri> {
+    pub fn guard_reading(&mut self, mode: usize, transition: usize, bx: &HybridBox) -> Read<Tri> {
         let guard = &self.mx.modes[mode].transitions[transition].guard;
         Ok(self.machine.reading(guard, bx)?.0)
     }
@@ -344,7 +337,11 @@ impl<'g, 'w> ModelReader<'g, 'w> {
     /// polynomial in time per variable, lowest coefficient first; `None`
     /// when the flow is not a polynomial flow (its rates depend on one
     /// another cyclically).
-    pub fn polynomial_solution(&self, mode: usize, start: &[Rational]) -> Option<Vec<Vec<Rational>>> {
+    pub fn polynomial_solution(
+        &self,
+        mode: usize,
+        start: &[Rational],
+    ) -> Option<Vec<Vec<Rational>>> {
         let flow = Flow::of(self.mx.modes[mode].rates.clone())?;
         Some(
             flow.solve(start)

@@ -271,9 +271,9 @@ pub enum BoundedMeasure {
         /// The reward.
         reward: Identifier,
         /// `A`.
-        from: CheckedPredicate,
+        from: Box<CheckedPredicate>,
         /// `B`.
-        until: CheckedPredicate,
+        until: Box<CheckedPredicate>,
         /// `h`.
         within: u64,
         /// Time upper bound for a timed subject's quantity-valued horizon.
@@ -282,9 +282,9 @@ pub enum BoundedMeasure {
     /// `steps from holds(A) until holds(B) within h`.
     Steps {
         /// `A`.
-        from: CheckedPredicate,
+        from: Box<CheckedPredicate>,
         /// `B`.
-        until: CheckedPredicate,
+        until: Box<CheckedPredicate>,
         /// `h`.
         within: u64,
         /// Time upper bound for a timed subject's quantity-valued horizon.
@@ -1626,12 +1626,10 @@ impl Pass<'_, '_> {
                 // unbounded event; do not add a duplicate interval refusal.
                 continue;
             }
-            refusals.push(match cause {
-                // Bounded and timed profiles own operator-form admission.
-                // Match temporal-clause diagnostics before probabilistic
-                // event boundedness is considered.
-                other => temporal_refusal(other),
-            });
+            // Bounded and timed profiles own operator-form admission.
+            // Match temporal-clause diagnostics before probabilistic
+            // event boundedness is considered.
+            refusals.push(temporal_refusal(cause));
         }
         let mut conditions = BTreeMap::new();
         for (id, node) in formula.iter() {
@@ -1754,8 +1752,8 @@ impl Pass<'_, '_> {
                 Ok((
                     BoundedMeasure::Accumulate {
                         reward: name,
-                        from,
-                        until,
+                        from: Box::new(from),
+                        until: Box::new(until),
                         within,
                         timed_within,
                     },
@@ -1766,8 +1764,8 @@ impl Pass<'_, '_> {
                 let (from, until, within, timed_within) = self.window(claim, window, cx, nodes)?;
                 Ok((
                     BoundedMeasure::Steps {
-                        from,
-                        until,
+                        from: Box::new(from),
+                        until: Box::new(until),
                         within,
                         timed_within,
                     },

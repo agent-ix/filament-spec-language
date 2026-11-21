@@ -38,10 +38,16 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
     fsl_foundation::diagnostic::CatalogCode::new("missing_declaration", "missing-selection"),
     fsl_foundation::diagnostic::CatalogCode::new("ambiguous_declaration", "ambiguous-name"),
     fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
-    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "runtime_invariant",
+        "established-invariant-broken",
+    ),
     fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "node-count-exceeded"),
     fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "declaration-form"),
-    fsl_foundation::diagnostic::CatalogCode::new("unsupported_projection", "unsupported-requested-capability"),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "unsupported_projection",
+        "unsupported-requested-capability",
+    ),
 ];
 
 // Private declared-type tests must reach Typer; the owner's allocator keeps

@@ -31,6 +31,7 @@ mod json;
 mod key;
 mod request;
 mod settle;
+mod transfer;
 
 #[cfg(test)]
 use request::read_declared;
@@ -41,17 +42,21 @@ use settle::settle_declared;
 mod composition_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transfer_tests;
 
 pub use compose::{DischargeEntry, DischargeRecord, DischargeSource, Relation};
 pub use declaration::{
-    ClauseFacts, ClauseForm, DerivedSlot, EnvSupplies, EnvironmentMember, ItemRole,
-    PlannerDeclaration, SchedulingPremise, SlotBacking, SlotRole,
+    strength_implies, ClauseFacts, ClauseForm, DerivedSlot, EnvSupplies, EnvironmentMember,
+    ItemRole, PlannerDeclaration, SchedulingPremise, SlotBacking, SlotRole,
 };
 pub use entry::{
     read_result_entry, EntryCause, EntryOrigin, LimitFacts, ResultEntry, ResultEntryRefusal,
     TaskSearchEdge, TaskSearchEvidence, TaskSearchFrontier, TaskSearchNode,
 };
-pub use from_package::{subject_text, DeclarationRefusal};
+pub use from_package::{
+    composition_premises, subject_text, CompositionPremise, DeclarationRefusal,
+};
 pub use item::{read_premise_item, PremiseItem};
 pub use json::{Cause, Fault};
 pub use key::{
@@ -67,3 +72,4 @@ pub use settle::{
     settle, Budget, Conclusion, ConclusionExtent, PlannerCause, PlannerResult, PlannerValue,
     SettleRefusal, SlotOutcome, SlotValue,
 };
+pub use transfer::{settle_transfer, TransferFacts, TransferPremiseValue, TransferSettlement};

@@ -153,7 +153,10 @@ fn the_output_byte_limit_is_reached_through_the_override() {
     let limited_run = export(&path, &overrides);
     limited_run.expect("export", "incomplete", 22);
     assert!(
-        limited_run.document.to_string().contains("export.output_bytes"),
+        limited_run
+            .document
+            .to_string()
+            .contains("export.output_bytes"),
         "{}",
         limited_run.document
     );

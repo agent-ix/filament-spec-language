@@ -3,7 +3,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -24,12 +24,6 @@ struct Fixture {
 
 fn fspec_repository() -> TempDir {
     xtask::published_fspec::directory("proposals/")
-}
-
-fn published(path: &str) -> Vec<u8> {
-    filament_specification::published_file(path)
-        .expect("pinned FSpec publishes the selected contract")
-        .to_vec()
 }
 
 impl Fixture {

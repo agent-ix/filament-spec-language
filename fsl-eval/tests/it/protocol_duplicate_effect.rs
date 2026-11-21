@@ -318,14 +318,13 @@ fn bound_reference_ids(
                     filament_exact::Value::Reference(reference) => {
                         Some(reference.object().as_str().to_owned())
                     }
-                    filament_exact::Value::Composite(composite) => composite
-                        .slots()
-                        .iter()
-                        .find_map(|slot| match slot {
+                    filament_exact::Value::Composite(composite) => {
+                        composite.slots().iter().find_map(|slot| match slot {
                             filament_exact::FieldValue::Present(value) => first_reference(value),
                             filament_exact::FieldValue::Absent
                             | filament_exact::FieldValue::Null => None,
-                        }),
+                        })
+                    }
                     _ => None,
                 }
             }

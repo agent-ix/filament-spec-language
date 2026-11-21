@@ -24,7 +24,7 @@ FSL SHALL decide FSpec FR-380's step-for-step condition from a model refinement'
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1020-AC-1 | Over a step-for-step refinement, proved abstract `always (holds(c.value = 2) implies once[1,1] holds(c.value = 1))` and `always (holds(c.value = 1) implies eventually[0,2] holds(c.value = 2))` transfer `proved`, `decisive-witness`, with no concrete exploration. | Test (TC-2870) |
+| FR-1020-AC-1 | Over a step-for-step refinement, proved abstract `always (holds(c.value = 1) implies once[1,1] holds(c.value = 0))` (the formula of the architecture ruling of 2026-11-20 on QSL-2247, FR-1030-AC-5: its earlier `value = 2` form is not proved under terminal stutter) and `always (holds(c.value = 1) implies eventually[0,2] holds(c.value = 2))` transfer `proved`, `decisive-witness`, with no concrete exploration. | Test (TC-2870) |
 | FR-1020-AC-2 | Over a refinement whose step map sends a concrete operation to `stutter`, the same clauses settle `inconclusive`, `transfer-not-preserving`, naming `once[1,1]` and `eventually[0,2]`; one with an `any` arm or a `time dense` concrete subject is not step-for-step. | Test (TC-2870) |
 
 ## Dependencies

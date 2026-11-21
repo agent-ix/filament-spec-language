@@ -25,10 +25,10 @@ use fsl_package::{
     TerminalResolveRefusal, UnreadModelForm,
 };
 use fsl_semantics::check::footprint::{
-    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
-    derive_attempt_footprint_fallback_with_reference_literals, derive_constraint_reads,
-    derive_footprint, derive_guard_reads, derive_node_reads,
+    derive_atom_reads, derive_attempt_footprint_fallback_with_reference_literals,
+    derive_constraint_reads, derive_footprint, derive_guard_reads, derive_node_reads,
     derive_selected_footprint_with_reference_literals, derive_slot_reads, reference_literals_of,
+    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation,
 };
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
@@ -44,8 +44,8 @@ use fsl_semantics::model::operation::{OperationDeclaration, OperationTable};
 use fsl_semantics::model::state::StateModel;
 
 use crate::value::{
-    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, QualifiedName,
-    WrittenCollection,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, ProtocolSlot,
+    ProtocolSlotEvaluation, ProtocolSupply, QualifiedName, WrittenCollection,
 };
 
 /// The reads a body derivation reports, and the reference literals the body
@@ -175,6 +175,16 @@ pub struct ModelCheckInput<'a> {
     pub admitted: Option<&'a fsl_package::CheckedPackageV2>,
 }
 
+/// A protocol definition in the form the selected analysis route reads.
+/// Package definitions borrow only the admitted V2 nodes; they do not
+/// reconstruct a source checked graph.
+pub enum ProtocolDefinition<'a> {
+    /// The source route's checked semantic form.
+    Source(&'a CheckedProtocol),
+    /// The package route's typed protocol-node form.
+    Package(Box<fsl_package::protocol_view::ProtocolExecutionView<'a>>),
+}
+
 impl<'a> ModelCheckInput<'a> {
     /// The source route's input (FR-531): every table read from the source
     /// package's `CheckedGraph`, and the package itself as the evaluator.
@@ -279,6 +289,19 @@ impl<'a> ModelCheckInput<'a> {
                     )
                 }),
         )
+    }
+
+    /// FR-940: resolve a protocol through this input's selected route, keeping
+    /// source checked forms and package node forms distinct.
+    pub fn protocol_definition(&self, name: &str) -> Option<ProtocolDefinition<'_>> {
+        self.evaluator
+            .protocol(name)
+            .map(ProtocolDefinition::Source)
+            .or_else(|| {
+                self.evaluator
+                    .package_protocol(name)
+                    .map(|form| ProtocolDefinition::Package(Box::new(form)))
+            })
     }
 
     /// The packages an admission of this package's observations
@@ -541,7 +564,35 @@ impl<'p> PackageModelInput<'p> {
         packages: &fsl_semantics::model::intake::PackageInput,
         normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
     ) -> Result<Self, PendingPackageForm> {
-        if let Some((form, node)) = package.first_unread_model_form() {
+        Self::of_trace_input(package, packages, normalization, false)
+    }
+
+    /// Build the model world for supplied timed observations, without simulating time.
+    /// Timed roots remain read through their admitted model-time joins by trace authentication.
+    ///
+    /// # Errors
+    ///
+    /// Refuses the same unsupported forms as [`Self::of`], except timed model roots.
+    pub fn of_timed_trace(
+        package: &'p BarePackage<'p>,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    ) -> Result<Self, PendingPackageForm> {
+        Self::of_trace_input(package, packages, normalization, true)
+    }
+
+    fn of_trace_input(
+        package: &'p BarePackage<'p>,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        timed_trace: bool,
+    ) -> Result<Self, PendingPackageForm> {
+        let unread = if timed_trace {
+            package.first_unread_timed_trace_form()
+        } else {
+            package.first_unread_model_form()
+        };
+        if let Some((form, node)) = unread {
             return Err(PendingPackageForm::Form {
                 form,
                 node: node.clone(),
@@ -673,7 +724,7 @@ impl<'p> PackageModelInput<'p> {
     }
 
     /// [`Self::temporal_clause`] for a run that reads the clause over a trace
-    /// or a model's behaviours rather than checking it: any untimed profile
+    /// or a model's behaviours rather than checking it: every profile
     /// and the clause's step intervals are read, since the evaluator reads
     /// each from the clause itself. A clause with captures is still refused,
     /// as the package-route letters do not read them yet.
@@ -707,7 +758,7 @@ impl<'p> PackageModelInput<'p> {
         if let ValueType::Reference(object) = &form.over.1 {
             form.populations = self.model.overlapping_populations(object.clone());
         }
-        CheckedTemporalClause::of_package_form(form, self.world.types(), position_limit)
+        CheckedTemporalClause::of_package_run_form(form, self.world.types(), position_limit)
             .map_err(PendingClauseForm::Build)
     }
 
@@ -823,8 +874,11 @@ impl<'p> PackageModelInput<'p> {
                 .terminals
                 .iter()
                 .map(|terminal| ModelTerminal {
-                    model: super::TerminalModel::new(terminal.model.clone(), terminal.model.clone())
-                        .with_ordinal(terminal.ordinal),
+                    model: super::TerminalModel::new(
+                        terminal.model.clone(),
+                        terminal.model.clone(),
+                    )
+                    .with_ordinal(terminal.ordinal),
                     node: terminal.node.clone(),
                     declaration: match &terminal.declaration {
                         fsl_package::BareTerminalDeclaration::Any => ModelTerminalDeclaration::Any,
@@ -910,6 +964,17 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
+    /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
+    fn evaluate_model_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
     /// FR-940: the `when` guard of the temporal clause `clause`, keyed by
     /// its node, over `objects`, on either route.
     ///
@@ -923,6 +988,24 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
+
+    /// Evaluate a model behaviour's activation guard with FR-107 model-read accounting.
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure>;
+
+    /// Reference literals reachable from the clause's projected conditions and guard.
+    /// An unread condition retains its evaluator refusal when evaluated.
+    fn temporal_reference_literals(
+        &self,
+        clause: &CheckedTemporalClause,
+        key: &NodeKey,
+    ) -> Vec<(EffectiveId, Vec<u8>)>;
 
     /// FR-940: `invocation` against the operation frame `frame`, keyed by
     /// its node, on either route. The package route reads the frame's
@@ -1156,6 +1239,36 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
 
+    /// FR-940: evaluate a package protocol slot from its admitted node
+    /// descriptor and supplied package binders. This is separate from the
+    /// source `CheckedBody` path so package execution never synthesizes one.
+    fn evaluate_package_protocol_slot(
+        &self,
+        _slot: &ProtocolSlot,
+        _supply: &ProtocolSupply<'_>,
+        _meter: &mut Meter,
+    ) -> Result<ProtocolSlotEvaluation, CallFailure> {
+        Err(CallFailure::Fault(SOURCE_FORM))
+    }
+
+    /// Admit a simulated state as this package evaluator's current protocol
+    /// observation, retaining the bare package's admission authority.
+    fn package_protocol_observation(
+        &self,
+        _model: &DomainPackageRef,
+        _packages: &fsl_semantics::model::intake::PackageInput,
+        _limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        _state: &fsl_semantics::model::state::ModelState,
+        _identity: fsl_semantics::model::observation::DocumentRef,
+    ) -> Result<
+        filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'static>,
+        >,
+        InternalFault,
+    > {
+        Err(SOURCE_FORM)
+    }
+
     /// [`crate::value::evaluate_join_predicate`].
     ///
     /// # Errors
@@ -1186,6 +1299,55 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     /// The checked protocol `name`.
     fn protocol(&self, name: &str) -> Option<&CheckedProtocol>;
 
+    /// FR-940: the package-native protocol structure read through the
+    /// admitted package view. This is available on the bytes route without
+    /// rebuilding a source `CheckedProtocol`.
+    fn package_protocol(
+        &self,
+        _name: &str,
+    ) -> Option<fsl_package::protocol_view::ProtocolExecutionView<'_>> {
+        None
+    }
+
+    /// FR-940: form a package protocol-slot descriptor from its admitted
+    /// structural identity. `None` means this evaluator has no package-side
+    /// identity row for `node`.
+    fn package_protocol_slot(
+        &self,
+        _node: &CheckedNodeId,
+        _member: &str,
+        _index: Option<usize>,
+    ) -> Option<ProtocolSlot> {
+        None
+    }
+
+    /// FR-390: the exact binder identities read by an admitted package
+    /// protocol slot, in its evaluator-defined order.
+    fn package_protocol_slot_binders(&self, _slot: &ProtocolSlot) -> Option<Vec<NodeKey>> {
+        None
+    }
+
+    /// FR-531: the exact identity row for one admitted package node.
+    fn package_node_key(&self, _node: &CheckedNodeId) -> Option<NodeKey> {
+        None
+    }
+
+    /// FR-531: the declaring type and operation selected by a package
+    /// protocol attempt's admitted operation anchor.
+    fn package_protocol_operation(&self, _anchor: &CheckedNodeId) -> Option<(EffectiveId, String)> {
+        None
+    }
+
+    /// FR-531: the exact object type selected by a package protocol role.
+    fn package_protocol_role_model(&self, _model: &CheckedNodeId) -> Option<EffectiveId> {
+        None
+    }
+
+    /// FR-531: the admitted value type of a package protocol binder.
+    fn package_protocol_parameter_type(&self, _binder: &CheckedNodeId) -> Option<ValueType> {
+        None
+    }
+
     /// The admitted node keys of the protocol `name`.
     fn protocol_node_keys(&self, name: &str) -> Option<&CheckedProtocolNodeKeys>;
 
@@ -1199,6 +1361,10 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     /// # Errors
     ///
     /// [`FootprintRefusal`] as the derivation reports it.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the footprint derivation takes the operation, its receiver identities, arguments, literals and selector"
+    )]
     fn selected_footprint(
         &self,
         model: &StateModel,
@@ -1216,6 +1382,10 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     /// # Errors
     ///
     /// [`FootprintRefusal`] as the derivation reports it.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the footprint derivation takes the operation, its receiver identities, arguments, literals and selector"
+    )]
     fn attempt_footprint_fallback(
         &self,
         model: &StateModel,
@@ -1362,6 +1532,26 @@ impl ModelEvaluator for CheckedPackage {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_holds(
+            self,
+            atom,
+            over,
+            captures,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
     fn evaluate_guard(
         &self,
         clause: &NodeKey,
@@ -1370,6 +1560,59 @@ impl ModelEvaluator for CheckedPackage {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_guard(self, clause, over, objects, meter)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_guard(
+            self,
+            clause,
+            over,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
+    fn temporal_reference_literals(
+        &self,
+        clause: &CheckedTemporalClause,
+        key: &NodeKey,
+    ) -> Vec<(EffectiveId, Vec<u8>)> {
+        let mut literals = BTreeSet::new();
+        if let Some(node) = self
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|node| node.identity() == *key)
+        {
+            for (index, formula) in clause.formula().nodes().iter().enumerate() {
+                if matches!(formula, fsl_semantics::check::FormulaNode::Holds { .. }) {
+                    if let Some((condition, _)) =
+                        node.condition(FormulaNodeId::from_arena_index(index))
+                    {
+                        super::reference_bindings::collect_literals(
+                            self.graph(),
+                            condition,
+                            &mut literals,
+                        );
+                    }
+                }
+            }
+            if let Some((guard, _)) = node.guard() {
+                super::reference_bindings::collect_literals(self.graph(), guard, &mut literals);
+            }
+        }
+        literals
+            .into_iter()
+            .map(|literal| (literal.object_type, literal.identity))
+            .collect()
     }
 
     fn evaluate_frame(
@@ -1757,6 +2000,22 @@ const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
 };
 
 impl ModelEvaluator for BarePackage<'_> {
+    fn package_protocol_observation(
+        &self,
+        model: &DomainPackageRef,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        state: &fsl_semantics::model::state::ModelState,
+        identity: fsl_semantics::model::observation::DocumentRef,
+    ) -> Result<
+        filament_semantic_value::admission::ObservationAdmission<
+            fsl_package::AdmittedProtocolObservation<'static>,
+        >,
+        InternalFault,
+    > {
+        Ok(self.admit_protocol_state(model, packages, limits, state, identity))
+    }
+
     fn evaluate_clause(
         &self,
         clause: &QualifiedName,
@@ -1786,6 +2045,26 @@ impl ModelEvaluator for BarePackage<'_> {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    fn evaluate_model_holds(
+        &self,
+        atom: &crate::value::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_holds(
+            self,
+            atom,
+            over,
+            captures,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
     fn evaluate_guard(
         &self,
         clause: &NodeKey,
@@ -1794,6 +2073,56 @@ impl ModelEvaluator for BarePackage<'_> {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_guard(self, clause, over, objects, meter)
+    }
+
+    fn evaluate_model_guard(
+        &self,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        reference_bindings: &crate::simulation::model::ReferenceBindings,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_model_guard(
+            self,
+            clause,
+            over,
+            objects,
+            reference_bindings,
+            meter,
+        )
+    }
+
+    fn temporal_reference_literals(
+        &self,
+        clause: &CheckedTemporalClause,
+        key: &NodeKey,
+    ) -> Vec<(EffectiveId, Vec<u8>)> {
+        let mut literals = BTreeSet::new();
+        let mut collect = |projection: &fsl_package::ReaderProtocolProjection| {
+            let mut index = 0;
+            while let Some(kind) = projection.kind(index) {
+                if let filament_checked::node::NodeKind::ReferenceLiteral {
+                    object_type,
+                    identity,
+                } = kind
+                {
+                    literals.insert((object_type.clone(), identity.clone()));
+                }
+                index += 1;
+            }
+        };
+        for (index, formula) in clause.formula().nodes().iter().enumerate() {
+            if matches!(formula, fsl_semantics::check::FormulaNode::Holds { .. }) {
+                if let Ok(term) = self.project_holds(key, index) {
+                    collect(term.projection());
+                }
+            }
+        }
+        if let Ok(Some(term)) = self.project_guard(key) {
+            collect(term.projection());
+        }
+        literals.into_iter().collect()
     }
 
     fn evaluate_frame(
@@ -2007,6 +2336,15 @@ impl ModelEvaluator for BarePackage<'_> {
         Err(SOURCE_FORM)
     }
 
+    fn evaluate_package_protocol_slot(
+        &self,
+        slot: &ProtocolSlot,
+        supply: &ProtocolSupply<'_>,
+        meter: &mut Meter,
+    ) -> Result<ProtocolSlotEvaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_protocol_slot(self, slot, supply, meter)
+    }
+
     fn evaluate_join_predicate(
         &self,
         _function: &NodeKey,
@@ -2031,6 +2369,63 @@ impl ModelEvaluator for BarePackage<'_> {
 
     fn protocol(&self, _name: &str) -> Option<&CheckedProtocol> {
         None
+    }
+
+    fn package_protocol(
+        &self,
+        name: &str,
+    ) -> Option<fsl_package::protocol_view::ProtocolExecutionView<'_>> {
+        fsl_package::AnalysisView::protocol_execution_named(self, name)
+            .ok()
+            .flatten()
+    }
+
+    fn package_protocol_slot(
+        &self,
+        node: &CheckedNodeId,
+        member: &str,
+        index: Option<usize>,
+    ) -> Option<ProtocolSlot> {
+        Some(ProtocolSlot {
+            node: self.node_key(node)?,
+            member: member.to_owned(),
+            index,
+        })
+    }
+
+    fn package_protocol_slot_binders(&self, slot: &ProtocolSlot) -> Option<Vec<NodeKey>> {
+        let selected = self
+            .select_protocol_slot(&fsl_package::ProtocolSlotDescriptor::new(
+                slot.node.clone(),
+                slot.member.clone(),
+                slot.index,
+            ))
+            .ok()?;
+        Some(
+            selected
+                .sources()
+                .iter()
+                .map(|source| source.binder().clone())
+                .collect(),
+        )
+    }
+
+    fn package_node_key(&self, node: &CheckedNodeId) -> Option<NodeKey> {
+        self.node_key(node)
+    }
+
+    fn package_protocol_operation(&self, anchor: &CheckedNodeId) -> Option<(EffectiveId, String)> {
+        self.protocol_operation(anchor)
+            .ok()
+            .map(|operation| (operation.declaring, operation.operation))
+    }
+
+    fn package_protocol_role_model(&self, model: &CheckedNodeId) -> Option<EffectiveId> {
+        self.protocol_role_model(model).ok()
+    }
+
+    fn package_protocol_parameter_type(&self, binder: &CheckedNodeId) -> Option<ValueType> {
+        self.protocol_parameter_type(binder).ok()
     }
 
     fn protocol_node_keys(&self, _name: &str) -> Option<&CheckedProtocolNodeKeys> {
@@ -2250,6 +2645,10 @@ fn projected_clause(
 /// FR-155 "Derivation" over the package route: the footprint of `operation`
 /// from the state clauses the package names for it, `select` admitting each
 /// by its node key, by the derivation the source route runs.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the footprint derivation takes the operation, its receiver identities, arguments, literals and selector"
+)]
 fn package_footprint(
     package: &BarePackage<'_>,
     model: &StateModel,
@@ -2322,7 +2721,7 @@ fn source_predicate<'p>(
 
 #[cfg(test)]
 mod tests {
-    use super::{ClauseBinder, receiver_slots};
+    use super::{receiver_slots, ClauseBinder};
     use ix_trace_rs::trace;
 
     /// FR-940-AC-11, FR-156: a package term gives frame slots to the binders

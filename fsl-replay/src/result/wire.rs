@@ -283,7 +283,7 @@ enum CauseWire<E> {
         failure: FailureWire,
     },
     HybridTrace {
-        disagreement: HybridDisagreementWire,
+        disagreement: Box<HybridDisagreementWire>,
     },
 }
 
@@ -323,10 +323,10 @@ impl CauseWire<Box<RawValue>> {
                 failure: FailureWire::of(failure),
             },
             DisagreementCause::HybridTrace(disagreement) => Self::HybridTrace {
-                disagreement: HybridDisagreementWire::of(
+                disagreement: Box::new(HybridDisagreementWire::of(
                     disagreement,
                     hybrid_model.ok_or(CauseCodecError::MissingHybridModel)?,
-                )?,
+                )?),
             },
         })
     }
@@ -833,7 +833,7 @@ impl RecordWire<Box<RawValue>> {
             (Some(comparison), Some(operands), Some(path))
                 if record.quantifier.is_none()
                     && record.index.is_none()
-                    && path.len() > 0
+                    && !path.is_empty()
                     && operands.len() == 2 =>
             {
                 Some((comparison, operands, path))

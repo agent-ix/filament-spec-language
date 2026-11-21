@@ -291,7 +291,7 @@ fn aggregate_binding<'a>(term: &'a CheckedTerm, key: &str) -> Option<&'a Checked
         return None;
     };
     members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name, value }
+        CheckedTerm::Binding { name, value, .. }
             if name.kind() == CheckedBindingNameKind::Other(key) =>
         {
             Some(value.as_ref())

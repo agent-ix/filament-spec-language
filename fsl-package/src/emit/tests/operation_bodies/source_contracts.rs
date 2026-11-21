@@ -70,7 +70,7 @@ fn strict_body_lookup_recovers_called_integer_and_uncalled_boolean_values() {
         let expression = members
             .iter()
             .find_map(|member| match member {
-                CheckedTerm::Binding { name, value }
+                CheckedTerm::Binding { name, value, .. }
                     if matches!(name.kind(), CheckedBindingNameKind::Body) =>
                 {
                     Some(value.as_ref())
@@ -251,7 +251,7 @@ fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
     let body = members
         .iter()
         .find_map(|member| match member {
-            CheckedTerm::Binding { name, value }
+            CheckedTerm::Binding { name, value, .. }
                 if matches!(name.kind(), CheckedBindingNameKind::Body) =>
             {
                 Some(value.as_ref())
@@ -280,7 +280,7 @@ fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
     let parameters = members
         .iter()
         .find_map(|member| match member {
-            CheckedTerm::Binding { name, value }
+            CheckedTerm::Binding { name, value, .. }
                 if matches!(name.kind(), CheckedBindingNameKind::Parameters) =>
             {
                 Some(value.as_ref())
@@ -312,7 +312,7 @@ fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
             let name = members
                 .iter()
                 .find_map(|member| match member {
-                    CheckedTerm::Binding { name, value }
+                    CheckedTerm::Binding { name, value, .. }
                         if matches!(name.kind(), CheckedBindingNameKind::Other("name")) =>
                     {
                         Some(value.as_ref())

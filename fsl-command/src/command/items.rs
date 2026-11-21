@@ -386,14 +386,14 @@ pub(super) fn run_bytes(
                         })
                         .transpose()?;
                     let selection = fsl_replay::spine::ProgramBatchSelection::ValueInvariants(
-                        fsl_replay::spine::ValueInvariantsBatchRequest {
+                        Box::new(fsl_replay::spine::ValueInvariantsBatchRequest {
                             snapshots: request.snapshots,
                             invocations: request.invocations,
                             snapshot: reference,
                             invocation,
                             observation_limits: request.observation_limits,
                             accounting: request.accounting,
-                        },
+                        }),
                     );
                     ItemExecution::Batch {
                         selection: Some(Box::new(selection)),
@@ -403,7 +403,8 @@ pub(super) fn run_bytes(
                 super::PreparedRun::Function(_)
                 | super::PreparedRun::TlLowering(_)
                 | super::PreparedRun::Package(_)
-                | super::PreparedRun::ModelBasedTest(_) => {
+                | super::PreparedRun::ModelBasedTest(_)
+                | super::PreparedRun::RefinementTransfer(_) => {
                     return Err(refused(
                         "value_invariants",
                         "expected a clause-run preparation",
@@ -436,7 +437,7 @@ pub(super) fn run_bytes(
                     });
                     ItemExecution::Batch {
                         selection: Some(Box::new(fsl_replay::spine::ProgramBatchSelection::Call {
-                            call: input.call,
+                            call: Box::new(input.call),
                             include_requirements: requirements.is_some(),
                         })),
                         call_output,
@@ -465,6 +466,12 @@ pub(super) fn run_bytes(
                     return Err(refused(
                         "model_based_test",
                         "model_based_test is not an item selection",
+                    ));
+                }
+                Ok(super::PreparedRun::RefinementTransfer(_)) => {
+                    return Err(refused(
+                        "items.selections",
+                        "refinement_transfer is not an item selection",
                     ));
                 }
                 Err(cause) => return Err(cause),

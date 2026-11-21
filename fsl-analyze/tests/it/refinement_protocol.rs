@@ -5,22 +5,22 @@
 
 use filament_exact::Cancel;
 use filament_semantic_value::checking::CheckMode;
-use fsl_analyze::model_check::{ModelCheckRefusal, RefinementCheckRequest, check_refinement};
+use fsl_analyze::model_check::{check_refinement, ModelCheckRefusal, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::operation_identity_text;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_replay::{
-    Certification, ClosureRefusal, ConcreteStep, ModelCheckLimits, ProofBasis,
-    ProtocolAssumptionReplaySettlement, RefinementPosition, RefinementTraceSettlement,
-    SafetyOutcome, SettlementBasis, SimulationCertificateRequest, SimulationRefusal, StepVerdict,
-    TerminalValue, check_protocol_initial, check_protocol_step, check_simulation_certificate,
+    check_protocol_initial, check_protocol_step, check_simulation_certificate,
     open_protocol_systems, replay_protocol_assumption_witness, replay_refinement_trace,
-    settle_refinement_safety, settle_refinement_safety_with_assumption_replay,
+    settle_refinement_safety, settle_refinement_safety_with_assumption_replay, Certification,
+    ClosureRefusal, ConcreteStep, ModelCheckLimits, ProofBasis, ProtocolAssumptionReplaySettlement,
+    RefinementPosition, RefinementTraceSettlement, SafetyOutcome, SettlementBasis,
+    SimulationCertificateRequest, SimulationRefusal, StepVerdict, TerminalValue,
 };
 use ix_trace_rs::trace;
 
-use crate::refinement_fixture::{CAS, SPEC, Variant, key};
-use crate::refinement_fixture::{UNLIMITED, World, cas_refines_counter};
+use crate::refinement_fixture::{cas_refines_counter, World, UNLIMITED};
+use crate::refinement_fixture::{key, Variant, CAS, SPEC};
 
 pub(crate) fn cas_twice(peek: bool, lost_update: bool) -> String {
     let retries = if lost_update {
@@ -1314,12 +1314,10 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
         fsl_replay::ProtocolAssumptionReason::RelationUndetermined
     );
     assert!(witness.path.loop_entry.is_none());
-    assert!(
-        witness
-            .undecided_locus
-            .as_deref()
-            .is_some_and(|locus| locus.starts_with("ProtocolContractUndetermined:"))
-    );
+    assert!(witness
+        .undecided_locus
+        .as_deref()
+        .is_some_and(|locus| locus.starts_with("ProtocolContractUndetermined:")));
     assert!(witness.identities.iter().any(|identity| {
         identity.side == fsl_replay::AssumptionSide::Specification
             && matches!(
@@ -2050,12 +2048,10 @@ fn check_initial_and_steps_retain_protocol_control_candidates() {
     let (next, _concrete_state) = apply(&position, &concrete_state, "commitB", 4);
     position = next;
     assert_eq!(counter_value(&position.abstract_states[0]), 2);
-    assert!(
-        position
-            .abstract_protocol_states
-            .iter()
-            .any(|state| protocol.successors(state).unwrap().successors.is_empty())
-    );
+    assert!(position
+        .abstract_protocol_states
+        .iter()
+        .any(|state| protocol.successors(state).unwrap().successors.is_empty()));
 }
 
 /// FR-148-AC-1 (TC-553): `any` admits the union of internal stutter and visible
@@ -2141,11 +2137,9 @@ fn an_any_row_can_take_a_visible_protocol_transition() {
             .collect(),
         other => panic!("any selects a visible protocol transition: {other:?}"),
     };
-    assert!(
-        transitions
-            .iter()
-            .any(|transition| transition.node() == Some("Main/a1"))
-    );
+    assert!(transitions
+        .iter()
+        .any(|transition| transition.node() == Some("Main/a1")));
     assert_eq!(counter_value(&post.abstract_states[0]), 1);
 }
 
@@ -2371,12 +2365,10 @@ fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
             capacities,
         )
     };
-    assert!(
-        open(&binding(&[("K", 1)]))
-            .expect("a bound capacity opens")
-            .abstract_protocol
-            .is_some()
-    );
+    assert!(open(&binding(&[("K", 1)]))
+        .expect("a bound capacity opens")
+        .abstract_protocol
+        .is_some());
     assert!(matches!(
         open(&[]),
         Err(ProtocolSystemsRefusal::UnboundCapacity(names)) if names == [UnboundCapacity {

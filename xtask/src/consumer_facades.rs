@@ -751,6 +751,23 @@ fn resolve_internal_path(
     resolve_internal_path(api, &format!("{parent}::{name}"), visited)
 }
 
+fn resolve_use_path(crate_name: &str, owner: &str, source: &str) -> String {
+    let mut path: Vec<_> = owner.split("::").collect();
+    for segment in source.split("::") {
+        match segment {
+            "crate" => path = vec![crate_name],
+            "self" => {}
+            "super" => {
+                if path.len() > 1 {
+                    path.pop();
+                }
+            }
+            name => path.push(name),
+        }
+    }
+    path.join("::")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -875,21 +892,4 @@ mod tests {
         assert!(!accessor_resolves(&api, "sample::facade::hidden", "Secret"));
         assert!(!accessor_resolves(&api, "sample::owners", "Thing::field"));
     }
-}
-
-fn resolve_use_path(crate_name: &str, owner: &str, source: &str) -> String {
-    let mut path: Vec<_> = owner.split("::").collect();
-    for segment in source.split("::") {
-        match segment {
-            "crate" => path = vec![crate_name],
-            "self" => {}
-            "super" => {
-                if path.len() > 1 {
-                    path.pop();
-                }
-            }
-            name => path.push(name),
-        }
-    }
-    path.join("::")
 }

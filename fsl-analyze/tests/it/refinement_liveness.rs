@@ -343,10 +343,7 @@ fn the_non_taking_candidate_is_hidden_and_a_fair_write_candidate_holds() {
 }
 
 /// The settlement FR-145 replay gives `payload` over `world`.
-fn replayed(
-    world: &AuxWorld<'_>,
-    payload: &TemporalCounterexample,
-) -> RefinementTraceSettlement {
+fn replayed(world: &AuxWorld<'_>, payload: &TemporalCounterexample) -> RefinementTraceSettlement {
     let systems = open_systems(
         world.refinement(),
         &world.concrete_request(AUX_UNLIMITED),
@@ -413,8 +410,7 @@ fn cx1_refutes_when_fire_only_leaves_the_candidate_cycle() {
           (pre(self.h) = 2 and self.h = 1 and self.v = pre(self.v)) or\n",
     );
     assert_ne!(edited_contracts, contracts, "the fire row is edited");
-    let edited_unit =
-        Unit::hidden_fairness_model(2, 0, &["advance", "fire"], &edited_contracts);
+    let edited_unit = Unit::hidden_fairness_model(2, 0, &["advance", "fire"], &edited_contracts);
     let edited_world = edited_unit.world(&refinement);
     holds(&check_aux(&edited_world));
     assert!(
@@ -504,8 +500,7 @@ fn cx3_holds_when_one_candidate_never_enables_fire() {
 
     // With `B` added the check holds, and the same hand-built `HiddenUnfair`
     // counterexample no longer reproduces under full FR-145 replay.
-    let unit = Unit::hidden_fairness_model(2, 0, &["fire"], contracts)
-        .with_hidden_initials(&[1]);
+    let unit = Unit::hidden_fairness_model(2, 0, &["fire"], contracts).with_hidden_initials(&[1]);
     let world = unit.world(&refinement);
     holds(&check_aux(&world));
     assert!(

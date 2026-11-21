@@ -258,7 +258,10 @@ impl HybridProcessRequest {
         }
         let mut dependencies: Vec<&HybridProcessDependency> = stage.dependencies.iter().collect();
         dependencies.sort_by(|left, right| left.identity.as_bytes().cmp(right.identity.as_bytes()));
-        if dependencies.windows(2).any(|pair| pair[0].identity == pair[1].identity) {
+        if dependencies
+            .windows(2)
+            .any(|pair| pair[0].identity == pair[1].identity)
+        {
             return Err(HybridProcessRequestRefusal::MalformedRequest);
         }
         let mut wire_items = Vec::with_capacity(items.len());
@@ -355,7 +358,8 @@ impl HybridProcessRequest {
                 .decode(&dependency.package)
                 .map_err(|_| HybridProcessRequestRefusal::MalformedRequest)?;
             if URL_SAFE_NO_PAD.encode(&bytes) != dependency.package
-                || previous.is_some_and(|before| before.as_bytes() >= dependency.identity.as_bytes())
+                || previous
+                    .is_some_and(|before| before.as_bytes() >= dependency.identity.as_bytes())
             {
                 return Err(HybridProcessRequestRefusal::MalformedRequest);
             }

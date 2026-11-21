@@ -77,6 +77,10 @@ pub(super) struct ProcessCall<'a> {
 }
 
 /// The item's answer, or the report that settles it without one.
+#[allow(
+    clippy::result_large_err,
+    reason = "failure directly settles the item with its existing EngineReport API rather than an intermediate error"
+)]
 pub(super) fn answer(
     call: &ProcessCall<'_>,
     cancel: &filament_exact::Cancel,
@@ -115,6 +119,10 @@ pub(super) fn answer(
 }
 
 /// The FSpec FR-331 request stage for the item.
+#[allow(
+    clippy::result_large_err,
+    reason = "failure directly settles the item with its existing EngineReport API rather than an intermediate error"
+)]
 fn compose(call: &ProcessCall<'_>) -> Result<HybridProcessRequest, EngineReport> {
     let node = call
         .wire
@@ -159,6 +167,10 @@ fn compose(call: &ProcessCall<'_>) -> Result<HybridProcessRequest, EngineReport>
 /// A body that is not an outcome stage is the FR-462 `malformed-body`
 /// failure; an entry or a counterexample of another item or backend is not
 /// the provider's answer to this request, `invalid_result`.
+#[allow(
+    clippy::result_large_err,
+    reason = "failure directly settles the item with its existing EngineReport API rather than an intermediate error"
+)]
 fn item_entry<'a>(
     outcome: &'a Value,
     backend: &BackendId,
@@ -166,12 +178,20 @@ fn item_entry<'a>(
     let body = ToolFailure::MalformedBody;
     let members = outcome.as_object().ok_or_else(|| tool_failed(body))?;
     let stage = members.len() == OUTCOME_MEMBERS.len()
-        && OUTCOME_MEMBERS.iter().all(|name| members.contains_key(*name))
+        && OUTCOME_MEMBERS
+            .iter()
+            .all(|name| members.contains_key(*name))
         && members["contract_version"] == CONTRACT_VERSION
         && members["capability_vocabulary"] == CAPABILITY_VOCABULARY
-        && ["dispositions", "artifacts", "results", "counterexamples", "accounting"]
-            .iter()
-            .all(|name| members[*name].is_array());
+        && [
+            "dispositions",
+            "artifacts",
+            "results",
+            "counterexamples",
+            "accounting",
+        ]
+        .iter()
+        .all(|name| members[*name].is_array());
     if !stage {
         return Err(tool_failed(body));
     }
@@ -207,11 +227,7 @@ fn item_entry<'a>(
             && found.get("backend").and_then(Value::as_str) == Some(backend.as_str());
         if !ours {
             let pointer = format!("/counterexamples/{position}");
-            return Err(invalid_at(
-                "invalid_result",
-                "invalid-value",
-                &pointer,
-            ));
+            return Err(invalid_at("invalid_result", "invalid-value", &pointer));
         }
         counterexamples.push(found.get("counterexample").cloned().unwrap_or(Value::Null));
     }
@@ -342,13 +358,25 @@ pub(super) fn descriptor_wire(descriptor: &BackendDescriptor, tool: &BackendTool
     if !descriptor.reductions().is_empty() {
         members.insert(
             "reductions".to_owned(),
-            labels(descriptor.reductions().iter().map(|kind| kind.as_str()).collect()),
+            labels(
+                descriptor
+                    .reductions()
+                    .iter()
+                    .map(|kind| kind.as_str())
+                    .collect(),
+            ),
         );
     }
     if advertised(Capability::ProbabilisticSatisfaction) {
         members.insert(
             "evidence_kinds".to_owned(),
-            labels(descriptor.evidence_kinds().iter().map(|kind| kind.to_wire()).collect()),
+            labels(
+                descriptor
+                    .evidence_kinds()
+                    .iter()
+                    .map(|kind| kind.to_wire())
+                    .collect(),
+            ),
         );
     }
     if advertised(Capability::TemporalSatisfaction) {
@@ -368,13 +396,25 @@ pub(super) fn descriptor_wire(descriptor: &BackendDescriptor, tool: &BackendTool
         if !descriptor.memory_models().is_empty() {
             members.insert(
                 "memory_models".to_owned(),
-                labels(descriptor.memory_models().iter().map(|model| model.label()).collect()),
+                labels(
+                    descriptor
+                        .memory_models()
+                        .iter()
+                        .map(|model| model.label())
+                        .collect(),
+                ),
             );
         }
         if !descriptor.state_graph_forms().is_empty() {
             members.insert(
                 "state_graph_forms".to_owned(),
-                labels(descriptor.state_graph_forms().iter().map(|form| form.as_str()).collect()),
+                labels(
+                    descriptor
+                        .state_graph_forms()
+                        .iter()
+                        .map(|form| form.as_str())
+                        .collect(),
+                ),
             );
         }
         if let Some(dynamics) = descriptor.dynamics() {

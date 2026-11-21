@@ -2,8 +2,8 @@
 //! FR-898 finite-trace counterexample replay.
 
 use fsl_eval::hyper::{
-    FiniteFalseTuple, FiniteQuantifier, FiniteTrace, FiniteTracePopulation, FiniteTupleOutcome,
-    replays_finite_refutation,
+    replays_finite_refutation, FiniteFalseTuple, FiniteQuantifier, FiniteTrace,
+    FiniteTracePopulation, FiniteTupleOutcome,
 };
 
 /// Evidence that a finite-hyperproperty refutation reproduced against its

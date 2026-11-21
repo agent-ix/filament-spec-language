@@ -6,18 +6,18 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
-    TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome, TimedRefinementUndecided,
-    TimedSafetyOutcome, ZoneUndecided, check_timed_refinement,
+    check_timed_refinement, TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome,
+    TimedRefinementUndecided, TimedSafetyOutcome, ZoneUndecided,
 };
 use fsl_eval::simulation::Limits;
 use fsl_replay::{
-    Lasso, ModelTraceRefusal, RefinementFailure, RefinementTraceSettlement, ReplayRefusal,
-    TemporalCounterexample, open_systems, replay_timed_refinement_trace,
+    open_systems, replay_timed_refinement_trace, Lasso, ModelTraceRefusal, RefinementFailure,
+    RefinementTraceSettlement, ReplayRefusal, TemporalCounterexample,
 };
 use ix_trace_rs::trace;
 
 use crate::timed_refinement::{analyzed, refinement, replay, replay_attempt, safety_request};
-use crate::timed_world::{DENSE, Refining, document, refining, renamed_package};
+use crate::timed_world::{document, refining, renamed_package, Refining, DENSE};
 
 /// FR-430-AC-5's `Req`: `send` with the precondition `not self.sent` (here
 /// `inflight`), and `ensure fair weak Req::send`.
@@ -258,7 +258,12 @@ fn hidden_timed_world(values: &[bool], strength: &str, invariant: bool) -> Refin
 /// `extra`, the abstract model also has `idle`, enabled only where `h` holds,
 /// and `nudge`, enabled everywhere the call is not in flight; neither is
 /// ever taken by the concrete polling loop.
-fn hidden_timed_world_with(values: &[bool], ensures: &str, invariant: bool, extra: bool) -> Refining {
+fn hidden_timed_world_with(
+    values: &[bool],
+    ensures: &str,
+    invariant: bool,
+    extra: bool,
+) -> Refining {
     let abstract_operations: &[(&str, &[&str])] = if extra {
         &[
             ("send", &["inflight"]),
@@ -269,8 +274,7 @@ fn hidden_timed_world_with(values: &[bool], ensures: &str, invariant: bool, extr
         &[("send", &["inflight"])]
     };
     let mut abstract_document: serde_json::Value =
-        serde_json::from_slice(&document(&[], abstract_operations))
-            .expect("abstract package JSON");
+        serde_json::from_slice(&document(&[], abstract_operations)).expect("abstract package JSON");
     abstract_document["types"][1]["fields"]
         .as_array_mut()
         .expect("abstract object fields")
@@ -827,17 +831,15 @@ fn timed_abstract_enabledness_is_read_over_the_positive_delay_loop() {
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let counterexample = violation(check(&world));
-    assert!(
-        counterexample
-            .prefix
-            .iter()
-            .filter(|step| step.transition.operation().contains("/Call/poll\""))
-            .any(|step| {
-                step.delay
-                    .as_ref()
-                    .is_some_and(|delay| delay > &Rational::from_integer(Integer::zero()))
-            })
-    );
+    assert!(counterexample
+        .prefix
+        .iter()
+        .filter(|step| step.transition.operation().contains("/Call/poll\""))
+        .any(|step| {
+            step.delay
+                .as_ref()
+                .is_some_and(|delay| delay > &Rational::from_integer(Integer::zero()))
+        }));
     assert!(matches!(
         replay(&world, &counterexample),
         RefinementTraceSettlement::Reproduced { .. }

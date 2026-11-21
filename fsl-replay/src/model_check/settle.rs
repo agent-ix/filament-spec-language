@@ -16,12 +16,12 @@
 use filament_semantic_value::catalog::Category;
 use fsl_foundation::{BackendId, RequestIndex};
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, Value, ValueType};
 
 use crate::certificate::closure::{
-    check_closure, check_components, check_protocol_closure, check_protocol_components,
-    CertificateRejection, CertificateRequest, ClosureRefusal, ProtocolCertificateRequest,
-    TemporalCertificateCheck,
+    check_closure, check_components, check_components_over_stutter_closure, check_protocol_closure,
+    check_protocol_components, CertificateRejection, CertificateRequest, ClosureRefusal,
+    ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 use crate::certificate::scc::ProofCertificate;
 use crate::execute::ReplayRefusal;
@@ -41,9 +41,10 @@ use crate::proof_result::{
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::model::ProtocolDefinition;
 use fsl_eval::simulation::protocol::{
-    activates_on_each, live_instance_bound, load_buffering_shapes, ProtocolRefusal,
-    ProtocolTransition, SubjectMemory, WeakAccessShape,
+    activates_on_each, live_instance_bound, load_buffering_shapes, package_load_buffering_shapes,
+    PackageProtocolProgram, ProtocolRefusal, ProtocolTransition, SubjectMemory, WeakAccessShape,
 };
 use fsl_eval::simulation::{ExpansionStop, SubjectTransition};
 
@@ -198,6 +199,8 @@ pub struct ModelCheckRecord<T: SubjectTransition = ModelTransition> {
 /// A qualified-core certificate checker of an EN-1 proof (FR-282).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CertificateChecker {
+    /// The independent hyper product-closure and component checker.
+    ProductClosure,
     /// The EN-1 closure checker of a safety claim (ADR-018 PC-3).
     Closure,
     /// The SCC and ranking checker of a liveness claim (ADR-018 PC-4).
@@ -212,6 +215,7 @@ impl CertificateChecker {
     /// The checker's FR-621 `certificate.checker` spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ProductClosure => "product-closure",
             Self::Closure => "en-1-closure",
             Self::Component => "scc-ranking",
             Self::Zone => "zone-certificate",
@@ -280,6 +284,32 @@ pub fn settle_model_check(
     )
 }
 
+/// [`settle_model_check`] for an outcome of EN-1's run over the item's
+/// stutter closure (FSpec FR-380): a liveness proof's component certificate is
+/// checked over the same closure the run explored, so a `certified` proof is
+/// one the core checked for the claimed property.
+pub fn settle_model_check_over_stutter_closure(
+    outcome: &ModelCheckOutcome,
+    limits: &ModelCheckLimits,
+    certificate: &CertificateRequest<'_>,
+    cancel: &Cancel,
+    replay: impl FnOnce(&TemporalCounterexample) -> Result<ModelTraceReplayResult, ReplayRefusal>,
+) -> ModelCheckRecord {
+    settle(
+        outcome,
+        limits,
+        |proof| match proof {
+            ProofCertificate::Closure(closure) => {
+                check_closure(certificate, closure, limits, cancel)
+            }
+            ProofCertificate::Component(components) => {
+                check_components_over_stutter_closure(certificate, components, limits, cancel)
+            }
+        },
+        replay,
+    )
+}
+
 /// FR-215 and FR-217 (ADR-027 TS-6, PX-1): [`settle_model_check`]'s one
 /// settlement map over an outcome of a protocol subject. A `Holds` outcome's
 /// certificate is checked over `certificate` by [`check_protocol_closure`] (a
@@ -321,9 +351,11 @@ pub fn settle_protocol_check(
             .model
             .simulation
             .input
-            .evaluator
-            .protocol(&certificate.subject.protocol)
-            .is_some_and(|protocol| !protocol.channels.is_empty())
+            .protocol_definition(&certificate.subject.protocol)
+            .is_some_and(|definition| match definition {
+                ProtocolDefinition::Source(protocol) => !protocol.channels.is_empty(),
+                ProtocolDefinition::Package(form) => !form.channels.is_empty(),
+            })
             .then_some(MemoryBound {
                 member: MemoryBoundMember::MaxMessages,
                 value: certificate
@@ -408,21 +440,29 @@ pub fn settle_protocol_check(
 fn load_buffering_warnings(
     subject: &ProtocolSubject<'_>,
 ) -> Result<Vec<RecordWarning>, Option<ExpansionStop>> {
-    let protocol = subject
-        .model
-        .simulation
-        .input
-        .evaluator
-        .protocol(&subject.protocol)
-        .ok_or(None)?;
     let model = ModelSystem::new(subject.model.simulation.clone()).map_err(|_| None)?;
-    let shapes = load_buffering_shapes(
-        &model,
-        protocol,
-        &subject.memory,
-        &subject.over,
-        &subject.capacities,
-    )
+    let input = &subject.model.simulation.input;
+    let definition = input.protocol_definition(&subject.protocol).ok_or(None)?;
+    let shapes = match definition {
+        ProtocolDefinition::Source(protocol) => load_buffering_shapes(
+            &model,
+            protocol,
+            &subject.memory,
+            &subject.over,
+            &subject.capacities,
+        ),
+        ProtocolDefinition::Package(form) => {
+            let package = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
+                .map_err(|_| None)?;
+            let ValueType::Reference(object_type) = &package.over_type else {
+                return Err(None);
+            };
+            let reference = model
+                .bound_reference(object_type.clone(), &subject.over)
+                .map_err(|_| None)?;
+            package_load_buffering_shapes(&model, &package, &Value::Reference(reference))
+        }
+    }
     .map_err(|refusal| match refusal {
         ProtocolRefusal::InitialStop(stop) if !stop.is_internal_failure() => Some(stop),
         _ => None,

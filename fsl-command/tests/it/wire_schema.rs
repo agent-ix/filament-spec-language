@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-286/FR-644 published schema and golden wire checks.
 
-use fsl_replay::{Operation, OutcomeDocument};
 use filament_semantic_value::catalog::Category;
+use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -22,25 +22,39 @@ fn outcome_golden_validates_and_rejects_mutations() {
     let validate = schema(fsl_replay::outcome::OUTCOME_SCHEMA_1);
     let success = OutcomeDocument::new(Operation::Check, None, Category::Success);
     let bytes = success.to_bytes().expect("canonical outcome bytes");
-    assert_eq!(bytes, include_bytes!("../fixtures/outcome-golden/FR-286-AC-1.json"));
+    assert_eq!(
+        bytes,
+        include_bytes!("../fixtures/outcome-golden/FR-286-AC-1.json")
+    );
     let value: Value = serde_json::from_slice(&bytes).expect("outcome JSON");
-    assert_eq!(fsl_foundation::canonical_json::encode(&value).unwrap(), bytes);
+    assert_eq!(
+        fsl_foundation::canonical_json::encode(&value).unwrap(),
+        bytes
+    );
     assert!(validate.is_valid(&value));
     let mut wrong_operation_member = value.clone();
     wrong_operation_member["aggregate"] = json!({"status":"ok","gaps":[]});
     assert!(!validate.is_valid(&wrong_operation_member));
 
-    let refused = OutcomeDocument::new(Operation::Check, None, Category::Refusal)
-        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
-            Some("type-mismatch"), "ill_typed", None, "bad value",
-        )]);
+    let refused =
+        OutcomeDocument::new(Operation::Check, None, Category::Refusal).with_diagnostics(vec![
+            fsl_replay::OutcomeDiagnostic::new(
+                Some("type-mismatch"),
+                "ill_typed",
+                None,
+                "bad value",
+            ),
+        ]);
     let refused_bytes = refused.to_bytes().expect("canonical refusal bytes");
     assert_eq!(
         refused_bytes,
         include_bytes!("../fixtures/outcome-golden/FR-286-AC-2.json")
     );
     let refused_value: Value = serde_json::from_slice(&refused_bytes).expect("outcome JSON");
-    assert_eq!(fsl_foundation::canonical_json::encode(&refused_value).unwrap(), refused_bytes);
+    assert_eq!(
+        fsl_foundation::canonical_json::encode(&refused_value).unwrap(),
+        refused_bytes
+    );
     assert!(validate.is_valid(&refused_value));
 
     let input_locus = fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Input {
@@ -56,7 +70,9 @@ fn outcome_golden_validates_and_rejects_mutations() {
             "bad handoff input",
         )]);
     let input_value: Value = serde_json::from_slice(
-        &input_document.to_bytes().expect("input-locus outcome serializes"),
+        &input_document
+            .to_bytes()
+            .expect("input-locus outcome serializes"),
     )
     .expect("input-locus outcome JSON");
     assert!(validate.is_valid(&input_value));
@@ -83,7 +99,10 @@ fn outcome_golden_validates_and_rejects_mutations() {
 
     let mut mutations = Vec::new();
     let mut missing_code = refused_value.clone();
-    missing_code["diagnostics"][0].as_object_mut().unwrap().remove("code");
+    missing_code["diagnostics"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("code");
     mutations.push(missing_code);
     let mut extra_diagnostic_member = refused_value.clone();
     extra_diagnostic_member["diagnostics"][0]["fix"] = json!("do this");
@@ -109,7 +128,10 @@ fn monitor_schemas_reject_invalid_settlement_and_extra_members() {
         .strip_suffix(b"\n")
         .expect("golden line ends in newline");
     let event_golden: Value = serde_json::from_slice(event_line).expect("event golden JSON");
-    assert_eq!(fsl_foundation::canonical_json::encode(&event_golden).unwrap(), event_line);
+    assert_eq!(
+        fsl_foundation::canonical_json::encode(&event_golden).unwrap(),
+        event_line
+    );
     assert!(event_schema.is_valid(&event_golden));
     let event = json!({
         "format":"filament.monitor-event/1", "record":2, "position":2,

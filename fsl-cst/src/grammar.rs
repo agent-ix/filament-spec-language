@@ -491,7 +491,11 @@ fn source_and_types(g: &mut Grammar) {
             x(":"),
             ident(),
             r(P::DomainMultiplicity),
-            opt(s(vec![contextual("inverse"), ident(), r(P::DomainMultiplicity)])),
+            opt(s(vec![
+                contextual("inverse"),
+                ident(),
+                r(P::DomainMultiplicity),
+            ])),
             x(";"),
         ]),
     );
@@ -619,7 +623,11 @@ fn source_and_types(g: &mut Grammar) {
             x("on"),
             ident(),
             opt(s(vec![x("when"), r(P::Block)])),
-            opt(s(vec![contextual("emits"), ident(), star(s(vec![x(","), ident()]))])),
+            opt(s(vec![
+                contextual("emits"),
+                ident(),
+                star(s(vec![x(","), ident()])),
+            ])),
             x(";"),
         ]),
     );
@@ -655,7 +663,11 @@ fn source_and_types(g: &mut Grammar) {
                 ident(),
                 star(s(vec![x(","), ident()])),
             ])),
-            opt(s(vec![contextual("emits"), ident(), star(s(vec![x(","), ident()]))])),
+            opt(s(vec![
+                contextual("emits"),
+                ident(),
+                star(s(vec![x(","), ident()])),
+            ])),
             x(";"),
         ]),
     );
@@ -3688,7 +3700,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{complete_compound_spellings, complete_reserved_words, complete_v1};
-    use crate::{Limits, parse};
+    use crate::{parse, Limits};
     use fsl_foundation::SourceIdentity;
 
     #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-302-AC-1")]

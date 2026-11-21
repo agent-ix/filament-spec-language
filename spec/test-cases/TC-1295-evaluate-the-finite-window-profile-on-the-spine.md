@@ -22,7 +22,9 @@ window, an empty window left unknown, a missing valuation read as false, an
 incomplete input read as closed, an event at the inclusive deadline dropped, a
 watermark that fails to settle a silent window, a result that depends on
 ingestion order, and a repeated order key of one authority ordered by
-observation identity for an order-sensitive operator.
+observation identity for an order-sensitive operator, plus a package report
+that changes an atom's authored text or obtains it from a source the caller
+did not supply.
 
 ## Test Procedure
 
@@ -33,6 +35,15 @@ valuations and progress, and runs it through the spine evaluator and through
 `run_clause`. Stamps are in ms. `W` is the watermark, `C(t)` is
 `Complete { through: t }`, `Inc` is `Incomplete`, scope is `Closed` unless
 stated, and `p`, `q` are `holds` atoms of the fixture.
+
+For rows 41 and 42, use the source and checked-package run routes with the
+same caller-supplied `sources`, matching each atom region by source reference.
+Exercise a `Timestamped` trace, an FR-504 `Progressed` trace and a call carrying
+the corresponding progress ledger; each fixture must produce non-empty
+decision support. The package route receives the emitted checked package and
+does not compile source again. Text comes only from the caller's `sources`,
+including when a package handoff holds other source bytes; no implicit file
+read supplies missing text.
 
 | # | Clause (`on origin` unless stated) | Trace and progress | Expected |
 | --- | --- | --- | --- |
@@ -76,6 +87,8 @@ stated, and `p`, `q` are `holds` atoms of the fixture.
 | 38 | row 27's request with the supplied cover `Counter{u=1}`, W 3001, C(3002); then the same input with cover `Exact` | req at 0; no ack | `Pending {deadline 3002}`; `Completed(false)` and a different result identity (FR-501-AC-24) |
 | 39 | row 1's request with `execution` `Open`, then `Closed` | as row 1 | the same verdict; the premises report `Open`, then `Closed` (FR-501-AC-25) |
 | 40 | row 17's `until` and `release` `on origin`, and its `since` and `triggered` `on each` (the anchor at position 2); then `eventually[0,1] holds(p)` | stamps 0,1,1; positions 1 and 2 both keyed `(A, 1)`, distinct identities (a third atom differs); listed as given, then the two keyed observations reversed | stage `evaluate`, `invalid_runtime_input`/`invalid-value` at position 2 for each of the four operators and both listings; `eventually` evaluates with one outcome and one `result_identity` for both listings (FR-501-AC-26) |
+| 41 | BothRoutesSupportAtomParity: row 28's clauses with the atom authored as `holds( p )` | row 28's timestamped inputs and equivalent FR-504 progressed inputs, with and without a valid ledger; the same caller-supplied sources on both routes | equal decision-support pairs on both routes, with the atom name exactly `holds( p )`, including its internal spaces and the whole `holds` atom; positions remain those of the corresponding trace |
+| 42 | PackageMissingSourceRefusal: row 41's package request | remove the caller-supplied source whose reference matches the atom region; then replace it with a source of another reference; then supply the matching reference with bytes shorter than the span or with a span endpoint inside a UTF-8 scalar | each case preserves FR-283's `SourceNotSupplied` contract: category refusal, `invalid_runtime_input`/`missing-member` naming `sources`, exit 20, with the region's source identity and no clause record; the run refusal stays at stage `call`, as on the source route, without using handoff source bytes, reading a file or compiling source again |
 
 ## Expected Results
 

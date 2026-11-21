@@ -10,12 +10,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::ObjectReference;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_semantics::check::{
     CheckedProbabilisticClaim, ProbForm, ProbScheduler, ReachTarget, StatePredicate, Workload,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use fsl_package::ObligationIdentity;
 
@@ -1161,12 +1161,10 @@ fn workload_distribution(
             Err(ExactProbabilityGraphError::UnsupportedDraw)
         };
     }
-    Ok(vec![
-        steps
-            .into_iter()
-            .map(|step| (step.probability, step.post))
-            .collect(),
-    ])
+    Ok(vec![steps
+        .into_iter()
+        .map(|step| (step.probability, step.post))
+        .collect()])
 }
 
 fn action_distributions(
@@ -1599,7 +1597,11 @@ fn check_exact_reachability(
             continue;
         }
         let actual = if let Some(target) = state.terminal {
-            if target { one.clone() } else { zero.clone() }
+            if target {
+                one.clone()
+            } else {
+                zero.clone()
+            }
         } else {
             if state.choices.is_empty()
                 || (objective == ProbabilityObjective::Workload && state.choices.len() != 1)
@@ -2280,11 +2282,13 @@ mod tests {
             )]),
         };
         let positive_cost = BTreeMap::from([(no_clock.clone(), vec![vec![rational(1)]])]);
-        assert!(
-            nonprogressive_end_components(&graph(no_clock), &Cancel::new(), Some(&positive_cost),)
-                .expect("clockless time progress is understood")
-                .is_empty()
-        );
+        assert!(nonprogressive_end_components(
+            &graph(no_clock),
+            &Cancel::new(),
+            Some(&positive_cost),
+        )
+        .expect("clockless time progress is understood")
+        .is_empty());
         let reset_cost = BTreeMap::from([(one_clock.clone(), vec![vec![rational(1)]])]);
         assert_eq!(
             nonprogressive_end_components(&graph(one_clock), &Cancel::new(), Some(&reset_cost),)

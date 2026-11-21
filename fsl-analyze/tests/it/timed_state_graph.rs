@@ -85,8 +85,7 @@ fn a_timed_always_possible_claim_proves_and_refutes() {
     assert_eq!(label(&item), "proved", "{item}");
     assert_eq!(item["certificate"]["accepted"], true, "{item}");
     assert_eq!(
-        item["certificate"]["document"]["state_graph"]["form"],
-        "always-possible",
+        item["certificate"]["document"]["state_graph"]["form"], "always-possible",
         "{item}"
     );
     assert!(
@@ -101,8 +100,7 @@ fn a_timed_always_possible_claim_proves_and_refutes() {
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
     assert_eq!(item["certificate"]["accepted"], false, "{item}");
     assert_eq!(
-        item["certificate"]["document"]["state_graph"]["form"],
-        "always-possible",
+        item["certificate"]["document"]["state_graph"]["form"], "always-possible",
         "{item}"
     );
 }
@@ -132,11 +130,13 @@ fn a_zeno_only_timed_graph_accepts_state_graph_certificate() {
     assert_eq!(item["record"]["backend"], "en-6", "{item}");
     assert_eq!(item["certificate"]["accepted"], true, "{item}");
     assert_eq!(
-        item["certificate"]["document"]["state_graph"]["form"],
-        "possible",
+        item["certificate"]["document"]["state_graph"]["form"], "possible",
         "{item}"
     );
-    assert!(item["certificate"]["document"]["admitted"].is_null(), "{item}");
+    assert!(
+        item["certificate"]["document"]["admitted"].is_null(),
+        "{item}"
+    );
 }
 
 /// FR-852-AC-3, FSpec FR-712-AC-3: the `reset` cycle gives `OneReply`
@@ -186,11 +186,7 @@ fn en_1_is_no_candidate_and_a_budget_stops_the_zone_search() {
     );
     let item = limited.item(0);
     assert_eq!(label(&item), "incomplete", "{item}");
-    assert_eq!(
-        item["record"]["cause"]["limit"],
-        "max_states",
-        "{item}"
-    );
+    assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
 }
 
 /// FR-852-AC-5: EN-6 advertises the three state-graph forms.
@@ -235,11 +231,14 @@ fn digital_clocks_decide_timed_state_graph_items_on_en_1() {
     assert_eq!(evidence["arm"], "witness", "{proved}");
     let paths = evidence["paths"].as_array().expect("witness paths");
     assert!(!paths.is_empty(), "{proved}");
-    assert!(paths.iter().all(|entry| {
-        entry["path"]["steps"]
-            .as_array()
-            .is_some_and(|steps| steps.iter().all(|step| step["delay"]["denominator"] == "1"))
-    }), "digital-clock witnesses use integral delays: {proved}");
+    assert!(
+        paths.iter().all(|entry| {
+            entry["path"]["steps"]
+                .as_array()
+                .is_some_and(|steps| steps.iter().all(|step| step["delay"]["denominator"] == "1"))
+        }),
+        "digital-clock witnesses use integral delays: {proved}"
+    );
     let refuted = run.item(1);
     assert_eq!(label(&refuted), "refuted", "{refuted}");
     assert_eq!(refuted["record"]["backend"], "en-1", "{refuted}");
@@ -322,7 +321,12 @@ fn digital_clocks_decline_a_strict_timed_subject() {
     assert_eq!(label(&item), "declined", "{item}");
     assert_eq!(item["record"]["backend"], "en-1", "{item}");
     assert_eq!(item["record"]["settled_by"], "result", "{item}");
-    assert!(item["record"].to_string().contains("strict-clock-constraint"), "{item}");
+    assert!(
+        item["record"]
+            .to_string()
+            .contains("strict-clock-constraint"),
+        "{item}"
+    );
     assert!(item.get("exploration").is_none(), "no search runs: {item}");
 }
 
@@ -356,7 +360,10 @@ fn timed_state_graph_items_report_empty_instance_and_initial_causes() {
         ));
         let item = no_initial.item(0);
         assert_eq!(label(&item), "inconclusive", "{item}");
-        assert_eq!(item["record"]["cause"]["kind"], "no-initial-state", "{item}");
+        assert_eq!(
+            item["record"]["cause"]["kind"], "no-initial-state",
+            "{item}"
+        );
         assert_eq!(item["exploration"]["states"], "0", "{item}");
     }
 }

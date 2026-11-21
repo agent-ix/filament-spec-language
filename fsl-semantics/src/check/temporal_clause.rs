@@ -844,6 +844,44 @@ impl CheckedTemporalClause {
         &self.operators
     }
 
+    /// The first operator that counts trace positions, in formula order, as
+    /// the source spells its operator and bounds: `previous` and every
+    /// interval that is not the whole future (`[0,*]`). `None` means every
+    /// temporal operator preserves the positions of an infinite trace, so an
+    /// unbounded `once` or `historically` is not named.
+    pub fn position_counting_operator(&self) -> Option<String> {
+        use fsl_foundation::bound::TemporalUpper;
+
+        self.operators.iter().find_map(|operator| {
+            let interval = match &operator.interval {
+                Some(CheckedInterval::Steps(interval)) => {
+                    match (interval.lower(), interval.upper()) {
+                        (0, TemporalUpper::Open) => None,
+                        (lower, TemporalUpper::Finite(upper)) => Some(format!("[{lower},{upper}]")),
+                        (lower, TemporalUpper::Open) => Some(format!("[{lower},*]")),
+                    }
+                }
+                Some(CheckedInterval::Timed(_)) => Some("[time]".to_owned()),
+                None => None,
+            }?;
+            let name = match operator.operator {
+                TemporalOperator::Eventually => "eventually",
+                TemporalOperator::Always => "always",
+                TemporalOperator::Once => "once",
+                TemporalOperator::Historically => "historically",
+                TemporalOperator::Until => "until",
+                TemporalOperator::Release => "release",
+                TemporalOperator::Since => "since",
+                TemporalOperator::Triggered => "triggered",
+                TemporalOperator::Not
+                | TemporalOperator::And
+                | TemporalOperator::Or
+                | TemporalOperator::Implies => "",
+            };
+            Some(format!("{name}{interval}"))
+        })
+    }
+
     /// The formula's horizon (ADR-014 TR-4): `Some` under a bounded
     /// profile, `None` under infinite-trace.
     pub fn horizon(&self) -> Option<u64> {
@@ -2753,6 +2791,20 @@ impl CheckedTemporalClause {
         if form.profile == TemporalProfile::Timed {
             return Err(PackageClauseRefusal::Profile(form.profile));
         }
+        Self::of_package_run_form(form, types, position_limit)
+    }
+
+    /// Rebuild a clause for reference evaluation over supplied traces.
+    /// Timed intervals are admitted here; lowering keeps its untimed restriction.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same malformed-arena and domain refusals as [`Self::of_package_form`].
+    pub fn of_package_run_form(
+        form: PackageClauseForm,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        position_limit: u64,
+    ) -> Result<Self, PackageClauseRefusal> {
         let bounded = form.profile.is_bounded();
         let mut nodes = Vec::with_capacity(form.formula.len());
         let mut operators = Vec::new();

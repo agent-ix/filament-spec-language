@@ -6023,7 +6023,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Rational(_)
                 | ValueType::Decimal(_),
             ) => {
-                use super::numeric_conversion::{Class, classify};
+                use super::numeric_conversion::{classify, Class};
                 let class = classify(&operand.value_type, target).ok_or_else(|| {
                     CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
                 })?;

@@ -40,17 +40,15 @@ use fsl_semantics::check::{
 };
 
 pub use certificate::{
-    probe_flowpipe_claim, ProbeOutcome,
-    box_advance, box_hull, box_tube, box_within, Fired, HybridBox, InitialHull, ModelReader,
-    ReadStop,
-    check_certificate, read_certificate, Acceptance, CertificateOutcome, CertificateRefusal,
-    Decisive, Expect, HybridCertificate, ProofCoverage, RefusalCode, Rejection,
-    Rule as HybridCertificateRule,
+    box_advance, box_hull, box_tube, box_within, check_certificate, probe_flowpipe_claim,
+    read_certificate, Acceptance, CertificateOutcome, CertificateRefusal, Decisive, Expect, Fired,
+    HybridBox, HybridCertificate, InitialHull, ModelReader, ProbeOutcome, ProofCoverage, ReadStop,
+    RefusalCode, Rejection, Rule as HybridCertificateRule,
 };
 pub use class::polynomial_class_gap;
-pub use interval::{Interval, Tri};
 pub use expand::{ExpansionGap, TermLocus};
 pub use fsl_foundation::diagnostic::JsonPointer;
+pub use interval::{Interval, Tri};
 pub use real::{ExactReal, Root};
 pub use trace::{
     admit, ExactInterval, HybridTrace, TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState,
@@ -396,18 +394,6 @@ impl UndefinedCause {
 /// A claim form exact replay does not decide.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ExactGap {
-    /// A fairness constraint reads the enabledness of a transition whose
-    /// reset leaves two or more variables free that the target mode's
-    /// invariant couples in one condition that is not linear in them (a
-    /// product of free variables, a conditional, a disequation). Linear
-    /// coupling is decided. Remaining work: QSL-2639.
-    #[error("fairness reads a reset whose free variables the target invariant couples")]
-    CoupledReset {
-        /// The source mode's position.
-        mode: usize,
-        /// The transition's position in the mode.
-        transition: usize,
-    },
     /// A recursive call reached exact evaluation.
     #[error("a recursive call reached exact evaluation")]
     RecursiveCall,
@@ -527,15 +513,7 @@ pub fn exact_replay(
         // FR-750 "Replay refusals": a recursive call is not a refusal. Exact
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
-        //
-        // TEMPORARY (QSL-2639 for `CoupledReset`, non-linear coupling of free
-        // variables only): a gap FR-750 deletes, because exact replay decides
-        // those claims (joint quantifier elimination). Linear coupling is
-        // decided; until the rest is, `CoupledReset` also settles `NotExact`,
-        // the only honest answer short of a verdict.
-        Err(HybridReplayRefusal::Exact(
-            ExactGap::RecursiveCall | ExactGap::CoupledReset { .. },
-        )) => Ok(ExactReplay::NotExact),
+        Err(HybridReplayRefusal::Exact(ExactGap::RecursiveCall)) => Ok(ExactReplay::NotExact),
         other => other,
     }
 }

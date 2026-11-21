@@ -411,7 +411,6 @@ fn sb_both_routes(
 #[trace("TC-3050", "FR-850-AC-11")]
 #[trace("TC-3050", "FR-940-AC-14")]
 #[test]
-#[ignore = "QSL-2405: the package-route protocol subject is not implemented yet"]
 fn a_protocol_subject_settles_from_the_package_as_from_source() {
     let body = sb_unit(&sb_run("", "release", "acquire"));
     let tso = json!({"subject": sb_subject(), "memory": [{"parallel": "SB::Both", "model": "tso"}],

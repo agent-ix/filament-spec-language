@@ -43,19 +43,19 @@ use crate::model_check::counterexample::{
 };
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::model_check::replay::{
-    ModelTraceRefusal, Position, close_loop, disagreement, fault, loop_states_of, no_value_cause,
-    reexecute, refused, timed_prefix, unfair_constraint,
+    close_loop, disagreement, fault, loop_states_of, no_value_cause, reexecute, refused,
+    timed_prefix, unfair_constraint, ModelTraceRefusal, Position,
 };
 use crate::refinement::{
-    AssumptionSide, AssumptionTarget, CandidateFairState, CandidateFairStep, ConcreteStep,
-    ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolRelationError,
-    ProtocolStateRelation, RefinementFailure, RefinementPosition, RefinementSystems, StepVerdict,
-    Taken, abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
-    step_history, stop_verdict,
+    step_history, stop_verdict, AssumptionSide, AssumptionTarget, CandidateFairState,
+    CandidateFairStep, ConcreteStep, ProtocolAssumptionReason, ProtocolAssumptionWitness,
+    ProtocolRelationError, ProtocolStateRelation, RefinementFailure, RefinementPosition,
+    RefinementSystems, StepVerdict, Taken,
 };
 use crate::result::DisagreementCause;
-use crate::timed::explore::{Closure, explore, widen};
+use crate::timed::explore::{explore, widen, Closure};
 use fsl_semantics::check::CheckedRefinement;
 
 /// FR-145's settlement of a refinement counterexample's replay.

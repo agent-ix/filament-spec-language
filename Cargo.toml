@@ -5,8 +5,8 @@ resolver = "2"
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "6ad873d5d8f23cdbcb71be6f1f43c969f882b762" }
-filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "6ad873d5d8f23cdbcb71be6f1f43c969f882b762" }
+filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "247a394157b58843643a61dfde16280c25d733c0" }
+filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "247a394157b58843643a61dfde16280c25d733c0" }
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
@@ -14,7 +14,7 @@ quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "
 # The shared no_std exact-value kernel and the semantic-value leaf above it,
 # each its own repository so IR, RT and CG depend on them without the FSL repo.
 filament-exact = { git = "https://github.com/agent-ix/filament-exact", rev = "b26a8e4c592503fccdc4a0e3d2cce23dd8487616", features = ["json-object"] }
-filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", rev = "f5c913bd4fc8880b45e02e3918e02360c530320c" }
+filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", rev = "6e809434d5fd7bde4c5b88ec40cd809efcca595d" }
 # ADR-011 §6.1 layer W: the shared no_std walker toolkit (ADR-030 D-1 item 2),
 # its own repository so IR, RT and CG depend on it without the FSL repo.
 filament-walk = { git = "https://github.com/agent-ix/filament-walk", tag = "v0.1.1" }
@@ -22,14 +22,14 @@ filament-walk = { git = "https://github.com/agent-ix/filament-walk", tag = "v0.1
 # repository so IR, RT and CG depend on it without the FSL repo. Only
 # `fsl-semantics` requests `construct` in its manifest; Cargo unifies the
 # feature across the workspace build.
-filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "2184793a5764e8ce4fe6ab508388932646673e1c" }
+filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "89573102cc309941786e3693b2f71e254dddc91c" }
 # ADR-011 §6.1 layer E: the shared evaluation-core interface (FR-262, FR-401),
 # its own repository so RT and CG depend on it without the FSL repo.
-filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "2184793a5764e8ce4fe6ab508388932646673e1c" }
+filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "89573102cc309941786e3693b2f71e254dddc91c" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "7b76c8be2a24a04eedf9720b806f57613a4df9b7" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "20a4dfbf29e979da4326ac81f85e8266e464519f" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
-filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "39b3ebb11525db626a3ba4d3b7693a96aee33d2a" }
+filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "1e356f99358aaf0f9bbc42dd3451c44cc61a4d06" }
 
 [package]
 name = "filament-spec-language"

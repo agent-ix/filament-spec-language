@@ -59,7 +59,7 @@ pub(super) fn empty(end: RunEnd) -> ExploredStateGraph {
 
 /// What the deadlock-freedom item found at the first node that decided it.
 enum DeadlockEvent {
-    Violated(CounterexampleKind, usize),
+    Violated(Box<CounterexampleKind>, usize),
     Undecided,
 }
 
@@ -392,10 +392,12 @@ impl Exploration<'_, '_, '_> {
         };
         if let Some(contract) = undefined {
             return Ok(Ok(Some(DeadlockEvent::Violated(
-                CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
-                    site: site(UndefinedLocus::Contract(contract.clause), contract.guard_of),
-                    cause: contract.cause,
-                }),
+                Box::new(CounterexampleKind::UndefinedEvaluation(
+                    UndefinedEvaluation {
+                        site: site(UndefinedLocus::Contract(contract.clause), contract.guard_of),
+                        cause: contract.cause,
+                    },
+                )),
                 at,
             ))));
         }
@@ -408,14 +410,17 @@ impl Exploration<'_, '_, '_> {
         };
         Ok(Ok(match class {
             TerminalClass::NotTerminal | TerminalClass::Intended => None,
-            TerminalClass::Deadlocked => {
-                Some(DeadlockEvent::Violated(CounterexampleKind::Deadlock, at))
-            }
+            TerminalClass::Deadlocked => Some(DeadlockEvent::Violated(
+                Box::new(CounterexampleKind::Deadlock),
+                at,
+            )),
             TerminalClass::Undefined { model, cause } => Some(DeadlockEvent::Violated(
-                CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
-                    site: site(UndefinedLocus::Terminal(model), None),
-                    cause,
-                }),
+                Box::new(CounterexampleKind::UndefinedEvaluation(
+                    UndefinedEvaluation {
+                        site: site(UndefinedLocus::Terminal(model), None),
+                        cause,
+                    },
+                )),
                 at,
             )),
             TerminalClass::Undecided { .. } => Some(DeadlockEvent::Undecided),
@@ -468,7 +473,7 @@ impl Exploration<'_, '_, '_> {
                     prefix: graph.path_to(NodeIndex(*at)),
                     over_binding: None,
                     fairness: Vec::new(),
-                    kind: kind.clone(),
+                    kind: kind.as_ref().clone(),
                     lasso: None,
                     blocked: Vec::new(),
                     refinement: None,

@@ -33,12 +33,12 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
+use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::ops::ControlFlow;
 
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 
 use filament_exact::{
@@ -96,33 +96,33 @@ mod timed_clause;
 
 pub(crate) use extension::ExtensionFormInput;
 pub(crate) use hybrid::{
-    HybridClaimInput, HybridModelInput, HybridSite, hybrid_location, hybrid_site,
+    hybrid_location, hybrid_site, HybridClaimInput, HybridModelInput, HybridSite,
 };
 pub(crate) use hyper::{
-    FiniteHyperClauseInput, HyperClauseInput, LoweredStepRelation, StepRelationInput,
-    finish_step_relation,
+    finish_step_relation, FiniteHyperClauseInput, HyperClauseInput, LoweredStepRelation,
+    StepRelationInput,
 };
 pub(crate) use model::ParentSlotFailure;
-pub use model::{
-    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
-    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedOperationMember,
-    collection_kind, model_root_key,
-};
 pub(crate) use model::{
-    QuantityKind, SourceClockLayout, SourceClockPlace, bound_origin, clock_type_identity,
-    equivalence_origin, model_declaration_key, quantity_origin, record_node_key, strictly_below,
+    bound_origin, clock_type_identity, equivalence_origin, model_declaration_key, quantity_origin,
+    record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
+};
+pub use model::{
+    collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
+    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember,
+    SelectedOperationMember,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
-    AttemptNodes, CompensationNodes, ProtocolInput, compensation_origin, declaration_origin,
-    protocol_location,
+    compensation_origin, declaration_origin, protocol_location, AttemptNodes, CompensationNodes,
+    ProtocolInput,
 };
-pub use protocol::{ProtocolSite, RelatedSide, protocol_site};
+pub use protocol::{protocol_site, ProtocolSite, RelatedSide};
 pub(crate) use state::{
-    AnchorInput, AttemptInput, LoweredAttempt, LoweredClause, OperationBinding, StateClauseInput,
     protocol_attempt_operation_location, protocol_attempt_operation_site,
     state_clause_name_location, state_clause_name_site, state_operation_location,
-    state_operation_site,
+    state_operation_site, AnchorInput, AttemptInput, LoweredAttempt, LoweredClause,
+    OperationBinding, StateClauseInput,
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
@@ -130,10 +130,10 @@ pub(crate) use synthesis::{
     synthesis_location, synthesis_objective_location, synthesis_satisfies_location,
 };
 pub(crate) use temporal::{
-    AggregatePart, LoweredTemporalClause, TemporalClauseInput, TemporalSite, temporal_location,
-    temporal_site,
+    temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
+    TemporalSite,
 };
-pub(crate) use terminal::{TerminalInput, TerminalSite, terminal_location, terminal_site};
+pub(crate) use terminal::{terminal_location, terminal_site, TerminalInput, TerminalSite};
 pub(crate) use timed_clause::TimedClauseInput;
 
 /// A node's place in its recursion group (FR-092 "Recursion groups"): the
@@ -360,7 +360,7 @@ impl SemanticNode {
         members
             .iter()
             .map(|member| {
-                let MemberTerm::Binding(Binding { name, value }) = member else {
+                let MemberTerm::Binding(Binding { name, value, .. }) = member else {
                     return None;
                 };
                 let leaf = match value {
@@ -390,13 +390,13 @@ impl SemanticNode {
         members
             .iter()
             .map(|member| {
-                let MemberTerm::Binding(Binding { name, value }) = member else {
+                let MemberTerm::Binding(Binding { name, value, .. }) = member else {
                     return None;
                 };
                 let (leaf, optional) = match value {
                     BindingValue::Leaf(leaf) => (leaf, false),
                     BindingValue::Aggregate(aggregate) => {
-                        let [MemberTerm::Binding(Binding { name, value })] =
+                        let [MemberTerm::Binding(Binding { name, value, .. })] =
                             aggregate.members.as_slice()
                         else {
                             return None;
@@ -495,6 +495,7 @@ impl SemanticNode {
                 let MemberTerm::Binding(Binding {
                     name,
                     value: BindingValue::Group(payload),
+                    ..
                 }) = member
                 else {
                     return None;
@@ -1256,11 +1257,11 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 #[ix_trace_rs::string_edge]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
-        [
-            filament_exact::PathSegment::Text(kind),
-            filament_exact::PathSegment::Text(form),
-            filament_exact::PathSegment::Text(identity),
-        ] if kind == "model" && form == "variant_type" => Some(identity),
+        [filament_exact::PathSegment::Text(kind), filament_exact::PathSegment::Text(form), filament_exact::PathSegment::Text(identity)]
+            if kind == "model" && form == "variant_type" =>
+        {
+            Some(identity)
+        }
         _ => None,
     }
 }
@@ -1494,7 +1495,7 @@ impl<'n> Operands<'n> {
             (Self::Each(nodes), index) => nodes.get(index),
             (Self::FirstThenEach(_, nodes), index) => nodes.get(index.checked_sub(1)?),
             (Self::Receiver(_, arguments), index) => arguments.get(index.checked_sub(1)?),
-            (Self::One(_) | Self::Two(..) | Self::Three(..) | Self::FirstThenEach(..), _) => None,
+            (Self::One(_) | Self::Two(..) | Self::Three(..), _) => None,
         };
         operand.copied()
     }
@@ -1536,7 +1537,7 @@ struct LetFrame<'n> {
     value: CheckedNode<'n>,
     body: CheckedNode<'n>,
     /// The value's term and the binder's name, once the value is lowered.
-    bound: Option<(LeafTerm, String)>,
+    bound: Option<(LeafTerm, String, NodeRef)>,
 }
 
 /// A one-binder operation's operands `[ref(source), binding{name,
@@ -3838,11 +3839,9 @@ impl<'a> Lowering<'a> {
             }
         }
         self.functions_open = false;
-        if !self.deferred_mixed_settlement {
-            if !self.has_unresolved_function_placeholders() {
-                if let Err(refusal) = self.settle() {
-                    refusals.push(refusal);
-                }
+        if !self.deferred_mixed_settlement && !self.has_unresolved_function_placeholders() {
+            if let Err(refusal) = self.settle() {
+                refusals.push(refusal);
             }
         }
         refusals
@@ -5317,7 +5316,7 @@ impl<'a> Lowering<'a> {
                 return self.next_operand(
                     Box::new(OperandsFrame {
                         node,
-                        operands: Operands::FirstThenEach(&reference, &slots),
+                        operands: Operands::FirstThenEach(reference, slots),
                         next: 0,
                         terms: vec![LeafTerm::reference_node(place.clone().into())],
                         keyed: Keyed::Application(
@@ -5564,7 +5563,7 @@ impl<'a> Lowering<'a> {
                         ..plain("filament.op.quantity.convert")
                     }
                 } else {
-                    use super::numeric_conversion::{Class, classify};
+                    use super::numeric_conversion::{classify, Class};
                     let identity = match classify(node.at(*operand).value_type(), &target) {
                         Some(Class::RangeNarrowing) => "filament.op.numeric.narrow",
                         Some(Class::RationalNarrowing) => "filament.op.rational.narrow",
@@ -6672,18 +6671,26 @@ impl<'a> Lowering<'a> {
                         _ => self.value_type_node(frame.value, binders)?,
                     };
                     let name = self.bind(binders, frame.slot, value_type, frame.node.location())?;
-                    frame.bound = Some((term, name));
+                    let binder = binders
+                        .scope
+                        .last()
+                        .map(|binder| binder.parameter.clone())
+                        .ok_or_else(|| fault(frame.node.location(), KeyFault::UnresolvedDraft))?;
+                    frame.bound = Some((term, name, binder));
                     let body = frame.body;
                     frames.push(LowerFrame::Let(frame));
                     Ok(LowerStep::Descend(body))
                 }
-                Some((value, name)) => {
+                Some((value, name, binder)) => {
                     binders.pop();
                     self.application(
                         frame.node,
                         Operator::Let,
                         plain("filament.op.control.let"),
-                        vec![MemberTerm::bound(name, value), MemberTerm::Leaf(term)],
+                        vec![
+                            MemberTerm::let_binding(name, value, binder),
+                            MemberTerm::Leaf(term),
+                        ],
                     )
                     .map(LowerStep::Lowered)
                 }
@@ -8101,6 +8108,10 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                 MemberTerm::Group(group) => self.group(group),
                 MemberTerm::Binding(binding) => {
                     self.text(&binding.name);
+                    // A `let`'s binder is part of its identity, read or not.
+                    if let Some(binder) = &binding.binder {
+                        self.node(binder);
+                    }
                     match &binding.value {
                         BindingValue::Leaf(leaf) => self.leaf(leaf),
                         BindingValue::Group(group) => self.group(group),
@@ -8175,13 +8186,11 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                         walk.push(PathSegment::Node(node.clone()));
                     }
                 },
-                Some(Member::TemporalInterval { interval }) => {
-                    // FSpec FR-498: an operator's interval is part of its
-                    // identity, so `always[0,2]` and `always[0,3]` are two nodes.
-                    if let Some(interval) = interval {
-                        walk.text(&interval_spelling(*interval));
-                    }
-                }
+                // FSpec FR-498: an operator's interval is part of its
+                // identity, so `always[0,2]` and `always[0,3]` are two nodes.
+                Some(Member::TemporalInterval {
+                    interval: Some(interval),
+                }) => walk.text(&interval_spelling(*interval)),
                 Some(Member::TimedInterval(timed)) => walk.text(&timed_interval_spelling(timed)),
                 // FSpec FR-322 "Named type arguments": an alias is part of
                 // the application's identity, after the declaration operand.

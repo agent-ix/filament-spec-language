@@ -145,7 +145,11 @@ fn member_json(member: &MemberTerm) -> Json {
         MemberTerm::Leaf(leaf) => leaf_json(leaf),
         MemberTerm::Group(group) => group_json(group),
         MemberTerm::Binding(binding) => {
-            json!({"term": "binding", "name": binding.name, "value": binding_value_json(&binding.value)})
+            let mut term = json!({"term": "binding", "name": binding.name, "value": binding_value_json(&binding.value)});
+            if let Some(binder) = &binding.binder {
+                term["binder"] = node_ref(binder);
+            }
+            term
         }
     }
 }

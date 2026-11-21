@@ -1279,6 +1279,198 @@ pub fn replay_protocol_trace_with_temporal_selections(
     )
 }
 
+/// Replay a protocol counterexample from the admitted package route.
+///
+/// The package bytes and handoff supply are admitted again, then the protocol
+/// and its temporal clause are read from the package-native execution views.
+/// This follows the same protocol transition engine as source replay without
+/// rebuilding a source `CheckedProtocol`.
+pub fn replay_protocol_trace_from_package(
+    wire: ReplayRequestWire,
+    supply: HandoffSupply<'_>,
+    subject: &ProtocolTraceSubject,
+    envelope: &WitnessEnvelope<TemporalCounterexample<ProtocolTransition>>,
+    letters: &dyn ModelLetters,
+    replay_limits: ReplayLimits,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("FR-850", cause));
+    let request = ReplayRequest::decode_package_route(wire, replay_limits)?;
+    let limits = request_limits(
+        request.stage_limits(),
+        request.accounting_limits(),
+        replay_limits,
+    )?;
+    let packages =
+        fsl_semantics::model::intake::package_input(request.byte_provision().package_documents())
+            .map_err(|refusal| ReplayRefusal::DomainPackages(Box::new(refusal)))?;
+    let read_limits =
+        fsl_package::V2ReadLimits::bounded(crate::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
+    let admitted =
+        fsl_package::admit_checked_package(request.package().bytes(), &packages, read_limits)
+            .map_err(|_| fault("package-bytes-admit"))?;
+    let mut budget = read_limits.native_join_limits().budget();
+    let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
+        .map_err(|_| fault("handoff-identities-admit"))?;
+    let equality = supply
+        .equality
+        .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
+        .transpose()
+        .map_err(|_| fault("handoff-equality-admit"))?;
+    let bare = fsl_package::BarePackage::new(&admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .map_err(|_| fault("handoff-supply-joins"))?;
+    let input =
+        fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.spine.model)
+            .map_err(|_| fault("package-route-input"))?;
+    if subject.model.timed.is_some() {
+        return Err(fault("package-route-replays-no-timed-reading-yet"));
+    }
+    let documents = request.byte_provision().snapshots();
+    let meter = request.accounting_limits();
+    let model_input = input.input();
+    let simulation = ModelSimulationRequest {
+        input: model_input.clone(),
+        packages: &packages,
+        normalization: limits.spine.model,
+        snapshots: &documents,
+        initial: subject.model.initial.clone(),
+        universes: subject.model.universes.clone(),
+        observation: limits.observation,
+        expansion: subject.model.expansion,
+        meter,
+        emit: limits.spine.package.emit(),
+    };
+    let model = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
+    let protocol_subject = ProtocolSubject {
+        model: fsl_eval::model_subject::ModelSubject {
+            simulation,
+            proof_bounds: Vec::new(),
+        },
+        protocol: subject.protocol.clone(),
+        over: subject.over.clone(),
+        roles: subject.roles.clone(),
+        capacities: subject.capacities.clone(),
+        memory: subject.memory.clone(),
+    };
+    let protocol_form = model_input
+        .protocol_definition(&subject.protocol)
+        .and_then(|definition| match definition {
+            fsl_eval::simulation::model::ProtocolDefinition::Package(form) => Some(form),
+            fsl_eval::simulation::model::ProtocolDefinition::Source(_) => None,
+        })
+        .ok_or_else(|| {
+            refused(ModelTraceRefusal::Protocol(
+                ProtocolRefusal::UnknownProtocol {
+                    protocol: subject.protocol.clone(),
+                },
+            ))
+        })?;
+    let protocol_node = bare
+        .node_key(protocol_form.protocol.clause())
+        .ok_or_else(|| fault("package-protocol-identity"))?;
+    let payload = envelope.family_payload();
+    let (for_deadlock, for_race) = derived_items(payload);
+    let for_lock = matches!(payload.kind, CounterexampleKind::TimeLock);
+    let clause = if for_deadlock || for_race || for_lock {
+        if *envelope.clause_node() != protocol_node {
+            return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
+                clause_node: envelope.clause_node().clone(),
+            }));
+        }
+        let expected = OccurrenceKey::new(
+            protocol_node.clone(),
+            filament_exact::Origin::new(filament_exact::Role::new("declaration"), 0),
+        );
+        if expected != *envelope.occurrence_key() {
+            return Err(refused(ModelTraceRefusal::ItemIdentity {
+                clause_node: protocol_node.clone(),
+                occurrence_key: Box::new(envelope.occurrence_key().clone()),
+                expected_node: protocol_node,
+                expected_key: Box::new(expected),
+            }));
+        }
+        None
+    } else {
+        let clause = input
+            .temporal_clause(
+                envelope.occurrence_key(),
+                filament_semantic_value::checking::CheckingLimits::default().nodes(),
+            )
+            .map_err(|refusal| {
+                refused(match refusal.pending_fact() {
+                    Some((fact, node)) => ModelTraceRefusal::PendingClauseForm {
+                        clause_node: envelope.clause_node().clone(),
+                        fact,
+                        node: node.clone(),
+                    },
+                    None => ModelTraceRefusal::UnknownTemporalClause {
+                        clause_node: envelope.clause_node().clone(),
+                    },
+                })
+            })?;
+        let identity = super::identity::ClauseIdentity::of_admitted(&admitted, &clause)
+            .map_err(|_| fault("package-clause-identity"))?;
+        let expected = OccurrenceKey::new(
+            envelope.clause_node().clone(),
+            identity.occurrence().origin().clone(),
+        );
+        if expected != *envelope.occurrence_key()
+            || identity.occurrence().node() != envelope.clause_node()
+        {
+            return Err(refused(ModelTraceRefusal::ItemIdentity {
+                clause_node: envelope.clause_node().clone(),
+                occurrence_key: Box::new(envelope.occurrence_key().clone()),
+                expected_node: identity.occurrence().node().clone(),
+                expected_key: Box::new(OccurrenceKey::new(
+                    identity.occurrence().node().clone(),
+                    identity.occurrence().origin().clone(),
+                )),
+            }));
+        }
+        Some(clause)
+    };
+    let replayed = ProtocolReplay {
+        payload,
+        clause: clause.as_ref(),
+        letters,
+        meter,
+    };
+    let live_instances = live_instance_bound(subject.max_live_instances);
+    let built = |refusal| refused(ModelTraceRefusal::Protocol(refusal));
+    let settlement = match SubjectMemory::of(
+        &subject.memory,
+        subject.max_store_buffer,
+        subject.max_messages,
+    ) {
+        SubjectMemory::Sc => replayed.settle(
+            &ProtocolSystem::new_package(model, &protocol_subject, Sc)
+                .map_err(built)?
+                .with_max_live_instances(live_instances),
+        )?,
+        SubjectMemory::Tso(tso) => replayed.settle(
+            &ProtocolSystem::new_package(model, &protocol_subject, tso)
+                .map_err(built)?
+                .with_max_live_instances(live_instances),
+        )?,
+        SubjectMemory::Ra(ra) => replayed.settle(
+            &ProtocolSystem::new_package(model, &protocol_subject, ra)
+                .map_err(built)?
+                .with_max_live_instances(live_instances),
+        )?,
+    };
+    Ok(ModelTraceReplayResult {
+        settlement,
+        hints: Vec::new(),
+        terminals: input.input().terminal_keys(),
+    })
+}
+
 /// What a protocol replay settles over its rebuilt system.
 struct ProtocolReplay<'r> {
     payload: &'r TemporalCounterexample<ProtocolTransition>,
@@ -1320,7 +1512,7 @@ impl ProtocolReplay<'_> {
         // A step that the resolved models do not reproduce refuses before a
         // fairness set that differs, which a change of memory model changes
         // too (FR-227-AC-1).
-        let replayed = match replay_prefix_with_mismatch_explanation(
+        let replayed = replay_prefix_with_mismatch_explanation(
             system,
             payload,
             &PROTOCOL_STEPS,
@@ -1333,10 +1525,7 @@ impl ProtocolReplay<'_> {
                         relationship,
                     })
             },
-        ) {
-            Ok(replayed) => replayed,
-            Err(refusal) => return Err(refusal),
-        };
+        )?;
         if self.clause.is_some() && payload.fairness != fairness {
             return Err(refused(ModelTraceRefusal::ProtocolFairnessSet {
                 payload: payload.fairness.clone(),
@@ -2402,6 +2591,8 @@ fn check_formula<S: SubjectSystem>(
 /// behaviour supplied as a request, not as a counterexample to settle.
 #[derive(Debug)]
 pub struct ModelTraceRun {
+    /// The original package call failure, before the letter engine boundary.
+    pub call_failure: Option<filament_eval::CallFailure>,
     /// What the FR-329 (or FR-328, for a finite prefix) evaluator returned.
     pub outcome: Result<TemporalOutcome, fsl_eval::temporal::TemporalRefusal>,
     /// The decisive atom of a violation, found on the same evaluator.
@@ -2493,6 +2684,7 @@ pub fn evaluate_model_trace(
         _ => None,
     };
     Ok(ModelTraceEnd::Evaluated(Box::new(ModelTraceRun {
+        call_failure: letters.take_call_failure(),
         outcome,
         decisive,
         observation,

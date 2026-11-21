@@ -1122,9 +1122,14 @@ fn a_locked_node_is_listed_with_its_edges() {
         assert!(node.locked);
         assert_eq!(node.zone.bound(1, 0), one);
     }
-    assert_eq!(certificate.admitted.as_ref().unwrap().target, DivergentTarget::Quiescent(0));
+    assert_eq!(
+        certificate.admitted.as_ref().unwrap().target,
+        DivergentTarget::Quiescent(0)
+    );
     assert!(certificate
-        .admitted.as_ref().unwrap()
+        .admitted
+        .as_ref()
+        .unwrap()
         .path
         .iter()
         .all(|&edge| !certificate.nodes[certificate.edges[edge].to].locked));
@@ -1165,7 +1170,7 @@ fn witness_cycle(certificate: &Certificate) -> Vec<&'static str> {
 
 /// A claim that holds over `body`'s model, with clocks `clocks` and
 /// operations `operations`.
-fn quiet(
+pub(crate) fn quiet(
     clocks: &[&str],
     operations: &[(&str, &[&str])],
     profile: &str,

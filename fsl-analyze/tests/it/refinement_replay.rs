@@ -709,7 +709,10 @@ fn a_hidden_unfair_peek_lasso_replays_and_settles_refuted() {
     let settled = settle_item(&subject, &outcome(&subject));
     assert_eq!(settled.record.value, TerminalValue::Refuted);
     assert_eq!(settled.record.label, ResultLabel::Refuted);
-    assert_eq!(settled.record.basis, SettlementBasis::DecisiveCounterexample);
+    assert_eq!(
+        settled.record.basis,
+        SettlementBasis::DecisiveCounterexample
+    );
     assert_eq!(settled.safety, Some(proved(Certification::Certified)));
     assert_eq!(settled.liveness, Some(TerminalValue::Refuted));
 }
@@ -1176,9 +1179,7 @@ fn an_unsupported_liveness_half_does_not_replace_a_safety_half_that_is_not_prove
                 cause: SafetyUndecided::NoInitialState,
                 stats: RunStats::default(),
             },
-            liveness: Some(LivenessHalf::Unsupported(
-                UnavailabilityCause::SolverAbsent,
-            )),
+            liveness: Some(LivenessHalf::Unsupported(UnavailabilityCause::SolverAbsent)),
         },
     );
     assert_eq!(
@@ -1188,7 +1189,9 @@ fn an_unsupported_liveness_half_does_not_replace_a_safety_half_that_is_not_prove
     assert_eq!(settled.safety, Some(settled.record.value.clone()));
     assert_eq!(
         settled.liveness,
-        Some(TerminalValue::Unsupported(UnavailabilityCause::SolverAbsent))
+        Some(TerminalValue::Unsupported(
+            UnavailabilityCause::SolverAbsent
+        ))
     );
 }
 

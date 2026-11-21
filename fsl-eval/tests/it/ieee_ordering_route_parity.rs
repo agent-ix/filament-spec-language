@@ -448,7 +448,10 @@ fn a_function_body_without_its_location_rows_is_refused() {
         .expect("the body location rows");
     let removed = rows
         .iter()
-        .position(|row| row["location"]["path"] == serde_json::json!([1]))
+        .position(|row| {
+            row["location"]["up"] == serde_json::json!(1)
+                && row["location"]["down"] == serde_json::json!([1])
+        })
         .expect("the second sqrt's row");
     rows.remove(removed);
     let forged = emission

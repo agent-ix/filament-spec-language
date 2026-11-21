@@ -42,6 +42,8 @@ pub enum ProductTransition<T> {
     Model(T),
     /// SM-4's infinite terminal repetition, with no model operation.
     TerminalStutter,
+    /// FR-380's abstract stutter closure, with no enabled model operation.
+    StutterClosure,
 }
 
 impl<T: Encode> Encode for ProductTransition<T> {
@@ -56,6 +58,7 @@ impl<T: Encode> Encode for ProductTransition<T> {
                 identity.encode_into(writer)?;
             }
             Self::TerminalStutter => writer.string("terminal-stutter")?,
+            Self::StutterClosure => writer.string("stutter-closure")?,
         }
         writer.end_array()
     }
@@ -254,7 +257,9 @@ where
     ) -> Option<Result<Footprint, ExpansionStop>> {
         match transition {
             ProductTransition::Model(transition) => self.model.footprint(transition),
-            ProductTransition::TerminalStutter => Some(Ok(Footprint::default())),
+            ProductTransition::TerminalStutter | ProductTransition::StutterClosure => {
+                Some(Ok(Footprint::default()))
+            }
         }
     }
 }

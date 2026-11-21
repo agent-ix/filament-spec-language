@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use serde_json::value::RawValue;
+use serde_json::Value;
 
 use super::{
     Basis, CallLocationRead, CallLocationWire, Category, DeclarationKeyRead, DispositionRead,
@@ -27,6 +27,12 @@ use fsl_eval::temporal::TemporalOutcome;
 
 /// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
+
+fn optional_counterexample<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<CounterexampleRead>, D::Error> {
+    fsl_foundation::serde_object::from_object(decoder).map(Some)
+}
 
 /// The incomplete limit a window aggregate reports (FR-194).
 pub(crate) const MAX_WINDOW_VALUES: &str = "max_window_values";
@@ -549,6 +555,7 @@ pub(super) fn item_counterexample(
             cause: TemporalUndefinedCause::InsufficientData { .. },
             ..
         } => return Ok(None),
+        TemporalVerdict::Undefined { .. } if counterexample.is_none() => return Ok(None),
         TemporalVerdict::Undefined { at, cause } => (*at, Some(undefined_reason(cause))),
         TemporalVerdict::Inactive
         | TemporalVerdict::Holds
@@ -605,7 +612,9 @@ pub(super) fn verdict_wire(
             (
                 TemporalWire::Undefined {
                     position: *at,
-                    counterexample: Some(checked(*at, Some(reason))?),
+                    counterexample: counterexample
+                        .map(|_| checked(*at, Some(reason)))
+                        .transpose()?,
                 },
                 Some(Outcome::Undefined { reason }),
             )
@@ -750,8 +759,9 @@ pub enum TemporalRecord {
     Undefined {
         /// The first undefined position.
         position: u64,
-        /// The observed-arm counterexample.
-        counterexample: CounterexampleRead,
+        /// The observed-arm evidence, absent for a reconstructed model trace.
+        #[serde(default, deserialize_with = "optional_counterexample")]
+        counterexample: Option<CounterexampleRead>,
     },
     /// A window aggregate held fewer values than its `min_count`.
     InsufficientData {
@@ -1031,7 +1041,8 @@ impl TemporalRecord {
     /// `condition-refused`, whose outcome carries the refusal record, and
     /// `incomplete`, whose FR-100 outcome carries the limit kind only, not
     /// the budget's counters. A family undefined cause restores with an
-    /// empty `fields`: the outcome carries its reason only.
+    /// empty `fields`: the outcome carries its reason only. An unwitnessed
+    /// model undefined row also returns `None`: its reason is in `outcome`.
     pub fn verdict(&self) -> Option<TemporalVerdict> {
         Some(match self {
             Self::Inactive {} => TemporalVerdict::Inactive,
@@ -1042,7 +1053,7 @@ impl TemporalRecord {
                 counterexample,
             } => TemporalVerdict::Undefined {
                 at: *position,
-                cause: undefined_cause(counterexample.undefined_reason()?)?,
+                cause: undefined_cause(counterexample.as_ref()?.undefined_reason()?)?,
             },
             Self::InsufficientData {
                 position,
@@ -1777,7 +1788,9 @@ pub(super) fn validate_temporal(
                     "unknown undefined reason",
                 ));
             }
-            validate_counterexample(counterexample, *position, Some(reason))?;
+            if let Some(counterexample) = counterexample {
+                validate_counterexample(counterexample, *position, Some(reason))?;
+            }
             Row {
                 category: Category::Violation,
                 truth: Some(false),

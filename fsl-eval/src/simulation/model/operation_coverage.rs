@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Serialize, Serializer, ser::SerializeMap};
+use serde::{ser::SerializeMap, Serialize, Serializer};
 
 /// A declared operation in the model's canonical declaration order.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

@@ -24,7 +24,11 @@ pub fn ceil_to(value: &Rational, bits: u32) -> Rational {
     let scaled = value.mul(&Rational::from_integer(scale.clone()));
     let divisor = NonZeroInteger::try_from(scaled.denominator()).expect("a denominator is nonzero");
     let (floor, rest) = scaled.numerator().div_mod_floor(divisor);
-    let up = if rest.is_zero() { floor } else { floor.add(&Integer::one()) };
+    let up = if rest.is_zero() {
+        floor
+    } else {
+        floor.add(&Integer::one())
+    };
     Rational::new(up, scale).expect("a power of two is nonzero")
 }
 
@@ -79,7 +83,13 @@ pub fn midpoint(bx: &HybridBox) -> Option<Vec<Rational>> {
 /// A bounded box's lower or upper corner.
 pub fn corner(bx: &HybridBox, upper: bool) -> Option<Vec<Rational>> {
     bx.iter()
-        .map(|x| if upper { x.upper.clone() } else { x.lower.clone() })
+        .map(|x| {
+            if upper {
+                x.upper.clone()
+            } else {
+                x.lower.clone()
+            }
+        })
         .collect()
 }
 

@@ -88,6 +88,8 @@ A new directory containing exactly:
 | Path | Content |
 | --- | --- |
 | `checked-package.json` | the exact bytes `emit_checked_v2::emit` returns |
+| `dependencies.json` | the required dependency artifact manifest, `filament.checked-handoff.dependencies/1`, as "The dependency artifact closure" states; present with an empty list when the root imports no library |
+| `dependencies/<n>/checked-package.json`, `dependencies/<n>/identities.json`, `dependencies/<n>/equality.json` | one checked package and its own FR-531 witness files per manifest row; no source is needed to admit these artifacts |
 | `sources/<label>` | the unit and library sources, exact bytes; `<label>` is the `source:<path>` label the package embeds |
 | `models/<n>.json` | each domain package document, exact bytes, in selection order |
 | `inventory.json` | `fsl_replay::fsl_inventory` over the unit, with the formal identity the writer selects (FR-514), in the encoding "The inventory file" states; the writer runs the replay spine over the unit's source to obtain the `check` outcome `fsl_inventory` takes (FR-517-AC-11). |
@@ -172,6 +174,75 @@ writer reads from `WireGraph::of_package_bytes` over the emitted bytes, as for t
 `node` member of `inventory.json`. A unit that holds no
 equality application writes the file with `applications`, `facts` and `source_units`
 empty, so the directory has the same paths for every unit.
+
+### The dependency artifact closure
+
+The writer SHALL persist the unique recursive closure of the root's selected
+library packages from the same checked acquisition as the root, including a
+library reached by more than one import path only once. Each library's artifact
+SHALL be its checked-package emission, and its `identities.json` and
+`equality.json` SHALL be derived from that library's own final emission by the
+same rules as the root's witness files. A file with no equality applications
+still has the three empty equality lists. The writer SHALL NOT substitute
+library source for these artifacts or recompile a library to recover a missing
+artifact or witness. The existing `sources/` entries remain available to the
+explicit source-compiling `compile` entry; bytes-only consumers never read them.
+
+`dependencies.json` SHALL be UTF-8 JSON, pretty-printed with two-space indent,
+members in the order below, ending in one newline. Equal checked inputs SHALL
+produce byte-identical manifests and dependency trees. Its top-level object
+and every row SHALL be closed: missing, repeated and unknown members are refused.
+
+| Member | Content |
+| --- | --- |
+| `format` | the string `filament.checked-handoff.dependencies/1` |
+| `dependencies` | an array of the entire unique recursive library artifact closure, ordered lexicographically by the UTF-8 bytes of each selected library identity |
+
+Each row SHALL contain exactly `identity` and `directory`, in that order.
+`identity` SHALL be the non-empty selected library identity used by
+`lock.dependency_selections`, with no normalization, revision or version.
+For the row at zero-based position `n`, `directory` SHALL be exactly
+`dependencies/<n>`, where `<n>` is the unsigned decimal position with no leading
+zero except `0`. It is relative to the handoff directory; an identity is never
+used as a filesystem path. The only artifact paths in that directory are
+`checked-package.json`, `identities.json` and `equality.json`. The manifest
+SHALL NOT carry import edges, source paths, digests or version pins: every
+package's existing lock supplies its direct dependency edges.
+
+For example, a root importing `test/z` that imports `test/a` writes:
+
+```json
+{
+  "format": "filament.checked-handoff.dependencies/1",
+  "dependencies": [
+    {
+      "identity": "test/a",
+      "directory": "dependencies/0"
+    },
+    {
+      "identity": "test/z",
+      "directory": "dependencies/1"
+    }
+  ]
+}
+```
+
+This is manifest order, not admission order. A root with no library selections
+SHALL write the same object with `"dependencies": []` and no `dependencies/`
+subdirectories. A missing manifest is not an empty closure and SHALL be refused;
+there is no source or legacy-format fallback. A repeated identity, a second
+artifact for one selected identity, an artifact not reachable from the root's
+lock, or an omitted reachable identity SHALL NOT be admitted. A diamond whose
+branches select the same admitted library shares its one row; branches requiring
+conflicting admitted content under one identity SHALL be refused, not resolved
+by selecting whichever artifact is read first.
+
+A bytes-only consumer SHALL load the closure and witnesses under
+[FR-850](FR-850-analyze-a-selected-checked-package-from-its-bytes.md)
+"Dependency artifact admission". The output directory's paths are confined
+relative paths: no absolute path, `.` or `..` component, backslash, symbolic
+link or non-regular artifact file is admitted. The writer's existing atomic
+write and no-partial-directory rules apply to the complete dependency tree.
 
 ### Compiling a handoff back in process
 
@@ -429,7 +500,7 @@ the three directories. The packages hold:
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-517-AC-1 | `write(&request_for_R, dir)` creates exactly the paths of the Outputs table of the Outputs table, `inventory.json` included (with no `mutations/` for `corpus = None`), and `checked-package.json` equals the bytes `emit_checked_v2::emit` returns for the same request. | Test (TC-1312) |
+| FR-517-AC-1 | `write(&request_for_R, dir)` creates exactly the paths of the Outputs table, `inventory.json` included (with no `mutations/` for `corpus = None`), and `checked-package.json` equals the bytes `emit_checked_v2::emit` returns for the same request. | Test (TC-1312) |
 | FR-517-AC-2 | The package read from `checked-package.json` with `read_checked_package` and evidence assembled from the written files is admitted, and `Selection::check` passes; the sidecar's clause ids, names, requirement entries, activation forms, profile selections, definition authority and `TemporalBinding` rows, those of clauses and those of compensation templates, equal the values read from the checked unit held in memory by the writer. | Test (TC-1312) |
 | FR-517-AC-3 | The event-position package of **R** emits one `protocol_clause`, a `Full` and a `Partial` compensation node with different keys paired with the one `Main::Applied` effect, two temporal clauses and four `temporal_bindings` rows in ascending `NodeRef` order; the fixed-sample and timestamped-event packages each emit one temporal clause and one row; the rows cover the clock kinds `EventPosition`, `FixedSample` and `TimestampedEvent`. | Test (TC-1312) |
 | FR-517-AC-4 | **R** carries the extrema `-9223372036854775808` and `9223372036854775807` as `Wide` values of the emitted package, and no declared bound is widened to admit them. | Test (TC-1312) |
@@ -455,6 +526,8 @@ the three directories. The packages hold:
 | FR-517-AC-24 | `compile` over a directory `write` wrote returns a `CompiledHandoff` whose checked package emits the bytes of `checked-package.json` and whose admitted package passes `Selection::check`; the sidecar names the package name, the unit's file and the execution points the request gave. A directory whose `checked-package.json` is edited to other bytes the reader admits returns `Error::ReadBackDiffers`, one whose sidecar `unit` leaves the directory, and one whose `models/0.json` is a symbolic link to a file outside it, return `Error::Label`, and one whose sidecar is removed returns `Error::Read`; none returns a package. | Test (TC-1312) |
 | FR-517-AC-25 | `write` over a unit declaring the temporal clause `Bounded` and the hyper clause `Equal` (`forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }`) writes a sidecar whose `temporal/temporal_clause` count is 2 and whose `claim/hyperproperty` count is 1; `compile` over that directory returns a `CompiledHandoff` whose admitted package passes `Selection::check`, and a `native-compile/1` request carrying the `handoff` member over the unit exits 0. A unit that adds a hybrid claim to `Bounded` and `Equal` writes a `temporal/temporal_clause` count of 3 and passes `Selection::check` the same way. The first sidecar with its `temporal/temporal_clause` count set to 1 refuses the package on `package.nodes`, so the comparison can fail. | Test (TC-3128) |
 | FR-517-AC-26 | `write` over a unit declaring the hyper clause `Ordered` under the event-position false-extension profile, with the quantifiers `forall trace a of M` and `forall trace b of M`, emits a package whose `temporal_bindings` hold exactly two rows for it. Both rows are keyed on its `hyperproperty` node at its `claim` occurrence, one with `trace` `a` and one with `trace` `b`, in quantifier order. No row is keyed on its body wrapper. The strict reader admits the package, the sidecar's expected binding count includes the two rows, and `Selection::check` passes. A package with one row keyed on the wrapper with no `trace` is refused by the strict reader at that row's `declaration`, so the emission check can fail. | Test (TC-3128) |
+| FR-517-AC-27 | A root importing `test/z`, which imports `test/a`, writes the manifest vector of "The dependency artifact closure" and exactly one artifact/witness triple in each indexed directory. Each triple is admitted with that package's own direct dependencies and witnesses, and the root is admitted with the retained closure. Reordering the caller's library provisions does not change any written byte. A unit with no imports writes the required manifest with an empty list and no dependency directory. | Test |
+| FR-517-AC-28 | For a diamond whose root imports `test/left` and `test/right`, both importing `test/shared`, the manifest contains three unique rows ordered `test/left`, `test/right`, `test/shared`, with directories `dependencies/0`, `dependencies/1`, `dependencies/2`; the shared package and its witnesses occur once. Two writes give equal trees. A conflicting `test/shared` selection is refused under the existing dependency conflict rule and leaves no output directory, never a tree containing one arbitrarily chosen shared artifact. | Test |
 
 ## Dependencies
 

@@ -23,8 +23,6 @@ pub enum UnreadModelForm {
     State,
     /// A timed model, time source, clock place or timed clause.
     TimedModel,
-    /// A protocol declaration.
-    Protocol,
     /// A hybrid model.
     Hybrid,
     /// A variant or union type, which a value's canonical form names.
@@ -41,7 +39,6 @@ impl UnreadModelForm {
         match self {
             Self::State => "state",
             Self::TimedModel => "timed-model",
-            Self::Protocol => "protocol",
             Self::Hybrid => "hybrid",
             Self::Variant => "variant",
             Self::Enumeration => "enumeration",
@@ -59,7 +56,10 @@ fn unread(node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
         ) => None,
         CheckedNodeKind::State(_) => Some(UnreadModelForm::State),
         CheckedNodeKind::TimedModel(_) => Some(UnreadModelForm::TimedModel),
-        CheckedNodeKind::Protocol(_) => Some(UnreadModelForm::Protocol),
+        // FR-940: protocol declarations are read through
+        // `AnalysisView::protocol_execution_named` and the typed package
+        // control/role surfaces in `protocol_view`.
+        CheckedNodeKind::Protocol(_) => None,
         CheckedNodeKind::Hybrid(_) => Some(UnreadModelForm::Hybrid),
         CheckedNodeKind::CompositeType(CompositeTypeForm::Union)
         | CheckedNodeKind::Model(ModelForm::VariantType) => Some(UnreadModelForm::Variant),
@@ -86,7 +86,28 @@ impl BarePackage<'_> {
     /// rows describe holds no field, population or effect frame
     /// ([`BarePackage::source_model`]), so no input that steps it is built.
     pub fn first_unread_model_form(&self) -> Option<(UnreadModelForm, &CheckedNodeId)> {
-        let found = self.first_unread_node_form();
+        self.first_unread_observation_form(false)
+    }
+
+    /// Unread forms for a supplied timed trace, whose stamps replace timed-model stepping.
+    pub fn first_unread_timed_trace_form(&self) -> Option<(UnreadModelForm, &CheckedNodeId)> {
+        self.first_unread_observation_form(true)
+    }
+
+    fn first_unread_observation_form(
+        &self,
+        timed_trace: bool,
+    ) -> Option<(UnreadModelForm, &CheckedNodeId)> {
+        let found = self
+            .package()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find_map(|node| {
+                unread(node)
+                    .filter(|form| !(timed_trace && *form == UnreadModelForm::TimedModel))
+                    .map(|form| (form, &node.node_id))
+            });
         if found.is_some() {
             return found;
         }

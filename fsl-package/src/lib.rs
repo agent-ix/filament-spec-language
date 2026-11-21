@@ -48,7 +48,7 @@ mod bare_units;
 #[cfg(feature = "std")]
 mod bare_world;
 #[cfg(feature = "std")]
-pub use bare_synthesis::{BareSynthesis, BareSynthesisObjective, is_plan_synthesis};
+pub use bare_synthesis::{is_plan_synthesis, BareSynthesis, BareSynthesisObjective};
 mod checked;
 #[cfg(feature = "std")]
 mod checked_v2;
@@ -98,8 +98,8 @@ mod wire_form;
 
 #[cfg(feature = "std")]
 pub use bare::{
-    BarePackage, BareSupply, IDENTITIES_FORMAT, IdentityFileRefusal, IdentityJoinFailure,
-    IdentityMember, IdentityWitnessRefusal, ReadIdentityRows,
+    BarePackage, BareSupply, IdentityFileRefusal, IdentityJoinFailure, IdentityMember,
+    IdentityWitnessRefusal, ReadIdentityRows, IDENTITIES_FORMAT,
 };
 #[cfg(feature = "std")]
 pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
@@ -120,43 +120,43 @@ pub use checked::{CheckedPackage, ResolvedDependency};
 pub use checked::{EmitLimits, EmittedPackage, Import, LinkRefusal};
 #[cfg(feature = "std")]
 pub use checked_v2::{
-    AdmittedPackageRead, AdmittedPackages, CheckedClockConstraint, CheckedClockGuard,
-    CheckedClockPlace, CheckedClockReset, CheckedConstraintTarget, CheckedGuardPart,
-    CheckedResetTarget, CheckedTimeInvariant, CheckedTimeSource, CheckedTimeSourceKind,
-    CheckedTimedModel, CheckedUrgency, ClauseRoot, ClauseRootUnresolved, ClockComparison,
-    ClockPathStep, EvaluationWitnessSupplier, EvaluationWitnesses, HybridRead, HybridReadError,
-    HyperRoot, HyperRootUnresolved, ImportViewRefusal, NativeJoinLimits, PackageTerminal,
-    PackageTerminalDeclaration, ReadHybridClaim, ReadHybridModel, ReadTerminal,
-    ReadTerminalDeclaration, ResolvedClockPathStep, SchedulabilityRoot, SourceMapDefect,
-    SourceWitnessSupplier, StateGraphKind, StateGraphRoot, TerminalResolveRefusal,
-    TimedLiteralTypes, TimedNodeMetadata, UnsupportedWire, V2ReadLimits, V2ReadRefusal,
-    WitnessSupplyFailure, checked_package_refusal_code, clause_roots, hyper_roots, occurrence_role,
+    checked_package_refusal_code, clause_roots, hyper_roots, occurrence_role,
     read_evaluation_emission, read_evaluation_package, read_hybrids, read_import_view,
     read_terminal, read_terminals, resolve_clause_root, resolve_hyper_root,
     resolve_schedulability_root, resolve_state_graph_root, resolve_terminals, schedulability_roots,
-    state_graph_roots, supply_closure,
+    state_graph_roots, supply_closure, AdmittedPackageRead, AdmittedPackages,
+    CheckedClockConstraint, CheckedClockGuard, CheckedClockPlace, CheckedClockReset,
+    CheckedConstraintTarget, CheckedGuardPart, CheckedResetTarget, CheckedTimeInvariant,
+    CheckedTimeSource, CheckedTimeSourceKind, CheckedTimedModel, CheckedUrgency, ClauseRoot,
+    ClauseRootUnresolved, ClockComparison, ClockPathStep, EvaluationWitnessSupplier,
+    EvaluationWitnesses, HybridRead, HybridReadError, HyperRoot, HyperRootUnresolved,
+    ImportViewRefusal, NativeJoinLimits, PackageTerminal, PackageTerminalDeclaration,
+    ReadHybridClaim, ReadHybridModel, ReadTerminal, ReadTerminalDeclaration, ResolvedClockPathStep,
+    SchedulabilityRoot, SourceMapDefect, SourceWitnessSupplier, StateGraphKind, StateGraphRoot,
+    TerminalResolveRefusal, TimedLiteralTypes, TimedNodeMetadata, UnsupportedWire, V2ReadLimits,
+    V2ReadRefusal, WitnessSupplyFailure,
 };
 #[cfg(feature = "std")]
 pub use emit::write_operand_slots;
 #[cfg(feature = "std")]
 pub use emit::{
-    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, Emission,
-    EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode, ProtocolEmission,
-    ProtocolEmissionAggregate, ProtocolEmissionResult, SelectedSourceCollectionRow,
-    SelectedSourceRecordMemberRow, SelectedSourceRecordRow, SourceObjectMemberFacts,
-    SourceObjectOperationFacts, TemporalBindingRows, TemporalClauseRef, TemporalClockSelection,
-    TemporalRows, TimedOrderFault, checked_occurrence, clock_configuration_invalid_field,
-    clock_kind, declaration_less_function_id, emit_checked, emit_checked_with_cancel,
+    checked_occurrence, clock_configuration_invalid_field, clock_kind,
+    declaration_less_function_id, emit_checked, emit_checked_with_cancel,
     emit_checked_with_protocol_results,
     emit_checked_with_protocol_results_and_temporal_selections_and_cancel,
     emit_checked_with_temporal_selections, emit_checked_with_temporal_selections_and_cancel,
     emit_dependency_with_temporal_selections_and_cancel, emit_monitor_plan_over, emit_package,
     emit_package_with_temporal_selections, emit_timed_models, hyper_clock_name, hyper_wrapper,
-    is_model_binding_name, profile_clock_kind,
+    is_model_binding_name, profile_clock_kind, ClockSelectionCause, ClockSelectionDeclaration,
+    ClockSelectionRefusal, Emission, EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode,
+    ProtocolEmission, ProtocolEmissionAggregate, ProtocolEmissionResult,
+    SelectedSourceCollectionRow, SelectedSourceRecordMemberRow, SelectedSourceRecordRow,
+    SourceObjectMemberFacts, SourceObjectOperationFacts, TemporalBindingRows, TemporalClauseRef,
+    TemporalClockSelection, TemporalRows, TimedOrderFault,
 };
 #[cfg(feature = "std")]
 pub use equality_file::{
-    EQUALITY_FORMAT, EqualityFileRefusal, EqualityWitnessRefusal, ReadEqualityRows,
+    EqualityFileRefusal, EqualityWitnessRefusal, ReadEqualityRows, EQUALITY_FORMAT,
 };
 #[cfg(feature = "std")]
 pub use evaluation_view::NativeJoinLimitError;
@@ -164,7 +164,7 @@ pub use evaluation_view::{
     AdmittedEvaluationView, AdmittedProtocolObservation, ProtocolSource, SelectedProtocolTerm,
     TermHandle, ViewFailure,
 };
-pub use export::{BoundItem, ExportRefusal, UnboundElement, export_bindings};
+pub use export::{export_bindings, BoundItem, ExportRefusal, UnboundElement};
 #[cfg(feature = "std")]
 pub use filament_contract_model::{CheckedBindingNameKind, CheckedLiteralValue, CheckedTerm};
 #[cfg(feature = "std")]
@@ -172,10 +172,10 @@ pub use native_row::{NativeRowError, NativeRowErrorCode};
 pub use obligation_identity::{ModelIdentity, ObligationIdentity};
 #[cfg(feature = "std")]
 pub use protocol_occurrence::{
-    CompensationEntry, ControlEntry, ControlOperator, ControlOwner, OccurrenceRefusal,
-    PopulationName, ProtocolOccurrence, ProtocolOccurrenceSchema, RepeatDimension, RoleLifetime,
-    RoleModelMember, RoleReplication, RoleSlot, RuntimeBindingRequirement, SubjectKind,
-    protocol_occurrence_schemas_from_read,
+    protocol_occurrence_schemas_from_read, CompensationEntry, ControlEntry, ControlOperator,
+    ControlOwner, OccurrenceRefusal, PopulationName, ProtocolOccurrence, ProtocolOccurrenceSchema,
+    RepeatDimension, RoleLifetime, RoleModelMember, RoleReplication, RoleSlot,
+    RuntimeBindingRequirement, SubjectKind,
 };
 #[cfg(feature = "std")]
 pub use protocol_occurrence_key::{
@@ -189,20 +189,20 @@ pub use reader_protocol_projection::{
 };
 #[cfg(feature = "std")]
 pub use verification_plan::{
-    VERIFICATION_PLAN_FORMAT, VerificationPlan, VerificationPlanClaim,
+    emit_verification_plans, read_verification_plan, VerificationPlan, VerificationPlanClaim,
     VerificationPlanDeclarationKey, VerificationPlanEdge, VerificationPlanIdentity,
     VerificationPlanMethod, VerificationPlanNode, VerificationPlanNodeIdentity,
     VerificationPlanPathSegment, VerificationPlanRefusal, VerificationPlanSource,
-    VerificationPlanSourceLocation, emit_verification_plans, read_verification_plan,
+    VerificationPlanSourceLocation, VERIFICATION_PLAN_FORMAT,
 };
 
 #[cfg(feature = "std")]
 pub use filament_contract_model::{
-    CHECKED_PACKAGE_V2, CheckedArtifactRef, CheckedIntervalEnd, CheckedNodeId, CheckedOccurrence,
+    CheckedArtifactRef, CheckedIntervalEnd, CheckedNodeId, CheckedOccurrence,
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedOperationRational, CheckedPackageV2,
     CheckedSelection, CheckedSourceMapEntry, ClockConfiguration, ClockExactNumber,
     ExactTypeProjection, ExactTypeProjectionError, ExactTypeProjectionErrorCode, NativeJoinBudget,
-    SelectedExactIdentities, TemporalBinding,
+    SelectedExactIdentities, TemporalBinding, CHECKED_PACKAGE_V2,
 };
 
 // The FR-105-AC-6 fault-injection seam. Public only under
@@ -368,7 +368,7 @@ const TEST_PACKAGE_NAME: &str = "pkg";
 #[cfg(feature = "std")]
 mod package_admission;
 #[cfg(feature = "std")]
-pub use package_admission::{PackageAdmissionRefusal, admit_checked_package};
+pub use package_admission::{admit_checked_package, PackageAdmissionRefusal};
 #[cfg(feature = "std")]
 mod native_join_failure;
 #[cfg(feature = "std")]

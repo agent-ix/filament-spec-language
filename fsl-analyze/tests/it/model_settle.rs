@@ -77,6 +77,7 @@ impl Case {
                 limits: ModelCheckLimits::default(),
                 reductions: Default::default(),
             },
+            stutter_closure: false,
             certificate: self.request(),
             replay: Box::new(|payload| replay(self, payload.clone())),
         }
@@ -961,7 +962,10 @@ fn an_undefined_terminal_predicate_reproduces_and_a_deadlock_kind_settles_the_sa
     assert_eq!(evaluation.site.position, 3);
     assert_eq!(
         evaluation.site.locus,
-        UndefinedLocus::Terminal(fsl_eval::simulation::model::TerminalModel::new("test/counter", "M"))
+        UndefinedLocus::Terminal(fsl_eval::simulation::model::TerminalModel::new(
+            "test/counter",
+            "M"
+        ))
     );
     let witness = ModelTraceValue::Undefined(evaluation.clone());
     assert_eq!(

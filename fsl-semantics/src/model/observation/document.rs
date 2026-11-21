@@ -3,7 +3,7 @@
 //! (check 1), admitting its populations and objects (checks 5 to 8) and
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
-use super::{AdmissionRecordExt, admission_record};
+use super::{admission_record, AdmissionRecordExt};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{
@@ -13,12 +13,12 @@ use filament_exact::{
 use fsl_foundation::diagnostic::Code;
 
 use super::helpers::object_reference;
-use super::tree::{Json, Object, read_raw_value};
+use super::tree::{read_raw_value, Json, Object};
 use super::{
+    check_document_valid, collection_tag, fault, incomplete, population_universe, refuse,
     AdmissionFailure, AdmissionRecord, DocumentRef, ModelView, NativeKind, ObservationLimits,
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
-    SelectedObject, SnapshotValue, check_document_valid, collection_tag, fault, incomplete,
-    population_universe, refuse,
+    SelectedObject, SnapshotValue,
 };
 use crate::model::object_environment::ObjectEnvironment;
 use crate::model::operation::OperationDeclaration;
@@ -1732,9 +1732,8 @@ fn admit_native(
             rational_in_domain(domain, value).map(Value::Rational)
         }
         (NativeKind::Decimal, filament_exact::ValueType::Decimal(domain)) => {
-            let value = filament_exact::Decimal::from_representation(
-                decimal_representation(native)?,
-            );
+            let value =
+                filament_exact::Decimal::from_representation(decimal_representation(native)?);
             if domain.contains(&value) {
                 return Ok(Value::Decimal(value));
             }
@@ -1842,7 +1841,10 @@ fn admit_native(
 /// signed zero.
 pub(super) fn float_payload(native: RawNative<'_>) -> Option<filament_exact::IeeeValue> {
     let bits = payload_text(native, "bits");
-    if !bits.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+    if !bits
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
         return None;
     }
     match native.kind() {
@@ -3628,7 +3630,7 @@ fn admit_contexts<'t>(
                     admission_record(Code::InvalidRuntimeInput, "unknown-member")
                         .with("machine", machine.to_owned())
                         .with("field", name.clone())
-                        .with("path", context_field_path(entry, Some(&*name))),
+                        .with("path", context_field_path(entry, Some(name))),
                     entry,
                 ));
             }
@@ -3647,7 +3649,7 @@ fn admit_contexts<'t>(
                     admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                         .with("machine", machine.to_owned())
                         .with("field", name.to_owned())
-                        .with("path", context_field_path(entry, Some(&*name))),
+                        .with("path", context_field_path(entry, Some(name))),
                     entry,
                 ));
             }
@@ -4463,7 +4465,7 @@ pub(super) fn admit_parameters(
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                     .with("field", name.clone())
-                    .with("path", parameter_path(Some(&*name))),
+                    .with("path", parameter_path(Some(name))),
             ));
         }
         let value = admit_form(references, raw.form(), value_type, None).map_err(|record| {
@@ -4486,7 +4488,7 @@ pub(super) fn admit_parameters(
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "unknown-member")
                     .with("field", name.clone())
-                    .with("path", parameter_path(Some(&*name))),
+                    .with("path", parameter_path(Some(name))),
             ));
         }
     }

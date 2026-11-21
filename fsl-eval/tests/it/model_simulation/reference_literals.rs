@@ -7,7 +7,7 @@ use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::CheckedHyperLetters;
 use fsl_eval::temporal::AtomReading;
 use fsl_semantics::check::{
-    CheckedHyper, FormulaNode, FormulaNodeId, PackageDeclarations, check_hyper_clauses,
+    check_hyper_clauses, CheckedHyper, FormulaNode, FormulaNodeId, PackageDeclarations,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};

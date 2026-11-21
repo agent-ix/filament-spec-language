@@ -259,6 +259,7 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::UnitGraphTopology { .. }
         | AssemblyCause::DimensionEquivalence { .. }
         | AssemblyCause::NominalAdmission(_)
+        | AssemblyCause::DimensionClassProjection(_)
         | AssemblyCause::UnsuppliedImport { .. }
         | AssemblyCause::UnadmittedModel { .. }
         | AssemblyCause::UnsupportedModelMember { .. }
@@ -571,6 +572,17 @@ fn classify_disposition(disposition: &ClauseDisposition) -> Classification {
         }
         ClauseDisposition::NotAPredicate { .. } => {
             one(Refused, Code::IllTyped, Some("type-mismatch"))
+        }
+        ClauseDisposition::PackageAdmission(failure) => {
+            let (class, admission) = match failure.as_ref() {
+                filament_eval::CallAdmissionFailure::Refused(record) => (Refused, record),
+                filament_eval::CallAdmissionFailure::Incomplete(record) => (Incomplete, record),
+            };
+            one(
+                class,
+                Code::from_code(admission.record.catalog.code()).unwrap_or(Code::RuntimeInvariant),
+                Some(admission.record.catalog.cause()),
+            )
         }
         ClauseDisposition::Admit(failure) => match failure {
             AdmissionFailure::Refused(record) => one(

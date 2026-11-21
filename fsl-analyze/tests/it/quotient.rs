@@ -176,7 +176,10 @@ fn an_each_refutation_concretises_to_a_loop_through_every_receiver() {
             .map(|binding| binding.key.as_str()),
         Some("a")
     );
-    assert_eq!(counterexample.lasso.as_ref().map(|lasso| lasso.entry), Some(0));
+    assert_eq!(
+        counterexample.lasso.as_ref().map(|lasso| lasso.entry),
+        Some(0)
+    );
     let states = world.positions(counterexample);
     let cycle = looped(counterexample, &states);
     assert_eq!(values(&cycle[0]), (0, 0, 0));
@@ -527,7 +530,10 @@ fn a_whole_loop_under_symmetry_concretises_in_one_pass() {
     let world = configs("fair weak whole M::Counter::bump; always eventually holds(x.v = 2)");
     let outcome = run(&world, |v| Some(v == 2), symmetric());
     let counterexample = violation(&outcome);
-    assert_eq!(counterexample.lasso.as_ref().map(|lasso| lasso.entry), Some(0));
+    assert_eq!(
+        counterexample.lasso.as_ref().map(|lasso| lasso.entry),
+        Some(0)
+    );
     let states = world.positions(counterexample);
     let visited: Vec<(i64, i64, i64)> = states.iter().map(values).collect();
     assert_eq!(visited, [(0, 0, 0), (0, 1, 0), (0, 2, 0), (0, 0, 0)]);
@@ -558,7 +564,10 @@ fn a_loop_that_needs_two_passes_closes_at_the_concrete_entry() {
         unreachable!("a violation");
     };
     assert_eq!(stats.product_states, 1, "one quotient state");
-    assert_eq!(counterexample.lasso.as_ref().map(|lasso| lasso.entry), Some(0));
+    assert_eq!(
+        counterexample.lasso.as_ref().map(|lasso| lasso.entry),
+        Some(0)
+    );
     assert_eq!(counterexample.initial_state, 0, "b holds the token");
     let states = world.positions(counterexample);
     let holder = |state: &ModelSimState| {

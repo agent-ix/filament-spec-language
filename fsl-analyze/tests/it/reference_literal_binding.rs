@@ -5,13 +5,13 @@
 //! and evaluation reads a created-object literal by a per-state key lookup.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, counter_request, counter_request_with, counter_snapshot, label,
-    request_members,
+    analyze, counter_request, counter_request_with, counter_snapshot, label, request_members,
+    Workspace,
 };
-use crate::counter::{CONTRACT, unit_text};
+use crate::counter::{unit_text, CONTRACT};
 
 /// One analyze run over the Counter subject whose initial state holds `a`
 /// and whose universe holds `a` and `b`, with `body` and the item `claim`.
@@ -260,12 +260,10 @@ fn hyper_letters_refuse_disagreeing_reference_bindings() {
             && text.contains("CreatedObject"),
         "{text}"
     );
-    assert!(
-        CheckedHyperLetters::new(
-            &fixed.package,
-            &fixed.clause,
-            vec![&fixed_system, &fixed_system],
-        )
-        .is_ok()
-    );
+    assert!(CheckedHyperLetters::new(
+        &fixed.package,
+        &fixed.clause,
+        vec![&fixed_system, &fixed_system],
+    )
+    .is_ok());
 }

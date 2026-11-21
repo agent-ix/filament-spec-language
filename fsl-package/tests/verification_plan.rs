@@ -3,7 +3,7 @@
 
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{
-    CheckedPackage, VerificationPlanRefusal, emit_verification_plans, read_verification_plan,
+    emit_verification_plans, read_verification_plan, CheckedPackage, VerificationPlanRefusal,
 };
 use fsl_semantics::check::PackageDeclarations;
 use ix_trace_rs::trace;
@@ -84,11 +84,9 @@ fn emission_keeps_package_identity_and_writes_the_plan_graph() {
     assert_eq!(plan.plan.source_location.source.authority, "agent-ix");
     assert_eq!(plan.plan.source_location.source.identity, "test:qsl-2509");
     assert!(plan.plan.source_location.start < plan.plan.source_location.end);
-    assert!(
-        SOURCE_WITH_PLAN
-            [plan.plan.source_location.start as usize..plan.plan.source_location.end as usize]
-            .starts_with("verify Release")
-    );
+    assert!(SOURCE_WITH_PLAN
+        [plan.plan.source_location.start as usize..plan.plan.source_location.end as usize]
+        .starts_with("verify Release"));
     assert_eq!(plan.nodes.len(), 3);
     let safe = &plan.nodes[0];
     assert_eq!(safe.name, "safe");

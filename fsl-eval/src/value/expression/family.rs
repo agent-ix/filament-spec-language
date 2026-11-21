@@ -151,19 +151,6 @@ impl<'a> EvaluationEnv<'a> {
         }
     }
 
-    /// An environment for an application whose `function.call` the caller
-    /// charged already: the hook runs the body only.
-    pub(crate) fn charged(
-        package: &'a super::CheckedPackage,
-        objects: &'a fsl_semantics::model::object_environment::ObjectEnvironment,
-        arguments: Vec<Value>,
-    ) -> Self {
-        Self {
-            call_charged: true,
-            ..Self::new(package, objects, arguments)
-        }
-    }
-
     /// An environment for a scheduler-charged call with an explicit
     /// live-occurrence bound.
     pub(crate) fn charged_with_session_limits(

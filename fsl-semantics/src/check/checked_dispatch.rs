@@ -108,8 +108,8 @@ use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::{AdmittedModel, ModelClause};
 use crate::model::accounting::Meter;
 use crate::model::dispatch::{
-    DispatchLinkOutcome, FamilySteps, GeneralizationClosure, LinkCheckOutcome,
-    link_dispatch_counted,
+    link_dispatch_counted, DispatchLinkOutcome, FamilySteps, GeneralizationClosure,
+    LinkCheckOutcome,
 };
 use crate::model::domain_package::{DomainPackage, DomainPackageRecord, OperationMemberRecord};
 use crate::model::normalize::{EffectiveView, ModelRefusal, ModelRefusalCause};
@@ -1369,8 +1369,8 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{
-        DispatchBridgeRefusal, OperationClauses, ancestor_closure, effective_terms,
-        rekey_object_types, rename_parameters, substitute_names,
+        ancestor_closure, effective_terms, rekey_object_types, rename_parameters, substitute_names,
+        DispatchBridgeRefusal, OperationClauses,
     };
     use crate::model::dispatch::FamilySteps;
     use crate::model::domain_package::{

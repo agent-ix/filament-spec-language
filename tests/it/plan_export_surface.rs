@@ -1473,17 +1473,34 @@ fn planning_examples_hold_only_their_envelope() {
 /// identity refinement `ThirdRefinesSpec`, which maps the one concrete
 /// operation to the one abstract operation and so is step-for-step.
 const TRANSFER_DECLARATIONS: &str =
-    "pre ThirdCanInc using v on Third::Counter::inc { self.value < 2 }\n\
+    "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+     pre ThirdCanInc using v on Third::Counter::inc { self.value < 2 }\n\
      post ThirdInc using v on Third::Counter::inc \
      { pre(self.value) < 2 and self.value = pre(self.value) + 1 }\n\
      temporal PrevSafe using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { always (holds(c.value = 1) implies once[1,1] holds(c.value = 0)) }\n\
+     temporal PrevStutter using inf over (c: Spec::Counter) clock \"model-steps\" \
      on origin { always (holds(c.value = 2) implies once[1,1] holds(c.value = 1)) }\n\
+     temporal PastTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { always (holds(c.value = 2) implies once holds(c.value = 1)) }\n\
      temporal SoonTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
      on origin { always (holds(c.value = 1) implies eventually[0,2] holds(c.value = 2)) }\n\
+     temporal EventuallyTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { fair weak each Spec::Counter::inc; \
+     always eventually holds(c.value = 2) }\n\
+     temporal StuckTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { always eventually holds(c.value = 2) }\n\
      temporal AtMostTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
      on origin { always holds(c.value <= 2) }\n\
+     temporal BoundedTwo using ev over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { eventually[0,2] holds(c.value = 2) }\n\
      temporal OverThird using inf over (c: Third::Counter) clock \"model-steps\" \
      on origin { always holds(c.value <= 2) }\n\
+     refinement ThirdAnyRefinesSpec using inf abstract Spec concrete Third {\n\
+       population Spec::counters from Third::counters;\n\
+       object Spec::Counter from Third::Counter { value = self.value; }\n\
+       step Third::Counter::inc -> any;\n\
+     }\n\
      refinement ThirdRefinesSpec using inf abstract Spec concrete Third {\n\
        population Spec::counters from Third::counters;\n\
        object Spec::Counter from Third::Counter { value = self.value; }\n\
@@ -1557,7 +1574,7 @@ fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
             );
         }
     }
-    let zero = json!({"type": "integer", "value": "0"});
+    let zero = json!({"integer": "0"});
     let snapshots = [
         (
             "spec-0.json",
@@ -1598,6 +1615,25 @@ fn transfer<'a>(value: &'a Value, clause: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("a transfer of {clause}: {value}"))
 }
 
+/// A complete FR-492 premise result using the transfer record's slot identity.
+fn transfer_premise(identity: &Value, result: &str) -> Value {
+    let mut request = identity.clone();
+    request["request_index"] = json!(0);
+    let mut entry = json!({
+        "request_index": 0,
+        "backend": "verus",
+        "kind": request["kind"],
+        "result": result,
+    });
+    if result == "proved" {
+        entry["basis"] = json!({"type": "inductive", "depth": 1});
+        entry["certification"] = json!("certified");
+    } else if result == "refuted" {
+        entry["counterexample"] = json!(0);
+    }
+    json!({"request": request, "result": entry})
+}
+
 /// FR-1030-AC-1/AC-2, FR-1020-AC-1/AC-2, FSpec FR-380-AC-9, FSpec
 /// FR-820-AC-1/AC-2: `once[1,1]` and `eventually[0,2]` clauses transfer
 /// `proved` through the step-for-step `ThirdRefinesSpec`, and settle
@@ -1605,14 +1641,10 @@ fn transfer<'a>(value: &'a Value, clause: &str) -> &'a Value {
 /// sends concrete operations to `stutter`; a fragment clause still transfers.
 #[test]
 #[trace("TC-2920", "FR-1030-AC-1")]
-#[trace("TC-2920", "FR-1030-AC-2")]
 #[trace("TC-2870", "FR-1020-AC-1")]
-#[trace("TC-2870", "FR-1020-AC-2")]
-#[trace("FSpec-TC-1042", "FSpec-FR-380-AC-9")]
 #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-1")]
-#[trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
-#[ignore = "QSL-2247: the refinement_transfer request member and step-for-step transfer are not implemented yet"]
-fn previous_transfers_only_through_a_step_for_step_refinement() {
+#[ignore = "QSL-2247: PrevSafe and SoonTwo are TP-3 past and interval forms with no core certificate checker, so their premise settles failed (FR-127, ADR-018 V-1)"]
+fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
     let (exit, value) = transfer_run(
         &[(
             "refinement_transfer",
@@ -1639,6 +1671,74 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
             "{value}"
         );
     }
+}
+
+/// FR-1030-AC-2, AC-5, FR-1020-AC-2: a step-for-step refinement decides its
+/// transfers by the clause's premises, which a TP-3 form no core checker
+/// certifies settles as a typed unproved slot 1, never `proved`; a
+/// certifiable clause transfers `proved`; the terminal-stutter clause is
+/// refuted at slot 1; and a refinement whose step map has a `stutter` row
+/// names the first position-counting operator.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-2")]
+#[trace("TC-2920", "FR-1030-AC-5")]
+#[trace("TC-2870", "FR-1020-AC-2")]
+#[trace("FSpec-TC-1042", "FSpec-FR-380-AC-9")]
+#[trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
+fn previous_transfers_only_through_a_step_for_step_refinement() {
+    let (exit, value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member(
+                "ThirdRefinesSpec",
+                ("Spec", "Third"),
+                &["PrevSafe", "SoonTwo", "AtMostTwo"],
+            ),
+        )],
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    assert_eq!(
+        value["refinement_transfer"]["refinement"]["step_for_step"]["holds"], true,
+        "{value}"
+    );
+    for clause in ["PrevSafe", "SoonTwo"] {
+        let result = transfer(&value, clause);
+        assert_eq!(result["value"], "inconclusive", "{value}");
+        assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
+        assert_eq!(result["cause"]["premise"], 1, "{value}");
+        // No core checker certifies a TP-3 past or interval proof, so its
+        // premise settles `failed` (FR-127, ADR-018 V-1), never `proved`.
+        assert_eq!(result["cause"]["result"], "failed", "{value}");
+        assert_eq!(result["slots"][1]["value"], "failed", "{value}");
+        assert_eq!(
+            result["transfer"]["fragment"]["class"], "position-counting",
+            "{value}"
+        );
+    }
+    let result = transfer(&value, "AtMostTwo");
+    assert_eq!(result["value"], "proved", "{value}");
+    assert_eq!(result["basis"], "decisive-witness", "{value}");
+    assert_eq!(
+        result["transfer"]["premises"].as_array().map(Vec::len),
+        Some(2),
+        "{value}"
+    );
+
+    let (exit, value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevStutter"]),
+        )],
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    let result = transfer(&value, "PrevStutter");
+    assert_eq!(result["value"], "inconclusive", "{value}");
+    assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
+    assert_eq!(result["cause"]["premise"], 1, "{value}");
+    assert_eq!(result["cause"]["result"], "refuted", "{value}");
+    assert_eq!(result["slots"][1]["value"], "refuted", "{value}");
 
     let (exit, value) = transfer_run(
         &[(
@@ -1646,7 +1746,7 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
             transfer_member(
                 "CasRefinesCounter",
                 ("Spec", "Impl"),
-                &["PrevSafe", "SoonTwo", "AtMostTwo"],
+                &["PrevSafe", "SoonTwo", "AtMostTwo", "PastTwo"],
             ),
         )],
         true,
@@ -1670,6 +1770,193 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
         assert_eq!(result["cause"]["operator"], operator, "{value}");
     }
     assert_eq!(transfer(&value, "AtMostTwo")["value"], "proved", "{value}");
+    // An unbounded `once` is stuttering-invariant: it is never refused as
+    // position-counting, whatever its premise settles.
+    let past = transfer(&value, "PastTwo");
+    assert_eq!(
+        past["transfer"]["fragment"]["class"], "stutter-invariant",
+        "{value}"
+    );
+    assert_ne!(past["cause"]["type"], "transfer-not-preserving", "{value}");
+}
+
+/// FR-1030-AC-3: complete certified premise results are consumed without
+/// settling them again, while a refuted abstract claim makes slot 1 inconclusive.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-3")]
+fn supplied_refinement_transfer_premises_are_consumed_once() {
+    let seed = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafe"]);
+    let (_, seed_value) = transfer_run(&[("refinement_transfer", seed.clone())], true);
+    let premises = &transfer(&seed_value, "PrevSafe")["transfer"]["premises"];
+    let refinement = transfer_premise(&premises[0]["identity"], "proved");
+    let claim = transfer_premise(&premises[1]["identity"], "proved");
+
+    let mut supplied = seed;
+    supplied["premises"] = json!({"refinement": refinement, "claims": {"PrevSafe": claim}});
+    let (exit, value) = transfer_run(&[("refinement_transfer", supplied.clone())], true);
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(transfer(&value, "PrevSafe")["value"], "proved", "{value}");
+    assert_eq!(
+        transfer(&value, "PrevSafe")["certification"],
+        "uncertified",
+        "{value}"
+    );
+
+    let refuted = transfer_premise(&premises[1]["identity"], "refuted");
+    supplied["premises"]["claims"]["PrevSafe"] = refuted;
+    let (exit, value) = transfer_run(&[("refinement_transfer", supplied)], true);
+    assert_eq!(exit, 22, "{value}");
+    let result = transfer(&value, "PrevSafe");
+    assert_eq!(result["value"], "inconclusive", "{value}");
+    assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
+    assert_eq!(result["cause"]["premise"], 1, "{value}");
+    assert_eq!(result["cause"]["result"], "refuted", "{value}");
+
+    // A supplied refinement premise is read, never settled again: the
+    // in-process result of `ThirdRefinesSpec` is `proved`, so a `refuted`
+    // slot 0 can only be the supplied one.
+    let mut supplied = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafe"]);
+    supplied["premises"] =
+        json!({"refinement": transfer_premise(&premises[0]["identity"], "refuted")});
+    let (exit, value) = transfer_run(&[("refinement_transfer", supplied)], true);
+    assert_eq!(exit, 22, "{value}");
+    let result = transfer(&value, "PrevSafe");
+    assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
+    assert_eq!(result["cause"]["premise"], 0, "{value}");
+    assert_eq!(result["cause"]["result"], "refuted", "{value}");
+}
+
+/// FR-1030-AC-4: the liveness premise is analyzed over stutter closure before
+/// its result transfers through the non-step-for-step CAS refinement.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-4")]
+fn a_liveness_clause_transfers_over_the_abstract_stutter_closure() {
+    let (exit, value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["EventuallyTwo"]),
+        )],
+        true,
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["refinement_transfer"]["refinement"]["step_for_step"]["holds"], false,
+        "{value}"
+    );
+    let result = transfer(&value, "EventuallyTwo");
+    assert_eq!(result["value"], "proved", "{value}");
+    assert_eq!(
+        result["transfer"]["premise_form"], "stutter-closure",
+        "{value}"
+    );
+    // The core's checker read the stutter closure, so the premise is certified.
+    assert_eq!(result["slots"][1]["certification"], "certified", "{value}");
+}
+
+/// FSpec FR-820 rule 2: a clause fairness constraint the refinement's
+/// abstract side does not imply makes the transfer `transfer-not-preserving`
+/// with the unimplied constraint, before any premise is read; `ThirdRefinesSpec`
+/// declares no fairness and `EventuallyTwo` needs weak `each` fairness of `inc`.
+#[test]
+#[trace("FSpec-TC-2000", "FSpec-FR-820-AC-4")]
+fn an_unimplied_clause_fairness_is_not_preserving() {
+    let (exit, value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["EventuallyTwo"]),
+        )],
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    let result = transfer(&value, "EventuallyTwo");
+    assert_eq!(result["value"], "inconclusive", "{value}");
+    assert_eq!(
+        result["cause"]["type"], "transfer-not-preserving",
+        "{value}"
+    );
+    assert_eq!(result["cause"]["reason"], "fairness", "{value}");
+    assert_eq!(result["transfer"]["fairness"]["implied"], false, "{value}");
+}
+
+/// FSpec FR-820-AC-2: a step map with an `any` arm is not step-for-step, and
+/// the fact names that row.
+#[test]
+#[trace("TC-2870", "FR-1020-AC-2")]
+#[trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
+fn an_any_arm_refinement_is_not_step_for_step() {
+    let (exit, value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member("ThirdAnyRefinesSpec", ("Spec", "Third"), &["PrevSafe"]),
+        )],
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    let step_for_step = &value["refinement_transfer"]["refinement"]["step_for_step"];
+    assert_eq!(step_for_step["holds"], false, "{value}");
+    assert_eq!(
+        step_for_step["row"]["operation"], "Third::Counter::inc",
+        "{value}"
+    );
+    assert_eq!(step_for_step["row"]["arm"], "any", "{value}");
+    let result = transfer(&value, "PrevSafe");
+    assert_eq!(result["cause"]["reason"], "fragment", "{value}");
+    assert_eq!(result["cause"]["operator"], "once[1,1]", "{value}");
+}
+
+/// FR-1030-AC-4: a liveness clause with no fairness is not proved over the
+/// abstract stutter closure, where the abstract model may repeat any state
+/// forever; its premise is a typed unproved slot 1.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-4")]
+fn a_liveness_clause_that_the_stutter_closure_violates_is_not_proved() {
+    let (exit, value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["StuckTwo"]),
+        )],
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    let result = transfer(&value, "StuckTwo");
+    assert_eq!(result["value"], "inconclusive", "{value}");
+    assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
+    assert_eq!(result["cause"]["premise"], 1, "{value}");
+    // The only violating loop is the closure's own self-loop, which has no
+    // replayable lasso, so EN-1 refuses it as unsupported.
+    assert_eq!(result["cause"]["result"], "unsupported", "{value}");
+    assert_eq!(result["slots"][1]["value"], "unsupported", "{value}");
+}
+
+/// FSpec FR-820 slot 1 is keyed without `stutter_closure`, which the planner
+/// reads from the supplied result: a liveness premise checked over the
+/// maximal model settles `transfer-not-preserving` for the closure, never a
+/// refusal.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-4")]
+#[trace("FSpec-TC-2000", "FSpec-FR-820-AC-4")]
+fn a_supplied_maximal_liveness_premise_is_not_preserving() {
+    let seed = transfer_member("CasRefinesCounter", ("Spec", "Impl"), &["EventuallyTwo"]);
+    let (_, seed_value) = transfer_run(&[("refinement_transfer", seed.clone())], true);
+    let premises = &transfer(&seed_value, "EventuallyTwo")["transfer"]["premises"];
+    let mut claim = transfer_premise(&premises[1]["identity"], "proved");
+    claim["request"]["temporal"]
+        .as_object_mut()
+        .expect("a temporal member")
+        .remove("stutter_closure");
+
+    let mut supplied = seed;
+    supplied["premises"] = json!({"claims": {"EventuallyTwo": claim}});
+    let (exit, value) = transfer_run(&[("refinement_transfer", supplied)], true);
+    assert_eq!(exit, 22, "{value}");
+    let result = transfer(&value, "EventuallyTwo");
+    assert_eq!(result["value"], "inconclusive", "{value}");
+    assert_eq!(
+        result["cause"]["type"], "transfer-not-preserving",
+        "{value}"
+    );
+    assert_eq!(result["cause"]["reason"], "stutter-closure", "{value}");
+    assert_eq!(result["transfer"]["premise_form"], "maximal", "{value}");
 }
 
 /// FR-1031-AC-1 to AC-3: conflicting selection members, a duplicate clause,
@@ -1679,7 +1966,6 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
 #[trace("TC-2921", "FR-1031-AC-1")]
 #[trace("TC-2921", "FR-1031-AC-2")]
 #[trace("TC-2921", "FR-1031-AC-3")]
-#[ignore = "QSL-2247: refinement_transfer request refusals are not implemented yet"]
 fn a_refinement_transfer_request_is_refused_by_stage() {
     let member = |abstract_model: &str, concrete: &str, clauses: &[&str]| {
         transfer_member("ThirdRefinesSpec", (abstract_model, concrete), clauses)
@@ -1758,6 +2044,13 @@ fn a_refinement_transfer_request_is_refused_by_stage() {
     );
     names(&value, "/refinement_transfer/concrete/model");
     names(&value, "Third");
+    let details = if value["details"].is_object() {
+        &value["details"]
+    } else {
+        &value["error"]["details"]
+    };
+    assert_eq!(details["declared"], "Third", "{value}");
+    assert_eq!(details["given"], "Impl", "{value}");
 
     // `CanInc` is a state precondition, not an infinite-trace clause.
     let value = refused(
@@ -1767,6 +2060,18 @@ fn a_refinement_transfer_request_is_refused_by_stage() {
         "type-mismatch",
     );
     names(&value, "/refinement_transfer/clauses/0");
+    // A bounded-profile temporal clause is no infinite-trace clause.
+    let value = refused(
+        &[(
+            "refinement_transfer",
+            member("Spec", "Third", &["BoundedTwo"]),
+        )],
+        true,
+        "select",
+        "type-mismatch",
+    );
+    names(&value, "/refinement_transfer/clauses/0");
+    names(&value, "event-position");
     let value = refused(
         &[(
             "refinement_transfer",
@@ -1777,6 +2082,53 @@ fn a_refinement_transfer_request_is_refused_by_stage() {
         "invalid-value",
     );
     names(&value, "/refinement_transfer/clauses/0");
+
+    // FR-1031 row 1: an `export` beside a transfer is a selection conflict,
+    // not a silently dropped transfer.
+    let value = refused(
+        &[
+            (
+                "refinement_transfer",
+                member("Spec", "Third", &["PrevSafe"]),
+            ),
+            ("export", json!({"profile": "filament.output.lean4/v1"})),
+        ],
+        true,
+        "request",
+        "invalid-request",
+    );
+    names(&value, "export");
+}
+
+/// FR-1031-AC-4: an initial snapshot FR-106 does not admit for its model, and
+/// a supplied claim premise of another slot, refuse at stage `admit` before
+/// anything settles.
+#[test]
+#[trace("TC-2921", "FR-1031-AC-4")]
+fn an_inadmissible_snapshot_or_supplied_premise_is_refused_at_admit() {
+    let seed = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafe"]);
+    let (_, seed_value) = transfer_run(&[("refinement_transfer", seed.clone())], true);
+    let premises = &transfer(&seed_value, "PrevSafe")["transfer"]["premises"];
+
+    // The refinement's identity is not the claim slot's.
+    let mut supplied = seed.clone();
+    supplied["premises"] =
+        json!({"claims": {"PrevSafe": transfer_premise(&premises[0]["identity"], "proved")}});
+    let (exit, value) = transfer_run(&[("refinement_transfer", supplied)], true);
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "admit");
+    names(&value, "invalid-value");
+    names(&value, "/refinement_transfer/premises/claims/PrevSafe");
+    assert!(value.get("refinement_transfer").is_none(), "{value}");
+
+    // The abstract model's snapshot is the third model's.
+    let mut wrong = seed;
+    wrong["observations"]["spec-0"] = json!("third-0.json");
+    let (exit, value) = transfer_run(&[("refinement_transfer", wrong)], true);
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "admit");
+    names(&value, "/refinement_transfer/abstract/initial/0");
+    assert!(value.get("refinement_transfer").is_none(), "{value}");
 }
 
 // ---- QSL-1979: target results as trusted evidence -------------------------

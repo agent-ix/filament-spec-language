@@ -275,7 +275,10 @@
 pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
     fsl_foundation::diagnostic::CatalogCode::new("cancelled", "caller-cancelled"),
     fsl_foundation::diagnostic::CatalogCode::new("cardinality_out_of_bound", "above-maximum"),
-    fsl_foundation::diagnostic::CatalogCode::new("dangling_reference", "absent-target-in-complete-population"),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "dangling_reference",
+        "absent-target-in-complete-population",
+    ),
     fsl_foundation::diagnostic::CatalogCode::new("foreign_reference", "foreign-universe"),
     fsl_foundation::diagnostic::CatalogCode::new("incomplete_population", "incomplete-scope"),
     fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "invalid-value"),
@@ -283,14 +286,20 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
     fsl_foundation::diagnostic::CatalogCode::new("undefined_expression", "unproved-nonzero"),
     fsl_foundation::diagnostic::CatalogCode::new("undefined_expression", "unproved-presence"),
     fsl_foundation::diagnostic::CatalogCode::new("undefined_expression", "unproved-range"),
-    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "collection-write-not-computed"),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "unsupported_construct",
+        "collection-write-not-computed",
+    ),
     fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "expression-form"),
     fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "not-yet-implemented"),
     fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "work-budget-exceeded"),
     fsl_foundation::diagnostic::CatalogCode::new("missing_declaration", "missing-name"),
     fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "allocation-failed"),
     fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
-    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new(
+        "runtime_invariant",
+        "established-invariant-broken",
+    ),
     fsl_foundation::diagnostic::CatalogCode::new("wrong_snapshot", "forbidden-pre-read"),
     fsl_foundation::diagnostic::CatalogCode::new("wrong_snapshot", "wrong-anchor"),
 ];

@@ -200,3 +200,141 @@ fn render_refusal(error: &command::RunError) -> String {
     .as_str()
     .to_owned()
 }
+
+/// The unit with one `Boolean` channel declaring `delivery`.
+fn delivery_unit(delivery: &str) -> String {
+    UNIT.replace(
+        "role R on M::Widget;",
+        &format!(
+            "role R on M::Widget; role S on M::Widget; \
+             channel C from R to S carries Boolean ordering unordered delivery {delivery} \
+             capacity 2 overflow block;"
+        ),
+    )
+    .replace(
+        "event Tick by R as (tick: Boolean) { true };",
+        "send Tx via C as (tx: Boolean) { true }; \
+         receive Rx via C of Tx as (rx: Boolean) { true };",
+    )
+    .replace("input.code > 0", "true")
+    .replace("input.code <= 0", "false")
+}
+
+/// FR-509-AC-2: a delivery interval whose lower count is above its upper
+/// count settles `ill_typed`/`type-mismatch` at the interval through the
+/// compile command, not `unsupported-feature`; `[3, 3]` compiles.
+#[trace("TC-1304", "FR-509-AC-2")]
+#[test]
+fn an_inverted_delivery_interval_refuses_type_mismatch_at_the_interval() {
+    let unit = delivery_unit("[4, 3]");
+    let directory = tempfile::tempdir().unwrap();
+    let path = request(directory.path(), &unit);
+    let Err(error) = command::compile_outcome(&path) else {
+        panic!("an inverted interval does not compile");
+    };
+    assert_eq!(error.category().exit_code(), 20, "{error:?}");
+    let command::RunCause::Spine(failure) = &error.cause else {
+        panic!("a compiler check refusal: {:?}", error.cause);
+    };
+    let CompileRefusal::Check { refusals, region } = &failure.refusal else {
+        panic!("a check refusal: {:?}", failure.refusal);
+    };
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            CheckCause::ProtocolAnchor(cause)
+                if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelDeliveryRange {
+                    lower: 4, upper: 3, ..
+                })
+        )),
+        "{refusals:?}"
+    );
+    assert!(
+        !refusals
+            .iter()
+            .any(|refusal| matches!(&refusal.cause, CheckCause::UnsupportedFeature { .. })),
+        "a refused protocol is not also unsupported: {refusals:?}"
+    );
+    let headline = refusals.first().expect("one refusal at least");
+    assert_eq!(
+        (headline.cause.code().as_str(), headline.cause.cause()),
+        ("ill_typed", Some("type-mismatch")),
+        "{refusals:?}"
+    );
+    assert_eq!(failure.refusal.code().as_str(), "ill_typed");
+    let start = unit.find("[4, 3]").expect("the interval") as u64;
+    let region = region.as_ref().expect("the refusal has a subject region");
+    assert_eq!(
+        (region.start(), region.end()),
+        (start, start + "[4, 3]".len() as u64)
+    );
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = request(directory.path(), &delivery_unit("[3, 3]"));
+    if let Err(error) = command::compile_outcome(&path) {
+        panic!("a degenerate interval compiles: {:?}", error.cause);
+    }
+}
+
+/// The filed example's shape (filament-examples
+/// `examples/lock/rules/protocols/handover-delivery-negative-bound.fsl`) with
+/// the interval `[4, 3]`: profile `v`, a record payload, a role pair on one
+/// model object, and `send`/`receive` over the channel. Only the model
+/// binding is swapped for the fixture model this suite compiles against.
+const FILED_HANDOVER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile pp = \"filament.protocol.finite-global/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
+    model L = \"acme/orders\";\n\
+    \n\
+    record Request { granted: Boolean; }\n\
+    \n\
+    protocol Handover using pp over (lock: L::Widget) on origin {\n\
+      role Asker on L::Widget;\n\
+      role Holder on L::Widget;\n\
+      channel Ask from Asker to Holder carries Request\n\
+        ordering unordered delivery [4, 3] capacity 4 overflow reject;\n\
+      run sequence Main {\n\
+        send Asked via Ask as (asked: Request) { true };\n\
+        receive Heard via Ask of Asked as (heard: Request) { true };\n\
+      }\n\
+      finish Done as (done: Boolean) { true };\n\
+    }\n";
+
+/// FR-509-AC-2: the filed handover unit with `delivery [4, 3]` settles
+/// `ill_typed`/`type-mismatch` at the interval and emits no
+/// `unsupported-feature`.
+#[trace("TC-1304", "FR-509-AC-2")]
+#[test]
+fn the_filed_handover_example_with_an_inverted_interval_refuses_type_mismatch() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = request(directory.path(), FILED_HANDOVER);
+    let Err(error) = command::compile_outcome(&path) else {
+        panic!("an inverted interval does not compile");
+    };
+    assert_eq!(error.category().exit_code(), 20, "{error:?}");
+    let command::RunCause::Spine(failure) = &error.cause else {
+        panic!("a compiler check refusal: {:?}", error.cause);
+    };
+    let CompileRefusal::Check { refusals, region } = &failure.refusal else {
+        panic!("a check refusal: {:?}", failure.refusal);
+    };
+    assert!(
+        !refusals
+            .iter()
+            .any(|refusal| matches!(&refusal.cause, CheckCause::UnsupportedFeature { .. })),
+        "a refused protocol is not also unsupported: {refusals:?}"
+    );
+    let headline = refusals.first().expect("one refusal at least");
+    assert_eq!(
+        (headline.cause.code().as_str(), headline.cause.cause()),
+        ("ill_typed", Some("type-mismatch")),
+        "{refusals:?}"
+    );
+    assert_eq!(failure.refusal.code().as_str(), "ill_typed");
+    let start = FILED_HANDOVER.find("[4, 3]").expect("the interval") as u64;
+    let region = region.as_ref().expect("the refusal has a subject region");
+    assert_eq!(
+        (region.start(), region.end()),
+        (start, start + "[4, 3]".len() as u64)
+    );
+}

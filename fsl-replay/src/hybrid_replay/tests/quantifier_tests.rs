@@ -617,3 +617,339 @@ fn the_cells_of_a_fairness_enablement_are_charged_to_the_meter() {
         );
     }
 }
+
+fn nonlinear_coupled(target: &str, guard: &str, reset: &str, third: bool, body: &str) -> Unit {
+    let (initial_z, invariant_z, flow_z, reset_z) = if third {
+        ("and z = 0", "and z = 0", "z' = 0;", "and z >= v")
+    } else {
+        ("", "", "", "")
+    };
+    check(&format!(
+        r#"
+        hybrid Coupled using p {{
+          initial {{ mode Run when {{ v = 0 and w = 0 {initial_z} }}; }}
+          mode Run invariant {{ v >= 0 and v <= 1 and w = 0 {invariant_z} }}
+            flow {{ v' = 1; w' = 0; {flow_z} }}
+            transition to Run when {{ v = 1 }} reset {{ v = 0 }};
+            transition to Gone when {{ {guard} }} reset {{ {reset} {reset_z} }};
+          mode Gone invariant {{ {target} }} flow {{ v' = 0; w' = 0; {flow_z} }}
+        }}
+        temporal Weak using p over (h: Coupled) clock "model-time" on origin {{
+          fair weak Run::Gone; {body}
+        }}
+        temporal Strong using p over (h: Coupled) clock "model-time" on origin {{
+          fair strong Run::Gone; always holds(h.v >= 1)
+        }}
+    "#
+    ))
+}
+
+fn nonlinear_lasso(third: bool) -> HybridTrace {
+    let zero = if third {
+        vec![n(0), n(0), n(0)]
+    } else {
+        vec![n(0), n(0)]
+    };
+    let mut end = zero.clone();
+    end[0] = n(1);
+    HybridTrace {
+        start: state(0, n(0), &zero),
+        jumps: vec![TraceJump {
+            transition: 0,
+            before: Some(before(n(1), &end)),
+            state: state(0, n(1), &zero),
+        }],
+        delta: None,
+        loop_to: Some(0),
+        end: None,
+    }
+}
+
+fn unfair() -> ExactReplay {
+    ExactReplay::NotReproduced {
+        at: JsonPointer::root(),
+        check: ExactCheck::Claim,
+    }
+}
+
+/// The exact product minimum on nonnegative lower bounds is t^2, so weak
+/// fairness holds and strong fairness fails on every repeated period.
+#[trace("FR-450-AC-14")]
+#[test]
+fn cad_nonlinear_product_fairness_replays_the_spec_lasso() {
+    let unit = nonlinear_coupled(
+        "v * w <= 1/2",
+        "true",
+        "v >= v and w >= v",
+        false,
+        "always holds(h.v >= 1)",
+    );
+    let lasso = nonlinear_lasso(false);
+    assert_eq!(
+        exact_replay(&unit, claim(&unit, "Weak"), &lasso),
+        Ok(reproduced_formula(&lasso))
+    );
+    assert_eq!(
+        exact_replay(&unit, claim(&unit, "Strong"), &lasso),
+        Ok(unfair())
+    );
+}
+
+/// At 2t^2=1 the closed product condition has precisely one feasible time
+/// section; making it strict removes that section as well.
+#[trace("FR-450-AC-15")]
+#[test]
+fn cad_irrational_point_enablement_respects_strict_boundaries() {
+    let lasso = nonlinear_lasso(false);
+    for (target, expected) in [
+        ("v * w <= 1/2", unfair()),
+        ("v * w < 1/2", reproduced_formula(&lasso)),
+    ] {
+        let unit = nonlinear_coupled(
+            target,
+            "2 * v * v = 1",
+            "v >= v and w >= v",
+            false,
+            "always holds(h.v >= 1)",
+        );
+        assert_eq!(
+            exact_replay(&unit, claim(&unit, "Strong"), &lasso),
+            Ok(expected)
+        );
+    }
+}
+
+#[trace("FR-450-AC-16")]
+#[test]
+fn cad_three_free_variables_have_the_cubic_fairness_boundary() {
+    let unit = nonlinear_coupled(
+        "v * w * z <= 1/2",
+        "true",
+        "v >= v and w >= v",
+        true,
+        "always holds(h.v >= 1)",
+    );
+    let lasso = nonlinear_lasso(true);
+    assert_eq!(
+        exact_replay(&unit, claim(&unit, "Weak"), &lasso),
+        Ok(reproduced_formula(&lasso))
+    );
+    assert_eq!(
+        exact_replay(&unit, claim(&unit, "Strong"), &lasso),
+        Ok(unfair())
+    );
+}
+
+#[trace("FR-450-AC-17")]
+#[test]
+fn cad_contradictory_reset_requires_one_common_valuation() {
+    let unit = nonlinear_coupled(
+        "v * w <= 1/2",
+        "true",
+        "v >= 1 and v < 0 and w >= 0",
+        false,
+        "always holds(h.v >= 1)",
+    );
+    let lasso = nonlinear_lasso(false);
+    for name in ["Weak", "Strong"] {
+        assert_eq!(
+            exact_replay(&unit, claim(&unit, name), &lasso),
+            Ok(reproduced_formula(&lasso))
+        );
+    }
+}
+
+#[trace("FR-450-AC-18")]
+#[test]
+fn cad_boolean_conditional_disequality_and_rational_targets_are_exact() {
+    let lasso = nonlinear_lasso(false);
+    for target in [
+        "(if v * w <= 1/2 then true else false)",
+        "v * w != 1/2",
+        "v * w < 1/2 or v * w > 1/2",
+        "v * w / (1 + w * w) > 1",
+    ] {
+        let unit = nonlinear_coupled(
+            target,
+            "true",
+            "v >= v and w >= v",
+            false,
+            "always holds(h.v >= 1)",
+        );
+        let weak = if target.starts_with("(if") {
+            reproduced_formula(&lasso)
+        } else {
+            unfair()
+        };
+        assert_eq!(
+            exact_replay(&unit, claim(&unit, "Weak"), &lasso),
+            Ok(weak),
+            "{target}"
+        );
+        assert_eq!(
+            exact_replay(&unit, claim(&unit, "Strong"), &lasso),
+            Ok(unfair()),
+            "{target}"
+        );
+    }
+}
+
+/// Actual trace undefinedness retains its division node and time even though
+/// undefined hypothetical post assignments are rejected by the existential.
+#[trace("FR-450")]
+#[test]
+fn cad_actual_trace_zero_divisor_retains_the_undefined_cause_and_locus() {
+    let unit = nonlinear_coupled(
+        "v * w <= 1/2",
+        "true",
+        "v >= v and w >= v",
+        false,
+        "always holds(1 / (h.v - h.w) > 0)",
+    );
+    let lasso = nonlinear_lasso(false);
+    let ExactReplay::Reproduced(found) = exact_replay(&unit, claim(&unit, "Weak"), &lasso).unwrap()
+    else {
+        panic!("an actual zero divisor must reproduce");
+    };
+    assert_eq!(found.trace, lasso);
+    let HybridCounterexampleKind::UndefinedEvaluation { at, cause } = found.kind else {
+        panic!("an actual division error is not a formula counterexample");
+    };
+    assert_eq!(cause, UndefinedCause::DivisionByZero);
+    assert_eq!(at.state, 0);
+    assert_eq!(at.time, ExactReal::Rational(n(0)));
+    assert_eq!(at.time_interval, None);
+    assert_eq!(at.locus.site, ExpressionSite::ClaimAtom { atom: 0 });
+    assert_eq!(
+        at.locus.term,
+        TermLocus {
+            term: vec![0],
+            body: vec![]
+        }
+    );
+}
+
+fn coupled_solver_result(trace: &HybridTrace) -> crate::hybrid::SolverResult {
+    crate::hybrid::SolverResult {
+        method: crate::hybrid::SolverMethod::FlowpipeOutwardRounded,
+        outcome: crate::hybrid::SolverOutcome::Unknown(Some(Box::new(trace.clone()))),
+        coverage: crate::hybrid::SolverCoverage::Inductive,
+    }
+}
+
+#[trace("FR-450-AC-20")]
+#[test]
+fn cad_replay_work_boundary_is_deterministic_and_both_provider_paths_settle_incomplete() {
+    use crate::hybrid::HybridSettlement;
+    use crate::proof_result::{IncompleteCause, TerminalValue};
+    use crate::ModelCheckLimit;
+    let unit = nonlinear_coupled(
+        "v * w <= 1/2",
+        "true",
+        "v >= v and w >= v",
+        false,
+        "always holds(h.v >= 1)",
+    );
+    let lasso = nonlinear_lasso(false);
+    let checked = claim(&unit, "Weak");
+    let replay = |bound| {
+        let mut meter = HybridReplayMeter::new(bound);
+        let found = super::super::exact_replay(&unit, checked, &lasso, &mut meter);
+        (found, meter.consumed())
+    };
+    let (found, work) = replay(u64::MAX);
+    assert_eq!(found, Ok(reproduced_formula(&lasso)));
+    assert!(work > 0);
+    assert_eq!(replay(u64::MAX), (found.clone(), work));
+    assert_eq!(replay(work), (found, work));
+    assert_eq!(
+        replay(work - 1).0,
+        Err(HybridReplayRefusal::ResourceExhausted {
+            counter: filament_exact::LimitKind::WorkUnits
+        })
+    );
+    let expected = TerminalValue::Incomplete(IncompleteCause::LimitReached {
+        limit: ModelCheckLimit::EvaluationMeter {
+            counter: filament_exact::LimitKind::WorkUnits,
+        },
+        value: work - 1,
+    });
+    let claimed = HybridCounterexample {
+        kind: HybridCounterexampleKind::Formula,
+        trace: lasso.clone(),
+    };
+    let provider = HybridSettlement::from_provider_counterexample(
+        &unit,
+        checked,
+        claimed,
+        &mut HybridReplayMeter::new(work - 1),
+    )
+    .unwrap();
+    let solver = coupled_solver_result(&lasso)
+        .settle(&unit, checked, &mut HybridReplayMeter::new(work - 1))
+        .unwrap();
+    for settled in [provider, solver] {
+        assert_eq!(settled.value, expected);
+        assert_eq!(settled.counterexample, None);
+        let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }) =
+            settled.value
+        else {
+            panic!("typed incomplete only");
+        };
+        assert_eq!(limit.setting(), "accounting.work_units");
+        assert_eq!(value, work - 1);
+    }
+    eprintln!("nonlinear Weak exact work W={work}");
+}
+
+/// Both settlement paths preserve the exact reproduced undefined kind,
+/// position, point time, cause and source division locus.
+#[trace("FR-450-AC-19")]
+#[test]
+fn cad_actual_undefined_trace_settles_refuted_through_both_provider_paths() {
+    use crate::hybrid::HybridSettlement;
+    use crate::proof_result::TerminalValue;
+    let unit = nonlinear_coupled(
+        "v * w <= 1/2",
+        "true",
+        "v >= v and w >= v",
+        false,
+        "always holds(1 / (h.v - h.w) > 0)",
+    );
+    let lasso = nonlinear_lasso(false);
+    let checked = claim(&unit, "Weak");
+    let ExactReplay::Reproduced(found) = exact_replay(&unit, checked, &lasso).unwrap() else {
+        panic!("actual undefined division");
+    };
+    let HybridCounterexampleKind::UndefinedEvaluation { at, cause } = &found.kind else {
+        panic!("undefined kind");
+    };
+    assert_eq!(*cause, UndefinedCause::DivisionByZero);
+    assert_eq!(at.state, 0);
+    assert_eq!(at.time, ExactReal::Rational(n(0)));
+    assert_eq!(at.time_interval, None);
+    assert_eq!(
+        at.locus,
+        ExpressionLocus {
+            site: ExpressionSite::ClaimAtom { atom: 0 },
+            term: TermLocus {
+                term: vec![0],
+                body: vec![]
+            }
+        }
+    );
+    let provider = HybridSettlement::from_provider_counterexample(
+        &unit,
+        checked,
+        (*found).clone(),
+        &mut HybridReplayMeter::new(u64::MAX),
+    )
+    .unwrap();
+    let solver = coupled_solver_result(&lasso)
+        .settle(&unit, checked, &mut HybridReplayMeter::new(u64::MAX))
+        .unwrap();
+    for settled in [provider, solver] {
+        assert_eq!(settled.value, TerminalValue::Refuted);
+        assert_eq!(settled.counterexample, Some((*found).clone()));
+    }
+}

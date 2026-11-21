@@ -268,7 +268,10 @@ mod schema_tests {
             .expect("event schema compiles");
         assert!(compiled.is_valid(&value));
         let mut malformed = value.clone();
-        malformed["disposition"].as_object_mut().unwrap().remove("member");
+        malformed["disposition"]
+            .as_object_mut()
+            .unwrap()
+            .remove("member");
         assert!(!compiled.is_valid(&malformed));
         let mut wrong_locus = value;
         wrong_locus["clause"] = json!("E");

@@ -13,9 +13,9 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, EmitLimits};
 use fsl_replay::{
-    hybrid_locus_wire, Certification, ExactGap, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
-    HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict, IncompleteCause,
-    ModelCheckLimit, TerminalValue, UnsupportedConstruct,
+    hybrid_locus_wire, Certification, ExactGap, HybridCounterexample, HybridCounterexampleKind,
+    HybridReplayMeter, HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict,
+    IncompleteCause, ModelCheckLimit, TerminalValue, UnsupportedConstruct,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::wire_id::WireGraph;
@@ -49,6 +49,10 @@ pub(super) struct Spelling<'a> {
 
 /// The item of the hybrid claim at `claim`, or `None` when the package holds
 /// no checked hybrid claim there.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the item binds the checked claim, provider candidates, spelling, and independent resource limits"
+)]
 pub(super) fn hybrid_item<'a>(
     package: &'a CheckedPackage,
     request_index: RequestIndex,
@@ -187,10 +191,18 @@ pub(super) fn hybrid_item<'a>(
                 match settled {
                     Ok(settled) => {
                         let disagreement = match &settled.value {
-                            TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayParity(
-                                fsl_replay::DisagreementCause::HybridTrace(found),
-                            )) => counterexample_wire(graph, &wire, position, model, found.counterexample())
-                                .ok(),
+                            TerminalValue::Inconclusive(
+                                fsl_replay::InconclusiveCause::ReplayParity(
+                                    fsl_replay::DisagreementCause::HybridTrace(found),
+                                ),
+                            ) => counterexample_wire(
+                                graph,
+                                &wire,
+                                position,
+                                model,
+                                found.counterexample(),
+                            )
+                            .ok(),
                             _ => None,
                         };
                         let wire = match &settled.counterexample {
@@ -201,7 +213,11 @@ pub(super) fn hybrid_item<'a>(
                         };
                         EngineReport::Hybrid(Box::new(HybridReport {
                             disagreement,
-                            value: if trusted { plugin_trust(settled.value) } else { settled.value },
+                            value: if trusted {
+                                plugin_trust(settled.value)
+                            } else {
+                                settled.value
+                            },
                             counterexample: settled.counterexample.map(Box::new),
                             certificate: settled.certificate,
                             wire,
