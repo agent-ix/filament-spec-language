@@ -1222,6 +1222,8 @@ pub enum ResolvedItem {
     /// A `simulation` item (FR-634), which settles no claim and is not
     /// negotiated.
     Simulation(Box<super::SimulationItem>),
+    /// A composition item or one of its premise items (FSL FR-1044).
+    Composition(Box<CompositionClaim>),
     /// An item settled without running: its terminal record.
     Settled {
         /// The declared name the item used, when it named one.
@@ -1401,6 +1403,13 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .claims()
             .iter()
             .filter_map(|claim| Some((claim.name.clone(), claim.occurrence()?.node().clone()))),
+    );
+    // FR-1044: a component composition is named by its declared name.
+    names.extend(
+        graph
+            .compositions()
+            .iter()
+            .map(|composition| (composition.name().to_owned(), composition.node().clone())),
     );
     // FR-630: a refinement is named by its declared name and keyed at the
     // node of its requirement record (FR-144).
@@ -1622,25 +1631,44 @@ pub fn resolve_items(
     limits: &AnalyzeLimits,
 ) -> Vec<ResolvedItem> {
     match selections {
-        Some(selections) => selections
-            .iter()
-            .enumerate()
-            .map(|(position, selection)| {
-                resolve_one(
-                    package,
-                    subject,
-                    RequestIndex::new(position),
-                    selection,
-                    registry,
-                    binding,
-                )
-            })
-            .collect(),
+        Some(selections) => {
+            let compositions = composition_item::Context {
+                package,
+                subject,
+                registry,
+                binding,
+            };
+            let mut resolved = Vec::with_capacity(selections.len());
+            let mut premises = Vec::new();
+            for (position, selection) in selections.iter().enumerate() {
+                let index = RequestIndex::new(position);
+                match composition_item::resolve(&compositions, index, selection) {
+                    Some(selected) => {
+                        resolved.push(selected.item);
+                        premises.push(selected.premises);
+                    }
+                    None => resolved.push(resolve_one(
+                        package, subject, index, selection, registry, binding,
+                    )),
+                }
+            }
+            // FR-1044: the premise items follow the caller's items.
+            let first = resolved.len();
+            resolved.extend(composition_item::premise_items(
+                &compositions,
+                premises,
+                first,
+            ));
+            resolved
+        }
         None => default_items(package, subject, registry, units, binding, limits),
     }
 }
 
+mod composition_item;
 mod package_run;
+
+pub use composition_item::CompositionClaim;
 
 pub use package_run::{
     settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
@@ -2348,9 +2376,10 @@ fn resolve_derived(
             {
                 Some(claim)
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
-                None
-            }
+            ResolvedItem::Claim(_)
+            | ResolvedItem::Composition(_)
+            | ResolvedItem::Settled { .. }
+            | ResolvedItem::Simulation(_) => None,
         });
     let Some(mut claim) = derived else {
         return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
@@ -2920,7 +2949,21 @@ fn default_items(
             nodes.push(record.node().clone());
         }
     }
+    // FR-1044: a `compose` declaration is a default item beside the claims.
+    for composition in graph.compositions() {
+        if !nodes.contains(composition.node()) {
+            nodes.push(composition.node().clone());
+        }
+    }
     let position = |node: &filament_exact::NodeKey| -> (usize, u64) {
+        if let Some(composition) = composition_item::composition_at(package, node) {
+            let unit = units
+                .iter()
+                .position(|candidate| candidate == graph.source())
+                .unwrap_or(usize::MAX);
+            let start = u64::try_from(composition.spans().declaration.start).unwrap_or(u64::MAX);
+            return (unit, start);
+        }
         let region = claim_occurrence(package, &records, node, None)
             .and_then(|occurrence| {
                 graph.occurrence_region(occurrence.node().clone(), occurrence.origin())
@@ -2950,10 +2993,34 @@ fn default_items(
     // place after those with one.
     nodes.sort_by_cached_key(|node| position(node));
     let mut resolved = Vec::new();
+    let compositions = composition_item::Context {
+        package,
+        subject,
+        registry,
+        binding,
+    };
+    let mut premises = Vec::new();
     for node in &nodes {
         let Some(name) = declared_name(package, node) else {
             continue;
         };
+        if let Some(composition) = composition_item::composition_at(package, node) {
+            // FSpec FR-290 gives an `assume-guarantee` declaration no item.
+            if composition.rule() != fsl_semantics::check::CompositionRule::AssumeGuarantee {
+                let selection = ItemSelection {
+                    claim: Some(name),
+                    kind: Some(Capability::Composition.to_wire().to_owned()),
+                    ..ItemSelection::default()
+                };
+                let index = RequestIndex::new(resolved.len());
+                if let Some(selected) = composition_item::resolve(&compositions, index, &selection)
+                {
+                    resolved.push(selected.item);
+                    premises.push(selected.premises);
+                }
+            }
+            continue;
+        }
         let kinds: Vec<Capability> = records
             .iter()
             .filter(|record| record.node() == node)
@@ -3012,6 +3079,12 @@ fn default_items(
         )
     };
     resolved.extend(derived);
+    let first = resolved.len();
+    resolved.extend(composition_item::premise_items(
+        &compositions,
+        premises,
+        first,
+    ));
     resolved
 }
 
@@ -3053,9 +3126,10 @@ fn derived_items(
             {
                 Some(claim.item.claim.clone())
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
-                None
-            }
+            ResolvedItem::Claim(_)
+            | ResolvedItem::Composition(_)
+            | ResolvedItem::Settled { .. }
+            | ResolvedItem::Simulation(_) => None,
         })
         .collect();
     let requirements = fsl_semantics::family::Requirements::new(
@@ -3191,9 +3265,10 @@ fn protocol_derived_items(
             {
                 Some(claim.item.claim.clone())
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
-                None
-            }
+            ResolvedItem::Claim(_)
+            | ResolvedItem::Composition(_)
+            | ResolvedItem::Settled { .. }
+            | ResolvedItem::Simulation(_) => None,
         })
         .collect();
     let requirements = fsl_semantics::family::Requirements::new(
@@ -3604,6 +3679,7 @@ pub fn settle_run(
     } = run;
     let source_input = fsl_eval::simulation::model::ModelCheckInput::source(package);
     let Negotiation {
+        components,
         negotiated,
         unrouted_items,
         settled,
@@ -3623,6 +3699,7 @@ pub fn settle_run(
         &binding,
         &provision,
         &negotiated,
+        &components,
         engines,
         &limits,
         cancel,
@@ -3685,6 +3762,8 @@ struct ItemReads<'r> {
 /// items negotiation ran for that no route reads, the items settled
 /// without running, each claim item's echo and the simulation items.
 struct Negotiation {
+    /// The checked package each component item is analyzed over (FR-1044).
+    components: BTreeMap<RequestIndex, std::sync::Arc<CheckedPackage>>,
     negotiated: Vec<NegotiatedItem>,
     unrouted_items: Vec<RequestIndex>,
     settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)>,
@@ -3706,25 +3785,49 @@ fn negotiate_items(
     let mut settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)> = BTreeMap::new();
     let mut echoes: BTreeMap<RequestIndex, Echo> = BTreeMap::new();
     let mut simulations: Vec<super::SimulationItem> = Vec::new();
+    let mut components = BTreeMap::new();
     for resolved in items {
-        match resolved {
-            ResolvedItem::Simulation(item) => simulations.push(*item),
+        let (claim, members, owner, before) = match resolved {
+            ResolvedItem::Simulation(item) => {
+                simulations.push(*item);
+                continue;
+            }
             ResolvedItem::Settled { claim_name, record } => {
                 settled.insert(record.request_index(), (claim_name, *record));
+                continue;
             }
-            ResolvedItem::Claim(claim) => {
+            ResolvedItem::Claim(claim) => (*claim, Map::new(), None, None),
+            ResolvedItem::Composition(derived) => {
+                let CompositionClaim {
+                    claim,
+                    members,
+                    package,
+                    settled,
+                } = *derived;
+                (claim, members, package, settled)
+            }
+        };
+        {
+            {
                 let ResolvedClaim {
                     mut item,
                     claim_name,
                     candidates,
                     subject,
                     unrouted,
-                } = *claim;
+                } = claim;
                 let admitted = (reads.admit)(&mut item);
-                let echo = item
+                let mut echo = item
                     .request_item_wire(&subject)
                     .map_err(|_| AnalyzeDocumentError::Fault)?;
-                let identity = (reads.owner)(&item.claim)
+                if let Some(request) = echo.as_object_mut() {
+                    request.extend(members);
+                }
+                let owning = match &owner {
+                    Some(package) => owning_model(package, &item.claim).map(str::to_owned),
+                    None => (reads.owner)(&item.claim),
+                };
+                let identity = owning
                     .map(|model| fsl_replay::certificate_identity_wire(&item.claim, &model))
                     .transpose()
                     .map_err(|_| AnalyzeDocumentError::Fault)?;
@@ -3739,6 +3842,11 @@ fn negotiate_items(
                         scoped: has_activation_scope(item.kind),
                     },
                 );
+                if let Some(record) = before {
+                    // FR-1044: settled before negotiation, with its echo.
+                    settled.insert(item.request_index, (None, *record));
+                    continue;
+                }
                 if let Err(refused) = admitted {
                     let record = match refused {
                         super::reduction_item::ReductionIssue::UnknownConstraint(name) => {
@@ -3772,8 +3880,14 @@ fn negotiate_items(
                     Some(ItemForm::Temporal(form)) => form.item_kind,
                     _ => ItemKind::Formula,
                 };
-                let inapplicable = (reads.family)(temporal_kind, &item.claim)
-                    .is_none_or(|family| !item.kind.applies_to_declaration(family));
+                let family = match &owner {
+                    Some(package) => {
+                        crate::claim_family::claim_family(package, temporal_kind, &item.claim)
+                    }
+                    None => (reads.family)(temporal_kind, &item.claim),
+                };
+                let inapplicable =
+                    family.is_none_or(|family| !item.kind.applies_to_declaration(family));
                 if unrouted
                     && !inapplicable
                     && !matches!(disposition, fsl_route::routing::Disposition::InvalidRequest)
@@ -3795,6 +3909,9 @@ fn negotiate_items(
                     );
                     continue;
                 }
+                if let Some(package) = owner {
+                    components.insert(item.request_index, package);
+                }
                 negotiated.push(NegotiatedItem {
                     item,
                     disposition,
@@ -3804,6 +3921,7 @@ fn negotiate_items(
         }
     }
     Ok(Negotiation {
+        components,
         negotiated,
         unrouted_items,
         settled,

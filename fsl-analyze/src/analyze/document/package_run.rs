@@ -432,6 +432,7 @@ pub fn settle_package_run(
         other => crate::claim_family::kind_family(other),
     };
     let Negotiation {
+        components: _,
         negotiated,
         unrouted_items,
         settled,

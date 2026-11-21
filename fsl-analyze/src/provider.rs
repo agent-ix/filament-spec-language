@@ -71,7 +71,16 @@ pub fn run(
     cancel: &Cancel,
 ) -> ProviderResults {
     let run = crate::analyze::RunInput::source(package);
-    match analyze_bound(&run, binding, provision, items, engines, limits, cancel) {
+    match analyze_bound(
+        &run,
+        binding,
+        provision,
+        items,
+        &std::collections::BTreeMap::new(),
+        engines,
+        limits,
+        cancel,
+    ) {
         Ok(staged) => {
             let outcome = staged.into_value();
             ProviderResults {

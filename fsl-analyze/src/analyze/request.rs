@@ -2,6 +2,7 @@
 //! The operation-owned request boundary shared by analyze and the provider.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::{BackendId, RequestIndex};
@@ -419,17 +420,22 @@ pub fn analyze(
         &request.binding,
         &request.provision,
         &request.items,
+        &BTreeMap::new(),
         engines,
         limits,
         cancel,
     )
 }
 
+/// [`analyze`] over `analysis`, where an item of `components` is analyzed
+/// over its own checked package (FR-1044: a clause of a component of a
+/// composition) instead of the run's.
 pub(crate) fn analyze_bound<'a>(
     analysis: &super::RunInput<'a>,
     binding: &super::SubjectBinding<'_>,
     provision: &SourceProvision,
     requested: &[NegotiatedItem],
+    components: &BTreeMap<RequestIndex, Arc<fsl_package::CheckedPackage>>,
     engines: &super::Engines,
     limits: &super::AnalyzeLimits,
     cancel: &filament_exact::Cancel,
@@ -460,9 +466,16 @@ pub(crate) fn analyze_bound<'a>(
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let shared = read.as_ref().map(crate::provider::Shared::of);
+    let component_runs: BTreeMap<RequestIndex, super::RunInput<'_>> = components
+        .iter()
+        .map(|(index, package)| (*index, super::RunInput::source(package)))
+        .collect();
     let items = requested
         .iter()
-        .map(|item| work(analysis, binding, provision, item, engines, limits, shared))
+        .map(|item| match component_runs.get(&item.item.request_index) {
+            Some(component) => work(component, binding, provision, item, engines, limits, None),
+            None => work(analysis, binding, provision, item, engines, limits, shared),
+        })
         .collect::<Vec<_>>();
     let requirements = items
         .iter()

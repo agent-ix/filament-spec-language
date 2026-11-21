@@ -27,6 +27,7 @@ enum Form {
     Refinement,
     ProbabilisticClaim,
     Schedulability,
+    ComponentComposition,
     /// A form no row selects by.
     Other,
 }
@@ -45,6 +46,7 @@ impl Form {
             "refinement" => Self::Refinement,
             "probabilistic_claim" => Self::ProbabilisticClaim,
             "schedulability" => Self::Schedulability,
+            "component_composition" => Self::ComponentComposition,
             _ => Self::Other,
         }
     }
@@ -148,7 +150,9 @@ fn node_family(graph: &CheckedGraph, claim: &OccurrenceKey) -> Option<Declaratio
         }
         (NodeTag::Claim, Form::ProbabilisticClaim, _) => Some(DeclarationFamily::Probabilistic),
         (NodeTag::Claim, Form::Schedulability, _) => Some(DeclarationFamily::RealTime),
-        (NodeTag::Protocol, _, _) => Some(DeclarationFamily::Protocol),
+        (NodeTag::Protocol, _, _) | (NodeTag::Correspondence, Form::ComponentComposition, _) => {
+            Some(DeclarationFamily::Protocol)
+        }
         _ => None,
     }
 }
