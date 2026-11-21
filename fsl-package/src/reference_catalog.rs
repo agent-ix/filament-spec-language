@@ -391,6 +391,44 @@ impl<'a> ReferenceCatalog<'a> {
         )
     }
 
+    /// Join a checked source package's retained structural rows to its actual
+    /// simulation model. This source route does not manufacture an emitted
+    /// package or require a function-call `SelectedModels` owner.
+    ///
+    /// # Errors
+    /// Refuses missing or conflicting complete identities and preserves budget
+    /// denials. A codec must also bind this catalog to the same source/runtime.
+    pub fn from_checked_model(
+        source: &'a CheckedPackage,
+        model: &'a StateModel,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Self, ReferenceCatalogError> {
+        let mut declarations = Vec::new();
+        for row in source.graph().selected_exact_declaration_rows() {
+            work(budget, 1)?;
+            if row.form != SelectedExactDeclarationForm::ObjectType {
+                continue;
+            }
+            let SelectedExactIdentity::Object(effective) = &row.exact_identity else {
+                return Err(ReferenceCatalogError::ForeignModel);
+            };
+            let key = model
+                .declaration_key_with_work(effective, &mut |units| work(budget, units))?
+                .ok_or(ReferenceCatalogError::UnknownDeclaration)?;
+            let (actual, universe) = model
+                .reference_components_with_work(key, &mut |units| work(budget, units))?
+                .ok_or(ReferenceCatalogError::UnknownDeclaration)?;
+            insert_declaration(&mut declarations, row, actual, key, universe, budget)?;
+        }
+        Ok(Self {
+            package: None,
+            source: Some(source),
+            model: Some(model),
+            selected_models: None,
+            declarations,
+        })
+    }
+
     /// Join the actual model-admission producer to a strictly admitted package.
     ///
     /// # Errors

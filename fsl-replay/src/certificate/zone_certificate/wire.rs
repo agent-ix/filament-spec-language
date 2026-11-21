@@ -259,7 +259,11 @@ impl<O> ZoneCertificate<O> {
         let task_product = self
             .task_product
             .as_ref()
-            .map(|member| member.to_wire_with_references(references))
+            .map(|member| {
+                references.at_pointer("/task_product", |references| {
+                    member.to_wire_with_references(references)
+                })
+            })
             .transpose()?;
         self.write_wire(identity, names.as_deref(), task_product, |edge| {
             match (&edge.transition, &edge.task_transition) {
@@ -285,7 +289,11 @@ impl<O> ZoneCertificate<O> {
         let names = source.map(source_names).transpose()?;
         let task_product = value
             .get("task_product")
-            .map(|member| TaskProductCertificate::from_wire_with_references(member, references))
+            .map(|member| {
+                references.at_pointer("/task_product", |references| {
+                    TaskProductCertificate::from_wire_with_references(member, references)
+                })
+            })
             .transpose()?;
         Self::read_wire(
             value,
