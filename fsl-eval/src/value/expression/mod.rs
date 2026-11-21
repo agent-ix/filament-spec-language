@@ -1587,6 +1587,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         &self,
         atom: &HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -1631,6 +1632,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -2676,6 +2678,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         &self,
         atom: &HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -2683,7 +2686,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
     ) -> Result<Evaluation, CallFailure> {
         let (clause, condition, slots) = source_condition(self.graph(), atom)?;
         let reads = std::collections::BTreeMap::new();
-        Machine::with_pre(
+        let mut machine = Machine::with_pre(
             self.graph().scope(),
             self.graph(),
             objects,
@@ -2692,9 +2695,18 @@ impl CheckedPackageEvaluation for CheckedPackage {
             meter,
             self.graph().dispatch_tables(),
         )
-        .with_reference_bindings(reference_bindings)
-        .run(condition, slots, holds_bindings(clause, over, captures))
-        .map_err(CallFailure::Fault)
+        .with_reference_bindings(reference_bindings);
+        if let Some(population) = absent_population {
+            let Value::Reference(key) = &over else {
+                return Err(CallFailure::Fault(InternalFault::new("FR-125", "absent-model-over-is-reference")));
+            };
+            machine = machine.with_absent_key(0, population.to_owned(), key.clone());
+            if clause.trigger().is_some() {
+                machine = machine.with_absent_key(1, population.to_owned(), key.clone());
+            }
+        }
+        machine.run(condition, slots, holds_bindings(clause, over, captures))
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_holds_traced(
@@ -2766,6 +2778,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -2776,7 +2789,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                 CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
             })?;
         let reads = std::collections::BTreeMap::new();
-        Machine::with_pre(
+        let mut machine = Machine::with_pre(
             self.graph().scope(),
             self.graph(),
             objects,
@@ -2785,9 +2798,17 @@ impl CheckedPackageEvaluation for CheckedPackage {
             meter,
             self.graph().dispatch_tables(),
         )
-        .with_reference_bindings(reference_bindings)
-        .run(guard, slots, vec![over.clone(), over])
-        .map_err(CallFailure::Fault)
+        .with_reference_bindings(reference_bindings);
+        if let Some(population) = absent_population {
+            let Value::Reference(key) = &over else {
+                return Err(CallFailure::Fault(InternalFault::new("FR-125", "absent-model-over-is-reference")));
+            };
+            for slot in [0, 1] {
+                machine = machine.with_absent_key(slot, population.to_owned(), key.clone());
+            }
+        }
+        machine.run(guard, slots, vec![over.clone(), over])
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_hyper_holds(

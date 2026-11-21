@@ -875,6 +875,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         &self,
         atom: &super::HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -886,7 +887,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             .map_err(|failure| refusal(self, failure))?;
         let arguments = clause_arguments(&term, &over, captures)?;
         let reads = BTreeMap::new();
-        Machine::with_world(
+        let mut machine = Machine::with_world(
             World::Bytes(&world),
             objects,
             None,
@@ -894,8 +895,18 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             meter,
             &[],
         )
-        .with_reference_bindings(reference_bindings)
-        .run(
+        .with_reference_bindings(reference_bindings);
+        if let Some(population) = absent_population {
+            let Value::Reference(key) = &over else {
+                return Err(CallFailure::Fault(InternalFault::new("FR-125", "absent-model-over-is-reference")));
+            };
+            for (slot, binder) in term.binders() {
+                if matches!(binder, ClauseBinder::Over | ClauseBinder::Trigger) {
+                    machine = machine.with_absent_key(*slot, population.to_owned(), key.clone());
+                }
+            }
+        }
+        machine.run(
             ReaderNode::root(term.projection()),
             term.projection().frame_slots(),
             arguments,
@@ -981,6 +992,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -994,7 +1006,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             })?;
         let arguments = clause_arguments(&term, &over, &[])?;
         let reads = BTreeMap::new();
-        Machine::with_world(
+        let mut machine = Machine::with_world(
             World::Bytes(&world),
             objects,
             None,
@@ -1002,8 +1014,18 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             meter,
             &[],
         )
-        .with_reference_bindings(reference_bindings)
-        .run(
+        .with_reference_bindings(reference_bindings);
+        if let Some(population) = absent_population {
+            let Value::Reference(key) = &over else {
+                return Err(CallFailure::Fault(InternalFault::new("FR-125", "absent-model-over-is-reference")));
+            };
+            for (slot, binder) in term.binders() {
+                if matches!(binder, ClauseBinder::Over | ClauseBinder::Trigger) {
+                    machine = machine.with_absent_key(*slot, population.to_owned(), key.clone());
+                }
+            }
+        }
+        machine.run(
             ReaderNode::root(term.projection()),
             term.projection().frame_slots(),
             arguments,

@@ -83,6 +83,9 @@ impl Default for ClauseLimits {
 /// Why no clause item was made.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ClauseItemRefusal {
+    /// The selected package clause retains the builder's exact refusal.
+    #[error(transparent)]
+    Build(fsl_semantics::check::PackageClauseRefusal),
     /// The package holds no temporal clause at the key (node and claim
     /// occurrence).
     #[error("the package holds no temporal clause at the given occurrence")]
@@ -810,12 +813,16 @@ impl<'a> PackageClauseSubject<'a> {
                 claim,
                 filament_semantic_value::checking::CheckingLimits::default().nodes(),
             )
-            .map_err(|refusal| match refusal.pending_fact() {
-                Some((fact, node)) => ClauseItemRefusal::Pending {
-                    fact,
-                    node: node.clone(),
-                },
-                None => ClauseItemRefusal::UnknownClause,
+            .map_err(|refusal| match refusal {
+                fsl_eval::simulation::model::PendingClauseForm::Read(
+                    fsl_package::BareClauseRefusal::Pending { fact, node },
+                ) => ClauseItemRefusal::Pending { fact, node },
+                fsl_eval::simulation::model::PendingClauseForm::Read(
+                    fsl_package::BareClauseRefusal::Selection(_),
+                ) => ClauseItemRefusal::UnknownClause,
+                fsl_eval::simulation::model::PendingClauseForm::Build(refusal) => {
+                    ClauseItemRefusal::Build(refusal)
+                }
             })?;
         let identity = fsl_replay::ClauseIdentity::of_admitted(admitted, &clause)
             .map_err(|_| ClauseItemRefusal::UnknownClause)?;
