@@ -3222,11 +3222,11 @@ fn package_clause_selections_timed_results_match_source() {
     }
 }
 
-/// FR-1039 Outputs: violated snapshot/model clauses follow the same traced
+/// FR-1039 Outputs: violated snapshot clauses follow the same traced
 /// decisive decision walk and return the source route's complete record.
 #[test]
 #[trace("TC-3019", "FR-1039")]
-fn package_clause_selections_violations_match_source_decisive_locations() {
+fn package_clause_snapshot_violations_match_source_decisive_locations() {
     let unit = bump_low().replace(LOW_BODY, "holds(c.versionNumber > 2)");
     package_clause_selection_outcomes(
         &unit,
@@ -3234,7 +3234,14 @@ fn package_clause_selections_violations_match_source_decisive_locations() {
         false,
         SelectionObjects::Present,
     );
-    let unit = unit
+}
+
+/// A model violation reads the decisive atom over its reconstructed state.
+#[test]
+#[trace("TC-840", "FR-330-AC-16")]
+fn package_clause_model_violations_match_source_decisive_locations() {
+    let unit = bump_low()
+        .replace(LOW_BODY, "holds(c.versionNumber > 2)")
         .replace(EVENT_POSITION, "filament.temporal.infinite-trace/v1")
         .replace(
             "pre(self.versionNumber) < 3 and self.versionNumber = pre(self.versionNumber) + 1",
