@@ -1290,6 +1290,9 @@ struct Expected {
     alive: Vec<Vec<u8>>,
 }
 
+/// The clock carries and resets of a row.
+type ClockUpdates = (Vec<(usize, usize)>, Vec<(usize, Rational)>);
+
 /// One piece of a discrete step's zone: the valuations at which the same
 /// alive rows hold, and the position they lead to.
 struct Piece {
@@ -2311,7 +2314,7 @@ impl<O> Checker<'_, '_, O> {
             if !rows.is_empty() && holding.is_empty() {
                 continue;
             }
-            let mut agreed: Option<(Vec<(usize, usize)>, Vec<(usize, Rational)>)> = None;
+            let mut agreed: Option<ClockUpdates> = None;
             for (step, _) in &holding {
                 let updates = step.as_ref().map_or((Vec::new(), Vec::new()), |step| {
                     (step.carries().to_vec(), step.resets().to_vec())
