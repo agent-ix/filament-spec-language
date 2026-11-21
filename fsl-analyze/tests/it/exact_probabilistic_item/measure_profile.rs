@@ -1986,3 +1986,74 @@ fn a_slack_mean_bound_emits_the_checked_policy_and_refuses_the_old_optimizer_pol
     );
     assert!(mismatch.probabilistic_counterexample.is_none());
 }
+
+#[trace("FR-1043-AC-9", "FR-202-AC-29")]
+#[test]
+fn a_live_mean_bound_checker_limit_or_cancellation_cannot_produce_a_token() {
+    let world = World::new(&retry(&claim(
+        "Q",
+        "Steady",
+        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+    )));
+    let record = settle(&world, "Q", ModelCheckLimits::default());
+    let mut offered = record
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap()
+        .evidence()
+        .clone();
+    let document = mean_bound(&offered, false, false);
+    offered.subsystem = Some(Box::new(
+        fsl_replay::ProbabilitySubsystemCertificate::from_bytes(
+            &serde_json::to_vec(&document).unwrap(),
+            document_limits(),
+            &Cancel::new(),
+        )
+        .unwrap(),
+    ));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let replay = |limits: &fsl_analyze::exact_probabilistic::ExactProbLimits, cancel: &Cancel| {
+        fsl_replay::replay_probabilistic_witness(
+            &world.package,
+            &system,
+            &offered.item,
+            &offered,
+            limits,
+            cancel,
+        )
+    };
+    let limits = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    let accepted = replay(&limits, &Cancel::new());
+    assert!(
+        matches!(
+            accepted,
+            Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+        ),
+        "valid control: {accepted:?}"
+    );
+    let mut exhausted = limits.clone();
+    exhausted.model.limits.max_states = 1;
+    let stopped = replay(&exhausted, &Cancel::new());
+    assert!(
+        matches!(
+            stopped,
+            Err(fsl_replay::ProbabilityWitnessError::Limit {
+                limit: fsl_replay::ModelCheckLimit::ExactProbMaxStates,
+                value: 1
+            })
+        ),
+        "live checking limit: {stopped:?}"
+    );
+    let cancel = Cancel::new();
+    cancel.cancel(CancelCause::Deadline);
+    let stopped = replay(&limits, &cancel);
+    assert!(
+        matches!(
+            stopped,
+            Err(fsl_replay::ProbabilityWitnessError::Graph(
+                fsl_replay::ExactProbabilityGraphError::Cancelled(CancelCause::Deadline)
+            ))
+        ),
+        "{stopped:?}"
+    );
+}
