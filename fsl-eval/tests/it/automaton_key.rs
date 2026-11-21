@@ -22,6 +22,7 @@ use fsl_eval::automaton::{
     Window,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_semantics::check::ProtocolNodeId;
 use ix_trace_rs::trace;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -78,6 +79,35 @@ fn equal_facts_give_equal_keys_in_any_reading_order() {
     assert_ne!(
         first.key(SafetyState::Carried).expect("encodes"),
         second.key(SafetyState::Carried).expect("encodes")
+    );
+}
+
+/// FR-730: loop-proof safety states are keyed by both obligation kind and
+/// checked repeat, so certificates cannot be reused across loop items.
+#[trace("TC-2022", "FR-730-AC-4")]
+#[test]
+fn loop_proof_safety_keys_name_the_obligation_and_repeat() {
+    let repeat = ProtocolNodeId(7);
+    let invariant = SafetyTranslation::loop_invariant(repeat).expect("the invariant context");
+    let termination = SafetyTranslation::loop_termination(repeat).expect("the termination context");
+    let carried = SafetyState::Carried;
+    let invariant_key = invariant.key(carried).expect("the invariant key");
+    let termination_key = termination.key(carried).expect("the termination key");
+    assert_ne!(invariant_key, termination_key);
+    assert_eq!(
+        invariant.admit(invariant_key.as_bytes()),
+        Ok((invariant_key.clone(), carried))
+    );
+    assert_eq!(
+        invariant.admit(termination_key.as_bytes()),
+        Err(KeyRefusal::ForeignContext)
+    );
+
+    let another_repeat =
+        SafetyTranslation::loop_invariant(ProtocolNodeId(8)).expect("the other repeat context");
+    assert_eq!(
+        another_repeat.admit(invariant_key.as_bytes()),
+        Err(KeyRefusal::ForeignContext)
     );
 }
 

@@ -76,6 +76,8 @@ pub(super) struct Loop<'a> {
     pub(super) max: Option<u64>,
     pub(super) post_test: bool,
     pub(super) guard: &'a CheckedBody,
+    /// The checked proof attached to this repeat, when present.
+    pub(super) proof: Option<&'a fsl_semantics::check::CheckedLoopProof>,
 }
 
 /// One `await` (ADR-027 ST-8): its matched event node, its `then` control
@@ -710,6 +712,7 @@ impl<'a> Program<'a> {
                     max: repeat.max,
                     post_test: repeat.post_test,
                     guard: &repeat.guard,
+                    proof: repeat.loop_proof.as_ref(),
                 },
             );
         }

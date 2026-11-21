@@ -223,7 +223,7 @@ mod identity_form;
 mod package_call;
 mod run_value;
 pub use call::{
-    default_accounting, run, run_with_profile_catalog,
+    default_accounting, run, run_with_integer_division, run_with_profile_catalog,
     run_with_profile_catalog_and_integer_division, Call, CallArgument, CallIncomplete, CallLocus,
     CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
     DEFAULT_LIVE_OCCURRENCES, DEFAULT_WORK_UNITS,
@@ -1687,6 +1687,10 @@ fn check_message_one(first: &CheckRefusal) -> String {
                      requires {}",
                     value_type_source(actual),
                     value_type_source(expected)
+                ),
+                ProtocolAnchorCause::VariantType { repeat, .. } => format!(
+                    "{message}: the variant of repeat `{repeat}` is neither an integer nor a \
+                     tuple of integers"
                 ),
                 ProtocolAnchorCause::CarriesMismatch { channel, .. } => format!(
                     "{message}: the binder's type is not the type channel `{channel}` carries"

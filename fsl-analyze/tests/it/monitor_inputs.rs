@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 
 use filament_exact::{Cancel, CancelCause, FieldValue, Integer, Rational, Value, ValueType};
 use filament_semantic_value::catalog::Category;
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::monitor::{
     monitor, MonitorClause, MonitorLimits, MonitorOutcome, MonitorRecord, MonitorRefusal,
     MonitorRequest, MonitorTrace, MonitorVerdict, TRACE_FORMAT,
@@ -51,8 +52,9 @@ fn header(profile: &str) -> String {
 /// and the `Reading` trace-subject clauses.
 fn event_unit() -> String {
     header("filament.temporal.event-position.false-extension/v1")
-        + "temporal Small using t over (c: M::Counter) clock \"model-steps\" on origin { always[0,2] holds(c.value < 2) }\n\
-           temporal Refuse using t over (c: M::Counter) clock \"model-steps\" on origin { always[0,1] holds(count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n\
+        + "function refusingCount using v(n: Integer): Zero pure { count<Zero>(m in ints(sequence[n]): m > 0) }\n\
+           temporal Small using t over (c: M::Counter) clock \"model-steps\" on origin { always[0,2] holds(c.value < 2) }\n\
+           temporal Refuse using t over (c: M::Counter) clock \"model-steps\" on origin { always[0,1] holds(refusingCount(c.value) = 0) }\n\
            temporal Gate using t over (r: Reading) clock \"events\" on origin { always[0,2] (count over past[0, 9] min_count 2 >= 1) }\n\
            temporal Dense using t over (r: Reading) clock \"events\" on origin { always[1,1] (count over past[0, 9] min_count 1 >= 1) }\n\
            temporal Wide using t over (r: Reading) clock \"events\" on origin { always[0,0] (count where holds(r.level > 9) over past[0, 0] min_count 0 >= 1) }\n\
@@ -155,11 +157,17 @@ fn compile_with(documents: &Documents, text: String, dependencies: &DependencyIn
     let cst = fsl_cst::parse(identity, PATH, text.as_bytes(), fsl_cst::Limits::default())
         .expect("the unit parses");
     let selections = selections(&cst);
-    let checked = spine::check_with_temporal_selections_and_execution_points(
+    let checked = spine::check_with_execution_points_and_source_inputs(
         &parsed,
         "fixture".to_owned(),
         &StateClauseExecutionPoints::new(),
-        &selections,
+        spine::SourceInputs {
+            temporal_selections: &selections,
+            // A function body is checked under Kernel, so `refusingCount`'s
+            // range refusal is left to S6a; the temporal clauses stay Linked.
+            check_mode: Some(CheckMode::Kernel),
+            ..spine::SourceInputs::default()
+        },
         &models,
         dependencies,
         limits,
@@ -486,7 +494,7 @@ fn a_refused_condition_needs_the_source_it_is_cited_at() {
     );
     let locus = locus.as_ref().expect("a locus");
     assert_eq!(locus.file, PATH);
-    let condition = "count<Zero>(m in ints(sequence[c.value]): m > 0)";
+    let condition = "count<Zero>(m in ints(sequence[n]): m > 0)";
     let start = world
         .event
         .text

@@ -72,7 +72,7 @@ pub(crate) struct Case {
     body: String,
     documents: Documents,
     initial: Vec<DocumentRef>,
-    checked: CheckedPackage,
+    pub(crate) checked: CheckedPackage,
     /// The subject's capacity binding (FSpec FR-785).
     capacities: Vec<CapacityBinding>,
 }
@@ -108,7 +108,7 @@ impl Case {
     }
 
     /// A Kernel remainder function called by the protocol's Linked clauses.
-    fn with_kernel_remainder(body: &str, values: &[i64]) -> Self {
+    pub(crate) fn with_kernel_remainder(body: &str, values: &[i64]) -> Self {
         let body = format!("function q using v(x: Integer): Integer pure {{ 6 mod x }}\n{body}");
         let mut documents = Documents::new();
         let initial = values
@@ -180,7 +180,7 @@ impl Case {
     }
 
     /// FR-217's replay of `payload` against this case's unit and documents.
-    fn replay(
+    pub(crate) fn replay(
         &self,
         protocol: &str,
         payload: TemporalCounterexample<ProtocolTransition>,
@@ -195,8 +195,21 @@ impl Case {
         payload: TemporalCounterexample<ProtocolTransition>,
         selections: &[TemporalClockSelection],
     ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+        let (_, occurrence) = protocol_anchor(&self.checked, protocol);
+        self.replay_at_occurrence(protocol, payload, selections, occurrence)
+    }
+
+    /// Replays a counterexample under the derived item's own occurrence,
+    /// such as a repeat's loop-proof anchor.
+    pub(crate) fn replay_at_occurrence(
+        &self,
+        protocol: &str,
+        payload: TemporalCounterexample<ProtocolTransition>,
+        selections: &[TemporalClockSelection],
+        occurrence: OccurrenceKey,
+    ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
         let unit = unit_text_with(PROTOCOL_PROFILE, &self.body).into_bytes();
-        let (node, occurrence) = protocol_anchor(&self.checked, protocol);
+        let (node, _) = protocol_anchor(&self.checked, protocol);
         replay_protocol_trace_with_temporal_selections(
             request(
                 &self.checked,

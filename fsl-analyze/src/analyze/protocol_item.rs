@@ -178,8 +178,32 @@ pub(super) fn protocol_clause_item<'a>(
                 })?)
             }
             ItemKind::RaceFreedom | ItemKind::DeadlockFreedom => None,
+            ItemKind::LoopInvariant | ItemKind::LoopTermination => None,
             ItemKind::TimeLockFreedom | ItemKind::Refinement => return None,
         };
+    let loop_repeat = match form.item_kind {
+        ItemKind::LoopInvariant | ItemKind::LoopTermination => {
+            if claim.origin().role().as_str() != "repeat" {
+                return None;
+            }
+            let repeat = usize::try_from(claim.origin().ordinal()).ok()?;
+            let checked = package.graph().protocol(&protocol.protocol)?;
+            checked
+                .slots
+                .repeats
+                .iter()
+                .any(|candidate| candidate.node.0 == repeat && candidate.loop_proof.is_some())
+                .then_some(fsl_semantics::check::ProtocolNodeId(repeat))
+        }
+        _ => None,
+    };
+    if matches!(
+        form.item_kind,
+        ItemKind::LoopInvariant | ItemKind::LoopTermination
+    ) && loop_repeat.is_none()
+    {
+        return None;
+    }
     if let Some(node) = node {
         clause_name(node).ok()?;
     }
@@ -281,6 +305,16 @@ pub(super) fn protocol_clause_item<'a>(
                         letters,
                     },
                     None if form.item_kind == ItemKind::RaceFreedom => ModelCheckItem::RaceFreedom,
+                    None if form.item_kind == ItemKind::LoopInvariant => {
+                        ModelCheckItem::LoopInvariant {
+                            repeat: loop_repeat.expect("loop invariant repeat was validated"),
+                        }
+                    }
+                    None if form.item_kind == ItemKind::LoopTermination => {
+                        ModelCheckItem::LoopTermination {
+                            repeat: loop_repeat.expect("loop termination repeat was validated"),
+                        }
+                    }
                     None => ModelCheckItem::DeadlockFreedom,
                 };
                 let trace = ProtocolTraceSubject {

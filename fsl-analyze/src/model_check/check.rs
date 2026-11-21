@@ -77,7 +77,7 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
     closure_shape, translate, translate_counted, Atom, AutomatonError, AutomatonKind, BoundedState,
     BoundedTranslation, Gba, GbaBuilder, Guard, KeyRefusal, Letter, Monitor, SafetyAutomaton,
-    SafetyState, StateId,
+    SafetyState, StateId, SubjectKind,
 };
 use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
@@ -179,6 +179,9 @@ pub enum ModelCheckRefusal {
     /// is decided over a model subject.
     #[error("the invariant item is decided over a model subject only")]
     InvariantOverProtocol,
+    /// FR-730's loop-proof item over a model subject.
+    #[error("a loop-proof item is decided over a protocol subject only")]
+    LoopProofOverModel,
     /// The refinement's concrete subject is a protocol, whose refinement
     /// check is not built yet (FR-142, FR-145).
     #[error("a refinement over a concrete protocol is not checked yet")]
@@ -315,6 +318,16 @@ enum Item<'a> {
         /// The invariant's declared name.
         name: &'a str,
     },
+    /// FR-730's repeat-invariant obligation.
+    LoopInvariant {
+        /// The checked repeat node.
+        repeat: fsl_semantics::check::ProtocolNodeId,
+    },
+    /// FR-730's repeat-termination obligation.
+    LoopTermination {
+        /// The checked repeat node.
+        repeat: fsl_semantics::check::ProtocolNodeId,
+    },
 }
 
 impl Item<'_> {
@@ -323,7 +336,11 @@ impl Item<'_> {
     fn fairness(&self) -> &[FairnessConstraint] {
         match self {
             Self::Clause { fairness, .. } => fairness,
-            Self::Deadlock | Self::Race | Self::Invariant { .. } => &[],
+            Self::Deadlock
+            | Self::Race
+            | Self::Invariant { .. }
+            | Self::LoopInvariant { .. }
+            | Self::LoopTermination { .. } => &[],
         }
     }
 
@@ -333,7 +350,11 @@ impl Item<'_> {
             Self::Clause {
                 protocol_fairness, ..
             } => protocol_fairness,
-            Self::Deadlock | Self::Race | Self::Invariant { .. } => &[],
+            Self::Deadlock
+            | Self::Race
+            | Self::Invariant { .. }
+            | Self::LoopInvariant { .. }
+            | Self::LoopTermination { .. } => &[],
         }
     }
 
@@ -341,7 +362,11 @@ impl Item<'_> {
     fn instance_count(&self) -> usize {
         match self {
             Self::Clause { bindings, .. } => bindings.len(),
-            Self::Deadlock | Self::Race | Self::Invariant { .. } => 1,
+            Self::Deadlock
+            | Self::Race
+            | Self::Invariant { .. }
+            | Self::LoopInvariant { .. }
+            | Self::LoopTermination { .. } => 1,
         }
     }
 }
@@ -786,12 +811,25 @@ pub fn check_protocol_constrained(
             value: live_instances,
         });
     let (instances, root_cancelled) = if certified {
-        match request.item.instances(
-            &subject.model,
-            &model,
-            request.temporal_clock_selections,
-            cancel,
-        ) {
+        let instances = match request.item {
+            ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
+                request.item.instances_for(
+                    &subject.model,
+                    &model,
+                    request.temporal_clock_selections,
+                    cancel,
+                    SubjectKind::Protocol,
+                    max_automaton_states,
+                )
+            }
+            _ => request.item.instances(
+                &subject.model,
+                &model,
+                request.temporal_clock_selections,
+                cancel,
+            ),
+        };
+        match instances {
             Ok(instances) => (instances, None),
             Err(ItemRefusal::ClauseRoot(ClauseRootRefusal::Cancelled(cause))) => {
                 (Vec::new(), Some(cause))
@@ -844,7 +882,13 @@ pub fn check_protocol_constrained(
         request.max_messages,
     );
     let built = match memory {
-        SubjectMemory::Sc => new_protocol_system(model, subject, Sc).map(|system| {
+        SubjectMemory::Sc => new_protocol_system(
+            model,
+            subject,
+            Sc,
+            protocol_run.loop_proof_target(),
+        )
+        .map(|system| {
             let bound = system.has_channels().then_some(MemoryBound {
                 member: MemoryBoundMember::MaxMessages,
                 value: request
@@ -869,7 +913,13 @@ pub fn check_protocol_constrained(
                 member: MemoryBoundMember::MaxStoreBuffer,
                 value: tso.max_store_buffer(),
             };
-            new_protocol_system(model, subject, tso).map(|system| {
+            new_protocol_system(
+                model,
+                subject,
+                tso,
+                protocol_run.loop_proof_target(),
+            )
+            .map(|system| {
                 protocol_run.decide(
                     &system
                         .with_channel_message_bound(
@@ -890,7 +940,13 @@ pub fn check_protocol_constrained(
                 value: ra.max_messages(),
             };
             let channel_bound = ra.max_messages();
-            new_protocol_system(model, subject, ra).map(|system| {
+            new_protocol_system(
+                model,
+                subject,
+                ra,
+                protocol_run.loop_proof_target(),
+            )
+            .map(|system| {
                 protocol_run.decide(
                     &system
                         .with_channel_message_bound(channel_bound)
@@ -909,6 +965,7 @@ fn new_protocol_system<'a, M: MemoryModel>(
     model: ModelSystem<'a>,
     subject: &'a ProtocolSubject<'a>,
     memory: M,
+    loop_proof_target: Option<fsl_eval::simulation::protocol::ProtocolLoopProofTarget>,
 ) -> Result<ProtocolSystem<'a, M>, ProtocolRefusal> {
     match subject
         .model
@@ -917,7 +974,16 @@ fn new_protocol_system<'a, M: MemoryModel>(
         .protocol_definition(&subject.protocol)
     {
         Some(fsl_eval::simulation::model::ProtocolDefinition::Source(_)) => {
-            ProtocolSystem::new(model, subject, memory)
+            ProtocolSystem::new_with_loop_proof(model, subject, memory, loop_proof_target)
+        }
+        Some(fsl_eval::simulation::model::ProtocolDefinition::Package(_))
+            if loop_proof_target.is_some() =>
+        {
+            Err(ProtocolRefusal::Unsupported(
+                fsl_eval::simulation::protocol::Unsupported::PackageControl(
+                    fsl_package::protocol_view::ControlOperation::Repeat,
+                ),
+            ))
         }
         Some(fsl_eval::simulation::model::ProtocolDefinition::Package(_)) => {
             ProtocolSystem::new_package(model, subject, memory)
@@ -994,7 +1060,7 @@ fn check_protocol_liveness(
                 member: MemoryBoundMember::MaxMessages,
                 value: ra.max_messages(),
             };
-            new_protocol_system(model, subject, ra).map(|system| {
+            new_protocol_system(model, subject, ra, None).map(|system| {
                 super::liveness::check_protocol(
                     subject,
                     &system
@@ -1020,7 +1086,7 @@ fn check_protocol_liveness(
                 member: MemoryBoundMember::MaxStoreBuffer,
                 value: tso.max_store_buffer(),
             };
-            new_protocol_system(model, subject, tso).map(|system| {
+            new_protocol_system(model, subject, tso, None).map(|system| {
                 super::liveness::check_protocol(
                     subject,
                     &system
@@ -1041,7 +1107,7 @@ fn check_protocol_liveness(
                 )
             })
         }
-        SubjectMemory::Sc => new_protocol_system(model, subject, Sc).map(|system| {
+        SubjectMemory::Sc => new_protocol_system(model, subject, Sc, None).map(|system| {
             super::liveness::check_protocol(
                 subject,
                 &system
@@ -1118,6 +1184,23 @@ struct ProtocolRun<'r> {
 }
 
 impl ProtocolRun<'_> {
+    fn loop_proof_target(&self) -> Option<fsl_eval::simulation::protocol::ProtocolLoopProofTarget> {
+        use fsl_eval::simulation::protocol::{
+            ProtocolLoopProofKind as Kind, ProtocolLoopProofTarget,
+        };
+        match self.item {
+            Item::LoopInvariant { repeat } => Some(ProtocolLoopProofTarget {
+                repeat: *repeat,
+                kind: Kind::Invariant,
+            }),
+            Item::LoopTermination { repeat } => Some(ProtocolLoopProofTarget {
+                repeat: *repeat,
+                kind: Kind::Termination,
+            }),
+            _ => None,
+        }
+    }
+
     /// The run over `system`, under the memory bound `bound` when its memory
     /// model has one (ADR-025 MB-3, MB-4), and the state constraint when the
     /// request names one.
@@ -1130,7 +1213,11 @@ impl ProtocolRun<'_> {
         // FR-430 adds scheduler constraints to infinite-trace clauses, not
         // to the derived deadlock-freedom item.
         let fairness = match self.item {
-            Item::Deadlock | Item::Race | Item::Invariant { .. } => Vec::new(),
+            Item::Deadlock
+            | Item::Race
+            | Item::Invariant { .. }
+            | Item::LoopInvariant { .. }
+            | Item::LoopTermination { .. } => Vec::new(),
             Item::Clause { .. } => system
                 .fairness_set_with_targets(self.item.fairness(), self.item.protocol_fairness())?,
         };
@@ -1316,6 +1403,9 @@ fn check_reduced(
             orbit: Vec::new(),
         }],
         ModelCheckItem::RaceFreedom => return Err(ModelCheckRefusal::RaceOverModel),
+        ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
+            return Err(ModelCheckRefusal::LoopProofOverModel)
+        }
     };
     refuse_capture_read(request.item)?;
     let mut total = RunStats::default();
@@ -1543,7 +1633,9 @@ fn ample_of<'r, 'a>(
             fairness,
             constraint,
         ),
-        Item::Deadlock | Item::Race => Por::new(system, None, &[], &[], constraint),
+        Item::Deadlock | Item::Race | Item::LoopInvariant { .. } | Item::LoopTermination { .. } => {
+            Por::new(system, None, &[], &[], constraint)
+        }
         // FR-951: the invariant's letter reads what its body reads, so
         // every step that writes a location it reads is visible.
         Item::Invariant { name } => Por::new(system, None, &[], &[], constraint).and_then(|por| {
@@ -1589,7 +1681,9 @@ pub(super) fn precheck(
                 .ok_or_else(|| fault("a-decided-clause-has-a-form"))?,
             ModelCheckItem::DeadlockFreedom
             | ModelCheckItem::RaceFreedom
-            | ModelCheckItem::Invariant { .. } => PropertyForm::ReachableInvariant,
+            | ModelCheckItem::Invariant { .. }
+            | ModelCheckItem::LoopInvariant { .. }
+            | ModelCheckItem::LoopTermination { .. } => PropertyForm::ReachableInvariant,
         };
         return Ok(Admitted::Settled(settled(ReductionCause::NotPreserving {
             reduction,
@@ -1640,13 +1734,27 @@ fn prepare(
         // share an automaton.
         let derived = match (item, counting) {
             (ModelCheckItem::Invariant { clause }, _) => Item::Invariant { name: clause.name },
+            (ModelCheckItem::LoopInvariant { repeat }, Counting::ByKind) => {
+                Item::LoopInvariant { repeat }
+            }
+            (ModelCheckItem::LoopTermination { repeat }, Counting::ByKind) => {
+                Item::LoopTermination { repeat }
+            }
             (ModelCheckItem::RaceFreedom, Counting::Every) => {
                 return Err(ModelCheckRefusal::RaceOverModel);
             }
             (ModelCheckItem::RaceFreedom, Counting::ByKind) => Item::Race,
             _ => Item::Deadlock,
         };
-        return Ok((derived, Box::new(deadlock_automaton()?), true));
+        let automaton = if matches!(
+            item,
+            ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. }
+        ) {
+            loop_proof_automaton()?
+        } else {
+            deadlock_automaton()?
+        };
+        return Ok((derived, Box::new(automaton), true));
     };
     let form = clause.property_form();
     let bounded = match form {
@@ -1722,6 +1830,16 @@ fn deadlock_automaton() -> Result<Gba, ModelCheckRefusal> {
     let mut builder = GbaBuilder::new();
     builder
         .add_transition(Gba::INITIAL, holding, Gba::INITIAL)
+        .map_err(|_| fault("the-initial-state-exists"))?;
+    Ok(builder.build())
+}
+
+/// A loop-proof item's monitor imposes no additional state predicate: its
+/// obligation is evaluated by the protocol system at repeat decisions.
+fn loop_proof_automaton() -> Result<Gba, ModelCheckRefusal> {
+    let mut builder = GbaBuilder::new();
+    builder
+        .add_transition(Gba::INITIAL, Guard::always(), Gba::INITIAL)
         .map_err(|_| fault("the-initial-state-exists"))?;
     Ok(builder.build())
 }
@@ -2202,6 +2320,45 @@ impl<S: SubjectSystem> Run<'_, S> {
                 if let Some((_, violation)) = self.first_bad.take() {
                     return Err(Finish::Violated(violation).into());
                 }
+            }
+            if let Some(violation) = self.system.loop_proof_violation(&self.nodes[at].state) {
+                let target = match self.item {
+                    Item::LoopInvariant { repeat } => {
+                        (repeat, fsl_replay::LoopProofObligation::Invariant)
+                    }
+                    Item::LoopTermination { repeat } => {
+                        (repeat, fsl_replay::LoopProofObligation::Termination)
+                    }
+                    _ => return Err(fault("loop-proof-failure-has-loop-proof-item").into()),
+                };
+                if *target.0 != violation.repeat {
+                    return Err(fault("loop-proof-failure-names-requested-repeat").into());
+                }
+                use fsl_eval::simulation::protocol::ProtocolLoopProofFailure as Failure;
+                let failure = match violation.failure {
+                    Failure::InvariantFalse => fsl_replay::LoopProofFailure::InvariantFalse,
+                    Failure::Undefined => fsl_replay::LoopProofFailure::Undefined,
+                    Failure::VariantDidNotDecrease => {
+                        fsl_replay::LoopProofFailure::VariantDidNotDecrease
+                    }
+                    Failure::VariantBelowFloor => fsl_replay::LoopProofFailure::VariantBelowFloor,
+                    Failure::EvaluationIncomplete => {
+                        return Err(Finish::Undecided(UndecidedCause::UndecidedSuccessor).into())
+                    }
+                    Failure::EvaluationRefused => {
+                        return Err(fault("a-checked-loop-proof-body-does-not-refuse").into())
+                    }
+                };
+                return Err(Finish::violated(
+                    CounterexampleKind::LoopProof(fsl_replay::LoopProofCounterexample {
+                        repeat: violation.repeat.0,
+                        obligation: target.1,
+                        failure,
+                    }),
+                    at,
+                    None,
+                )
+                .into());
             }
             // FR-158: a boundary state is never expanded, stutter-extended
             // or classified as a deadlock.
@@ -2715,7 +2872,12 @@ impl<S: SubjectSystem> Run<'_, S> {
                 last_read: Some(last),
                 ..
             } => usize::try_from(*last).map_or(usize::MAX, |last| last.saturating_add(1)),
-            Item::Clause { .. } | Item::Deadlock | Item::Race | Item::Invariant { .. } => 0,
+            Item::Clause { .. }
+            | Item::Deadlock
+            | Item::Race
+            | Item::Invariant { .. }
+            | Item::LoopInvariant { .. }
+            | Item::LoopTermination { .. } => 0,
         };
         // The canonical bounded state is part of the key: the general monitor
         // state alone merges `Open { remaining: 0 }` with `Idle`, which the
@@ -2808,7 +2970,10 @@ impl<S: SubjectSystem> Run<'_, S> {
         node: &Node<S::State, S::TransitionId>,
         before: &[StateId],
     ) -> Step<Reading> {
-        if matches!(self.item, Item::Deadlock) {
+        if matches!(
+            self.item,
+            Item::Deadlock | Item::LoopInvariant { .. } | Item::LoopTermination { .. }
+        ) {
             return Ok((before.to_vec(), Vec::new(), None));
         }
         if let Item::Invariant { name } = self.item {
@@ -3104,7 +3269,11 @@ impl<S: SubjectSystem> Run<'_, S> {
     fn binding_of(&self, instance: usize) -> Option<ModelInstance> {
         match self.item {
             Item::Clause { bindings, .. } => bindings.get(instance).cloned(),
-            Item::Deadlock | Item::Race | Item::Invariant { .. } => None,
+            Item::Deadlock
+            | Item::Race
+            | Item::Invariant { .. }
+            | Item::LoopInvariant { .. }
+            | Item::LoopTermination { .. } => None,
         }
     }
 

@@ -2337,10 +2337,11 @@ fn positive() -> Expression {
     binary(BinaryOperator::Greater, name("x"), literal(0))
 }
 
-const COUNTED_KINDS: [CollectionKind; 3] = [
+const COUNTED_KINDS: [CollectionKind; 4] = [
     CollectionKind::Sequence,
     CollectionKind::Bag,
     CollectionKind::Set,
+    CollectionKind::OrderedSet,
 ];
 
 /// FR-766-AC-1 and AC-3: a linked `count<N>` whose `[0, size maximum]` is not
@@ -2353,7 +2354,6 @@ const COUNTED_KINDS: [CollectionKind; 3] = [
     "FSpec-FR-145-AC-16"
 )]
 #[test]
-#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the temporal-atom count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478; the invariant RefusedDomain fixture (witness.rs:84,1736, tc_743_the_separation_check_names_its_failing_step) moves its count<Zero> into a called function z (FR-268-AC-3) under CheckMode::Kernel and keeps its step-2 refusal record"]
 fn q14_count_refuses_unproved_range_at_check() {
     let package = plain();
     for kind in COUNTED_KINDS {
@@ -2390,10 +2390,56 @@ fn q14_count_refuses_unproved_range_at_check() {
     );
 }
 
+/// Kernel count membership is decided at the count and retains its domain.
+#[trace("TC-2195", "FR-766-AC-4", "FR-096-AC-8")]
+#[test]
+fn q14_count_kernel_refusal_records_its_domain_at_the_count() {
+    let package = plain();
+    let source = of(CollectionKind::Sequence, ValueType::Boolean, 0, 5);
+    let checked = check(
+        &package,
+        &[("q", source.clone())],
+        &count("Three", "q", name("x")),
+    )
+    .expect("kernel checking leaves the final count membership to evaluation");
+    let evaluation = package
+        .evaluate(
+            &checked,
+            vec![collection(&source, vec![Value::Boolean(true); 5])],
+            &ObjectEnvironment::default(),
+            &mut Meter::new(UNLIMITED),
+        )
+        .unwrap();
+    let FamilyOutcome::Evaluated(outcome) = &evaluation.outcome else {
+        panic!(
+            "count reaches an evaluated refusal: {:?}",
+            evaluation.outcome
+        );
+    };
+    assert_eq!(
+        refused_domain(outcome),
+        IntegerInterval::spanning(0_i64.into(), 3_i64.into())
+    );
+    assert_eq!(
+        evaluation.location.as_ref(),
+        Some(checked.root().location())
+    );
+    let record =
+        fsl_eval::value::refusal_record(&evaluation, |location| package.graph().region(location))
+            .expect("a refused count carries its record");
+    assert_eq!(
+        (record.code().code(), record.code().cause()),
+        ("integer_out_of_domain", "outside-domain")
+    );
+    assert_eq!(
+        record.fields().get("expected").map(String::as_str),
+        Some("Int[0, 3]")
+    );
+}
+
 /// FR-766-AC-1: the same count into a domain that holds `[0, 5]` checks.
 #[trace("TC-2195", "FR-766-AC-1")]
 #[test]
-#[ignore = "QSL-2003: control for the linked count<N> range obligation, enabled with it"]
 fn q14_count_proves_when_the_bound_fits() {
     let package = plain();
     for kind in COUNTED_KINDS {
@@ -2408,7 +2454,6 @@ fn q14_count_proves_when_the_bound_fits() {
 /// FR-766-AC-2: a `size(q)` guard narrows the count's upper bound.
 #[trace("TC-2195", "FR-766-AC-2", "FSpec-TC-1653", "FSpec-FR-145-AC-16")]
 #[test]
-#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the temporal-atom count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478; the invariant RefusedDomain fixture (witness.rs:84,1736, tc_743_the_separation_check_names_its_failing_step) moves its count<Zero> into a called function z (FR-268-AC-3) under CheckMode::Kernel and keeps its step-2 refusal record"]
 fn q14_count_under_a_size_guard_proves() {
     let package = plain();
     let guarded = |maximum: i64| {

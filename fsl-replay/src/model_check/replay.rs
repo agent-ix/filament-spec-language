@@ -50,8 +50,9 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::protocol::{
     check_protocol_bounds, live_instance_bound, protocol_constraints, Capacities, CapacityRefusal,
-    CarriedComponent, MemoryModel, ProtocolFairness, ProtocolFairnessError, ProtocolRefusal,
-    ProtocolSystem, ProtocolTransition, ResolvedMemory, Sc, SendRecord, StepKind, SubjectMemory,
+    CarriedComponent, MemoryModel, ProtocolFairness, ProtocolFairnessError, ProtocolLoopProofKind,
+    ProtocolLoopProofTarget, ProtocolRefusal, ProtocolSystem, ProtocolTransition, ResolvedMemory,
+    Sc, SendRecord, StepKind, SubjectMemory,
 };
 use fsl_eval::simulation::{
     ConstraintValue, Cut, Expansion, ExpansionStop, NotSimulated, SubjectSystem, SubjectTransition,
@@ -1222,6 +1223,20 @@ pub fn replay_protocol_trace_with_temporal_selections(
                 letters,
                 meter,
             };
+            let loop_proof_target = match &payload.kind {
+                CounterexampleKind::LoopProof(proof) => Some(ProtocolLoopProofTarget {
+                    repeat: fsl_semantics::check::ProtocolNodeId(proof.repeat),
+                    kind: match proof.obligation {
+                        crate::model_check::counterexample::LoopProofObligation::Invariant => {
+                            ProtocolLoopProofKind::Invariant
+                        }
+                        crate::model_check::counterexample::LoopProofObligation::Termination => {
+                            ProtocolLoopProofKind::Termination
+                        }
+                    },
+                }),
+                _ => None,
+            };
             let live_instances = live_instance_bound(subject.max_live_instances);
             let settlement = match SubjectMemory::of(
                 &subject.memory,
@@ -1229,19 +1244,34 @@ pub fn replay_protocol_trace_with_temporal_selections(
                 subject.max_messages,
             ) {
                 SubjectMemory::Sc => replayed.settle(
-                    &ProtocolSystem::new(model, &protocol_subject, Sc)
-                        .map_err(built)?
-                        .with_max_live_instances(live_instances),
+                    &ProtocolSystem::new_with_loop_proof(
+                        model,
+                        &protocol_subject,
+                        Sc,
+                        loop_proof_target,
+                    )
+                    .map_err(built)?
+                    .with_max_live_instances(live_instances),
                 )?,
                 SubjectMemory::Tso(tso) => replayed.settle(
-                    &ProtocolSystem::new(model, &protocol_subject, tso)
-                        .map_err(built)?
-                        .with_max_live_instances(live_instances),
+                    &ProtocolSystem::new_with_loop_proof(
+                        model,
+                        &protocol_subject,
+                        tso,
+                        loop_proof_target,
+                    )
+                    .map_err(built)?
+                    .with_max_live_instances(live_instances),
                 )?,
                 SubjectMemory::Ra(ra) => replayed.settle(
-                    &ProtocolSystem::new(model, &protocol_subject, ra)
-                        .map_err(built)?
-                        .with_max_live_instances(live_instances),
+                    &ProtocolSystem::new_with_loop_proof(
+                        model,
+                        &protocol_subject,
+                        ra,
+                        loop_proof_target,
+                    )
+                    .map_err(built)?
+                    .with_max_live_instances(live_instances),
                 )?,
             };
             Ok((settlement, Vec::new()))
@@ -1573,8 +1603,42 @@ impl ProtocolReplay<'_> {
             (CounterexampleKind::Formula, None) => {
                 return Err(fault("formula-counterexample-names-a-clause"))
             }
+            (CounterexampleKind::LoopProof(claimed), _) => {
+                let Some(position) = positions.last() else {
+                    return Err(fault("loop-proof-prefix-has-final-position"));
+                };
+                let reproduced =
+                    system
+                        .loop_proof_violation(&position.state)
+                        .is_some_and(|violation| {
+                            violation.repeat.0 == claimed.repeat
+                                && loop_proof_failure(violation.failure) == Some(claimed.failure)
+                        });
+                if reproduced {
+                    ModelTraceSettlement::Reproduced {
+                        value: ModelTraceValue::Truth(false),
+                        trace_position: payload.trace_position(),
+                    }
+                } else {
+                    disagrees(Category::Success)
+                }
+            }
         })
     }
+}
+
+fn loop_proof_failure(
+    failure: fsl_eval::simulation::protocol::ProtocolLoopProofFailure,
+) -> Option<crate::model_check::counterexample::LoopProofFailure> {
+    use crate::model_check::counterexample::LoopProofFailure as Replayed;
+    use fsl_eval::simulation::protocol::ProtocolLoopProofFailure as Evaluated;
+    Some(match failure {
+        Evaluated::InvariantFalse => Replayed::InvariantFalse,
+        Evaluated::Undefined => Replayed::Undefined,
+        Evaluated::VariantDidNotDecrease => Replayed::VariantDidNotDecrease,
+        Evaluated::VariantBelowFloor => Replayed::VariantBelowFloor,
+        Evaluated::EvaluationIncomplete | Evaluated::EvaluationRefused => return None,
+    })
 }
 
 /// The recompiled package and its library name.
@@ -1728,6 +1792,52 @@ fn resolve_item<'p, T: SubjectTransition>(
             expected_key: Box::new(expected_key),
         })
     };
+    if let CounterexampleKind::LoopProof(proof) = &envelope.family_payload().kind {
+        let DerivedAnchors::Protocol(name) = anchors else {
+            return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
+                clause_node: envelope.clause_node().clone(),
+            }));
+        };
+        let Some(clause_node) = package
+            .graph()
+            .protocol_node_keys(name)
+            .and_then(|keys| keys.clause.clone())
+        else {
+            return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
+                clause_node: envelope.clause_node().clone(),
+            }));
+        };
+        let valid_repeat = package.graph().protocol(name).is_some_and(|protocol| {
+            protocol
+                .slots
+                .repeats
+                .iter()
+                .any(|repeat| repeat.node.0 == proof.repeat && repeat.loop_proof.is_some())
+        });
+        if !valid_repeat {
+            return Err(identity_mismatch(
+                clause_node.clone(),
+                OccurrenceKey::new(
+                    clause_node.clone(),
+                    filament_exact::Origin::new(
+                        filament_exact::Role::new("repeat"),
+                        u64::try_from(proof.repeat).unwrap_or(u64::MAX),
+                    ),
+                ),
+            ));
+        }
+        let expected = OccurrenceKey::new(
+            clause_node.clone(),
+            filament_exact::Origin::new(
+                filament_exact::Role::new("repeat"),
+                u64::try_from(proof.repeat).unwrap_or(u64::MAX),
+            ),
+        );
+        if envelope.clause_node() != &clause_node || envelope.occurrence_key() != &expected {
+            return Err(identity_mismatch(clause_node, expected));
+        }
+        return Ok(None);
+    }
     let found = package
         .graph()
         .temporal_clauses()
@@ -1783,7 +1893,9 @@ fn derived_items<T: SubjectTransition>(payload: &TemporalCounterexample<T>) -> (
                 && !matches!(evaluation.site.locus, UndefinedLocus::Atom(_));
             (derived, derived)
         }
-        CounterexampleKind::Formula | CounterexampleKind::TimeLock => (false, false),
+        CounterexampleKind::Formula
+        | CounterexampleKind::TimeLock
+        | CounterexampleKind::LoopProof(_) => (false, false),
     }
 }
 
@@ -2057,6 +2169,9 @@ fn settle(
             Ok((settlement, hints))
         }
         (CounterexampleKind::Formula, None) => Err(fault("formula-counterexample-names-a-clause")),
+        (CounterexampleKind::LoopProof(_), _) => {
+            Err(fault("loop-proof-replay-requires-repeat-item"))
+        }
     }
 }
 

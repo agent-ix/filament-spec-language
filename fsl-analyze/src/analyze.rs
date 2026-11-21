@@ -2196,7 +2196,8 @@ fn undefined_cause(
         CounterexampleKind::Formula
         | CounterexampleKind::Deadlock
         | CounterexampleKind::Race(_)
-        | CounterexampleKind::TimeLock => None,
+        | CounterexampleKind::TimeLock
+        | CounterexampleKind::LoopProof(_) => None,
     }
 }
 

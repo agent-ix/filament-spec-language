@@ -15,7 +15,7 @@ use crate::simulation::model::{ModelFinding, ModelSimState, ModelSystem, Termina
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::protocol::{
     AccessRecord, BlockedThread, DataRace, ProtocolFairness, ProtocolFairnessError,
-    ProtocolTransition,
+    ProtocolLoopProofViolation, ProtocolTransition,
 };
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
@@ -107,6 +107,15 @@ pub enum ConstraintError {
 pub trait SubjectSystem:
     TransitionSystem<Finding = ModelFinding, State: Clone, TransitionId: SubjectTransition>
 {
+    /// A target-specific loop-proof violation encoded in `state`, if this
+    /// subject is an FR-730 proof-product run.
+    fn loop_proof_violation<'s>(
+        &self,
+        _state: &'s Self::State,
+    ) -> Option<&'s ProtocolLoopProofViolation> {
+        None
+    }
+
     /// FR-101's complete RFC 8785 canonical state-key bytes for `state`.
     ///
     /// # Errors

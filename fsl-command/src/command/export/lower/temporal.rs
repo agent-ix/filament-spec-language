@@ -69,6 +69,12 @@ pub(super) enum Tf {
     Timed(Box<super::dense::Window>),
 }
 
+/// The checked node and operands corresponding to a use in the original formula.
+pub(super) struct FormulaSite {
+    position: usize,
+    operands: Vec<usize>,
+}
+
 /// One fairness constraint of a clause, as read from the package.
 pub(super) struct FairRead {
     pub(super) strong: bool,
@@ -92,6 +98,7 @@ pub(super) struct ClauseRead {
     /// The `over` binder node.
     pub(super) over: usize,
     pub(super) tf: Tf,
+    pub(super) formula_sites: Vec<FormulaSite>,
     /// The first future operator the clause's TLA+ text has no deterministic
     /// monitor for, when one exists.
     pub(super) refuse_at: Option<usize>,
@@ -109,6 +116,7 @@ pub(super) struct ClauseLow {
     pub(super) object: usize,
     pub(super) binder: String,
     pub(super) tf: Tf,
+    pub(super) formula_sites: Vec<FormulaSite>,
     /// The node a clause without a deterministic monitor is refused at.
     pub(super) refuse_at: Option<usize>,
     /// The FR-812 definedness conditions of the atoms, which `ok_<clause>`
@@ -438,6 +446,19 @@ pub(super) fn read(
         .collect::<Lower<Vec<_>>>()?;
     let binder = super::parameter_name(graph, over)
         .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder has no name"))?;
+    let formula_sites = if target == Target::Tla && timed_root.is_none() {
+        view.formula_graph()
+            .iter()
+            .map(|usage| {
+                Ok(FormulaSite {
+                    position: at_node(graph, usage.node)?,
+                    operands: usage.operands.clone(),
+                })
+            })
+            .collect::<Lower<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
     Ok(ClauseRead {
         name: name.to_owned(),
         position,
@@ -446,6 +467,7 @@ pub(super) fn read(
         binder: mangle("p_", &binder),
         over,
         tf,
+        formula_sites,
         refuse_at,
         atoms,
         fairness: super::fairness_of(graph, position)?,

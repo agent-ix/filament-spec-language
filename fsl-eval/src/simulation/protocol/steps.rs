@@ -777,7 +777,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     /// Settle the thread `path` of instance `ordinal` of `next` from
     /// `cursor` (FO-1), setting its rest point and, at the end of a branch
     /// body, its disposition. `false`, with the finding pushed, when a guard
-    /// is undecided: the step is not taken.
+    /// is undecided: the step is not taken, unless it reached a loop-proof
+    /// failure that must remain available to the proof checker and replay.
     pub(super) fn place(
         &self,
         next: &mut ProtocolState<M>,
@@ -787,13 +788,22 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         findings: &mut Vec<ModelFinding>,
     ) -> Result<bool, ExpansionStop> {
         let ProtocolState {
-            model, instances, ..
+            model,
+            instances,
+            initial_findings,
+            ..
         } = next;
         let instance = instances
             .get_mut(&ordinal)
             .ok_or_else(|| ProtocolRefusal::fault("a-stepped-instance-is-live"))?;
         match self.settle(instance, path, cursor, model)? {
             Settled::Undecided(finding) => {
+                if instance.loop_proof_violation.is_some() {
+                    // Report the undecided guard at the reached state, so it
+                    // cannot hide the proof failure by rejecting this step.
+                    initial_findings.push(*finding);
+                    return Ok(true);
+                }
                 findings.push(*finding);
                 Ok(false)
             }

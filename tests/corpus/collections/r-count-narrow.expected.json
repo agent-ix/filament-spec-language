@@ -1,1 +1,1 @@
-{"verb":"run","exit_code":20,"category":"refusal","last_stage":"S6a","code":"integer_out_of_domain","cause":"outside-domain","flips_with":"QSL-2003"}
+{"verb":"run","exit_code":20,"category":"refusal","last_stage":"S3","code":"undefined_expression","cause":"unproved-range"}

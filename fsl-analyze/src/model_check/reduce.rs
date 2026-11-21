@@ -61,6 +61,9 @@ impl TableForm {
             ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => {
                 return Some(Self::DeadlockFreedom)
             }
+            ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
+                return Some(Self::ReachableInvariant)
+            }
         };
         let interval = clause
             .operators()

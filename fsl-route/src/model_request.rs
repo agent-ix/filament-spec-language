@@ -250,7 +250,13 @@ impl<S: Clone + Eq> ModelRequest<S> {
             for derived in derived_kinds(&reading) {
                 let kind = derived.item_kind();
                 let property_form = derived.property_form();
-                let claim = match reading.anchor() {
+                let anchored = match derived.repeat_node() {
+                    Some(repeat) => reading
+                        .protocol_loop_anchor(repeat)
+                        .ok_or(crate::deadlock::NoAnchor::NoProtocolProfile),
+                    None => reading.anchor(),
+                };
+                let claim = match anchored {
                     Ok(claim) => claim,
                     Err(cause) => {
                         unanchored.push(UnanchoredItem {
@@ -322,7 +328,22 @@ fn derived_kinds(reading: &SubjectReading) -> Vec<Derived> {
             reading.timed().then_some(Derived::TimeLock),
         ],
     };
-    kinds.into_iter().flatten().collect()
+    let mut derived = kinds.into_iter().flatten().collect::<Vec<_>>();
+    if let Some(models) = reading.protocol_models() {
+        for repeat in reading.protocol_loop_proofs() {
+            derived.push(Derived::LoopInvariant {
+                repeat: *repeat,
+                models: models.to_vec(),
+            });
+            if reading.protocol_loop_termination_required(*repeat) {
+                derived.push(Derived::LoopTermination {
+                    repeat: *repeat,
+                    models: models.to_vec(),
+                });
+            }
+        }
+    }
+    derived
 }
 
 /// A derived item the writer adds (FR-124, FR-232, FR-224), in FR-368's
@@ -335,6 +356,16 @@ enum Derived {
     TimeLock,
     /// Over the protocol subject's resolved models.
     Race(Vec<(String, MemoryModelName)>),
+    /// One protocol repeat's invariant obligation.
+    LoopInvariant {
+        repeat: fsl_semantics::check::ProtocolNodeId,
+        models: Vec<(String, MemoryModelName)>,
+    },
+    /// One protocol repeat's termination obligation.
+    LoopTermination {
+        repeat: fsl_semantics::check::ProtocolNodeId,
+        models: Vec<(String, MemoryModelName)>,
+    },
 }
 
 impl Derived {
@@ -343,6 +374,8 @@ impl Derived {
             Self::Deadlock | Self::ProtocolDeadlock(_) => ItemKind::DeadlockFreedom,
             Self::TimeLock => ItemKind::TimeLockFreedom,
             Self::Race(_) => ItemKind::RaceFreedom,
+            Self::LoopInvariant { .. } => ItemKind::LoopInvariant,
+            Self::LoopTermination { .. } => ItemKind::LoopTermination,
         }
     }
 
@@ -355,6 +388,12 @@ impl Derived {
             Self::ProtocolDeadlock(models) => ObligationKind::ProtocolDeadlockFreedom { models },
             Self::TimeLock => ObligationKind::TimeLockFreedom,
             Self::Race(models) => ObligationKind::RaceFreedom { models },
+            Self::LoopInvariant { repeat, models } => {
+                ObligationKind::ProtocolLoopInvariant { repeat, models }
+            }
+            Self::LoopTermination { repeat, models } => {
+                ObligationKind::ProtocolLoopTermination { repeat, models }
+            }
         }
     }
 
@@ -364,10 +403,21 @@ impl Derived {
     /// and has none.
     const fn property_form(&self) -> Option<PropertyForm> {
         match self {
-            Self::Deadlock | Self::ProtocolDeadlock(_) | Self::Race(_) => {
-                Some(PropertyForm::ReachableInvariant)
-            }
+            Self::Deadlock
+            | Self::ProtocolDeadlock(_)
+            | Self::Race(_)
+            | Self::LoopInvariant { .. }
+            | Self::LoopTermination { .. } => Some(PropertyForm::ReachableInvariant),
             Self::TimeLock => None,
+        }
+    }
+
+    fn repeat_node(&self) -> Option<fsl_semantics::check::ProtocolNodeId> {
+        match self {
+            Self::LoopInvariant { repeat, .. } | Self::LoopTermination { repeat, .. } => {
+                Some(*repeat)
+            }
+            Self::Deadlock | Self::ProtocolDeadlock(_) | Self::TimeLock | Self::Race(_) => None,
         }
     }
 }

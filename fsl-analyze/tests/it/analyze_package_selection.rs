@@ -954,6 +954,40 @@ fn a_pending_package_family_refuses_typed_naming_it() {
     }
 }
 
+/// FR-730 loop items run over checked source; until the package contract
+/// admits their item kinds, either spelling refuses the entire package
+/// request as unsupported, before resolving or running any claim.
+#[trace("TC-2022", "FR-730", "FR-850", "FR-940")]
+#[test]
+fn package_loop_proof_kinds_refuse_typed_unsupported() {
+    let ws = Workspace::new("package-loop-proof-wire");
+    let (mut members, _) = package_request(&ws, &bounded(), json!([]));
+    for kind in ["loop-invariant", "loop-termination"] {
+        for claim in [json!("Bounded"), json!("test/counter"), Value::Null] {
+            members["items"] = json!([
+                {"claim": "Bounded"},
+                {"claim": claim, "temporal": {"item_kind": kind}}
+            ]);
+            let run = analyze_members(&ws, "analyze-loop.json", &members);
+            let diagnostic = first_diagnostic(&run);
+            assert_eq!(run.exit, 21, "{}", run.document());
+            assert_eq!(diagnostic["code"], "unsupported_construct", "{diagnostic}");
+            assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+            assert!(
+                diagnostic["message"].as_str().is_some_and(
+                    |message| message.contains(&format!("items[1] names the {kind} family"))
+                ),
+                "{diagnostic}"
+            );
+            assert_eq!(
+                run.document()["items"],
+                json!([]),
+                "the earlier claim must not run"
+            );
+        }
+    }
+}
+
 /// FR-850-AC-9 (TC-2987): on the package route a derived item names its
 /// model by the package identity its model selection records; the source
 /// alias `M` settles that item `invalid-request` `model-alias` naming the

@@ -81,11 +81,6 @@ const CLAUSES: &[(&str, &str)] = &[
         "MappedAll",
         "forall(n in map(m in ints(sequence[0, self.versionNumber]): m + 1): n < 500)",
     ),
-    (
-        "RefusedDomain",
-        "forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): \
-         n < 500)",
-    ),
     ("FloatOrder", "fl(ONE) < fl(TWO)"),
     ("FloatNot", "not (fl(ONE) < fl(TWO))"),
     ("FloatLet", "let k = 500 in fl(ONE) < fl(TWO)"),
@@ -153,18 +148,18 @@ fn tc_3121_unit_text() -> String {
             !line.starts_with("invariant ")
                 || line.starts_with("invariant AllBelow ")
                 || line.starts_with("invariant NotAllBelow ")
-                || line.starts_with("invariant RefusedDomain ")
                 || line.starts_with("invariant MatchesParent ")
                 || line.starts_with("invariant AtLeastParent ")
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let direct_refusal = "forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): n < 500)";
-    let function_refusal = "forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500)";
-    unit = unit.replace(direct_refusal, function_refusal);
     unit.push_str(
         "\nfunction z using v(x: Integer): Int[0, 0] pure { \
          count<Zero>(m in ints(sequence[x]): m > 0) }\n",
+    );
+    unit.push_str(
+        "invariant RefusedDomain using v on Config::ConfigVersion at current { \
+         forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500) }\n",
     );
     unit
 }
@@ -2953,22 +2948,59 @@ fn tc_743_the_separation_check_names_its_failing_step() {
         assert_eq!(check(&unit, "AllBelow", failing, 1_000_000), unmet(step));
     }
 
-    // A domain refused on `high`: `count<Zero>` of one element.
-    let refused = SeparatingWitnessRecord {
-        quantifier: Some(occurrence(&unit, "RefusedDomain", &[], Operator::Quantify)),
-        ..record.clone()
-    };
-    let SeparationOutcome::Failed(SeparationStep::Domain, SeparationReason::Refused(refusal)) =
-        check(&unit, "RefusedDomain", &refused, 1_000_000)
-    else {
-        panic!("a refused domain fails step 2 with its refusal record");
-    };
-    assert_eq!(refusal.code, "integer_out_of_domain");
-
+    assert_count_refusal_fails_the_domain_step();
     assert_eq!(
         check(&unit, "AllBelow", &record, 0),
         SeparationOutcome::Exhausted
     );
+}
+
+/// A kernel function's refused count retains the separation domain failure.
+#[trace("TC-743", "FR-268-AC-3")]
+#[test]
+fn count_refusal_in_a_called_kernel_function_fails_the_domain_step() {
+    assert_count_refusal_fails_the_domain_step();
+}
+
+fn assert_count_refusal_fails_the_domain_step() {
+    let (base, packages) = config_version_unit_and_packages();
+    let text = base + "type Zero = Int[0, 0];\n\
+        function z using v(x: Integer): Zero pure { count<Zero>(m in ints(sequence[x]): m > 0) }\n\
+        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
+        invariant RefusedDomain using v on Config::ConfigVersion at current { forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500) }\n";
+    let compiled = crate::spine::lifecycle::compose_in_mode(
+        source(),
+        "witness.native",
+        text.as_bytes(),
+        &packages,
+        &DependencyInput::default(),
+        SpineLimits::default(),
+        crate::spine::lifecycle::ComposeModes {
+            check_mode: Some(CheckMode::Linked),
+            function_modes: &BTreeMap::from([("z".to_owned(), CheckMode::Kernel)]),
+        },
+    )
+    .expect("only the called function's count needs kernel checking");
+    let unit = Unit {
+        bytes: text.into_bytes(),
+        domain_document: config_version_domain_document(),
+        compiled,
+    };
+    let refused = built_record(
+        &unit,
+        "RefusedDomain",
+        &[],
+        &[0, 0],
+        integer(600),
+        1,
+        Snapshot::High,
+    );
+    let SeparationOutcome::Failed(SeparationStep::Domain, SeparationReason::Refused(refusal)) =
+        check(&unit, "RefusedDomain", &refused, 1_000_000)
+    else {
+        panic!("a refused count must fail separation step 2 with its refusal record");
+    };
+    assert_eq!(refusal.code, "integer_out_of_domain");
 }
 
 /// TC-744 step 2 (FR-269-AC-2): an `undefined` step evaluation maps to
