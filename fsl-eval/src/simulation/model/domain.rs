@@ -1728,7 +1728,16 @@ mod tests {
             .object_reference(owner_type, "c2")
             .expect("second owner");
         let references = [c1.clone(), c2.clone()];
-        let value_type = ValueType::Reference(fsl_semantics::check::clock_reference_target());
+        let target = graph
+            .scope()
+            .types()
+            .object_types()
+            .find(|declaration| {
+                fsl_semantics::model::clock_reference::is_clock_type(&declaration.key())
+            })
+            .expect("checked native clock reference target")
+            .key();
+        let value_type = ValueType::Reference(target);
         assert!(
             Domain::of_bounded(
                 &value_type,
@@ -1758,9 +1767,13 @@ mod tests {
     #[trace("TC-3084", "FR-1040-AC-8")]
     #[test]
     fn unauthenticated_clock_reference_domains_refuse_nested_carriers() {
-        use filament_semantic_value::declaration::FieldDeclaration;
+        use filament_semantic_value::declaration::{FieldDeclaration, ObjectTypeDeclaration};
 
-        let clock = ValueType::Reference(fsl_semantics::check::clock_reference_target());
+        let target = filament_exact::EffectiveId::new(
+            None,
+            filament_exact::OriginalDeclarationKey::new("filament/native", "Clock"),
+        );
+        let clock = ValueType::Reference(target.clone());
         let record = crate::test_ids::node_key([21]);
         let tuple = crate::test_ids::node_key([22]);
         let union = crate::test_ids::node_key([23]);
@@ -1794,7 +1807,11 @@ mod tests {
                     ]),
                 ),
             ],
-            [],
+            [ObjectTypeDeclaration::new(
+                target,
+                "ClockReference",
+                Vec::new(),
+            )],
         )
         .expect("carrier declarations admit");
         let sequence = ValueType::collection(CollectionType::new(
