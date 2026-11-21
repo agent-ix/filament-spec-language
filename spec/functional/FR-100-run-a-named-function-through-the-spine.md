@@ -336,6 +336,9 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   - `snapshot`: optional, the file of one current
     `filament.state.snapshot/v1` document whose objects and populations are
     the call's object world (FR-650).
+  - `relationships`: optional, the closed relationship-correlation selection
+    specified by FR-1045. When present, it requires `snapshot`; FR-1045 owns
+    its eight members and all nested wire forms.
   - `accounting`: optional, a closed object whose members are any subset of
     the ten `filament.value.accounting/v1` counter names; each value is a JSON
     integer from 0 to 18446744073709551615 (`u64::MAX`). An omitted object
@@ -373,10 +376,17 @@ For a call that reaches S6a, `command`'s outcome carries one
 `spine-run-result/1` JSON document as its result document and no refusal
 envelope.
 
+When FR-1045 relationship admission is selected, its typed `Incomplete` or
+`Refused` result also carries one `spine-run-result/1` document even though
+S6a is not reached. This is the specific pre-S6a result-document exception;
+the document has no stage member. Request-shape, Producer-reader and
+snapshot-reference refusals remain command-error envelopes as specified below.
+
 `spine-run-result/1` is `command`'s result document for a `1-draft` run. The
 outcome document of the `execute` operation is FR-286's `filament-outcome/1`,
 whose `result` member carries the completed value, undefined reason or
-exhausted limit this document's `outcome` member carries. Its members are:
+exhausted limit or typed incomplete reasons this document's `outcome` member
+carries. FR-286 preserves an incomplete `reasons` array unchanged. Its members are:
 
 - `format`: `"spine-run-result/1"`.
 - `source`: the program source as native-run-result/1 renders one: its two
@@ -392,8 +402,26 @@ exhausted limit this document's `outcome` member carries. Its members are:
   - `{"kind": "refused", ...}`, with the members the refusal table below
     states;
   - `{"kind": "undefined", "reason": "<reason>"}`;
-  - `{"kind": "incomplete", "limit": "<accounting counter>"}`, the
-    exhausted counter's `filament.value.accounting/v1` member name.
+  - `{"kind": "incomplete", "limit": "<bound>"}`, the exhausted
+    `filament.value.accounting/v1` counter name or the observation admission
+    bound name (`max_records`, `max_members`, `max_relationships` or
+    `max_required_relationships`); or
+  - `{"kind": "incomplete", "reasons": [R, ...]}`, where each `R` is a
+    typed incomplete reason with `code` and, when it has a payload, `fields`.
+    The `fields` object maps field names to text. `missing-valuation` has
+    `record`, the exact record identity text; `missing-membership`
+    and `missing-closure` have no fields; `missing-relationship` and
+    `incomplete-relationship-extent` have `required`, the UTF-8 canonical JSON
+    text of the complete required slot, serialized by the canonical JSON
+    writer with fields in order
+    `declaration_identity`, `authority`, `interface_version`, `source`,
+    `target`. `authority` has `bundle_identity`, `bundle_revision`
+    (`namespace`, then `value`) and `digest` (`label`, then `value`). Each
+    subject has `authority`, `subject_kind`, then
+    `authority_local_object_identity`. The canonical slot JSON uses lowercase-hex bytes
+    for opaque identities and preserves source before target. These two
+    incomplete forms are mutually exclusive: resource exhaustion uses
+    `limit`; typed admission incompleteness uses `reasons`.
 
 The command renders every S6a outcome through one total mapping to this
 document and an FR-301 exit status. Each outcome's category is its
@@ -401,6 +429,16 @@ ADR-013 O-16 category, except the kernel `Refusal::CheckedInvariant`, which
 O-16 lists as a refusal and which is an internal failure by
 [FR-096](FR-096-stage-limits-refusal-records-and-readers-carry-a-locus.md)
 (ADR-013 T-4 `InternalFault`).
+
+Before S6a, a selected FR-1045 relationship admission maps its outcome through
+this additional total mapping:
+
+| Admission outcome | `outcome` | Exit |
+|---|---|---|
+| `AdmissionOutcome::Available` | Continue into S6a; use the S6a mapping below. | S6a outcome exit. |
+| `AdmissionOutcome::Incomplete { reasons }` | `incomplete` with FR-100's `reasons` array, preserving each reason code and fields. | 22 |
+| `AdmissionOutcome::Refused { cause: ResourceLimit { limit } }` | `incomplete` with `limit` equal to the exact FR-1045 bound name. | 22 |
+| `AdmissionOutcome::Refused { cause }` for every other cause | `refused` with FR-1045's exact `code`, `cause` and text `fields`. | 20 |
 
 | S6a outcome | `outcome` | Exit |
 |-------------|-----------|------|
@@ -521,7 +559,8 @@ path exits 30, FR-285's exit code for internal failure.
 
 ### Refusals before S6a
 
-Every refusal before S6a carries no result document. It carries the
+Every refusal before S6a, except the typed FR-1045 resolver outcomes above,
+carries no result document. It carries the
 command-error envelope (`native-run-result/1` until the change that lands FR-100's clause runner (FR-312's reader plus `run_clause`),
 FR-267's `native-run-result/2` from it) as its refusal envelope, holding a stage, a
 catalog code, a `message` and a `details` object, and
@@ -535,6 +574,9 @@ exits with that code's exit status:
 | A clause-run request carrying `extraction` in a build without `quire-extraction` | `request` | `invalid-request` | names `extraction` | 20 |
 | A feature-enabled extraction request with `call` instead of `clause`, a package selection, or a clause-binding count other than one | `request` | `extraction-requires-run`; `extraction-package-conflict`; `extraction-clause-count` | as FR-031, produced by the FR-312 request reader; `{"actual": n}` for clause count | 20 |
 | A `call` that is not the closed object above; an argument `value` that is neither a JSON object nor a JSON integer in the signed 64-bit range (FR-650), naming `/call/arguments/<index>/value`; an `accounting` member that is not the closed counter object above or has a value that is not a JSON integer from 0 to `u64::MAX` | `request` | `invalid-request` | as FR-026 | 20 |
+| A `call.relationships` selection without `call.snapshot`, or a missing, unknown or malformed member of the closed FR-1045 selection | `request` | `invalid-request` | the exact `/call/relationships` member path, before any selected-file read | 20 |
+| A malformed or invalid Producer interface 1.2 bundle in `call.relationships.producer` | `request` | `invalid-request` | `{"path":"/call/relationships/producer","cause":<Producer reader's exact cause text>}` | 20 |
+| An absent or malformed relationship instance `identity` on an entry that FR-1045's `relationship_identities` maps, or a snapshot relationship type with no declaration in the selected package, when FR-1045 is selected | `request` | `invalid-request` | `{"path":P}`, where `P` is the exact snapshot `identity` or `relationship` JSON Pointer; after snapshot read and before resolver evaluation | 20 |
 | A spine compile refusal | the refusing spine stage | that stage's cause code | as FR-027 | that code's |
 | A `function` that is empty, holds an empty segment or a segment that is not an identifier, has more than one segment, or names no function of the compiled package | `call` | `missing_declaration` | `{"function": "<the function string>"}` | 20 |
 | A function whose declared result type has no FSpec FR-181 form and is not a population (FR-650) | `call` | `unknown_required_feature`, cause `unsupported-feature` | `{"function": "<the function string>"}` | 21 |
@@ -722,6 +764,7 @@ apply to it.
 | FR-100-AC-21 | A completed function run's `spine-run-result/1` document carries no `axes` member. | Test (TC-1582) |
 | FR-100-AC-22 | A request whose `package` selects a checked package and which carries no `program` is admitted and runs its `call` from the package, the edition read from the package's `lock`; a request carrying neither `program` nor `package` refuses `invalid-request` at stage `request` naming `program`, exit 20, and one carrying `package` and `integer_division` refuses `invalid-request` naming `integer_division` before the package file is opened. | Test (TC-3019) |
 | FR-100-AC-23 | A package request admits the optional top-level `sources` array under FR-1039's caller source contract. The same member beside `program`, both as `[]` and as a non-empty valid array naming an unavailable file, refuses `invalid-request` at stage `request`, exit 20, naming `/request/sources`, before any file is opened. A source request without the member retains its existing compilation sources and outcomes. | Test |
+| FR-100-AC-24 | A correlation incomplete result writes `outcome` `{"kind":"incomplete","reasons":[...]}` with each typed reason's exact code and fields; a missing required relationship field is the canonical slot JSON text, a missing valuation field is the exact record identity text, and a resource-limit incomplete keeps the existing `limit` form without `reasons`. | Test (`tests/it/native_run_relationships.rs::resolver_incomplete_reasons_preserve_typed_payloads`) |
 
 The typed-call acceptance criteria supplement all existing scalar oracles;
 FR-100-AC-13 is the QSL-656 accounting-object criterion.

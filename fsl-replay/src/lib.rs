@@ -171,8 +171,10 @@ pub use certificate::closure::{
     ClosureRefusal, ProductStateRef, ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 pub use certificate::product::{
-    check_product_closure, product_certificate, product_state_key, HyperProductMember,
-    ProductClosureCertificate, ProductClosureRefusal, ProductClosureRequest, ProductEvidence,
+    check_product_closure, product_certificate, product_state_key, HyperExecutionEdges,
+    HyperProductMember, HyperSubjectClosure, HyperTransitionEdge, HyperTransitionTuple,
+    HyperTupleStop, ProductClosure, ProductClosureCertificate, ProductClosureCheck,
+    ProductClosureClause, ProductClosureRefusal, ProductClosureRequest, ProductEvidence,
     ProductStateKey,
 };
 pub use certificate::scc::{Component, ComponentCertificate, ComponentWitness, ProofCertificate};
@@ -398,7 +400,7 @@ pub use refinement::{
     open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,
     step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
-    AssumptionTarget, CandidateFairState, CandidateFairStep, CandidateLivenessError, ConcreteStep,
+    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, CandidateLivenessError, ConcreteStep,
     EvalFailure, HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure,
     MappingRowRef, MappingUndetermined, ObjectKey, ObservationField, ObservationLabel,
     PairedAssumptionPath, PairedAssumptionStep, ProtocolAssumptionFairness,

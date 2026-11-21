@@ -111,9 +111,11 @@ fn a_package_hyper_item_does_not_fall_back_to_source() {
     let package = analyze(&path);
     let document = package.document();
     assert_ne!(package.exit, 0, "{document}");
-    let proved = document["items"]
-        .as_array()
-        .is_some_and(|items| items.iter().any(|item| item["record"]["result"] == "proved"));
+    let proved = document["items"].as_array().is_some_and(|items| {
+        items
+            .iter()
+            .any(|item| item["record"]["result"] == "proved")
+    });
     assert!(!proved, "{document}");
 }
 
@@ -243,24 +245,28 @@ fn analyze_hyper_outside_the_admitted_forms_is_a_typed_refusal() {
         run.item(0)["record"]["diagnostic"]["code"],
         "unsupported_construct"
     );
-    assert!(run.item(0)["counterexample"].is_null(), "{}", run.document());
+    assert!(
+        run.item(0)["counterexample"].is_null(),
+        "{}",
+        run.document()
+    );
 }
 
 /// FR-179 through `native-analyze/1`: a step relation over reachable
 /// transitions is checked by enumerating the tuples of its executions. Over
 /// the vault's `reset`, `h` is unchanged, so two resets from equal `h` agree
-/// on it, but without an accepted core certificate the relation settles
-/// `incomplete`; the two resets need not agree on
+/// on it, and the independently checked certificate settles it `proved`;
+/// the two resets need not agree on
 /// `l`, so that relation settles `refuted` with a replayed step-tuple
 /// counterexample.
-#[trace("TC-1591", "FR-179")]
+#[trace("TC-1591", "FR-179", "FR-182-AC-17", "FR-163-AC-10")]
 #[test]
 fn hyper_step_relation_through_analyze() {
     for (body, expected, exit) in [
         (
             "pre(x.self.h) = pre(y.self.h) implies x.self.h = y.self.h",
-            "incomplete",
-            22,
+            "proved",
+            0,
         ),
         ("x.self.l = y.self.l", "refuted", 10),
     ] {
@@ -279,19 +285,9 @@ fn hyper_step_relation_through_analyze() {
         ));
         assert_eq!(label(&run.item(0)), expected, "{}", run.document());
         assert_eq!(run.exit, exit, "{}", run.document());
-        if exit == 22 {
-            assert_eq!(
-                run.item(0)["record"]["cause"]["kind"],
-                "bounded-search-incomplete",
-                "{}",
-                run.document()
-            );
-            assert_eq!(
-                run.item(0)["record"]["cause"]["reason"],
-                "certificate-unchecked"
-            );
-            assert!(run.item(0)["record"]["certification"].is_null());
-            assert!(run.item(0)["certificate"].is_null());
+        if exit == 0 {
+            assert_eq!(run.item(0)["record"]["certification"], "certified");
+            assert_eq!(run.item(0)["certificate"]["checker"], "product-closure");
             assert!(run.item(0)["counterexample"].is_null());
         }
         if exit == 10 {
@@ -329,7 +325,12 @@ fn analyze_hyper_two_model_infinite_trace_proof_is_checked() {
     ));
     assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
     assert_eq!(run.exit, 0, "{}", run.document());
-    assert_eq!(run.item(0)["record"]["certification"], "certified", "{}", run.document());
+    assert_eq!(
+        run.item(0)["record"]["certification"],
+        "certified",
+        "{}",
+        run.document()
+    );
 }
 
 /// FR-173-AC-6 (HP-5) through `native-analyze/1`: under the event-position
@@ -358,7 +359,8 @@ fn analyze_event_position_single_existential_is_proved_or_trapped() {
         ));
         let item = run.item(0);
         assert_ne!(
-            item["record"]["diagnostic"]["cause"], "not-yet-implemented",
+            item["record"]["diagnostic"]["cause"],
+            "not-yet-implemented",
             "{}",
             run.document()
         );
@@ -465,5 +467,8 @@ fn a_stopped_event_position_search_names_the_limit_it_reached() {
         json!({"items": [{"claim": "Possible", "temporal": {"witness_samples": 0, "limits": {"max_states": 1}}}]}),
     ));
     let item = run.item(0);
-    assert_eq!(item["record"]["limit_reached"]["limit"], "max_states", "{item}");
+    assert_eq!(
+        item["record"]["limit_reached"]["limit"], "max_states",
+        "{item}"
+    );
 }

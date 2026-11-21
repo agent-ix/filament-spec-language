@@ -617,3 +617,44 @@ fn a_forged_step_level_locked_entry_that_diverges_is_a_bad_state() {
         rejected(CertificateRule::BadState, node(entry))
     );
 }
+
+/// FR-900-AC-2 with a hidden abstract field: the abstract clock guard of the
+/// step the concrete send maps to is applied through the hidden candidate's
+/// step rows, the half holds, and FR-245 recomputes the rows with its own
+/// `check_step` and accepts the certificate; an edit to the abstract clock
+/// is rejected.
+#[trace("TC-2538", "FR-900-AC-2")]
+#[test]
+fn a_hidden_field_timed_abstract_refinement_returns_a_replayable_certificate() {
+    let abstract_model =
+        renamed_package(&document(&["y"], &[("send", &["inflight"])]), "test/treq2");
+    let world = refining(
+        &abstract_model,
+        &treq(),
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASend2 using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 2 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let certificate = certified(&world);
+    assert_eq!(certificate.nodes[0].zone.dim(), 3);
+    assert_eq!(
+        verdict(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+
+    let mut altered = certificate.clone();
+    altered.nodes[certificate.initials[0]]
+        .zone
+        .reset(2, &Integer::one())
+        .expect("the auxiliary clock is a zone clock");
+    assert!(matches!(
+        verdict(&world, &altered),
+        ZoneCertificateVerdict::Rejected(_)
+    ));
+}

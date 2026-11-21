@@ -246,7 +246,14 @@ fn contains_boolean(value: &Value, expected: bool) -> bool {
 }
 
 #[test]
-#[trace("TC-2990", "FR-206-AC-13", "FSpec-TC-2019", "FSpec-FR-822-AC-5")]
+#[trace(
+    "TC-2990",
+    "FR-206-AC-13",
+    "FSpec-TC-2019",
+    "FSpec-FR-822-AC-3",
+    "FSpec-FR-822-AC-5",
+    "FSpec-FR-182-AC-7"
+)]
 fn an_observe_only_step_leaves_state_unchanged() {
     let graph = reachable(SOURCE);
     let mut recommends = 0_usize;
@@ -265,7 +272,14 @@ fn an_observe_only_step_leaves_state_unchanged() {
                 let recommendation = transition.recommendation().expect("typed recommendation");
                 assert_eq!(recommendation.node, "Main/Advise");
                 assert_eq!(recommendation.role, "Auditor");
-                assert_eq!(recommendation.operation, "step");
+                assert_eq!(recommendation.instance, 0);
+                assert!(recommendation.actor.is_none());
+                let operation: Value = serde_json::from_str(&recommendation.operation)
+                    .expect("canonical operation declaration identity");
+                assert_eq!(
+                    operation,
+                    json!({"package": tc1070::model::PACKAGE, "node": tc1070::model::id("Node/step")})
+                );
                 let receiver: Value = serde_json::from_str(&recommendation.receiver)
                     .expect("the recommendation receiver is canonical JSON");
                 assert_eq!(receiver["type"], "reference");
@@ -296,7 +310,14 @@ fn an_observe_only_step_leaves_state_unchanged() {
 /// FR-206-AC-13: an unobserved role can still apply a state-changing
 /// operation in the same protocol; the observe-only role's recommendation
 /// remains state-free.
-#[trace("TC-2990", "FR-206-AC-13", "FSpec-TC-2019", "FSpec-FR-822-AC-5")]
+#[trace(
+    "TC-2990",
+    "FR-206-AC-13",
+    "FSpec-TC-2019",
+    "FSpec-FR-822-AC-5",
+    "FSpec-FR-182-AC-6",
+    "FSpec-FR-182-AC-7"
+)]
 #[test]
 fn another_role_can_write_shared_state() {
     let mut document = tc1070::document();

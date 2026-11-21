@@ -570,7 +570,7 @@ pub(crate) struct TimedStateWire {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-struct TimedTransitionWire {
+pub(crate) struct TimedTransitionWire {
     #[serde(rename = "type")]
     kind: &'static str,
     operation: serde_json::Value,

@@ -100,6 +100,8 @@ pub(crate) struct ModelSpellings {
     primary: Option<RawSourceRef>,
     /// Each unit's model aliases, to their package's position in `packages`.
     units: BTreeMap<RawSourceRef, BTreeMap<String, usize>>,
+    /// Model aliases in each source unit's declaration order.
+    declaration_order: BTreeMap<RawSourceRef, Vec<String>>,
     /// Each unit's import aliases, which a model alias of another unit
     /// leaves to the unit.
     others: BTreeMap<RawSourceRef, BTreeSet<String>>,
@@ -267,6 +269,10 @@ impl ModelSpellings {
     /// `package`, or to no package when its selection did not admit.
     pub(crate) fn bind_model(&mut self, unit: &RawSourceRef, alias: &str, package: Option<usize>) {
         self.model_aliases.insert(alias.to_owned());
+        let order = self.declaration_order.entry(unit.clone()).or_default();
+        if !order.iter().any(|known| known == alias) {
+            order.push(alias.to_owned());
+        }
         if let Some(package) = package {
             self.units
                 .entry(unit.clone())
@@ -274,6 +280,14 @@ impl ModelSpellings {
                 .entry(alias.to_owned())
                 .or_insert(package);
         }
+    }
+
+    /// The model aliases declared in this source unit, in declaration order.
+    pub(crate) fn declared_aliases(&self, unit: Option<&RawSourceRef>) -> &[String] {
+        unit.or(self.primary.as_ref())
+            .and_then(|unit| self.declaration_order.get(unit))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     /// `unit` declares the import alias `alias`.

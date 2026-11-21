@@ -313,7 +313,15 @@ Snapshot, format `filament.state.snapshot/v1`:
   only for a relationship one of whose ends declares `ordered: true`, a
   `positions` object whose members are exactly the ordered ends, `source`
   and/or `target`, each a non-negative decimal integer string (FR-364
-  "Positions of an ordered end"). An instance links a source object to a
+  "Positions of an ordered end"). An instance MAY also carry `identity`, the
+  non-empty lowercase-hex spelling of its producer-supplied
+  `RelationshipIdentity` bytes, as reference identity bytes are encoded in
+  FSpec FR-181 and FR-480. The reader SHALL decode those bytes exactly, without
+  parsing, trimming, normalizing or deriving them. This member is optional for
+  ordinary snapshot admission. When a `call.relationships` selection reads the
+  instance as a candidate, `identity` SHALL be present and valid lowercase
+  hex; otherwise admission SHALL refuse `invalid-request` at that instance's
+  `identity` path, exit 20, before evaluation. An instance links a source object to a
   target object through the relationship; the entry's order and its
   instances' order carry no meaning (only `positions` order an ordered end),
   and a link between the same two objects listed twice is two instances. An
@@ -1011,7 +1019,11 @@ completeness.
    7. For each entry: admission SHALL decide FR-364's extent conditions 1 and 2
       at the entry: a `relationship` that names no navigation relationship of
       the package (a connection and an unknown identity included) refuses
-      `invalid_runtime_input`/`wrong-role-mapping`, and a second entry for one
+      `invalid_runtime_input`/`wrong-role-mapping`, except that when the
+      `call.relationships` correlation selection is active, an unknown
+      relationship declaration refuses `invalid-request` at that reference's
+      exact member path after snapshot read and before resolver evaluation. A
+      second entry for one
       relationship refuses `invalid_runtime_input`/`conflicting-identity` at
       the later entry.
    8. For each instance of an entry, in document order: if a member of the
@@ -1359,6 +1371,8 @@ completeness.
 | FR-106-AC-71 | Over FSpec TC-2054's `test/refunds` unit and a pre snapshot holding `Staff` objects `s1` (`badge` `1`) and `s2`, an invocation of `Order.note` with `parameters` `{firstApprover: s1, secondApprover: {"absent": {}}}`, one with `secondApprover` `{"present": <reference to s2>}`, and one omitting `secondApprover` are admitted, the third with `secondApprover` absent, so `NoteBy` evaluates false for the first and third and true for the second. The same invocation with `secondApprover` a bare `{"reference": ...}` refuses `invalid_runtime_input`/`wrong-value-kind` at `parameters.secondApprover`, and one omitting `firstApprover` refuses `invalid_runtime_input`/`missing-member` at `parameters.firstApprover`. | Test (TC-3040) |
 | FR-106-AC-72 | Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md) step 7's dense-time `Call` fixture, a raw snapshot storing the actual per-instance place identities of `c1.x` and `c2.x` in `r: Reference<Clock>`, `maybe: Option<Reference<Clock>>` and `refs: Sequence<Reference<Clock>>` admits, retaining those identities as data, the optional presence and the sequence order. Neither place identity is an object key, and neither target is resolved as a population member. Reading the admitted fields distinguishes `c1.x` from `c2.x`; the required evaluation of the stored `self.r` under FR-1040-AC-3 and FR-1040-AC-8 remains in force. | Test (TC-464) |
 | FR-106-AC-73 | Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md) step 8's model variant without `x`, storing the formerly declared `c1.x` identity in `r`, in the present value of `maybe`, or at element 0 of `refs` refuses `dangling_reference`/`absent-target-in-complete-population`, naming the snapshot, owner population `calls`, object `c1`, the affected field and nested value path, and that undeclared target identity, with no admitted observation or truth value. A target's clock-reference static type or native Clock target alone does not make it declared. | Test (TC-464) |
+| FR-106-AC-74 | A relationship instance with producer-supplied identity bytes written in lowercase hex preserves the exact decoded bytes as `RelationshipIdentity`; ordinary snapshot admission accepts an instance without `identity`, but a `call.relationships` selection that reads the instance as a candidate (its entry is mapped by `relationship_identities`) with an absent, empty, non-string, uppercase, odd-length or invalid lowercase-hex identity refuses `invalid-request` at that instance's `identity` path after snapshot read and before resolver evaluation. | Test (`tests/it/native_run_relationships.rs::relationship_identity_is_optional_without_correlation`, `tests/it/native_run_relationships.rs::snapshot_relationship_identity_round_trips_exact_bytes`, `tests/it/native_run_relationships.rs::invalid_relationship_identity_refuses_after_snapshot_read`) |
+| FR-106-AC-75 | A relationship declaration absent from the selected package refuses `invalid-request` at its exact snapshot reference path after read and before resolver evaluation when `call.relationships` is selected; with no correlation selection the same reference keeps `invalid_runtime_input`/`wrong-role-mapping`. | Test (`tests/it/native_run_relationships.rs::unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read`, `tests/it/native_run_relationships.rs::unknown_relationship_type_without_correlation_keeps_wrong_role_mapping`) |
 
 ## Dependencies
 

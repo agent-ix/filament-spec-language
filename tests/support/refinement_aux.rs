@@ -290,6 +290,24 @@ impl Unit {
         abstract_operations: &[&str],
         contracts: &str,
     ) -> Self {
+        Self::hidden_fairness_model_over(
+            hidden_max,
+            hidden_initial,
+            abstract_operations,
+            (&["tick"], &[]),
+            contracts,
+        )
+    }
+
+    /// [`Self::hidden_fairness_model`] whose concrete subject has the named
+    /// operations, each modifying `concrete.1`.
+    pub fn hidden_fairness_model_over(
+        hidden_max: u32,
+        hidden_initial: i64,
+        abstract_operations: &[&str],
+        concrete: (&[&str], &[&str]),
+        contracts: &str,
+    ) -> Self {
         let model = |package: &'static str, abstract_side: bool| {
             let level = node(package, "Level");
             let bit = node(package, "Bit");
@@ -299,7 +317,11 @@ impl Unit {
                     .map(|name| operation(package, "M", name, &[], None, &["v", "h"]))
                     .collect()
             } else {
-                vec![operation(package, "M", "tick", &[], None, &[])]
+                concrete
+                    .0
+                    .iter()
+                    .map(|name| operation(package, "M", name, &[], None, concrete.1))
+                    .collect()
             };
             let object = if abstract_side {
                 object_type(
@@ -607,10 +629,16 @@ impl Unit {
     /// The unit's text: both models, the contracts and `body`.
     fn text(&self, packages: &fsl_semantics::model::intake::PackageInput, body: &str) -> String {
         let _ = packages;
+        let protocol = if body.contains("protocol ") {
+            "profile p = \"filament.protocol.finite-global/v1\";\n"
+        } else {
+            ""
+        };
         format!(
             "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n\
              profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+             {protocol}\
              model Spec = \"{}\";\n\
              model Impl = \"{}\";\n\
              {}{body}\n",
@@ -640,6 +668,17 @@ impl Unit {
         body: &str,
         mode: CheckMode,
     ) -> Result<CheckedGraph, Vec<Refused>> {
+        self.check_with_internals(body, mode, None)
+    }
+
+    /// The checked graph under `mode` with the compilation's protocol
+    /// refinement internals, or the located refusals.
+    pub fn check_with_internals(
+        &self,
+        body: &str,
+        mode: CheckMode,
+        internals: Option<Json>,
+    ) -> Result<CheckedGraph, Vec<Refused>> {
         let packages = self.packages();
         let text = self.text(&packages, body);
         let parsed = fsl_cst::parse(
@@ -668,8 +707,11 @@ impl Unit {
             models,
             Vec::new(),
         )
-        .expect("the unit assembles")
-        .with_unwritten_refinements();
+        .expect("the unit assembles");
+        let declarations = match internals {
+            Some(internals) => declarations.with_refinement_internals(internals),
+            None => declarations.with_unwritten_refinements(),
+        };
         let regions = declarations.regions();
         declarations
             .check(
@@ -710,6 +752,22 @@ impl Unit {
         let graph = self.check(body).unwrap_or_else(|refusals| {
             panic!("{body}: the unit checks: {refusals:?}");
         });
+        World::new(self, graph)
+    }
+
+    /// The world of the unit with `body`, whose abstract protocol's internal
+    /// nodes are named by `internals`.
+    pub fn world_with_internals(&self, body: &str, internals: Json) -> World<'_> {
+        let mode = if self.kernel {
+            CheckMode::Kernel
+        } else {
+            CheckMode::Linked
+        };
+        let graph = self
+            .check_with_internals(body, mode, Some(internals))
+            .unwrap_or_else(|refusals| {
+                panic!("{body}: the unit checks: {refusals:?}");
+            });
         World::new(self, graph)
     }
 
