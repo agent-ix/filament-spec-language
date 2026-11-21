@@ -946,3 +946,26 @@ fn the_source_map_regions_of_a_later_units_time_nodes_name_that_unit() {
     }
     assert!(checked >= 2, "the unit's time nodes were found");
 }
+
+/// QSL-2768: two objects each declare `time X dense unit ms`; the two
+/// declarations are equal in content but located apart, so one package emits
+/// and strictly reads, and each declaration keeps its own source occurrence.
+#[trace("TC-3012", "FR-740-AC-5")]
+#[test]
+fn two_time_declarations_of_equal_content_emit_as_one_checked_package() {
+    let package = check(
+        "object Config { n: Integer; operation step() modifies self.n; }\n\
+         object Order { n: Integer; operation poke() modifies self.n; }\n\
+         time Config dense unit ms;\n\
+         time Order dense unit ms;\n",
+    )
+    .unwrap_or_else(|refusals| panic!("S3 admits two time declarations: {refusals:?}"));
+    let (wire, _) = emitted_and_joined(&package);
+    let sources: Vec<&Value> = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter(|node| node["node_tag"] == "timed_model" && node["semantic_form"] == "time_source")
+        .collect();
+    assert!(!sources.is_empty(), "a time_source node is emitted");
+}
