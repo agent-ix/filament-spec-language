@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Metadata-only progress admission after a clause has settled.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::{canonical_order, AdmittedPosition, ClauseRefusal, ClauseState, ClauseTraceKind, Seen};
@@ -90,7 +92,16 @@ impl ClauseProgress {
                     position.stamp <= entry.watermark()
                         && opening_watermark.is_none_or(|watermark| position.stamp > watermark)
                 })
-                .count()
+                // FR-502 retains historical rows from partial assertions.
+                // Reordered sample indices may therefore occur at several
+                // stamps; they remain one logical position of the prefix.
+                // Snapshot identities keep their distinct stamps.
+                .map(|position| {
+                    let stamp = position.fingerprint.is_none().then_some(position.stamp);
+                    (position.identity, stamp)
+                })
+                .collect::<BTreeSet<_>>()
+                .len()
         });
         if self.first != 0 && self.first != u64::try_from(covered_count).unwrap_or(u64::MAX) {
             return Err(mismatch());

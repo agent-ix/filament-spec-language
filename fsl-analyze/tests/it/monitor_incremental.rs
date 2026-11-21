@@ -421,7 +421,19 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
     let cancel = Cancel::new();
     let mut last = None;
     let mut pending_checkpoint: Option<MonitorState> = None;
-    for (stamp, level) in [(0, 0), (2, 0), (5, 1), (7, 0)] {
+    let mut prior_partial_ledger = None;
+    let open = || MonitorOpen {
+        clauses: clauses(&["T"]),
+        kind: MonitorTraceKind::Timestamped,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: Some(stamped_binding()),
+        cover: None,
+        ledger: None,
+        packages: &world.packages,
+        sources: &world.sources,
+        temporal_selections: &world.selections,
+    };
+    for (stamp, level, watermark) in [(0, 0, 0), (2, 0, 2), (5, 1, 5), (7, 0, 5), (6, 0, 7)] {
         let observed = text(level);
         session
             .step(stamped(&observed, stamp), &cancel)
@@ -430,17 +442,6 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
             // The decisive observation has settled T, before G5 is asserted.
             // Its metadata-only ledger continuation survives a checkpoint.
             let checkpoint = session.checkpoint().expect("checkpoints after settlement");
-            let open = || MonitorOpen {
-                clauses: clauses(&["T"]),
-                kind: MonitorTraceKind::Timestamped,
-                lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
-                binding: Some(stamped_binding()),
-                cover: None,
-                ledger: None,
-                packages: &world.packages,
-                sources: &world.sources,
-                temporal_selections: &world.selections,
-            };
             for mutation in 0..5 {
                 let mut altered: serde_json::Value =
                     serde_json::from_slice(checkpoint.as_bytes()).unwrap();
@@ -511,9 +512,30 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         }
         last = Some(
             session
-                .assert_progress(progress(stamp), &cancel)
+                .assert_progress(progress(watermark), &cancel)
                 .expect("progress"),
         );
+        if stamp == 7 || stamp == 6 {
+            let checkpoint = session
+                .checkpoint()
+                .expect("checkpoints the partial-history ledger");
+            let resumed = MonitorSession::resume(
+                world.unit.package(),
+                &checkpoint,
+                open(),
+                &limits(DEFAULT_RETAINED_POSITIONS),
+                &cancel,
+            )
+            .expect("resumes the partial-history ledger");
+            if stamp == 7 {
+                prior_partial_ledger = resumed
+                    .finish(&cancel)
+                    .expect("reads the actual G5 ledger")
+                    .ledger;
+            } else {
+                session = resumed;
+            }
+        }
         if stamp == 2 {
             pending_checkpoint = Some(session.checkpoint().expect("checkpoints while pending"));
             let late = text(1);
@@ -601,12 +623,31 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         stamp: 7,
         order_key: None,
     });
+    observations.push(TimestampedObservation {
+        document: spine::sample_position(&text(0)),
+        stamp: 6,
+        order_key: None,
+    });
     *assertion = progress(7);
+    // FR-502 requires equality for the same request sequence, retaining
+    // facts from the earlier G5 request that already listed stamp 7.
+    let prior_partial_ledger = prior_partial_ledger.expect("the actual prior G5 ledger");
     let latest_batch = run_package_temporal(&PackageTemporalRequest {
         trace: &latest,
+        ledger: Some(&prior_partial_ledger),
         ..request
     });
     assert_eq!(outcome.ledger, latest_batch.ledger);
+    let ledger = outcome.ledger.expect("the session's latest ledger");
+    let (_, entry) = ledger
+        .entries()
+        .next()
+        .expect("the clause's ledger binding");
+    assert_eq!(
+        entry.covered().count(),
+        6,
+        "all historical facts remain across five observations"
+    );
 }
 
 /// FR-643 Order (TC-1667): a progress assertion that regresses the retained
