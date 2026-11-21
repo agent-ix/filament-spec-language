@@ -23,6 +23,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-866
     type: depends_on
+  - target: ix://agent-ix/filament-core-data/FR-095
+    type: references
 ---
 # FR-710: Author a domain package in an FSL model unit
 
@@ -192,6 +194,19 @@ without `open` has extent `closed`. The document's `contractVersion` is
 The compiled bytes SHALL be a function of the model unit's source bytes and
 source identity alone: compiling one source twice gives equal bytes.
 
+For an inline bounded Integer field type, the compiler SHALL generate the
+existing [FSpec FR-154](ix://agent-ix/filament-specification/FR-154)
+integer scalar-and-constraints value type and make the field's `typeRef`
+name it, using [FCD FR-095](ix://agent-ix/filament-core-data/FR-095)'s
+constrained-field identity `ix://<domain identity>/<Owner><Field>`, where
+`Owner` is the declaring type name verbatim and `Field` is the field's slug
+with its first character upper-cased. The generated definition and its
+bounds SHALL retain the model's source identity and the inline type's span
+from its type name through its closing `]`. A collision with an authored or
+another generated type identity SHALL refuse under the existing
+`ambiguous_declaration`/`ambiguous-name` rule, at that inline type span,
+with no document written.
+
 ### Systems declarations and endpoint qualifiers
 
 When compiling a `connection C p.outlet -> q.inlet;` or its `<->` form,
@@ -342,7 +357,7 @@ checked package (FR-810).
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-710-AC-1 | The model unit `domain "example/shop"; object Order identity (id) { id: Int[0, 999]; total: Int[0, 100]; operation pay(): Boolean modifies self.total; } population orders: Order;` parses, compiles to a document that FSpec FR-154 admits with no refusal, with one object type `ix://example/shop/Order` (fields `id`, `total` with multiplicity `[1, 1]` and an `origin` each), one operation `pay` with its frame, one closed population `orders` and exactly the `constructs` entries for the object type and population kinds. A unit with `model M = "example/shop";` supplied that model unit checks `invariant I using P on M::Order at current { self.total >= 0 }`. Compiling the model unit twice gives equal bytes. | Test (TC-1942) |
+| FR-710-AC-1 | The model unit `domain "example/shop"; object Order identity (id) { id: Int[0, 999]; total: Int[0, 100]; operation pay(): Boolean modifies self.total; } population orders: Order;` parses, compiles to a document that FSpec FR-154 admits with no refusal, with one object type `ix://example/shop/Order` (fields `id`, `total` with multiplicity `[1, 1]` and an `origin` each), one operation `pay` with its frame, one closed population `orders` and exactly the `constructs` entries for the `object_type`, `value_type` and `population` kinds. The fields' `typeRef`s name generated integer value-type definitions `ix://example/shop/OrderId` and `ix://example/shop/OrderTotal`, respectively, preserving inclusive domains `[0,999]` and `[0,100]`; those definitions and their bounds retain the model source identity and their respective inline type origins. Their used `value_type` kind has meaning `filament.meaning.model.value-type/v1`; these generated definitions preserve the authored inline types without adding authored declarations. A unit with `model M = "example/shop";` supplied that model unit checks `invariant I using P on M::Order at current { self.total >= 0 }`. Compiling the model unit twice gives equal bytes. | Test (TC-1942) |
 | FR-710-AC-2 | A model unit with `object Node { relationship next: Node [0, 1]; }` and `population nodes: Node;` compiles to a document whose `Node` declares the relationship `ix://example/graph/relationship/Node-next-Node` with its ends and multiplicity, FR-154 admits it, and `reaches(a, b, next)` checks and evaluates over a snapshot of `nodes`. | Test (TC-1942) |
 | FR-710-AC-3 | One model unit holding one declaration of every form in the grammar (object with relationship, contract clauses and invariant; alias, record, tuple, enum, union, option field and map; event; machine with states and a transition; process with a step; store; namespace; open and closed populations; dimension and unit; interface, part, port, connection and allocation) compiles to a document that FR-154 admits, with one node of each FR-208 meaning in the compilation table. | Test (TC-1942) |
 | FR-710-AC-4 | Each refuses with no document, at the model unit's span: `domain` with no string `invalid_syntax`/`unexpected-token` at `;`; `domain` after a `profile` declaration `invalid_syntax`/`unexpected-token` at `domain`; `relationship next: Ghost [0, 1];` `missing_declaration`/`missing-name` at `Ghost`; two objects `Order` `ambiguous_declaration`/`ambiguous-name` at the second; `domain "filament/native/x";` `invalid_model_binding`/`malformed-declaration` at the string; an operation on a `record` with FR-154's `unsupported_construct`/`declaration-form` at the operation. | Test (TC-1943) |
