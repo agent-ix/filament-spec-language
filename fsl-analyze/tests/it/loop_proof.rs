@@ -11,8 +11,8 @@ use fsl_analyze::analyze::{
 };
 use fsl_analyze::model_check::ProtocolCheckRequest;
 use fsl_replay::{
-    IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ProtocolCertificateRequest,
-    TerminalValue,
+    CounterexampleKind, IncompleteCause, LoopProofFailure, ModelCheckItem, ModelCheckLimit,
+    ModelCheckLimits, ProtocolCertificateRequest, TerminalValue,
 };
 use fsl_route::deadlock::{ObligationKind, ProtocolTemporalItem};
 use fsl_route::request::DerivedLimits;
@@ -54,7 +54,7 @@ fn two_loop_proofs_derive_four_items_once_and_bounded_repeat_derives_none() {
 
 /// FR-730 "Obligations": a repeat without a loop proof derives neither
 /// obligation.
-#[trace("TC-2022", "FR-730-AC-4")]
+#[trace("TC-2022", "FR-730")]
 #[test]
 fn a_repeat_without_a_variant_derives_no_loop_proof_items() {
     let run = format!(
@@ -156,6 +156,28 @@ fn analyze_loop(
     limits: &DerivedLimits,
 ) -> Vec<(ItemKind, TerminalValue, bool)> {
     let case = Case::new(body, &[initial]);
+    analyze_case(&case, limits, None)
+}
+
+fn analyze_case(
+    case: &Case,
+    limits: &DerivedLimits,
+    expected_failure: Option<(ItemKind, LoopProofFailure)>,
+) -> Vec<(ItemKind, TerminalValue, bool)> {
+    analyze_case_items(
+        case,
+        limits,
+        expected_failure,
+        &[ItemKind::LoopInvariant, ItemKind::LoopTermination],
+    )
+}
+
+fn analyze_case_items(
+    case: &Case,
+    limits: &DerivedLimits,
+    expected_failure: Option<(ItemKind, LoopProofFailure)>,
+    kinds: &[ItemKind],
+) -> Vec<(ItemKind, TerminalValue, bool)> {
     let protocol = case.checked.graph().protocol("P").expect("P");
     let occurrence = crate::model_settle::protocol_anchor(&case.checked, "P").1;
     let subject = case.subject("P");
@@ -177,7 +199,7 @@ fn analyze_loop(
     );
     let mut items = Vec::new();
     let mut indexes = Vec::new();
-    for kind in [ItemKind::LoopInvariant, ItemKind::LoopTermination] {
+    for &kind in kinds {
         let [(derived, obligation)] = &items_of_kind(&written, kind)[..] else {
             panic!("one {kind:?} item: {:?}", written.items());
         };
@@ -192,7 +214,7 @@ fn analyze_loop(
             _ => unreachable!(),
         };
         let occurrence = derived.occurrence().clone();
-        let case_ref = &case;
+        let case_ref = case;
         let item = ProtocolItem {
             request: ProtocolCheckRequest {
                 temporal_clock_selections: &[],
@@ -214,6 +236,17 @@ fn analyze_loop(
                 max_live_instances: None,
             },
             replay: Box::new(move |payload| {
+                let CounterexampleKind::LoopProof(proof) = &payload.kind else {
+                    panic!(
+                        "a loop-proof counterexample, not a guard failure: {:?}",
+                        payload.kind
+                    );
+                };
+                if let Some((expected_kind, failure)) = expected_failure {
+                    if kind == expected_kind {
+                        assert_eq!(proof.failure, failure);
+                    }
+                }
                 case_ref.replay_at_occurrence("P", payload.clone(), &[], occurrence)
             }),
         };
@@ -228,6 +261,11 @@ fn analyze_loop(
         &Cancel::new(),
     );
     let (terminals, counterexamples) = split_records(records, &case.checked);
+    assert_eq!(
+        terminals.len(),
+        kinds.len(),
+        "each requested loop item settles"
+    );
     terminals
         .iter()
         .map(|terminal| {
@@ -329,5 +367,199 @@ fn a_state_limit_leaves_both_loop_items_incomplete_naming_it() {
             "{kind:?}: {value:?}"
         );
         assert!(!replayed, "{kind:?}: unexpected counterexample");
+    }
+}
+
+fn assert_refuted(items: &[(ItemKind, TerminalValue, bool)], wanted: ItemKind) {
+    let (_, value, replayed) = items
+        .iter()
+        .find(|(kind, _, _)| *kind == wanted)
+        .expect("the loop item");
+    assert!(
+        matches!(value, TerminalValue::Refuted),
+        "{wanted:?}: {value:?}"
+    );
+    assert!(
+        *replayed,
+        "{wanted:?}: the loop-proof counterexample replays"
+    );
+}
+
+/// Tuple order uses the first unequal component, and consults later
+/// components when the earlier ones are equal.
+#[trace("TC-2022", "FR-730", "FR-218-AC-43")]
+#[test]
+fn tuple_variants_use_lexicographic_order_in_checker_and_replay() {
+    for (variant, proved) in [
+        ("Pair(got.left, 3 - got.left)", true),
+        ("Pair(0, got.left)", true),
+        ("Pair(3 - got.left, got.left)", false),
+        ("Pair(0, 3 - got.left)", false),
+    ] {
+        let body = format!(
+            "tuple Pair(Integer, Integer);\n{}",
+            loop_unit("true", variant, "got.left > 0", "dec")
+        );
+        let case = Case::new(&body, &[2]);
+        let items = analyze_case(
+            &case,
+            &DerivedLimits::default(),
+            Some((
+                ItemKind::LoopTermination,
+                LoopProofFailure::VariantDidNotDecrease,
+            )),
+        );
+        if proved {
+            for (kind, value, replayed) in items {
+                assert!(
+                    matches!(value, TerminalValue::Proved { .. }),
+                    "{variant}, {kind:?}: {value:?}"
+                );
+                assert!(!replayed);
+            }
+        } else {
+            assert_refuted(&items, ItemKind::LoopTermination);
+        }
+    }
+}
+
+/// A strictly decreasing negative first value still violates the scalar or
+/// tuple-element floor on a completed back edge.
+#[trace("TC-2022", "FR-730")]
+#[test]
+fn negative_first_decision_variants_refute_the_floor() {
+    for variant in ["got.left - 3", "Pair(got.left, got.left - 3)"] {
+        let body = format!(
+            "tuple Pair(Integer, Integer);\n{}",
+            loop_unit("true", variant, "got.left > 0", "dec")
+        );
+        let case = Case::new(&body, &[2]);
+        let items = analyze_case(
+            &case,
+            &DerivedLimits::default(),
+            Some((
+                ItemKind::LoopTermination,
+                LoopProofFailure::VariantBelowFloor,
+            )),
+        );
+        assert_refuted(&items, ItemKind::LoopTermination);
+    }
+}
+
+/// Undefined proof expressions refute their own obligations at a decision,
+/// independently of a true or false while guard.
+#[trace("TC-2022", "FR-730")]
+#[test]
+fn undefined_invariant_and_variant_refute_with_loop_proof_replay() {
+    for (invariant, variant, wanted) in [
+        ("q(0) = 0", "got.left", ItemKind::LoopInvariant),
+        ("true", "q(0)", ItemKind::LoopTermination),
+    ] {
+        let body = loop_unit(invariant, variant, "got.left > 0", "dec");
+        let case = Case::with_kernel_remainder(&body, &[2]);
+        let items = analyze_case(
+            &case,
+            &DerivedLimits::default(),
+            Some((wanted, LoopProofFailure::Undefined)),
+        );
+        assert_refuted(&items, wanted);
+    }
+}
+
+/// Entry and post-body decisions remain reachable proof failures when the
+/// same decision's guard is undefined. The post-body invariant becomes
+/// false only on the second completed body, when the guard becomes undefined.
+#[trace("TC-2022", "FR-730")]
+#[test]
+fn undecided_guards_preserve_initial_and_post_body_loop_proof_failures() {
+    for (entry_invariant, post_invariant, variant, wanted, failure) in [
+        (
+            "false",
+            "got.left > 0",
+            "1",
+            ItemKind::LoopInvariant,
+            LoopProofFailure::InvariantFalse,
+        ),
+        (
+            "q(0) = 0",
+            "if got.left > 0 then true else q(0) = 0",
+            "1",
+            ItemKind::LoopInvariant,
+            LoopProofFailure::Undefined,
+        ),
+        (
+            "true",
+            "true",
+            "q(0)",
+            ItemKind::LoopTermination,
+            LoopProofFailure::Undefined,
+        ),
+    ] {
+        let entry_run = format!(
+            "sequence Main {{ repeat Retry by w visible () invariant {{ {entry_invariant} }} variant {{ {variant} }} while {{ q(0) = 0 }} sequence Body {{ {} }} }}",
+            crate::fill::attempt("T", "touch", "TouchPre", "t", "true")
+        );
+        let entry = loop_pieces(&entry_run);
+        let post_variant = if wanted == ItemKind::LoopTermination {
+            "if got.left > 0 then got.left else q(0)"
+        } else {
+            variant
+        };
+        let post_body = loop_unit(
+            post_invariant,
+            post_variant,
+            "if got.left > 0 then true else q(0) = 0",
+            "dec",
+        );
+        for body in [entry, post_body] {
+            let case = Case::with_kernel_remainder(&body, &[2]);
+            let items = analyze_case_items(
+                &case,
+                &DerivedLimits::default(),
+                Some((wanted, failure)),
+                &[wanted],
+            );
+            assert_refuted(&items, wanted);
+        }
+    }
+}
+
+/// FR-730's source-backed request document resolves both loop kinds to
+/// the repeat and evaluates them through the source checker.
+#[trace("TC-2022", "FR-730", "FR-620")]
+#[test]
+fn source_loop_proof_documents_settle_both_item_kinds() {
+    use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+    use serde_json::json;
+
+    let ws = Workspace::new("source-loop-proof-wire");
+    let body = loop_unit("true", "got.left", "got.left > 0", "dec");
+    let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
+    let mut documents = crate::fill::Documents::new();
+    documents.start("s0", &[("c", 2)]);
+    let snapshots: Vec<Vec<u8>> = documents.snapshots.values().cloned().collect();
+    let path = request_over(
+        &ws,
+        &unit,
+        &crate::fill::document(),
+        &snapshots,
+        json!({"subject": {"protocol": {"protocol": "P",
+        "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
+        "roles": {"w": {"type": "model-binding", "selection": "test/fill"}}}},
+        "items": [
+                {"claim": "P::Main::Retry", "temporal": {"item_kind": "loop-invariant"}},
+                {"claim": "P::Main::Retry", "temporal": {"item_kind": "loop-termination"}}
+        ]}),
+    );
+    let run = analyze(&path);
+    assert_eq!(run.exit, 0, "{}", run.document());
+    assert_eq!(run.document()["items"].as_array().expect("items").len(), 2);
+    for (index, kind) in ["loop-invariant", "loop-termination"]
+        .into_iter()
+        .enumerate()
+    {
+        let item = run.item(index);
+        assert_eq!(label(&item), "proved", "{item}");
+        assert_eq!(item["request"]["temporal"]["item_kind"], kind, "{item}");
     }
 }

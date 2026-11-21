@@ -108,7 +108,7 @@ impl Case {
     }
 
     /// A Kernel remainder function called by the protocol's Linked clauses.
-    fn with_kernel_remainder(body: &str, values: &[i64]) -> Self {
+    pub(crate) fn with_kernel_remainder(body: &str, values: &[i64]) -> Self {
         let body = format!("function q using v(x: Integer): Integer pure {{ 6 mod x }}\n{body}");
         let mut documents = Documents::new();
         let initial = values

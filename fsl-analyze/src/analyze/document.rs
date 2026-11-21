@@ -2490,10 +2490,9 @@ fn invalid_member_cause(
     }
 }
 
-/// FSL FR-1033 "Selecting the subject of an item": a `race-freedom` item
-/// whose `claim` is the scoped path of an outermost `parallel` is decided over
-/// the protocol its path names. `None` when the item is no such item, so the
-/// caller resolves it as every other item.
+/// FSL FR-1033 and FR-730: a protocol freedom or loop-proof item whose
+/// `claim` names the scoped control path is decided over that protocol.
+/// `None` when the selection names no eligible control.
 fn resolve_protocol_freedom(
     package: &CheckedPackage,
     subject: &SubjectSelection,
@@ -2503,19 +2502,41 @@ fn resolve_protocol_freedom(
     name: &str,
 ) -> Option<ResolvedItem> {
     let temporal = selection.temporal.as_ref()?;
-    if temporal.item_kind?.kind() != ItemKind::RaceFreedom {
-        return None;
-    }
+    let kind = temporal.item_kind?.kind();
     let owner = name.split("::").next()?;
     let checked = package.graph().protocol(owner)?;
-    let outermost = fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &[]).ok()?;
-    if !outermost
-        .parallels()
-        .iter()
-        .any(|parallel| parallel.parallel == name)
-    {
-        return None;
-    }
+    let repeat = match kind {
+        ItemKind::RaceFreedom => {
+            let outermost =
+                fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &[]).ok()?;
+            if !outermost
+                .parallels()
+                .iter()
+                .any(|parallel| parallel.parallel == name)
+            {
+                return None;
+            }
+            None
+        }
+        ItemKind::LoopInvariant | ItemKind::LoopTermination => {
+            let (_, path) = name.split_once("::")?;
+            let path = path.split("::").collect::<Vec<_>>();
+            let control = checked.controls.at_path(&path)?;
+            let repeat = checked
+                .slots
+                .repeats
+                .iter()
+                .find(|repeat| repeat.node == control.node && repeat.loop_proof.is_some())?;
+            if temporal.max_depth.is_some() {
+                return Some(invalid_value(index, name, "temporal.max_depth"));
+            }
+            Some(repeat.node)
+        }
+        ItemKind::Formula
+        | ItemKind::DeadlockFreedom
+        | ItemKind::TimeLockFreedom
+        | ItemKind::Refinement => return None,
+    };
     let own_subject = temporal
         .subject
         .clone()
@@ -2556,7 +2577,19 @@ fn resolve_protocol_freedom(
     ) {
         return Some(refused);
     }
-    let claim = OccurrenceKey::declaration(node);
+    let declaration = OccurrenceKey::declaration(node);
+    let claim = match repeat {
+        Some(repeat) => fsl_route::deadlock::ProtocolTemporalItem {
+            occurrence: &declaration,
+            subject: &binding,
+            protocol: checked,
+            models: &binding.effective,
+            non_atomic_access: false,
+        }
+        .reading()
+        .protocol_loop_anchor(repeat)?,
+        None => declaration,
+    };
     let candidates = registry.restrict_to_timing(
         registry.candidates(Capability::TemporalSatisfaction, named.as_ref()),
         false,

@@ -139,6 +139,7 @@ fn a_guard_reads_the_input_through_a_capture_and_a_direct_read_refuses_at_the_re
 #[test]
 fn a_variant_without_a_well_founded_order_refuses_at_the_variant() {
     let types = "tuple Pair(Int[0, 9], Int[0, 9]);\n\
+                 tuple Nested(Pair, Int[0, 9]);\n\
                  tuple Flags(Int[0, 9], Boolean);\n\
                  record Point { x: Int[0, 9]; y: Int[0, 9]; }\n";
     let repeat = |variant: &str| {
@@ -158,7 +159,12 @@ fn a_variant_without_a_well_founded_order_refuses_at_the_variant() {
     super::checks(&repeat("3"));
     super::checks(&repeat("Pair(3, 4)"));
 
-    for refused in ["true", "Point { x: 1, y: 2 }", "Flags(1, true)"] {
+    for refused in [
+        "true",
+        "Point { x: 1, y: 2 }",
+        "Flags(1, true)",
+        "Nested(Pair(1, 2), 3)",
+    ] {
         let found = located_refusals(&repeat(refused));
         let mismatches: Vec<&String> = found
             .iter()

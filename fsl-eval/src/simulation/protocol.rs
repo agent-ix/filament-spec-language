@@ -1188,7 +1188,12 @@ fn loop_variant_components(
                 let filament_exact::FieldValue::Present(value) = slot else {
                     return None;
                 };
-                components.extend(loop_variant_components(value, value_type, typing)?);
+                let (Value::Integer(value), ValueType::Integer | ValueType::Int(_)) =
+                    (value, value_type)
+                else {
+                    return None;
+                };
+                components.push((value.clone(), value_type.clone()));
             }
             Some(components)
         }
@@ -1559,8 +1564,15 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         roles::Started::Instance(instance) => {
                             (BTreeMap::from([(0, *instance)]), Vec::new())
                         }
-                        roles::Started::Undecided { finding, .. } => {
-                            (BTreeMap::new(), vec![*finding])
+                        roles::Started::Undecided { instance, finding } => {
+                            // A proof failure is a reachable decision even when
+                            // the guard cannot choose the next control.
+                            let instances = if instance.loop_proof_violation.is_some() {
+                                BTreeMap::from([(0, *instance)])
+                            } else {
+                                BTreeMap::new()
+                            };
+                            (instances, vec![*finding])
                         }
                     }
                 };

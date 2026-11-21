@@ -96,7 +96,9 @@ impl ExtentClassification {
 }
 
 /// FSpec FR-368 "Item kinds": the `item_kind` of a `temporal-satisfaction`
-/// item over a model subject. These five are the only kinds: a transfer
+/// item over a model subject, extended by FR-730's source-checked loop
+/// obligations. The package wire route refuses those two kinds until its
+/// contract admits them. A transfer
 /// item (FSpec FR-380) is evaluated by the verification planner and is no
 /// request item, so it has none.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

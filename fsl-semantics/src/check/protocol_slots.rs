@@ -2150,15 +2150,17 @@ fn partition(
 fn is_well_founded(scope: &Scope, value_type: &ValueType) -> bool {
     match value_type {
         ValueType::Integer | ValueType::Int(_) => true,
-        ValueType::Composite(key) => scope
-            .types()
-            .composite(key.clone())
-            .is_some_and(|declaration| match declaration.shape() {
-                CompositeShape::Tuple(types) => types
-                    .iter()
-                    .all(|member| is_well_founded(scope, member)),
-                CompositeShape::Record(_) | CompositeShape::Union(_) => false,
-            }),
+        ValueType::Composite(key) => {
+            scope
+                .types()
+                .composite(key.clone())
+                .is_some_and(|declaration| match declaration.shape() {
+                    CompositeShape::Tuple(types) => types
+                        .iter()
+                        .all(|member| matches!(member, ValueType::Integer | ValueType::Int(_))),
+                    CompositeShape::Record(_) | CompositeShape::Union(_) => false,
+                })
+        }
         _ => false,
     }
 }
