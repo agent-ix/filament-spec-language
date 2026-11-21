@@ -336,7 +336,7 @@ pub(crate) fn declare(
         step.clone(),
         "step",
         CompositeShape::Record(vec![
-            FieldDeclaration::new("index", lengths.clone(), Presence::Required),
+            FieldDeclaration::new("index", ValueType::Integer, Presence::Required),
             FieldDeclaration::new(
                 "operation",
                 ValueType::Enum(operation_enum.shape()),
