@@ -53,10 +53,10 @@ pub enum HoldsStop {
 /// condition stopped the run, why (the result is then the stop's fault).
 #[derive(Debug)]
 pub struct ObservedRun {
-    /// A completed guarded clause over a closed lasso whose every guard
-    /// was false. No instance exists, even though the formula scan holds.
-    /// Open prefixes, unresolved guards and formula-at-position calls never
-    /// establish this fact.
+    /// A completed guarded clause over a closed trace or a lasso whose every
+    /// guard was false. No instance exists, even though the formula scan
+    /// holds. Open prefixes, unresolved guards and formula-at-position calls
+    /// never establish this fact.
     pub inactive: bool,
     /// The evaluator's result.
     pub result: Result<TemporalOutcome, TemporalRefusal>,
@@ -191,6 +191,7 @@ pub fn evaluate_observed_timed(
     };
     let mut letters = ObservedLetters::over(package, clause, positions, shape);
     let represented = stamps.len();
+    let closed = loop_start.is_some() || through.is_some();
     let trace = match (loop_start.clone(), through) {
         (Some((start, delay)), None) => super::TimedTrace::lasso(stamps, start, delay),
         (Some(_), Some(_)) => Err(TemporalRefusal::Fault(InternalFault::new(
@@ -302,8 +303,15 @@ pub fn evaluate_observed_timed(
         (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
         (stopped, _) => stopped,
     };
+    let inactive = closed
+        && matches!(
+            clause.clause().activation(),
+            fsl_semantics::check::Activation::Each { guarded: true }
+        )
+        && matches!(result, Ok(TemporalOutcome::Holds))
+        && !letters.activated;
     ObservedRun {
-        inactive: false,
+        inactive,
         result,
         stopped,
         undefined: letters.undefined,
@@ -424,7 +432,7 @@ fn evaluate_observed_goal(
         windows: None,
         activated: false,
     };
-    let (result, decisive) = super::engine::run_seeking(
+    let (result, decisive, inactive) = super::engine::run_seeking(
         super::engine::Subject::of_clause(clause.clause()),
         trace,
         goal,
@@ -445,14 +453,6 @@ fn evaluate_observed_goal(
         }
         _ => Vec::new(),
     };
-    let inactive = matches!(goal, super::engine::Goal::Clause)
-        && matches!(trace, TemporalTrace::Lasso { .. })
-        && matches!(
-            clause.clause().activation(),
-            fsl_semantics::check::Activation::Each { guarded: true }
-        )
-        && matches!(result, Ok(TemporalOutcome::Holds))
-        && !letters.activated;
     ObservedRun {
         inactive,
         result,
@@ -1847,7 +1847,7 @@ pub fn letters_valuation<L: TemporalLetters>(
             }
         };
         if active {
-            let (result, _) = super::engine::run_seeking(
+            let (result, _, _) = super::engine::run_seeking(
                 super::engine::Subject::of_clause(clause),
                 trace,
                 super::engine::Goal::At(position),

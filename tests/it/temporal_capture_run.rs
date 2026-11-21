@@ -477,6 +477,39 @@ fn a_closed_false_guard_capture_scope_is_inactive_on_both_routes() {
     }
 }
 
+/// A guarded `on each` clause under a bounded profile over a closed finite
+/// trace.
+const GUARDED_CLOSED: &str = "temporal GuardedClosed using e over (r: Reading) clock \"events\" \
+    on each (trigger: Reading) when (trigger.level > 0) { \
+    capture beganFast: Boolean = trigger.level > 3; \
+    eventually[0,1] holds(r.stopped or not beganFast) }\n";
+
+/// A closed finite trace whose every guard is false has no activation and no
+/// truth; one true guard makes it active again.
+#[test]
+#[trace("FSpec-FR-093-AC-5", "FR-267-AC-28")]
+fn a_closed_finite_trace_with_every_guard_false_is_inactive() {
+    let directory = tempfile::tempdir().unwrap();
+    let inactive = result(&run_with(
+        directory.path(),
+        GUARDED_CLOSED,
+        "GuardedClosed",
+        json!({"finite": moving(&[0, 0, 0])}),
+    ));
+    assert_eq!(inactive["axes"]["activation"], "inactive", "{inactive}");
+    assert_eq!(inactive["axes"]["execution"], "completed", "{inactive}");
+    assert_eq!(inactive["axes"]["truth"], Value::Null, "{inactive}");
+    assert_eq!(temporal(&inactive)["kind"], "inactive", "{inactive}");
+    let active = result(&run_with(
+        directory.path(),
+        GUARDED_CLOSED,
+        "GuardedClosed",
+        json!({"finite": moving(&[0, 1, 0])}),
+    ));
+    assert_eq!(active["axes"]["activation"], "active", "{active}");
+    assert_ne!(temporal(&active)["kind"], "inactive", "{active}");
+}
+
 /// The actual guard, rather than the captured predicate or body truth,
 /// decides whether an obligation exists. Active controls still hold/refute.
 #[test]

@@ -1898,6 +1898,11 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         );
         let (disposition, refused_at) =
             observed_disposition(timed.stopped, timed.result, graph, run.sources);
+        let disposition = if timed.inactive {
+            ClauseDisposition::Temporal(TemporalVerdict::Inactive)
+        } else {
+            disposition
+        };
         let (disposition, counterexample) =
             with_counterexample(node, trace, disposition, timed.undefined);
         let usage = ClauseRunUsage::from_meter(&meter, admitted);

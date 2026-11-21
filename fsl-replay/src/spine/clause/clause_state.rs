@@ -1036,6 +1036,7 @@ impl<'a> ClauseState<'a> {
         let mut report = subject_report(
             self.node,
             result,
+            false,
             self.undefined_atom,
             &self.atom_values,
             ClauseRunUsage::from_meter(meter, Default::default()),
