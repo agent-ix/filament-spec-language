@@ -62,12 +62,32 @@ fn a_recommendation_reaches_the_analyze_counterexample() {
     assert_eq!(recommendation["type"], "protocol-recommendation");
     assert_eq!(recommendation["node"], "Main/Advise");
     assert_eq!(recommendation["role"], "Auditor");
+    assert_eq!(recommendation["instance"], "0");
+    assert!(recommendation.get("actor").is_none());
+    let operation: Value = serde_json::from_str(
+        recommendation["operation"]
+            .as_str()
+            .expect("operation identity"),
+    )
+    .expect("canonical declaration identity");
+    assert_eq!(
+        operation,
+        json!({"package": "test/counter", "node": "ix://test/counter/Counter/inc"})
+    );
     assert_eq!(recommendation["receiver"]["identity"], "counter");
     assert_eq!(recommendation["arguments"], json!([]));
     for forbidden in ["post_state", "result", "effect"] {
         assert!(recommendation.get(forbidden).is_none(), "{recommendation}");
     }
     assert_eq!(prefix[1]["transition"]["step"], "attempt");
+    assert_eq!(
+        recommendation["operation"],
+        prefix[1]["transition"]["operation"]
+    );
+    assert_eq!(
+        item["exploration"]["transitions"], "2",
+        "one recommendation per application, regardless of possible post-states: {item}"
+    );
     let semantic = |index: usize| &prefix[index]["post_state"]["state"]["semantic"];
     let field = |index: usize| {
         semantic(index)["entries"][0]["value"]["entries"][0]["value"]["fields"][0]["value"]["value"]
@@ -75,6 +95,59 @@ fn a_recommendation_reaches_the_analyze_counterexample() {
     };
     assert_eq!(field(0), "0", "recommendation leaves the supplied value");
     assert_eq!(field(1), "1", "Seller's attempt writes the model value");
+}
+
+/// A selected postcondition that admits no post-state cannot disable advice.
+#[test]
+#[trace("FSpec-FR-822-AC-3")]
+fn a_recommendation_ignores_selected_postconditions() {
+    let source = SOURCE
+        .replace(
+            "protocol Review",
+            "post Impossible using v on M::Counter::inc { false }\nprotocol Review",
+        )
+        .replace(
+            "contracts [SpaceAvailable]\n",
+            "contracts [SpaceAvailable, Impossible]\n",
+        );
+    let outcome = run(&source);
+    assert_eq!(outcome.exit, 10, "{}", outcome.document);
+    let item = &outcome.document["items"][0];
+    assert_eq!(
+        item["counterexample"]["prefix"][0]["transition"]["step"], "recommend",
+        "{item}"
+    );
+    assert_eq!(
+        item["counterexample"]["prefix"].as_array().map(Vec::len),
+        Some(2),
+        "{item}"
+    );
+    assert_eq!(item["exploration"]["transitions"], "2", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// The acting object is carried inside the record for a replicated role.
+#[test]
+#[trace("FSpec-FR-822-AC-3")]
+fn a_replicated_auditor_recommendation_names_its_actor() {
+    let source = SOURCE.replace(
+        "observe role Auditor on M::Counter;",
+        "observe role Auditor each M::Counter from counters max 1 lifetime workflow;",
+    );
+    let outcome = run(&source);
+    assert_eq!(outcome.exit, 10, "{}", outcome.document);
+    let prefix = &outcome.document["items"][0]["counterexample"]["prefix"];
+    let transition = prefix
+        .as_array()
+        .expect("prefix")
+        .iter()
+        .map(|step| &step["transition"])
+        .find(|transition| transition["step"] == "recommend")
+        .expect("replicated recommendation");
+    assert_eq!(transition["recommendation"]["actor"]["type"], "reference");
+    assert_eq!(transition["recommendation"]["actor"]["identity"], "counter");
+    assert_eq!(transition["recommendation"]["actor"], transition["actor"]);
+    assert_eq!(transition["recommendation"]["instance"], "0");
 }
 
 /// A source observe boundary refuses an attempt before an item can step.

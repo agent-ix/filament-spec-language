@@ -56,7 +56,7 @@ pub(super) struct Attempt<'a> {
     pub(super) binds: Option<usize>,
 }
 
-/// One checked recommendation's operation call and optional result filter.
+/// One checked recommendation's operation call and result-free constraint.
 pub(super) struct Recommendation<'a> {
     pub(super) role: String,
     pub(super) declaring: EffectiveId,
@@ -64,7 +64,6 @@ pub(super) struct Recommendation<'a> {
     pub(super) receiver: EffectiveId,
     pub(super) contracts: std::sync::Arc<BTreeSet<NodeKey>>,
     pub(super) constraint: Option<&'a CheckedBody>,
-    pub(super) binds: Option<usize>,
 }
 
 /// One `parallel`'s join (ADR-027 ST-6, ST-7).
@@ -652,12 +651,6 @@ impl<'a> Program<'a> {
         let mut recommendations = BTreeMap::new();
         for recommendation in &protocol.recommendations {
             let node = ProtocolNodeId(recommendation.declaration);
-            let binder = binder_of.get(&node).copied();
-            let binds = binder.filter(|slot| {
-                protocol.slots.binders.get(*slot).is_some_and(|binder| {
-                    recommendation.operation.declaration.result() == Some(&binder.value_type)
-                })
-            });
             recommendations.insert(
                 node,
                 Recommendation {
@@ -669,7 +662,6 @@ impl<'a> Program<'a> {
                         recommendation.contracts.iter().cloned().collect(),
                     ),
                     constraint: body_of(node),
-                    binds,
                 },
             );
         }

@@ -265,7 +265,14 @@ fn an_observe_only_step_leaves_state_unchanged() {
                 let recommendation = transition.recommendation().expect("typed recommendation");
                 assert_eq!(recommendation.node, "Main/Advise");
                 assert_eq!(recommendation.role, "Auditor");
-                assert_eq!(recommendation.operation, "step");
+                assert_eq!(recommendation.instance, 0);
+                assert!(recommendation.actor.is_none());
+                let operation: Value = serde_json::from_str(&recommendation.operation)
+                    .expect("canonical operation declaration identity");
+                assert_eq!(
+                    operation,
+                    json!({"package": tc1070::model::PACKAGE, "node": tc1070::model::id("Node/step")})
+                );
                 let receiver: Value = serde_json::from_str(&recommendation.receiver)
                     .expect("the recommendation receiver is canonical JSON");
                 assert_eq!(receiver["type"], "reference");

@@ -19,7 +19,8 @@ The command exits `10` because `check Blocked` deliberately fails. The
 `items[0].counterexample.prefix` array contains two transitions:
 
 1. `Main/Advise`, with `step` `recommend`. Its `recommendation` member names
-   `Auditor`, operation `inc`, receiver `counter`, and an empty argument vector.
+   `Auditor`, instance `0`, the qualified declaration identity of `inc`,
+   receiver `counter`, and an empty argument vector.
    The returned model still has counter value `0`.
 2. `Main/Apply`, with `step` `attempt`. The returned model has counter value `1`.
 

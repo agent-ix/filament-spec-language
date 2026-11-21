@@ -449,6 +449,7 @@ fn expand<'s>(
                 &clauses,
                 &mut budget,
                 frames::Outputs {
+                    recommendations: None,
                     contract: &mut contract,
                     successors: &mut successors,
                     enabled: enabled.as_deref_mut(),
