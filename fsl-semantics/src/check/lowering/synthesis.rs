@@ -43,7 +43,16 @@ impl<'a> Lowering<'a> {
         };
         let domain = self.type_node(&checked.domain, &claim_at)?;
         if let Some(plan) = checked.plan() {
-            self.enum_nodes_at(&plan.shape().operation_enum, claim_at.clone())?;
+            let binding = &plan.shape().operation_enum;
+            self.enum_nodes_at(binding, claim_at.clone())?;
+            for member in &binding.members {
+                let key = self.enum_member_node(&claim_at, binding.declaration.key(), member)?;
+                self.record(
+                    key,
+                    crate::check::family::OccurrenceRole::Generated,
+                    claim_at.clone(),
+                );
+            }
         }
         let candidate_type = checked.plan().map_or_else(
             || checked.domain.clone(),

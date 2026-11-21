@@ -553,7 +553,49 @@ fn a_source_plan_candidate_emits_its_record_types_and_source_regions() {
             "filament.temporal.infinite-trace/v1"
         ),
     );
-    let bytes = package_bytes(&unit, &packages);
+    let emitted = emitted(
+        SourceIdentity::new("test", "synthesis-request"),
+        "unit.native",
+        unit.as_bytes(),
+        &packages,
+        &DependencyInput::default(),
+    )
+    .expect("the source plan emits with its generated type declarations");
+    let records = emitted.emission().selected_source_record_rows();
+    assert!(
+        records.iter().any(|row| row
+            .members
+            .iter()
+            .map(|field| field.admitted_name.as_ref())
+            .eq(["length", "final", "initial", "steps"])),
+        "the plan record has a producer identity row"
+    );
+    assert!(
+        records
+            .iter()
+            .all(|row| row.source_authority.as_ref() == "test"
+                && row.source_identity.as_ref() == "synthesis-request"),
+        "generated records retain the authored source identity"
+    );
+    let operation = emitted
+        .emission()
+        .selected_enum_declaration_rows()
+        .iter()
+        .find(|row| {
+            row.qualified_declaration
+                .iter()
+                .map(|segment| segment.as_ref())
+                .eq(["Reach", "Config", "Op"])
+        })
+        .expect("the plan operation enum has its producer identity row");
+    assert_eq!(
+        (
+            operation.source_authority.as_ref(),
+            operation.source_identity.as_ref()
+        ),
+        ("test", "synthesis-request")
+    );
+    let bytes = emitted.package().bytes();
     let wire: Value = serde_json::from_slice(&bytes).expect("a JSON package");
     let claim = synthesis_nodes(&wire)[0];
     let nodes = wire["semantic_graph"]["nodes"]

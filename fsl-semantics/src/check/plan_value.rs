@@ -407,8 +407,8 @@ pub(crate) fn declare(
     })
 }
 
-/// The unordered enum `name` over `cases`, admitted under a synthetic owner
-/// no package declaration shares.
+/// The unordered enum `name` over `cases`, admitted under the authored
+/// source owner and qualified by the synthesis declaration.
 fn operation_enum(
     name: &str,
     synthesis: &str,
@@ -417,9 +417,9 @@ fn operation_enum(
     package_name: &str,
 ) -> Option<EnumBinding> {
     let subject = OwnerSubject::new(source.authority(), source.identity(), package_name);
-    let owners = OwnerSelection::new([NodeOwner::Definition(subject.clone())]);
+    let owners = OwnerSelection::new([NodeOwner::Source(subject.clone())]);
     let preimage = EnumDeclarationPreimage::new(
-        NodeOwner::Definition(subject),
+        NodeOwner::Source(subject),
         std::iter::once(synthesis)
             .chain(name.split("::"))
             .map(str::to_owned)
