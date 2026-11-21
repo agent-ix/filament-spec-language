@@ -27,3 +27,12 @@ Fix round needed: one cross-requirement contradiction and two false interoperabi
 ## Scope and evidence
 
 FSpec checked at filament-specification origin/main. Library checked at filament-observation baa30aa5.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | fixed at 1cfcdac6 |
+| FND-002 | fixed | fixed at 1cfcdac6 |
+| FND-003 | fixed | fixed at 1cfcdac6 |
+| FND-004 | fixed | fixed at 1cfcdac6 |

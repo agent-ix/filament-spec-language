@@ -28,3 +28,13 @@ Fix round needed. The record, scope, anchor, range, value and visibility forms a
 ## Scope and evidence
 
 Library ground truth: filament-observation at baa30aa5b474fad106be4be59fbaeba3fde6317b, src/lib.rs, src/runtime_reference.rs, src/producer.rs, src/authority/admission.rs, spec FR-001, FR-014. The named test file tests/it/native_run_relationships.rs does not exist yet. That is expected for a spec-first PR whose tests land in PR 2b, so it is not recorded as a finding.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | fixed at 1cfcdac6 |
+| FND-002 | fixed | fixed at 1cfcdac6 |
+| FND-003 | fixed | fixed at 1cfcdac6 |
+| FND-004 | fixed | fixed at 1cfcdac6 |
+| FND-005 | fixed | fixed at 1cfcdac6 |

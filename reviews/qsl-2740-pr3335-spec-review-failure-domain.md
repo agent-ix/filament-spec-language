@@ -27,3 +27,19 @@ Fix round needed.
 ## Scope and evidence
 
 Library `admit` order checked at baa30aa5 src/lib.rs:593-824. FR-106 snapshot relationship form checked at spec/functional/FR-106-admit-snapshots-and-invocations.md:307-330.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | medium | Snapshot relationship name and Producer relationshipIdentity may use different spellings, so byte-for-byte resolution can fail for every entry | spec/functional/FR-1045-admit-native-run-relationships-through-the-observation-resolver.md:71-75 |
+| FND-006 | low | Constructor build order omits the binding, expected-subject and record SubjectKind constructions it now lists as refusal sources | spec/functional/FR-1045-admit-native-run-relationships-through-the-observation-resolver.md:265-273 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The deliberate departure makes the kind the UTF-8 of the RFC 8785 text of an FR-322 node id {package, path, ordinal}. The standard already fixes a different spelling. FSpec FR-204 says the type component under filament.model.complete/v1 is the effective declaration identity of the most-specific type "as supplied by the population member's typeIdentity", and AD-006 says runtime subject references u |
+| FND-002 | fixed | fixed at 1cfcdac6 |
+| FND-003 | fixed | fixed at 1cfcdac6 |
+| FND-004 | fixed | fixed at 1cfcdac6 |

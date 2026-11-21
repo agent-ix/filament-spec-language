@@ -23,6 +23,10 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-specification/FR-480
     type: references
+  - target: ix://agent-ix/filament-specification/FR-204
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-056
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-038
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-944
@@ -69,23 +73,32 @@ native-run result and exit category.
   the complete candidate set passed to the resolver; FSL SHALL NOT filter
   them by required declaration before identity validation.
 - FSL builds each snapshot candidate from the selected checked package and
-  Producer bundle. Its declaration identity is the snapshot entry's
-  `relationship` text, byte for byte; `Relationship::new` and
-  `RelationshipExtent::new` resolve it against the bundle's
-  `relationships[].relationshipIdentity`. Each `source` and `target` object
+  Producer bundle. Its declaration identity is the Producer
+  `relationshipIdentity` that the selected package's model view records for
+  the navigation relationship the snapshot entry's `relationship` names;
+  `Relationship::new` and `RelationshipExtent::new` resolve it against the
+  bundle's `relationships[].relationshipIdentity`. The selected package's
+  model view records each navigation relationship under its FR-056
+  declaration identity `ix://<package identity>/relationship/<Name>-<verb>-<TargetName>`,
+  which is the text the snapshot entry's `relationship` carries. A Producer
+  interface 1.2 bundle's `relationshipIdentity` is the identity its producer
+  selects. FSL derives neither identity from the other and does not compare
+  the entry's `relationship` text with the bundle's identity. Each `source` and `target` object
   reference `{"population": P, "key": K}` becomes
   `QualifiedSubject::from_authority(<selected bundle key>, SubjectKind::new(<kind>), SubjectIdentity::new(<UTF-8 of K>))`.
-  `<kind>` is the UTF-8 of the RFC 8785 text of the structural checked-package
-  node id `{package, path, ordinal}` (FSpec FR-322) of the declaration node of
-  the referenced object's most-specific type, the node FSpec FR-181 writes as
-  a reference's `object_type`. That is the object's declaration key (domain
-  package identity, IR node identity), which FSpec FR-287 makes the subject
-  kind of a domain object. The identity is the UTF-8 encoding of the key
-  string with no normalization, which is the object identity FSpec FR-480
-  assigns to a key. The result is the same FR-287 key a caller writes in `S`
-  for that object, so a snapshot-derived subject and a caller-written subject
-  for one object are byte-identical. The resolver compares the kind byte for
-  byte with the bundle endpoint's `type_identity`. A snapshot entry whose
+  `<kind>` is the UTF-8 of the `type` text of the referenced object's entry in
+  the snapshot: the identity of the object's most-specific type, which FSpec
+  FR-204 takes from the population member's `typeIdentity` under
+  `filament.model.complete/v1` and which FSpec FR-287 and AD-006 make the
+  subject kind of a domain object. A Producer interface 1.2 bundle spells each
+  relationship endpoint by the same `typeIdentity` (for example
+  `ix://agent-ix/commerce/type/Order`), and the resolver compares the two byte
+  for byte. The identity is the UTF-8 encoding of `K` with no normalization,
+  the object identity FSpec FR-480 assigns to a key string; FR-106 refuses a
+  non-string `key` (`wrong-value-kind`) before correlation is reached. The
+  result is the same FR-287 key a caller writes in `S` for that object, so a
+  snapshot-derived subject and a caller-written subject for one object are
+  byte-identical. A snapshot entry whose
   `relationship` names no navigation relationship of the selected package
   refuses `invalid-request` at that entry's `relationship` path after snapshot
   read and before resolver evaluation.
@@ -262,9 +275,11 @@ exit 20, before any selected file is opened. The command-error details are
 the request root (for example `/call/relationships/records/0/anchor/kind`).
 No member takes a default.
 
-FSL builds every `RequiredRelationship` in `required_relationships` array
-order, then every `Relationship` and `RelationshipExtent` in snapshot document
-order, before it calls `admit`. The first `ReferenceRefusal` returned by
+FSL builds, in this order and each array in array order,
+`binding.subject_kind`, `expected_subject`, every `required_relationships`
+entry (its endpoint subjects, then `RequiredRelationship::new`), every
+`records` entry's `subject`, then every `Relationship` and
+`RelationshipExtent` in snapshot document order, before it calls `admit`. The first `ReferenceRefusal` returned by
 `SubjectKind::new`, `RequiredRelationship::new`, `Relationship::new` or
 `RelationshipExtent::new` is reported as
 `AdmissionOutcome::Refused { cause: InvalidReference(refusal) }` under the
