@@ -1034,6 +1034,10 @@ pub(crate) struct Lowered {
     /// the name its record's position in the emitted array gives it
     /// (FSpec FR-322-AC-388). `check` relocates the end under that name.
     pub(crate) related_renames: Vec<(Location, String)>,
+    /// Each control's authored clause positions in its canonical related
+    /// array, retaining duplicates in source order (FSpec FR-831).
+    pub(crate) related_canonical_positions:
+        BTreeMap<(String, super::protocol_clause::ProtocolNodeId), Vec<usize>>,
     /// FSL equality facts retained by the checked equality application's key
     /// and source occurrence. Structural keys can be reused by distinct
     /// occurrences whose authored conversion decisions differ.
@@ -1202,6 +1206,9 @@ pub(crate) struct Lowering<'a> {
         BTreeMap<String, Vec<crate::check::protocol_clause::CheckedProtocolExpressionBindings>>,
     /// See [`Lowered::related_renames`].
     related_renames: Vec<(Location, String)>,
+    /// See [`Lowered::related_canonical_positions`].
+    related_canonical_positions:
+        BTreeMap<(String, super::protocol_clause::ProtocolNodeId), Vec<usize>>,
     /// The protocol whose S4 bodies are being lowered, when any.
     active_protocol: Option<String>,
     /// Indexed only by the live body token's address, not by a semantic
@@ -2297,6 +2304,7 @@ impl<'a> Lowering<'a> {
             protocol_binder_keys: BTreeMap::new(),
             protocol_expression_binders: BTreeMap::new(),
             related_renames: Vec::new(),
+            related_canonical_positions: BTreeMap::new(),
             active_protocol: None,
             checked_body_keys: BTreeMap::new(),
             pending_checked_node_keys: Vec::new(),
@@ -2407,6 +2415,7 @@ impl<'a> Lowering<'a> {
             composites,
             protocol_members,
             related_renames: self.related_renames,
+            related_canonical_positions: self.related_canonical_positions,
             equality_producer_data: self.equality_producer_data,
             equality_producer_identities: self.equality_producer_identities,
             dispatch_producer_decisions: self.dispatch_producer_decisions,

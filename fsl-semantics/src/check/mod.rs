@@ -7224,6 +7224,7 @@ impl PackageDeclarations {
             binders,
             mut lowered_protocol_members,
             lowered_related_renames,
+            mut related_canonical_positions,
         ) = (
             lowered.graph,
             lowered.equality_producer_data,
@@ -7234,7 +7235,45 @@ impl PackageDeclarations {
             lowered.binders,
             lowered.protocol_members,
             lowered.related_renames,
+            lowered.related_canonical_positions,
         );
+        // Source slots retain every authored clause. Attach the positions
+        // captured by the canonical sort, never a lookup by alias or key.
+        for checked in &mut checked_protocols {
+            let mut ordinals = BTreeMap::new();
+            for related in &mut checked.slots.related {
+                let ordinal = ordinals.entry(related.node).or_insert(0usize);
+                let key = (checked.name.clone(), related.node);
+                let Some(position) = related_canonical_positions
+                    .get(&key)
+                    .and_then(|positions| positions.get(*ordinal))
+                else {
+                    return Err(vec![CheckRefusal {
+                        location: root(Origin::Expression),
+                        cause: CheckCause::InternalFault(Box::new(KeyFault::UncheckedProtocolFact)),
+                    }]);
+                };
+                related.canonical_index = Some(*position);
+                *ordinal += 1;
+            }
+            for (node, count) in ordinals {
+                if related_canonical_positions
+                    .remove(&(checked.name.clone(), node))
+                    .is_none_or(|positions| positions.len() != count)
+                {
+                    return Err(vec![CheckRefusal {
+                        location: root(Origin::Expression),
+                        cause: CheckCause::InternalFault(Box::new(KeyFault::UncheckedProtocolFact)),
+                    }]);
+                }
+            }
+        }
+        if !related_canonical_positions.is_empty() {
+            return Err(vec![CheckRefusal {
+                location: root(Origin::Expression),
+                cause: CheckCause::InternalFault(Box::new(KeyFault::UncheckedProtocolFact)),
+            }]);
+        }
         // FSpec FR-322-AC-388: a `related` end is named by its record's
         // position in the emitted array, which lowering fixed by sorting and
         // collapsing the records. Locate the end under that name now, in its
