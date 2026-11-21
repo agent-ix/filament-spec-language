@@ -2284,11 +2284,16 @@ impl<O> Checker<'_, '_, O> {
                 continue;
             };
             let listed = &certificate.nodes[node];
-            let q = self
-                .bound
-                .get(&listed.automaton_state)
-                .copied()
-                .unwrap_or_default();
+            // A refinement form's second component is a position, read at
+            // the node's own index (it is no claim-automaton state).
+            let q = if self.refined.is_some() {
+                listed.automaton_state
+            } else {
+                self.bound
+                    .get(&listed.automaton_state)
+                    .copied()
+                    .unwrap_or_default()
+            };
             let successors = match listed.product {
                 Some(mark) if self.live.is_some() => {
                     self.live_successors(node, &state, q, mark, &listed.zone)?
