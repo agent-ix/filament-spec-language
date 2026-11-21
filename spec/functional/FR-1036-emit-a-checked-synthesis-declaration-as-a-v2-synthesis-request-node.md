@@ -49,11 +49,15 @@ objective with its direction, and the typed `satisfies` block.
   mints for the declaration.
 - The writer SHALL write `candidate` as a reference to the `value`/`parameter`
   node of the declaration's own name at level `0`, typed `D` for a value
-  synthesis and the generated FR-800 plan-record type for a plan synthesis,
+  synthesis and the generated FR-800 plan-record type for a state-model or
+  hybrid plan synthesis,
   the binder S3 bound inside the block and the objective (FR-754). The plan
   candidate's `semantic_type` SHALL reference that generated plan-record
-  type node; `grammar` still references the actual `G` node and `domain`
-  still references `D`.
+  `composite_type`/`record` node defined by FSpec FR-322 "Plan-record type",
+  with that section's field schema, applicable FR-819 extensions and
+  ordinary generated-record identity, ownership and source mapping;
+  `grammar` still references the actual `G` node and `domain` still
+  references `D`.
 - The writer SHALL write `objective` as the empty aggregate when the
   declaration has none, and otherwise its `direction`, a reference to its
   root and its `text`, the objective expression's tokens from its first to
