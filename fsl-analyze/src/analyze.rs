@@ -661,6 +661,18 @@ pub struct SubjectBinding<'a> {
     pub universes: Vec<PopulationUniverse>,
 }
 
+impl SubjectBinding<'_> {
+    /// Formal replay premises exclude descriptive effect-decision receipts.
+    /// The original provision remains available for item-local receipt binding.
+    fn replay_documents(&self) -> impl Iterator<Item = &Vec<u8>> {
+        self.packages.values().chain(
+            self.snapshots
+                .values()
+                .filter(|bytes| !document::effect_decision::is_receipt(bytes)),
+        )
+    }
+}
+
 /// The caller's shared accounting, observation, normalization and deadline
 /// limits for one analyze request (FR-277, FR-281).
 ///
