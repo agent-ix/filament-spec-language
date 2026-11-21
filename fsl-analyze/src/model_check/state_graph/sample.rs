@@ -450,7 +450,21 @@ mod tests {
             0,
             &PredicateReading::Refused(ClauseOutcome::NotBoolean),
         );
+        memo.retain(
+            &key,
+            1,
+            &PredicateReading::Undefined {
+                cause: fsl_eval::temporal::UndefinedCause::Family(
+                    filament_semantic_value::catalog::UndefinedRecord {
+                        reason: filament_semantic_value::catalog::UndefinedReason::AbsentKey,
+                        fields: BTreeMap::new(),
+                    },
+                ),
+                location: None,
+            },
+        );
         assert_eq!(memo.get(&key, 0), Ok(None));
+        assert_eq!(memo.get(&key, 1), Ok(None));
         assert!(memo.values.is_empty());
         assert_eq!(memo.storage.consumed(LimitKind::ResultUnits), 0);
     }

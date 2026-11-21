@@ -1840,11 +1840,20 @@ fn resolve_one(
     {
         return resolved;
     }
+    // A model-derived item names its model alias, even when a declaration
+    // happens to have the requested name. Protocol deadlock items instead
+    // retain their authored protocol anchor.
     if selection
         .temporal
         .as_ref()
         .and_then(|temporal| temporal.item_kind)
-        .is_some_and(|kind| !matches!(kind.kind(), ItemKind::Formula | ItemKind::Refinement))
+        .is_some_and(|kind| {
+            matches!(
+                kind.kind(),
+                ItemKind::DeadlockFreedom | ItemKind::TimeLockFreedom
+            )
+        })
+        && package.graph().protocol(name).is_none()
     {
         return resolve_derived(package, subject, index, selection, registry, binding, name)
             .unwrap_or_else(|| unknown_claim(index, name));
