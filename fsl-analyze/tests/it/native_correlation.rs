@@ -188,7 +188,7 @@ impl Fixture {
             .expect("native correlation");
             assert_eq!(
                 native.offered_reductions(),
-                fsl_eval::simulation::reduction::OfferedReductions::NONE
+                fsl_eval::simulation::OfferedReductions::NONE
             );
             let workers = std::num::NonZeroUsize::new(1).expect("one worker");
             let source = fill::reachable_with_workers(&source, workers).0;
@@ -295,9 +295,15 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
         "the queued message is retained while Rx cannot take it"
     );
     let queued: Json = serde_json::from_slice(waiting[queued].key.as_bytes()).expect("state JSON");
-    assert!(
-        queued.to_string().contains("queues"),
-        "the queued state is encoded: {queued}"
+    let entries = queued["queues"]["entries"].as_array().expect("queue map");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["key"]["channel"], "P::ch");
+    assert_eq!(
+        entries[0]["value"]["elements"]
+            .as_array()
+            .expect("queued entries")
+            .len(),
+        1
     );
     let undefined = Fixture::new(
         "capture missing: Option<Reference<M::Cell>> = none;",
@@ -330,19 +336,12 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
 
 #[trace("FR-731-AC-1", "FR-940-AC-6", "FR-216")]
 #[test]
-fn correlation_only_capture_reads_remain_live_after_an_earlier_step() {
+fn correlation_only_capture_and_prior_binder_reads_remain_live_after_an_earlier_step() {
     let run = format!(
-        "send First via ch as (first: Boolean) {{ false }}; {}",
-        controls(
-            "related by Owns (saved, saved)",
-            "related by Owns (saved, saved)"
-        )
+        "send First via spare as (first: Reference<M::Cell>) {{ true }}; check Between {{ true }}; {}",
+        controls("related by Owns (saved, first)", "related by Owns (first, saved)")
     );
-    // An enabled first step must not fill the bounded queue before Tx.
-    let run = run
-        .replace("send First via ch", "send First via spare")
-        .replace("{ false }", "{ first }");
-    let fixture = Fixture::new("capture saved: Reference<M::Cell> = k; channel spare from w to w carries Boolean ordering unordered delivery exactly-once-premise capacity 1 overflow block;", &run, true);
+    let fixture = Fixture::new("capture saved: Reference<M::Cell> = k; channel spare from w to w carries Reference<M::Cell> ordering unordered delivery exactly-once-premise capacity 1 overflow block;", &run, true);
     let graph = fixture.graph();
     let tx = graph
         .iter()
@@ -354,6 +353,21 @@ fn correlation_only_capture_reads_remain_live_after_an_earlier_step() {
         Some(&filament_exact::Value::Boolean(true))
     );
     assert!(has_step(&graph, StepKind::Receive));
+    fixture.with_routes(true, |source, native| {
+        let source = fill::sc_system(source);
+        let native = ProtocolSystem::new_package(ModelSystem::new(native.model.simulation.clone()).expect("model"), native, Sc).expect("native");
+        for system in [&source, &native] {
+            let reached = fill::reachable(system);
+            let (tx, at, _) = reached.iter().enumerate().flat_map(|(at, state)| state.steps.iter().map(move |(step, next)| (step, at, next)))
+                .find(|(step, _, _)| step.node() == Some("Main/Tx")).expect("Tx");
+            assert!(system.binders(&reached[at].state).expect("live binders").iter().any(|(node, _)| node == "Main/First"));
+            let footprint = system.footprint(&reached[at].state, tx).expect("footprint");
+            assert!(footprint.reads.iter().any(|location| matches!(location,
+                fsl_eval::simulation::Location::Protocol(fsl_eval::simulation::protocol::ProtocolLocation::Binder { node, .. }) if node == "Main/First"
+            )), "correlation-only prior binder is an enabling read: {footprint:?}");
+            assert!(!system.capture_bytes(&reached[at].state).expect("captures").is_empty());
+        }
+    });
 }
 
 #[trace("FR-940-AC-6", "FSpec-FR-831")]
@@ -404,7 +418,7 @@ fn missing_authored_carrier_is_typed_unavailable_but_empty_legacy_group_executes
 fn unported_attempt_and_recommend_correlations_remain_named_unsupported() {
     for step in [
         "attempt Work by w on M::Cell::touch contracts [] as (result: Boolean) related by Other (k, k) { true };",
-        "recommend Work by w on M::Cell::touch contracts [] related by Other (k, k) { true };",
+        "recommend Work by w on M::Cell::touch contracts [] as (advice: Boolean) related by Other (k, k) { true };",
     ] {
         let fixture = Fixture::new("", step, true);
         fixture.with_routes(true, |_, native| {

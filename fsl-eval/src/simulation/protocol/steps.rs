@@ -971,7 +971,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 .ok()?;
             let (Ok(Value::Reference(source)), Ok(Value::Reference(target))) = (first, second)
             else {
-                return Some(clause.alias.clone());
+                return Some(clause.alias.to_owned());
             };
             let holds = state.model.state().extents.iter().any(|extent| {
                 extent.relationship == clause.relationship
@@ -981,7 +981,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .any(|pair| pair.0 == source && pair.1 == target)
             });
             if !holds {
-                return Some(clause.alias.clone());
+                return Some(clause.alias.to_owned());
             }
         }
         None

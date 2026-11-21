@@ -118,7 +118,7 @@ pub(super) struct Record<'a> {
 /// One checked `related by` premise of an event step (FR-731).
 pub(super) struct Related<'a> {
     pub(super) relationship: DeclarationKey,
-    pub(super) alias: String,
+    pub(super) alias: &'a str,
     pub(super) ends: RelatedEnds<'a>,
 }
 
@@ -826,7 +826,7 @@ impl<'a> Program<'a> {
                 .ok_or_else(|| ProtocolRefusal::fault("a-related-clause-has-a-relationship"))?;
             related.entry(clause.node).or_default().push(Related {
                 relationship: relationship.key.clone(),
-                alias: relationship.name.clone(),
+                alias: &relationship.name,
                 ends: RelatedEnds::Source([&clause.ends[0], &clause.ends[1]]),
             });
         }
@@ -1370,7 +1370,7 @@ impl<'a> Program<'a> {
                             .iter()
                             .map(|clause| Related {
                                 relationship: clause.relationship.clone(),
-                                alias: clause.alias.clone(),
+                                alias: &clause.authored.alias,
                                 ends: RelatedEnds::Package(clause.ends.clone()),
                             })
                             .collect(),

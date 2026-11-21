@@ -209,8 +209,8 @@ pub use filament_contract_model::{
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedOperationRational, CheckedPackageV2,
     CheckedSelection, CheckedSourceMapEntry, ClockConfiguration, ClockExactNumber,
     ExactTypeProjection, ExactTypeProjectionError, ExactTypeProjectionErrorCode, NativeJoinBudget,
-    ProtocolCorrelationReadError, SelectedExactIdentities, SelectedModelUnionPayload,
-    SelectedModelUnionRow, TemporalBinding,
+    ProtocolCorrelationReadError, ProtocolCorrelationRow, SelectedExactIdentities,
+    SelectedModelUnionPayload, SelectedModelUnionRow, TemporalBinding,
     UnavailableCorrelationProvenance, CHECKED_PACKAGE_V2,
 };
 

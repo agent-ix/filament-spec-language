@@ -95,9 +95,9 @@ pub(super) struct PackageChannelKey {
 }
 
 /// One authored premise, in source order, selecting canonical end slots.
-pub(super) struct PackageRelated {
+pub(super) struct PackageRelated<'a> {
     pub(super) relationship: filament_checked::key::DeclarationKey,
-    pub(super) alias: String,
+    pub(super) authored: &'a fsl_package::ProtocolCorrelationRow,
     pub(super) ends: [ProtocolSlot; 2],
 }
 
@@ -135,7 +135,7 @@ pub struct PackageAttemptContext {
 
 /// The package-native protocol program needed by selection and execution.
 pub struct PackageProtocolProgram<'a> {
-    pub(super) related: BTreeMap<ProtocolNodeId, Vec<PackageRelated>>,
+    pub(super) related: BTreeMap<ProtocolNodeId, Vec<PackageRelated<'a>>>,
     /// The protocol's intended terminal states, read from its admitted obligation.
     pub(super) terminal: PackageTerminal,
     /// Origin captures in authored initialization order.
@@ -741,7 +741,7 @@ impl<'a> PackageProtocolProgram<'a> {
                                 package: identity.to_string(),
                                 node: node.to_string(),
                             },
-                            alias: clause.alias.to_string(),
+                            authored: clause,
                             ends: [end("related.from")?, end("related.to")?],
                         });
                     }
