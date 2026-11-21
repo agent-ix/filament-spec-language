@@ -187,13 +187,13 @@ pub use certificate::task_product::{
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
-    explore_task_product, recomputed_member, QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop,
-    QuotientVertex, TaskProductQuotient,
-    check_zone_certificate, AcceptanceSet, CertEdge, CertNode, CertificateCheckLimits,
-    CertificateItem, CertifiedItem, CheckerFault, ComponentReason, Components, DivergenceWitness,
-    DivergentTarget, FairnessMember, ItemIdentity, NonZeno, ProductMark, RefinementIdentity,
-    RefinementPart, SilentMove, StateGraphCertificateForm, StateGraphPart, ZoneCertificate,
-    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
+    check_zone_certificate, explore_task_product, recomputed_member, AcceptanceSet, CertEdge,
+    CertNode, CertificateCheckLimits, CertificateItem, CertifiedItem, CheckerFault,
+    ComponentReason, Components, DivergenceWitness, DivergentTarget, FairnessMember, ItemIdentity,
+    NonZeno, ProductMark, QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop,
+    QuotientVertex, RefinementIdentity, RefinementPart, SilentMove, StateGraphCertificateForm,
+    StateGraphPart, TaskProductQuotient, ZoneCertificate, ZoneCertificateRefusal,
+    ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.

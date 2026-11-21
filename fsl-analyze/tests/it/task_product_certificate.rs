@@ -14,16 +14,16 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::{Cancel, Integer};
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_eval::simulation::model::{
     TaskAutomaton, TaskProductSystem, TimedSystem, DEFAULT_MAX_CLOCKS,
 };
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
     check_zone_certificate, explore_task_product, recomputed_member, CertEdge, CertNode,
-    CertificateCheckLimits, CertificateItem, CertificateLocus, CertificateMember,
-    CertificateRule, CertifiedItem, DivergenceWitness, DivergentTarget, QuotientIdentity,
-    QuotientStop, TaskProductQuotient, Zone, ZoneCertificate, ZoneCertificateRefusal,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    CertificateCheckLimits, CertificateItem, CertificateLocus, CertificateMember, CertificateRule,
+    CertifiedItem, DivergenceWitness, DivergentTarget, QuotientIdentity, QuotientStop,
+    TaskProductQuotient, Zone, ZoneCertificate, ZoneCertificateRefusal, ZoneCertificateRequest,
+    ZoneCertificateVerdict,
 };
 use ix_trace_rs::trace;
 
@@ -35,8 +35,10 @@ use crate::zone_search::TIMED;
 /// scheduler's.
 fn world_for(set: &str, tasks: &[&str], declarations: &str) -> World {
     let names: Vec<String> = tasks.iter().map(|task| format!("fire_{task}")).collect();
-    let operations: Vec<(&str, &[&str])> =
-        names.iter().map(|name| (name.as_str(), &["phase"][..])).collect();
+    let operations: Vec<(&str, &[&str])> = names
+        .iter()
+        .map(|name| (name.as_str(), &["phase"][..]))
+        .collect();
     let releases: String = tasks
         .iter()
         .map(|task| {
@@ -133,7 +135,11 @@ fn build(world: &World, claim_name: &str) -> Built {
     let mut edges = BTreeMap::new();
     let mut list = Vec::new();
     for step in &quotient.discrete {
-        let triple = (node_of_vertex[step.from], step.identity, node_of_vertex[step.to]);
+        let triple = (
+            node_of_vertex[step.from],
+            step.identity,
+            node_of_vertex[step.to],
+        );
         edges.entry(triple).or_insert_with(|| {
             let mut edge = CertEdge {
                 from: triple.0,
@@ -261,7 +267,8 @@ fn admitted(built: &Built, node_of_vertex: &[usize]) -> DivergenceWitness {
         node_of_vertex[root]
     };
     // A vertex where time idles forever.
-    if let Some(idle) = (0..count).find(|&vertex| seen[vertex] && quotient.time.contains(&(vertex, vertex)))
+    if let Some(idle) =
+        (0..count).find(|&vertex| seen[vertex] && quotient.time.contains(&(vertex, vertex)))
     {
         let (_, path) = path_to(&parent, idle);
         return DivergenceWitness {
@@ -323,9 +330,7 @@ fn verdict(
 }
 
 fn node_at(index: usize) -> CertificateLocus {
-    CertificateLocus::ZoneNode {
-        node: index as u64,
-    }
+    CertificateLocus::ZoneNode { node: index as u64 }
 }
 
 const SOLO: &str = "taskset S {\n\
@@ -362,13 +367,17 @@ fn the_recomputed_periodic_certificate_is_accepted() {
         let world = solo();
         let built = build(&world, claim);
         assert_eq!(
-            verdict(&world, claim, &built.certificate, CertificateCheckLimits::default()),
+            verdict(
+                &world,
+                claim,
+                &built.certificate,
+                CertificateCheckLimits::default()
+            ),
             Ok(ZoneCertificateVerdict::Accepted),
             "{claim}"
         );
     }
 }
-
 
 fn edit(
     world: &World,
@@ -377,7 +386,12 @@ fn edit(
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<OccurrenceKey>> {
     let mut certificate = build(world, claim).certificate;
     change(&mut certificate);
-    verdict(world, claim, &certificate, CertificateCheckLimits::default())
+    verdict(
+        world,
+        claim,
+        &certificate,
+        CertificateCheckLimits::default(),
+    )
 }
 
 fn rejected(
@@ -422,28 +436,55 @@ fn big(value: u64) -> Integer {
 #[test]
 fn a_member_that_differs_from_its_recomputation_is_malformed() {
     let tampers: Vec<(&str, &str, Box<dyn Fn(&mut Certificate)>)> = vec![
-        ("max_jobs + 1", "SFp", Box::new(|c| {
-            c.task_product.as_mut().unwrap().queue_bounds[0].max_jobs += 1;
-        })),
-        ("max_jobs - 1", "SFp", Box::new(|c| {
-            c.task_product.as_mut().unwrap().queue_bounds[0].max_jobs -= 1;
-        })),
-        ("cap != sum", "SFp", Box::new(|c| {
-            c.task_product.as_mut().unwrap().time_progress.live_job_cap += 1;
-        })),
-        ("work lower != upper", "SFp", Box::new(|c| {
-            let row = &mut c.task_product.as_mut().unwrap().queue_bounds[0];
-            row.work_lower = crate::zone_search::exact(1, 4000);
-        })),
-        ("a ceiling changed", "SFp", Box::new(|c| {
-            c.task_product.as_mut().unwrap().clock_ceilings[0].maximum = big(9_999_999);
-        })),
+        (
+            "max_jobs + 1",
+            "SFp",
+            Box::new(|c| {
+                c.task_product.as_mut().unwrap().queue_bounds[0].max_jobs += 1;
+            }),
+        ),
+        (
+            "max_jobs - 1",
+            "SFp",
+            Box::new(|c| {
+                c.task_product.as_mut().unwrap().queue_bounds[0].max_jobs -= 1;
+            }),
+        ),
+        (
+            "cap != sum",
+            "SFp",
+            Box::new(|c| {
+                c.task_product.as_mut().unwrap().time_progress.live_job_cap += 1;
+            }),
+        ),
+        (
+            "work lower != upper",
+            "SFp",
+            Box::new(|c| {
+                let row = &mut c.task_product.as_mut().unwrap().queue_bounds[0];
+                row.work_lower = crate::zone_search::exact(1, 4000);
+            }),
+        ),
+        (
+            "a ceiling changed",
+            "SFp",
+            Box::new(|c| {
+                c.task_product.as_mut().unwrap().clock_ceilings[0].maximum = big(9_999_999);
+            }),
+        ),
     ];
     for (name, claim, change) in tampers {
-        assert_eq!(rejected(edit(&solo(), claim, change)), malformed_member(), "{name}");
+        assert_eq!(
+            rejected(edit(&solo(), claim, change)),
+            malformed_member(),
+            "{name}"
+        );
     }
     let diagonals = |c: &Certificate| c.task_product.as_ref().unwrap().diagonal_constraints.len();
-    assert!(diagonals(&build(&preempting(), "QEdf").certificate) > 0, "EDF over two tasks has diagonals");
+    assert!(
+        diagonals(&build(&preempting(), "QEdf").certificate) > 0,
+        "EDF over two tasks has diagonals"
+    );
     assert_eq!(
         rejected(edit(&preempting(), "QEdf", |c| {
             c.task_product.as_mut().unwrap().diagonal_constraints.pop();
@@ -478,10 +519,7 @@ fn a_member_that_differs_from_its_recomputation_is_malformed() {
     );
 }
 
-fn template_edge(
-    certificate: &Certificate,
-    action: fsl_replay::TaskTransitionAction,
-) -> usize {
+fn template_edge(certificate: &Certificate, action: fsl_replay::TaskTransitionAction) -> usize {
     certificate
         .edges
         .iter()
@@ -500,18 +538,27 @@ fn template_edge(
 fn a_forged_template_leaves_the_successor_missing() {
     let world = solo();
     let built = build(&world, "SFp");
-    let dispatch = template_edge(&built.certificate, fsl_replay::TaskTransitionAction::Dispatch);
+    let dispatch = template_edge(
+        &built.certificate,
+        fsl_replay::TaskTransitionAction::Dispatch,
+    );
     let from = built.certificate.edges[dispatch].from;
     // A forged priority.
     let forged = edit(&world, "SFp", |c| {
         c.edges[dispatch].task_transition.as_mut().unwrap().priority = Some(99);
     });
-    assert_eq!(rejected(forged), (CertificateRule::SuccessorMissing, node_at(from)));
+    assert_eq!(
+        rejected(forged),
+        (CertificateRule::SuccessorMissing, node_at(from))
+    );
     // A slot not bound to the live job (ZC-25's shape).
     let slot = edit(&world, "SFp", |c| {
         c.edges[dispatch].task_transition.as_mut().unwrap().slot = 1;
     });
-    assert_eq!(rejected(slot), (CertificateRule::SuccessorMissing, node_at(from)));
+    assert_eq!(
+        rejected(slot),
+        (CertificateRule::SuccessorMissing, node_at(from))
+    );
 }
 
 /// FR-418-AC-13 (matcher): an activation whose rank is beyond the
@@ -521,12 +568,18 @@ fn a_forged_template_leaves_the_successor_missing() {
 fn an_out_of_range_activation_rank_leaves_the_successor_missing() {
     let world = solo();
     let built = build(&world, "SFp");
-    let activate = template_edge(&built.certificate, fsl_replay::TaskTransitionAction::Activate);
+    let activate = template_edge(
+        &built.certificate,
+        fsl_replay::TaskTransitionAction::Activate,
+    );
     let from = built.certificate.edges[activate].from;
     let result = edit(&world, "SFp", |c| {
         c.edges[activate].task_transition.as_mut().unwrap().job_rank = 7;
     });
-    assert_eq!(rejected(result), (CertificateRule::SuccessorMissing, node_at(from)));
+    assert_eq!(
+        rejected(result),
+        (CertificateRule::SuccessorMissing, node_at(from))
+    );
 }
 
 /// The certificate is canonical (ruling U5): an edge or node the
@@ -544,18 +597,27 @@ fn the_certificate_is_the_reachable_closure() {
     });
     assert_eq!(
         rejected(extra),
-        (CertificateRule::ExtraEdge, CertificateLocus::ZoneEdge { edge: count as u64 })
+        (
+            CertificateRule::ExtraEdge,
+            CertificateLocus::ZoneEdge { edge: count as u64 }
+        )
     );
     let nodes = built.certificate.nodes.len();
     let unreached = edit(&world, "SFp", |c| {
         let copy = c.nodes[0].clone();
         c.nodes.push(copy);
     });
-    assert_eq!(rejected(unreached), (CertificateRule::UnreachedNode, node_at(nodes)));
+    assert_eq!(
+        rejected(unreached),
+        (CertificateRule::UnreachedNode, node_at(nodes))
+    );
     let removed_from = built.certificate.edges[0].from;
     let removed = edit(&world, "SFp", |c| {
         let admitted = c.admitted.as_mut().unwrap();
-        assert!(!admitted.path.contains(&0), "the witness does not use edge 0");
+        assert!(
+            !admitted.path.contains(&0),
+            "the witness does not use edge 0"
+        );
         for edge in &mut admitted.path {
             *edge -= usize::from(*edge > 0);
         }
@@ -566,7 +628,10 @@ fn the_certificate_is_the_reachable_closure() {
         }
         c.edges.remove(0);
     });
-    assert_eq!(rejected(removed), (CertificateRule::SuccessorMissing, node_at(removed_from)));
+    assert_eq!(
+        rejected(removed),
+        (CertificateRule::SuccessorMissing, node_at(removed_from))
+    );
 }
 
 /// Two releases at one instant are two source edges, fired in either order;
@@ -582,9 +647,9 @@ fn one_interleaving_of_simultaneous_releases_cannot_be_removed() {
         .iter()
         .enumerate()
         .filter(|(_, edge)| {
-            edge.task_transition.as_ref().is_some_and(|t| {
-                t.action == fsl_replay::TaskTransitionAction::Activate
-            })
+            edge.task_transition
+                .as_ref()
+                .is_some_and(|t| t.action == fsl_replay::TaskTransitionAction::Activate)
         })
         .map(|(index, _)| index)
         .collect();
@@ -594,7 +659,11 @@ fn one_interleaving_of_simultaneous_releases_cannot_be_removed() {
         .copied()
         .filter(|&index| built.certificate.edges[index].from == node)
         .collect();
-    assert_eq!(both.len(), 2, "both tasks can release first at the initial node");
+    assert_eq!(
+        both.len(),
+        2,
+        "both tasks can release first at the initial node"
+    );
     let last = *both.last().expect("two");
     let result = edit(&world, "EEdf", |c| {
         let admitted = c.admitted.as_mut().unwrap();
@@ -608,7 +677,10 @@ fn one_interleaving_of_simultaneous_releases_cannot_be_removed() {
         }
         c.edges.remove(last);
     });
-    assert_eq!(rejected(result), (CertificateRule::SuccessorMissing, node_at(node)));
+    assert_eq!(
+        rejected(result),
+        (CertificateRule::SuccessorMissing, node_at(node))
+    );
 }
 
 /// A node that does not cover the initial zero valuation is
@@ -622,11 +694,15 @@ fn a_node_that_does_not_cover_is_rejected() {
     let initial = built.certificate.initials[0];
     let result = edit(&world, "SFp", |c| {
         let zone = &mut c.nodes[initial].zone;
-        zone.constrain(0, 1, &Integer::from(-1_i64), false).expect("constrain");
+        zone.constrain(0, 1, &Integer::from(-1_i64), false)
+            .expect("constrain");
     });
     let (rule, _) = rejected(result);
     assert!(
-        matches!(rule, CertificateRule::InitialMissing | CertificateRule::Malformed),
+        matches!(
+            rule,
+            CertificateRule::InitialMissing | CertificateRule::Malformed
+        ),
         "{rule:?}"
     );
     // Two clock columns swapped in the last node's DBM.
@@ -638,8 +714,20 @@ fn a_node_that_does_not_cover_is_rejected() {
         for i in 0..dim {
             for j in 0..dim {
                 let (i, j) = (
-                    if i == 1 { 2 } else if i == 2 { 1 } else { i },
-                    if j == 1 { 2 } else if j == 2 { 1 } else { j },
+                    if i == 1 {
+                        2
+                    } else if i == 2 {
+                        1
+                    } else {
+                        i
+                    },
+                    if j == 1 {
+                        2
+                    } else if j == 2 {
+                        1
+                    } else {
+                        j
+                    },
                 );
                 cells.push(zone.bound(i, j).expect("bound"));
             }
@@ -661,7 +749,9 @@ fn a_reversed_ready_order_is_not_the_recomputed_key() {
         .certificate
         .nodes
         .iter()
-        .position(|node| String::from_utf8_lossy(node.state_key.as_bytes()).contains("|q:0.0:1.0l."))
+        .position(|node| {
+            String::from_utf8_lossy(node.state_key.as_bytes()).contains("|q:0.0:1.0l.")
+        })
         .expect("a node with two ready jobs");
     let result = edit(&world, "EEdf", |c| {
         let text = String::from_utf8_lossy(c.nodes[target].state_key.as_bytes())
@@ -683,7 +773,12 @@ fn an_edf_tie_dispatches_the_canonically_first_task() {
     let world = tied();
     let built = build(&world, "EEdf");
     assert_eq!(
-        verdict(&world, "EEdf", &built.certificate, CertificateCheckLimits::default()),
+        verdict(
+            &world,
+            "EEdf",
+            &built.certificate,
+            CertificateCheckLimits::default()
+        ),
         Ok(ZoneCertificateVerdict::Accepted)
     );
     let dispatches: Vec<&CertEdge> = built
@@ -696,13 +791,20 @@ fn an_edf_tie_dispatches_the_canonically_first_task() {
                 .is_some_and(|t| t.action == fsl_replay::TaskTransitionAction::Dispatch)
         })
         .collect();
-    assert!(dispatches.iter().all(|edge| edge.task_transition.as_ref().unwrap().priority.is_none()));
+    assert!(dispatches.iter().all(|edge| edge
+        .task_transition
+        .as_ref()
+        .unwrap()
+        .priority
+        .is_none()));
     // At the node holding both ready jobs the only dispatch is `a`.
     let both = built
         .certificate
         .nodes
         .iter()
-        .position(|node| String::from_utf8_lossy(node.state_key.as_bytes()).contains("|q:0.0:1.0l."))
+        .position(|node| {
+            String::from_utf8_lossy(node.state_key.as_bytes()).contains("|q:0.0:1.0l.")
+        })
         .expect("a node with two ready jobs");
     let at_tie: Vec<&str> = built
         .certificate
@@ -729,7 +831,10 @@ fn an_edf_tie_dispatches_the_canonically_first_task() {
     let reversed = edit(&world, "EEdf", |c| {
         c.edges[index].task_transition.as_mut().unwrap().task = "b".to_owned();
     });
-    assert_eq!(rejected(reversed), (CertificateRule::SuccessorMissing, node_at(both)));
+    assert_eq!(
+        rejected(reversed),
+        (CertificateRule::SuccessorMissing, node_at(both))
+    );
     // A `policy` member is not a task-product certificate.
     let mut wire = built
         .certificate
@@ -768,10 +873,13 @@ fn divergence_and_the_admitted_witness_are_replayed_on_the_quotient() {
             target: DivergentTarget::Quiescent(to),
         });
     });
-    assert_eq!(rejected(idles_nowhere), (CertificateRule::WitnessFails, node_at(to)));
+    assert_eq!(
+        rejected(idles_nowhere),
+        (CertificateRule::WitnessFails, node_at(to))
+    );
 }
 
-/// FR-418-AC-20-style budget: a work limit below the graph's size settles
+/// A work limit below the graph's size settles
 /// `incomplete` naming `max_check_work`, never an acceptance.
 #[trace("TC-371", "FR-418-AC-13")]
 #[test]
@@ -812,7 +920,12 @@ fn a_mixed_criticality_set_is_certificate_unchecked() {
     let mut certificate = build(&solo(), "SFp").certificate;
     certificate.obligation = claim_of(&world, "DFp").occurrence().expect("occurrence");
     assert_eq!(
-        verdict(&world, "DFp", &certificate, CertificateCheckLimits::default()),
+        verdict(
+            &world,
+            "DFp",
+            &certificate,
+            CertificateCheckLimits::default()
+        ),
         Ok(ZoneCertificateVerdict::Stopped(
             fsl_replay::IncompleteCause::CertificateUnchecked
         ))
@@ -848,7 +961,9 @@ fn no_release_certificate(world: &World, claim_name: &str) -> Certificate {
     let source_clocks = automaton.source_clocks();
     let dim = source_clocks + 1;
     ZoneCertificate {
-        obligation: claim_of(world, claim_name).occurrence().expect("occurrence"),
+        obligation: claim_of(world, claim_name)
+            .occurrence()
+            .expect("occurrence"),
         scale: Integer::from(1_u64),
         lu_bounds: fsl_replay::LuBounds {
             lower: vec![None; source_clocks],
@@ -890,21 +1005,41 @@ fn a_no_release_closure_is_accepted_only_when_no_release_is_reachable() {
     let world = no_release();
     let certificate = no_release_certificate(&world, "NFp");
     assert_eq!(
-        verdict(&world, "NFp", &certificate, CertificateCheckLimits::default()),
+        verdict(
+            &world,
+            "NFp",
+            &certificate,
+            CertificateCheckLimits::default()
+        ),
         Ok(ZoneCertificateVerdict::Accepted),
         "ZC-26"
     );
     let mut capped = certificate.clone();
-    capped.task_product.as_mut().unwrap().time_progress.live_job_cap = 1;
+    capped
+        .task_product
+        .as_mut()
+        .unwrap()
+        .time_progress
+        .live_job_cap = 1;
     assert_eq!(
-        rejected(verdict(&world, "NFp", &capped, CertificateCheckLimits::default())),
+        rejected(verdict(
+            &world,
+            "NFp",
+            &capped,
+            CertificateCheckLimits::default()
+        )),
         malformed_member(),
         "ZC-27"
     );
     let mut empty = certificate.clone();
     empty.task_product.as_mut().unwrap().queue_bounds.clear();
     assert_eq!(
-        rejected(verdict(&world, "NFp", &empty, CertificateCheckLimits::default())),
+        rejected(verdict(
+            &world,
+            "NFp",
+            &empty,
+            CertificateCheckLimits::default()
+        )),
         malformed_member(),
         "ZC-29"
     );
@@ -912,7 +1047,12 @@ fn a_no_release_closure_is_accepted_only_when_no_release_is_reachable() {
     let releasing = solo();
     let wrong = no_release_certificate(&releasing, "SFp");
     assert_eq!(
-        rejected(verdict(&releasing, "SFp", &wrong, CertificateCheckLimits::default())),
+        rejected(verdict(
+            &releasing,
+            "SFp",
+            &wrong,
+            CertificateCheckLimits::default()
+        )),
         (CertificateRule::SuccessorMissing, node_at(0)),
         "ZC-28"
     );

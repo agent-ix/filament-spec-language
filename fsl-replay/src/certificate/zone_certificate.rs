@@ -84,8 +84,8 @@
 mod divergence;
 mod product;
 pub use task_check::{
-    explore_task_product, recomputed_member, QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop,
-    QuotientVertex, TaskProductQuotient,
+    explore_task_product, recomputed_member, QuotientEdge, QuotientIdentity, QuotientInitial,
+    QuotientStop, QuotientVertex, TaskProductQuotient,
 };
 mod task_check;
 
@@ -877,7 +877,9 @@ pub fn check_zone_certificate<O: Clone + Eq>(
     limits: CertificateCheckLimits,
     cancel: &Cancel,
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<O>> {
-    if certificate.task_product.is_some() && !matches!(request.item, CertifiedItem::Schedulability { .. }) {
+    if certificate.task_product.is_some()
+        && !matches!(request.item, CertifiedItem::Schedulability { .. })
+    {
         // Only a schedulability item carries FR-418's task-product member.
         return Ok(malformed_verdict(CertificateMember::TaskProduct));
     }
@@ -2298,7 +2300,8 @@ impl<O> Checker<'_, '_, O> {
         if self.time_lock
             || self.release_ops.is_some()
             || self.live.is_some()
-            || self.refined.is_some() {
+            || self.refined.is_some()
+        {
             // A refinement form's badness is `check_step`'s, judged on
             // each edge in `reach`.
             // Time-lock freedom is read from the divergence part, and a

@@ -20,7 +20,12 @@
 //! A source operation that releases several tasks at once is one source
 //! edge of the lowering with all its activations, so its certificate edge
 //! keeps the source identity; an operation releasing one task is the
-//! `activate` template edge (the published ZC-19 shape).
+//! `activate` template edge (the published ZC-19 shape). This is v1,
+//! pending arch's ruling on splitting a multi-release operation into one
+//! source edge plus a template edge per activation in every interleaving:
+//! S3's `EdgeKind::Source` is one atomic edge whose target already holds
+//! every activated job, so (a) needs S3 to expose the intermediate
+//! locations, and would be a follow-up here.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -34,14 +39,14 @@ use fsl_eval::simulation::model::{
     Successors, TaskAutomaton, TaskAutomatonRefusal, TaskEdge, TaskLocation, TaskProductPlan,
     TaskProductSystem, TaskTemplate, TimedSystem,
 };
-use fsl_semantics::check::CheckedScheduleClaim;
 use fsl_eval::simulation::StateKey;
+use fsl_semantics::check::CheckedScheduleClaim;
 
 use super::super::task_product::{
     same_source_transition, TaskArrivalPhase, TaskClockCeiling, TaskClosureEvidence,
     TaskClosureMethod, TaskDiagonalConstraint, TaskDiagonalOperator, TaskJobPhase, TaskLiveJob,
-    TaskProductCertificate,
-    TaskProductKey, TaskQueueBound, TaskSchedulerControl, TaskSubtraction, TaskTransitionTemplate,
+    TaskProductCertificate, TaskProductKey, TaskQueueBound, TaskSchedulerControl, TaskSubtraction,
+    TaskTransitionTemplate,
 };
 use super::super::zone::{Coverage, DiagonalPredicate, TargetShape, Zone, ZoneError};
 use super::{
@@ -365,10 +370,8 @@ impl Explorer<'_, '_, '_, '_> {
         if zone.is_empty() {
             return Ok(Vec::new());
         }
-        zone.region_normalize_charged(&self.ceilings, &self.diagonals, &mut || {
-            self.work.charge()
-        })?
-        .ok_or(QuotientStop::Work)
+        zone.region_normalize_charged(&self.ceilings, &self.diagonals, &mut || self.work.charge())?
+            .ok_or(QuotientStop::Work)
     }
 
     fn data(&mut self, location: &TaskLocation) -> Explored<(StateKey, Rc<LocationData>)> {
@@ -435,8 +438,8 @@ impl Explorer<'_, '_, '_, '_> {
             }
             let (key, data) = self.data(&location)?;
             let mut zone = Zone::zero(self.dim);
-            for clock in 1..self.dim {
-                let value = self.sc(&valuation[clock])?;
+            for (clock, entry) in valuation.iter().enumerate().skip(1) {
+                let value = self.sc(entry)?;
                 if value != Integer::zero() {
                     zone.reset(clock, &value)?;
                 }
@@ -647,7 +650,9 @@ fn explore(
     scale: &Integer,
     work: &Work<'_>,
 ) -> Explored<TaskProductQuotient> {
-    automaton.certification().map_err(|_| QuotientStop::Uncertified)?;
+    automaton
+        .certification()
+        .map_err(|_| QuotientStop::Uncertified)?;
     let (ceilings, diagonals) = region_parameters(automaton, scale)?;
     let mut explorer = Explorer {
         automaton,
@@ -876,8 +881,8 @@ pub(super) fn check<O: Clone + Eq>(
     let dim = automaton.clocks().len() + 1;
     shape(certificate, dim)?;
     compare_member(automaton, certificate, &work)?;
-    let quotient = explore(automaton, &certificate.scale, &work)
-        .map_err(|stop| quotient_halt(stop, &work))?;
+    let quotient =
+        explore(automaton, &certificate.scale, &work).map_err(|stop| quotient_halt(stop, &work))?;
     compare_subtractions(certificate, &quotient)?;
     let (ceilings, diagonals) = region_parameters(automaton, &certificate.scale)
         .map_err(|stop| quotient_halt(stop, &work))?;
@@ -1064,8 +1069,7 @@ impl<O: Clone + Eq> Matcher<'_, '_, O> {
     /// The certificate holds exactly the reachable closure.
     fn canonical(&self) -> Step<(), O> {
         let reached: BTreeSet<usize> = self.pairs.iter().map(|&(node, _)| node).collect();
-        if let Some(node) = (0..self.certificate.nodes.len()).find(|node| !reached.contains(node))
-        {
+        if let Some(node) = (0..self.certificate.nodes.len()).find(|node| !reached.contains(node)) {
             return reject(CertificateRule::UnreachedNode, at_node(node));
         }
         if let Some(edge) = self.used.iter().position(|used| !used) {
@@ -1164,7 +1168,9 @@ impl<O: Clone + Eq> Matcher<'_, '_, O> {
         let edges = &self.certificate.edges;
         let chained = !cycle.is_empty()
             && edges[cycle[0]].from == at
-            && cycle.windows(2).all(|pair| edges[pair[0]].to == edges[pair[1]].from)
+            && cycle
+                .windows(2)
+                .all(|pair| edges[pair[0]].to == edges[pair[1]].from)
             && edges[cycle[cycle.len() - 1]].to == at
             && cycle.iter().all(|&index| self.used[index]);
         if !chained {
