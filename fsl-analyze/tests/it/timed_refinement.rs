@@ -493,11 +493,8 @@ fn the_liveness_half_of_a_timed_abstract_hidden_field_is_decided() {
     assert!(
         matches!(
             outcome.liveness,
-            Some(TimedLivenessHalf::Checked(TimedLivenessOutcome::Holds { .. }))
-        ),
-        "{:?}",
-        outcome.liveness
-    );| TimedLivenessOutcome::Undecided { .. }
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Holds { .. }
             ))
         ),
         "{:?}",
