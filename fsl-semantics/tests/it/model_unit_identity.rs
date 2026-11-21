@@ -117,9 +117,9 @@ fn inherited_source_member_keeps_original_and_changes_effective_owner() {
 #[test]
 #[trace("FR-081-AC-2")]
 fn equally_shaped_source_fields_have_distinct_original_and_effective_keys() {
-    let view = view("object Item { first: Integer; second: Integer; }");
-    let first = entry(&view, "Item", "Item/first");
-    let second = entry(&view, "Item", "Item/second");
+    let view = view("object Item { alpha: Integer; beta: Integer; }");
+    let first = entry(&view, "Item", "Item/alpha");
+    let second = entry(&view, "Item", "Item/beta");
     assert_eq!(
         first.preimage.owner_effective_type,
         second.preimage.owner_effective_type
