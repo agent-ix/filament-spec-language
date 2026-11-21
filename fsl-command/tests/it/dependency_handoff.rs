@@ -168,6 +168,8 @@ fn malformed_manifests_and_missing_indexed_witnesses_refuse_before_a_call() {
         ("{\"format\":\"filament.checked-handoff.dependencies/2\",\"dependencies\":[]}", "unknown-format", "/format"),
         ("{\"format\":\"filament.checked-handoff.dependencies/1\",\"format\":\"filament.checked-handoff.dependencies/1\",\"dependencies\":[]}", "malformed-file", "/format"),
         ("{\"format\":\"filament.checked-handoff.dependencies/1\",\"dependencies\":[{\"identity\":\"test/a\",\"directory\":\"../escape\"}]}", "invalid-value", "/dependencies/0/directory"),
+        ("{\"format\":\"filament.checked-handoff.dependencies/1\",\"dependencies\":[{\"identity\":\"test/a\",\"directory\":\"/absolute\"}]}", "invalid-value", "/dependencies/0/directory"),
+        ("{\"format\":\"filament.checked-handoff.dependencies/1\",\"dependencies\":[{\"identity\":\"test/a\",\"directory\":\"dependencies/7\"}]}", "invalid-value", "/dependencies/0/directory"),
     ] {
         std::fs::write(&manifest_file, raw).unwrap();
         let (exit, result) = run(directory.path(), json!({"directory": "handoff"}));
