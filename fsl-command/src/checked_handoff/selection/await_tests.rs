@@ -424,9 +424,10 @@ fn await_selectors_refuse_unknown_duplicate_missing_and_ambiguous_requests() {
     let source = std::fs::read_to_string(&fixture.request.emit.source).unwrap();
     let original = awaiting("WaitZ");
     let nested = original.replace("after Started", "after Main::Started");
+    let right = nested.replace("seenWaitZ", "seenOther");
     let ambiguous = source.replace(
         &original,
-        &format!("sequence Left {{ {nested} }} sequence Right {{ {nested} }}"),
+        &format!("sequence Left {{ {nested} }} sequence Right {{ {right} }}"),
     );
     std::fs::write(&fixture.request.emit.source, ambiguous).unwrap();
     assert!(matches!(
