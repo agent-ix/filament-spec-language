@@ -233,6 +233,7 @@ that the `Counterexample` variant is:
 | `Graph` | FSpec FR-393's `GraphEvidence` |
 | `Assignments` | FSpec FR-197's canonical assignments `{type: "assignments", values}`, one FR-181 typed value per parameter node |
 | `Contract` | FSpec FR-485's `contract-counterexample` `{type, obligation, violated, bound, executions}` |
+| `ProtocolAnalysis` | [FSpec FR-331](ix://agent-ix/filament-specification/FR-331)'s `ProtocolAnalysisCounterexample`, the closed `CanonicalCounterexample` alternative with `type` `protocol-analysis-counterexample` and `kind` `indistinguishable-histories`, `environment-defeat` or `projection`; its members and nested encodings are exactly FR-331's |
 
 An item has none of `position`, `decisive` and `witness`, which belong to a
 clause run. An item of any result but `refuted` carries no `counterexample`.
@@ -240,6 +241,56 @@ clause run. An item of any result but `refuted` carries no `counterexample`.
 `Err(OutcomeItemError::MissingCounterexample)` and builds no item. One
 spelling serves the document `analyze` writes and the item `prove` writes, so
 the same item through either gives the same bytes.
+
+### Protocol-analysis refutations
+
+When a realizability or local-projection analysis settles `Refuted`, the
+shared analyze item producer SHALL carry its typed counterexample in the
+`ProtocolAnalysisCounterexample` alternative above. The producer SHALL
+associate that body with the originating request item, preserving its
+`request_index`, declared claim and admitted request, through the same
+record, item, spelling and counterexample-taking path used by other
+refuted analyses. Source compilation and checked-Package intake SHALL use
+that same assembly contract.
+
+For `IndistinguishableHistories`, the body SHALL preserve the analysis
+`key`, `role`, both plays `history_a` and `history_b`, both required actions
+`action_a` and `action_b`, the violated `obligation` and the
+`separating_witness`. For `EnvironmentDefeat`, the body SHALL preserve the
+analysis `key`, `defeats_per_branch` in branch order, each branch's `play`,
+the violated `obligation` and the `separating_witness`. Each play SHALL
+preserve its `initial` state and ordered steps, including every
+`successor` and protocol `transition`. A send step SHALL carry its
+`send_record`; every non-send step SHALL omit that member, never write
+`null`. Transitions,
+send records and the FSpec FR-351 separating witness SHALL use their
+existing canonical encodings as FR-331 requires.
+
+For a projection refutation, the body SHALL preserve the analysis `key`,
+`role`, complete typed `decision` and `separating_witness`. A `choice`
+decision SHALL retain its `choice`, `owner` and both indexed `cases`,
+`paths` and nullable `actions`; an `acting-instance` decision SHALL retain
+its `event`, `owner`, `instances` and `maximum`. The producer SHALL use
+FR-331's decision and action spellings without adding realizability
+strategy data to a projection body.
+
+The resulting item SHALL retain its `refuted` terminal record and category
+violation. The document SHALL retain `filament-outcome/1`, operation
+`analyze`, the category ranked from its items and the last stage reached
+under [FR-621](FR-621-write-the-analyze-result-as-one-outcome-document-per-request.md).
+A completed typed refutation SHALL NOT become a refusal, unsupported
+result or internal failure because the result assembler omitted its body.
+The producer SHALL NOT substitute graph evidence, fabricate a body or
+drop typed data to fit another counterexample alternative. An absent body
+still returns `MissingCounterexample` under the rule above; it SHALL NOT
+be accepted as a complete refuted item.
+
+The terminal record's `format`, `analysis`, proof basis and witness do not
+constitute the counterexample body. [FSpec FR-352](ix://agent-ix/filament-specification/FR-352)
+continues to exclude that body; the item carries it separately as
+`counterexample` in FR-331's closed union. Structural validation of an
+outcome document does not establish that its body belongs to that item or
+truthfully encodes the typed refutation.
 
 ## Export outcomes
 
@@ -815,8 +866,17 @@ member goes untested against a real writer's bytes.
 | FR-286-AC-30 | `hint_for` returns a text for every one of the 23 pairs of the "Fix hints" table, `io-error` with no cause included, and returns `None` for `(Code::OutputFailure, Some("output-failure"))` and for `(Code::InvalidRequest, None)`. | Test (TC-3113) |
 | FR-286-AC-31 | The schema completeness test passes over every writer of the "Published schema" table: the golden `execute` document of FR-963-AC-1's call with `requirements` and its root `registry`, an FR-990-AC-1 `analyze` item with `obligations`, `closure` and `global`, an FR-990-AC-3 item with `recording`, FR-634-AC-1's simulation item, a diagnostic with `construct`, `declaration`, `profile` and `text`, and an FR-650 record value whose `fields` hold the names `a` and `zz` all validate. Run against a copy of the schema with `max_messages` removed from the item definition, it fails naming `/items/*/max_messages`. A new optional field added to `OutcomeItem` with the full-member fixture left unchanged fails to compile; set in the fixture but absent from `MEMBERS`, it fails the writer's `MEMBERS` test; added to `MEMBERS` and not to the schema, it fails the completeness test naming its path. A Value-built writer that emits a key outside its `MEMBERS` fails its `MEMBERS` test; the corpus coverage test run against a copy declaring a diagnostic member `unused` fails naming `/diagnostics/*/unused`. | Test (TC-3116) |
 | FR-286-AC-32 | A `prove` item from a state-graph record with seed 18446744073709551615 encodes `"seed":"18446744073709551615"`, validates against the schema, and reads back to the same `u64`; with seed 7 it encodes `"seed":"7"`. `fsl_foundation::canonical_json::encode` refuses `{"n": 9007199254740992}` with `CanonicalJsonError::UnsafeInteger` at `/n` and accepts `{"n": 9007199254740991}`. A request whose `witness_samples` is 9007199254740992 refuses `invalid-request` naming `witness_samples`. The handoff tree FR-517-AC-5 writes keeps its `selection.json` pretty-printed with two-space indentation and FR-517's member order, which the encoder rule does not touch. | Test (TC-3117) |
+| FR-286-AC-33 | A genuine `IndistinguishableHistories` refutation assembled through both Source and checked-Package intake gives an `analyze` item with its original request index, claim, admitted request, `refuted` record and category violation. Its `counterexample` has `type` `protocol-analysis-counterexample`, `kind` `indistinguishable-histories`, the exact analysis key and role, both histories and required actions, obligation and separating witness of the typed result. Each history retains its initial state and ordered successor/transition steps in FR-331's encodings; each send step carries its send record, and every non-send step omits `send_record`. Serializing the same settled item through the shared item producer gives the same canonical body bytes on either route. | Test |
+| FR-286-AC-34 | A genuine `EnvironmentDefeat` refutation assembled through both intake routes gives the same body type with `kind` `environment-defeat`, preserving its key, every `defeats_per_branch` play in branch order, obligation and separating witness; each play retains the data AC-33 requires. An empty or shortened replacement for a nonempty branch list, reordered branches or a substituted play fails the typed-result-to-body comparison even when the enclosing outcome validates structurally. | Test |
+| FR-286-AC-35 | Genuine projection refutations assembled through both intake routes give the same body type with `kind` `projection` and preserve the typed key, role, decision and separating witness. A choice decision retains both indexed cases, paths and nullable actions with its choice and owner; an acting-instance decision retains event, owner, both instances and maximum. The result remains `refuted`, category violation, with a separate canonical body and no fabricated realizability strategy. | Test |
+| FR-286-AC-36 | Running the exact Source request `fsl-analyze/tests/fixtures/hidden-choice-source/requests/protocols/protocol-unrealizable.json` with its referenced `handover-hidden-choice.fsl`, `lock.semantic-ir.json` and `lock-free.json` gives one `Handover` item at request index 0, `record.result` `refuted`, category violation and a non-null `protocol-analysis-counterexample` body equal to the genuine realizability counterexample. The document is `filament-outcome/1`, operation `analyze`, category violation, with the non-null last stage FR-621 assigns to the completed analysis, and exits 10. Exit 30 with `runtime_invariant`, `items` `[]` and `last_stage` `null` does not satisfy this criterion. | Test |
+| FR-286-AC-37 | For each of AC-33 to AC-35, the full emitted document validates against the published outcome schema and its body satisfies FR-331's positive/adverse protocol-counterexample contract vectors. Removing a required body member, adding an unknown member, using an unknown kind, mixing members of different kinds, omitting a send step's `send_record`, adding it to a non-send step or setting it to `null` fails that body contract. Removing the body makes the shared producer return `MissingCounterexample`; attaching a valid body from a different request item fails association checks. A record alone, a graph substitution or a rewritten `declined`/`unsupported` result never passes as the original refutation. Existing non-protocol counterexample spellings and non-refuted item behavior remain as specified above. | Test |
 
 ## Status
+
+The protocol-analysis amendment for QSL-2501 is a serialization contract.
+Its production fix and AC-33 to AC-37 verification remain outstanding;
+authoring and validating this requirement do not establish runtime repair.
 
 Driver follow-up: driver FR-002-AC-9 still states that the CLI encodes
 machine-mode outcomes through ix-cli-kit's `json` module, which orders keys
