@@ -502,7 +502,8 @@ fn every_scheduler_discrete_delay_is_certified() {
 #[test]
 fn every_scheduler_discrete_delay_refutes() {
     let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
-    assert!(is_refuted(&settle(&world, "Strict")));
+    let record = settle(&world, "Strict");
+    assert!(is_refuted(&record), "{record:#?}");
 }
 
 /// FR-923-AC-1: a refutation is evidence only when the checker's own replay of
@@ -572,7 +573,8 @@ fn every_scheduler_tie_is_the_schedulers_choice() {
             claim("Weighted", "under Both")
         ),
     );
-    assert!(is_refuted(&settle(&world, "Every")));
+    let record = settle(&world, "Every");
+    assert!(is_refuted(&record), "{record:#?}");
     assert_eq!(proved_value(&settle(&world, "Weighted")), ratio(21, 40));
 }
 
