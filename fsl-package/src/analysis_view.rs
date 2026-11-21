@@ -68,6 +68,39 @@ pub trait AnalysisView: sealed::Sealed {
     /// reader keeps nonempty (FR-940 `identity`).
     fn identity(&self) -> &LibraryName;
 
+    /// Resolve an explicitly selected occurrence against this owning package.
+    /// An ambiguous multi-region occurrence requires an exact region selector.
+    fn occurrence_source(
+        &self,
+        application: &CheckedNodeId,
+        occurrence: &filament_contract_model::CheckedOccurrence,
+        selected: Option<&fsl_foundation::source::provenance::SourceRegion>,
+    ) -> Result<
+        crate::occurrence_source::OccurrenceSource,
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        crate::occurrence_source::occurrence_source(
+            self.package(),
+            application,
+            occurrence,
+            selected,
+        )
+    }
+
+    /// Validate a complete captured function-body visit with the bounded
+    /// lending cursor, returning its attribution and cumulative cursor work.
+    fn body_source(
+        &self,
+        coordinate: crate::occurrence_source::BodySourceCoordinate<'_>,
+        selected: Option<&fsl_foundation::source::provenance::SourceRegion>,
+        work_limit: u64,
+    ) -> Result<
+        (crate::occurrence_source::OccurrenceSource, u64),
+        crate::occurrence_source::OccurrenceSourceRefusal,
+    > {
+        crate::occurrence_source::body_source(self.package(), coordinate, selected, work_limit)
+    }
+
     /// The model identities the package selects, ascending (FR-533).
     fn model_selections(&self) -> Vec<DomainPackageRef> {
         self.package()
