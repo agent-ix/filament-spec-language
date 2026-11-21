@@ -20,7 +20,7 @@ Ticket: QSL-2271. PR: filament-spec-language#3293. Frozen head: b160c7c8fb923d68
 
 ## Verdict
 
-FAIL — five open findings include a high-severity silent Send correlation omission. Runtime acceptance also remains blocked by five focused failures.
+PASS — all seven findings are fixed, all seven family tests plus the focused library unit are green, and no new findings remain. The bounded slice is mergeable.
 
 ## Findings
 
@@ -31,6 +31,13 @@ FAIL — five open findings include a high-severity silent Send correlation omis
 | FND-003 | medium | Three new parity tests use the reserved binder name first, so source parsing fails before queue, constraint or replay behavior executes. Rename the binder and its reads without changing the tested outcomes or assertions. | fsl-analyze/tests/it/analyze_package_protocol.rs:183-185,243-244,265-266 |
 | FND-004 | medium | A refused capacity binding is mapped to Refusal::Failed, producing an internal-failure for unknown capacity input. FR-1033 requires declined invalid-input with the typed cause and named member. Use the existing declined-input mapping on both routes; preserve the invalid-capacity refusal oracle. | fsl-analyze/src/analyze/items.rs:1161-1163 |
 | FND-005 | high | New package Send execution admits nonempty related-by clauses but never populates Program.related, so related_admits returns true and sends payloads the source correlation excludes. Implement admitted correlation evaluation or explicitly refuse correlated Send with a typed correlation-naming reason and a regression; preserve the named remaining full port on open QSL-2271. | fsl-eval/src/simulation/protocol/program.rs:1267 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | high | The exhaustive cfg(test) diagnostic helper omits the new Refusal::UnsupportedWithDetail variant, so fsl-analyze library tests cannot compile (E0004). Add its diagnostic-extraction arm; the integration-target check does not compile this helper. | fsl-analyze/src/analyze/items.rs:1261-1275 |
+| FND-007 | high | The new correlation regression duplicates the existing Cell-to-Cell Owns fixture definition in related_by.rs:40-60. Reuse/extract that test-only relationship setup instead of maintaining two definitions; preserve the finite closure and relation-present/absent cases. | fsl-analyze/tests/it/analyze_package_protocol.rs:411-428 |
 
 ## Coverage
 
@@ -52,7 +59,7 @@ Additional boundary evidence before fix round 1 is pushed: fsl-eval/tests/it/pro
 
 ## Validation limits
 
-No Cargo, runtime, matrix, full gate or target operation ran in this review. Lead-reported scoped cargo check passed at the frozen head; Draco TEST-RUN completed with one pass and five failures; fixes and focused reruns are required. Broader criterion completion, ignored-test census, FIFO/Receive/mixed-Parallel support and full-tree assurance are not claimed.
+This reviewer ran no Cargo, runtime, computed matrix or whole-repository gate. Final Draco acceptance is green: six focused integration tests passed at 9638b9046038eabafccc207aad9e00496d1dd317, the unchanged Parallel/Send guard passed at b160c7c8fb923d6892b4994fd15a23f01f83e20d, and the existing library unit passed at dc915bdbb2c70897fae9e4ed96abf6d920dedd7b (1 passed, 0 failed, 0 ignored, 172 filtered, exit 0; /private/tmp/qsl-3293-dc91-libunit.log). Thus all seven family tests plus the one library unit are green. The final test-only fixture extraction is equivalent; no production assertions were weakened. All seven code-review findings and all three gap findings are closed. QSL-2271 stays open for the named remaining families and full native correlation port. Full-tree criterion coverage and remaining FIFO/Receive/mixed-Parallel/correlation execution are not claimed.
 
 ## Examined scope
 
@@ -205,6 +212,19 @@ scope:
     \  conjoined; their order does not change which steps exist. A node none of\n\
     \  whose candidates satisfies its clauses has no step, and its thread waits,\n\
     \  as for an unsatisfied constraint (FR-206)."
+- id: fsl-analyze/src/analyze/items.rs::tests::code
+  path: fsl-analyze/src/analyze/items.rs
+  role: examined
+  excerpt: "fn code(refusal: &Refusal) -> Option<String> {\n        match refusal\
+    \ {\n            Refusal::Declined(_, _, code)\n            | Refusal::DeclinedWithDetail(_,\
+    \ _, code, _)\n            | Refusal::Unsupported(code)\n            | Refusal::FailedWithDetail(code,\
+    \ _)\n            | Refusal::Failed(code) => Some(code.to_string()),"
+- id: fsl-analyze/tests/it/analyze_package_protocol.rs::package_channel_send_related_premises_refuse_before_execution
+  path: fsl-analyze/tests/it/analyze_package_protocol.rs
+  role: examined
+  excerpt: "cell[\"relationships\"] = json!([{\n            \"identity\": \"ix://test/fill/relationship/owns\"\
+    , \"category\": \"structural\",\n            \"composite\": false, \"direction\"\
+    : \"source-to-target\","
 findings:
 - fnd: FND-001
   severity: low
@@ -339,3 +359,36 @@ bindings:
   ac_id: FR-850-AC-11
   trace: wrong
 ```
+
+## Dispositions
+
+Round 1; inspected frozen 9638b9046038eabafccc207aad9e00496d1dd317. Static fixes do not imply runtime acceptance.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Removed only the unrelated FR-850-AC-11 trace binding. |
+| FND-002 | fixed | Settlement now derives channel presence from the admitted Source/Package protocol definition; no record normalization. |
+| FND-003 | fixed | Renamed reserved fixture binders and their reads while retaining all outcome/counterexample assertions. |
+| FND-004 | fixed | All CapacityRefusal variants preserve their cause and named capacity through the existing declined-input path. |
+| FND-005 | fixed | Admitted nonempty Send correlations explicitly refuse. The existing unsupported detail map names correlation and the admitted node; dedicated relation-present/absent tests preserve source expectations. Full native correlation remains named on QSL-2271. |
+| FND-006 | still-open | The exhaustive cfg(test) diagnostic helper omits the new Refusal::UnsupportedWithDetail variant, so fsl-analyze library tests cannot compile (E0004). Add its diagnostic-extraction arm; the integration-target check does not compile this helper. |
+| FND-007 | still-open | The new correlation regression duplicates the existing Cell-to-Cell Owns fixture definition in related_by.rs:40-60. Reuse/extract that test-only relationship setup instead of maintaining two definitions; preserve the finite closure and relation-present/absent cases. |
+
+## Runtime evidence after round 2
+
+Draco exact 9638b9046038eabafccc207aad9e00496d1dd317 passed all six requested integration tests (0 failed, 0 ignored, 2518 filtered; /private/tmp/qsl-3293-9638-fix1.log). The unchanged Parallel/Send guard passed at b160c7c8fb923d6892b4994fd15a23f01f83e20d, making all seven family tests green. The final three-file mechanical correction preserves production and integration fixture meaning; only the explicitly requested existing fsl-analyze library unit at dc915bdbb2c70897fae9e4ed96abf6d920dedd7b remains pending to compile the previously missed cfg(test) target.
+
+## Round 2 scope
+
+Inspected dc915bdbb2c70897fae9e4ed96abf6d920dedd7b against 9638b9046038eabafccc207aad9e00496d1dd317: one missing exhaustive cfg(test) arm and extraction of the exact existing Owns relationship fixture into test-only add_owns_relationship. Both original related_document and the new minimal channel fixture call it. fill::PACKAGE is test/fill, so the emitted relationship identity, origin, roles, end types and multiplicities match the former inline data. Snapshot self-edge present/absent cases and every assertion are unchanged. Production runtime code is unchanged. No Cargo, target operation or test rerun was performed by this reviewer.
+
+## Dispositions round 2
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-006 | fixed | The exhaustive cfg(test) diagnostic helper extracts UnsupportedWithDetail; all enum variants are now covered. Focused lib-unit execution is pending. |
+| FND-007 | fixed | Both correlation fixtures use the one existing relationship definition through test-only add_owns_relationship; no relationship data or assertions changed. |
+
+## Final acceptance
+
+Final Draco acceptance is green: six focused integration tests passed at 9638b9046038eabafccc207aad9e00496d1dd317, the unchanged Parallel/Send guard passed at b160c7c8fb923d6892b4994fd15a23f01f83e20d, and the existing library unit passed at dc915bdbb2c70897fae9e4ed96abf6d920dedd7b (1 passed, 0 failed, 0 ignored, 172 filtered, exit 0; /private/tmp/qsl-3293-dc91-libunit.log). Thus all seven family tests plus the one library unit are green. The final test-only fixture extraction is equivalent; no production assertions were weakened. All seven code-review findings and all three gap findings are closed. QSL-2271 stays open for the named remaining families and full native correlation port.

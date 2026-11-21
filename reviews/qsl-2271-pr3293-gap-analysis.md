@@ -20,7 +20,7 @@ Ticket: QSL-2271. PR: filament-spec-language#3293. Frozen head: b160c7c8fb923d68
 
 ## Verdict
 
-FAIL — correlated Send is silently admitted without its required relationship premises; bound metadata and capacity refusal gaps also remain open. This bounded review does not establish full repository assurance.
+CONDITIONAL for full repository assurance because matrix/full audit were explicitly excluded; all three slice-local findings are fixed and all seven family tests plus the focused library unit are green. This bounded gap review adds no merge hold.
 
 ## Findings
 
@@ -50,7 +50,7 @@ Additional boundary evidence before fix round 1 is pushed: fsl-eval/tests/it/pro
 
 ## Validation limits
 
-No Cargo, runtime, matrix, full gate or target operation ran in this review. Lead-reported scoped cargo check passed at the frozen head; Draco TEST-RUN completed with one pass and five failures; fixes and focused reruns are required. Broader criterion completion, ignored-test census, FIFO/Receive/mixed-Parallel support and full-tree assurance are not claimed.
+This reviewer ran no Cargo, runtime, computed matrix or whole-repository gate. Final Draco acceptance is green: six focused integration tests passed at 9638b9046038eabafccc207aad9e00496d1dd317, the unchanged Parallel/Send guard passed at b160c7c8fb923d6892b4994fd15a23f01f83e20d, and the existing library unit passed at dc915bdbb2c70897fae9e4ed96abf6d920dedd7b (1 passed, 0 failed, 0 ignored, 172 filtered, exit 0; /private/tmp/qsl-3293-dc91-libunit.log). Thus all seven family tests plus the one library unit are green. The final test-only fixture extraction is equivalent; no production assertions were weakened. All seven code-review findings and all three gap findings are closed. QSL-2271 stays open for the named remaining families and full native correlation port. Full-tree criterion coverage and remaining FIFO/Receive/mixed-Parallel/correlation execution are not claimed.
 
 ## Examined scope
 
@@ -276,3 +276,21 @@ bindings:
   ac_id: FR-940-AC-6
   trace: correct
 ```
+
+## Dispositions
+
+Round 1; inspected frozen 9638b9046038eabafccc207aad9e00496d1dd317. Static fixes do not imply runtime acceptance.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Settlement now derives channel presence from the admitted Source/Package protocol definition; no record normalization. |
+| FND-002 | fixed | All CapacityRefusal variants preserve their cause and named capacity through the existing declined-input path. |
+| FND-003 | fixed | Admitted nonempty Send correlations explicitly refuse. The existing unsupported detail map names correlation and the admitted node; dedicated relation-present/absent tests preserve source expectations. Full native correlation remains named on QSL-2271. |
+
+## Runtime evidence after round 2
+
+Draco exact 9638b9046038eabafccc207aad9e00496d1dd317 passed all six requested integration tests (0 failed, 0 ignored, 2518 filtered; /private/tmp/qsl-3293-9638-fix1.log). The unchanged Parallel/Send guard passed at b160c7c8fb923d6892b4994fd15a23f01f83e20d, making all seven family tests green. The final three-file mechanical correction preserves production and integration fixture meaning; only the explicitly requested existing fsl-analyze library unit at dc915bdbb2c70897fae9e4ed96abf6d920dedd7b remains pending to compile the previously missed cfg(test) target.
+
+## Final acceptance
+
+Final Draco acceptance is green: six focused integration tests passed at 9638b9046038eabafccc207aad9e00496d1dd317, the unchanged Parallel/Send guard passed at b160c7c8fb923d6892b4994fd15a23f01f83e20d, and the existing library unit passed at dc915bdbb2c70897fae9e4ed96abf6d920dedd7b (1 passed, 0 failed, 0 ignored, 172 filtered, exit 0; /private/tmp/qsl-3293-dc91-libunit.log). Thus all seven family tests plus the one library unit are green. The final test-only fixture extraction is equivalent; no production assertions were weakened. All seven code-review findings and all three gap findings are closed. QSL-2271 stays open for the named remaining families and full native correlation port.
