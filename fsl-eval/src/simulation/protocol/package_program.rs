@@ -94,6 +94,13 @@ pub(super) struct PackageChannelKey {
     pub(super) slot: ProtocolSlot,
 }
 
+/// One authored premise, in source order, selecting canonical end slots.
+pub(super) struct PackageRelated {
+    pub(super) relationship: filament_checked::key::DeclarationKey,
+    pub(super) alias: String,
+    pub(super) ends: [ProtocolSlot; 2],
+}
+
 /// One static role binding from the admitted package.
 #[derive(Clone, Debug)]
 pub struct PackageRole {
@@ -128,6 +135,7 @@ pub struct PackageAttemptContext {
 
 /// The package-native protocol program needed by selection and execution.
 pub struct PackageProtocolProgram<'a> {
+    pub(super) related: BTreeMap<ProtocolNodeId, Vec<PackageRelated>>,
     /// The protocol's intended terminal states, read from its admitted obligation.
     pub(super) terminal: PackageTerminal,
     /// Origin captures in authored initialization order.
@@ -332,6 +340,9 @@ pub enum PackageProgramRefusal {
         /// The admitted control whose `related` group is nonempty.
         node: fsl_package::CheckedNodeId,
     },
+    /// Nonempty correlation lacks the producer's authored clause evidence.
+    #[error(transparent)]
+    CorrelationProvenance(fsl_package::UnavailableCorrelationProvenance),
     /// A repeat carries proof expressions without executable package readers.
     #[error("unsupported_construct/not-yet-implemented: package repeat proof at {node:?}")]
     RepeatProof {
@@ -655,7 +666,17 @@ impl<'a> PackageProtocolProgram<'a> {
         };
         let mut choices = BTreeMap::new();
         let mut controls = BTreeMap::new();
+        let mut related = BTreeMap::new();
         for control in &form.controls {
+            if matches!(
+                control.operation,
+                ControlOperation::Attempt | ControlOperation::Recommend
+            ) && matches!(member(&control.node.body, "related"), Some(fsl_package::CheckedTerm::Aggregate { members }) if !members.is_empty())
+            {
+                return Err(PackageProgramRefusal::Correlation {
+                    node: control.node.node_id.clone(),
+                });
+            }
             let name = control.path.last().cloned().unwrap_or_default();
             let channel = match &control.body {
                 ControlBody::Send { channel, .. } | ControlBody::Receive { channel, .. } => {
@@ -666,10 +687,66 @@ impl<'a> PackageProtocolProgram<'a> {
                             control.node.node_id.clone(),
                         ));
                     };
-                    if !members.is_empty() {
+                    if !members.is_empty()
+                        && memory
+                            .parallels()
+                            .iter()
+                            .any(|parallel| parallel.model.is_weak())
+                    {
                         return Err(PackageProgramRefusal::Correlation {
                             node: control.node.node_id.clone(),
                         });
+                    }
+                    let clauses = admitted
+                        .protocol_correlation_clauses(&control.node.node_id)
+                        .map_err(|failure| match failure {
+                            fsl_package::ProtocolCorrelationReadError::Unavailable(cause) => {
+                                PackageProgramRefusal::CorrelationProvenance(cause)
+                            }
+                            fsl_package::ProtocolCorrelationReadError::NotAnEligibleControl => {
+                                PackageProgramRefusal::UnknownControl
+                            }
+                        })?;
+                    let mut premises = Vec::with_capacity(clauses.len());
+                    for clause in clauses {
+                        let missing =
+                            || PackageProgramRefusal::MissingIdentity(control.node.node_id.clone());
+                        let index =
+                            usize::try_from(clause.canonical_index).map_err(|_| missing())?;
+                        let record = members.get(index).ok_or_else(missing)?;
+                        let fsl_package::CheckedTerm::Reference { target, .. } =
+                            member(record, "relationship").ok_or_else(missing)?
+                        else {
+                            return Err(missing());
+                        };
+                        let relationship = admitted
+                            .resolved_graph()
+                            .nodes
+                            .iter()
+                            .find(|node| &node.node_id == target)
+                            .ok_or_else(missing)?;
+                        let Some(fsl_package::CheckedNodeOwner::Model { identity, node }) =
+                            relationship.owner.as_ref()
+                        else {
+                            return Err(missing());
+                        };
+                        let end = |member| {
+                            input
+                                .evaluator
+                                .package_protocol_slot(&control.node.node_id, member, Some(index))
+                                .ok_or_else(missing)
+                        };
+                        premises.push(PackageRelated {
+                            relationship: filament_checked::key::DeclarationKey {
+                                package: identity.to_string(),
+                                node: node.to_string(),
+                            },
+                            alias: clause.alias.to_string(),
+                            ends: [end("related.from")?, end("related.to")?],
+                        });
+                    }
+                    if !premises.is_empty() {
+                        related.insert(control.id, premises);
                     }
                     Some((*channel).clone())
                 }
@@ -1145,6 +1222,7 @@ impl<'a> PackageProtocolProgram<'a> {
                 failure: Box::new(failure),
             })?;
         Ok(Self {
+            related,
             terminal,
             captures,
             channels,

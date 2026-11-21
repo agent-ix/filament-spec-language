@@ -15,8 +15,7 @@
 //! was appended, `rejected` or `lost` when it was not, and `displaced` the
 //! queued entry a `head` or `tail` selector removed for it.
 
-use filament_eval::FamilyOutcome;
-use filament_exact::{Meter, Outcome, Value};
+use filament_exact::{Meter, Value};
 use fsl_semantics::check::ProtocolNodeId;
 use fsl_semantics::check::{ChannelDelivery, ChannelOverflow, LossSelector};
 
@@ -33,7 +32,7 @@ use super::{
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::encode::{value_enc, Enc};
-use crate::simulation::model::{verdict, ModelFinding, ModelSimState, Verdict};
+use crate::simulation::model::{ModelFinding, ModelSimState};
 
 /// How many entries of `queue` ahead of `position` have the bytes of the one
 /// at `position`.
@@ -182,19 +181,18 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 }
             }
         };
-        if let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &outcome {
-            let enc = value_enc(value, self.model.typing());
-            return Ok(Ok(QueueKey {
-                channel,
-                fifo: Some(FifoKey {
-                    bytes: jcs(&enc)?,
-                    enc,
-                }),
-            }));
-        }
-        match verdict(&outcome) {
-            Verdict::Undecided(outcome) => Ok(Err(undetermined(self.program.text(node)?, outcome))),
-            Verdict::True | Verdict::False => Err(broken()),
+        match super::value_outcome(outcome) {
+            Ok(value) => {
+                let enc = value_enc(&value, self.model.typing());
+                Ok(Ok(QueueKey {
+                    channel,
+                    fifo: Some(FifoKey {
+                        bytes: jcs(&enc)?,
+                        enc,
+                    }),
+                }))
+            }
+            Err(outcome) => Ok(Err(undetermined(self.program.text(node)?, outcome))),
         }
     }
 

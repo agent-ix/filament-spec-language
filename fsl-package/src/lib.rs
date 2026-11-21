@@ -205,12 +205,13 @@ pub use verification_plan::{
 
 #[cfg(feature = "std")]
 pub use filament_contract_model::{
-    CheckedArtifactRef, CheckedIntervalEnd, CheckedNodeId, CheckedOccurrence,
+    CheckedArtifactRef, CheckedIntervalEnd, CheckedNodeId, CheckedNodeOwner, CheckedOccurrence,
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedOperationRational, CheckedPackageV2,
     CheckedSelection, CheckedSourceMapEntry, ClockConfiguration, ClockExactNumber,
     ExactTypeProjection, ExactTypeProjectionError, ExactTypeProjectionErrorCode, NativeJoinBudget,
-    SelectedExactIdentities, SelectedModelUnionPayload, SelectedModelUnionRow, TemporalBinding,
-    CHECKED_PACKAGE_V2,
+    ProtocolCorrelationReadError, SelectedExactIdentities, SelectedModelUnionPayload,
+    SelectedModelUnionRow, TemporalBinding,
+    UnavailableCorrelationProvenance, CHECKED_PACKAGE_V2,
 };
 
 // The FR-105-AC-6 fault-injection seam. Public only under

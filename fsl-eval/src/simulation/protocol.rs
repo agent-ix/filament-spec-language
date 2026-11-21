@@ -128,6 +128,8 @@ pub enum Unsupported {
     PackageControl(fsl_package::protocol_view::ControlOperation),
     /// A package control's correlation premises have no executable form yet.
     PackageCorrelation,
+    /// Authored clause order is unavailable for a nonempty correlation group.
+    PackageCorrelationProvenance(fsl_package::UnavailableCorrelationProvenance),
     /// A package repeat's loop proof has no executable package form yet.
     PackageRepeatProof,
     /// A package protocol declares a replicated role this program does not
@@ -145,6 +147,7 @@ impl Unsupported {
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
             Self::PackageControl(_) => "package protocol control",
             Self::PackageCorrelation => "package protocol correlation",
+            Self::PackageCorrelationProvenance(cause) => cause.as_str(),
             Self::PackageRepeatProof => "package repeat proof",
             Self::PackageReplicatedRole => "package replicated role",
             Self::PackageRoleLifetime => "package replicated role lifetime",
@@ -1623,6 +1626,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 PackageProgramRefusal::Correlation { .. } => {
                     ProtocolRefusal::Unsupported(Unsupported::PackageCorrelation)
                 }
+                PackageProgramRefusal::CorrelationProvenance(cause) => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageCorrelationProvenance(cause))
+                }
                 PackageProgramRefusal::RepeatProof { .. } => {
                     ProtocolRefusal::Unsupported(Unsupported::PackageRepeatProof)
                 }
@@ -2841,28 +2847,53 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 &mut Meter::new(self.model.meter()),
             )
             .map_err(|_| broken())?;
-        Ok(match evaluation.outcome {
-            filament_eval::FamilyOutcome::Evaluated(outcome) => match outcome {
-                filament_exact::Outcome::Completed(value) => Ok(value),
-                filament_exact::Outcome::Undefined(undefined) => {
-                    Err(ClauseOutcome::KernelUndefined(undefined))
-                }
-                filament_exact::Outcome::Refused(refusal) => {
-                    Err(ClauseOutcome::KernelRefused(refusal))
-                }
-                filament_exact::Outcome::Incomplete(incomplete) => {
-                    Err(ClauseOutcome::Incomplete(incomplete))
-                }
-            },
-            filament_eval::FamilyOutcome::FamilyEvaluated(family) => Err(match family {
-                filament_eval::FamilyResult::Refused(cause) => {
-                    ClauseOutcome::FamilyRefused(cause.catalog_code())
-                }
-                filament_eval::FamilyResult::Undefined(cause) => {
-                    ClauseOutcome::FamilyUndefined(cause.undefined_record().reason)
-                }
-            }),
-        })
+        Ok(value_outcome(evaluation.outcome))
+    }
+
+    /// Evaluate an admitted native value slot with precisely its required binders.
+    fn evaluate_package_value(
+        &self,
+        slot: &crate::value::ProtocolSlot,
+        frame: Vec<Option<Value>>,
+        state: &ModelSimState,
+    ) -> Result<Result<Value, ClauseOutcome>, ExpansionStop> {
+        let package = self.package_program.as_ref().ok_or_else(broken)?;
+        let observation = self.package_observation(state)?;
+        let binders = self.package_binder_values(frame, &observation, slot)?;
+        let supply = package
+            .supply_for_slot(slot, binders, Some(&observation))
+            .map_err(|_| broken())?;
+        let result = package
+            .evaluate_slot(slot, &supply, &mut Meter::new(self.model.meter()))
+            .map_err(|_| broken())?;
+        match result {
+            crate::value::ProtocolSlotEvaluation::Evaluated(evaluation, _) => {
+                Ok(value_outcome(evaluation.outcome))
+            }
+            crate::value::ProtocolSlotEvaluation::Unavailable { .. } => Err(broken()),
+        }
+    }
+
+    /// Evaluate both ends against the candidate frame and observed model state.
+    fn related_values(
+        &self,
+        ends: &program::RelatedEnds<'_>,
+        frame: Vec<Option<Value>>,
+        state: &ModelSimState,
+    ) -> Result<[Result<Value, ClauseOutcome>; 2], ExpansionStop> {
+        match ends {
+            program::RelatedEnds::Source(ends) => {
+                let observation = self.model.observation_of(state)?;
+                Ok([
+                    self.evaluate_value_in(ends[0], frame.clone(), &observation)?,
+                    self.evaluate_value_in(ends[1], frame, &observation)?,
+                ])
+            }
+            program::RelatedEnds::Package(ends) => Ok([
+                self.evaluate_package_value(&ends[0], frame.clone(), state)?,
+                self.evaluate_package_value(&ends[1], frame, state)?,
+            ]),
+        }
     }
 
     /// Evaluate a package control constraint from admitted binder identities.
@@ -3173,6 +3204,26 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 })
             }
         }
+    }
+}
+
+/// Preserve value and typed non-value outcomes for both expression routes.
+fn value_outcome(outcome: filament_eval::FamilyOutcome<Value>) -> Result<Value, ClauseOutcome> {
+    match outcome {
+        filament_eval::FamilyOutcome::Evaluated(outcome) => match outcome {
+            filament_exact::Outcome::Completed(value) => Ok(value),
+            filament_exact::Outcome::Undefined(cause) => Err(ClauseOutcome::KernelUndefined(cause)),
+            filament_exact::Outcome::Refused(cause) => Err(ClauseOutcome::KernelRefused(cause)),
+            filament_exact::Outcome::Incomplete(cause) => Err(ClauseOutcome::Incomplete(cause)),
+        },
+        filament_eval::FamilyOutcome::FamilyEvaluated(family) => Err(match family {
+            filament_eval::FamilyResult::Refused(cause) => {
+                ClauseOutcome::FamilyRefused(cause.catalog_code())
+            }
+            filament_eval::FamilyResult::Undefined(cause) => {
+                ClauseOutcome::FamilyUndefined(cause.undefined_record().reason)
+            }
+        }),
     }
 }
 
