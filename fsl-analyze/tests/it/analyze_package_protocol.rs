@@ -221,8 +221,8 @@ fn package_repeat_blocked_attempt_preserves_replay_refusal() {
                 let unit = std::fs::read_to_string(ws.path("program.fsl"))
                     .expect("the undefined-guard unit");
                 let unit = unit.replace(
-                    "run sequence Main {",
-                    "capture zero: Decimal[0, 0; 0, 0; exact] = decimal(0, 0); run sequence Main {",
+                    "role Planning on M::Cell;",
+                    "capture zero: Decimal[0, 0; 0, 0; exact] = decimal(0, 0); role Planning on M::Cell;",
                 );
                 ws.write("program.fsl", unit.as_bytes());
             }
