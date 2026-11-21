@@ -133,7 +133,11 @@ impl Budget {
 
     pub(super) fn scoped(max: u64, system: &ModelSystem<'_>) -> Self {
         let mut budget = Self::new(max);
-        budget.work_meter = system.probability_work.as_ref().map(|scope| scope.meter());
+        budget.work_meter = system
+            .probability_work
+            .as_ref()
+            .map(|_| system.fresh_meter());
+        budget.cancel = system.probability_cancel.clone();
         budget
     }
 
@@ -642,7 +646,9 @@ fn expand<'s>(
     walk.post_presence = selection.post_presence;
     walk.clock_selectors = selection.clock_selectors;
     let mut budget = system.budget();
-    budget.cancel = cancel.cloned();
+    budget.cancel = cancel
+        .cloned()
+        .or_else(|| system.probability_cancel.clone());
     if let (Some(meter), Some(cancel)) = (&mut budget.work_meter, cancel) {
         *meter = meter.clone().with_cancel(cancel.clone());
     }

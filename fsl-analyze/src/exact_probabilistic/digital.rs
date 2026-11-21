@@ -122,6 +122,7 @@ pub(super) fn build<'s, 'a>(
         locals: BTreeMap::new(),
         nodes: Vec::new(),
         index: BTreeMap::new(),
+        pending_keys: BTreeSet::new(),
         readings: BTreeMap::new(),
         edges: Vec::new(),
         zero_delay: Vec::new(),
@@ -784,6 +785,7 @@ struct Builder<'r, 'a, 'c> {
     locals: BTreeMap<Vec<u8>, Rc<Local>>,
     nodes: Vec<Node>,
     index: BTreeMap<ProbKey, usize>,
+    pending_keys: BTreeSet<ProbKey>,
     readings: BTreeMap<(usize, Vec<u8>), Vec<bool>>,
     edges: Vec<ProbEdge>,
     zero_delay: Vec<bool>,
@@ -870,6 +872,7 @@ impl<'c> Builder<'_, '_, 'c> {
         if let Some(known) = self.locals.get(&key) {
             return Ok(Rc::clone(known));
         }
+        super::observe_relation_construction();
         let actions = match self.system.actions(model) {
             Ok(Ok(actions)) => actions,
             Ok(Err(undecided)) => {
@@ -1433,6 +1436,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 let mut state = state.clone();
                 let monitor = self.deadline_start(&truths, &mut state);
                 let key = self.key_of(&state, binding, monitor, None)?;
+                self.admit_state(&key)?;
+                super::observe_target_construction();
                 let target = Target {
                     key,
                     state,
@@ -1471,6 +1476,7 @@ impl<'c> Builder<'_, '_, 'c> {
             .map(|parent| self.nodes[parent].initial)
             .unwrap_or(initial);
         let decided = target.key.monitor.is_some_and(MonitorState::is_decided);
+        self.pending_keys.remove(&target.key);
         self.index.insert(target.key.clone(), id);
         self.nodes.push(Node {
             key: target.key,
@@ -1484,6 +1490,32 @@ impl<'c> Builder<'_, '_, 'c> {
             self.queue.push_back(id);
         }
         Ok(id)
+    }
+
+    /// Reserve distinct target keys across the whole pending expansion.
+    fn admit_state(&mut self, key: &ProbKey) -> Step<()> {
+        if self.index.contains_key(key) || self.pending_keys.contains(key) {
+            return Ok(());
+        }
+        if self.nodes.len().saturating_add(self.pending_keys.len()) >= self.max_states {
+            return Err(Self::stopped(
+                ModelCheckLimit::ExactProbMaxStates,
+                self.max_states,
+            ));
+        }
+        self.pending_keys.insert(key.clone());
+        Ok(())
+    }
+
+    fn admit_edge(&self, pending: usize) -> Step<()> {
+        self.poll()?;
+        if self.edges.len().saturating_add(pending) >= self.max_transitions {
+            return Err(Self::stopped(
+                ModelCheckLimit::ExactProbMaxTransitions,
+                self.max_transitions,
+            ));
+        }
+        Ok(())
     }
 
     fn undefined(
@@ -1557,6 +1589,8 @@ impl<'c> Builder<'_, '_, 'c> {
         mut reached: DState,
         landed: &[ModelSimState],
         taken: Option<&TraceStep>,
+        planned: &[Planned],
+        reuse: impl FnOnce(&ProbKey) -> bool,
     ) -> Step<Target> {
         let binding = self.binding_of(at)?;
         let mut letters = Vec::with_capacity(landed.len());
@@ -1588,6 +1622,11 @@ impl<'c> Builder<'_, '_, 'c> {
         let source = self.nodes[at].key.monitor;
         let monitor = self.control_after(source, &mut reached, &letters)?;
         let key = self.key_of(&reached, binding, monitor, None)?;
+        if !reuse(&key) {
+            self.admit_edge(planned.len())?;
+        }
+        self.admit_state(&key)?;
+        super::observe_target_construction();
         Ok(Target {
             key,
             state: reached,
@@ -1597,6 +1636,10 @@ impl<'c> Builder<'_, '_, 'c> {
     }
 
     fn expand(&mut self, at: usize) -> Step<()> {
+        // Decided states never enter the queue. A queued state needs an edge
+        // allowance before querying its successor relation.
+        self.admit_edge(0)?;
+        self.pending_keys.clear();
         let planned = match self.nodes[at].resolution.take() {
             Some(resolution) => self.resolve(at, &resolution)?,
             None => self.moves(at)?,
@@ -1636,14 +1679,17 @@ impl<'c> Builder<'_, '_, 'c> {
             });
             self.zero_delay.push(zero_delay);
         }
+        self.pending_keys.clear();
         Ok(())
     }
 
     fn resolve(&mut self, at: usize, resolution: &Resolution) -> Step<Vec<Planned>> {
-        let mut planned = Vec::with_capacity(resolution.successors.len());
+        let mut planned = Vec::new();
         for post in &resolution.successors {
+            self.admit_edge(planned.len())?;
             let model = post.model.clone();
-            let target = self.arrive(at, post.clone(), &[model], None)?;
+            let target = self.arrive(at, post.clone(), &[model], None, &planned, |_| false)?;
+            super::observe_edge_construction();
             planned.push(Planned {
                 choice: ProductAction::PostState(Box::new(target.key.clone())),
                 action: None,
@@ -1680,6 +1726,8 @@ impl<'c> Builder<'_, '_, 'c> {
         delayed: (Vec<u64>, Option<u64>),
         tail: Tail,
         elapsed_ticks: u64,
+        planned: &[Planned],
+        omit_unchanged: bool,
     ) -> Step<Planned> {
         let reached = DState {
             model: state.model.clone(),
@@ -1692,7 +1740,13 @@ impl<'c> Builder<'_, '_, 'c> {
             draw: None,
             probability: one(),
         };
-        let target = self.arrive(at, reached, &[], Some(&taken))?;
+        let current = self.nodes[at].key.clone();
+        let target = self.arrive(at, reached, &[], Some(&taken), planned, |key| {
+            omit_unchanged && *key == current
+        })?;
+        if !omit_unchanged || target.key != current {
+            super::observe_edge_construction();
+        }
         Ok(Planned {
             choice,
             action: None,
@@ -1723,6 +1777,8 @@ impl<'c> Builder<'_, '_, 'c> {
                     first_delay.clone(),
                     Tail::Running,
                     1,
+                    planned,
+                    true,
                 )?;
                 if unit.target.key != self.nodes[at].key {
                     planned.push(unit);
@@ -1742,6 +1798,8 @@ impl<'c> Builder<'_, '_, 'c> {
                         delayed.clone(),
                         Tail::Running,
                         elapsed_ticks,
+                        planned,
+                        true,
                     )?;
                     if unit.target.key != current_key {
                         planned.push(unit);
@@ -1762,6 +1820,8 @@ impl<'c> Builder<'_, '_, 'c> {
                     first_delay,
                     Tail::IdleDelayed,
                     1,
+                    planned,
+                    false,
                 )?);
             }
         }
@@ -1779,6 +1839,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 delayed,
                 Tail::IdleDelayed,
                 1,
+                &planned,
+                self.subdivisions != 1,
             )?;
             if self.subdivisions == 1 || delay.target.key != self.nodes[at].key {
                 planned.push(delay);
@@ -1795,7 +1857,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 probability: one(),
             };
             let landed = [state.model.clone()];
-            let target = self.arrive(at, reached, &landed, Some(&taken))?;
+            let target = self.arrive(at, reached, &landed, Some(&taken), &planned, |_| false)?;
+            super::observe_edge_construction();
             planned.push(Planned {
                 choice: ProductAction::IdleObserve,
                 action: None,
@@ -1929,14 +1992,20 @@ impl<'c> Builder<'_, '_, 'c> {
                 draw: None,
                 probability: probability.clone(),
             };
-            let terminal = self.arrive(at, start.clone(), &[], Some(&delayed))?;
+            // Inspect the monitor before allocating a terminal target. A
+            // nonterminal delay is only the start of the tied chain.
+            let mut probe = start.clone();
+            let monitor = self.control_after(self.nodes[at].key.monitor, &mut probe, &[])?;
             if matches!(
-                &terminal.key.monitor,
+                monitor,
                 Some(MonitorState::Deadline {
                     phase: DeadlinePhase::Accept | DeadlinePhase::Reject,
                     ..
                 })
             ) {
+                let terminal =
+                    self.arrive(at, start.clone(), &[], Some(&delayed), planned, |_| false)?;
+                super::observe_edge_construction();
                 planned.push(Planned {
                     choice: ProductAction::Identity(representative.clone()),
                     action: None,
@@ -2002,7 +2071,18 @@ impl<'c> Builder<'_, '_, 'c> {
             };
             if let [(model, clocks)] = draw.posts.as_slice() {
                 let reached = post(model, clocks);
-                let target = self.arrive(at, reached, std::slice::from_ref(model), Some(&taken))?;
+                let target = self.arrive(
+                    at,
+                    reached,
+                    std::slice::from_ref(model),
+                    Some(&taken),
+                    planned,
+                    |key| {
+                        planned[first..].iter().any(|edge| {
+                            edge.target.key == *key && same_rewards(&edge.rewards, &draw.rewards)
+                        })
+                    },
+                )?;
                 if let Some(merged) = planned[first..].iter_mut().find(|edge| {
                     edge.target.key == target.key && same_rewards(&edge.rewards, &draw.rewards)
                 }) {
@@ -2015,6 +2095,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     });
                     continue;
                 }
+                super::observe_edge_construction();
                 planned.push(Planned {
                     choice: ProductAction::Identity(action.identity.clone()),
                     action: Some(action.identity.clone()),
@@ -2056,6 +2137,9 @@ impl<'c> Builder<'_, '_, 'c> {
                     identity_bytes,
                 }),
             )?;
+            self.admit_edge(planned.len())?;
+            self.admit_state(&key)?;
+            super::observe_target_construction();
             let target = Target {
                 key,
                 state: state.clone(),
@@ -2068,6 +2152,7 @@ impl<'c> Builder<'_, '_, 'c> {
                         .collect(),
                 }),
             };
+            super::observe_edge_construction();
             planned.push(Planned {
                 choice: ProductAction::Identity(action.identity.clone()),
                 action: Some(action.identity.clone()),
@@ -2400,12 +2485,6 @@ impl<'c> Builder<'_, '_, 'c> {
                 for edge in &mut planned[first..] {
                     edge.choice = choice.clone();
                 }
-                if self.edges.len().saturating_add(planned.len()) > self.max_transitions {
-                    return Err(Self::stopped(
-                        ModelCheckLimit::ExactProbMaxTransitions,
-                        self.max_transitions,
-                    ));
-                }
             }
         }
         self.decisions = true;
@@ -2464,12 +2543,6 @@ impl<'c> Builder<'_, '_, 'c> {
                         scope,
                     },
                 )?;
-                if self.edges.len().saturating_add(planned.len()) > self.max_transitions {
-                    return Err(Self::stopped(
-                        ModelCheckLimit::ExactProbMaxTransitions,
-                        self.max_transitions,
-                    ));
-                }
                 Ok(())
             },
         )
@@ -2570,7 +2643,13 @@ impl<'c> Builder<'_, '_, 'c> {
                 draw: draw.clone(),
                 probability: chain_probability.clone(),
             };
-            let target = self.arrive(at, reached, &landed, Some(&taken))?;
+            let target = self.arrive(at, reached, &landed, Some(&taken), planned, |key| {
+                planned[scope..].iter().any(|edge| {
+                    edge.target.key == *key
+                        && edge.action.as_ref() == Some(&first)
+                        && same_rewards(&edge.rewards, &rewards)
+                })
+            })?;
             if let Some(merged) = planned[scope..].iter_mut().find(|edge| {
                 edge.target.key == target.key
                     && edge.action.as_ref() == Some(&first)
@@ -2585,6 +2664,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 });
                 continue;
             }
+            super::observe_edge_construction();
             planned.push(Planned {
                 choice: ProductAction::Identity(representative.clone()),
                 action: Some(first.clone()),

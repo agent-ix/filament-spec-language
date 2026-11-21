@@ -8,6 +8,9 @@ use fsl_analyze::exact_probabilistic::{
     ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct, ProductAction, ProductKind,
     ProductRefusal, ProductRequest, SchedulerChoice, WitnessError, WitnessScope,
 };
+use fsl_analyze::exact_probabilistic::{
+    product_construction_counts, reset_product_construction_counts, ProductStop,
+};
 use fsl_analyze::exact_probabilistic::{DeadlinePhase, MonitorState};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_semantics::check::{
@@ -100,6 +103,14 @@ fn deadline_claim(name: &str, scheduler: &str, bound: &str, body: &str) -> Strin
 }
 
 fn build(world: &World, claim: &str) -> Result<ProbBuild, ProductRefusal> {
+    build_with_limits(world, claim, ExactProbLimits::default())
+}
+
+fn build_with_limits(
+    world: &World,
+    claim: &str,
+    limits: ExactProbLimits,
+) -> Result<ProbBuild, ProductRefusal> {
     let claim = world
         .package
         .graph()
@@ -113,10 +124,219 @@ fn build(world: &World, claim: &str) -> Result<ProbBuild, ProductRefusal> {
                 proof_bounds: Vec::new(),
             },
             claim,
-            limits: ExactProbLimits::default(),
+            limits,
         },
         &Cancel::new(),
     )
+}
+
+fn assert_construction_limit(result: Result<ProbBuild, ProductRefusal>, setting: &str, bound: u64) {
+    let Err(ProductRefusal::Stopped(ProductStop::Limit { limit, value })) = result else {
+        panic!("expected {setting}={bound}, got {result:?}");
+    };
+    assert_eq!(limit.setting(), setting);
+    assert_eq!(value, bound);
+}
+
+#[trace("FR-203-AC-14")]
+#[test]
+fn digital_zero_edges_denies_before_successor_construction() {
+    let every = every(GUARD, true);
+    let race = one_workload("delay M::Call::send ~ discrete { 1 ms: 1 };\n");
+    for (world, claim) in [(&every, "Deadline"), (&race, "Under")] {
+        let mut limits = ExactProbLimits::default();
+        limits.model.limits.max_transitions = 0;
+        reset_product_construction_counts();
+        assert_construction_limit(
+            build_with_limits(world, claim, limits),
+            "exact_prob.max_transitions",
+            0,
+        );
+        let observed = product_construction_counts();
+        assert_eq!(observed.relations, 0, "{claim}: no successor relation");
+        assert_eq!(observed.targets, 1, "{claim}: only the admitted root");
+        assert_eq!(observed.edges, 0, "{claim}: no planned edge");
+    }
+}
+
+#[trace("FR-203-AC-14")]
+#[test]
+fn digital_one_edge_denies_before_the_next_target_is_materialized() {
+    let every = every("", true);
+    let race = one_workload("delay M::Call::send ~ discrete { 1 ms: 1 };\n");
+    for (world, claim) in [(&every, "Deadline"), (&race, "Under")] {
+        let mut limits = ExactProbLimits::default();
+        limits.model.limits.max_transitions = 1;
+        reset_product_construction_counts();
+        assert_construction_limit(
+            build_with_limits(world, claim, limits),
+            "exact_prob.max_transitions",
+            1,
+        );
+        let observed = product_construction_counts();
+        assert!(
+            observed.relations > 0,
+            "{claim}: real successors were discovered"
+        );
+        assert_eq!(observed.targets, 2, "{claim}: root and one admitted target");
+        assert_eq!(observed.edges, 1, "{claim}: exactly one planned edge");
+    }
+}
+
+/// No unit delay is possible; the only moves are the two discrete identities.
+fn frozen_discrete(posts: &str, predicate: &str) -> World {
+    let document = timed_world::document(
+        &["x"],
+        &[("send", &["late", "phase"]), ("tick", &["late", "phase"])],
+    );
+    timed_world::world(
+        &document,
+        PROFILES,
+        &format!(
+            "{}{posts}\n\
+             time invariant Frozen when {{ true }} {{ self.x <= 0 ms }}\n\
+             probabilistic Reach using ev on M over (c: M::Call) \
+             under every scheduler on origin {{ probability >= 0.5 \
+             [ eventually[0 ms, 0 ms] holds({predicate}) ] }}\n",
+            timed_world::DENSE,
+        ),
+    )
+}
+
+#[trace("FR-203-AC-14")]
+#[test]
+fn digital_full_state_capacity_reuses_existing_keys_before_denying_new_keys() {
+    let existing = frozen_discrete(
+        "post Send using v on M::Call::send { self.late = pre(self.late) and self.phase = pre(self.phase) }\n\
+         post Tick using v on M::Call::tick { self.late = pre(self.late) and self.phase = pre(self.phase) }",
+        "c.late",
+    );
+    let new = frozen_discrete(
+        "post Send using v on M::Call::send { self.late = true and self.phase = 0 }\n\
+         post Tick using v on M::Call::tick { self.late = true and self.phase = 0 }",
+        "c.late",
+    );
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 1;
+    limits.model.limits.max_transitions = 2;
+    reset_product_construction_counts();
+    let built = build_with_limits(&existing, "Reach", limits);
+    assert!(matches!(built, Ok(ProbBuild::Built(_))), "{built:?}");
+    let observed = product_construction_counts();
+    assert_eq!(observed.edges, 2, "both identities reuse the root key");
+    reset_product_construction_counts();
+    assert_construction_limit(
+        build_with_limits(&new, "Reach", limits),
+        "exact_prob.max_states",
+        1,
+    );
+    let observed = product_construction_counts();
+    assert!(observed.relations > 0);
+    assert_eq!(
+        observed.targets, 1,
+        "the new target is denied before construction"
+    );
+    assert_eq!(observed.edges, 0);
+}
+
+#[trace("FR-203-AC-14")]
+#[test]
+fn digital_pending_duplicate_keys_share_one_state_slot() {
+    let world = frozen_discrete(
+        "post Send using v on M::Call::send { self.late = true and self.phase = 0 }\n\
+         post Tick using v on M::Call::tick { self.late = true and self.phase = 0 }",
+        "c.late",
+    );
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 2;
+    limits.model.limits.max_transitions = 2;
+    reset_product_construction_counts();
+    let built = build_with_limits(&world, "Reach", limits);
+    let Ok(ProbBuild::Built(built)) = built else {
+        panic!("two pending edges share their new target slot: {built:?}");
+    };
+    assert_eq!(built.states.len(), 2);
+    assert_eq!(built.edges.len(), 2);
+    assert_eq!(built.edges[0].to, built.edges[1].to);
+    assert_eq!(product_construction_counts().edges, 2);
+}
+
+#[trace("FR-203-AC-14")]
+#[test]
+fn digital_pending_distinct_keys_deny_before_the_second_new_target() {
+    let world = frozen_discrete(
+        "post Send using v on M::Call::send { self.late = false and self.phase = 1 }\n\
+         post Tick using v on M::Call::tick { self.late = false and self.phase = 2 }",
+        "c.late",
+    );
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 2;
+    reset_product_construction_counts();
+    assert_construction_limit(
+        build_with_limits(&world, "Reach", limits),
+        "exact_prob.max_states",
+        2,
+    );
+    let observed = product_construction_counts();
+    assert_eq!(
+        observed.targets, 2,
+        "root and the first distinct pending target"
+    );
+    assert_eq!(
+        observed.edges, 1,
+        "the second distinct key has no planned edge"
+    );
+}
+
+#[trace("FR-203-AC-14", "FR-204-AC-3")]
+#[test]
+fn digital_race_merges_repeated_outcomes_at_full_edge_and_state_capacity() {
+    let document = retx_document(&[("send", &["late", "x"])]);
+    let body = retx_body(
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 1 ms: 1 };\n\
+         workload One on M { weight Call::send = 1; }\n",
+        &deadline_claim("Under", "under One", ">= 0.5", "eventually"),
+    )
+    .replace("self.late = not lost", "self.late = true");
+    let world = timed_world::world(&document, PROFILES, &body);
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 2;
+    limits.model.limits.max_transitions = 1;
+    reset_product_construction_counts();
+    let built = build_with_limits(&world, "Under", limits);
+    let Ok(ProbBuild::Built(built)) = built else {
+        panic!("both random draws reuse one admitted race edge: {built:?}");
+    };
+    assert_eq!(built.states.len(), 2);
+    assert_eq!(built.edges.len(), 1);
+    assert_eq!(built.edges[0].probability, ratio(1, 1));
+    assert!(
+        built.edges[0].draw.is_none(),
+        "the merged edge has no single draw"
+    );
+    assert_eq!(product_construction_counts().edges, 1);
+}
+
+#[trace("FR-203-AC-14")]
+#[test]
+fn digital_boundary_equal_capacity_completes() {
+    let world = every(GUARD, true);
+    let baseline = product(&world, "Deadline");
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = baseline.states.len();
+    limits.model.limits.max_transitions = baseline.edges.len();
+    let result = build_with_limits(&world, "Deadline", limits);
+    let Ok(ProbBuild::Built(built)) = result else {
+        panic!("the exact product fits its boundary: {result:?}");
+    };
+    assert_eq!(built.states.len(), baseline.states.len());
+    assert_eq!(built.edges.len(), baseline.edges.len());
+    assert_eq!(
+        initial_value(&built, Bound::AtLeast(ratio(99, 100))),
+        initial_value(&baseline, Bound::AtLeast(ratio(99, 100))),
+    );
 }
 
 fn product(world: &World, claim: &str) -> ProbProduct {

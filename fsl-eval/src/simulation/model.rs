@@ -805,6 +805,7 @@ pub struct ModelSystem<'a> {
     limits: ExpansionLimits,
     meter: ScalarLimits,
     probability_work: Option<filament_exact::WorkScope>,
+    probability_cancel: Option<filament_exact::Cancel>,
     shared_meter: std::sync::Arc<std::sync::Mutex<filament_exact::Meter>>,
     shared_accounting: std::sync::atomic::AtomicBool,
     shared_limits: std::sync::Mutex<ScalarLimits>,
@@ -986,9 +987,13 @@ impl ModelSystem<'_> {
     /// A fresh evaluation meter, sharing only the probability item's work
     /// allowance when this system belongs to such an item.
     pub fn fresh_meter(&self) -> filament_exact::Meter {
-        match &self.probability_work {
+        let meter = match &self.probability_work {
             Some(scope) => scope.meter(),
             None => filament_exact::Meter::new(self.meter),
+        };
+        match &self.probability_cancel {
+            Some(cancel) => meter.with_cancel(cancel.clone()),
+            None => meter,
         }
     }
 }
@@ -1610,6 +1615,7 @@ impl<'a> ModelSystem<'a> {
             populations,
             limits: request.expansion,
             meter: request.meter,
+            probability_cancel: probability_work.as_ref().and(cancel.cloned()),
             probability_work,
             shared_meter: std::sync::Arc::new(std::sync::Mutex::new(filament_exact::Meter::new(
                 request.meter,
