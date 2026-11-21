@@ -145,6 +145,12 @@ pub struct SourcePlan<'a> {
 }
 
 impl<'a> SourcePlan<'a> {
+    /// Whether a checked policy has a canonical positive-length source adapter.
+    /// Model compatibility is admitted separately against the plan grammar.
+    pub fn supports_positive_policy(node: &TemporalClauseNode) -> bool {
+        node.clause().clock() == "model-steps" && StepPolicy::new(node.clause()).is_some()
+    }
+
     /// The rules of `synthesis` over `system`, evaluating under `limits`.
     ///
     /// # Errors
@@ -178,9 +184,9 @@ impl<'a> SourcePlan<'a> {
         let positive_policies =
             !matches!(synthesis.domain(), ValueType::Int(domain) if domain.upper().is_zero());
         if positive_policies
-            && policies.iter().any(|node| {
-                node.clause().clock() != "model-steps" || StepPolicy::new(node.clause()).is_none()
-            })
+            && policies
+                .iter()
+                .any(|node| !Self::supports_positive_policy(node))
         {
             return Err(PlanSourceError::UnsupportedForm {
                 form: "positive-length source policy outside capture-free origin safety and bounded F/G[0,k]"
