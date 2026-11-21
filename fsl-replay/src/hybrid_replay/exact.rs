@@ -29,6 +29,7 @@ use super::{
 };
 
 mod activation;
+mod cad;
 mod joint;
 
 use activation::Obligations;
@@ -1262,8 +1263,6 @@ impl Replay<'_, '_, '_> {
             joint.push(Joint {
                 variables: variables.into_iter().collect(),
                 conjuncts: conditions,
-                mode: source,
-                transition,
             });
         }
         let free = grouped
