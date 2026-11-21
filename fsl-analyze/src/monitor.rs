@@ -887,7 +887,7 @@ fn named_atom(
         } => match name_clause_atom(package, sources, clause, *atom) {
             Ok(name) => Ok(Some(name)),
             Err(refusal) => Err(match *refusal {
-                RunRefusal::SourceNotSupplied { reference } => {
+                RunRefusal::SourceNotSupplied { reference, .. } => {
                     StageFailure::Refused(MonitorRefusal::SourceNotSupplied {
                         clause: clause.to_owned(),
                         source: reference,
@@ -918,7 +918,7 @@ pub(crate) fn request_failure(clause: &str, disposition: &ClauseDisposition) -> 
             failure: Box::new(failure.clone()),
         }),
         D::ArgumentRefusal(refusal) => match refusal.as_ref() {
-            RunRefusal::SourceNotSupplied { reference } => {
+            RunRefusal::SourceNotSupplied { reference, .. } => {
                 StageFailure::Refused(MonitorRefusal::SourceNotSupplied {
                     clause: clause.to_owned(),
                     source: reference.clone(),

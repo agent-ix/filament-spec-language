@@ -3669,6 +3669,7 @@ pub(super) fn atom_name(
                 reference.authority(),
                 reference.identity(),
             ),
+            clause: Some(node.clause().name().to_owned()),
         })
     })
 }

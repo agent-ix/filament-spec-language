@@ -436,10 +436,12 @@ pub enum RunRefusal {
     /// boundaries (FR-283 "Outputs"). A run over sources the spine compiled
     /// never reaches it; `monitor` takes `sources` as input and refuses with
     /// it.
-    #[error("the source {reference:?} is not supplied for the region it is cited at")]
+    #[error("the source {reference:?} is not supplied for the region it is cited at{context}", context = .clause.as_ref().map(|name| format!(" in clause `{name}`")).unwrap_or_default())]
     SourceNotSupplied {
         /// The cited source's identity labels.
         reference: SourceIdentity,
+        /// The selected temporal clause, when rendering one of its atoms.
+        clause: Option<String>,
     },
     /// The caller's [`Cancel`] stopped the run at one of its stages or at
     /// S6a (ADR-029 LC-3): category incomplete, exit 22, no call outcome.
@@ -641,8 +643,8 @@ impl RunRefusal {
                 "stage": fault.stage(),
                 "invariant": fault.invariant(),
             })),
+            Self::SourceNotSupplied { .. } => object(json!({"field": "sources"})),
             Self::Compile(_)
-            | Self::SourceNotSupplied { .. }
             | Self::ObjectEnvironment(_)
             | Self::Cancelled(_)
             | Self::Unsupported(_)
@@ -1774,6 +1776,7 @@ pub(crate) fn resolve_locus(
     let unsupplied = || {
         Box::new(RunRefusal::SourceNotSupplied {
             reference: SourceIdentity::new(region.source().authority(), region.source().identity()),
+            clause: None,
         })
     };
     let source = sources

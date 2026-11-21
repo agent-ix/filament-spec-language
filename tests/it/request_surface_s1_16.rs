@@ -3398,7 +3398,8 @@ fn package_remainder_caller_source_carrier_refuses_before_file_io() {
         );
         assert_eq!(code, 20, "{value}");
         assert_eq!(value["stage"], "request", "{value}");
-        assert_eq!(value["code"], "invalid_identifier", "{value}");
+        assert_eq!(value["code"], "invalid-identifier", "{value}");
+        assert_eq!(value["details"]["code"], "invalid_identifier", "{value}");
         assert!(
             value
                 .to_string()
@@ -3485,7 +3486,7 @@ fn package_remainder_caller_sources_admit_and_leave_tl_atoms_canonical() {
     let (code, value) = write_request(directory.path(), &unavailable);
     assert_eq!(code, 20, "{value}");
     assert_eq!(value["stage"], "file", "{value}");
-    assert_eq!(value["code"], "io_error", "{value}");
+    assert_eq!(value["code"], "io-error", "{value}");
     for (bytes, blank_label) in [
         (vec![0xff], None),
         (b"\xef\xbb\xbftext".to_vec(), None),
