@@ -61,6 +61,8 @@ pub(crate) const REPLAY_PARITY_KIND: &str = "replay-parity";
 pub(crate) const REPLAY_REFUSED_KIND: &str = "replay-refused";
 /// The wire spelling of `premise-unproved`, a planner-only cause.
 pub(crate) const PREMISE_UNPROVED_KIND: &str = "premise-unproved";
+/// The wire spelling of `provider-answer-unconfirmed`, a producer-only cause.
+pub(crate) const PROVIDER_ANSWER_UNCONFIRMED_KIND: &str = "provider-answer-unconfirmed";
 /// The wire spelling of `transfer-not-preserving`, a planner-only cause.
 pub(crate) const TRANSFER_NOT_PRESERVING_KIND: &str = "transfer-not-preserving";
 /// The wire spelling of `kani-vacuous-proof`.
@@ -1077,6 +1079,16 @@ pub enum InconclusiveCause {
         /// Which fact fails.
         reason: TransferReason,
     },
+    /// FSpec FR-331 `provider-answer-unconfirmed{premise}`: a provider
+    /// answered a `composition` item `proved` and the request's own
+    /// `component-guarantee` settlements do not confirm it. Only the
+    /// producer's proof guard constructs it; no provider's entry carries it
+    /// (FSL FR-1044).
+    ProviderAnswerUnconfirmed {
+        /// The `premises` index of the first `component-guarantee` entry the
+        /// request does not hold or does not settle `proved`.
+        premise: u64,
+    },
     /// ADR-036 PA-20 (FSL FR-573): a protocol analysis that settled
     /// `inconclusive` for a cause other than its horizon, which settles
     /// `bound-reached`.
@@ -1241,6 +1253,7 @@ impl InconclusiveCause {
             Self::InstanceBoundReached { .. } => "instance-bound-reached",
             Self::PremiseUnproved { .. } => PREMISE_UNPROVED_KIND,
             Self::TransferNotPreserving { .. } => TRANSFER_NOT_PRESERVING_KIND,
+            Self::ProviderAnswerUnconfirmed { .. } => PROVIDER_ANSWER_UNCONFIRMED_KIND,
             Self::ProtocolAnalysis(cause) => cause.as_str(),
         }
     }
@@ -1280,6 +1293,7 @@ impl InconclusiveCause {
             | Self::InstanceBoundReached { .. }
             | Self::PremiseUnproved { .. }
             | Self::TransferNotPreserving { .. }
+            | Self::ProviderAnswerUnconfirmed { .. }
             | Self::ProtocolAnalysis(_) => 0,
             Self::SymmetryBroken { population, cause } => {
                 let SymmetryBrokenCause::InitialStatesNotClosed { generator, .. } = cause;
@@ -1821,6 +1835,15 @@ impl TerminalRecord {
         backend: BackendId,
         _reproduced: &crate::value_check::ReproducedViolation,
     ) -> Self {
+        Self::with_backend(request_index, backend, TerminalValue::Refuted)
+    }
+
+    /// FSpec FR-331, FR-492 "Interface mismatch": a `refuted` record for a
+    /// composition whose declared interface is absent or weaker than a
+    /// premise needs. The caller admits the witness only when it equals the
+    /// mismatch recomputed from the checked declaration, so the record has no
+    /// replay, no certification and no conclusion.
+    pub fn refuted_by_interface_mismatch(request_index: RequestIndex, backend: BackendId) -> Self {
         Self::with_backend(request_index, backend, TerminalValue::Refuted)
     }
 

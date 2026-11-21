@@ -9,6 +9,7 @@ use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity,
 use fsl_foundation::source::provenance::SourceRegion;
 
 use super::key::{OperationRef, SlotKey};
+use super::mismatch::InterfaceMismatch;
 
 /// The role of the planner-local item a request settles (FSpec FR-492
 /// `item.role`).
@@ -66,13 +67,11 @@ pub enum SlotRole {
     LivenessDependency,
     /// A derived fairness premise (composition).
     Fairness,
-    /// A cycle's fixed-point item (composition).
-    FixedPoint,
 }
 
 impl SlotRole {
     /// Every role, in the order FSpec FR-490 then FR-491 list them.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 11] = [
         Self::ModelClaim,
         Self::Initialization,
         Self::TransitionSimulation,
@@ -84,7 +83,6 @@ impl SlotRole {
         Self::Rely,
         Self::LivenessDependency,
         Self::Fairness,
-        Self::FixedPoint,
     ];
 
     /// The role's wire spelling.
@@ -101,7 +99,6 @@ impl SlotRole {
             Self::Rely => "rely",
             Self::LivenessDependency => "liveness-dependency",
             Self::Fairness => "fairness",
-            Self::FixedPoint => "fixed-point",
         }
     }
 
@@ -215,12 +212,6 @@ pub struct DerivedSlot {
     /// Its FR-363 form is the clause's own, so a claim of this node has the
     /// slot's form.
     pub peer_clause: Option<NodeKey>,
-    /// The accepted cycle (an index the declaration numbers) a `fixed-point`
-    /// slot settles, and that each `rely` and `liveness-dependency` slot
-    /// whose peer guarantee lies on it belongs to; `None` for every other
-    /// slot. A cycle member is discharged only by its `fixed-point` slot's
-    /// proved result, never from the pool (FSpec FR-489 "Cycles").
-    pub cycle: Option<usize>,
     /// The source region of the declaration member that produced the slot
     /// (FSpec FR-322 source map), carried into the planner result.
     pub source: Option<SourceRegion>,
@@ -254,6 +245,10 @@ pub struct PlannerDeclaration {
     /// members): what discharges a `fairness` slot and what a supplied
     /// guarantee's fairness set must be implied by. Empty for a guarantee.
     pub(crate) supplies: Vec<FairnessConstraint>,
+    /// The first interface mismatch a composition declares (FSpec FR-492
+    /// "Interface mismatch"); `None` for a guarantee and for a composition
+    /// whose interfaces meet every premise.
+    pub(crate) mismatch: Option<InterfaceMismatch>,
 }
 
 impl PlannerDeclaration {
@@ -280,6 +275,12 @@ impl PlannerDeclaration {
     /// The derived premise slots, in derived order.
     pub fn slots(&self) -> &[DerivedSlot] {
         &self.slots
+    }
+
+    /// The first interface mismatch the declaration holds (FSpec FR-492
+    /// "Interface mismatch"), which the planner settles `refuted`.
+    pub fn mismatch(&self) -> Option<&InterfaceMismatch> {
+        self.mismatch.as_ref()
     }
 }
 

@@ -1036,6 +1036,9 @@ pub enum Counterexample {
     /// An EN-7 closed-form miss in FSpec FR-419's `schedulability-miss`
     /// spelling, typed and not replayed.
     ScheduleMiss(Box<serde_json::Value>),
+    /// A composition's declared interface mismatch (FSpec FR-331), recomputed
+    /// from the checked declaration, so it has no replay.
+    InterfaceMismatch(Box<fsl_replay::planner::InterfaceMismatch>),
     /// A hybrid provider's trace, reproduced by exact replay (FR-450).
     Hybrid(Box<fsl_replay::HybridCounterexample>),
     /// A task-product model trace accepted by FR-237 and spelled by FR-364.
@@ -1312,7 +1315,9 @@ fn item_stage(
         .find(|found| found.request_index == record.request_index())
     {
         let typed_witness = match &found.counterexample {
-            Counterexample::StateGraph(_) | Counterexample::ScheduleMiss(_) => true,
+            Counterexample::StateGraph(_)
+            | Counterexample::ScheduleMiss(_)
+            | Counterexample::InterfaceMismatch(_) => true,
             Counterexample::ProtocolAnalysis(found) => {
                 matches!(found.as_ref(), fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample::Projection(found)
                     if matches!(found.decision, fsl_replay::protocol_analysis::ProjectionDecision::ActingInstance { .. }))
@@ -2118,6 +2123,10 @@ pub struct AnalyzeRecord {
     /// EN-7 item (FSL FR-621): recomputed by the closed-form check, so it has
     /// no replay.
     pub schedule_miss: Option<Box<serde_json::Value>>,
+    /// The `interface-mismatch` counterexample of a refuted composition
+    /// (FSpec FR-331): recomputed from the checked declaration, so it has no
+    /// replay.
+    pub interface_mismatch: Option<Box<fsl_replay::planner::InterfaceMismatch>>,
     /// The replayed hybrid counterexample of a `refuted` hybrid item
     /// (FR-750), with its FR-286 spelling.
     pub hybrid_counterexample: Option<Spelled<fsl_replay::HybridCounterexample>>,
@@ -2175,6 +2184,7 @@ impl AnalyzeRecord {
             protocol_conformance_counterexample: None,
             closed_form: None,
             schedule_miss: None,
+            interface_mismatch: None,
             hybrid_counterexample: None,
             hybrid_certificate: None,
             hybrid_disagreement: None,
@@ -2262,6 +2272,18 @@ impl AnalyzeRecord {
                 "counterexample": (**found).clone(),
             })));
         }
+        if let Some(found) = &self.interface_mismatch {
+            // FSpec FR-331's counterexample entry around the typed mismatch.
+            let backend = self.terminal().and_then(|terminal| terminal.backend());
+            return Some(match found.to_wire() {
+                Ok(wire) => Ok(serde_json::json!({
+                    "request_index": self.request_index.get(),
+                    "backend": backend.map(BackendId::as_str),
+                    "counterexample": wire,
+                })),
+                Err(_) => Err(CounterexampleWireError::Unspelled("interface mismatch")),
+            });
+        }
         if let Some(found) = &self.hybrid_counterexample {
             return Some(found.wire.clone());
         }
@@ -2336,6 +2358,9 @@ impl AnalyzeRecord {
         }
         if let Some(found) = self.schedule_miss.take() {
             return Some(Counterexample::ScheduleMiss(found));
+        }
+        if let Some(found) = self.interface_mismatch.take() {
+            return Some(Counterexample::InterfaceMismatch(found));
         }
         if let Some(found) = self.hybrid_counterexample.take() {
             return Some(Counterexample::Hybrid(found.found));
@@ -2463,6 +2488,7 @@ impl Counterexample {
             | Self::StateGraph(_)
             | Self::GlobalConformance(_)
             | Self::ScheduleMiss(_)
+            | Self::InterfaceMismatch(_)
             | Self::Hybrid(_)
             | Self::TaskProduct(_)
             | Self::ProtocolAnalysis(_)
@@ -2923,7 +2949,15 @@ fn settle(
             let (settled_record, counterexample) =
                 crate::provider::settle_record(*report, index, backend, engine.descriptor.origin());
             let mut settled = record(terminal(settled_record), None);
-            settled.value_check = counterexample.map(Box::new);
+            match counterexample {
+                Some(crate::provider::ProviderCounterexample::Assignments(found)) => {
+                    settled.value_check = Some(found);
+                }
+                Some(crate::provider::ProviderCounterexample::Mismatch(found)) => {
+                    settled.interface_mismatch = Some(found);
+                }
+                None => {}
+            }
             settled
         }
         EngineReport::Contract(report) => {

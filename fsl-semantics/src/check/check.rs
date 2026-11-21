@@ -565,10 +565,6 @@ pub struct PackageDeclarations {
     /// FSpec FR-491: the unit's `compose` declarations in declaration order,
     /// each as S2 built it, for `CheckedGraph::compositions`.
     pub compositions: Vec<fsl_forms::CompositionDeclarationForm>,
-    /// FSpec FR-491 "Dependency graph and cycles": the profile the unit
-    /// selects that declares FR-176's monotone complete lattice, initial
-    /// element and convergence rule, when it selects one.
-    pub composition_lattice: Option<String>,
     /// FR-311, FR-392: the unit's `random`, `reward`, `workload` and
     /// `probabilistic` declarations in declaration order, each as S2 built
     /// it, for the `Probabilistic` family's check (FR-185, FR-186).
@@ -717,15 +713,6 @@ impl PackageDeclarations {
         self
     }
 
-    /// These declarations with the profile `profile` the unit selects that
-    /// declares FR-176's monotone complete lattice, initial element and
-    /// convergence rule (FSpec FR-491 "Dependency graph and cycles").
-    #[must_use]
-    pub fn with_composition_lattice(mut self, profile: impl Into<String>) -> Self {
-        self.composition_lattice = Some(profile.into());
-        self
-    }
-
     /// These declarations with the extension definitions the unit selects,
     /// held after validation (FR-354 "Definition validation").
     #[must_use]
@@ -867,7 +854,6 @@ impl PackageDeclarations {
             abstractions: Vec::new(),
             guarantees: Vec::new(),
             compositions: Vec::new(),
-            composition_lattice: None,
             probabilistic: Vec::new(),
             state_graph_claims: Vec::new(),
             synthesis_forms: Vec::new(),

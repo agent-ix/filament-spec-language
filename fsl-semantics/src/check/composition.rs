@@ -13,9 +13,9 @@
 //! are read from the import's checked graph ([`AdmittedImport::graph`]), the
 //! same graph a refinement's abstract side is read from. The dependency graph
 //! and its cycles are derived here, and a cycle is not a declaration refusal:
-//! it is the composition item's own refusal
-//! ([`CheckedComposition::item_refusal`]) unless the unit selects a profile
-//! that declares FR-176's lattice, when it derives a `fixed-point` slot.
+//! [`CheckedComposition::cycles`] lists it, and the item that selects the
+//! declaration settles `unsupported` (FSpec FR-489 "Cycles"). No slot is
+//! derived for a cycle.
 //!
 //! [`AdmittedImport::graph`]: super::AdmittedImport
 
@@ -300,28 +300,6 @@ pub struct CompositionCycle {
     pub source: Span,
 }
 
-/// The composition item's scoped refusal: the dependency graph has a cycle
-/// and no profile the unit selects declares FR-176's lattice (FSpec FR-491
-/// "Dependency graph and cycles"), `invalid_model_binding`/
-/// `malformed-declaration`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CompositionItemRefusal {
-    /// Every cycle, with its guarantees in edge order.
-    pub cycles: Vec<Vec<ClauseRef>>,
-}
-
-impl CompositionItemRefusal {
-    /// `invalid_model_binding`.
-    pub fn code(&self) -> Code {
-        Code::InvalidModelBinding
-    }
-
-    /// `malformed-declaration`.
-    pub fn cause(&self) -> &'static str {
-        "malformed-declaration"
-    }
-}
-
 /// A checked component composition declaration (FSpec FR-489, FR-491).
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedComposition {
@@ -338,8 +316,6 @@ pub struct CheckedComposition {
     environment: Vec<EnvironmentMember>,
     clauses: Vec<CompositionClauseFacts>,
     cycles: Vec<CompositionCycle>,
-    lattice: Option<String>,
-    refusal: Option<CompositionItemRefusal>,
 }
 
 /// The slot key of a `component-guarantee` slot (FSpec FR-491 "Derived item
@@ -350,8 +326,14 @@ pub struct ComponentGuaranteeKey {
     /// The item's FR-492 slot key without the assumption set.
     pub key: SlotKey,
     /// The peer guarantees `G` may assume: the `H` of each `rely` and
-    /// `depends` member `G` carries, sorted by node.
+    /// `depends` member `G` carries that a declared `guarantee` names, sorted
+    /// by node. An `H` no declared `guarantee` names has no index (FSpec
+    /// FR-491 "Assumption binding"), so it is no assumption.
     pub assumptions: Vec<NodeKey>,
+    /// The peer clauses behind `assumptions`, by full identity (component and
+    /// clause), sorted: two components built from one package name one clause
+    /// node yet are distinct peers (FSpec FR-491 "Assumption binding").
+    pub peers: Vec<ClauseRef>,
 }
 
 /// The slot key of an item-backed composition slot.
@@ -359,20 +341,6 @@ pub struct ComponentGuaranteeKey {
 pub enum CompositionSlotKey {
     /// A `component-guarantee` slot.
     ComponentGuarantee(ComponentGuaranteeKey),
-    /// A `fixed-point` slot: one FR-331 `composition` item anchored at the
-    /// declaration's node, whose premises are the cycle's component-guarantee
-    /// keys and whose options name the declaring profile.
-    FixedPoint {
-        /// The declaration's node.
-        node: NodeKey,
-        /// The checked package's identity text.
-        package: String,
-        /// The cycle's component-guarantee slot keys, in the cycle's edge
-        /// order.
-        premises: Vec<ComponentGuaranteeKey>,
-        /// The profile that declares FR-176's lattice.
-        profile: String,
-    },
 }
 
 /// One derived premise slot (FSpec FR-491 "Derived item and slots").
@@ -423,9 +391,15 @@ pub struct CompositionItem {
     pub subjects: Vec<ComponentSubject>,
     /// The item's `premises` member: its slots in derived order. A `Request`
     /// item holds the `component-guarantee`, `rely`, `liveness-dependency`,
-    /// `fairness` and `environment` slots; the `fixed-point` slot is its own
-    /// item.
+    /// `fairness` and `environment` slots.
     pub premises: Vec<CompositionSlot>,
+    /// The item's `assumptions` member (FSpec FR-331, FR-491 "Assumption
+    /// binding"): one array per `component-guarantee` entry of `premises`, in
+    /// `premises` order, each strictly ascending and holding the `premises`
+    /// indices of the peer `component-guarantee` entries the guarantee's
+    /// `rely` and `depends` members name. Every array is empty under a rule
+    /// other than `assume-guarantee`.
+    pub assumptions: Vec<Vec<usize>>,
 }
 
 impl CheckedComposition {
@@ -496,17 +470,6 @@ impl CheckedComposition {
         &self.cycles
     }
 
-    /// The profile that declares FR-176's lattice, when the unit selects one.
-    pub fn lattice(&self) -> Option<&str> {
-        self.lattice.as_deref()
-    }
-
-    /// The composition item's scoped refusal, when the dependency graph has a
-    /// cycle and no selected profile declares FR-176's lattice.
-    pub fn item_refusal(&self) -> Option<&CompositionItemRefusal> {
-        self.refusal.as_ref()
-    }
-
     fn facts(&self, reference: &ClauseRef) -> Option<&CompositionClauseFacts> {
         self.clauses
             .iter()
@@ -530,13 +493,16 @@ impl CheckedComposition {
             .map(|entry| entry.constraint.clone())
             .collect();
         fairness.sort();
-        let assumptions: BTreeSet<NodeKey> = self
+        let assumes = self.rule == CompositionRule::AssumeGuarantee;
+        let peers: BTreeSet<ClauseRef> = self
             .relies
             .iter()
             .chain(&self.liveness_dependencies)
-            .filter(|premise| premise.guarantee == *reference)
-            .map(|premise| premise.on.node.clone())
+            .filter(|premise| assumes && premise.guarantee == *reference)
+            .filter(|premise| self.guarantees.iter().any(|g| g.reference == premise.on))
+            .map(|premise| premise.on.clone())
             .collect();
+        let assumptions: BTreeSet<NodeKey> = peers.iter().map(|peer| peer.node.clone()).collect();
         Some(ComponentGuaranteeKey {
             key: SlotKey {
                 node: reference.node.clone(),
@@ -553,6 +519,7 @@ impl CheckedComposition {
                 extent: ExtentClass::Unbounded,
             },
             assumptions: assumptions.into_iter().collect(),
+            peers: peers.into_iter().collect(),
         })
     }
 
@@ -562,7 +529,7 @@ impl CheckedComposition {
     /// one `fairness` slot per derived fairness premise (each constraint of
     /// the resolved fairness set of each declared guarantee and of each `H` a
     /// `rely` or `depends` member names), one `environment` slot per
-    /// `environment` member, and one `fixed-point` slot per admitted cycle.
+    /// `environment` member.
     pub fn slots(&self) -> Vec<CompositionSlot> {
         let mut slots: Vec<CompositionSlot> = Vec::new();
         let mut push = |slot: CompositionSlot| {
@@ -643,31 +610,14 @@ impl CheckedComposition {
                 )
             });
         }
-        if let Some(profile) = &self.lattice {
-            for cycle in &self.cycles {
-                let premises: Vec<ComponentGuaranteeKey> = cycle
-                    .guarantees
-                    .iter()
-                    .filter_map(|reference| self.guarantee_key(reference))
-                    .collect();
-                push(CompositionSlot {
-                    key: Some(CompositionSlotKey::FixedPoint {
-                        node: self.key.clone(),
-                        package: self.package.clone(),
-                        premises,
-                        profile: profile.clone(),
-                    }),
-                    ..slot(SlotRole::FixedPoint, SlotBacking::Item, cycle.source)
-                });
-            }
-        }
         slots
     }
 
     /// The item the declaration derives (FSpec FR-491 "Derived item and
     /// slots"): one planner-local item under `assume-guarantee`, one FR-331
-    /// `composition` request item under the other three rules. An item whose
-    /// [`Self::item_refusal`] is present is not settled.
+    /// `composition` request item under the other three rules. An item of a
+    /// declaration with a dependency cycle is not settled (see
+    /// [`Self::cycles`]).
     pub fn item(&self) -> CompositionItem {
         let placement = match self.rule {
             CompositionRule::AssumeGuarantee => ItemPlacement::PlannerLocal,
@@ -675,13 +625,8 @@ impl CheckedComposition {
             | CompositionRule::RefinementTransfer
             | CompositionRule::Interface => ItemPlacement::Request,
         };
-        let premises = self
-            .slots()
-            .into_iter()
-            .filter(|slot| {
-                placement == ItemPlacement::PlannerLocal || slot.role != SlotRole::FixedPoint
-            })
-            .collect();
+        let premises = self.slots();
+        let assumptions = self.assumption_indices(&premises);
         let mut subjects: Vec<&CheckedComponent> = self.components.iter().collect();
         subjects.sort_by(|left, right| left.name.cmp(&right.name));
         CompositionItem {
@@ -694,7 +639,41 @@ impl CheckedComposition {
                 .map(|component| component.subject.clone())
                 .collect(),
             premises,
+            assumptions,
         }
+    }
+
+    /// The `assumptions` member of `slots`, the derived slot list (FSpec
+    /// FR-491 "Assumption binding"). A peer guarantee no declared `guarantee`
+    /// names contributes no index.
+    fn assumption_indices(&self, slots: &[CompositionSlot]) -> Vec<Vec<usize>> {
+        let guarantees: Vec<(usize, &ClauseRef)> = slots
+            .iter()
+            .filter(|slot| slot.role == SlotRole::ComponentGuarantee)
+            .filter_map(|slot| Some((slot.index, slot.guarantee.as_ref()?)))
+            .collect();
+        slots
+            .iter()
+            .filter_map(|slot| {
+                slot.key
+                    .as_ref()
+                    .map(|CompositionSlotKey::ComponentGuarantee(key)| key)
+            })
+            .map(|key| {
+                let mut indices: Vec<usize> = key
+                    .peers
+                    .iter()
+                    .filter_map(|peer| {
+                        guarantees
+                            .iter()
+                            .find_map(|(index, reference)| (*reference == peer).then_some(*index))
+                    })
+                    .collect();
+                indices.sort_unstable();
+                indices.dedup();
+                indices
+            })
+            .collect()
     }
 
     /// The checked-graph node `S` is emitted as (FSpec FR-491), and the
@@ -1167,12 +1146,6 @@ impl CheckedGraph {
         &self.compositions
     }
 
-    /// The profile the unit selects that declares FR-176's lattice, initial
-    /// element and convergence rule, when it selects one.
-    pub fn composition_lattice(&self) -> Option<&str> {
-        self.composition_lattice.as_deref()
-    }
-
     /// Where a refusal in the `index`th `compose` declaration is located.
     pub(super) fn composition_location(&self, index: usize) -> Location {
         Location::root(Origin::TypeDeclaration {
@@ -1432,8 +1405,7 @@ impl CheckedGraph {
         ))
     }
 
-    /// The composition, its dependency graph's cycles found and the lattice
-    /// check applied.
+    /// The composition, its dependency graph's cycles found.
     #[allow(
         clippy::too_many_arguments,
         reason = "the checked composition's members"
@@ -1455,13 +1427,6 @@ impl CheckedGraph {
             .clauses
             .sort_by(|left, right| left.reference.cmp(&right.reference));
         let cycles = members.cycles();
-        let lattice = self.composition_lattice.clone();
-        let refusal = (!cycles.is_empty() && lattice.is_none()).then(|| CompositionItemRefusal {
-            cycles: cycles
-                .iter()
-                .map(|cycle| cycle.guarantees.clone())
-                .collect(),
-        });
         CheckedComposition {
             name,
             key,
@@ -1476,8 +1441,6 @@ impl CheckedGraph {
             environment,
             clauses: members.clauses,
             cycles,
-            lattice,
-            refusal,
         }
     }
 

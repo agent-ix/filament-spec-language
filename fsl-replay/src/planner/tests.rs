@@ -110,7 +110,6 @@ pub(super) fn slot(role: SlotRole, key: SlotKey, backing: SlotBacking, start: u6
         operation: None,
         premise_subject: None,
         peer_clause: None,
-        cycle: None,
         source: Some(region(start)),
     }
 }
@@ -217,6 +216,7 @@ fn declaration_with(with_progress: bool, fp: &FairnessConstraint) -> PlannerDecl
             fairness,
         ],
         supplies: Vec::new(),
+        mismatch: None,
     }
 }
 
@@ -916,6 +916,70 @@ fn a_work_budget_below_the_slot_count_settles_incomplete_naming_max_work() {
     assert_ne!(
         settled(&declaration, &request).value,
         PlannerValue::Incomplete
+    );
+}
+
+// ---- FSpec FR-331-AC-65: the producer's guard cause --------------------------
+
+/// No provider's result entry carries `provider-answer-unconfirmed`, whatever
+/// item kind the entry answers and whatever the provider's origin: the reader
+/// refuses it `invalid_result`/`unknown-cause` at `/cause/type`, and the
+/// plugin cause reader and `from_plugin_inconclusive` refuse it as FSL-only.
+#[trace("FR-1044-AC-13")]
+#[trace("FSpec-FR-331-AC-65")]
+#[test]
+fn provider_answer_unconfirmed_is_refused_in_every_provider_entry() {
+    let cause = json!({"type": "provider-answer-unconfirmed", "premise": 1});
+    assert_eq!(
+        read_plugin_inconclusive_cause(&cause),
+        Err(PluginResultRefusal::FslOnlyCause(
+            FslOnlyCause::ProviderAnswerUnconfirmed
+        ))
+    );
+    for kind in [
+        "composition",
+        "operation-contract",
+        "temporal-satisfaction",
+        "value-validity",
+    ] {
+        let entry = json!({
+            "request_index": 0,
+            "backend": "verus",
+            "kind": kind,
+            "result": "inconclusive",
+            "cause": cause,
+        });
+        for origin in [EntryOrigin::FirstParty, EntryOrigin::Plugin] {
+            let refusal = read_result_entry(&entry, 4, origin).expect_err("refused");
+            assert_eq!(refusal.pointer, "/cause/type", "{kind}");
+            assert_eq!(refusal.cause, EntryCause::UnknownCause, "{kind}");
+            assert_eq!(refusal.cause.code(), "invalid_result", "{kind}");
+        }
+    }
+    let unconfirmed = InconclusiveCause::ProviderAnswerUnconfirmed { premise: 1 };
+    assert_eq!(
+        TerminalRecord::from_plugin_inconclusive(
+            RequestIndex::new(0),
+            BackendId::new("verus"),
+            unconfirmed.clone(),
+        )
+        .err(),
+        Some(PluginResultRefusal::FslOnlyCause(
+            FslOnlyCause::ProviderAnswerUnconfirmed
+        ))
+    );
+    // The producer writes it, with its premise, in the outcome document's
+    // own spelling (`kind`, FSpec FR-621); a provider's entry spells the
+    // member `type` (FSpec FR-331), which the readers above refuse.
+    let record = TerminalRecord::from_value(
+        RequestIndex::new(0),
+        TerminalValue::Inconclusive(unconfirmed),
+    );
+    let item = serde_json::to_value(crate::outcome::OutcomeItem::from_terminal(&record))
+        .expect("the item serializes");
+    assert_eq!(
+        item["cause"],
+        json!({"kind": "provider-answer-unconfirmed", "premise": 1})
     );
 }
 

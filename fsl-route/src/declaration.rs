@@ -13,13 +13,12 @@
 //! - the model-claim `temporal-satisfaction` item of a liveness clause
 //!   carries `stutter_closure` ([`RequestItem::stutter_closure`]);
 //! - a `composition` item carries `premises`, its premise slots in order
-//!   ([`RequestItem::premises`]): the item of a composition under a rule
-//!   other than `assume-guarantee` holds every premise slot but the
-//!   `fixed-point` slots, and a `fixed-point` slot's own item holds the
-//!   component-guarantee keys of its cycle.
+//!   ([`RequestItem::premises`]), and `assumptions`, the peer
+//!   component-guarantee indices each component guarantee assumes
+//!   ([`RequestItem::assumptions`]).
 //!
-//! A declaration whose item is refused (FSpec FR-490-AC-6, FR-491 "Dependency
-//! graph and cycles") writes no item. Routing is unchanged: an item is
+//! A declaration whose item is refused (FSpec FR-490-AC-6) or that holds a
+//! dependency cycle (FSpec FR-489 "Cycles") writes no item. Routing is unchanged: an item is
 //! negotiated by its [`kind`](RequestItem::kind) as every other item is, so a
 //! `composition` item with no composition-capable backend registered has an
 //! empty candidate set (FSpec FR-348-AC-4).
@@ -61,9 +60,7 @@ impl ItemPremise {
             Some(CompositionSlotKey::ComponentGuarantee(key)) => {
                 Self::ComponentGuarantee(key.clone())
             }
-            Some(CompositionSlotKey::FixedPoint { .. }) | None => {
-                Self::Slot(Box::new(slot.clone()))
-            }
+            None => Self::Slot(Box::new(slot.clone())),
         }
     }
 }
@@ -91,6 +88,7 @@ pub(crate) struct Declared {
     pub(crate) correspondence: Option<Correspondence>,
     pub(crate) stutter_closure: bool,
     pub(crate) premises: Vec<ItemPremise>,
+    pub(crate) assumptions: Vec<Vec<usize>>,
 }
 
 impl Declared {
@@ -109,11 +107,15 @@ impl Declared {
             correspondence: key.correspondence.clone(),
             stutter_closure: key.stutter_closure,
             premises: Vec::new(),
+            assumptions: Vec::new(),
         }
     }
 
     /// A `composition` item anchored at `node`.
-    fn composition(node: &NodeKey, premises: Vec<ItemPremise>) -> Self {
+    fn composition(
+        node: &NodeKey,
+        (premises, assumptions): (Vec<ItemPremise>, Vec<Vec<usize>>),
+    ) -> Self {
         Self {
             occurrence: OccurrenceKey::new(node.clone(), Origin::new(Role::new("claim"), 0)),
             kind: Capability::Composition,
@@ -123,6 +125,7 @@ impl Declared {
             correspondence: None,
             stutter_closure: false,
             premises,
+            assumptions,
         }
     }
 }
@@ -172,14 +175,17 @@ impl RequestWriter {
         composition: &CheckedComposition,
         written: &mut Vec<DeclaredItem>,
     ) {
-        if composition.item_refusal().is_some() {
+        if !composition.cycles().is_empty() {
             return;
         }
         let declaration = composition.node().clone();
         let item = composition.item();
         if composition.rule() != CompositionRule::AssumeGuarantee {
             let premises = item.premises.iter().map(ItemPremise::of).collect();
-            let own = self.declared_item(Declared::composition(&declaration, premises));
+            let own = self.declared_item(Declared::composition(
+                &declaration,
+                (premises, item.assumptions.clone()),
+            ));
             written.push(DeclaredItem {
                 declaration: declaration.clone(),
                 slot: None,
@@ -195,16 +201,6 @@ impl RequestWriter {
                         .find(|facts| facts.reference.node == key.key.claim)
                         .map(|facts| facts.form);
                     Declared::of_key(&key.key, form)
-                }
-                Some(CompositionSlotKey::FixedPoint { node, premises, .. }) => {
-                    Declared::composition(
-                        node,
-                        premises
-                            .iter()
-                            .cloned()
-                            .map(ItemPremise::ComponentGuarantee)
-                            .collect(),
-                    )
                 }
                 None => continue,
             };

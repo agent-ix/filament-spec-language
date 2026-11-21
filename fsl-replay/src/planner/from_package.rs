@@ -36,8 +36,9 @@ use super::declaration::{
 use super::json::canonical_text;
 use super::key::{
     ClaimKind, Correspondence, CorrespondenceRole, ExtentClass, FairnessKey, ItemKey, KeyWireError,
-    LocalKey, OperationRef, PremiseKey, SlotKey, TemporalItemKind, TemporalKey,
+    LocalKey, OperationRef, SlotKey, TemporalItemKind, TemporalKey,
 };
+use super::mismatch::interface_mismatch;
 
 /// Why a checked package yields no planner declaration for a node.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -47,9 +48,8 @@ pub enum DeclarationRefusal {
     #[error("the node is no implementation guarantee or composition of the package")]
     NoDeclaration,
     /// The declaration's item is refused: an unbound model element
-    /// (`missing_declaration`/`missing-name`) or a dependency cycle with no
-    /// declaring profile (`invalid_model_binding`/`malformed-declaration`).
-    /// No other item of the package is affected.
+    /// (`missing_declaration`/`missing-name`). No other item of the package is
+    /// affected.
     #[error("the item is refused: {code:?}/{cause}")]
     ItemRefused {
         /// The refusal's code.
@@ -57,6 +57,11 @@ pub enum DeclarationRefusal {
         /// The refusal's cause.
         cause: &'static str,
     },
+    /// The composition's dependency graph holds a cycle, which no rule settles
+    /// (FSpec FR-489 "Cycles"): its item is `unsupported`, and no premise is
+    /// derived for it.
+    #[error("the composition's dependency graph holds a cycle")]
+    Cyclic,
     /// The composition's rule is not settled by the planner; its item is a
     /// request item routed to a composition-capable provider (FSpec
     /// FR-491 "Derived item and slots").
@@ -148,12 +153,12 @@ pub struct CompositionPremise {
 
 /// Every slot the composition declared at `node` derives, in FSpec FR-491's
 /// order, under any rule: the keys a routed composition item's `premises`
-/// member holds, and the `fixed-point` slot's own item.
+/// member holds.
 ///
 /// # Errors
 ///
-/// [`DeclarationRefusal`] when `node` names no composition, or its item is
-/// refused.
+/// [`DeclarationRefusal`] when `node` names no composition, or its
+/// dependency graph holds a cycle.
 pub fn composition_premises(
     package: &CheckedPackage,
     node: &NodeKey,
@@ -164,11 +169,8 @@ pub fn composition_premises(
         .iter()
         .find(|composition| composition.node() == node)
         .ok_or(DeclarationRefusal::NoDeclaration)?;
-    if let Some(refusal) = composition.item_refusal() {
-        return Err(DeclarationRefusal::ItemRefused {
-            code: refusal.code(),
-            cause: refusal.cause(),
-        });
+    if !composition.cycles().is_empty() {
+        return Err(DeclarationRefusal::Cyclic);
     }
     let regions = Regions {
         source: graph.source(),
@@ -216,7 +218,6 @@ fn slot_role(role: SemRole) -> Option<SlotRole> {
         SemRole::Rely => SlotRole::Rely,
         SemRole::LivenessDependency => SlotRole::LivenessDependency,
         SemRole::Fairness => SlotRole::Fairness,
-        SemRole::FixedPoint => SlotRole::FixedPoint,
         SemRole::Guarantee | SemRole::Composition => return None,
     })
 }
@@ -406,6 +407,7 @@ fn guarantee_declaration(
         environment,
         slots,
         supplies: Vec::new(),
+        mismatch: None,
     })
 }
 
@@ -476,7 +478,6 @@ fn guarantee_slot(
         operation,
         premise_subject: None,
         peer_clause: None,
-        cycle: None,
         source: Some(regions.region(slot.source)?),
     })
 }
@@ -491,11 +492,8 @@ fn composition_declaration(
             composition.rule().as_str(),
         ));
     }
-    if let Some(refusal) = composition.item_refusal() {
-        return Err(DeclarationRefusal::ItemRefused {
-            code: refusal.code(),
-            cause: refusal.cause(),
-        });
+    if !composition.cycles().is_empty() {
+        return Err(DeclarationRefusal::Cyclic);
     }
     let item = composition.item();
     debug_assert_eq!(item.placement, ItemPlacement::PlannerLocal);
@@ -563,6 +561,7 @@ fn composition_declaration(
         environment,
         slots,
         supplies,
+        mismatch: interface_mismatch(composition),
     })
 }
 
@@ -581,14 +580,6 @@ impl CompositionContext<'_> {
             .find(|component| component.name == reference.component)
             .ok_or(DeclarationRefusal::NoDeclaration)?;
         Ok(subject_text(&component.subject.to_string(), &[])?)
-    }
-
-    /// The index of the accepted cycle whose guarantees include `reference`.
-    fn cycle_of(&self, reference: &ClauseRef) -> Option<usize> {
-        self.composition
-            .cycles()
-            .iter()
-            .position(|cycle| cycle.guarantees.contains(reference))
     }
 
     fn guarantee_item(&self, key: &ComponentGuaranteeKey) -> Result<ItemKey, DeclarationRefusal> {
@@ -610,38 +601,12 @@ impl CompositionContext<'_> {
             operation: None,
             premise_subject: None,
             peer_clause: None,
-            cycle: None,
             source: Some(self.regions.region(slot.source)?),
         };
         match (slot.role, &slot.key) {
             (SemRole::ComponentGuarantee, Some(CompositionSlotKey::ComponentGuarantee(key))) => {
                 derived.key = SlotKey::Item(self.guarantee_item(key)?);
                 derived.backing = SlotBacking::Item;
-            }
-            (SemRole::FixedPoint, Some(CompositionSlotKey::FixedPoint { node, premises, .. })) => {
-                let mut keys = Vec::new();
-                for premise in premises {
-                    keys.push(PremiseKey {
-                        role: SlotRole::ComponentGuarantee,
-                        key: canonical_text(&self.guarantee_item(premise)?.to_wire()?),
-                    });
-                }
-                derived.key = SlotKey::Item(ItemKey {
-                    claim: OccurrenceKey::new(node.clone(), Origin::new(Role::new("claim"), 0)),
-                    kind: ClaimKind::Composition,
-                    temporal: None,
-                    correspondence: None,
-                    premises: keys,
-                    extent: ExtentClass::Unbounded,
-                });
-                derived.backing = SlotBacking::Item;
-                derived.cycle = self.composition.cycles().iter().position(|cycle| {
-                    premises.len() == cycle.guarantees.len()
-                        && premises
-                            .iter()
-                            .zip(&cycle.guarantees)
-                            .all(|(key, reference)| key.key.node == reference.node)
-                });
             }
             (SemRole::Rely | SemRole::LivenessDependency, _) => {
                 let (Some(guarantee), Some(on)) = (&slot.guarantee, &slot.on) else {
@@ -650,7 +615,6 @@ impl CompositionContext<'_> {
                 derived.key = local(role, vec![guarantee.to_string(), on.to_string()]);
                 derived.premise_subject = Some(self.peer_subject(on)?);
                 derived.peer_clause = Some(on.node.clone());
-                derived.cycle = self.cycle_of(on);
             }
             (SemRole::Fairness, _) => {
                 let constraint = slot

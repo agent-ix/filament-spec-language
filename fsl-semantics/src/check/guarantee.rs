@@ -417,8 +417,6 @@ pub enum SlotRole {
     LivenessDependency,
     /// `fairness`.
     Fairness,
-    /// `fixed-point`.
-    FixedPoint,
 }
 
 impl SlotRole {
@@ -438,7 +436,6 @@ impl SlotRole {
             Self::Rely => "rely",
             Self::LivenessDependency => "liveness-dependency",
             Self::Fairness => "fairness",
-            Self::FixedPoint => "fixed-point",
         }
     }
 }

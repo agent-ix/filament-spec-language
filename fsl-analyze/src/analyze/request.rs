@@ -266,6 +266,11 @@ pub struct CompositionItem {
     /// The derived premise slots, each `{role, key}` (FSpec FR-331
     /// `premises`).
     pub premises: Vec<serde_json::Value>,
+    /// The derived `assumptions` (FSpec FR-331, FR-491 "Assumption
+    /// binding"): one array per `component-guarantee` entry of `premises`,
+    /// in `premises` order, of the `premises` indices of the peer entries it
+    /// assumes.
+    pub assumptions: Vec<Vec<usize>>,
 }
 
 /// The checked finite-hyper clause selected by a temporal-satisfaction item.
@@ -1457,6 +1462,7 @@ fn work<'a>(
                         crate::provider::CompositionTarget::new(
                             item.claim.clone(),
                             form.premises.clone(),
+                            form.assumptions.clone(),
                         ),
                         shared,
                     )

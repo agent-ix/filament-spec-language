@@ -428,6 +428,10 @@ fn tc_774_cause_reader_refuses_in_order() {
             "transfer-not-preserving",
             FslOnlyCause::TransferNotPreserving,
         ),
+        (
+            "provider-answer-unconfirmed",
+            FslOnlyCause::ProviderAnswerUnconfirmed,
+        ),
     ] {
         for body in [
             json!({"type": spelling}),

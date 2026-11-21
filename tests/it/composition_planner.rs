@@ -14,9 +14,10 @@ use fsl_package::{
     V2ReadLimits,
 };
 use fsl_replay::planner::{
-    DeclarationRefusal, PlannerCause, PlannerDeclaration, PlannerResult, PlannerValue, SlotRole,
+    interface_mismatch, DeclarationRefusal, MismatchReason, PlannerCause, PlannerDeclaration,
+    PlannerResult, PlannerValue, SlotRole,
 };
-use fsl_replay::{Certification, InconclusiveCause, ItemLabel, PremiseOutcome};
+use fsl_replay::{Certification, InconclusiveCause, PremiseOutcome};
 use fsl_route::request::RequestWriter;
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{
@@ -49,6 +50,16 @@ const CONSUMER: &str = "temporal Done using t over (c: M::Consumer) clock \"mode
      on origin { always (holds(c.received) implies eventually holds(c.done)) }\n\
      temporal Bounded using t over (c: M::Consumer) clock \"model-steps\" \
      on origin { always holds(c.received_count >= 0) }\n";
+
+/// `PRODUCER` with a safety clause conditional on fairness, and a liveness
+/// clause, both for interface-mismatch ordering.
+const PRODUCER_WITH_FENCE: &str =
+    "temporal Sends using t over (p: M::Producer) clock \"model-steps\" \
+     on origin { fair weak each M::Producer::send; always eventually holds(p.sent) }\n\
+     temporal Fenced using t over (p: M::Producer) clock \"model-steps\" \
+     on origin { fair weak each M::Producer::send; always holds(p.sent_count >= 0) }\n\
+     temporal Pings using t over (p: M::Producer) clock \"model-steps\" \
+     on origin { always eventually holds(p.sent) }\n";
 
 const COMPONENTS: &str = "component Producer from P using M; component Consumer from Q using M; ";
 
@@ -127,16 +138,14 @@ fn dependency(identity: &str, clauses: &str) -> Dependency {
     }
 }
 
-fn compile(
-    declaration: &str,
-    lattice: Option<&str>,
-    dependencies: &[&Dependency],
-) -> Result<CheckedPackage, Failure> {
+fn compile(declaration: &str, dependencies: &[&Dependency]) -> Result<CheckedPackage, Failure> {
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
+         profile q = \"filament.value.complete/v1\";\n\
          import \"test/producer\" as P;\n\
-         import \"test/consumer\" as Q;\n{declaration}\n"
+         import \"test/consumer\" as Q;\n\
+         function marker using q(): Boolean pure {{ true }}\n{declaration}\n"
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:composition"),
@@ -162,12 +171,8 @@ fn compile(
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("an empty model selection is admitted");
-    let mut assembled =
-        PackageDeclarations::assemble(raw, PACKAGE.to_owned(), built, models, imports)
-            .map_err(Failure::Assembly)?;
-    if let Some(profile) = lattice {
-        assembled = assembled.with_composition_lattice(profile);
-    }
+    let assembled = PackageDeclarations::assemble(raw, PACKAGE.to_owned(), built, models, imports)
+        .map_err(Failure::Assembly)?;
     let graph = assembled
         .check(
             CheckMode::Linked,
@@ -206,14 +211,14 @@ impl World {
         format!("compose Sys rule {rule} {{ {COMPONENTS}{members}}}")
     }
 
-    fn package(&self, rule: &str, members: &str, lattice: Option<&str>) -> CheckedPackage {
+    fn package(&self, rule: &str, members: &str) -> CheckedPackage {
         let declaration = self.declare(rule, members);
-        compile(&declaration, lattice, &[&self.producer, &self.consumer])
+        compile(&declaration, &[&self.producer, &self.consumer])
             .unwrap_or_else(|failure| panic!("{declaration}: the unit compiles: {failure:?}"))
     }
 
-    fn chain(&self, rule: &str, members: &str, lattice: Option<&str>) -> Chain {
-        let package = self.package(rule, members, lattice);
+    fn chain(&self, rule: &str, members: &str) -> Chain {
+        let package = self.package(rule, members);
         let node = package.graph().compositions()[0].node().clone();
         Chain::of(package, &node).expect("the composition derives")
     }
@@ -257,7 +262,7 @@ fn positive(chain: &Chain) -> Value {
 #[test]
 fn a_discharged_producer_consumer_composition_settles_proved_with_its_discharge_record() {
     let world = World::new();
-    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS, None);
+    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS);
     assert_eq!(chain.declaration.slots().len(), 6);
     let result = chain.settled(&positive(&chain));
     assert_eq!(result.value, PlannerValue::Proved);
@@ -279,7 +284,7 @@ fn a_discharged_producer_consumer_composition_settles_proved_with_its_discharge_
 #[test]
 fn a_guarantee_of_another_subject_clause_kind_or_package_leaves_the_slot_undischarged() {
     let world = World::new();
-    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS, None);
+    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS);
     let sends = pool_entry(&chain, SENDS);
     let counted = pool_entry(&chain, COUNTED);
     let done = pool_entry(&chain, DONE);
@@ -303,65 +308,155 @@ fn a_guarantee_of_another_subject_clause_kind_or_package_leaves_the_slot_undisch
     }
 }
 
-// ---- FR-530-AC-4, AC-5: cycles ----------------------------------------------
+// ---- FR-530-AC-4: cycles ---------------------------------------------------------
 
 const MUTUAL: &str = "depends Producer::Sends on Consumer::Done; ";
 
+/// FSpec FR-489 "Cycles": a well-formed declaration whose dependency graph
+/// holds a cycle has no planner declaration and writes no request item, under
+/// every rule; no `fixed-point` slot is derived.
 #[trace("TC-1330", "FR-530-AC-4")]
 #[trace("FSpec-TC-983", "FSpec-FR-489-AC-4", "FSpec-TC-985")]
 #[test]
-fn a_mutual_dependency_without_the_lattice_refuses_the_composition_item() {
+fn a_mutual_dependency_derives_no_planner_declaration_and_no_request_item() {
     let world = World::new();
     let members = format!("{CASE_ONE_MEMBERS}{MUTUAL}");
-    let package = world.package("assume-guarantee", &members, None);
-    let composition = &package.graph().compositions()[0];
-    let refusal = composition.item_refusal().expect("the item is refused");
-    assert_eq!(refusal.code(), fsl_foundation::Code::InvalidModelBinding);
-    assert_eq!(refusal.cause(), "malformed-declaration");
-    let named: Vec<String> = refusal.cycles[0].iter().map(ToString::to_string).collect();
-    assert_eq!(named, ["Consumer::Done", "Producer::Sends"]);
-    assert_eq!(
-        PlannerDeclaration::from_package(&package, composition.node()).err(),
-        Some(DeclarationRefusal::ItemRefused {
-            code: fsl_foundation::Code::InvalidModelBinding,
-            cause: "malformed-declaration",
-        })
-    );
-    // route writes no item for the refused composition.
-    assert!(RequestWriter::new()
-        .declaration_items(package.graph())
-        .is_empty());
+    for rule in [
+        "assume-guarantee",
+        "interface",
+        "protocol-refinement",
+        "refinement-transfer",
+    ] {
+        let package = world.package(rule, &members);
+        let composition = &package.graph().compositions()[0];
+        let [cycle] = composition.cycles() else {
+            panic!("{rule}: one cycle");
+        };
+        let named: Vec<String> = cycle.guarantees.iter().map(ToString::to_string).collect();
+        assert_eq!(named, ["Consumer::Done", "Producer::Sends"], "{rule}");
+        if rule == "assume-guarantee" {
+            assert_eq!(
+                PlannerDeclaration::from_package(&package, composition.node()).err(),
+                Some(DeclarationRefusal::Cyclic)
+            );
+        }
+        // route writes no item for the cyclic composition.
+        assert!(RequestWriter::new()
+            .declaration_items(package.graph())
+            .is_empty());
+    }
 }
 
-#[trace("TC-1330", "FR-530-AC-5")]
-#[trace("FSpec-TC-983", "FSpec-FR-489-AC-4", "FSpec-TC-985")]
-#[test]
-fn a_cycle_settles_proved_only_through_a_proved_fixed_point_result() {
-    let world = World::new();
-    let members = format!("{CASE_ONE_MEMBERS}{MUTUAL}");
-    let chain = world.chain("assume-guarantee", &members, Some("fixed-point-lattice"));
-    let slots = &chain.declaration.slots();
-    let fixed = slots.len() - 1;
-    assert_eq!(slots[fixed].role, SlotRole::FixedPoint);
-    assert_eq!(slots[fixed].cycle, Some(0));
-    let mut request = chain.request(&|_| Value::Null);
-    request["guarantees"] = json!([pool_entry(&chain, COUNTED), pool_entry(&chain, SENDS)]);
-    let proved = chain.settled(&request);
-    assert_eq!(proved.value, PlannerValue::Proved);
-    let discharge = proved.discharge.as_ref().expect("a discharge record");
-    assert!(discharge.entries.iter().any(|entry| entry.slot == fixed));
+// ---- FR-530-AC-9: declared interface mismatch ------------------------------------
 
-    let mut inconclusive = request.clone();
-    inconclusive["slots"][fixed]["result"]["result"] = chain.entry(
-        fixed,
-        json!({"result": "inconclusive", "cause": {"type": "induction-not-closed", "depth": 3}}),
-    );
-    let result = chain.settled(&inconclusive);
-    assert_eq!(result.value, PlannerValue::Inconclusive);
+/// A declared interface absent from the composition refutes it: the peer
+/// guarantee `Counted` is no `guarantee` member.
+const ABSENT_MEMBERS: &str = "guarantee Producer::Sends; guarantee Consumer::Done; \
+     rely Consumer::Done on Producer::Counted; supplies fair weak each M::Producer::send; ";
+
+/// FSpec FR-492 "Interface mismatch", TC-1330: the refutation names the peer
+/// component, the interface node, the `rely` slot and the reason, keeps the
+/// complete slot list and carries no cause, certification or conclusion.
+#[trace("TC-1330", "FR-530-AC-9")]
+#[trace("FSpec-TC-983", "FSpec-FR-348-AC-2")]
+#[test]
+fn an_absent_peer_interface_refutes_the_composition_with_its_full_slot_list() {
+    let world = World::new();
+    let chain = world.chain("assume-guarantee", ABSENT_MEMBERS);
+    let result = chain.settled(&chain.request(&|_| Value::Null));
+    assert_eq!(result.value, PlannerValue::Refuted);
+    assert_eq!(result.value.basis().as_str(), "decisive-counterexample");
+    assert!(result.cause.is_none());
+    assert!(result.certification.is_none());
+    assert!(result.conclusion.is_none());
+    assert_eq!(result.slots.len(), chain.declaration.slots().len());
+    let mismatch = result.mismatch.as_ref().expect("the mismatch");
+    assert_eq!(mismatch.component, "Producer");
+    assert_eq!(mismatch.premise, 2);
+    assert_eq!(mismatch.reason, MismatchReason::Absent);
+    let wire = result.to_wire().expect("wire");
+    assert_eq!(wire["value"], "refuted");
+    assert_eq!(wire["basis"], "decisive-counterexample");
+    assert_eq!(wire["mismatch"]["component"], "Producer");
+    assert_eq!(wire["mismatch"]["premise"], 2);
+    assert_eq!(wire["mismatch"]["reason"], "absent");
+    assert!(wire.get("cause").is_none() && wire.get("certification").is_none());
+    assert!(wire.get("conclusion").is_none());
+}
+
+/// A peer guarantee whose fairness set no supplied constraint implies is
+/// `weaker`; supplying the constraint removes the mismatch.
+#[trace("TC-1330", "FR-530-AC-9")]
+#[test]
+fn a_peer_guarantee_conditional_on_unsupplied_fairness_is_weaker() {
+    let world = World::new();
+    let members = "guarantee Producer::Sends; guarantee Consumer::Done; \
+         depends Consumer::Done on Producer::Sends; ";
+    let chain = world.chain("assume-guarantee", members);
+    let result = chain.settled(&chain.request(&|_| Value::Null));
+    assert_eq!(result.value, PlannerValue::Refuted);
+    let mismatch = result.mismatch.as_ref().expect("the mismatch");
     assert_eq!(
-        premise(&result),
-        Some((fixed as u64, PremiseOutcome::Label(ItemLabel::Inconclusive)))
+        (mismatch.premise, mismatch.reason),
+        (2, MismatchReason::Weaker)
     );
+    // The same declaration with the constraint supplied has no mismatch.
+    let supplied = format!("{members}supplies fair weak each M::Producer::send; ");
+    let chain = world.chain("assume-guarantee", &supplied);
+    assert!(chain.declaration.mismatch().is_none());
+}
+
+/// FSpec FR-492 "Interface mismatch": the order is reason-major, so an
+/// `absent` slot is reported although a lower slot is `weaker`.
+#[trace("TC-1330", "FR-530-AC-9")]
+#[test]
+fn an_absent_mismatch_is_reported_before_a_weaker_one_at_a_lower_slot() {
+    let producer = dependency("test/producer", PRODUCER_WITH_FENCE);
+    let consumer = dependency("test/consumer", CONSUMER);
+    let members = "guarantee Producer::Sends; guarantee Consumer::Done; \
+         guarantee Producer::Fenced; rely Consumer::Done on Producer::Fenced; \
+         depends Consumer::Done on Producer::Pings; ";
+    let declaration = format!("compose Sys rule assume-guarantee {{ {COMPONENTS}{members}}}");
+    let package = compile(&declaration, &[&producer, &consumer]).expect("the unit compiles");
+    let composition = &package.graph().compositions()[0];
+    let found = interface_mismatch(composition).expect("a mismatch");
+    // `Fenced` (slot 3) is weaker, `Pings` (slot 4) is absent.
+    assert_eq!((found.premise, found.reason), (4, MismatchReason::Absent));
+    assert_eq!(found.component, "Producer");
+}
+
+/// FSpec FR-491 "Assumption binding": only a peer a declared `guarantee`
+/// names is an assumption. A guarantee relying on a declared peer is keyed
+/// under it, and one relying on an undeclared peer is keyed as its own clause
+/// alone, so a result for the bare clause settles it.
+#[trace("TC-1330", "FR-530-AC-10")]
+#[test]
+fn only_a_declared_peer_is_an_assumption_of_the_slot_key() {
+    let world = World::new();
+    let subject = |chain: &Chain, slot: usize| chain.item_json(slot)["temporal"]["subject"].clone();
+    let declared = world.chain("assume-guarantee", CASE_ONE_MEMBERS);
+    assert!(subject(&declared, DONE).get("assumptions").is_some());
+    let undeclared = world.chain(
+        "assume-guarantee",
+        "guarantee Consumer::Done; rely Consumer::Done on Producer::Counted; ",
+    );
+    assert!(subject(&undeclared, 0).get("assumptions").is_none());
+}
+
+/// A wrong or unproved supplied result under a declared, non-weaker
+/// interface is never a mismatch (FSpec FR-492 "Interface mismatch").
+#[trace("TC-1330", "FR-530-AC-9")]
+#[test]
+fn a_supplied_result_that_does_not_prove_a_declared_interface_is_not_a_mismatch() {
+    let world = World::new();
+    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS);
+    assert!(chain.declaration.mismatch().is_none());
+    let mut request = positive(&chain);
+    request["guarantees"] = json!([]);
+    let result = chain.settled(&request);
+    assert_eq!(result.value, PlannerValue::Inconclusive);
+    assert!(result.mismatch.is_none());
+    assert!(premise(&result).is_some());
 }
 
 // ---- FR-530-AC-6: trust, assumption, unsupported, failed, exhausted --------------
@@ -371,7 +466,7 @@ fn a_cycle_settles_proved_only_through_a_proved_fixed_point_result() {
 #[test]
 fn each_outcome_keeps_its_own_trust_basis_and_extent() {
     let world = World::new();
-    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS, None);
+    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS);
 
     // A `trusted` plugin discharger settles `proved`, `trusted`.
     let mut trusted = positive(&chain);
@@ -395,7 +490,7 @@ fn each_outcome_keeps_its_own_trust_basis_and_extent() {
     let members = format!(
         "{CASE_ONE_MEMBERS}environment Net by \"network\" fair weak each M::Producer::send; "
     );
-    let assumed = world.chain("assume-guarantee", &members, None);
+    let assumed = world.chain("assume-guarantee", &members);
     let env = assumed.declaration.slots().len() - 1;
     assert_eq!(assumed.declaration.slots()[env].role, SlotRole::Environment);
     let context = match &assumed.declaration.environment()[0].supplies {
@@ -442,7 +537,7 @@ fn each_outcome_keeps_its_own_trust_basis_and_extent() {
     // An unsupported rule: `interface` derives a FR-331 `composition` request
     // item, and with no composition-capable backend registered its candidate
     // set is empty (FSpec FR-348-AC-4).
-    let package = world.package("interface", CASE_ONE_MEMBERS, None);
+    let package = world.package("interface", CASE_ONE_MEMBERS);
     let node = package.graph().compositions()[0].node().clone();
     assert_eq!(
         PlannerDeclaration::from_package(&package, &node).err(),
@@ -475,7 +570,7 @@ fn each_outcome_keeps_its_own_trust_basis_and_extent() {
 #[test]
 fn a_discharge_record_is_admitted_against_the_pool_and_discharges_only_a_proved_result() {
     let world = World::new();
-    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS, None);
+    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS);
     // Naming no pool entry.
     let mut missing = positive(&chain);
     missing["discharges"] = json!([{"slot": DEPENDS, "guarantee": 9}]);
@@ -507,7 +602,7 @@ fn a_discharge_record_is_admitted_against_the_pool_and_discharges_only_a_proved_
 #[test]
 fn a_forged_or_reordered_slot_and_a_result_for_another_identity_are_refused() {
     let world = World::new();
-    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS, None);
+    let chain = world.chain("assume-guarantee", CASE_ONE_MEMBERS);
     let mut swapped = positive(&chain);
     swapped["slots"].as_array_mut().expect("slots").swap(0, 1);
     assert_eq!(chain.refusal(&swapped), invalid("/slots/0"));
