@@ -36,8 +36,8 @@ mod node_key;
 
 pub use claim::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedTemporalFormula,
-    ClaimActivation, ClaimNormalForm, Confidence, Event, FractionMeasure, ModelSubjectRef,
-    OverBinding, ProbForm, ProbScheduler, ReachTarget, Weighting,
+    ClaimActivation, ClaimMemberPath, ClaimNormalForm, Confidence, Event, FractionMeasure,
+    ModelSubjectRef, OverBinding, ProbForm, ProbScheduler, ReachTarget, Weighting,
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{

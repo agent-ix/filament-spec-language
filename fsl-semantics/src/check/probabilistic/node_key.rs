@@ -410,6 +410,16 @@ pub enum Statement {
     Text(String),
     /// A reference to a node.
     Ref(NodeKey),
+    /// A reference to the root `temporal`/`formula` node of an event formula,
+    /// with the key of every formula node by its `FormulaNodeId` index, so a
+    /// cause can name a nested node (FR-498 member path). It spells and
+    /// writes as a reference to `root`.
+    Formula {
+        /// The node the claim's `formula` binding references.
+        root: NodeKey,
+        /// The key of each formula node, by node index.
+        nodes: Vec<NodeKey>,
+    },
     /// An exact value: its `value_kind`, the node it is typed at (the unit
     /// node of a quantity) and its canonical text.
     Exact {
@@ -463,7 +473,9 @@ impl Statement {
     pub fn spell(&self, path: &mut Vec<PathSegment>) {
         match self {
             Self::Text(text) => path.push(PathSegment::Text(text.clone())),
-            Self::Ref(key) => path.push(PathSegment::Node(key.clone())),
+            Self::Ref(key) | Self::Formula { root: key, .. } => {
+                path.push(PathSegment::Node(key.clone()));
+            }
             Self::Exact { kind, ty, text } => {
                 path.push(PathSegment::Text((*kind).into()));
                 if *kind == "quantity" {

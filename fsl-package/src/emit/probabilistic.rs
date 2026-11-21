@@ -610,7 +610,7 @@ fn statement_term(
     };
     Some(match statement {
         Statement::Text(value) => text_literal(text, value),
-        Statement::Ref(key) => Ok(reference(emitted(key)?)),
+        Statement::Ref(key) | Statement::Formula { root: key, .. } => Ok(reference(emitted(key)?)),
         Statement::Exact {
             kind,
             ty,

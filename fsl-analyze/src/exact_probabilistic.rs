@@ -734,6 +734,9 @@ pub enum ProductRefusal {
         /// The selected claim's checked-package identity (FR-498), when the
         /// claim was checked in an assembled package.
         claim: Option<OccurrenceKey>,
+        /// The member path of the unsupported part (FSL FR-498), when the
+        /// claim has an identity.
+        member: Option<fsl_semantics::check::ClaimMemberPath>,
     },
     /// A strict clock constraint has no digital reading (FR-204 "Admission",
     /// ADR-028 TA-2): the first one in source order.

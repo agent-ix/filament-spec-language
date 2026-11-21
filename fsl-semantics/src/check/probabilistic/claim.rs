@@ -2788,3 +2788,87 @@ mod conversion_budget_tests {
         }
     }
 }
+
+/// FSL FR-498 "Outputs": the member path of a `TimedFormShape` or
+/// `PunctualInterval` cause of a claim with an identity, naming the part of
+/// the claim that is unsupported. The FSpec FR-331 cause wire keeps its
+/// `{node, occurrence}` locus; this path is FSL's own and rides on the cause
+/// value and its diagnostic.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ClaimMemberPath {
+    /// The FSpec FR-640 binding names from the claim node's body to the
+    /// binding that holds the unsupported part: `[form]`, `[form, measure]`,
+    /// `[form, event, measure]` or `[form, event, formula]`.
+    pub body: Vec<&'static str>,
+    /// Empty unless `body` ends in `formula`; then the `temporal`/`formula`
+    /// node keys from the one the `formula` binding references down to the
+    /// node whose interval operator is unsupported, outermost first.
+    pub formulas: Vec<NodeKey>,
+}
+
+impl CheckedProbabilisticClaim {
+    /// The member path of a timed form this claim's exact product does not
+    /// admit, other than an event formula: `[form]`, or the `measure` the form
+    /// holds (`[form, measure]`, `[form, event, measure]`). `None` for a claim
+    /// with no identity.
+    #[must_use]
+    pub fn timed_form_member_path(&self) -> Option<ClaimMemberPath> {
+        self.occurrence.as_ref()?;
+        let body = match &self.form {
+            ProbForm::Probability {
+                event: Event::Compare { .. },
+                ..
+            } => vec!["form", "event", "measure"],
+            ProbForm::Probability {
+                event: Event::Formula { .. },
+                ..
+            } => vec!["form", "event", "formula"],
+            ProbForm::Quantile { .. } | ProbForm::MeanOfFraction { .. } => {
+                vec!["form", "measure"]
+            }
+            ProbForm::LongRunFraction { .. }
+            | ProbForm::Reach { .. }
+            | ProbForm::ExpectedReward { .. }
+            | ProbForm::MeanTime { .. } => vec!["form"],
+        };
+        Some(ClaimMemberPath {
+            body,
+            formulas: Vec::new(),
+        })
+    }
+
+    /// The member path of the event formula node reached from the root by
+    /// `chain`, the `FormulaNodeId` indices outermost first (the root's own
+    /// index first). `None` for a claim with no identity, no lowered formula
+    /// or an index the formula does not hold.
+    #[must_use]
+    pub fn formula_member_path(&self, chain: &[usize]) -> Option<ClaimMemberPath> {
+        self.occurrence.as_ref()?;
+        let super::node_key::Statement::Aggregate(members) = self.statement.as_ref()? else {
+            return None;
+        };
+        let member = |members: &'_ [(&'static str, super::node_key::Statement)], name: &str| {
+            members
+                .iter()
+                .find(|(held, _)| *held == name)
+                .map(|(_, v)| v.clone())
+        };
+        let super::node_key::Statement::Aggregate(form) = member(members, "form")? else {
+            return None;
+        };
+        let super::node_key::Statement::Aggregate(event) = member(&form, "event")? else {
+            return None;
+        };
+        let super::node_key::Statement::Formula { nodes, .. } = member(&event, "formula")? else {
+            return None;
+        };
+        let formulas = chain
+            .iter()
+            .map(|index| nodes.get(*index).cloned())
+            .collect::<Option<Vec<_>>>()?;
+        Some(ClaimMemberPath {
+            body: vec!["form", "event", "formula"],
+            formulas,
+        })
+    }
+}
