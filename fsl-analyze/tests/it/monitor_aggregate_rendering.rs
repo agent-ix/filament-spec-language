@@ -139,10 +139,21 @@ fn aggregate_candidates(
             "all uses resolve to the same checked aggregate"
         );
     }
-    let declaration = graph
+    let claim_region = graph
         .occurrence(node.identity(), node.claim())
         .and_then(|location| graph.region(location))
-        .expect("the claim has its actual declaration region");
+        .expect("the actual Claim occurrence identifies its source");
+    let text = compiled.sources[0].text();
+    let start = text
+        .find("temporal Window")
+        .expect("literal declaration start");
+    let end = text.rfind('}').expect("literal final declaration brace") + 1;
+    let declaration = SourceRegion::new(
+        claim_region.source().clone(),
+        u64::try_from(start).expect("the literal start fits a source region"),
+        u64::try_from(end).expect("the literal end fits a source region"),
+    )
+    .expect("the authored whole declaration is a valid region");
     let candidates = graph
         .occurrences()
         .filter(|(identity, origin, _)| identity == key && origin.role().as_str() == "expression")
@@ -155,7 +166,7 @@ fn aggregate_candidates(
         .cloned()
         .collect::<Vec<_>>();
     assert_eq!(candidates.len(), expected_uses, "actual caller regions");
-    (atoms, candidates, declaration.clone())
+    (atoms, candidates, declaration)
 }
 
 fn monitor_samples(
