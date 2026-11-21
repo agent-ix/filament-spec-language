@@ -22,13 +22,13 @@ FR-860-AC-3, FR-860-AC-4.
 1. Run `Fast` over finite samples levels 5, 1, 1, 1 (`stopped` false), the same clause with `not (r.level > 3)` in place of the capture, and `Fast` over levels 1, 5, 5, 5.
 2. Run the infinite-trace `Origin` over the lasso loops (level 5, level 1) and (level 5, level 5 stopped), and the capture-free variant over the first loop.
 3. Run `Each` over levels 0, 1, 2.
-4. Run `Div` over levels 2, 0 and 0, 2; its `on each` variant over 0, 2; and the `Zero` capture clause over a sample with level 1.
+4. Run `Div` over levels 2, 0 and 0, 2; its `on each` variant over 0, 2; and the `Zero` capture clause with a `count` source whose proved range exceeds `Zero`.
 
 ## Expected Results
 
 - Step 1: `violated` at position 0, exit 10; `holds`; `holds`.
 - Step 2: `violated` at position 0; `holds`; `holds`.
 - Step 3: `holds`.
-- Step 4: `undefined` at position 0, `division-by-zero` at the capture initializer, exit 10; `holds`; `undefined` at position 1; stage `evaluate` refusal `integer_out_of_domain`/`outside-domain` at the capture initializer, exit 20. No run exits 30.
+- Step 4: `undefined` at position 0, `division-by-zero` at the capture initializer, exit 10; `holds`; `undefined` at position 1; a compile-stage refusal `undefined_expression`/`unproved-range` at the `count`, exit 20. No run exits 30.
 
 Test: `tests/it/temporal_capture_run.rs`.

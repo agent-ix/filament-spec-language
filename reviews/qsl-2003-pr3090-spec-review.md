@@ -58,3 +58,21 @@ findings:
   - {fnd: FND-004, severity: low, confidence: medium, method: spec-review, check: trace, artifact_id: FR-766-AC-9, related_ids: [FR-981-AC-4], path: "spec/functional/FR-766-prove-the-result-range-of-count-at-check.md", lines: "125"}
   - {fnd: FND-005, severity: low, confidence: high, method: spec-review, check: other, artifact_id: TC-2240, related_ids: [FR-766-AC-9], path: "spec/test-cases/TC-2240-a-count-range-in-a-state-clause-refuses-under-both-modes.md", lines: "15-18"}
 ```
+
+## Dispositions
+
+Disposition pass 1, against head `09b834b010` (fix commit `2211d3844f`). Static re-check of the fix diff; no build or test was run.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The Notes now say: write the `count<Zero>` atom, with `type Zero = Int[0, 0];`, in a called function body checked under `CheckMode::Kernel`. |
+| FND-002 | fixed | The Notes say "outside a declared state clause" again, which agrees with Behavior:93-95. |
+| FND-003 | fixed | AC-1 to AC-4 and the Behavior example use declared names: `Three`, `Tiny`, `Positive`. These match the names in the tests' `unproved_count` intervals. |
+| FND-004 | fixed | The citation now reads "(FSpec FR-144-AC-10; FR-981-AC-4)". `references` edges to FSpec FR-144 and FR-981 were added, along with a Behavior bullet for the `ambiguous-literal` outcome. |
+| FND-005 | fixed | TC-2240's Description now says that a bare collection literal as the count source refuses `ambiguous-literal` (AC-9). |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | medium | FR-860-AC-4 still requires that `capture z: Zero = count<Zero>(m in ints(sequence[r.level]): m > 0)` over level 1 "reports stage `evaluate`, category `refusal`, exit 20, with `integer_out_of_domain`/`outside-domain` located at the capture's initializer". The rewritten `a_refused_capture_is_reported_at_the_capture` is still traced `#[trace("TC-2440", "FR-860-AC-4")]` but asserts the opposite: a compile-stage `unproved-range`, as FR-766 requires. The two FRs now contradict each other, and the matrix counts FR-860-AC-4 as covered by a test that refutes its text. Fix: amend that FR-860-AC-4 sentence to "refuses at S3 `undefined_expression`/`unproved-range` at the `count` under Linked (FR-766), exit 20", as the AC already says for the inline `mod`, and update TC-2440 to match. | spec/functional/FR-860-fix-a-temporal-clause-s-captures-at-each-activation-over-a-supplied-trace.md; tests/it/temporal_capture_run.rs:261-279 |

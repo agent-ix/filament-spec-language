@@ -67,3 +67,17 @@ findings:
   - {fnd: FND-006, severity: low, confidence: high, method: rust-review, check: other, artifact_id: FR-766, related_ids: [FR-495], path: fsl-semantics/src/check/facts.rs, lines: "1696-1698"}
   - {fnd: FND-007, severity: low, confidence: high, method: rust-review, check: other, artifact_id: FR-268-AC-3, related_ids: [], path: fsl-replay/src/spine/clause/tests/witness.rs, lines: "2974"}
 ```
+
+## Dispositions
+
+Disposition pass 1, against head `09b834b010` (fix commits `2211d3844f`, `09b834b010`; branch base `3c7b98bebb`). Static re-check of the fix diff `791571fa4c..09b834b010`; no build or test was run.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | `tc_3121_unit_text` now pushes `invariant RefusedDomain ... z(self.versionNumber) ...` itself. The dead `RefusedDomain` filter arm and the `direct_refusal` replace are gone. |
+| FND-002 | fixed | Both rows are now exit 20, category `refusal`, `undefined_expression`/`unproved-range`, last_stage `S3`, with no `flips_with`. S3 is correct and my S4 was wrong: 32 other check-stage `unproved-range` rows use S3, and run rows refused at check also report S3. `r-count-narrow` correctly stays `verb: run`, because the row exercises a run request that now refuses at compile. |
+| FND-003 | fixed | `Refused`, `type Zero` and `ints` moved out of `unit()` into `REFUSED`, which only `a_refused_capture_is_reported_at_the_capture` passes through `run_with`. That test asserts a compile-stage `undefined_expression`/`unproved-range` refusal. The FR-860-AC-4 conflict this exposes is SR-2026112105500003 FND-006. |
+| FND-004 | fixed | `compile_with` now compiles through spine with `check_with_execution_points_and_source_inputs`, passing `dependencies`, keeping libraries, and setting `check_mode: Some(Kernel)`. The `SourceInputs.check_mode` doc (lifecycle.rs:1987-1990) says declared clauses stay Linked under it. Function bodies are the only part that goes Kernel, and the fixtures' only functions are `ints` and `ok`, which carry no obligation, plus `refusingCount`. So in effect only the called function is Kernel, which meets FR-766 Notes. Adding a per-function field to `SourceInputs` is not needed. |
+| FND-005 | fixed | The fixture constants now write `refusingCount(..)`, and the string rewrite is gone, so the source shown is the program run apart from one appended helper declaration. The conditional append and the `refusingCount(` byte check that remain are accepted as test plumbing. A smaller optional tidy-up is to declare `refusingCount` in the fixture `concat!` strings that use it and set the mode from the `Unit` kind. |
+| FND-006 | fixed | The Kernel early return in the Count arm is deleted. |
+| FND-007 | fixed | The body is now the helper `assert_count_refusal_fails_the_domain_step`, called by both `tc_743` and the `#[test]`. |
