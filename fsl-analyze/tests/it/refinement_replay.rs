@@ -714,6 +714,59 @@ fn a_hidden_unfair_peek_lasso_replays_and_settles_refuted() {
     assert_eq!(settled.liveness, Some(TerminalValue::Refuted));
 }
 
+/// FR-899-AC-7 (TC-2536/TC-550): `F_A = [fire1, fire2, fire3]` where `fire1`
+/// and `fire2` are each satisfiable by some candidate cycle but not jointly,
+/// and every candidate cycle violates `fire3`. The first constraint every
+/// candidate cycle violates is `fire3`, not the joint prefix's `fire2`; replay
+/// reproduces that name and does not reproduce another.
+#[trace("TC-2536", "FR-899-AC-7")]
+#[test]
+fn the_first_constraint_every_candidate_cycle_violates_is_named_and_replays() {
+    let contracts = "post Fire1Step using v on Spec::M::fire1 {\n\
+          (pre(self.h) = 0 and self.h = 0 and self.v = pre(self.v)) or\n\
+          (pre(self.h) != 0 and self.h = pre(self.h) and self.v = 1)\n\
+        }\n\
+        post Fire2Step using v on Spec::M::fire2 {\n\
+          (pre(self.h) = 1 and self.h = 1 and self.v = pre(self.v)) or\n\
+          (pre(self.h) != 1 and self.h = pre(self.h) and self.v = 1)\n\
+        }\n\
+        post Fire3Step using v on Spec::M::fire3 { self.v = 1 and self.h = pre(self.h) }\n";
+    let unit = Unit::hidden_fairness_model(2, 0, &["fire1", "fire2", "fire3"], contracts)
+        .with_hidden_initials(&[1]);
+    let refinement = "refinement HiddenTick using inf abstract Spec concrete Impl {\n\
+         population Spec::ms from Impl::ms;\n\
+         object Spec::M from Impl::M { v = self.v; }\n\
+         step Impl::M::tick -> any;\n\
+         ensure fair weak Spec::M::fire1;\n\
+         ensure fair weak Spec::M::fire2;\n\
+         ensure fair weak Spec::M::fire3;\n}";
+    let world = unit.world(refinement);
+    let subject = aux(&world);
+    let payload = lasso(outcome(&subject));
+    let Some(RefinementFailure::HiddenUnfair { constraint }) = payload.refinement.as_ref() else {
+        panic!("a hidden-unfair lasso: {:?}", payload.refinement);
+    };
+    assert_eq!(constraint.operation().name(), "fire3");
+    let (failure, _) = reproduced(replay(&subject, &payload));
+    assert_eq!(Some(failure), payload.refinement);
+
+    let fire2 = world
+        .refinement()
+        .abstract_operation_fairness()
+        .find(|constraint| constraint.operation().name() == "fire2")
+        .cloned()
+        .expect("the fire2 constraint");
+    let mut renamed = payload.clone();
+    renamed.refinement = Some(RefinementFailure::HiddenUnfair { constraint: fire2 });
+    assert!(
+        matches!(
+            replay(&subject, &renamed),
+            Ok(RefinementTraceSettlement::Inconclusive(_))
+        ),
+        "replay does not reproduce the joint-prefix name"
+    );
+}
+
 /// The steps of `operations`, each the first successor of the state before
 /// it whose transition is of that operation's text.
 fn walk(system: &ModelSystem<'_>, operations: &[String]) -> Vec<ModelStep> {
