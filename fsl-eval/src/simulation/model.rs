@@ -1548,7 +1548,14 @@ impl<'a> ModelSystem<'a> {
             0 => None,
             bits => Some(bits),
         };
-        domain::Domain::of_bounded(value_type, objects, self.types, &self.record_orders, bits)
+        domain::Domain::of_bounded_with_clock_places(
+            value_type,
+            objects,
+            self.types,
+            &self.record_orders,
+            bits,
+            self.input.timed_models,
+        )
     }
 
     pub(super) fn reset_value_bound_cuts(&self) {
