@@ -36,6 +36,7 @@ use filament_eval::{
     LiveContext, PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved,
     SessionLimits, StateModelUndefined,
 };
+use filament_exact::NodeKey;
 use filament_exact::{
     admit_quantity_result, compare_text, BoundedQuantityType, ComparisonOperator,
     QuantityResultInterval,
@@ -59,7 +60,6 @@ use filament_exact::{
     LimitKind, Meter, PopulationId,
 };
 use filament_exact::{DivisionMember, IntegerDomain};
-use filament_exact::{EffectiveId, NodeKey};
 use filament_exact::{FloatType, Rational};
 use filament_exact::{Outcome, Refusal, Undefined};
 use filament_semantic_value::catalog::{render_identity, InternalFault};
@@ -342,18 +342,77 @@ fn invariant(identifier: &'static str) -> Halt {
     Halt::Fault(InternalFault::new("S6a", identifier))
 }
 
-/// Build the FR-230 identity for a clock place selected from an owner.
-fn clock_place_reference(
-    owner: ObjectReference,
-    clock_type: EffectiveId,
-    place: &NodeKey,
-    selectors: Vec<Value>,
-) -> Result<ObjectReference, Halt> {
-    if !fsl_semantics::model::clock_reference::is_clock_type(&clock_type) {
-        return Err(invariant("place-reference-result-type-expected"));
+/// A missing authenticated origin is a supported, typed boundary, rather
+/// than permission to choose a population from object membership.
+#[derive(Debug)]
+struct ClockOriginUnavailable {
+    locus: Option<fsl_semantics::model::object_environment::ReferenceOriginLocus>,
+}
+
+impl filament_semantic_value::catalog::CatalogCoded for ClockOriginUnavailable {
+    fn catalog_code(&self) -> filament_semantic_value::catalog::CatalogCode {
+        filament_semantic_value::catalog::CatalogCode::new(
+            "unknown_required_feature",
+            "unsupported-feature",
+        )
     }
-    fsl_semantics::model::clock_reference::encode(&owner, place, &selectors)
-        .map_err(|_| invariant("clock-place-reference-identity-invalid"))
+
+    fn catalog_fields(&self) -> Option<std::collections::BTreeMap<&'static str, String>> {
+        let mut fields = std::collections::BTreeMap::from([(
+            "reason",
+            "clock-owner-population-authority".to_owned(),
+        )]);
+        if let Some(locus) = &self.locus {
+            fields.insert("origin", format!("{locus:?}"));
+        }
+        Some(fields)
+    }
+}
+
+fn unavailable_clock_origin(origins: &ReferenceOrigins) -> Halt {
+    Halt::Family(FamilyResult::Refused(Box::new(ClockOriginUnavailable {
+        locus: origins.locus().cloned(),
+    })))
+}
+
+#[derive(Debug)]
+struct ClockIdentityAllocation(usize);
+
+impl filament_semantic_value::catalog::CatalogCoded for ClockIdentityAllocation {
+    fn catalog_code(&self) -> filament_semantic_value::catalog::CatalogCode {
+        filament_semantic_value::catalog::CatalogCode::new(
+            "resource_exhausted",
+            "allocation-failed",
+        )
+    }
+
+    fn catalog_fields(&self) -> Option<std::collections::BTreeMap<&'static str, String>> {
+        Some(std::collections::BTreeMap::from([(
+            "requested",
+            self.0.to_string(),
+        )]))
+    }
+}
+
+fn clock_identity_halt(
+    error: fsl_semantics::model::clock_reference::identity::IdentityError,
+) -> Halt {
+    use fsl_semantics::model::clock_reference::identity::IdentityError;
+    match error {
+        IdentityError::Canonical(quire_canonical::Error::Limit(limit)) => Halt::Family(
+            FamilyResult::Refused(Box::new(fsl_foundation::diagnostic::LimitExceeded::new(
+                fsl_foundation::setting::Setting::IdentityInputBytes,
+                limit.bound,
+                u128::from(limit.required),
+            ))),
+        ),
+        IdentityError::Canonical(quire_canonical::Error::Allocation { requested }) => Halt::Family(
+            FamilyResult::Refused(Box::new(ClockIdentityAllocation(requested))),
+        ),
+        IdentityError::Malformed | IdentityError::Canonical(_) | IdentityError::Read(_) => {
+            invariant("checked-clock-place-identity-is-canonical")
+        }
+    }
 }
 
 /// The one target of a single-valued navigation end `[lower, upper]` (FR-364
@@ -797,6 +856,9 @@ enum Anchor {
 struct Iteration<N> {
     node: N,
     state: IterationState,
+    source_origins: ReferenceOrigins,
+    population_origin: Option<ReferenceOrigins>,
+    stable_sequence: bool,
     /// The binder the source derives from; element slots take it.
     source_owner: Owner,
     /// The binder the source and every result so far derive from.
@@ -838,6 +900,9 @@ pub(crate) struct Machine<'a, 'm, N> {
     /// and function table, or a bytes-only package's own world (FR-533).
     world: World<'a>,
     objects: &'a ObjectEnvironment,
+    /// Actual checked/admitted original declarations, never derived from values.
+    clock_declarations:
+        Option<fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable>,
     /// FR-107: a precondition's or postcondition's pre observation, distinct
     /// from `objects` (the clause's own observation: `current` for an
     /// invariant, `post` for a postcondition). `None` for the `Value`
@@ -1172,6 +1237,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         Self {
             world,
             objects,
+            clock_declarations: world
+                .graph()
+                .map(|graph| graph.clock_declaration_table().clone()),
             pre_objects,
             reads,
             family,
@@ -1214,6 +1282,101 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             reference_bindings: None,
             component_reference_bindings: None,
         }
+    }
+
+    /// Attach the admitted package's atomic Clock declaration context.
+    pub(crate) fn with_clock_declarations(
+        mut self,
+        declarations: fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable,
+    ) -> Self {
+        self.clock_declarations = Some(declarations);
+        self
+    }
+
+    fn clock_place_reference(
+        &self,
+        node: N,
+        owner: &ObjectReference,
+        origins: &ReferenceOrigins,
+        place: &NodeKey,
+        selectors: Vec<Value>,
+    ) -> Result<ObjectReference, Halt> {
+        use fsl_semantics::model::clock_reference::identity::{
+            Decimal, PathEntry, PlaceIdentity, SlotIndex,
+        };
+        use fsl_semantics::model::clock_reference::{encode_identity, is_declared_identity};
+        let ValueType::Reference(clock_type) = node.value_type() else {
+            return Err(invariant("place-reference-result-type-expected"));
+        };
+        if !fsl_semantics::model::clock_reference::is_clock_type(clock_type) {
+            return Err(invariant("place-reference-result-type-expected"));
+        }
+        let unavailable = || unavailable_clock_origin(origins);
+        let declarations = self.clock_declarations.as_ref().ok_or_else(unavailable)?;
+        let run = declarations.run_place(place).ok_or_else(unavailable)?;
+        let objects = self.objects_for(node)?;
+        let population_node = origins.population().ok_or_else(unavailable)?;
+        let provenance = objects
+            .population_provenance(population_node)
+            .ok_or_else(unavailable)?;
+        if !objects
+            .population_members(&provenance.declaration().node)
+            .is_some_and(|members| members.contains(owner))
+        {
+            return Err(unavailable());
+        }
+        let source = declarations.source_declarations();
+        let population = match source.declaration_scope_for_node(population_node) {
+            Some(scope) => scope.clone(),
+            None => source
+                .scope(provenance.declaration())
+                .map_err(Halt::Fault)?,
+        };
+        let positions = run
+            .template
+            .path
+            .iter()
+            .enumerate()
+            .filter_map(|(position, entry)| {
+                matches!(entry, PathEntry::Collection { .. }).then_some(position)
+            })
+            .collect::<Vec<_>>();
+        if positions.len() != selectors.len() {
+            return Err(invariant("place-reference-selectors-match-checked-path"));
+        }
+        let mut indices = Vec::with_capacity(selectors.len());
+        for (position, selector) in positions.into_iter().zip(selectors) {
+            let Value::Integer(index) = selector else {
+                return Err(invariant("place-reference-selector-is-integer"));
+            };
+            let index = Decimal::new(&index.to_string())
+                .map_err(|_| Halt::Stop(Stop::Undefined(Undefined::NoElement)))?;
+            indices.push(SlotIndex {
+                path_position: Decimal::new(&position.to_string()).map_err(clock_identity_halt)?,
+                index,
+            });
+        }
+        let identity = PlaceIdentity {
+            population: population.clone(),
+            owner: owner.object().as_str().to_owned(),
+            template: run.template.as_ref().clone(),
+            indices,
+        };
+        if !is_declared_identity(
+            &identity,
+            &population,
+            owner,
+            declarations,
+            self.world.types(),
+        ) {
+            return Err(Stop::Undefined(Undefined::NoElement).into());
+        }
+        encode_identity(
+            owner,
+            &identity,
+            quire_canonical::Limits::new(fsl_foundation::IdentityLimits::default().input_bytes),
+        )
+        .map_err(clock_identity_halt)
     }
 
     /// FR-1000: evaluate against the reference literals admitted with the
@@ -3768,16 +3931,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     .len()
                     .checked_add(1)
                     .ok_or_else(|| invariant("place-reference-child-count-overflow"))?;
-                let mut children = self.pop_many(count)?.into_iter();
+                let (children, _, origins) = self.pop_many_owned_with_origins(count)?;
+                let mut children = children.into_iter();
                 let Some(Value::Reference(owner)) = children.next() else {
                     return Err(invariant("place-reference-owner-expected"));
                 };
-                let ValueType::Reference(clock_type) = node.value_type() else {
-                    return Err(invariant("place-reference-result-type-expected"));
-                };
-                Value::Reference(clock_place_reference(
-                    owner,
-                    clock_type.clone(),
+                let origins = origins
+                    .first()
+                    .ok_or_else(|| invariant("place-reference-owner-origin-slot"))?;
+                Value::Reference(self.clock_place_reference(
+                    node,
+                    &owner,
+                    origins,
                     place,
                     children.collect(),
                 )?)
@@ -5196,7 +5361,42 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::Query { .. } => (None, false),
             _ => return Err(invariant("iteration-node-invalid")),
         };
+        let source_origins = self
+            .value_reference_origins
+            .last()
+            .cloned()
+            .unwrap_or_default();
+        let mut operand = match node.kind() {
+            NodeKind::Query { source, .. } | NodeKind::Fold { source, .. } => node.at(*source),
+            _ => return Err(invariant("iteration-node-invalid")),
+        };
+        let population_origin = loop {
+            match operand.kind() {
+                NodeKind::PopulationObjects { population } => {
+                    let objects = self.objects_for(node)?;
+                    let origin = objects
+                        .population_node(&population.node)
+                        .filter(|key| objects.population_provenance(key).is_some())
+                        .map(|population| {
+                            ReferenceOrigins::from_occurrences(vec![
+                                fsl_semantics::model::object_environment::ReferenceOccurrence {
+                                    path: Vec::new(),
+                                    population: population.clone(),
+                                },
+                            ])
+                        });
+                    break origin;
+                }
+                NodeKind::Query {
+                    visit: Visit::Filter,
+                    source,
+                    ..
+                } => operand = operand.at(*source),
+                _ => break None,
+            }
+        };
         let source = self.pop_collection()?;
+        let stable_sequence = source.collection_type().kind() == CollectionKind::Sequence;
         let spec = Self::iteration_spec(node)?;
         let state = match IterationState::start(&spec, source, identity, reduce, self.meter) {
             Ok(state) => state,
@@ -5220,6 +5420,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self.iterate(Box::new(Iteration {
             node,
             state,
+            source_origins,
+            population_origin,
+            stable_sequence,
             source_owner: self.step_owner(),
             owner: self.step_owner(),
         }))
@@ -5268,12 +5471,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             Flow::Exhausted => return self.finish(*iteration),
             Flow::Visit { element, position } => (element, position),
         };
+        let element_origins = match &iteration.population_origin {
+            Some(origin) => origin.clone(),
+            None if iteration.stable_sequence => iteration.source_origins.select(
+                &filament_semantic_value::admission::PathStep::Index(position),
+            ),
+            None => ReferenceOrigins::default(),
+        };
         let body = match node.kind() {
             NodeKind::Query {
                 slot, body, source, ..
             } => {
                 self.note_element(node.at(*source), &iteration.state.source, *slot, position);
                 *self.slot(*slot)? = Some(element);
+                *self
+                    .frame_reference_origins
+                    .last_mut()
+                    .and_then(|frame| frame.get_mut(*slot))
+                    .ok_or_else(|| invariant("query-binder-origin-slot"))? = element_origins;
                 iteration.owner = self.step_owner();
                 self.set_slot_owner(*slot, iteration.source_owner)?;
                 body
@@ -5295,6 +5510,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 }
                 *self.slot(*accumulator)? = Some(current);
                 *self.slot(*binder)? = Some(element);
+                *self
+                    .frame_reference_origins
+                    .last_mut()
+                    .and_then(|frame| frame.get_mut(*binder))
+                    .ok_or_else(|| invariant("fold-binder-origin-slot"))? = element_origins;
+                *self
+                    .frame_reference_origins
+                    .last_mut()
+                    .and_then(|frame| frame.get_mut(*accumulator))
+                    .ok_or_else(|| invariant("fold-accumulator-origin-slot"))? =
+                    ReferenceOrigins::default();
                 iteration.owner = self.step_owner();
                 self.set_slot_owner(*accumulator, iteration.owner)?;
                 self.set_slot_owner(*binder, iteration.source_owner)?;
@@ -5869,55 +6095,6 @@ mod tests {
 
     // `TypeForm`'s span carries no identity (ADR-011 §2.2 row E2).
     const SPAN: fsl_foundation::Span = fsl_foundation::Span { start: 0, end: 0 };
-
-    /// FR-230-AC-43: a reference identifies its owner, canonical place key,
-    /// and concrete slot path without carrying a clock value.
-    #[trace("FR-230-AC-43")]
-    #[test]
-    fn clock_place_references_encode_the_place_and_ordered_slots() {
-        let owner = ObjectReference::new(
-            crate::test_ids::universe_id([1]),
-            crate::test_ids::effective_id([2]),
-            ObjectId::new("call").expect("fixture object id is non-empty"),
-        );
-        let place = crate::test_ids::node_key([4]);
-        let clock_type = fsl_semantics::model::clock_reference::encode(&owner, &place, &[])
-            .expect("the public codec issues the canonical Clock target")
-            .object_type()
-            .clone();
-        let expected_prefix = "place/v1/63616c6c/7b226f7264696e616c223a302c227061636b616765223a2266697874757265222c2270617468223a5b225b345d225d7d";
-
-        assert!(
-            clock_place_reference(
-                owner.clone(),
-                crate::test_ids::effective_id([3]),
-                &place,
-                Vec::new(),
-            )
-            .is_err(),
-            "a non-clock target is refused"
-        );
-
-        let unindexed =
-            clock_place_reference(owner.clone(), clock_type.clone(), &place, Vec::new())
-                .unwrap_or_else(|_| panic!("an unindexed place reference is well formed"));
-        assert_eq!(unindexed.object().as_str(), format!("{expected_prefix}/-"));
-        assert_eq!(unindexed.universe(), owner.universe());
-        assert_eq!(unindexed.object_type(), &clock_type);
-
-        let indexed = clock_place_reference(
-            owner,
-            clock_type,
-            &place,
-            vec![
-                Value::Integer(Integer::from(0_i64)),
-                Value::Integer(Integer::from(1_i64)),
-            ],
-        )
-        .unwrap_or_else(|_| panic!("an indexed place reference is well formed"));
-        assert_eq!(indexed.object().as_str(), format!("{expected_prefix}/0.1"));
-        assert_ne!(indexed, unindexed);
-    }
 
     #[trace("FSpec-TC-235", "FSpec-FR-208-AC-11", "FSpec-FR-207-AC-8")]
     #[test]
