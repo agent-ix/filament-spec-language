@@ -23,6 +23,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-866
     type: depends_on
+  - target: ix://agent-ix/filament-core-data/FR-095
+    type: references
 ---
 # FR-710: Author a domain package in an FSL model unit
 
@@ -191,6 +193,19 @@ without `open` has extent `closed`. The document's `contractVersion` is
 
 The compiled bytes SHALL be a function of the model unit's source bytes and
 source identity alone: compiling one source twice gives equal bytes.
+
+For an inline bounded Integer field type, the compiler SHALL generate the
+existing [FSpec FR-154](ix://agent-ix/filament-specification/FR-154)
+integer scalar-and-constraints value type and make the field's `typeRef`
+name it, using [FCD FR-095](ix://agent-ix/filament-core-data/FR-095)'s
+constrained-field identity `ix://<domain identity>/<Owner><Field>`, where
+`Owner` is the declaring type name verbatim and `Field` is the field's slug
+with its first character upper-cased. The generated definition and its
+bounds SHALL retain the model's source identity and the inline type's span
+from its type name through its closing `]`. A collision with an authored or
+another generated type identity SHALL refuse under the existing
+`ambiguous_declaration`/`ambiguous-name` rule, at that inline type span,
+with no document written.
 
 ### Systems declarations and endpoint qualifiers
 

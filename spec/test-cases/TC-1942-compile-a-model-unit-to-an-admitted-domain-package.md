@@ -26,6 +26,23 @@ declaration form. Scope: FR-710-AC-1 to FR-710-AC-3.
 2. Compile the AC-2 model unit; admit it; check and evaluate `reaches(a, b,
    next)` over a snapshot of `nodes` with a two-node chain.
 3. Compile the AC-3 model unit; admit it; list the meanings of its nodes.
+4. Compile each complete model unit below. The authored `OrderId` and the
+   generated bounded-field definition would have the same identity; reverse
+   declaration order to check that neither can shadow the other.
+
+```fsl
+language "ix:native" edition "1-draft";
+domain "example/shop";
+type OrderId = Int[0,99];
+object Order { id: Int[0,9]; }
+```
+
+```fsl
+language "ix:native" edition "1-draft";
+domain "example/shop";
+object Order { id: Int[0,9]; }
+type OrderId = Int[0,99];
+```
 
 ## Expected Results
 
@@ -44,3 +61,7 @@ states. The generated definitions are not extra authored declarations.
 Step 2: the relationship is declared and `reaches` holds
 from the first node to the second. Step 3: admitted, with one node of each
 meaning of FR-710's compilation table.
+Step 4: each unit refuses `ambiguous_declaration`/`ambiguous-name`, located
+at the inline field type `Int[0,9]`, and writes no domain package document.
+The shared identity is exactly `ix://example/shop/OrderId`; neither source
+order changes the generated identity or permits silent replacement.
