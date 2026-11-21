@@ -715,7 +715,7 @@ fn a_plan_synthesis_is_refused_not_enumerated() {
          satisfies {{ true }};\n"
     );
     let (exit, value) = run(&unit, true, ("synthesis", json!({"declaration": "Reach"})));
-    assert_eq!(exit, 20, "{value}");
+    assert_eq!(exit, 21, "{value}");
     assert_eq!(value["code"], "unsupported_construct", "{value}");
     assert_eq!(value["cause"], "not-yet-implemented", "{value}");
     assert!(value["synthesis"].get("status").is_none(), "{value}");
