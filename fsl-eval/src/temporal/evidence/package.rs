@@ -31,7 +31,9 @@ use fsl_semantics::check::{Activation, CheckedFormula, FormulaNode, TemporalProf
 use super::call::{
     evaluate_temporal_evidence, fault, refusal, select_occurrence, EvaluatedEvidence,
 };
-use super::request::{ActivationRow, EvidenceRequest, EvidenceSubject, SubjectOccurrence};
+use super::request::{
+    ActivationRow, ClockScale, EvidenceRequest, EvidenceSubject, SubjectOccurrence,
+};
 use crate::temporal::facts::{atom_numbers, counts_ticks, ClauseFacts, ClauseFormula};
 use crate::temporal::ledger::LedgerBinding;
 use crate::temporal::DEFAULT_COVERED_POSITIONS;
@@ -163,35 +165,51 @@ pub(super) fn clock_time_unit(clock: &fsl_package::ClockConfiguration) -> Option
     }
 }
 
+/// Whether the package declares a unit named `unit`, whichever route built it.
+fn package_declares_unit(package: &CheckedPackageV2, unit: &str) -> bool {
+    package.resolved_graph().nodes.iter().any(|node| {
+        node.node_tag.as_ref() == "scalar_type"
+            && node.semantic_form.as_ref() == "unit"
+            && node.declaration.as_ref().is_some_and(|declaration| {
+                declaration
+                    .qualified_name
+                    .last()
+                    .is_some_and(|last| last.as_ref() == unit)
+            })
+    })
+}
+
+/// The one time-unit rule of FR-944, applied by both routes: only an
+/// undeclared name counts steps; a declared unit that is no usable linear
+/// time unit is refused, never counted.
 fn collect_time_unit_scales(
+    package: &CheckedPackageV2,
     rows: &PackageRows,
     source: Option<&SourceCheck<'_>>,
     bare: Option<&BarePackage<'_>>,
-) -> BTreeMap<Box<str>, filament_exact::Rational> {
+) -> BTreeMap<Box<str>, ClockScale> {
+    use fsl_semantics::check::TimeUnitCause;
     let mut scales = BTreeMap::new();
     for binding in &rows.bindings {
         let Some(unit) = clock_time_unit(&binding.clock) else {
             continue;
         };
+        let declared = || package_declares_unit(package, unit);
         let scale = match (source, bare) {
-            (Some(source), _) => source
-                .read
-                .source()
-                .graph()
-                .time_unit_scale(unit)
-                .ok()
-                .cloned(),
-            // A declared unit the bare route cannot read is marked by a zero
-            // factor, which the owner refuses; an undeclared one is a count.
-            (None, Some(bare)) => bare.time_unit_scale(unit).or_else(|| {
-                bare.declares_unit(unit)
-                    .then(|| filament_exact::Rational::from_integer(0_i64.into()))
-            }),
-            (None, None) => None,
+            (Some(source), _) => match source.read.source().graph().time_unit_scale(unit) {
+                Ok(scale) => ClockScale::PerSecond(scale.clone()),
+                Err(TimeUnitCause::UnknownUnit { .. }) => ClockScale::Count,
+                Err(TimeUnitCause::NoTimeDimension { .. }) if !declared() => ClockScale::Count,
+                Err(_) => ClockScale::Unreadable,
+            },
+            (None, Some(bare)) => match bare.time_unit_scale(unit) {
+                Some(scale) => ClockScale::PerSecond(scale),
+                None if declared() => ClockScale::Unreadable,
+                None => ClockScale::Count,
+            },
+            (None, None) => ClockScale::Count,
         };
-        if let Some(scale) = scale {
-            scales.insert(unit.into(), scale);
-        }
+        scales.insert(unit.into(), scale);
     }
     scales
 }
@@ -217,7 +235,7 @@ pub struct EvidencePackage<'p> {
     >,
     rows: PackageRows,
     activation_map: Vec<ActivationRow>,
-    time_unit_scales: BTreeMap<Box<str>, filament_exact::Rational>,
+    time_unit_scales: BTreeMap<Box<str>, ClockScale>,
     progress_capacity: u64,
     max_window_values: u64,
 }
@@ -357,7 +375,7 @@ impl<'p> EvidencePackage<'p> {
                 budget,
             )?)
         };
-        let time_unit_scales = collect_time_unit_scales(&rows, None, Some(bare));
+        let time_unit_scales = collect_time_unit_scales(package, &rows, None, Some(bare));
         Ok(Self::assemble(
             bare.package(),
             bare.canonical_bytes(),
@@ -392,7 +410,7 @@ impl<'p> EvidencePackage<'p> {
             Some(Err(_)) | None => SelectedExactIdentities::empty(),
         };
         let projections = Self::project_captures(package, &rows, &identities, budget)?;
-        let time_unit_scales = collect_time_unit_scales(&rows, source.as_ref(), None);
+        let time_unit_scales = collect_time_unit_scales(package, &rows, source.as_ref(), None);
         Ok(Self::assemble(
             package,
             canonical_package_bytes,
@@ -447,7 +465,7 @@ impl<'p> EvidencePackage<'p> {
             'p,
             BTreeMap<CheckedNodeId, Result<ExactTypeProjection, ExactTypeProjectionError>>,
         >,
-        time_unit_scales: BTreeMap<Box<str>, filament_exact::Rational>,
+        time_unit_scales: BTreeMap<Box<str>, ClockScale>,
         rows: PackageRows,
     ) -> Self {
         let activation_map = activation_relation(package)
@@ -644,10 +662,13 @@ impl<'p> EvidencePackage<'p> {
             formula,
         );
         let key = view.declaration_key().ok_or_else(unresolved)?;
-        let time_unit_scale = chosen.clock.and_then(|clock| {
-            let unit = clock_time_unit(&clock.clock)?;
-            self.time_unit_scales.get(unit).cloned()
-        });
+        let time_unit_scale = chosen
+            .clock
+            .and_then(|clock| {
+                let unit = clock_time_unit(&clock.clock)?;
+                self.time_unit_scales.get(unit).cloned()
+            })
+            .unwrap_or(ClockScale::Count);
         Ok(EvidenceSubject {
             package_identity: self.package.name().to_owned(),
             canonical_package_bytes: self.canonical_package_bytes,

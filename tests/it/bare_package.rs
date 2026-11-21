@@ -11,7 +11,8 @@ use serde_json::{json, Value};
 
 use super::checked_handoff::{admitted, request, tree, KINDS};
 use super::temporal_package_route::{
-    clause_ids, event_clauses, event_clauses_over, recipe, request as evidence_request, run,
+    clause_ids, event_clauses, event_clauses_over, recipe, recipe_naming,
+    request as evidence_request, run,
 };
 use fsl_command::checked_handoff::{evidence, write, Corpus};
 
@@ -2314,4 +2315,47 @@ fn a_guard_and_a_holds_term_project_their_ieee_operand_binders_at_the_checkers_l
         .expect("a holds atom");
     bare.project_holds(&key, position)
         .unwrap_or_else(|failure| panic!("the holds term projects: {failure:?}"));
+}
+
+/// FR-944-AC-13 (TC-1332): a clock naming a unit the package declares that is
+/// no linear time unit (`U`, a `Money` unit) is refused with the same cause by
+/// the source route and the bare route, never read as a count of steps.
+#[trace("FR-944-AC-13", "FR-944-AC-10", "TC-1332")]
+#[test]
+fn a_clock_naming_a_declared_non_time_unit_is_refused_on_both_routes() {
+    for kind in ["fixed_sample", "timestamped_event"] {
+        let built = recipe_naming(kind, Some("U"));
+        let read = built.read(&built.emission);
+        let emitted = EvidencePackage::from_emission(
+            &built.emission,
+            &read,
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("emission");
+        let bare = BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
+        let bytes = EvidencePackage::from_package(
+            &bare,
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("bare");
+        let mut causes = Vec::new();
+        for package in [&emitted, &bytes] {
+            let clause = clause_ids(package).into_iter().next().expect("a clause");
+            let subject = package.subject(&clause, None).expect("reads");
+            assert_eq!(
+                subject.time_unit_scale,
+                fsl_eval::temporal::evidence::ClockScale::Unreadable,
+                "{kind}"
+            );
+            let asked = evidence_request(package, &clause, None, 2);
+            let failure = run(package, &clause, &asked).0.expect_err("refused");
+            causes.push(format!("{failure:?}"));
+        }
+        assert!(
+            causes[0].contains("declared-time-unit-factor-is-readable"),
+            "{kind}: {}",
+            causes[0]
+        );
+        assert_eq!(causes[0], causes[1], "{kind}");
+    }
 }

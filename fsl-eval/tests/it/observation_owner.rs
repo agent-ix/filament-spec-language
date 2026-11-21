@@ -342,8 +342,9 @@ fn evidence_calls_consume_optional_activation_views_for_scopes_and_instances() {
     // selection bytes as the owner unit fixtures; source/reader parity is separate.
     let mut subject = env.subject(&[]);
     subject.canonical_package_bytes = Some(b"{}");
-    subject.time_unit_scale =
-        Some(filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"));
+    subject.time_unit_scale = fsl_eval::temporal::evidence::ClockScale::PerSecond(
+        filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"),
+    );
     let mut request = fixture::request(&env, fixture::at_t0(&[(atom, Valuation::True)]));
     request.trigger = Some(fixture::id("t1"));
     let mut delivery = fixture::delivery("t1", "r1", "payload", &[]);
@@ -384,8 +385,9 @@ fn evidence_calls_consume_optional_activation_views_for_scopes_and_instances() {
     let atom = env.atom("p");
     let mut subject = env.subject(&[]);
     subject.canonical_package_bytes = Some(b"{}");
-    subject.time_unit_scale =
-        Some(filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"));
+    subject.time_unit_scale = fsl_eval::temporal::evidence::ClockScale::PerSecond(
+        filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"),
+    );
     let mut request = fixture::request(&env, fixture::at_t0(&[(atom, Valuation::True)]));
     request.trigger = Some(fixture::id("t1"));
     request.deliveries = vec![

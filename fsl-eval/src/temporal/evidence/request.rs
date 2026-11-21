@@ -450,6 +450,19 @@ pub struct SubjectOccurrence<'p> {
     pub source_map: &'p CheckedSourceMapEntry,
 }
 
+/// How a clock's stamps convert to nanoseconds (FR-944): a count of steps, a
+/// declared linear time unit's exact factor to seconds, or a declared unit the
+/// route cannot read, which the call refuses and never counts.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClockScale {
+    /// The unit names no declared time unit (or the clock has none): `s` = 1.
+    Count,
+    /// A declared linear time unit, exactly this many seconds per tick.
+    PerSecond(filament_exact::Rational),
+    /// A declared unit that is no usable linear time unit on this route.
+    Unreadable,
+}
+
 /// The checked package's facts about the clause a call assesses (FR-515):
 /// the declaration and profile row, each occurrence with the clock row its
 /// key selects, the clause's formula, activation and captures, the atoms that
@@ -463,8 +476,8 @@ pub struct EvidenceSubject<'p> {
     pub package_identity: String,
     /// The exact canonical package bytes retained by the checked reader.
     pub canonical_package_bytes: Option<&'p [u8]>,
-    /// Exact checked unit scale to seconds for this occurrence's clock.
-    pub time_unit_scale: Option<filament_exact::Rational>,
+    /// How this occurrence's clock stamps convert to nanoseconds (FR-944).
+    pub time_unit_scale: ClockScale,
     /// The clause's declaration node.
     pub declaration: &'p CheckedNodeId,
     /// The checked signal node the temporal clause observes.
