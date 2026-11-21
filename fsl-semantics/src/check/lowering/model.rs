@@ -2938,34 +2938,48 @@ impl<'a> Lowering<'a> {
             return Ok(());
         };
         let site = type_declaration(alias);
+        // One borrowed pass collects this union's variant records by case; a
+        // case then reads its authored record without rescanning the model.
+        let mut variants: BTreeMap<&str, &crate::model::domain_package::VariantRecord> =
+            BTreeMap::new();
+        for record in model.records.values() {
+            if let DomainPackageRecord::Variant(variant) = record {
+                if &variant.owner == declaration {
+                    variants.insert(variant.case.as_str(), variant);
+                }
+            }
+        }
         let mut cases = Vec::with_capacity(members.len());
         for member in members {
             let case = member.identifier();
-            let record = model
-                .records
-                .values()
-                .find_map(|record| match record {
-                    DomainPackageRecord::Variant(variant)
-                        if &variant.owner == declaration && variant.case == case =>
-                    {
-                        Some(variant)
-                    }
-                    _ => None,
-                })
-                .ok_or_else(|| {
-                    fault(location, KeyFault::UnknownDeclaration(declaration.clone()))
-                })?;
+            let record = variants.get(case).copied().ok_or_else(|| {
+                fault(location, KeyFault::MissingUnionVariant(declaration.clone()))
+            })?;
+            // A payload is a Clock place only when its alias-resolved type is
+            // `Clock` itself; a collection over Clock has no IR payload form.
             let payload = match (&record.payload_type, member.positions()) {
-                (None, _) => SelectedModelUnionPayload::None,
-                (Some(_), []) => SelectedModelUnionPayload::Clock,
+                (None, []) => SelectedModelUnionPayload::None,
+                (Some(payload_type), []) => {
+                    match crate::model::domain_package::unaliased(payload_type, |key| {
+                        model.records.get(key)
+                    }) {
+                        Some((ValueTypeRef::Clock, 0)) => SelectedModelUnionPayload::Clock,
+                        _ => {
+                            return Err(fault(
+                                location,
+                                KeyFault::UnsupportedUnionPayload(record.key.clone()),
+                            ))
+                        }
+                    }
+                }
                 (Some(_), [original_type]) => SelectedModelUnionPayload::Data {
                     node: self.type_node(original_type, &site)?,
                     original_type: original_type.clone(),
                 },
-                (Some(_), _) => {
+                (_, _) => {
                     return Err(fault(
                         location,
-                        KeyFault::UnknownDeclaration(declaration.clone()),
+                        KeyFault::UnsupportedUnionPayload(record.key.clone()),
                     ))
                 }
             };
