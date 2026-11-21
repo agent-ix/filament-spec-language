@@ -12,13 +12,13 @@ use fsl_analyze::zone_check::{
     ZoneCheckLimits, ZoneCheckRefusal,
 };
 use fsl_replay::{
-    check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, RefinementFailure,
-    SilentMove, ZoneCertificate, ZoneCertificateVerdict,
+    check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, CertifiedItem,
+    RefinementFailure, SilentMove, ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::ItemObligation;
 use ix_trace_rs::trace;
 
-use crate::timed_refinement::{certificate_request, obligation, refinement, safety_request};
+use crate::timed_refinement::{obligation, refinement, safety_request, the_refinement};
 use crate::timed_world::{document, refining, renamed_package, wire_field, Refining, DENSE};
 
 type Certificate = ZoneCertificate<ItemObligation<&'static str>>;
@@ -86,9 +86,23 @@ fn certified(world: &Refining) -> Certificate {
     }
 }
 
+/// FR-245's request for `world`'s refinement, over both initial candidates.
+fn request(world: &Refining) -> ZoneCertificateRequest<'_> {
+    ZoneCertificateRequest {
+        simulation: world.concrete_request(),
+        model: "M",
+        max_clocks: fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS,
+        item: CertifiedItem::Refinement {
+            refinement: the_refinement(world),
+            abstract_package: &world.package,
+            abstract_initial: &world.abstract_initials,
+        },
+    }
+}
+
 fn checked(world: &Refining, certificate: &Certificate) -> ZoneCertificateVerdict {
     check_zone_certificate(
-        certificate_request(world),
+        request(world),
         &obligation(world),
         certificate_item,
         certificate,
