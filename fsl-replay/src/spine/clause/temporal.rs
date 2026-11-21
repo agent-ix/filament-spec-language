@@ -3963,7 +3963,7 @@ mod package_admission_tests {
                 };
                 let record = AdmissionRecord {
                     catalog,
-                    fields: BTreeMap::from([("member".to_owned(), "holds[0]".to_owned())]),
+                    fields: BTreeMap::from([("member", "holds[0]".to_owned())]),
                     path: Vec::new(),
                     kernel: None,
                 };
