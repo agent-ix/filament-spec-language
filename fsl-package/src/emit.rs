@@ -7367,6 +7367,21 @@ fn emit_package_inner(
             profile_selections.push(selection);
         }
     }
+    // A finite trace-set clause writes no profile law on its node, so the lock
+    // selects its profile here for the clause's clock binding to resolve.
+    for hyper in graph.finite_hyper_clauses() {
+        let profile = hyper.profile();
+        if !profile.is_bounded() {
+            continue;
+        }
+        let selection = CheckedSelection {
+            role: CheckedSelectionRole::TemporalProfile,
+            definition: profile_definition(profile),
+        };
+        if !profile_selections.contains(&selection) {
+            profile_selections.push(selection);
+        }
+    }
     // The IEEE trigger includes a declared float with no IEEE application.
     // Keep the selected, admitted policy even when no node needs its law.
     if let Some(profile) = graph.scope().ieee_profile_selection() {

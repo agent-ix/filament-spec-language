@@ -1157,7 +1157,7 @@ fn the_first_refusal_in_precedence_order_is_reported() {
     let (text, refusals) = refused(EVENT, &["S", "N"], &both);
     assert_eq!(
         not_emitted_text(&text, &refusals),
-        "S::ConfigVersion::mix",
+        "fair weak S::ConfigVersion::mix;",
         "the fairness constraint is the first refusal"
     );
 }
