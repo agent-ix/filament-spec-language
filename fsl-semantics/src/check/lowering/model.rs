@@ -234,7 +234,16 @@ pub(crate) fn clock_type_identity(
                 pending.push(Part::Text(">"));
                 pending.push(Part::Value(map.values()));
                 pending.push(Part::Text(", "));
-                pending.push(Part::Value(map.key()));
+                // FSpec FR-789 "Rendering": a native scalar key renders as its bare
+                // name, as the reader's `key_rendering` spells it.
+                match map.key() {
+                    ValueType::String => pending.push(Part::Text("Text")),
+                    ValueType::Boolean => pending.push(Part::Text("Boolean")),
+                    ValueType::Integer => pending.push(Part::Text("Integer")),
+                    ValueType::Uuid => pending.push(Part::Text("UUID")),
+                    ValueType::Timestamp => pending.push(Part::Text("Timestamp")),
+                    key => pending.push(Part::Value(key)),
+                }
             }
             ValueType::Boolean => output.push_str("ix://filament/native/Boolean"),
             ValueType::Integer => output.push_str("ix://filament/native/Integer"),
@@ -301,7 +310,7 @@ impl PackagePlace {
                 }
                 PlaceStep::Slot(shape) if shape.map => {
                     let parent = previous.unwrap_or_default();
-                    (parent.clone(), format!("{parent}[key]"))
+                    (parent.clone(), format!("{parent}[slot]"))
                 }
                 PlaceStep::Slot(_) => {
                     let parent = previous.unwrap_or_default();

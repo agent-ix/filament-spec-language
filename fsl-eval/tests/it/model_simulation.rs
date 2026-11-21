@@ -2968,6 +2968,19 @@ fn checked_float_field_graph_compares_nan_and_signed_zero() {
 #[trace("TC-1171", "FR-106-AC-58")]
 #[test]
 fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
+    // FR-106: a refusal's `path` is the absolute field prefix plus the typed
+    // steps below it, here the one set element.
+    let levels_element = |index| {
+        vec![
+            PathStep::Field("populations".to_owned()),
+            PathStep::Index(0),
+            PathStep::Field("objects".to_owned()),
+            PathStep::Index(0),
+            PathStep::Field("fields".to_owned()),
+            PathStep::Field("levels".to_owned()),
+            PathStep::Index(index),
+        ]
+    };
     let mut world = float_world_with_body("", Vec::new());
     let model = world.model();
     let cases = [
@@ -3090,15 +3103,33 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
             Some(field),
             "case {name} identifies the declared field"
         );
+        // FR-663: `path` is the RFC 6901 pointer to the failing member in
+        // the document's own spelling, or to the containing object for a
+        // member the document lacks.
+        let pointer = if cause == "missing-member" {
+            format!("/populations/0/objects/0/fields/{field}")
+        } else {
+            format!("/populations/0/objects/0/fields/{field}/{member}")
+        };
         assert_eq!(
             record.fields.get("path").map(String::as_str),
-            Some(format!("/populations/0/objects/0/fields/{field}").as_str()),
-            "case {name} identifies the snapshot field path"
+            Some(pointer.as_str()),
+            "case {name} identifies the failing member by its document pointer"
         );
+        // FR-106: `record.path` is the absolute field prefix plus the typed
+        // steps, which here are the one malformed native member.
         assert_eq!(
             record.path,
-            Vec::<PathStep>::new(),
-            "case {name} keeps the native-local path empty; the snapshot field path is asserted above"
+            vec![
+                PathStep::Field("populations".to_owned()),
+                PathStep::Index(0),
+                PathStep::Field("objects".to_owned()),
+                PathStep::Index(0),
+                PathStep::Field("fields".to_owned()),
+                PathStep::Field(field.to_owned()),
+                PathStep::Field(member.to_owned()),
+            ],
+            "case {name} carries the absolute field prefix and the typed steps"
         );
     }
     let duplicate = float_snapshot(
@@ -3125,7 +3156,7 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
         record.fields.get("earlier-index").map(String::as_str),
         Some("0")
     );
-    assert_eq!(record.path, vec![PathStep::Index(1)]);
+    assert_eq!(record.path, levels_element(1));
     let duplicate_nan = float_snapshot(
         &mut world,
         "duplicate-nan",
@@ -3154,7 +3185,7 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
         record.fields.get("earlier-index").map(String::as_str),
         Some("0")
     );
-    assert_eq!(record.path, vec![PathStep::Index(1)]);
+    assert_eq!(record.path, levels_element(1));
 }
 
 /// FR-106-AC-57: a large unique Float set is admitted through the canonical

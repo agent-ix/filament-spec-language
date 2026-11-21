@@ -2621,7 +2621,8 @@ fn member_value(ids: &StructuralIds, member: &Member) -> Result<serde_json::Valu
             json!({"kind":"operation","declaration":node_id(ids, declaration),"name":name.as_str()})
         }
         Member::TypeArgument { declaration, alias } => {
-            let mut member = json!({"kind":"type_argument","declaration":node_id(ids, declaration)});
+            let mut member =
+                json!({"kind":"type_argument","declaration":node_id(ids, declaration)});
             if let Some(alias) = alias {
                 member["alias"] = json!({"package": alias.package, "node": alias.node});
             }
@@ -6348,8 +6349,7 @@ pub fn emit_timed_models(
         .first()
         .ok_or(EmitRefusal::SourceMapInvariant)
         .and_then(|source| {
-            crate::checked_v2::raw_source_ref(source)
-                .map_err(|_| EmitRefusal::SourceMapInvariant)
+            crate::checked_v2::raw_source_ref(source).map_err(|_| EmitRefusal::SourceMapInvariant)
         })?;
     let ids = &StructuralIds::default();
     let expected = base
@@ -8243,11 +8243,15 @@ fn tuple_position_rows(
         .map(|(ordinal, (value_type, key))| {
             Ok(filament_contract_model::SelectedTuplePositionRow {
                 ordinal,
-                type_node: emitted
-                    .get(&key)
-                    .cloned()
-                    .ok_or(EmitRefusal::SourceMapInvariant)?,
-                value_type: value_type.clone(),
+                type_node: Some(
+                    emitted
+                        .get(&key)
+                        .cloned()
+                        .ok_or(EmitRefusal::SourceMapInvariant)?,
+                ),
+                value_type: Some(value_type.clone()),
+                member_type: None,
+                collections: Vec::new(),
             })
         })
         .collect()
@@ -9240,13 +9244,15 @@ fn temporal_binding_rows(
                 .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Declaration)
                 .map(|occurrence| occurrence.ordinal)
             {
-                rows.push(filament_contract_model::TemporalBinding {
+                let row = filament_contract_model::TemporalBinding {
                     declaration: declaration.clone(),
                     occurrence: ordinal,
                     clock_name: awaited.clock.as_str().into(),
                     clock: clock.clone(),
                     trace: None,
-                });
+                };
+                keyed.rows.push((node_key.clone(), row.clone()));
+                rows.push(row);
             }
         }
     }
@@ -9269,6 +9275,8 @@ fn temporal_binding_rows(
             Some((path, &node.node_id))
         })
         .collect();
+    let key_of_id: BTreeMap<&CheckedNodeId, &NodeKey> =
+        emitted_node_ids.iter().map(|(key, id)| (id, key)).collect();
     for protocol in graph.protocols() {
         let source = graph.source().clone();
         for template in &protocol.obligations.compensations {
@@ -9302,6 +9310,9 @@ fn temporal_binding_rows(
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, template.clock.as_str(), clock)?;
+            let node_key = key_of_id
+                .get(&declaration)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
             for node in nodes.iter().filter(|node| node.node_id == declaration) {
                 for ordinal in node
                     .occurrences
@@ -9309,13 +9320,15 @@ fn temporal_binding_rows(
                     .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Declaration)
                     .map(|occurrence| occurrence.ordinal)
                 {
-                    rows.push(filament_contract_model::TemporalBinding {
+                    let row = filament_contract_model::TemporalBinding {
                         declaration: declaration.clone(),
                         occurrence: ordinal,
                         clock_name: template.clock.as_str().into(),
                         clock: clock.clone(),
                         trace: None,
-                    });
+                    };
+                    keyed.rows.push(((*node_key).clone(), row.clone()));
+                    rows.push(row);
                 }
             }
         }
@@ -9343,6 +9356,28 @@ fn temporal_binding_rows(
     refs.sort_by(|left, right| {
         (&left.declaration, left.occurrence).cmp(&(&right.declaration, right.occurrence))
     });
+    // A hybrid claim is a temporal clause node too (FR-447), and its
+    // declared name belongs to its claim occurrence like any clause's.
+    for site in graph.hybrid_claim_sites() {
+        let declaration = emitted_node_ids
+            .get(&site.identity)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        keyed_names.push((
+            site.identity.clone(),
+            filament_contract_model::TemporalClauseName {
+                declaration_region: declaration_region(
+                    source_map,
+                    &declaration,
+                    &claim_occurrence(site.claim.ordinal()),
+                    site.span,
+                )?,
+                declaration,
+                occurrence: site.claim.ordinal(),
+                name: site.name.as_str().into(),
+            },
+        ));
+    }
     keyed_names.sort_by(|(left_key, left), (right_key, right)| {
         (left_key, left.occurrence).cmp(&(right_key, right.occurrence))
     });
@@ -9810,14 +9845,14 @@ pub(crate) mod equality_reader;
 #[cfg(test)]
 mod extent_agreement;
 pub use clock_selection::{
-    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, clock_kind,
-    is_model_binding_name, profile_clock_kind,
+    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
+    ClockSelectionDeclaration, ClockSelectionRefusal,
 };
 mod body_locations;
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
-pub use monitor_plan::{MonitorPlanWire, declaration_less_function_id, emit_monitor_plan_over};
+pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;
 

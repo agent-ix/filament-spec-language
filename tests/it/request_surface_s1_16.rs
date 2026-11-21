@@ -2382,7 +2382,6 @@ fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
 /// the strict read admits, and both routes print its atom alike.
 #[test]
 #[trace("TC-2601")]
-#[ignore = "waits for the contract-ir reader to resolve a seq binder level inside a temporal clause leaf (arch ruling 2026-11-20: FR-322 general binder level rule governs; reader gap)"]
 fn a_seq_source_inside_a_clause_emits_a_package_the_strict_read_admits() {
     let leaf = "holds(size(seq(i in 0 .. 3: i)) >= 1)";
     let (from_source, from_package) = both_routes(leaf);

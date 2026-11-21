@@ -119,7 +119,7 @@ fn a_package_map_of_clocks_lists_a_key_selected_place() {
         (rows[0].minimum.as_str(), rows[0].maximum.as_str()),
         ("0", "2")
     );
-    assert!(rows[1].member_identity.ends_with("[key]"));
+    assert!(rows[1].member_identity.ends_with("[slot]"));
 
     let timers = places.iter().find(|p| p.name() == "t.[key].x").unwrap();
     let rows = timers.rows();
@@ -281,4 +281,28 @@ fn a_map_slot_selector_is_the_key_node_of_the_map_type() {
     assert_ne!(selectors["mt"], native_string);
     assert_eq!(selectors["mi"], integer);
     assert_eq!(selectors["mb"], boolean);
+}
+
+/// FSpec FR-789 "Rendering": every native scalar map key renders as its bare
+/// name, as the reader's `key_rendering` spells it; the values keep their native identity.
+#[test]
+fn a_native_scalar_map_key_renders_as_its_bare_name() {
+    use super::super::clock_type_identity;
+    use filament_exact::{MapType, ValueType};
+
+    for (key, name) in [
+        (ValueType::String, "Text"),
+        (ValueType::Integer, "Integer"),
+        (ValueType::Boolean, "Boolean"),
+        (ValueType::Uuid, "UUID"),
+        (ValueType::Timestamp, "Timestamp"),
+    ] {
+        let map = ValueType::Map(std::sync::Arc::new(
+            MapType::new(key, ValueType::Integer, None).expect("a leaf key"),
+        ));
+        assert_eq!(
+            clock_type_identity(&map, |_| None).as_deref(),
+            Some(format!("Map<{name}, ix://filament/native/Integer>").as_str())
+        );
+    }
 }

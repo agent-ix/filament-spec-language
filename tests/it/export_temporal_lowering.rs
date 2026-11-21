@@ -4,9 +4,9 @@
 //! clause's definitions in each target, and the clause shapes the TLA+
 //! encoding does not cover.
 
-use crate::plan_export_surface::{COUNTER_UNIT, counter_request};
+use crate::plan_export_surface::{counter_request, COUNTER_UNIT};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const HEAD: &str =
     "temporal T using t over (c: Counter::Counter) clock \"model-steps\" on origin {";
@@ -74,12 +74,26 @@ fn export_full(
 /// Exports the declarations `tail`, which follow the counter's, to `target`
 /// from the counter's snapshot.
 fn export_tail(tail: &str, target: Target) -> (u8, Value) {
-    export_unit(
+    export_unit_with_protocol_binding(
         tail,
         target,
         None,
         "filament.temporal.infinite-trace/v1",
         true,
+        true,
+        true,
+    )
+}
+
+fn export_tail_with_unbound_static_role(tail: &str, target: Target) -> (u8, Value) {
+    export_unit_with_protocol_binding(
+        tail,
+        target,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        true,
+        true,
+        false,
     )
 }
 
@@ -92,11 +106,39 @@ fn export_unit(
     profile: &str,
     fixed: bool,
 ) -> (u8, Value) {
+    export_unit_with_protocol_binding(tail, target, start, profile, fixed, false, false)
+}
+
+fn export_unit_with_protocol_binding(
+    tail: &str,
+    target: Target,
+    start: Option<i64>,
+    profile: &str,
+    fixed: bool,
+    bind_protocol: bool,
+    bind_roles: bool,
+) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
-    let path = counter_request(
-        directory.path(),
-        json!({"profile": target.profile(), "obligations": ["T"]}),
-    );
+    let mut export = json!({"profile": target.profile(), "obligations": ["T"]});
+    if bind_protocol && tail.contains("protocol Hand") {
+        let mut roles = serde_json::Map::new();
+        if bind_roles {
+            for role in ["a", "b"] {
+                if tail.contains(&format!("role {role} on")) {
+                    roles.insert(
+                        role.to_owned(),
+                        json!({"type": "model-binding", "selection": "model/Counter"}),
+                    );
+                }
+            }
+        }
+        export["protocols"] = json!([{
+            "protocol": "Hand",
+            "over": {"reference": {"population": "counters", "key": "<<99>>"}},
+            "roles": roles
+        }]);
+    }
+    let path = counter_request(directory.path(), export);
     if let Some(start) = start {
         let file = directory.path().join("counter-0.json");
         let snapshot = std::fs::read_to_string(&file).unwrap();
@@ -119,7 +161,9 @@ fn export_unit(
     }
     let unit = COUNTER_UNIT.replace(
         "model Counter",
-        &format!("profile t = \"{profile}\";\nprofile P = \"filament.protocol.finite-global/v1\";\nmodel Counter"),
+        &format!(
+            "profile t = \"{profile}\";\nprofile P = \"filament.protocol.finite-global/v1\";\nmodel Counter"
+        ),
     );
     std::fs::write(
         directory.path().join("unit.native"),
@@ -838,7 +882,7 @@ fn strong_fairness_tla() {
 
 ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
-Spec_T == Init /\ [][Next]_vars /\ WF_vars(Next) /\ SF_vars(\E r_self \in Ids_Counter : op_inc(r_self))
+Spec_T == Init /\ [][Next]_vars /\ WF_vars(Next) /\ SF_vars(\E r_self \in Ids_Counter : op_Counter_inc(r_self))
 
 THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>((v_Counter[o_c].fld_value = 2)))
 
@@ -866,7 +910,7 @@ def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (exists d2 : Int, 0 <= d2 /\ (0 <= ((i + d1) + d2) /\ at_T_0 (b.st (Int.toNat ((i + d1) + d2))) o_c)))
 
 def fair_T (b : Behaviour) : Prop :=
-  ((forall i : Nat, exists j : Nat, i <= j /\ (exists t, exists r_self, op_inc (b.st j) t r_self)) -> (forall i : Nat, exists j : Nat, i <= j /\ (exists r_self, op_inc (b.st j) (b.st (j + 1)) r_self)))
+  ((forall i : Nat, exists j : Nat, i <= j /\ (exists t, exists r_self, op_Counter_inc (b.st j) t r_self)) -> (forall i : Nat, exists j : Nat, i <= j /\ (exists r_self, op_Counter_inc (b.st j) (b.st (j + 1)) r_self)))
 
 def Ob_T : Prop :=
   forall b : Behaviour, fair_T b -> forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
@@ -888,7 +932,7 @@ fn weak_each_fairness_tla() {
 
 ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
-Spec_T == Init /\ [][Next]_vars /\ WF_vars(Next) /\ \A r_self \in Ids_Counter : WF_vars(op_inc(r_self))
+Spec_T == Init /\ [][Next]_vars /\ WF_vars(Next) /\ \A r_self \in Ids_Counter : WF_vars(op_Counter_inc(r_self))
 
 THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>((v_Counter[o_c].fld_value = 2)))
 
@@ -916,7 +960,7 @@ def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (exists d2 : Int, 0 <= d2 /\ (0 <= ((i + d1) + d2) /\ at_T_0 (b.st (Int.toNat ((i + d1) + d2))) o_c)))
 
 def fair_T (b : Behaviour) : Prop :=
-  (forall r_self, Ids_Counter r_self -> (forall i : Nat, (forall j : Nat, i <= j -> (exists t, op_inc (b.st j) t r_self)) -> (exists j : Nat, i <= j /\ (op_inc (b.st j) (b.st (j + 1)) r_self))))
+  (forall r_self, Ids_Counter r_self -> (forall i : Nat, (forall j : Nat, i <= j -> (exists t, op_Counter_inc (b.st j) t r_self)) -> (exists j : Nat, i <= j /\ (op_Counter_inc (b.st j) (b.st (j + 1)) r_self))))
 
 def Ob_T : Prop :=
   forall b : Behaviour, fair_T b -> forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
@@ -953,7 +997,7 @@ Mon_T ==
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
-Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T) /\ \A r_self \in Ids_Counter : WF_vars(op_inc(r_self))
+Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T) /\ \A r_self \in Ids_Counter : WF_vars(op_Counter_inc(r_self))
 
 THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>(m_T_h0[o_c]))
 
@@ -984,7 +1028,7 @@ def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (exists d2 : Int, 0 <= d2 /\ (exists d3 : Int, 0 <= d3 /\ 0 <= (((i + d1) + d2) - d3) /\ (0 <= (((i + d1) + d2) - d3) /\ at_T_1 (b.st (Int.toNat (((i + d1) + d2) - d3))) o_c) /\ (forall e4 : Int, 0 <= e4 -> e4 < d3 -> (0 <= (((i + d1) + d2) - e4) /\ at_T_0 (b.st (Int.toNat (((i + d1) + d2) - e4))) o_c)))))
 
 def fair_T (b : Behaviour) : Prop :=
-  (forall r_self, Ids_Counter r_self -> (forall i : Nat, (forall j : Nat, i <= j -> (exists t, op_inc (b.st j) t r_self)) -> (exists j : Nat, i <= j /\ (op_inc (b.st j) (b.st (j + 1)) r_self))))
+  (forall r_self, Ids_Counter r_self -> (forall i : Nat, (forall j : Nat, i <= j -> (exists t, op_Counter_inc (b.st j) t r_self)) -> (exists j : Nat, i <= j /\ (op_Counter_inc (b.st j) (b.st (j + 1)) r_self))))
 
 def Ob_T : Prop :=
   forall b : Behaviour, fair_T b -> forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
@@ -1006,7 +1050,7 @@ fn weak_fairness_tla() {
 
 ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
-Spec_T == Init /\ [][Next]_vars /\ WF_vars(Next) /\ WF_vars(\E r_self \in Ids_Counter : op_inc(r_self))
+Spec_T == Init /\ [][Next]_vars /\ WF_vars(Next) /\ WF_vars(\E r_self \in Ids_Counter : op_Counter_inc(r_self))
 
 THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>((v_Counter[o_c].fld_value = 2)))
 
@@ -1034,7 +1078,7 @@ def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (exists d2 : Int, 0 <= d2 /\ (0 <= ((i + d1) + d2) /\ at_T_0 (b.st (Int.toNat ((i + d1) + d2))) o_c)))
 
 def fair_T (b : Behaviour) : Prop :=
-  (forall i : Nat, (forall j : Nat, i <= j -> (exists t, exists r_self, op_inc (b.st j) t r_self)) -> (exists j : Nat, i <= j /\ (exists r_self, op_inc (b.st j) (b.st (j + 1)) r_self)))
+  (forall i : Nat, (forall j : Nat, i <= j -> (exists t, exists r_self, op_Counter_inc (b.st j) t r_self)) -> (exists j : Nat, i <= j /\ (exists r_self, op_Counter_inc (b.st j) (b.st (j + 1)) r_self)))
 
 def Ob_T : Prop :=
   forall b : Behaviour, fair_T b -> forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
@@ -2333,12 +2377,11 @@ fn a_non_object_subject_is_refused_at_its_binder() {
     }
 }
 
-/// FSpec FR-813 Binding and FR-817-AC-16 (FND-012): a clause that a protocol
-/// requires is refused at the protocol clause's node, not exported over the
-/// bare model.
+/// Origin-required clauses that a protocol requires retain their typed
+/// refusal until the exporter lowers the complete protocol behavior.
 #[test]
 #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
-fn a_clause_a_protocol_requires_is_refused() {
+fn a_check_only_protocol_subject_keeps_its_typed_refusal() {
     let tail = format!(
         "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
              role a on Counter::Counter;\n\
@@ -2350,7 +2393,99 @@ fn a_clause_a_protocol_requires_is_refused() {
     );
     for target in [Target::Tla, Target::Lean] {
         let refusal = refusal_of(&tail, target);
+        assert_eq!(refusal["construct"], "protocol/protocol_clause");
+    }
+}
+
+#[test]
+#[trace("FSpec-FR-813-AC-17")]
+fn a_protocol_subject_with_an_unbound_static_role_refuses_wrong_role_mapping() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    let (exit, value) = export_tail_with_unbound_static_role(&tail, Target::Tla);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(value["cause"], "wrong-role-mapping", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/request/export/protocols/0/roles/a",
+        "{value}"
+    );
+}
+
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn a_protocol_each_requirement_is_refused_at_its_activation_trigger() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on each (trg0: Boolean) {{\n\
+             role a on Counter::Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    for target in [Target::Tla, Target::Lean] {
+        let refusal = refusal_of(&tail, target);
         assert_ne!(refusal["construct"], "temporal/temporal_clause");
+        assert_ne!(refusal["construct"], "protocol/protocol_clause");
+    }
+}
+
+/// FSpec FR-813-AC-24: origin-required protocol subjects outside the
+/// check-only subset keep a typed refusal at the protocol clause.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn a_channel_protocol_subject_keeps_its_typed_refusal() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             role b on Counter::Counter;\n\
+             channel ch from a to b carries Boolean ordering unordered delivery exactly-once-premise capacity 1 overflow block;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    for target in [Target::Tla, Target::Lean] {
+        let refusal = refusal_of(&tail, target);
+        assert_eq!(refusal["construct"], "protocol/protocol_clause");
+    }
+}
+
+/// FR-813-AC-17's bounded origin projection admits only proven constant-true
+/// check and finish predicates; a changing or false condition keeps a typed
+/// refusal at the protocol clause.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-17")]
+fn a_protocol_subject_origin_with_a_nontrivial_check_or_finish_keeps_its_refusal() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    for unsupported in [
+        tail.replace("check Ok using v { true }", "check Ok using v { false }"),
+        tail.replace(
+            "finish Done as (d: Counter::Counter) { true }",
+            "finish Done as (d: Counter::Counter) { false }",
+        ),
+    ] {
+        for target in [Target::Tla, Target::Lean] {
+            let refusal = refusal_of(&unsupported, target);
+            assert_eq!(refusal["construct"], "protocol/protocol_clause");
+        }
     }
 }
 

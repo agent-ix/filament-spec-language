@@ -10,13 +10,13 @@ mod map;
 mod request;
 
 use super::{
-    FileCounts, RequestOverrides, Result, RunCause, RunLimits, RunResult, check_sources,
-    intake_with_bytes, output::NativeResult, output_file, wire,
+    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, FileCounts,
+    RequestOverrides, Result, RunCause, RunLimits, RunResult,
 };
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{OutcomeDocument, OutcomeStage};
 use request::Request;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 /// FSpec FR-298's disposition of one record, as FR-269 names it.
@@ -178,15 +178,40 @@ pub(super) fn run_bytes(
             &package_request,
             package,
             limits.dependent_bytes,
-            None,
+            request.initial.as_deref(),
         )?;
         let clauses = map::package_clauses(&admitted.package)?;
+        let models = admitted
+            .models
+            .iter()
+            .map(|model| model.text().as_bytes().to_vec())
+            .collect::<Vec<_>>();
+        let initial = admitted
+            .snapshot
+            .as_deref()
+            .map(|bytes| {
+                let document: Value =
+                    serde_json::from_slice(bytes).map_err(|error| RunCause::ClauseRequest {
+                        member: "/request/export/initial".to_owned(),
+                        reason: format!("the snapshot is not JSON: {error}"),
+                    })?;
+                if document.get("format").and_then(Value::as_str)
+                    != Some("filament.state.snapshot/v1")
+                {
+                    return Err(RunCause::ClauseRequest {
+                        member: "/request/export/initial".to_owned(),
+                        reason: "the file is not a filament.state.snapshot/v1 document".to_owned(),
+                    });
+                }
+                Ok(document)
+            })
+            .transpose()?;
         let mapped = map::run(
             &admitted.package,
             &program.identity,
             &clauses,
-            &[],
-            None,
+            &models,
+            initial.as_ref(),
             &request,
             &request.limits.effective(),
         )?;
@@ -299,18 +324,16 @@ fn unsupported_observer(request: &Request, observer: &str, output: Option<&Path>
     }
     let document = OutcomeDocument::new(fsl_replay::Operation::Export, None, Category::Unsupported)
         .with_export(export.clone())
-        .with_diagnostics(vec![
-            fsl_replay::OutcomeDiagnostic::new(
-                Some("unsupported-requested-capability"),
-                "unsupported_projection",
-                None,
-                reason,
-            )
-            .with_details(Some(serde_json::Map::from_iter([(
-                "path".to_owned(),
-                Value::String(path.to_owned()),
-            )]))),
-        ]);
+        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            Some("unsupported-requested-capability"),
+            "unsupported_projection",
+            None,
+            reason,
+        )
+        .with_details(Some(serde_json::Map::from_iter([(
+            "path".to_owned(),
+            Value::String(path.to_owned()),
+        )])))]);
     RunResult {
         exit_code: Category::Unsupported.exit_code(),
         value: NativeResult::export_document(json!({"export": export})),
@@ -537,18 +560,16 @@ fn finish(
     if export["refusal"]["code"] == "unimplemented_capability" {
         let refusal = &export["refusal"];
         let text = |member: &str| refusal[member].as_str().unwrap_or_default().to_owned();
-        document = document.with_diagnostics(vec![
-            fsl_replay::OutcomeDiagnostic::new(
-                Some("unimplemented-meaning"),
-                "unimplemented_capability",
-                None,
-                format!("the export does not lower {}", text("construct")),
-            )
-            .with_details(Some(serde_json::Map::from_iter([(
-                "capability".to_owned(),
-                Value::String(text("capability")),
-            )]))),
-        ]);
+        document = document.with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            Some("unimplemented-meaning"),
+            "unimplemented_capability",
+            None,
+            format!("the export does not lower {}", text("construct")),
+        )
+        .with_details(Some(serde_json::Map::from_iter([(
+            "capability".to_owned(),
+            Value::String(text("capability")),
+        )])))]);
     }
     Ok(Some(RunResult {
         exit_code: category.exit_code(),

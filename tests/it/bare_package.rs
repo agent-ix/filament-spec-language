@@ -316,7 +316,7 @@ fn a_handoff_directory_gives_a_bare_package_and_an_identity_file() {
     assert!(!charges.is_empty());
 
     let file: Value = serde_json::from_slice(&files["identities.json"]).expect("JSON");
-    assert_eq!(file["format"], "filament.checked-handoff.identities/3");
+    assert_eq!(file["format"], "filament.checked-handoff.identities/4");
     assert!(files["identities.json"].ends_with(b"}\n"));
     let rows = ReadIdentityRows::read(
         &files["identities.json"],
@@ -389,6 +389,32 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
                 .is_some_and(|name| name.as_ref() == "Pair")
         })
         .expect("the original Pair row");
+    // FR-531: a record member is exactly a data entry or exactly a clock
+    // entry; `type_node` and `value_type` present or absent together.
+    let good: Value = serde_json::from_slice(&files["identities.json"]).unwrap();
+    let pair = good["source_records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|row| {
+            row["qualified_declaration"].as_array().unwrap().last() == Some(&json!("Pair"))
+        })
+        .expect("the Pair record row");
+    for dropped in ["value_type", "type_node"] {
+        let mut forged = good.clone();
+        forged["source_records"][pair]["members"][0][dropped] = Value::Null;
+        assert_eq!(
+            ReadIdentityRows::read(
+                &serde_json::to_vec(&forged).unwrap(),
+                &package,
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+            ),
+            Err(IdentityFileRefusal::Malformed {
+                member: IdentityMember::SourceRecords
+            }),
+            "a record member without `{dropped}` and without a clock rendering is refused"
+        );
+    }
     let equality = fsl_package::ReadEqualityRows::read(&files["equality.json"], &package).unwrap();
     let graph = fsl_semantics::check::wire_id::WireGraph::new(
         package

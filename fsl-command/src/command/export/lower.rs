@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FSpec FR-812 to FR-814: the lowering of invariant state clauses over
-//! object populations to TLA+ and Lean 4 text.
+//! FSpec FR-812 to FR-814: lower state and temporal clauses over model
+//! populations to TLA+ and Lean 4 text.
 //!
 //! The mapper reads the checked package's node graph for each obligation's
 //! expression and the selected domain packages for the object types, their
-//! fields and operations. It lowers integer and Boolean fields, operation
-//! parameters, integer arithmetic and comparison, Boolean connectives, `pre`
-//! and the exact `narrow` conversion. Any other construct is a refusal that
-//! names it, so the export stops as a mapper failure rather than writing a
+//! fields and operations. It lowers bounded integer, Boolean and enum fields,
+//! operation parameters, integer arithmetic and comparison, Boolean
+//! connectives, `pre`, `narrow`, and the supported temporal operators. Any
+//! other construct is a refusal that names it, so the export never writes a
 //! text that states less than the clause says.
 
 mod temporal;
 
 use self::temporal::{ClauseLow, ClauseRead, Extra, FairLow, FairRead};
-use super::map::{Graph, mangle};
+use super::map::{mangle, Graph};
 use super::request::Target;
 use fsl_replay::protocol_analysis::node_text;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A construct this build does not lower, and why.
@@ -60,6 +60,11 @@ enum Kind {
         hi: Option<String>,
     },
     Bool,
+    Enum {
+        id: String,
+        name: String,
+        cases: Vec<String>,
+    },
 }
 
 struct Field {
@@ -74,6 +79,7 @@ struct Param {
 }
 
 struct Operation {
+    id: String,
     name: String,
     params: Vec<Param>,
     every: BTreeSet<String>,
@@ -96,6 +102,16 @@ impl Object {
     }
     fn record(&self) -> String {
         mangle("T_", &self.name)
+    }
+    fn field(&self, field: &Field) -> String {
+        mangle("fld_", &field.name)
+    }
+    fn operation(&self, operation: &Operation) -> String {
+        format!(
+            "{}_{}",
+            mangle("op_", &self.name),
+            mangle("", &operation.name)
+        )
     }
     fn field_index(&self, name: &str) -> Option<usize> {
         self.fields.iter().position(|field| field.name == name)
@@ -125,6 +141,14 @@ struct RawObject {
 
 fn short_name(id: &str) -> &str {
     id.rsplit('/').next().unwrap_or(id)
+}
+
+fn enum_type_name(name: &str) -> String {
+    mangle("E_", name)
+}
+
+fn enum_member_name(owner: &str, member: &str) -> String {
+    format!("{}_{}", mangle("e_", owner), mangle("", member))
 }
 
 fn kind_of(type_ref: &str, values: &BTreeMap<String, Kind>) -> Lower<Kind> {
@@ -205,6 +229,7 @@ fn read_object(
             });
         }
         operations.push(Operation {
+            id: str_of(operation, "identity").unwrap_or_default().to_owned(),
             name: name.to_owned(),
             params,
             every: set("modifies"),
@@ -224,24 +249,44 @@ fn read_models(models: &[Vec<u8>]) -> Lower<BTreeMap<String, RawObject>> {
     let mut values = BTreeMap::new();
     for document in &documents {
         for node in items(document, "types") {
-            let (Some(id), Some("integer")) = (str_of(node, "identity"), str_of(node, "scalar"))
-            else {
+            let Some(id) = str_of(node, "identity") else {
                 continue;
             };
-            let bound = |keyword: &str| {
-                items(node, "constraints")
+            if str_of(node, "scalar") == Some("integer") {
+                let bound = |keyword: &str| {
+                    items(node, "constraints")
+                        .iter()
+                        .find(|constraint| str_of(constraint, "keyword") == Some(keyword))
+                        .and_then(|constraint| constraint["operands"]["value"].as_str())
+                        .map(str::to_owned)
+                };
+                values.insert(
+                    id.to_owned(),
+                    Kind::Int {
+                        lo: bound("min"),
+                        hi: bound("max"),
+                    },
+                );
+            } else if node["kind"]["name"] == "variant_type"
+                && node.get("variants").and_then(Value::as_array).is_some()
+            {
+                let mut cases: Vec<String> = items(node, "variants")
                     .iter()
-                    .find(|constraint| str_of(constraint, "keyword") == Some(keyword))
-                    .and_then(|constraint| constraint["operands"]["value"].as_str())
-                    .map(str::to_owned)
-            };
-            values.insert(
-                id.to_owned(),
-                Kind::Int {
-                    lo: bound("min"),
-                    hi: bound("max"),
-                },
-            );
+                    .filter_map(|variant| str_of(variant, "name").map(str::to_owned))
+                    .collect();
+                cases.sort();
+                values.insert(
+                    id.to_owned(),
+                    Kind::Enum {
+                        id: id.to_owned(),
+                        // Generated enum names must retain the full source
+                        // identity: two declarations may share a terminal
+                        // name while denoting different types.
+                        name: id.to_owned(),
+                        cases,
+                    },
+                );
+            }
         }
     }
     let mut objects = BTreeMap::new();
@@ -314,6 +359,8 @@ enum Op {
     Ge,
     EqInt,
     NeInt,
+    EqEnum,
+    NeEnum,
     And,
     Or,
     Implies,
@@ -325,6 +372,10 @@ enum Op {
 enum E {
     Int(String),
     Bool(bool),
+    Enum {
+        owner: String,
+        case: String,
+    },
     Param(String),
     Field {
         object: usize,
@@ -380,7 +431,7 @@ impl Lowerer<'_> {
                     .ok_or_else(|| refusal("checked package", "a reference names no node"))?;
                 self.node(position, primed)
             }
-            Some("literal") => Self::literal(term),
+            Some("literal") => self.literal(term),
             other => refuse(
                 "expression/term",
                 format!("a `{}` term", other.unwrap_or("unknown")),
@@ -388,7 +439,7 @@ impl Lowerer<'_> {
         }
     }
 
-    fn literal(term: &Value) -> Lower<Low> {
+    fn literal(&self, term: &Value) -> Lower<Low> {
         let value = &term["value"];
         let value = match str_of(term, "value_kind") {
             Some("integer") => value.as_str().map(|text| E::Int(text.to_owned())),
@@ -396,13 +447,25 @@ impl Lowerer<'_> {
                 .as_bool()
                 .or_else(|| value.as_str().map(|text| text == "true"))
                 .map(E::Bool),
+            Some("enum") => {
+                let owner = self
+                    .graph
+                    .position_of(&term["type"])
+                    .and_then(|position| self.graph.node(position).declaration.as_ref())
+                    .and_then(|declaration| declaration.qualified_name.last())
+                    .map(|name| name.to_string());
+                value.as_str().zip(owner).map(|(case, owner)| E::Enum {
+                    owner,
+                    case: case.to_owned(),
+                })
+            }
             _ => None,
         };
         value.map_or_else(
             || {
                 refuse(
                     "value/literal",
-                    "a literal that is neither an integer nor a Boolean",
+                    "a literal that is not supported by the state mapper",
                 )
             },
             |value| {
@@ -452,7 +515,7 @@ impl Lowerer<'_> {
             });
         }
         match str_of(&body, "term") {
-            Some("literal") => Self::literal(&body),
+            Some("literal") => self.literal(&body),
             Some("application") => {
                 let identity = body["operation"]["identity"].as_str().unwrap_or_default();
                 self.application(&construct, identity, &body, primed)
@@ -491,6 +554,8 @@ impl Lowerer<'_> {
             "filament.op.integer.ge" => Some(Op::Ge),
             "filament.op.integer.eq" => Some(Op::EqInt),
             "filament.op.integer.ne" => Some(Op::NeInt),
+            "filament.op.enum.eq" => Some(Op::EqEnum),
+            "filament.op.enum.ne" => Some(Op::NeEnum),
             "filament.op.boolean.and" => Some(Op::And),
             "filament.op.boolean.or" => Some(Op::Or),
             "filament.op.boolean.implies" => Some(Op::Implies),
@@ -731,6 +796,14 @@ impl Show<'_> {
             E::Int(value) => int_text(value),
             E::Bool(true) => if tla { "TRUE" } else { "True" }.to_owned(),
             E::Bool(false) => if tla { "FALSE" } else { "False" }.to_owned(),
+            E::Enum { owner, case } => {
+                let member = enum_member_name(owner, case);
+                if tla {
+                    format!("\"{member}\"")
+                } else {
+                    format!("{}.{}", enum_type_name(owner), member)
+                }
+            }
             E::Param(name) => name.clone(),
             E::Field {
                 object,
@@ -747,7 +820,7 @@ impl Show<'_> {
                     .get(*field)
                     .ok_or_else(|| refusal("checked package", "a read of an unknown field"))?;
                 let key = self.expr(key)?;
-                let name = mangle("fld_", &field.name);
+                let name = object.field(field);
                 if tla {
                     let tick = if *primed { "'" } else { "" };
                     format!("{}{tick}[{key}].{name}", object.variable())
@@ -760,7 +833,7 @@ impl Show<'_> {
                     );
                     match field.kind {
                         Kind::Bool => format!("({read} = true)"),
-                        Kind::Int { .. } => read,
+                        Kind::Int { .. } | Kind::Enum { .. } => read,
                     }
                 }
             }
@@ -777,6 +850,7 @@ impl Show<'_> {
                 match (op, tla) {
                     (Op::NeBool, true) => format!("~({left} <=> {right})"),
                     (Op::NeInt, false) => format!("(Ne {left} {right})"),
+                    (Op::NeEnum, false) => format!("(Ne {left} {right})"),
                     (Op::NeBool, false) => format!("Not ({left} <-> {right})"),
                     _ => {
                         let symbol = match (op, tla) {
@@ -788,9 +862,11 @@ impl Show<'_> {
                             (Op::Gt, _) => ">",
                             (Op::Ge, _) => ">=",
                             (Op::EqInt, _) => "=",
+                            (Op::EqEnum, _) => "=",
                             (Op::And, _) => "/\\",
                             (Op::Or, _) => "\\/",
                             (Op::NeInt, _) => "/=",
+                            (Op::NeEnum, _) => "/=",
                             (Op::Implies, true) => "=>",
                             (Op::Implies, false) => "->",
                             (Op::EqBool, true) => "<=>",
@@ -822,6 +898,12 @@ struct Definition {
     name: Option<String>,
     body: String,
     obligation: Option<String>,
+}
+
+struct NameRecord {
+    name: String,
+    node: usize,
+    binding: Option<String>,
 }
 
 fn escape(text: &str) -> String {
@@ -959,6 +1041,17 @@ fn range_conditions(path: &str, kind: &Kind, target: Target) -> Vec<String> {
                 Vec::new()
             }
         }
+        Kind::Enum { name, cases, .. } => {
+            let members = cases
+                .iter()
+                .map(|case| format!("\"{}\"", enum_member_name(name, case)))
+                .collect::<Vec<_>>();
+            if tla {
+                vec![format!("{path} \\in {{{}}}", members.join(", "))]
+            } else {
+                Vec::new()
+            }
+        }
         Kind::Int { lo, hi } => {
             let mut out = Vec::new();
             if tla {
@@ -979,6 +1072,14 @@ fn range_conditions(path: &str, kind: &Kind, target: Target) -> Vec<String> {
 fn tla_domain(kind: &Kind) -> String {
     match kind {
         Kind::Bool => "BOOLEAN".to_owned(),
+        Kind::Enum { name, cases, .. } => format!(
+            "{{{}}}",
+            cases
+                .iter()
+                .map(|case| format!("\"{}\"", enum_member_name(name, case)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Kind::Int {
             lo: Some(lo),
             hi: Some(hi),
@@ -1064,7 +1165,6 @@ pub(super) fn lower(
     if names.len() != objects.len() {
         return refuse("model/object_type", "two exported types share one name");
     }
-
     let mut lowerer = Lowerer {
         graph,
         objects: &objects,
@@ -1243,6 +1343,7 @@ pub(super) fn lower(
 enum Lit {
     Int(String),
     Bool(bool),
+    Enum { owner: String, case: String },
 }
 
 impl Lit {
@@ -1252,6 +1353,16 @@ impl Lit {
             (Self::Bool(true), Target::Tla) => "TRUE".to_owned(),
             (Self::Bool(false), Target::Tla) => "FALSE".to_owned(),
             (Self::Bool(value), Target::Lean) => value.to_string(),
+            (Self::Enum { owner, case }, Target::Tla) => {
+                format!("\"{}\"", enum_member_name(owner, case))
+            }
+            (Self::Enum { owner, case }, Target::Lean) => {
+                format!(
+                    "{}.{}",
+                    enum_type_name(owner),
+                    enum_member_name(owner, case)
+                )
+            }
         }
     }
 }
@@ -1272,6 +1383,12 @@ fn snapshot_rows(object: &Object, snapshot: &Value) -> Lower<Vec<(String, Vec<Li
                 let lit = match &field.kind {
                     Kind::Int { .. } => value["integer"].as_str().map(|n| Lit::Int(n.to_owned())),
                     Kind::Bool => value["boolean"].as_bool().map(Lit::Bool),
+                    Kind::Enum { name, .. } => {
+                        value["variant"]["case"].as_str().map(|case| Lit::Enum {
+                            owner: name.clone(),
+                            case: case.to_owned(),
+                        })
+                    }
                 };
                 values.push(lit.ok_or_else(|| {
                     refusal(
@@ -1293,7 +1410,7 @@ fn record_literal(object: &Object, values: &[Lit], target: Target) -> String {
         .iter()
         .zip(values)
         .map(|(field, value)| {
-            let name = mangle("fld_", &field.name);
+            let name = object.field(field);
             let value = value.text(target);
             match target {
                 Target::Tla => format!("{name} |-> {value}"),
@@ -1378,7 +1495,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
             .iter()
             .flat_map(|field| {
                 range_conditions(
-                    &format!("{v}[k].{}", mangle("fld_", &field.name)),
+                    &format!("{v}[k].{}", object.field(field)),
                     &field.kind,
                     target,
                 )
@@ -1428,7 +1545,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
     for (index, object) in objects.iter().enumerate() {
         let v = object.variable();
         for (operation, lowered) in object.operations.iter().zip(&input.operations[index]) {
-            let name = mangle("op_", &operation.name);
+            let name = object.operation(operation);
             let params = parameters(operation);
             let names: Vec<&str> = params.iter().map(|(name, _)| name.as_str()).collect();
             let mut lines = vec![format!("r_self \\in DOMAIN {v}")];
@@ -1441,7 +1558,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
             lines.extend(input.show.exprs(&lowered.post)?);
             lines.push(format!("DOMAIN {v}' = DOMAIN {v}"));
             for (field, receiver) in frame_fields(object, operation) {
-                let f = mangle("fld_", &field.name);
+                let f = object.field(field);
                 let guard = if receiver { "k /= r_self => " } else { "" };
                 lines.push(format!(
                     "\\A k \\in DOMAIN {v} : {guard}{v}'[k].{f} = {v}[k].{f}"
@@ -1514,6 +1631,39 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
 fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
     let target = Target::Lean;
     let objects = input.objects;
+    let mut enums = BTreeMap::new();
+    for kind in objects
+        .iter()
+        .flat_map(|object| object.fields.iter().map(|field| &field.kind))
+        .chain(
+            objects
+                .iter()
+                .flat_map(|object| object.operations.iter())
+                .flat_map(|operation| operation.params.iter().map(|param| &param.kind)),
+        )
+    {
+        if let Kind::Enum { id, name, cases } = kind {
+            enums
+                .entry(id.clone())
+                .or_insert_with(|| (name.clone(), cases.clone()));
+        }
+    }
+    for (name, cases) in enums.values() {
+        let constructors = cases
+            .iter()
+            .map(|case| format!("  | {}", enum_member_name(name, case)))
+            .collect::<Vec<_>>();
+        out.push(define(
+            input.first,
+            Some(enum_type_name(name)),
+            format!(
+                "inductive {} where\n{}\nderiving DecidableEq",
+                enum_type_name(name),
+                constructors.join("\n")
+            ),
+            None,
+        ));
+    }
     out.push(define(
         input.first,
         None,
@@ -1527,11 +1677,12 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             .fields
             .iter()
             .map(|field| {
-                let ty = match field.kind {
-                    Kind::Int { .. } => "Int",
-                    Kind::Bool => "Bool",
+                let ty = match &field.kind {
+                    Kind::Int { .. } => "Int".to_owned(),
+                    Kind::Bool => "Bool".to_owned(),
+                    Kind::Enum { name, .. } => enum_type_name(name),
                 };
-                format!("  {} : {ty}", mangle("fld_", &field.name))
+                format!("  {} : {ty}", object.field(field))
             })
             .collect();
         out.push(define(
@@ -1545,11 +1696,15 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             .fields
             .iter()
             .map(|field| {
-                let value = match field.kind {
-                    Kind::Int { .. } => "0",
-                    Kind::Bool => "false",
+                let value = match &field.kind {
+                    Kind::Int { .. } => "0".to_owned(),
+                    Kind::Bool => "false".to_owned(),
+                    Kind::Enum { name, cases, .. } => cases.first().map_or_else(
+                        || "".to_owned(),
+                        |case| format!("{}.{}", enum_type_name(name), enum_member_name(name, case)),
+                    ),
                 };
-                format!("{} := {value}", mangle("fld_", &field.name))
+                format!("{} := {value}", object.field(field))
             })
             .collect();
         let default = mangle("F_default_", &object.name);
@@ -1591,11 +1746,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             .fields
             .iter()
             .flat_map(|field| {
-                range_conditions(
-                    &format!("e.2.{}", mangle("fld_", &field.name)),
-                    &field.kind,
-                    target,
-                )
+                range_conditions(&format!("e.2.{}", object.field(field)), &field.kind, target)
             })
             .collect();
         let each = if conditions.is_empty() {
@@ -1688,15 +1839,16 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
         let has = mangle("F_has_", &object.name);
         let get = mangle("F_get_", &object.name);
         for (operation, lowered) in object.operations.iter().zip(&input.operations[index]) {
-            let name = mangle("op_", &operation.name);
+            let name = object.operation(operation);
             let params = parameters(operation);
             let typed: Vec<String> = params
                 .iter()
                 .map(|(param, kind)| {
                     let ty = match kind {
-                        None => "List Nat",
-                        Some(Kind::Bool) => "Bool",
-                        Some(Kind::Int { .. }) => "Int",
+                        None => "List Nat".to_owned(),
+                        Some(Kind::Bool) => "Bool".to_owned(),
+                        Some(Kind::Int { .. }) => "Int".to_owned(),
+                        Some(Kind::Enum { name, .. }) => enum_type_name(name),
                     };
                     format!("({param} : {ty})")
                 })
@@ -1713,7 +1865,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 "List.map (fun e => e.1) s'.{v} = List.map (fun e => e.1) s.{v}"
             ));
             for (field, receiver) in frame_fields(object, operation) {
-                let f = mangle("fld_", &field.name);
+                let f = object.field(field);
                 let guard = if receiver { "Not (k = r_self) -> " } else { "" };
                 lines.push(format!(
                     "forall k, {has} k s.{v} -> {guard}({get} k s'.{v}).{f} = ({get} k s.{v}).{f}"
@@ -1814,6 +1966,7 @@ fn assemble(
     extra: &Extra,
     definitions: Vec<Definition>,
 ) -> Lower<Lowered> {
+    let state_clauses = state_clauses(graph)?;
     let first = objects.first().map_or(0, |object| object.node);
     let mut text = match target {
         Target::Tla => {
@@ -1846,15 +1999,57 @@ fn assemble(
         }
         Target::Lean => format!("namespace {module}\n"),
     };
-    let mut name_map = Vec::new();
+    let mut name_records = Vec::new();
     for object in objects {
-        let region = source_region(graph, object.node)
-            .map_or(Value::Null, |(_, start, end)| json!([start, end]));
-        name_map.push(json!({
-            "name": object.variable(),
-            "node": node_id_text(graph, object.node)?,
-            "region": region,
-        }));
+        name_records.push(NameRecord {
+            name: object.variable(),
+            node: object.node,
+            binding: None,
+        });
+        for field in &object.fields {
+            name_records.push(NameRecord {
+                name: object.field(field),
+                node: object.node,
+                binding: Some(node_id_text(graph, object.node)?),
+            });
+        }
+        for operation in &object.operations {
+            let position = operation_anchor(graph, object, operation).unwrap_or(object.node);
+            name_records.push(NameRecord {
+                name: object.operation(operation),
+                node: position,
+                binding: None,
+            });
+            for parameter in &operation.params {
+                let node =
+                    operation_parameter_node(graph, &state_clauses, position, &parameter.name)
+                        .unwrap_or(position);
+                name_records.push(NameRecord {
+                    name: mangle("p_", &parameter.name),
+                    node,
+                    binding: Some(node_id_text(graph, position)?),
+                });
+            }
+        }
+    }
+    for object in objects {
+        let owner = node_id_text(graph, object.node)?;
+        for kind in object.fields.iter().map(|field| &field.kind).chain(
+            object
+                .operations
+                .iter()
+                .flat_map(|operation| operation.params.iter().map(|param| &param.kind)),
+        ) {
+            if let Kind::Enum { name, cases, .. } = kind {
+                for case in cases {
+                    name_records.push(NameRecord {
+                        name: enum_member_name(name, case),
+                        node: object.node,
+                        binding: Some(owner.clone()),
+                    });
+                }
+            }
+        }
     }
     let count = definitions.len();
     let mut regions: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
@@ -1870,18 +2065,36 @@ fn assemble(
             regions.entry(name).or_default().push((start, end));
         }
         if let Some(name) = definition.name {
-            let region = source_region(graph, definition.node)
-                .map_or(Value::Null, |(_, start, end)| json!([start, end]));
-            name_map.push(json!({
-                "name": name,
-                "node": node_id_text(graph, definition.node)?,
-                "region": region,
-            }));
+            name_records.push(NameRecord {
+                name,
+                node: definition.node,
+                binding: None,
+            });
         }
     }
     match target {
         Target::Tla => text.push_str("\n====\n"),
         Target::Lean => text.push_str(&format!("\nend {module}\n")),
+    }
+    name_records.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.binding.cmp(&right.binding))
+    });
+    name_records.dedup_by(|right, left| right.name == left.name && right.binding == left.binding);
+    let mut name_map = Vec::with_capacity(name_records.len());
+    for record in name_records {
+        let region = source_region(graph, record.node)
+            .map_or(Value::Null, |(_, start, end)| json!([start, end]));
+        let mut entry = json!({
+            "name": record.name,
+            "node": node_id_text(graph, record.node)?,
+            "region": region,
+        });
+        if let Some(binding) = record.binding {
+            entry["binding"] = json!(binding);
+        }
+        name_map.push(entry);
     }
     let mut conditions: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for cond in &extra.conditional {
@@ -1902,6 +2115,52 @@ fn assemble(
         conditions,
         definitions: count,
     })
+}
+
+fn operation_anchor(graph: &Graph<'_>, object: &Object, operation: &Operation) -> Option<usize> {
+    graph
+        .package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(position, node)| {
+            if &*node.node_tag != "state" || &*node.semantic_form != "operation_anchor" {
+                return None;
+            }
+            let body = serde_json::to_value(&node.body).ok()?;
+            let members = items(&body, "members");
+            let context = members
+                .iter()
+                .find(|member| str_of(member, "name") == Some("context"))?;
+            let operation_member = members
+                .iter()
+                .find(|member| str_of(member, "name") == Some("operation"))?;
+            let context_path = context["value"]["target"]["path"].as_array()?;
+            let context_identity = context_path.get(2)?.as_str()?;
+            let operation_name = operation_member["value"]["value"].as_str()?;
+            (context_identity == object.id
+                && (operation_name == operation.name || operation_name == operation.id))
+                .then_some(position)
+        })
+}
+
+fn operation_parameter_node(
+    graph: &Graph<'_>,
+    clauses: &[StateClause],
+    anchor: usize,
+    parameter: &str,
+) -> Option<usize> {
+    clauses
+        .iter()
+        .filter(|clause| clause.anchor == Some(anchor))
+        .flat_map(|clause| graph.closure(clause.position))
+        .find(|&position| {
+            let node = graph.node(position);
+            &*node.node_tag == "value"
+                && &*node.semantic_form == "parameter"
+                && parameter_name(graph, position).as_deref() == Some(parameter)
+        })
 }
 
 /// `e` with the parameter `from` renamed to `to`.

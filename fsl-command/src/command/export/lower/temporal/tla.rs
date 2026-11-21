@@ -16,10 +16,10 @@
 //! every step of `Next_<clause>`, which includes the terminal step, so both
 //! targets count FSL's terminal stutter positions.
 
-use super::{CONSTRUCT, ClauseLow, Iv, Tf};
+use super::{ClauseLow, Iv, Tf, CONSTRUCT};
 use crate::command::export::lower::{
-    Definition, Input, Lower, Object, Operation, Target, bullets, defer_at, define, mangle,
-    parameters, refusal, scalars, snapshot_rows, tla_domain,
+    bullets, defer_at, define, mangle, parameters, refusal, scalars, snapshot_rows, tla_domain,
+    Definition, Input, Lower, Object, Operation, Target,
 };
 use std::collections::BTreeSet;
 
@@ -712,7 +712,11 @@ impl Ctx<'_> {
 }
 
 fn boolean(value: bool) -> &'static str {
-    if value { "TRUE" } else { "FALSE" }
+    if value {
+        "TRUE"
+    } else {
+        "FALSE"
+    }
 }
 
 // ---- Deterministic monitors ------------------------------------------------
@@ -794,8 +798,7 @@ fn monitor_step(
 
 /// The action an operation contributes, with its arguments chosen.
 fn operation_action(object: &Object, operation: &Operation, ids: &str, receiver: bool) -> String {
-    let _ = object;
-    let name = mangle("op_", &operation.name);
+    let name = object.operation(operation);
     let params = parameters(operation);
     let names: Vec<&str> = params.iter().map(|(name, _)| name.as_str()).collect();
     let binders: Vec<String> = params
@@ -951,7 +954,6 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
             );
         }
     }
-
     let names = &ctx.names;
     let composed = !vars.is_empty();
     let fair = fairness(&ctx)?;
