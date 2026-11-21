@@ -756,7 +756,7 @@ pub(super) fn replay_subsystem(
         return Err(ProbabilityWitnessError::Refused);
     }
     step::scheduler(&witness.scheduler, limits, &mut meter, &mut storage, cancel)?;
-    match super::super::document::measure::check_mean_refutation(
+    let checked = super::super::document::measure::check_mean_refutation(
         system,
         claim,
         &witness.item,
@@ -765,8 +765,17 @@ pub(super) fn replay_subsystem(
         document_limits,
         cancel,
     )
-    .map_err(bounded::document_error)?
-    {
+    .map_err(|error| match error {
+        ProbabilityDocumentError::MalformedMember(member)
+        | ProbabilityDocumentError::MissingMember(member) => {
+            ProbabilityWitnessError::CertificateRejected(ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::Malformed,
+                at: ProbabilityCertificateLocus::Member(member),
+            })
+        }
+        other => bounded::document_error(other),
+    })?;
+    match checked {
         super::super::document::measure::MeanRefutationCheck::Accepted => {
             poll_cancel(cancel)?;
             Ok(ProbabilityWitnessReplay::Reproduced(Box::new(

@@ -727,3 +727,208 @@ fn unreachable_workload_activation_has_a_certified_value_free_vacuity_basis() {
         "{checked:?}"
     );
 }
+
+fn document_limits() -> fsl_replay::ProbabilityDocumentLimits {
+    fsl_replay::ProbabilityDocumentLimits {
+        bytes: 1_000_000,
+        storage_bytes: 8_000_000,
+        states: 128,
+        edges: 1024,
+        scalar_bits: 128,
+        accounting: fsl_replay::AccountingLimits::default().0,
+    }
+}
+
+#[trace(
+    "TC-3152",
+    "FR-1043-AC-5",
+    "FR-202-AC-27",
+    "FR-1043-AC-9",
+    "FR-202-AC-29"
+)]
+#[test]
+fn workload_mean_refutation_uses_a_checked_subsystem_and_equality_never_refutes() {
+    let claims = claim(
+        "No",
+        "Steady",
+        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+    ) + &claim(
+        "EqualGe",
+        "Steady",
+        "mean of fraction holds(m.delivered) over [0,2] >= rational(5,12)",
+    ) + &claim(
+        "EqualLe",
+        "Steady",
+        "mean of fraction holds(m.delivered) over [0,2] <= rational(5,12)",
+    );
+    let world = World::new(&retry(&claims));
+    let record = settle(&world, "No", ModelCheckLimits::default());
+    assert_eq!(
+        record.terminal().unwrap().value(),
+        &TerminalValue::Refuted,
+        "{:?}",
+        record.settlement
+    );
+    let token = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("a checked subsystem");
+    assert!(token.evidence().paths.is_empty());
+    let subsystem = token
+        .evidence()
+        .subsystem
+        .as_ref()
+        .expect("fraction expectation certificate");
+    let document: Value = serde_json::from_slice(subsystem.as_bytes()).unwrap();
+    assert_eq!(document["kind"], "exact");
+    assert_eq!(document["objective"]["payoff"], "fraction");
+    assert_eq!(
+        token.wire.as_ref().unwrap()["evidence"]["type"],
+        "subsystem"
+    );
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let replay = fsl_replay::replay_probabilistic_witness(
+        &world.package,
+        &system,
+        &token.evidence().item,
+        token.evidence(),
+        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            replay,
+            Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+        ),
+        "{replay:?}"
+    );
+    for name in ["EqualGe", "EqualLe"] {
+        proof(&world, name, ratio(5, 12));
+        let mut offered = token.evidence().clone();
+        offered.item = fsl_replay::probabilistic_claim_identity(world.claim(name)).unwrap();
+        let mut document = fsl_replay::read_measure_probability_certificate(
+            subsystem.as_bytes(),
+            document_limits(),
+            &Cancel::new(),
+        )
+        .unwrap();
+        document.identity = offered.item.clone();
+        offered.subsystem = Some(Box::new(
+            fsl_replay::ProbabilitySubsystemCertificate::from_document(
+                &document,
+                document_limits(),
+                &Cancel::new(),
+            )
+            .unwrap(),
+        ));
+        let replay = fsl_replay::replay_probabilistic_witness(
+            &world.package,
+            &system,
+            &offered.item,
+            &offered,
+            &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(
+                replay,
+                Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                    ProbabilityCertificateRejection {
+                        rule: ProbabilityCertificateRule::ThresholdMissed,
+                        ..
+                    }
+                ))
+            ),
+            "equality: {replay:?}"
+        );
+    }
+    let mut document = fsl_replay::read_measure_probability_certificate(
+        subsystem.as_bytes(),
+        document_limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    document.values[0].value = ratio(1, 7);
+    let mut offered = token.evidence().clone();
+    offered.subsystem = Some(Box::new(
+        fsl_replay::ProbabilitySubsystemCertificate::from_document(
+            &document,
+            document_limits(),
+            &Cancel::new(),
+        )
+        .unwrap(),
+    ));
+    let replay = fsl_replay::replay_probabilistic_witness(
+        &world.package,
+        &system,
+        &offered.item,
+        &offered,
+        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            replay,
+            Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    ..
+                }
+            ))
+        ),
+        "altered exact value: {replay:?}"
+    );
+}
+
+#[trace("TC-3152", "FR-1043-AC-8", "FR-1043-AC-9", "FR-202-AC-29")]
+#[test]
+fn every_scheduler_exact_mean_witness_attains_the_deciding_extremum() {
+    let claims = claim(
+        "MinNo",
+        "every scheduler",
+        "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+    ) + &claim(
+        "MaxNo",
+        "every scheduler",
+        "mean of fraction holds(m.delivered) over [0,2] <= rational(1,3)",
+    );
+    let world = World::new(&retry(&claims));
+    for name in ["MinNo", "MaxNo"] {
+        refuted(&world, name);
+    }
+    let baseline = settle(&world, "MinNo", ModelCheckLimits::default());
+    let token = baseline.probabilistic_counterexample.as_ref().unwrap();
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let initial = system.initial().remove(0);
+    let fast = system
+        .actions(&initial)
+        .unwrap()
+        .unwrap()
+        .remove(0)
+        .identity;
+    let fast =
+        fsl_replay::ProductAction::Identity(fsl_replay::Schedule::of(&system, &fast).unwrap());
+    let mut changed = token.evidence().clone();
+    let row = changed
+        .scheduler
+        .iter_mut()
+        .find(|(key, _)| key == &changed.initial_key)
+        .unwrap();
+    assert_ne!(
+        row.1, fast,
+        "the adverse action must differ from the actual minimizing policy"
+    );
+    row.1 = fast;
+    let replay = fsl_replay::replay_probabilistic_witness(
+        &world.package,
+        &system,
+        &changed.item,
+        &changed,
+        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(replay, Ok(fsl_replay::ProbabilityWitnessReplay::Parity)),
+        "{replay:?}"
+    );
+}

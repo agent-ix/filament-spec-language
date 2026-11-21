@@ -79,7 +79,7 @@ pub(super) fn run(
     }
 }
 
-fn failure(
+pub(super) fn failure(
     error: ProbabilityWitnessError,
     subject: SubjectLimits<'_>,
     limits: &crate::exact_probabilistic::ExactProbLimits,

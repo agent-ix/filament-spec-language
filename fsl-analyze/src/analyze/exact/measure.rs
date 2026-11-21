@@ -289,6 +289,21 @@ pub(super) fn run(
     })();
     let failed_bound = matches!(&checked, Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) if rejection.rule == ProbabilityCertificateRule::ThresholdMissed || matches!(&claim.form,ProbForm::Quantile { threshold:Bound::AtLeast(_),.. }) && values.get(initial.index()).is_some_and(Rational::is_zero));
     if failed_bound && tamper.is_none() {
+        if matches!(claim.form, ProbForm::MeanOfFraction { .. }) {
+            return refute_mean(
+                &system,
+                claim,
+                &product,
+                &policy,
+                initial,
+                reference,
+                &certificate,
+                &limits,
+                cancel,
+                subject,
+                tamper_witness,
+            );
+        }
         return refute(
             &system,
             claim,
@@ -503,5 +518,136 @@ fn induction_failure(error: QualifiedFhError, cancel: &Cancel) -> ProbabilityDoc
             | FhError::InvalidProbability
             | FhError::InvalidPrecision => ProbabilityDocumentError::Malformed,
         },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn refute_mean(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    product: &ProbProduct,
+    policy: &[Option<usize>],
+    initial: crate::exact_probabilistic::ProbStateId,
+    binding: Option<&ObjectReference>,
+    certificate: &ExactProbabilityCertificate,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+) -> EngineReport {
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(_) => return broken(),
+    };
+    let Some(package) = system.source_package() else {
+        return not_yet();
+    };
+    let document_limits = ProbabilityDocumentLimits {
+        bytes: limits.document.bytes,
+        storage_bytes: limits.document.storage_bytes,
+        states: limits.model.limits.max_states,
+        edges: limits.model.limits.max_transitions,
+        scalar_bits: limits.max_rational_bits,
+        accounting: system.meter_limits(),
+    };
+    let document = match measure_probability_certificate_document(
+        system,
+        package.graph().probabilistic_model().claims(),
+        &item,
+        certificate,
+        MeasurePayoffKind::Fraction,
+        document_limits,
+        cancel,
+    ) {
+        Ok(document) => document,
+        Err(error) => return document_failure(error, subject),
+    };
+    let subsystem = match fsl_replay::ProbabilitySubsystemCertificate::from_document(
+        &document,
+        document_limits,
+        cancel,
+    ) {
+        Ok(subsystem) => subsystem,
+        Err(error) => return document_failure(error, subject),
+    };
+    let key_of = |state: &crate::exact_probabilistic::ProbKey| {
+        state
+            .certificate_state
+            .clone()
+            .ok_or(ProbabilityDocumentError::Malformed)
+    };
+    let mut scheduler = Vec::new();
+    let mut spelled = Vec::new();
+    if matches!(claim.scheduler, ProbScheduler::Every) {
+        for state in product.ids() {
+            let Some(action) = crate::exact_probabilistic::policy_action(product, state, policy)
+            else {
+                continue;
+            };
+            let Some(node) = product.states.get(state.index()) else {
+                return broken();
+            };
+            let key = match key_of(node) {
+                Ok(key) => key,
+                Err(error) => return document_failure(error, subject),
+            };
+            if let crate::exact_probabilistic::ProductAction::Identity(identity) = &action {
+                spelled.push((
+                    fsl_eval::simulation::StateKey::from_canonical_bytes(key.as_bytes().to_vec()),
+                    identity.clone(),
+                ));
+            }
+            let action = match canonical_action(system, product, &action, &key_of) {
+                Ok(action) => action,
+                Err(_) => return not_yet(),
+            };
+            scheduler.push((key, action));
+        }
+    }
+    scheduler.sort_by(|a, b| a.0.cmp(&b.0));
+    let initials = system.initial();
+    let [first] = initials.as_slice() else {
+        return not_yet();
+    };
+    let initial_key = match product
+        .states
+        .get(initial.index())
+        .and_then(|state| state.certificate_state.clone())
+    {
+        Some(key) => key,
+        None => return broken(),
+    };
+    let mut witness = ProbabilisticCounterexample {
+        item: item.clone(),
+        binding: binding.cloned(),
+        initial: first.clone(),
+        initial_key,
+        scheduler,
+        paths: Vec::new(),
+        subsystem: Some(Box::new(subsystem)),
+    };
+    if let Some(tamper) = tamper {
+        tamper(&mut witness);
+    }
+    match replay_probabilistic_witness(package, system, &item, &witness, limits, cancel) {
+        Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
+            let ProbForm::MeanOfFraction { bound, .. } = &claim.form else {
+                return broken();
+            };
+            let scope = package.graph().scope();
+            let wire = fsl_replay::probabilistic_wire(
+                &witness,
+                bound,
+                scope.types(),
+                scope.variant_types(),
+                &|state| system.state_key(state).ok().map(|(_, key)| key),
+                &spelled,
+            );
+            EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
+        }
+        Ok(ProbabilityWitnessReplay::Parity) => {
+            EngineReport::Exact(Box::new(ExactReport::ReplayParity))
+        }
+        Err(error) => undefined::failure(error, subject, limits),
     }
 }

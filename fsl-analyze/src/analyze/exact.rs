@@ -2053,34 +2053,7 @@ fn replay_produced_witness(
             )
         }
     };
-    let replay_choice = |choice: &ProductAction| -> Result<fsl_replay::ProductAction, ()> {
-        use crate::exact_probabilistic::ProductAction as AnalyzerAction;
-        Ok(match choice {
-            AnalyzerAction::Identity(identity) => fsl_replay::ProductAction::Identity(
-                fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
-            ),
-            AnalyzerAction::PostState(target) => {
-                let target = product
-                    .states
-                    .iter()
-                    .find(|state| *state == target.as_ref())
-                    .ok_or(())?;
-                fsl_replay::ProductAction::PostState(key_of(target).map_err(|_| ())?)
-            }
-            AnalyzerAction::TerminalStutter => fsl_replay::ProductAction::TerminalStutter,
-            AnalyzerAction::UnitDelay => fsl_replay::ProductAction::UnitDelay,
-            AnalyzerAction::EnterIdleDelay => fsl_replay::ProductAction::EnterIdleDelay,
-            AnalyzerAction::IdleDelay => fsl_replay::ProductAction::IdleDelay,
-            AnalyzerAction::IdleObserve => fsl_replay::ProductAction::IdleObserve,
-            AnalyzerAction::WorkloadResolve { identity, delay } => {
-                fsl_replay::ProductAction::WorkloadResolve {
-                    schedule: fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
-                    delay: *delay,
-                }
-            }
-            AnalyzerAction::FreeDelays(_) => return Err(()),
-        })
-    };
+    let replay_choice = |choice: &ProductAction| canonical_action(system, product, choice, &key_of);
     let Some(initial_state) = product.states.get(initial.index()) else {
         return broken();
     };
@@ -2409,6 +2382,42 @@ fn replay_produced_witness(
             | ExactProbabilityGraphError::ClaimNotBound,
         )) => broken(),
     }
+}
+
+fn canonical_action(
+    system: &ModelSystem<'_>,
+    product: &ProbProduct,
+    choice: &crate::exact_probabilistic::ProductAction,
+    key_of: &impl Fn(
+        &crate::exact_probabilistic::ProbKey,
+    ) -> Result<ProbabilityProductKey, ProbabilityDocumentError>,
+) -> Result<fsl_replay::ProductAction, ()> {
+    use crate::exact_probabilistic::ProductAction as AnalyzerAction;
+    Ok(match choice {
+        AnalyzerAction::Identity(identity) => fsl_replay::ProductAction::Identity(
+            fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
+        ),
+        AnalyzerAction::PostState(target) => {
+            let target = product
+                .states
+                .iter()
+                .find(|state| *state == target.as_ref())
+                .ok_or(())?;
+            fsl_replay::ProductAction::PostState(key_of(target).map_err(|_| ())?)
+        }
+        AnalyzerAction::TerminalStutter => fsl_replay::ProductAction::TerminalStutter,
+        AnalyzerAction::UnitDelay => fsl_replay::ProductAction::UnitDelay,
+        AnalyzerAction::EnterIdleDelay => fsl_replay::ProductAction::EnterIdleDelay,
+        AnalyzerAction::IdleDelay => fsl_replay::ProductAction::IdleDelay,
+        AnalyzerAction::IdleObserve => fsl_replay::ProductAction::IdleObserve,
+        AnalyzerAction::WorkloadResolve { identity, delay } => {
+            fsl_replay::ProductAction::WorkloadResolve {
+                schedule: fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
+                delay: *delay,
+            }
+        }
+        AnalyzerAction::FreeDelays(_) => return Err(()),
+    })
 }
 
 /// Test seam altering produced typed evidence before independent replay.
