@@ -39,7 +39,9 @@ selection a source run reads from its header and bindings from the
 package's own `lock` and name rows, run the request's member over the
 admitted package through FR-940's read view, and never compile source or
 fall back to it. The outcome SHALL equal the outcome of the same request over
-the source the package was compiled from.
+the source the package was compiled from, with the same sources supplied for
+any text or locus rendering that requires them. Optional caller source
+provisions below do not participate in compilation or package execution.
 
 ### Decision: the package's records replace the source and its bindings
 
@@ -77,6 +79,8 @@ request member that would restate one of them (a `program`, `libraries`,
   `semantic-ir/2.0.0` documents and `native-model-unit/1` units compiled to
   their documents (FR-710), each matched by identity to one of the package's
   recorded model selections.
+- `sources`: optional top-level caller source provisions, admitted only
+  beside `package`, as "Caller source provisions" specifies below.
 - Exactly one run member: `call`, `clause`, `items`, `synthesis`,
   `verification_plan` (with its `document`, FSpec FR-824), `export` or
   `tl_lowering`. `tl_lowering` is FR-931's member: an object with exactly the
@@ -145,6 +149,81 @@ request echo carrying `package` where a source request carries `program`.
   cause `missing-file`, naming `/request/package/equality`, exit 20, and
   write no member outcome (the bytes-only `Equality(Missing)` refusal,
   FR-533). A package with no equality application runs from `{file}` alone.
+
+### Caller source provisions
+
+When a package request carries `sources`, FSL SHALL decode it as an ordered
+array of the existing source-file selection records. Each entry is a closed
+object with all five members required:
+
+```json
+{"file":"unit.native","authority":"example","identity":"unit-1","document":"doc-1","formal_revision":1}
+```
+
+`file`, `authority`, `identity` and `document` are strings;
+`formal_revision` is a JSON unsigned 64-bit integer admitted by the existing
+positive `SourceRevision` constructor. The existing `SourceDocumentId`
+constructor validates `document`. This reuses the command's `SourceFile`
+record, including its formal metadata; it introduces no inline-text record.
+Formal metadata is a caller assignment, not authentication. Native source
+admission remains [FR-001](FR-001-read-exact-source.md)'s `Source::read_typed`.
+
+When `sources` is absent or `[]`, FSL SHALL supply no rendering source from
+this member. When the array repeats an exact native `(authority, identity)`
+pair, FSL SHALL refuse the second entry, even if its file or formal metadata
+differs or its bytes would be equal. No label, path, text or metadata is
+normalized. This member is admitted for every package run member; it supplies
+neither compiler input, libraries, import resolution nor package bindings.
+
+Before opening any selected file, FSL SHALL reject a malformed carrier and
+the source-route conflict with the following request-stage diagnostics, exit
+20, with no member outcome:
+
+| Defect | Code | Member named |
+| --- | --- | --- |
+| `sources` is `null`, an object or another non-array value | `invalid-request` | `/request/sources` |
+| repeated top-level `sources` member | `invalid-request` | `/request/sources` |
+| an entry is not an object, including a positional record array | `invalid-request` | `/request/sources/<i>` |
+| an entry lacks, repeats or adds a field, or a field has the wrong JSON type | `invalid-request` | `/request/sources/<i>/<field>` |
+| an entry repeats an earlier native pair | `invalid-request` | `/request/sources/<i>` for the second entry |
+| `document` or `formal_revision` fails its existing constructor, including revision zero | `invalid_identifier` | `/request/sources/<i>/document` or `/request/sources/<i>/formal_revision`, retaining the constructor diagnostic |
+| `program` and `sources` both occur, including `sources: []` | `invalid-request` | `/request/sources` |
+
+After package and model admission, FSL SHALL read and admit the explicitly
+selected files once in array order, before executing the run member, using
+[FR-026](FR-026-run-standalone-native-workflow.md)'s path resolution,
+`dependent_bytes` budget and shared 64-selected-file ceiling. The array's
+JSON remains subject to `request_bytes`. These are the existing intake
+limits; reaching one preserves `resource_exhausted`, category incomplete,
+exit 22. An unavailable source file preserves the existing `io_error` at
+stage `file`, exit 20. An admitted-file source failure, including a blank
+native label, invalid UTF-8, BOM or NUL, preserves FR-001's native source/S0
+diagnostic and original offered-source details, exit 20. Neither failure is
+reclassified as `SourceNotSupplied`.
+
+When execution renders a source region, FSL SHALL match it only by the exact
+native `authority` and `identity` of the caller's admitted `Source`. The file
+path, formal document/revision and source bytes confer no authentication of
+that match. A locus renders its `file` from that source's authored path and
+its span from the original source bytes. A finite-window decision-support
+atom renders the exact whole atom slice, including authored spaces, under
+[FR-283](FR-283-monitor-a-supplied-trace-offline.md) and
+[FR-501](FR-501-evaluate-a-temporal-clause-under-the-timestamped-event-finite-window-profile.md),
+for timestamped and progressed inputs, with or without a progress ledger.
+If no admitted source matches, or the matching source does not hold the
+region on UTF-8 boundaries, FSL SHALL preserve FR-283's `SourceNotSupplied`
+contract: `invalid_runtime_input`/`missing-member` naming `sources`, stage
+`call`, exit 20, with the region's source identity, the clause when applicable,
+and no clause record. This also applies to source-native condition and call
+refusal loci; it is not an internal fault or a package-reader refusal.
+
+FSL SHALL obtain rendering text only from these caller provisions. It SHALL
+NOT discover source files in a handoff, open an unselected source path,
+compile these sources, derive source authentication from a hash, or change
+the package's semantic authority. Direct byte-only adapters receive admitted
+`Source` values from their caller and perform no file intake. The canonical
+TL atom text of [FR-931](FR-931-select-the-tl-correspondence-through-the-tl-lowering-request-member.md)
+is unchanged: its lowering uses package reader projections, not `sources`.
 
 ### A package that cannot run
 
@@ -278,6 +357,11 @@ reader refusal in the table.
 | FR-1039-AC-5 | FR-961-AC-2's `Even` request with `call.requirements` `{}` and no providers, and FR-062's RR-12 unit called as `f` with `n = 4` and `requirements` `{}`, each compiled to a package file with an FR-517 handoff and run over `package` `{"file": P}` (RR-12, which holds no equality application) or `{"file": P, "equality": E}` (`Even`, whose `n * 2 - n = n` is one; `E` its handoff's `equality.json`) with the source file removed, write `requirements` and `registry` members equal byte for byte to the source route's (the same request indices, claims, extents, path conditions, records and categories), and the `execute` outcome's `items` equal the source route's; RR-12's `g` called over the package writes `requirements` `[]`; an `items` entry naming a claim of `f` in a call of `g` refuses `UnknownRequirementClaim` before any item is negotiated, as on the source route; the package with the row of `f`'s `+` record removed refuses at stage `request`, exit 20, `invalid_package`/`invalid-value` at `/request/package/semantic_graph/nodes/{n}/body` (FSpec FR-825 rule 14), and settles no item; no request over the package refuses `call.requirements` as not implemented; `Even` selected as `{"file": P}` alone refuses `invalid_package`/`missing-file` at `/request/package/equality`, exit 20. | Test (TC-3019) |
 | FR-1039-AC-6 | FR-931-AC-1's `Low` unit compiled to a package file with an FR-517 handoff and selected as `package` `{"file": P, "equality": E}`, `E` its handoff's `equality.json`, with the source file removed, runs `tl_lowering` `{"clause": "Low"}` and `{"clause": "Low", "correspondence": "mltl.online-prefix/v1"}` and returns the records the source route returns for the same members, byte-equal, exit 0: each carries `clause` `Low`, `disposition` `supported`, its `correspondence` (`mltl.closed-trace/v1`, then `mltl.online-prefix/v1`), `formula` `G[0,3] p0`, `atoms` `{"p0": "holds(c.versionNumber <= 2)"}` and the source route's `classification`, built from the `Low` row of `temporal_clause_names`, the `temporal_profile` law of its `temporal_clause` node and that node's `formula` argument (FR-931 "The lowering input"); `{"clause": "Low", "correspondence": "mltl.origin-complete-history/v1"}` returns the source route's `unsupported` record, exit 21; `{"clause": "Nothing"}` refuses `missing_declaration`/`missing-name` naming `tl_lowering.clause`, exit 20; `{"clause": "Low", "formula": 1}` refuses `invalid-request` at stage `request` naming `tl_lowering.formula`, exit 20; and `tl_lowering` beside `call` refuses `invalid-request` naming `tl_lowering`, exit 20; `{"clause": "Low", "cross_evaluate": {"initial": S, "max_steps": 2}}` (FR-931-AC-6's snapshot) refuses `invalid-request` at stage `request` with `details` `{"member": "tl_lowering.cross_evaluate", "requires": "directory"}`, exit 20, and over the handoff `{"directory": D}` returns the source route's record with its `cross_evaluation`, byte-equal. No response is the not-implemented refusal, and none is a `call` or `clause` outcome. | Test (TC-3019) |
 | FR-1039-AC-7 | FR-1039-AC-6's `Low` package with a defect in a piece of the lowering input refuses the whole request at stage `request`, exit 20, with no `tl_lowering` record: with its `temporal_clause_names` member removed, `invalid_package`/`invalid-value` at `/request/package/temporal_clause_names`; with the `temporal_profile` law of the `Low` node naming `filament.temporal.unknown/v1`, `unknown_profile`/`unsupported-selection` at `/request/package/semantic_graph/nodes/{n}/body/operation/laws/0/definition`. FR-931-AC-16's unit compiled to a package with the source removed returns, for `{"clause": "Low"}`, the source route's record byte-equal, its atom `count<ix://I/Small>` printed from the `type_argument` member's `alias` (FSpec FR-322 "Named type arguments"). | Test (TC-3019) |
+| FR-1039-AC-8 | A package request admits absent `sources`, `[]`, and an ordered array of exactly the five-field records above. Every malformed carrier and constructor-invalid value in the caller source table refuses with its stated request-stage code, member path and exit 20 before any selected file opens, including when `package` names an unavailable file. A repeated native pair refuses at its second index despite different paths or formal metadata; distinct native pairs are admitted in array order. | Test |
+| FR-1039-AC-9 | With valid package and model inputs, each explicit source file is read and admitted once in array order before member execution. An unavailable source file gives `io_error` at stage `file`, exit 20; invalid UTF-8, BOM, NUL and each blank native label preserve FR-001's source/S0 code, cause and offered-source details. These failures produce no member outcome and are distinct from missing-region-source refusals. FR-026's shared intake ceilings apply without an additional source limit. | Test |
+| FR-1039-AC-10 | Source and package runs of TC-1295 rows 41 and 42 use the same admitted source bytes and native references: timestamped and progressed inputs, with and without a ledger, render non-empty decision support with the exact whole atom `holds( p )`. Removing or changing its reference, shortening the admitted source below the region, or placing a region endpoint inside a UTF-8 scalar gives `SourceNotSupplied`, `invalid_runtime_input`/`missing-member` naming `sources`, stage `call`, exit 20, source identity and clause, no clause record. Handoff source bytes cannot satisfy the request. | Test |
+| FR-1039-AC-11 | A package call refusal and a refused source-native condition with a region locus render the same code, cause, fields and native source span as their source runs, with `file` equal to the caller-supplied authored path even when it differs from the compiler's path. An omitted or wrong native reference, a short source or a non-UTF-8-boundary endpoint gives the caller-source refusal in AC-10 at stage `call`, exit 20, with no rendered member outcome. Different valid formal metadata does not change native region matching or atom text. | Test |
+| FR-1039-AC-12 | A package TL lowering with absent `sources`, `[]` and valid caller sources produces the same canonical atom text from the package projections as FR-931 specifies. Caller sources neither change package evaluation nor supply libraries, imports or bindings; no adapter discovers handoff source bytes, compiles caller sources or authenticates caller labels against their bytes. | Test |
 
 ## Dependencies
 

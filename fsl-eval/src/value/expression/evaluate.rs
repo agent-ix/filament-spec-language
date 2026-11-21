@@ -46,7 +46,7 @@ use filament_exact::{
 };
 use filament_exact::{
     compare_keys, form, form_grouped, retain_composite, CollectionValue, CompositeValue,
-    FieldValue, ObjectId, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
+    FieldValue, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
 };
 use filament_exact::{
     evaluate_boolean, evaluate_integer_arithmetic, evaluate_rational_arithmetic, order_numbers,
@@ -358,66 +358,11 @@ fn clock_place_reference(
     place: &NodeKey,
     selectors: Vec<Value>,
 ) -> Result<ObjectReference, Halt> {
-    let place_text = fsl_foundation::node_wire::node_key_to_text(place)
-        .map_err(|_| invariant("clock-place-reference-key-encoding-failed"))?;
-    let owner_identity = clock_place_identity_component(owner.object().as_str().as_bytes());
-    let place_identity = clock_place_identity_component(place_text.as_bytes());
-    let mut identity = String::new();
-    identity.push_str("place/v1/");
-    identity.push_str(&owner_identity);
-    identity.push('/');
-    identity.push_str(&place_identity);
-    identity.push('/');
-    if selectors.is_empty() {
-        identity.push('-');
-    } else {
-        for (position, selector) in selectors.into_iter().enumerate() {
-            let Value::Integer(index) = selector else {
-                return Err(invariant("clock-place-reference-slot-index-expected"));
-            };
-            if position != 0 {
-                identity.push('.');
-            }
-            identity.push_str(&clock_place_slot_index(index)?);
-        }
+    if !fsl_semantics::model::clock_reference::is_clock_type(&clock_type) {
+        return Err(invariant("place-reference-result-type-expected"));
     }
-    let object =
-        ObjectId::new(identity).map_err(|_| invariant("clock-place-reference-identity-empty"))?;
-    Ok(ObjectReference::new(
-        owner.universe().clone(),
-        clock_type,
-        object,
-    ))
-}
-
-/// A checked slot is a concrete, non-negative sequence index; encode its
-/// decimal digits directly without consulting its display implementation.
-fn clock_place_slot_index(index: Integer) -> Result<String, Halt> {
-    let mut value = index
-        .to_u64()
-        .ok_or_else(|| invariant("clock-place-reference-slot-index-out-of-range"))?;
-    let mut digits = Vec::with_capacity(20);
-    loop {
-        digits.push(char::from(b'0' + (value % 10) as u8));
-        value /= 10;
-        if value == 0 {
-            break;
-        }
-    }
-    Ok(digits.into_iter().rev().collect())
-}
-
-/// FR-230 uses lowercase hex for identity components, including printable
-/// UTF-8 bytes that `render_identity` would leave unescaped.
-fn clock_place_identity_component(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-
-    let mut encoded = String::with_capacity(bytes.len().saturating_mul(2));
-    for byte in bytes {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
+    fsl_semantics::model::clock_reference::encode(&owner, place, &selectors)
+        .map_err(|_| invariant("clock-place-reference-identity-invalid"))
 }
 
 /// The one target of a single-valued navigation end `[lower, upper]` (FR-364
@@ -5836,6 +5781,7 @@ mod tests {
     use super::*;
     use filament_checked::key::DeclarationKey;
     use filament_checked::node::CheckedLiteral;
+    use filament_exact::ObjectId;
     use filament_semantic_value::catalog::Category;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use filament_semantic_value::object_closure::ObjectClosure;
@@ -5867,9 +5813,23 @@ mod tests {
             crate::test_ids::effective_id([2]),
             ObjectId::new("call").expect("fixture object id is non-empty"),
         );
-        let clock_type = crate::test_ids::effective_id([3]);
         let place = crate::test_ids::node_key([4]);
+        let clock_type = fsl_semantics::model::clock_reference::encode(&owner, &place, &[])
+            .expect("the public codec issues the canonical Clock target")
+            .object_type()
+            .clone();
         let expected_prefix = "place/v1/63616c6c/7b226f7264696e616c223a302c227061636b616765223a2266697874757265222c2270617468223a5b225b345d225d7d";
+
+        assert!(
+            clock_place_reference(
+                owner.clone(),
+                crate::test_ids::effective_id([3]),
+                &place,
+                Vec::new(),
+            )
+            .is_err(),
+            "a non-clock target is refused"
+        );
 
         let unindexed =
             clock_place_reference(owner.clone(), clock_type.clone(), &place, Vec::new())

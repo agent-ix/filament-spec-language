@@ -526,6 +526,14 @@ impl StateModel {
     /// environment of every object with every field value, and every listed
     /// population complete.
     ///
+    /// # Preconditions
+    ///
+    /// `state` must have been produced during this model's current run or
+    /// already admitted for that run. This trusted Rust interface does not
+    /// authenticate caller-constructed Clock references from another model
+    /// or run; handcrafted Clock references are outside its contract. Raw
+    /// transport inputs must use document admission.
+    ///
     /// # Errors
     ///
     /// A `Fault` when `state` is not a state of this model.
@@ -540,6 +548,14 @@ impl StateModel {
     /// Observe the complete simulated state with the population authority
     /// required to admit protocol reference arguments. All listed populations
     /// are complete and their whole object closure is validated together.
+    ///
+    /// # Preconditions
+    ///
+    /// `state` must have been produced during this model's current run or
+    /// already admitted for that run. This trusted Rust interface does not
+    /// authenticate caller-constructed Clock references from another model
+    /// or run; handcrafted Clock references are outside its contract. Raw
+    /// transport inputs must use document admission.
     ///
     /// # Errors
     /// The same state/model invariant failures as [`Self::observation`].

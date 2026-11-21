@@ -44,7 +44,7 @@ pub(crate) mod tests;
 mod timed_model;
 
 pub use clause_root::{clause_roots, resolve_clause_root, ClauseRoot, ClauseRootUnresolved};
-pub(crate) use hybrid::float_rounding_type;
+pub(crate) use hybrid::{decimal_range_type, float_rounding_type};
 pub use hybrid::{read_hybrids, HybridRead, HybridReadError, ReadHybridClaim, ReadHybridModel};
 pub use hyper_root::{hyper_roots, resolve_hyper_root, HyperRoot, HyperRootUnresolved};
 pub use schedulability_root::{

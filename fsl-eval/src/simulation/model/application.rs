@@ -574,6 +574,10 @@ impl<'a> ModelSystem<'a> {
                 observation: Observation::clone(observation),
                 rows: rows_of(self, &observed.state().state)?,
                 enforcement: None,
+                // Protocol attempts have no timed-profile selector authority.
+                // check_protocol_bounds runs the model's requires-bound
+                // preflight before an attempt can expand frames.
+                clock_selectors: None,
                 post_presence: None,
             }),
             None => walk_of(self, observed.state(), None),

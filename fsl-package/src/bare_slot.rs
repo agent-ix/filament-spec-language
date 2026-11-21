@@ -73,7 +73,7 @@ fn contains_nested_population(value_type: &ValueType, types: &TypeEnvironment) -
 }
 
 /// Why a bare selection produced no slot.
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BareSelectionFailure {
     /// The identity rows of the supply are absent, foreign or name nothing
     /// the package admits (FR-531-AC-5); decided before any node is read.

@@ -26,6 +26,14 @@ fn refused(catalog: CatalogCode, fields: BTreeMap<&'static str, String>) -> Admi
 }
 
 impl BarePackage<'_> {
+    fn needs_clock_reference_authority(&self) -> bool {
+        use filament_contract_model::{CheckedNodeKind, CheckedNodeTag, ScalarTypeForm};
+        self.package().resolved_graph().nodes.iter().any(|node| {
+            CheckedNodeTag::from_wire(&node.node_tag)
+                .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))
+                == Some(CheckedNodeKind::ScalarType(ScalarTypeForm::ClockReference))
+        })
+    }
     /// Admit a simulated current state against this package's selected models
     /// and type environment. The resulting authority belongs to this exact
     /// bare package, as an admitted snapshot's authority does.
@@ -52,6 +60,9 @@ impl BarePackage<'_> {
                 ]),
             ))
         };
+        if self.needs_clock_reference_authority() {
+            return unsupported("missing-route-neutral-place-identity");
+        }
         if let Err(failure) = self.witness() {
             return match failure {
                 crate::BareSelectionFailure::Identity(refusal) => unsupported(
@@ -116,6 +127,9 @@ impl BarePackage<'_> {
                 ]),
             )))
         };
+        if self.needs_clock_reference_authority() {
+            return Err(unsupported("missing-route-neutral-place-identity"));
+        }
         if let Err(failure) = self.witness() {
             let reason = match failure {
                 crate::BareSelectionFailure::Identity(refusal) => {
@@ -170,6 +184,9 @@ impl BarePackage<'_> {
                 ]),
             ))
         };
+        if self.needs_clock_reference_authority() {
+            return unsupported("missing-route-neutral-place-identity");
+        }
         if let Err(failure) = self.witness() {
             return match failure {
                 crate::BareSelectionFailure::Identity(refusal) => unsupported(

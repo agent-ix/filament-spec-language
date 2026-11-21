@@ -42,7 +42,7 @@ impl ProtocolSlotDescriptor {
 }
 
 /// Why a view could not select the requested checked expression.
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SlotSelectionFailure {
     /// The requested node does not exist in the source package.
     MissingNode(NodeKey),
