@@ -267,13 +267,10 @@ impl Lowering<'_> {
             let mut postconditions = Vec::new();
             for (form, node) in input.state_forms.iter().zip(input.state_nodes) {
                 let Some(node) = node else { continue };
-                let Some(selected) = form.operation.as_ref() else {
-                    continue;
-                };
-                if form.selection.alias != *alias
-                    || selected.declaring != anchor.declaring
-                    || selected.declaration.name() != anchor.operation.name()
-                {
+                // `selection.alias` names the clause's profile, not its
+                // model. Join the already lowered clauses by the exact
+                // operation anchor shared with this execution instead.
+                if node.binding.as_ref().map(|clause| &clause.anchor) != Some(&binding.anchor) {
                     continue;
                 }
                 match form.kind {
@@ -288,7 +285,9 @@ impl Lowering<'_> {
                 }
             }
             preconditions.sort();
+            preconditions.dedup();
             postconditions.sort();
+            postconditions.dedup();
             let _ = operation;
             let implementation = BindingValue::Group(GroupTerm::new(Vec::new()));
             let alias = self.text_literal(alias, &at)?;

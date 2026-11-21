@@ -878,3 +878,137 @@ fn hp1_package_ambiguous_model_read_fails_only_its_item() {
     assert!(run.item(0)["counterexample"].is_null());
     assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
 }
+
+/// The source producer must carry every clause of the selected anchor, even
+/// when its profile alias differs from the model alias. This seam emits real
+/// bytes without asking the still-pinned reader to accept its known defect.
+#[trace("FR-940-AC-23")]
+#[test]
+fn relation_emission_retains_exact_execution_clause_joins() {
+    use fsl_forms::StateClauseKind;
+    use fsl_semantics::check::{
+        AggregateTerm, BindingValue, BodyTerm, GroupMember, LeafTerm, MemberTerm,
+    };
+    use fsl_semantics::value::Member;
+
+    fn binding<'a>(aggregate: &'a AggregateTerm, name: &str) -> &'a BindingValue {
+        aggregate
+            .members
+            .iter()
+            .find_map(|member| match member {
+                MemberTerm::Binding(binding) if binding.name == name => Some(&binding.value),
+                _ => None,
+            })
+            .expect("named metadata binding")
+    }
+    fn reference(value: &BindingValue) -> filament_exact::NodeKey {
+        let BindingValue::Leaf(LeafTerm::Reference { target }) = value else {
+            panic!("metadata reference");
+        };
+        target.admitted().expect("admitted source key").clone()
+    }
+    const CLAUSES: &str = "pre First using v on V::Vault::step { i >= 0 }\n\
+        pre Second using v on V::Vault::step { self.h >= 0 }\n\
+        post Step using v on V::Vault::step { self.l = i }\n\
+        post Keep using v on V::Vault::step { self.h = pre(self.h) }\n\
+        post Other using v on V::Vault::reset { self.l = 0 }\n";
+    let (source, _, _) = crate::relation_claims::package_and_relation_with_document(
+        hyper_world::document(false, true),
+        Vault::Custom(CLAUSES),
+        DETERMINISTIC,
+    );
+    let graph = source.graph().semantic_graph();
+    let relation = graph
+        .nodes()
+        .find(|node| node.semantic_form() == "step_relation")
+        .expect("lowered relation");
+    let BodyTerm::Aggregate(body) = relation.body() else {
+        panic!("relation body");
+    };
+    let BindingValue::Aggregate(executions) = binding(body, "executions") else {
+        panic!("executions aggregate");
+    };
+    assert_eq!(executions.members.len(), 2);
+    for execution in &executions.members {
+        let MemberTerm::Binding(execution) = execution else {
+            panic!("execution binding");
+        };
+        let BindingValue::Aggregate(execution) = &execution.value else {
+            panic!("execution facts");
+        };
+        let anchor = reference(binding(execution, "operation"));
+        for (name, kind) in [
+            ("preconditions", StateClauseKind::Precondition),
+            ("postconditions", StateClauseKind::Postcondition),
+        ] {
+            let mut expected: Vec<_> = graph
+                .nodes()
+                .filter_map(|node| {
+                    if node.semantic_form() != "state_clause" {
+                        return None;
+                    }
+                    let BodyTerm::Application(application) = node.body() else {
+                        return None;
+                    };
+                    let Some(Member::StateClause { clause, .. }) = application.operation.member()
+                    else {
+                        return None;
+                    };
+                    let Some(MemberTerm::Leaf(LeafTerm::Reference { target })) =
+                        application.arguments.get(1)
+                    else {
+                        return None;
+                    };
+                    (*clause == kind && target.admitted() == Some(&anchor)).then(|| node.key())
+                })
+                .collect();
+            expected.sort();
+            expected.dedup();
+            assert_eq!(
+                expected.len(),
+                2,
+                "both clauses of this anchor, excluding reset"
+            );
+            let BindingValue::Group(group) = binding(execution, name) else {
+                panic!("clause group");
+            };
+            let actual: Vec<_> = group
+                .members
+                .iter()
+                .map(|member| {
+                    let GroupMember::Leaf(LeafTerm::Reference { target }) = member else {
+                        panic!("clause reference");
+                    };
+                    target.admitted().expect("admitted clause key").clone()
+                })
+                .collect();
+            assert_eq!(
+                actual, expected,
+                "{name}: exact sorted and deduplicated anchor clauses"
+            );
+        }
+    }
+    let emission = fsl_package::emit_checked(&source, fsl_package::EmitLimits::fixture())
+        .expect("genuine source emits");
+    let wire: Value = serde_json::from_slice(emission.package().bytes()).expect("emitted JSON");
+    let relation = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("wire nodes")
+        .iter()
+        .find(|node| node["semantic_form"] == "step_relation")
+        .expect("wire relation");
+    for execution in relation["body"]["members"][1]["value"]["members"]
+        .as_array()
+        .expect("wire executions")
+    {
+        for slot in [3, 4] {
+            assert_eq!(
+                execution["value"]["members"][slot]["value"]["members"]
+                    .as_array()
+                    .expect("wire clause group")
+                    .len(),
+                2
+            );
+        }
+    }
+}
