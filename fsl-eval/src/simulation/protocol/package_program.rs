@@ -10,8 +10,10 @@ use filament_eval::CallFailure;
 use filament_exact::{Meter, NodeKey};
 use fsl_foundation::MemoryModelName;
 use fsl_package::protocol_view::{
-    ControlBody, ControlOperation, ParallelJoinPolicy, ProtocolExecutionView, ProtocolNodeId,
+    self, ChannelOrdering, ControlBody, ControlOperation, Delivery, Overflow, ParallelJoinPolicy,
+    ProtocolExecutionView, ProtocolNodeId, QueueCapacity,
 };
+use fsl_semantics::check::{ChannelDelivery, ChannelOverflow, LossSelector};
 
 use super::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use crate::simulation::model::{ModelCheckInput, ModelEvaluator, OperationRef, ProtocolDefinition};
@@ -57,6 +59,8 @@ pub struct PackageControl {
     pub binder_key: Option<NodeKey>,
     /// The admitted value type of the attempt result binder.
     pub binder_type: Option<filament_exact::ValueType>,
+    /// The admitted channel selected by a send.
+    pub(super) channel: Option<fsl_package::CheckedNodeId>,
     /// The attempt's explicit memory ordering.
     pub ordering: Option<fsl_forms::AccessOrdering>,
     /// The state clauses selected by an attempt's `contracts` member.
@@ -70,6 +74,15 @@ pub(super) struct PackageJoin {
     pub(super) policy: fsl_semantics::check::CheckedJoinPolicy,
     pub(super) joined: Vec<String>,
     pub(super) outstanding: Option<fsl_semantics::check::CheckedOutstanding>,
+}
+
+/// An admitted unordered channel and its literal queue premises.
+pub(super) struct PackageChannel {
+    pub(super) node: fsl_package::CheckedNodeId,
+    pub(super) name: String,
+    pub(super) capacity: u64,
+    pub(super) overflow: ChannelOverflow,
+    pub(super) delivery: ChannelDelivery,
 }
 
 /// One static role binding from the admitted package.
@@ -110,6 +123,8 @@ pub struct PackageProtocolProgram<'a> {
     pub(super) terminal: PackageTerminal,
     /// Origin captures in authored initialization order.
     pub(super) captures: Vec<PackageCapture>,
+    /// Unordered channels and their admitted queue premises.
+    pub(super) channels: Vec<PackageChannel>,
     /// The admitted protocol name.
     pub name: String,
     /// The `run` root control.
@@ -175,6 +190,75 @@ fn member<'t>(
     })
 }
 
+fn channels(
+    form: &ProtocolExecutionView<'_>,
+) -> Result<Vec<PackageChannel>, PackageProgramRefusal> {
+    for queue in &form.queues {
+        let channel = protocol_view::queue_channel(queue)
+            .map_err(|_| PackageProgramRefusal::MissingIdentity(queue.node_id.clone()))?;
+        if !form.channels.iter().any(|node| &node.node_id == channel) {
+            return Err(PackageProgramRefusal::MissingIdentity(
+                queue.node_id.clone(),
+            ));
+        }
+    }
+    let mut channels = Vec::with_capacity(form.channels.len());
+    for channel in &form.channels {
+        let absent = || PackageProgramRefusal::MissingIdentity(channel.node_id.clone());
+        if protocol_view::channel_ordering(channel).map_err(|_| absent())?
+            != ChannelOrdering::Unordered
+        {
+            return Err(PackageProgramRefusal::Unsupported(
+                ControlOperation::Channel,
+            ));
+        }
+        let queue = form
+            .queues
+            .iter()
+            .find(|queue| {
+                protocol_view::queue_channel(queue).is_ok_and(|id| id == &channel.node_id)
+            })
+            .ok_or_else(absent)?;
+        let capacity = match protocol_view::queue_capacity(queue).map_err(|_| absent())? {
+            QueueCapacity::Literal(capacity) => capacity,
+            QueueCapacity::Symbolic(_) => {
+                return Err(PackageProgramRefusal::Unsupported(
+                    ControlOperation::Channel,
+                ));
+            }
+        };
+        let overflow = match protocol_view::queue_overflow(queue).map_err(|_| absent())? {
+            Overflow::Reject => ChannelOverflow::Reject,
+            Overflow::Block => ChannelOverflow::Block,
+            Overflow::Loss(selector) => ChannelOverflow::Loss(match selector {
+                protocol_view::LossSelector::Head => LossSelector::Head,
+                protocol_view::LossSelector::Tail => LossSelector::Tail,
+                protocol_view::LossSelector::New => LossSelector::New,
+            }),
+        };
+        let delivery = match protocol_view::delivery(channel).map_err(|_| absent())? {
+            Delivery::Unknown => ChannelDelivery::Unknown,
+            Delivery::AtMostOnce => ChannelDelivery::AtMostOnce,
+            Delivery::AtLeastOnce => ChannelDelivery::AtLeastOnce,
+            Delivery::ExactlyOncePremise => ChannelDelivery::ExactlyOncePremise,
+            Delivery::Between { lower, upper } => ChannelDelivery::Between { lower, upper },
+        };
+        let name = channel
+            .declaration
+            .as_ref()
+            .and_then(|declaration| declaration.qualified_name.get(2))
+            .ok_or_else(absent)?;
+        channels.push(PackageChannel {
+            node: channel.node_id.clone(),
+            name: format!("{}::{name}", form.name),
+            capacity,
+            overflow,
+            delivery,
+        });
+    }
+    Ok(channels)
+}
+
 /// Why a package protocol could not become an executable program.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum PackageProgramRefusal {
@@ -201,6 +285,12 @@ pub enum PackageProgramRefusal {
     /// The execution engine does not step this checked package operation yet.
     #[error("unsupported_construct/not-yet-implemented: package control {0:?}")]
     Unsupported(ControlOperation),
+    /// A selected control has correlation premises with no executable package form.
+    #[error("unsupported_construct/not-yet-implemented: package correlation at {node:?}")]
+    Correlation {
+        /// The admitted control whose `related` group is nonempty.
+        node: fsl_package::CheckedNodeId,
+    },
     /// A node referenced by the control tree has no package execution entry.
     #[error("the package control tree references an absent control")]
     UnknownControl,
@@ -255,10 +345,20 @@ impl<'a> PackageProtocolProgram<'a> {
                 .ok_or_else(|| PackageProgramRefusal::UnknownProtocol {
                     name: form.name.clone(),
                 })?;
-        if !form.channels.is_empty() || !form.queues.is_empty() {
-            return Err(PackageProgramRefusal::Unsupported(
-                ControlOperation::Channel,
-            ));
+        let channels = channels(&form)?;
+        // A branch's source-local numeric node indices are not admitted
+        // package identities. Message keys and weak send footprints need a
+        // shared representation before mixed parallel/send programs execute.
+        if form
+            .controls
+            .iter()
+            .any(|control| matches!(&control.body, ControlBody::Parallel { .. }))
+            && form
+                .controls
+                .iter()
+                .any(|control| matches!(&control.body, ControlBody::Send { .. }))
+        {
+            return Err(PackageProgramRefusal::Unsupported(ControlOperation::Send));
         }
         if !form.protocol.compensations().is_empty() {
             return Err(PackageProgramRefusal::Unsupported(
@@ -384,6 +484,24 @@ impl<'a> PackageProtocolProgram<'a> {
         let mut controls = BTreeMap::new();
         for control in &form.controls {
             let name = control.path.last().cloned().unwrap_or_default();
+            let channel = match &control.body {
+                ControlBody::Send { channel, .. } => {
+                    let Some(fsl_package::CheckedTerm::Aggregate { members }) =
+                        member(&control.node.body, "related")
+                    else {
+                        return Err(PackageProgramRefusal::MissingIdentity(
+                            control.node.node_id.clone(),
+                        ));
+                    };
+                    if !members.is_empty() {
+                        return Err(PackageProgramRefusal::Correlation {
+                            node: control.node.node_id.clone(),
+                        });
+                    }
+                    Some((*channel).clone())
+                }
+                _ => None,
+            };
             let join = match &control.body {
                 ControlBody::Parallel { join, .. } => {
                     use fsl_semantics::check::{CheckedJoinPolicy, CheckedOutstanding};
@@ -505,9 +623,24 @@ impl<'a> PackageProtocolProgram<'a> {
                             .collect(),
                     )
                 }
+                ControlBody::Send { binder, .. } => (
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    Some((*binder).clone()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Vec::new(),
+                ),
                 _ => return Err(PackageProgramRefusal::Unsupported(control.operation)),
             };
-            let constraint = if matches!(&control.body, ControlBody::Attempt { .. }) {
+            let constraint = if matches!(
+                &control.body,
+                ControlBody::Attempt { .. } | ControlBody::Send { .. }
+            ) {
                 Some(
                     input
                         .evaluator
@@ -577,6 +710,7 @@ impl<'a> PackageProtocolProgram<'a> {
                     binder,
                     binder_key,
                     binder_type,
+                    channel,
                     ordering,
                     contracts,
                     contract_keys,
@@ -636,6 +770,7 @@ impl<'a> PackageProtocolProgram<'a> {
         Ok(Self {
             terminal,
             captures,
+            channels,
             name: form.name.clone(),
             root,
             over,

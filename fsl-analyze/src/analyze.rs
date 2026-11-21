@@ -1603,6 +1603,8 @@ pub(crate) enum Refusal {
     Incomplete(fsl_replay::IncompleteCause),
     /// `unsupported` with the refusal's own diagnostic.
     Unsupported(CatalogCode),
+    /// `unsupported` with structured details naming the unavailable package fact.
+    UnsupportedWithDetail(CatalogCode, serde_json::Map<String, serde_json::Value>),
     /// `failed` with the refusal's diagnostic.
     Failed(CatalogCode),
     /// `failed` with the refusal's diagnostic and its detail (FR-750
@@ -3025,6 +3027,10 @@ fn settle(
         EngineReport::Refused(Refusal::Unsupported(code)) => {
             disposed(DispositionKind::Unsupported, Diagnostic::new(code), backend)
         }
+        EngineReport::Refused(Refusal::UnsupportedWithDetail(code, detail)) => record(
+            terminal(TerminalRecord::disposition_unsupported(index, code, detail)),
+            None,
+        ),
         EngineReport::Refused(Refusal::NotEmitted) => {
             let diagnostic = Diagnostic {
                 code: CatalogCode::new(

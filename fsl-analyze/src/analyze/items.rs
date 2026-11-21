@@ -7,7 +7,7 @@
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, DEFAULT_MAX_CLOCKS};
-use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTransition};
+use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal, ProtocolTransition};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
@@ -1156,10 +1156,20 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         | ModelCheckRefusal::Hyper(
             HyperRefusal::UnknownOperation { .. } | HyperRefusal::SubjectCount { .. },
         ) => Refusal::Failed(INVALID_VALUE),
-        // FSpec FR-785-AC-3: a refused capacity binding is the request's own
-        // `invalid_runtime_input`, naming its cause.
+        // FR-1033 and FR-205: a refused capacity binding is invalid input,
+        // naming the capacity rather than reporting an engine failure.
         ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)) => {
-            Refusal::Failed(CatalogCode::new(refusal.code().as_str(), refusal.cause()))
+            let name = match refusal {
+                CapacityRefusal::UnknownName { name }
+                | CapacityRefusal::InvalidValue { name, .. }
+                | CapacityRefusal::Duplicate { name }
+                | CapacityRefusal::Missing { name } => name,
+            };
+            named_decline(
+                CatalogCode::new(refusal.code().as_str(), refusal.cause()),
+                "capacity",
+                name.clone(),
+            )
         }
         // FSL FR-1033: a protocol binding FR-205's subject builder refuses is
         // the request's own `invalid_runtime_input`, so the item settles
@@ -1253,6 +1263,7 @@ mod tests {
             Refusal::Declined(_, _, code)
             | Refusal::DeclinedWithDetail(_, _, code, _)
             | Refusal::Unsupported(code)
+            | Refusal::UnsupportedWithDetail(code, _)
             | Refusal::FailedWithDetail(code, _)
             | Refusal::Failed(code) => Some(code.to_string()),
             Refusal::RequiresBound

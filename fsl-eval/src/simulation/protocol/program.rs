@@ -989,7 +989,7 @@ impl<'a> Program<'a> {
         Ok(program)
     }
 
-    /// Build the sequence/parallel/attempt program directly from the admitted
+    /// Build the sequence/parallel/attempt/send program directly from the admitted
     /// package form. Package execution keeps expression slots out of the
     /// source `CheckedBody` fields; callers evaluate them through the package
     /// evaluator.
@@ -1025,6 +1025,7 @@ impl<'a> Program<'a> {
                 fsl_package::protocol_view::ControlOperation::Sequence => ControlStep::Sequence,
                 fsl_package::protocol_view::ControlOperation::Parallel => ControlStep::Parallel,
                 fsl_package::protocol_view::ControlOperation::Attempt => ControlStep::Attempt,
+                fsl_package::protocol_view::ControlOperation::Send => ControlStep::Send,
                 operation => {
                     return Err(ProtocolRefusal::Unsupported(
                         super::Unsupported::PackageControl(operation),
@@ -1103,11 +1104,12 @@ impl<'a> Program<'a> {
             .collect();
         let mut binder_of = BTreeMap::new();
         for control in package.controls.values().filter(|control| {
-            control.operation == fsl_package::protocol_view::ControlOperation::Attempt
+            matches!(
+                control.operation,
+                fsl_package::protocol_view::ControlOperation::Attempt
+                    | fsl_package::protocol_view::ControlOperation::Send
+            )
         }) {
-            let operation = package
-                .operation_ref(control.id)
-                .map_err(|_| ProtocolRefusal::fault("a-package-attempt-resolves"))?;
             let binds = if let (Some(binder), Some(binder_type)) =
                 (&control.binder, &control.binder_type)
             {
@@ -1120,15 +1122,73 @@ impl<'a> Program<'a> {
             } else {
                 None
             };
-            attempts.insert(
+            if control.operation == fsl_package::protocol_view::ControlOperation::Attempt {
+                let operation = package
+                    .operation_ref(control.id)
+                    .map_err(|_| ProtocolRefusal::fault("a-package-attempt-resolves"))?;
+                attempts.insert(
+                    control.id,
+                    Attempt {
+                        declaring: operation.declaring,
+                        operation: operation.name.to_owned(),
+                        receiver: operation.receiver,
+                        contracts: std::sync::Arc::new(
+                            control.contract_keys.iter().cloned().collect(),
+                        ),
+                        constraint: None,
+                        binds,
+                    },
+                );
+            }
+        }
+
+        let channels = package
+            .channels
+            .iter()
+            .map(|channel| Channel {
+                name: channel.name.clone(),
+                capacity: usize::try_from(channel.capacity).unwrap_or(usize::MAX),
+                overflow: channel.overflow,
+                delivery: channel.delivery,
+                send_ordered: matches!(
+                    channel.overflow,
+                    ChannelOverflow::Loss(LossSelector::Head | LossSelector::Tail)
+                ),
+                key: None,
+            })
+            .collect();
+        let mut messages = BTreeMap::new();
+        for control in package.controls.values().filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Send
+        }) {
+            let channel = package
+                .channels
+                .iter()
+                .position(|channel| Some(&channel.node) == control.channel.as_ref())
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-send-names-a-channel"))?;
+            let slot = binder_of
+                .get(&control.id)
+                .copied()
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-send-has-a-binder"))?;
+            let record_type = control
+                .binder_type
+                .clone()
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-send-has-a-payload-type"))?;
+            if !model.enumerates(&record_type) {
+                return Err(ProtocolRefusal::Unsupported(
+                    Unsupported::UnenumerableRecord,
+                ));
+            }
+            messages.insert(
                 control.id,
-                Attempt {
-                    declaring: operation.declaring,
-                    operation: operation.name.to_owned(),
-                    receiver: operation.receiver,
-                    contracts: std::sync::Arc::new(control.contract_keys.iter().cloned().collect()),
-                    constraint: None,
-                    binds,
+                Message {
+                    record: Record {
+                        constraint: None,
+                        slot,
+                        record_type,
+                    },
+                    channel,
+                    from: None,
                 },
             );
         }
@@ -1212,8 +1272,8 @@ impl<'a> Program<'a> {
             checks: BTreeMap::new(),
             fences: BTreeMap::new(),
             events: BTreeMap::new(),
-            messages: BTreeMap::new(),
-            channels: Vec::new(),
+            messages,
+            channels,
             finish,
             slots,
             package_binders,
