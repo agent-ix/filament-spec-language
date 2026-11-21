@@ -14,6 +14,8 @@ use fsl_semantics::model::population::PopulationBinding;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
 
+mod model_over;
+
 #[cfg(test)]
 #[path = "../../examples/config-version/spine_unit.rs"]
 #[allow(
