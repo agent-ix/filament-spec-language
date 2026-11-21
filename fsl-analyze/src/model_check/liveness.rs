@@ -62,8 +62,8 @@
 //! concrete entry. A state constraint on a liveness clause (FR-158) cuts the
 //! product at its boundary states, which are stored and read but never
 //! expanded or stutter-extended; a run that finds no violation and stored one
-//! settles `ConstraintReached`. A protocol subject refuses it
-//! ([`ModelCheckRefusal::ReducedLiveness`]).
+//! settles `ConstraintReached`, for a protocol subject as for a model subject
+//! (FR-158 "Protocol subjects").
 //!
 //! A protocol subject under `sc` or `tso` (FR-212, FR-228) is one more
 //! [`LiveSubject`]: its products are explored and decided by the same
@@ -290,10 +290,12 @@ pub(super) fn check(
 ///
 /// [`ModelCheckRefusal`] as [`check`] returns it.
 #[derive(Clone, Copy)]
-pub(super) struct ProtocolLivenessOptions {
+pub(super) struct ProtocolLivenessOptions<'c> {
     pub(super) limits: fsl_replay::ModelCheckLimits,
     pub(super) ignore_memory_constraints: bool,
     pub(super) instance_bound: Option<InstanceBound>,
+    /// The request's state constraint (FR-158).
+    pub(super) constraint: Option<&'c str>,
 }
 
 #[allow(
@@ -307,7 +309,7 @@ pub(super) fn check_protocol<M: MemoryModel>(
     item: ModelCheckItem<'_>,
     temporal_clock_selections: &[fsl_package::TemporalClockSelection],
     max_depth: Option<usize>,
-    options: ProtocolLivenessOptions,
+    options: ProtocolLivenessOptions<'_>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
     let ModelCheckItem::Clause { clause, letters } = item else {
@@ -374,7 +376,7 @@ pub(super) fn check_protocol<M: MemoryModel>(
                 value,
             }),
             instance_bound: options.instance_bound,
-            constraint: None,
+            constraint: options.constraint,
             root_cancelled,
             no_initial: simulation.initial.is_empty(),
             certify: Certify {

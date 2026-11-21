@@ -138,7 +138,6 @@ pub struct ModelCheckRequest<'a> {
     pub reductions: Reductions,
 }
 
-
 /// The model system `request` runs over. The derived deadlock-freedom item
 /// classifies the terminal states of the identities its subject reads alone
 /// (FR-124-AC-12); every other item reads every selection.
@@ -252,10 +251,6 @@ pub enum ModelCheckRefusal {
         "unsupported_construct/not-yet-implemented: EN-1 does not decide a liveness clause over an `ra` `parallel` yet"
     )]
     WeakLiveness,
-    /// A liveness clause with a state constraint selected: the liveness
-    /// engine runs reduced under symmetry and partial-order reduction only.
-    #[error("EN-1 does not decide a liveness clause under a state constraint yet")]
-    ReducedLiveness,
     /// FR-155: partial-order reduction needs a footprint of an atom or a
     /// state constraint that reads through a form FSpec FR-383 gives no
     /// rule for.
@@ -558,8 +553,8 @@ pub fn check_model(
     let meter = request.subject.simulation.meter;
     let max_candidates = request.subject.simulation.expansion.max_candidates;
     let no_initial = request.subject.simulation.initial.is_empty();
-    let system = read_system(&request)
-        .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
+    let system =
+        read_system(&request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
     let (instances, root_cancelled) = if certified {
         match request.item.instances(
@@ -721,8 +716,8 @@ pub fn check_protocol(
 /// [`check_protocol`] under the state constraint `constraint` (FR-158, FSL
 /// FR-225-AC-4): a state where the constraint is false is stored and read but
 /// never expanded, and a run that reached one settles `ConstraintReached`
-/// before any memory bound it also reached. A liveness clause under a state
-/// constraint is not decided.
+/// before any memory bound it also reached, for a liveness clause as for a
+/// safety item.
 ///
 /// # Errors
 ///
@@ -738,10 +733,7 @@ pub fn check_protocol_constrained(
     }
     if let ModelCheckItem::Clause { clause, .. } = request.item {
         if clause.property_form() == Some(PropertyForm::Liveness) {
-            if constraint.is_some() {
-                return Err(ModelCheckRefusal::ReducedLiveness);
-            }
-            return check_protocol_liveness(request, cancel);
+            return check_protocol_liveness(request, constraint, cancel);
         }
     }
     let max_automaton_states = request.limits.max_automaton_states;
@@ -913,11 +905,19 @@ pub fn check_protocol_constrained(
 /// in its fairness set (FR-228).
 fn check_protocol_liveness(
     request: ProtocolCheckRequest<'_>,
+    constraint: Option<&str>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
     let subject = &request.subject;
     let model = ModelSystem::new(subject.model.simulation.clone())
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
+    if let Some(name) = constraint {
+        if !model.has_constraint(name) {
+            return Err(ModelCheckRefusal::UnknownConstraint {
+                name: name.to_owned(),
+            });
+        }
+    }
     let protocol = subject
         .model
         .simulation
@@ -948,6 +948,9 @@ fn check_protocol_liveness(
     let instance_bound = activates_on_each(protocol).then_some(InstanceBound {
         value: live_instances,
     });
+    let channel_bound = request
+        .max_messages
+        .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND);
     let decided = match memory {
         SubjectMemory::Ra(ra) => {
             let bound = MemoryBound {
@@ -958,6 +961,7 @@ fn check_protocol_liveness(
                 super::liveness::check_protocol(
                     subject,
                     &system
+                        .with_channel_message_bound(channel_bound)
                         .with_max_live_instances(live_instances)
                         .with_cycle_keys(BTreeSet::new()),
                     Some(bound),
@@ -968,6 +972,7 @@ fn check_protocol_liveness(
                         limits: request.limits,
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
+                        constraint,
                     },
                     cancel,
                 )
@@ -982,6 +987,7 @@ fn check_protocol_liveness(
                 super::liveness::check_protocol(
                     subject,
                     &system
+                        .with_channel_message_bound(channel_bound)
                         .with_max_live_instances(live_instances)
                         .with_cycle_keys(BTreeSet::new()),
                     Some(bound),
@@ -992,6 +998,7 @@ fn check_protocol_liveness(
                         limits: request.limits,
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
+                        constraint,
                     },
                     cancel,
                 )
@@ -1001,6 +1008,7 @@ fn check_protocol_liveness(
             super::liveness::check_protocol(
                 subject,
                 &system
+                    .with_channel_message_bound(channel_bound)
                     .with_max_live_instances(live_instances)
                     .with_cycle_keys(BTreeSet::new()),
                 None,
@@ -1011,6 +1019,7 @@ fn check_protocol_liveness(
                     limits: request.limits,
                     ignore_memory_constraints: request.ignore_memory_constraints,
                     instance_bound,
+                    constraint,
                 },
                 cancel,
             )
@@ -1224,8 +1233,8 @@ fn check_reduced(
     let meter = request.subject.simulation.meter;
     let max_candidates = request.subject.simulation.expansion.max_candidates;
     let no_initial = request.subject.simulation.initial.is_empty();
-    let system = read_system(&request)
-        .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
+    let system =
+        read_system(&request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
     let group = match precheck(reductions, &request.item, &system)? {
         Admitted::Group(group) => group,
