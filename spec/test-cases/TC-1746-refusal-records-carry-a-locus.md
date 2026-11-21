@@ -31,6 +31,10 @@ require a planner search or assert that a model-intake path is implemented.
    and its path to `other.native`; then independently replace only the
    imported `sourceIdentity` by `ix://external/model`.
 6. Repeat step 4 with the parameter origin absent.
+7. Repeat step 4 with the imported URI `ix://example/model` and separately
+   retained actual native-producer provenance whose source-label pair is
+   `example` / `model`. Keep the declaration imported and its supplied
+   origin point unchanged; do not replace it by a native byte-span input.
 
 ### Imported parameter origin
 
@@ -54,7 +58,7 @@ Tag the tests `#[trace("TC-1746", "<AC id>")]`.
 - Step 4: each adapter preserves stage S3 and the original code/cause,
   exits 20 and creates no checked package or synthesis request. Its
   diagnostic locus is exactly TC-3081's imported-point vector. No endpoint
-  has a `byte` member; no program source-label pair is attached to the
+  has a `byte` member; no native source-label pair is attached to the
   imported path and point. Both document readers preserve that form under
   FR-267-AC-30.
 - Step 5: changing the program labels/path leaves the imported locus
@@ -63,3 +67,8 @@ Tag the tests `#[trace("TC-1746", "<AC id>")]`.
   native labels or bytes.
 - Step 6: the parameter's authored position is explicitly unavailable,
   with no program location or fabricated byte-zero point substituted.
+- Step 7: each adapter still writes the imported form with exact URI
+  `ix://example/model`, the supplied path and point, absent bytes and no
+  native source-label pair in the locus or its command-error source
+  context. Known native-producer provenance does not change the imported
+  origin's form. TC-3081's ordinary native-span control remains unchanged.

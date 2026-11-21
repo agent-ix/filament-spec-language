@@ -262,15 +262,18 @@ positive JSON integers in both forms. An imported-source point's identity is
 its exact `sourceIdentity`, not its path or the compiling program's labels.
 
 When projecting an imported declaration origin that supplies this point but
-no byte offsets or retained native source-label pair, the writer SHALL use
-the imported-source point form. The writer SHALL preserve the URI without
+no byte offsets, the writer SHALL use the imported-source point form,
+including when the imported declaration's native producer is known and its
+native source-label pair has been retained separately. The writer SHALL preserve the URI without
 normalizing it, deriving native labels from its scheme, or replacing it with
 the program's source identity. Native source labels come only from actual
 retained native provenance; a URI spelling, including `ix://`, does not
 establish that provenance. This form carries no native `{authority, identity}`
-pair. Any accompanying command-error source context SHALL omit that pair
-when it is unavailable for the imported source; it SHALL NOT attach the
-program's pair to the imported path and point. An unavailable byte offset
+pair. Any accompanying command-error source context for the imported origin
+SHALL omit a native source-label pair, whether known or unavailable; it SHALL
+NOT attach the program's or imported producer's pair to the imported path
+and point. Ordinary native byte spans retain their native provenance under
+the unchanged native form. An unavailable byte offset
 SHALL be absent, never zero or `null` as a substitute.
 
 The strict readers of both result documents SHALL restore either `located`
