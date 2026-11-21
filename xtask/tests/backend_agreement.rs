@@ -158,11 +158,28 @@ mod backend_agreement {
             .unwrap();
             let assignment = vec![RuntimeValue::Integer(Integer::from(4))];
             let reference = target.evaluate(&assignment, &Cancel::new()).unwrap();
+            // Both fixture functions have the exact finite input domain 0..=10.
+            // A reference proof requires every assignment, not one sampled run.
+            let holds_everywhere = (0..=10).all(|value| {
+                matches!(
+                    target
+                        .evaluate(
+                            &[RuntimeValue::Integer(Integer::from(value))],
+                            &Cancel::new(),
+                        )
+                        .unwrap(),
+                    Verdict::Holds
+                )
+            });
             let result = match plan {
                 Plan::Reference => {
-                    if matches!(reference, Verdict::Holds) {
+                    if holds_everywhere {
                         "proved"
                     } else {
+                        assert!(
+                            matches!(reference, Verdict::Violated(_)),
+                            "the recorded witness must violate the claim"
+                        );
                         "refuted"
                     }
                 }
