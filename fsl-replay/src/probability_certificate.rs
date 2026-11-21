@@ -2054,7 +2054,8 @@ fn internal_nonprogressive_choice(
         };
         if !candidate.contains(target)
             || (kind == ComponentKind::ZeroTime
-                && !timed_axes::edge_is_zero_time(source, &edge.target)) {
+                && !timed_axes::edge_is_zero_time(source, &edge.target))
+        {
             return Ok(false);
         }
         if costs

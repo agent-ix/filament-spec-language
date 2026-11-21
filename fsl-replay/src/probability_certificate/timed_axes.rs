@@ -227,10 +227,7 @@ mod tests {
     fn a_component_that_resets_or_crosses_every_clock_is_progressive() {
         let zero = key(&[(0, 3)], None);
         let one = key(&[(1, 3)], None);
-        assert!(component_is_progressive(
-            &[&zero, &one],
-            &[(0, 1), (1, 0)]
-        ));
+        assert!(component_is_progressive(&[&zero, &one], &[(0, 1), (1, 0)]));
         let capped = key(&[(3, 3)], None);
         assert!(component_is_progressive(&[&capped], &[(0, 0)]));
     }

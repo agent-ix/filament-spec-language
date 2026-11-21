@@ -836,9 +836,11 @@ fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
     assert!(proved_value_of(&tampered).is_none());
 }
 
-/// FR-923: a workload resolves a state by its weights, so an operation it weighs at zero
-/// cannot be dropped from the checker's product.
-#[trace("TC-2492", "FR-923-AC-3")]
+/// FR-923: a workload resolves a state by its weights, so an operation it weighs
+/// at zero cannot be dropped from the checker's product. The checker refuses the
+/// product (`Unsupported`), so the item settles disposed `unsupported` with no
+/// terminal verdict and no document: neither `proved` nor a rejected value.
+#[trace("TC-2492")]
 #[test]
 fn a_workload_that_gives_an_enabled_operation_no_weight_is_not_proved() {
     let claim = "probabilistic ZeroWeight using ev on M over (c: M::Call) under One on origin \
@@ -853,7 +855,12 @@ fn a_workload_that_gives_an_enabled_operation_no_weight_is_not_proved() {
          workload One on M { weight Call::send = 1; weight Call::tick = 0; }\n",
         claim,
     );
-    assert!(proved_value_of(&settle(&world, "ZeroWeight")).is_none());
+    let record = settle(&world, "ZeroWeight");
+    assert!(record.terminal().is_none(), "{record:#?}");
+    assert!(
+        format!("{:?}", record.settlement).contains("Unsupported"),
+        "{record:#?}"
+    );
 }
 
 /// The exact value of a `proved` record, when it is one.

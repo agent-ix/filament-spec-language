@@ -876,8 +876,7 @@ fn enumerate_region_mean_time(
         let actions = system
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            ;
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         admit_workload(system, claim, &actions)?;
         for action in actions {
             charge_work(meter, cancel, 1)?;
@@ -1427,8 +1426,7 @@ fn enumerate_digital_deadline(
         let actions = system
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?
-;
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         admit_workload(system, claim, &actions)?;
         let enabled = digital_enabled_actions(system, timed, &current.timed, claim, cancel)?;
         let delta = rational_units(1, key_scale)?;
@@ -1796,8 +1794,7 @@ fn enumerate_region_deadline(
         let actions = system
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?
-            ;
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         admit_workload(system, claim, &actions)?;
         for action in actions {
             charge_work(meter, cancel, 1)?;
@@ -2501,7 +2498,8 @@ fn digital_discrete_delay_choice(
             for identity in order {
                 let mut next = Vec::new();
                 for (branch_probability, state) in branches {
-                    let available = digital_enabled_actions(system, timed, &state.timed, claim, cancel)?;
+                    let available =
+                        digital_enabled_actions(system, timed, &state.timed, claim, cancel)?;
                     let Some(enabled) = available
                         .iter()
                         .find(|candidate| candidate.identity == identity)

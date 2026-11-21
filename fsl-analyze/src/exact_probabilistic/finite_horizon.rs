@@ -276,9 +276,8 @@ fn collapse_zero_time_components(
         choices: zero_choices,
     };
     let all_states = (0..product.states.len()).collect::<BTreeSet<_>>();
-    let mut found: Vec<Vec<usize>> =
-        maximal_end_components_from(&zero_graph, all_states.clone())
-            .map_err(|_| FhError::InvalidState)?;
+    let mut found: Vec<Vec<usize>> = maximal_end_components_from(&zero_graph, all_states.clone())
+        .map_err(|_| FhError::InvalidState)?;
     // FR-924: a maximal end component over all actions is progressive when
     // every clock entry of its key is reset, crossed or capped by it. A bounded
     // event over a timed product keeps its deadline clock in the state; that
