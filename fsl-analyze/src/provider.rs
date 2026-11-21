@@ -2,7 +2,7 @@
 //! FR-280's in-process provider boundary over the same admitted analyze request.
 
 use crate::analyze::{
-    analyze.map_err(|_| NotAdmitted::Other(None))?bound, AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
+    analyze_bound,AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
     SourceProvision, SubjectBinding,
 };
 use filament_exact::Cancel;
@@ -1022,7 +1022,7 @@ pub(crate) fn read_package<'p>(
     emit: EmitLimits,
 ) -> Result<fsl_package::AdmittedPackageRead<'p>, NotAdmitted> {
     let identity =
-        LibraryName::new(package.graph().package_name()).map_err(|_| NotAdmitted::Other)?;
+        LibraryName::new(package.graph().package_name()).map_err(|_| NotAdmitted::Other(None))?;
     fsl_package::read_evaluation_package(
         package,
         identity,
