@@ -1247,6 +1247,23 @@ fn restored_model_keys_preserve_successors_and_refuse_initial_provenance() {
         refused.is_err(),
         "key restoration cannot supply an initial anchor: {refused:?}"
     );
+    let sampler_id =
+        fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
+            .unwrap();
+    let sampler = crate::simulation::sampled::ProbabilisticSampler::new(
+        &system,
+        world.workload("Even"),
+        &sampler_id,
+    )
+    .unwrap();
+    let refused = sampler.position(restored.clone());
+    assert!(
+        matches!(
+            refused,
+            Err(crate::simulation::sampled::SampleStop::Expansion(_))
+        ),
+        "restored context is no sampled initial: {refused:?}"
+    );
     let original = system.actions(&actual).unwrap().unwrap();
     let rebuilt = system.actions(&restored).unwrap().unwrap();
     assert_eq!(original.len(), rebuilt.len());

@@ -173,11 +173,18 @@ impl Restore<'_, '_, '_> {
                 .checked_mul(4)
                 .ok_or(ModelKeyError::SizeOverflow)?,
         )?;
-        let document = quire_canonical::read_with_reservation(
-            spelling.as_bytes(),
-            self.identity.input_bytes,
+        let document = super::encode::bounded::with_reservation(
+            self.identity,
             self.budget,
-        )
+            self.cancel,
+            |reservation| {
+                quire_canonical::read_with_reservation(
+                    spelling.as_bytes(),
+                    self.identity.input_bytes,
+                    reservation,
+                )
+            },
+        )?
         .map_err(|error| read_error(error, self.identity))?;
         Ok(DeclarationKey {
             package: text(member(document.root(), "package")?)?.to_owned(),
@@ -740,7 +747,10 @@ impl ModelSystem<'_> {
         budget
             .work(u64::try_from(bytes.len()).map_err(|_| ModelKeyError::SizeOverflow)?)
             .map_err(|_| ModelKeyError::Denied)?;
-        let document = quire_canonical::read_with_reservation(bytes, identity.input_bytes, budget)
+        let document =
+            super::encode::bounded::with_reservation(identity, budget, cancel, |reservation| {
+                quire_canonical::read_with_reservation(bytes, identity.input_bytes, reservation)
+            })?
             .map_err(|error| read_error(error, identity))?;
         let mut restore = Restore {
             system: self,

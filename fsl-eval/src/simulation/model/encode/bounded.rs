@@ -986,6 +986,28 @@ impl ValueSink for Bounded<'_, '_> {
     }
 }
 
+/// Run canonical admission through the same reservation/cancellation bridge as encoding.
+pub(crate) fn with_reservation<T>(
+    identity: IdentityLimits,
+    budget: &mut dyn ModelKeyBudget,
+    cancel: &Cancel,
+    action: impl FnOnce(&mut dyn quire_canonical::Reservation) -> T,
+) -> Result<T, ModelKeyError> {
+    let scope = Scope {
+        budget: RefCell::new(budget),
+        cancel,
+        identity,
+        refused: RefCell::new(None),
+    };
+    scope.poll()?;
+    let result = action(&mut Provision(&scope));
+    scope.poll()?;
+    if let Some(error) = scope.refused.borrow_mut().take() {
+        return Err(error);
+    }
+    Ok(result)
+}
+
 pub(crate) fn node_bytes(
     node: NodeRef<'_>,
     identity: IdentityLimits,
