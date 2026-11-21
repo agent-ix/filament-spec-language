@@ -938,8 +938,10 @@ fn the_package_default_items_refuse_a_composition() {
 /// that unit is refused whole too.
 #[test]
 fn a_package_item_naming_a_composition_is_refused() {
-    let ws = Workspace::new("compose-package-named");
+    // Each compile writes its own handoff directory, so each name gets its
+    // own workspace.
     for name in ["Sys", "Typo"] {
+        let ws = Workspace::new(&format!("compose-package-named-{name}"));
         let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition(name)])));
         assert_package_refused(&analyze(&package_handoff(&ws, &path)));
     }
