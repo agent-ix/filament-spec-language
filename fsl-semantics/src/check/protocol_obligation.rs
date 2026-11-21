@@ -34,12 +34,12 @@ use filament_semantic_value::location::{
 };
 use fsl_forms::{
     ActivationForm, AnchorSite, BinderKind, CaptureForm, ClauseKind, CompensationCommit,
-    CompensationForm, ExpressionForm, IntervalUpper, ProtocolDeclarationForm, StateClauseKind,
+    CompensationForm, DeclaredName, ExpressionForm, IntervalUpper, ProtocolDeclarationForm, StateClauseKind,
     TypeForm, TypeFormHead,
 };
 use fsl_foundation::Span;
 
-use super::check::{NamedScope, Scope, StateContext, Typer, bind_parameters};
+use super::check::{NamedScope, Scope, StateContext, Typer, bind_parameters, reserved_slot_refusal};
 use super::facts::Definedness;
 use super::ir::CheckedBody;
 use super::lowering::{ProtocolSite, protocol_location};
@@ -553,9 +553,62 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// FR-488: every `over` input, activation parameter, capture, trigger,
+    /// forward, retry and recovery binder of the protocol written in the
+    /// reserved slot form refuses at its own identifier. Returns whether any
+    /// did.
+    fn refuse_reserved_slot_names(&mut self) -> bool {
+        let protocol = self.protocol;
+        let owner = protocol.name.name.as_str();
+        let declaration = || protocol_location(owner, ProtocolSite::Declaration);
+        let mut names: Vec<(&DeclaredName, Location)> = protocol
+            .binders
+            .iter()
+            .map(|binder| (&binder.name, declaration()))
+            .collect();
+        if let ActivationForm::Each { parameter, .. } = &protocol.activation {
+            names.push((&parameter.name, declaration()));
+        }
+        names.extend(protocol.captures.iter().map(|capture| {
+            let name = &capture.parameter.name;
+            (name, protocol_location(owner, ProtocolSite::Capture(&name.name)))
+        }));
+        for template in &protocol.compensations {
+            let at = || protocol_location(owner, ProtocolSite::Compensation(&template.name.name));
+            names.extend(
+                [
+                    &template.forward.name,
+                    &template.trigger.name,
+                    &template.retry.earlier.name,
+                    &template.retry.later.name,
+                    &template.recover.binder.name,
+                ]
+                .into_iter()
+                .chain(
+                    template
+                        .registration_captures
+                        .iter()
+                        .chain(&template.activation_captures)
+                        .map(|capture| &capture.parameter.name),
+                )
+                .map(|name| (name, at())),
+            );
+        }
+        let before = self.refusals.len();
+        for (name, location) in names {
+            if let Some(refusal) = reserved_slot_refusal(&name.name, Some(name.span), &location) {
+                self.refusals.push((name.span, refusal));
+            }
+        }
+        self.refusals.len() > before
+    }
+
     fn run(&mut self, cx: &mut CheckContext<'_, Scope>) -> Option<CheckedObligations> {
         let protocol = self.protocol;
         let types = self.resolve_types();
+        if self.refuse_reserved_slot_names() {
+            return None;
+        }
 
         let activation = self.activation(&types, cx);
 

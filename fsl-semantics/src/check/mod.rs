@@ -255,7 +255,7 @@ use crate::model::domain_package::DomainPackageRef;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub use check::FormedUnits;
-use check::{bind_parameters, NamedScope, Typer};
+use check::{bind_parameters, reserved_slot_refusal, NamedScope, Typer};
 // `Signature` is public only under `test-support`: the layer-5 evaluator's
 // tests build the resolved `Signature` `declarations_for` takes as
 // `own_signature`; no shipped caller outside `check` names it.
@@ -590,8 +590,8 @@ pub use refusal::{
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
     MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
     ProtocolAnchorCause, ProtocolCheckRefusal, ProtocolConstruct, ProtocolReferenceCause,
-    ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ShadowedDeclaration,
-    SlotKind, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
+    ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ReservedSlotName,
+    ShadowedDeclaration, SlotKind, SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
     TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
@@ -2838,6 +2838,26 @@ impl PackageDeclarations {
                         loci: loci.to_vec(),
                     },
                 });
+            }
+        }
+        // FR-488: a function parameter in the reserved slot form is refused
+        // at the parameter's own identifier.
+        for (index, function) in self.functions.iter().enumerate() {
+            let spans = function.parameter_spans();
+            for (position, (name, _)) in function.parameters.iter().enumerate() {
+                let identifier = spans
+                    .and_then(|spans| spans.get(position))
+                    .and_then(|span| {
+                        Some(fsl_foundation::Span {
+                            start: span.start,
+                            end: span.start.checked_add(name.len())?,
+                        })
+                    });
+                refusals.extend(reserved_slot_refusal(
+                    name,
+                    identifier,
+                    &body_location(index, &function.name),
+                ));
             }
         }
         if !refusals.is_empty() {

@@ -354,6 +354,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::ClockReadingCall(_)
         | CheckCause::AmbiguousName { .. }
         | CheckCause::AmbiguousMember(_)
+        | CheckCause::ReservedSlotName(_)
         | CheckCause::AmbiguousQualified(_)
         | CheckCause::UnsupportedNavigation(_)
         | CheckCause::NullExpression

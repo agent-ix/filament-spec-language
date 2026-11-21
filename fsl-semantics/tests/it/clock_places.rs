@@ -4766,3 +4766,58 @@ fn a_value_type_bound_to_clock_by_target_types_a_clock_place() {
         model.invariants()
     );
 }
+
+/// FR-488-AC-29 (TC-3082 step 3): a clock guard's quantifier binder in the
+/// reserved slot form, `forall(slot_sx_sy in self.ts: ...)` over a
+/// `Sequence<Timer>` field, refuses `ambiguous_declaration`/`ambiguous-name`
+/// naming the identifier and the tag `slot`, within the guard's quantifier.
+#[trace("TC-3082", "FR-488-AC-29")]
+#[test]
+fn a_clock_guard_binder_in_the_reserved_slot_form_is_refused() {
+    let document = timer_document(|document: &mut Value| {
+        let mut held = field("ts", &package("Timer"));
+        held["multiplicity"]["lower"] = json!(0);
+        held["multiplicity"]["upper"] = json!(3);
+        document["types"][1]["fields"]
+            .as_array_mut()
+            .expect("Call fields")
+            .push(held);
+    });
+    let guard = "forall(slot_sx_sy in self.ts: slot_sx_sy.x < 5 ms)";
+    let body = format!("{UNITS}{DENSE}pre F using v on Config::Call::send {{ {guard} }}\n");
+    let refusals = check(&document, &body).expect_err("the reserved binder is refused");
+    let reserved: Vec<_> = refusals
+        .iter()
+        .filter_map(|refusal| match &refusal.cause {
+            fsl_semantics::check::CheckCause::ReservedSlotName(cause) => Some(cause),
+            _ => None,
+        })
+        .collect();
+    let [cause] = reserved.as_slice() else {
+        panic!("one reserved-name refusal: {refusals:?}");
+    };
+    assert_eq!(
+        (cause.name.as_str(), cause.tag.to_string().as_str()),
+        ("slot_sx_sy", "slot")
+    );
+    let (text, _) = crate::model_operations::config_unit_with_profiles(
+        &document,
+        crate::timed_model::TEMPORAL,
+        &body,
+    );
+    let span = cause.span.expect("the guard's own span");
+    assert_eq!(&text[span.start..span.end], guard);
+    let refusal = refusals
+        .iter()
+        .find(|refusal| {
+            matches!(
+                refusal.cause,
+                fsl_semantics::check::CheckCause::ReservedSlotName(_)
+            )
+        })
+        .expect("the reserved-name refusal");
+    assert_eq!(
+        (refusal.cause.code(), refusal.cause.cause()),
+        (Code::AmbiguousDeclaration, Some("ambiguous-name"))
+    );
+}
