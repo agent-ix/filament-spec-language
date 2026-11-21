@@ -3578,6 +3578,7 @@ impl Disposition {
                     | super::RunRefusal::DanglingReference { .. }
                     | super::RunRefusal::UnsupportedHelper(_)
                     | super::RunRefusal::PrepareLimit(_)
+                    | super::RunRefusal::RelationshipRequest { .. }
                     | super::RunRefusal::Cancelled(_) => None,
                     super::RunRefusal::Unsupported(entry) => Some(entry.catalog_code().cause()),
                     super::RunRefusal::Supplied(stop) => fsl_eval::value::supplied_stop_cause(stop),
@@ -3710,6 +3711,9 @@ impl Disposition {
                     super::RunRefusal::SourceNotSupplied { .. } => {
                         record = record.fields(BTreeMap::from([("field", "sources".to_owned())]));
                     }
+                    super::RunRefusal::RelationshipRequest { member } => {
+                        record = record.fields(BTreeMap::from([("path", member.clone())]));
+                    }
                     super::RunRefusal::Unsupported(entry) => {
                         let payload = entry.payload();
                         let mut fields = BTreeMap::from([("backend", payload.backend.to_owned())]);
@@ -3796,6 +3800,14 @@ impl Disposition {
                     result.outcome = Some(Outcome::Incomplete {
                         limit: incomplete.limits_field(),
                     });
+                }
+                CallOutcome::RelationshipIncomplete(_) => {
+                    result.outcome = Some(Outcome::Incomplete {
+                        limit: "relationship-correlation",
+                    });
+                }
+                CallOutcome::RelationshipLimit(limit) => {
+                    result.outcome = Some(Outcome::Incomplete { limit });
                 }
             },
             ClauseDisposition::FrameViolation(witness) => {

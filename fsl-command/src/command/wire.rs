@@ -435,6 +435,9 @@ pub(super) struct Call {
     /// Population arguments resolve against.
     #[serde(default)]
     pub snapshot: Option<String>,
+    /// FR-1045: explicit relationship-correlation selection for this call.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub relationships: Option<serde_json::Value>,
     /// FR-960: the call's requirement settlement and the backends of its
     /// items, read by `requirements::read`; absent settles no item.
     #[serde(default, deserialize_with = "present_json_value")]

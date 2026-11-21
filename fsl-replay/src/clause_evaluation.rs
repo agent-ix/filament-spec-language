@@ -341,6 +341,11 @@ fn settle(disposition: ClauseDisposition) -> ClauseEvaluation {
         ClauseDisposition::Evaluate(CallOutcome::Incomplete(incomplete)) => {
             ClauseEvaluation::Incomplete(ClauseIncomplete::Accounting(incomplete))
         }
+        ClauseDisposition::Evaluate(
+            CallOutcome::RelationshipIncomplete(_) | CallOutcome::RelationshipLimit(_),
+        ) => ClauseEvaluation::Incomplete(ClauseIncomplete::Stopped {
+            code: "incomplete-relationship-correlation",
+        }),
         ClauseDisposition::Evaluate(CallOutcome::Refused(refusal)) => {
             let (crate::spine::CallRefusal::Record { code, .. }
             | crate::spine::CallRefusal::Family { code, .. }) = &refusal;

@@ -24,6 +24,171 @@ fn is_identifier_admits_ascii_identifiers_only() {
     assert!(!is_identifier("a.b"));
 }
 
+#[trace("FR-1045-AC-5", "FR-100-AC-24")]
+#[test]
+fn resolver_incomplete_and_refusal_outcomes_keep_their_typed_payloads() {
+    use filament_observation::{
+        AdmissionOutcome, IncompleteReason, ProducerConfiguration, ProducerDigest, RefusalCause,
+        RelationshipDeclaration, RelationshipEndpointDeclaration, RequiredRelationship,
+        ResourceKind, Revision, SelectionField, StaticProducerBundle,
+    };
+
+    let mut candidate = StaticProducerBundle {
+        bundle_identity: Some("ix://test/producer".to_owned()),
+        bundle_revision: Some(Revision::new("test", "1")),
+        interface_version: Some(filament_observation::PRODUCER_INTERFACE_VERSION.to_owned()),
+        configuration: Some(ProducerConfiguration {
+            configuration_identity: "ix://test/configuration".to_owned(),
+            digest: ProducerDigest {
+                label: "filament-canonical-json-1/1".to_owned(),
+                value: format!("sha256:{}", "00".repeat(32)),
+            },
+        }),
+        relationships: Some(vec![RelationshipDeclaration {
+            relationship_identity: "producer:Order-ships-Shipment".to_owned(),
+            source: RelationshipEndpointDeclaration {
+                type_identity: "ix://test/Order".to_owned(),
+            },
+            target: RelationshipEndpointDeclaration {
+                type_identity: "ix://test/Shipment".to_owned(),
+            },
+        }]),
+        ..StaticProducerBundle::default()
+    };
+    candidate.digest = Some(
+        candidate
+            .canonical_digest_selection()
+            .expect("test Producer candidate has a canonical digest"),
+    );
+    let producer = candidate.admit().expect("test Producer bundle admits");
+    let authority = producer.key().clone();
+    let source = filament_observation::QualifiedSubject::from_authority(
+        authority.clone(),
+        filament_observation::SubjectKind::new(b"ix://test/Order".to_vec())
+            .expect("non-empty source kind"),
+        filament_observation::SubjectIdentity::new(b"o1".to_vec())
+            .expect("non-empty source identity"),
+    );
+    let target = filament_observation::QualifiedSubject::from_authority(
+        authority,
+        filament_observation::SubjectKind::new(b"ix://test/Shipment".to_vec())
+            .expect("non-empty target kind"),
+        filament_observation::SubjectIdentity::new(b"s1".to_vec())
+            .expect("non-empty target identity"),
+    );
+    let required =
+        RequiredRelationship::new(&producer, "producer:Order-ships-Shipment", source, target)
+            .expect("required slot matches Producer endpoints");
+    let incomplete = super::relationship_call_outcome(
+        AdmissionOutcome::Incomplete {
+            reasons: vec![
+                IncompleteReason::MissingValuation {
+                    record: filament_observation::Identity::new("record:missing"),
+                },
+                IncompleteReason::MissingRelationship {
+                    required: required.clone(),
+                },
+                IncompleteReason::IncompleteRelationshipExtent { required },
+                IncompleteReason::MissingMembership,
+                IncompleteReason::MissingClosure,
+            ],
+        },
+        &producer,
+    )
+    .expect("incomplete admission prevents call evaluation");
+    let CallOutcome::RelationshipIncomplete(reasons) = incomplete else {
+        panic!("typed incompleteness must remain incomplete");
+    };
+    assert_eq!(
+        reasons[0],
+        serde_json::json!({
+            "code": "missing-valuation",
+            "fields": {"record": "record:missing"}
+        })
+    );
+    let expected_slot = format!(
+        "{{\"declaration_identity\":\"producer:Order-ships-Shipment\",\"authority\":{{\"bundle_identity\":\"{}\",\"bundle_revision\":{{\"namespace\":\"{}\",\"value\":\"{}\"}},\"digest\":{{\"label\":\"{}\",\"value\":\"{}\"}}}},\"interface_version\":\"{}\",\"source\":{{\"authority\":{{\"bundle_identity\":\"{}\",\"bundle_revision\":{{\"namespace\":\"{}\",\"value\":\"{}\"}},\"digest\":{{\"label\":\"{}\",\"value\":\"{}\"}}}},\"subject_kind\":\"ix://test/Order\",\"authority_local_object_identity\":\"6f31\"}},\"target\":{{\"authority\":{{\"bundle_identity\":\"{}\",\"bundle_revision\":{{\"namespace\":\"{}\",\"value\":\"{}\"}},\"digest\":{{\"label\":\"{}\",\"value\":\"{}\"}}}},\"subject_kind\":\"ix://test/Shipment\",\"authority_local_object_identity\":\"7331\"}}}}",
+        producer.key().bundle_identity,
+        producer.key().bundle_revision.namespace,
+        producer.key().bundle_revision.value,
+        producer.key().digest.label,
+        producer.key().digest.value,
+        producer.interface_version(),
+        producer.key().bundle_identity,
+        producer.key().bundle_revision.namespace,
+        producer.key().bundle_revision.value,
+        producer.key().digest.label,
+        producer.key().digest.value,
+        producer.key().bundle_identity,
+        producer.key().bundle_revision.namespace,
+        producer.key().bundle_revision.value,
+        producer.key().digest.label,
+        producer.key().digest.value,
+    );
+    assert_eq!(
+        reasons[1],
+        serde_json::json!({
+            "code": "missing-relationship",
+            "fields": {"required": expected_slot.clone()}
+        })
+    );
+    assert_eq!(
+        reasons[2],
+        serde_json::json!({
+            "code": "incomplete-relationship-extent",
+            "fields": {"required": expected_slot}
+        })
+    );
+    assert_eq!(
+        reasons[3],
+        serde_json::json!({
+            "code": "missing-membership", "fields": {}
+        })
+    );
+    assert_eq!(
+        reasons[4],
+        serde_json::json!({
+            "code": "missing-closure", "fields": {}
+        })
+    );
+
+    for (limit, expected) in [
+        (ResourceKind::Records, "max_records"),
+        (ResourceKind::Members, "max_members"),
+        (ResourceKind::Relationships, "max_relationships"),
+        (
+            ResourceKind::RequiredRelationships,
+            "max_required_relationships",
+        ),
+    ] {
+        let limited = super::relationship_call_outcome(
+            AdmissionOutcome::Refused {
+                cause: RefusalCause::ResourceLimit { limit },
+            },
+            &producer,
+        )
+        .expect("resource refusal maps to incomplete");
+        assert!(matches!(
+            limited,
+            CallOutcome::RelationshipLimit(actual) if actual == expected
+        ));
+    }
+
+    let refused = super::relationship_call_outcome(
+        AdmissionOutcome::Refused {
+            cause: RefusalCause::InvalidSelection(SelectionField::Closure),
+        },
+        &producer,
+    )
+    .expect("non-resource refusal remains refusal");
+    let CallOutcome::Refused(CallRefusal::Record { code, fields, .. }) = refused else {
+        panic!("resolver refusal must retain record form");
+    };
+    assert_eq!(code.code(), "invalid_runtime_input");
+    assert_eq!(code.cause(), "invalid-selection");
+    assert_eq!(fields.get("selection").map(String::as_str), Some("closure"));
+}
+
 const FIXTURE: &str = include_str!("../../../../tests/fixtures/spine-run.native");
 
 fn source() -> SourceIdentity {

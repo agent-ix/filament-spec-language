@@ -1571,7 +1571,11 @@ impl ClauseRunReport {
                     | TemporalVerdict::ProgressLimitReached(_)
                     | TemporalVerdict::ExpansionLimitReached(_)
                     | TemporalVerdict::ActivationIncomplete { .. }
-            ) | ClauseDisposition::Evaluate(CallOutcome::Incomplete(_))
+            ) | ClauseDisposition::Evaluate(
+                CallOutcome::Incomplete(_)
+                    | CallOutcome::RelationshipIncomplete(_)
+                    | CallOutcome::RelationshipLimit(_)
+            )
         );
         let execution = match (&self.finite_window, activation) {
             (Some(window), _) => Some(match window.premises.assessment {

@@ -149,9 +149,11 @@ fn classify_clause_outcome(
         ClauseDisposition::Evaluate(CallOutcome::Refused(refusal)) => {
             Err(DerivationRefusal::Refused(separation_refusal(refusal)))
         }
-        ClauseDisposition::Evaluate(CallOutcome::Incomplete(_)) => {
-            Err(DerivationRefusal::Exhausted)
-        }
+        ClauseDisposition::Evaluate(
+            CallOutcome::Incomplete(_)
+            | CallOutcome::RelationshipIncomplete(_)
+            | CallOutcome::RelationshipLimit(_),
+        ) => Err(DerivationRefusal::Exhausted),
         ClauseDisposition::Evaluate(CallOutcome::Undefined { reason, location }) => location
             .map_or_else(
                 || {

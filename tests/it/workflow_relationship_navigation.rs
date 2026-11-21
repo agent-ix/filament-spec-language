@@ -8,18 +8,21 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;
 
-const PACKAGE: &str = "test/workflow-relationships";
-const ORDER: &str = "ix://test/workflow-relationships/Order";
-const SHIPMENT: &str = "ix://test/workflow-relationships/Shipment";
-const PAYMENT_ATTEMPT: &str = "ix://test/workflow-relationships/PaymentAttempt";
-const REFUND: &str = "ix://test/workflow-relationships/Refund";
-const PROVIDER: &str = "ix://test/workflow-relationships/Provider";
-const RECORDS: &str = "ix://test/workflow-relationships/records";
-const SHIPMENTS: &str = "ix://test/workflow-relationships/relationship/Order-ships-Shipment";
-const PAYMENTS: &str =
+pub(super) const PACKAGE: &str = "test/workflow-relationships";
+pub(super) const ORDER: &str = "ix://test/workflow-relationships/Order";
+pub(super) const SHIPMENT: &str = "ix://test/workflow-relationships/Shipment";
+pub(super) const PAYMENT_ATTEMPT: &str = "ix://test/workflow-relationships/PaymentAttempt";
+pub(super) const REFUND: &str = "ix://test/workflow-relationships/Refund";
+pub(super) const PROVIDER: &str = "ix://test/workflow-relationships/Provider";
+pub(super) const RECORDS: &str = "ix://test/workflow-relationships/records";
+pub(super) const SHIPMENTS: &str =
+    "ix://test/workflow-relationships/relationship/Order-ships-Shipment";
+pub(super) const PAYMENTS: &str =
     "ix://test/workflow-relationships/relationship/Order-hasPaymentAttempt-PaymentAttempt";
-const REFUNDS: &str = "ix://test/workflow-relationships/relationship/Order-hasRefund-Refund";
-const PROVIDERS: &str = "ix://test/workflow-relationships/relationship/Order-usesProvider-Provider";
+pub(super) const REFUNDS: &str =
+    "ix://test/workflow-relationships/relationship/Order-hasRefund-Refund";
+pub(super) const PROVIDERS: &str =
+    "ix://test/workflow-relationships/relationship/Order-usesProvider-Provider";
 
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.model.complete/v1\";\n\
@@ -63,7 +66,7 @@ fn relationship(
     })
 }
 
-fn workflow_model() -> Value {
+pub(super) fn workflow_model() -> Value {
     let mut model: Value = serde_json::from_str(include_str!(
         "../../examples/config-version/model.semantic-ir.json"
     ))
@@ -151,15 +154,15 @@ fn workflow_model() -> Value {
     model
 }
 
-fn reference(key: &str) -> Value {
+pub(super) fn reference(key: &str) -> Value {
     json!({"population": RECORDS, "key": key})
 }
 
-fn instance(source: &str, target: &str) -> Value {
+pub(super) fn instance(source: &str, target: &str) -> Value {
     json!({"source": reference(source), "target": reference(target)})
 }
 
-fn workflow_snapshot(relationships: Vec<Value>) -> Value {
+pub(super) fn workflow_snapshot(relationships: Vec<Value>) -> Value {
     json!({
         "format": "filament.state.snapshot/v1",
         "identity": {"authority": "agent-ix", "identity": "ix://test/workflow-relationships/snapshot"},
@@ -186,11 +189,20 @@ fn workflow_snapshot(relationships: Vec<Value>) -> Value {
     })
 }
 
-fn relationship_row(identity: &str, complete: bool, instances: Vec<Value>) -> Value {
+pub(super) fn relationship_row(identity: &str, complete: bool, instances: Vec<Value>) -> Value {
     json!({"relationship": identity, "complete": complete, "instances": instances})
 }
 
 fn run(function: &str, input_key: &str, relationships: Vec<Value>) -> Output {
+    run_selected(function, input_key, relationships, None)
+}
+
+pub(super) fn run_selected(
+    function: &str,
+    input_key: &str,
+    relationships: Vec<Value>,
+    selection: Option<Value>,
+) -> Output {
     let directory = tempfile::tempdir().unwrap();
     let path: &Path = directory.path();
     std::fs::write(
@@ -204,13 +216,17 @@ fn run(function: &str, input_key: &str, relationships: Vec<Value>) -> Output {
         workflow_snapshot(relationships).to_string(),
     )
     .unwrap();
+    let mut call = json!({"function": function, "snapshot": "snapshot.json", "arguments": [
+        {"parameter": if function == "providerOrders" { "provider" } else { "order" },
+            "value": {"reference": {"population": RECORDS, "key": input_key}}}
+    ]});
+    if let Some(selection) = selection {
+        call["relationships"] = selection;
+    }
     let request = json!({"format": "native-run/1", "request": {
         "models": [{"format": "semantic-ir/2.0.0", "source": source("model.semantic-ir.json", "WorkflowModel")}],
         "program": {"source": source("workflow.native", "WorkflowUnit")},
-        "call": {"function": function, "snapshot": "snapshot.json", "arguments": [
-            {"parameter": if function == "providerOrders" { "provider" } else { "order" },
-                "value": {"reference": {"population": RECORDS, "key": input_key}}}
-        ]}
+        "call": call
     }});
     std::fs::write(
         path.join("request.json"),

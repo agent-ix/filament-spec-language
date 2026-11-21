@@ -54,6 +54,7 @@ mod clocks;
 mod lifecycle;
 #[cfg(feature = "quire-extraction")]
 mod native_fences;
+mod relationships;
 /// FR-527's TL mapping table and the native valuation a TL cross-evaluation
 /// reads (FR-757, FR-931), for the command adapter's correspondence stage.
 pub use crate::spine_eval_api::{
@@ -62,6 +63,7 @@ pub use crate::spine_eval_api::{
     SpineEvalTemporalOutcome as TemporalOutcome, SpineEvalTemporalRefusal as TemporalRefusal,
     SpineEvalValueInvariantEvaluation as ValueInvariantEvaluation,
 };
+pub(crate) use call::relationship_call_outcome;
 pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
 pub use fsl_package::checked_views::{
@@ -73,6 +75,11 @@ pub use fsl_package::TemporalClockSelection;
 pub use native_fences::{
     check_native_fences, CheckLimits, FenceCheckCause, NativeFenceDiagnostic, NativeFenceReport,
     NativeFenceRequest, NativeFenceResult, NativeFenceUnit,
+};
+pub use relationships::package_selection as relationship_package_selection;
+pub use relationships::{
+    invalid_snapshot_relationship_identity, snapshot_relationship_member,
+    unknown_snapshot_relationship, ReadError as RelationshipReadError, RelationshipSelection,
 };
 mod subject;
 pub use lifecycle::{

@@ -14,6 +14,7 @@ mod output;
 mod output_file;
 mod package_run;
 pub mod plan;
+mod relationships;
 mod runtime_sources;
 pub use package_run::PreparedPackageRun;
 pub mod plan_request;
@@ -1497,7 +1498,12 @@ impl RunError {
                     )]))),
                 ])
             }
-            RunCause::ClauseRequest { member, .. } if member.starts_with("/call/arguments/") => {
+            RunCause::ClauseRequest { member, .. }
+                if member.starts_with("/call/arguments/")
+                    || member == "/call/relationships"
+                    || member.starts_with("/call/relationships/")
+                    || member.starts_with("/call/snapshot/relationships/") =>
+            {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         None,
@@ -4032,9 +4038,20 @@ fn prepare_run_bytes_with_sources(
     overrides: &RequestOverrides<'_>,
     admitted_sources: &mut crate::Sources,
 ) -> Result<PreparedRun> {
+    if let Some(member) =
+        relationships::duplicate_selection_member(bytes).map_err(RunCause::Json)?
+    {
+        return Err(RunCause::ClauseRequest {
+            member,
+            reason: "member is repeated".to_owned(),
+        });
+    }
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
     // FR-1031: the first refusal in table order is the selection conflict.
     refuse_transfer_selection_conflict(&request)?;
+    // FR-1045: reject malformed correlation selection before any selected
+    // program, package, model or snapshot file is opened.
+    relationships::validate_request(request.call.as_ref())?;
     // FR-100, FR-1039: a selected checked package runs from its own records,
     // refusing every member that would restate them before any file is read.
     if let Some(package) = &request.package {
@@ -4523,6 +4540,48 @@ fn prepare_complete_run(
                 fsl_replay::spine::CompileRefusal::DependencyInput(refusal),
             )
         })?;
+    let relationship_navigation = if let Some(selection) = call.relationships.as_ref() {
+        let parse_request = fsl_replay::spine::ParseRequest {
+            source: source.source().identity(),
+            path: source.source().path(),
+            bytes: source.source().text().as_bytes(),
+        };
+        let cancel = filament_exact::Cancel::new();
+        let parsed = fsl_replay::spine::parse_selecting_extensions(
+            &parse_request,
+            fsl_replay::spine::ProfileCatalogInput {
+                catalog: &extension_catalog,
+                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+            },
+            stage_limits.source,
+            &cancel,
+        )
+        .map(|stage| stage.into_value())
+        .map_err(
+            |failure| match fsl_replay::spine::refusal_or_fault(failure) {
+                Ok(refusal) => spine_run_failure(
+                    &source,
+                    libraries.iter().map(|(_, source)| source),
+                    *refusal,
+                ),
+                Err(fault) => {
+                    RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(fault)))
+                }
+            },
+        )?;
+        Some(relationships::validate_package_mappings(
+            selection,
+            parsed
+                .unit()
+                .selections()
+                .models
+                .iter()
+                .map(|model| model.identity.clone()),
+            &packages,
+        )?)
+    } else {
+        None
+    };
     let mut spine_call = read_call(call, request)?;
     if let Some(file) = &call.snapshot {
         let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None).map_err(|error| {
@@ -4532,14 +4591,20 @@ fn prepare_complete_run(
             }
         })?;
         let bytes = intake.file(file, intake.remaining)?;
-        let observation = fsl_replay::spine::SuppliedObservation::from_document("snapshot", bytes)
-            .map_err(|error| RunCause::ClauseRequest {
-                member: error.member,
-                reason: error.reason,
-            })?;
+        let (snapshot_bytes, relationship_extents) =
+            relationships::snapshot_document(&bytes, call.relationships.as_ref())?;
+        let observation =
+            fsl_replay::spine::SuppliedObservation::from_document("snapshot", snapshot_bytes)
+                .map_err(|error| RunCause::ClauseRequest {
+                    member: error.member,
+                    reason: error.reason,
+                })?;
         spine_call.snapshot = Some(fsl_replay::spine::CallSnapshot {
             observation,
             limits,
+            relationship_selection: call.relationships.clone(),
+            relationship_extents,
+            relationship_navigation,
         });
     }
     spine_call.clocks = request.clocks.clone();

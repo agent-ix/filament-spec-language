@@ -665,6 +665,9 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
             vec![RefusalCause::new(Code::ResourceExhausted, None)
                 .reaching(Some(accounting_limit(incomplete)))],
         ),
+        CallOutcome::RelationshipIncomplete(_) | CallOutcome::RelationshipLimit(_) => {
+            Classification::new(Incomplete, Vec::new())
+        }
     }
 }
 
