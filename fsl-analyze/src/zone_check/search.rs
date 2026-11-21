@@ -588,11 +588,6 @@ pub enum ZoneCheckRefusal {
     /// the product keeps one abstract clock block per position.
     #[error("the refinement checker does not decide a timed abstract side whose alive hidden candidates apply different clock carries or resets at one step")]
     HiddenCandidateClockBlocks,
-    /// The liveness half of a timed abstract side whose hidden candidates
-    /// disagree on clock behaviour: its product would need one clock
-    /// valuation per candidate (the safety half is decided).
-    #[error("the refinement checker does not decide the liveness half of a timed abstract side whose hidden candidates differ in clock behaviour")]
-    HiddenCandidateLiveness,
     /// The liveness half of a timed abstract side under a concrete tick
     /// source: abstract class enabledness is read over the instants between
     /// positions, which a tick source does not have.

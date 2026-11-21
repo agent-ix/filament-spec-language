@@ -42,6 +42,7 @@ use num_bigint::BigInt;
 
 mod fair_loops;
 
+use super::super::concretise::ClockTransform;
 use super::{
     Judgement, Product, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
 };
@@ -92,8 +93,14 @@ struct Node {
 /// How an edge is taken.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Via {
-    Step { step: usize, part: usize },
+    Step {
+        step: usize,
+        part: usize,
+    },
     Wait,
+    /// A delay after which some alive candidates are dead: a silent edge to
+    /// the position of the survivors (FR-899 "Timed subjects").
+    Dies,
     Diverge,
     Stutter,
 }
@@ -106,7 +113,10 @@ struct Arc {
     /// The abstract steps a position takes; `None` for a delay.
     taken: Option<Taken>,
     /// Auxiliary abstract clock operation for a mapped discrete step.
-    auxiliary_transform: Option<super::super::concretise::ClockTransform>,
+    auxiliary_transform: Option<ClockTransform>,
+    /// For a death edge, the constraints that cut its piece: the alive
+    /// candidates' invariants and a failing branch of each dying one's.
+    cut: Vec<PlaceConstraint>,
 }
 
 /// A position's judgement, by its position, its state's key and its step
@@ -394,7 +404,7 @@ impl Product<'_, '_> {
                 state.state(),
             );
             let q = match self.judge(verdict, run)? {
-                Judgement::Passes(q, _) => q,
+                Judgement::Passes(q, _) => self.alive_at_zero(run, q)?,
                 // A failing initial state is time-locked, since the safety
                 // half holds: no behaviour from it diverges.
                 Judgement::Fails(_) => continue,
@@ -507,75 +517,114 @@ impl Product<'_, '_> {
                     Moved::To(None) => continue,
                     Moved::Ends(ends) => return Ok(Err(ends)),
                 };
-                let (failure, auxiliary_transform) =
-                    self.auxiliary_step(run, node.q, q, &taken, &mut next)?;
-                if failure.is_some() || next.is_empty() {
-                    continue;
-                }
-                let extra = self.abstract_view(run, live, q)?.atoms;
-                for (cell, piece) in run.split(&mut live.cells, &post, &extra, &next)? {
-                    let Some(entered) = run.close(&mut live.cells, &post, &extra, piece, &cell)?
-                    else {
+                // The abstract side's alive candidates split the landing by
+                // the truth pattern of their rows' clock guards (FR-899
+                // "Timed subjects"); a landing no row or no post candidate
+                // admits is time-locked, since the safety half holds.
+                let landings = self.step_pieces(run, node.q, q, &taken, next)?.0;
+                for landing in landings {
+                    let (landed, q, taken, auxiliary_transform) = (
+                        landing.zone,
+                        landing.target,
+                        landing.taken,
+                        landing.transform,
+                    );
+                    if landed.is_empty() {
                         continue;
-                    };
-                    let next = Node {
-                        state: post.clone(),
-                        q,
-                        cell,
-                        zone: entered,
-                        positioned: true,
-                        divergent: !dense && tick,
-                        tail: false,
-                        initial: None,
-                        depth: node.depth + 1,
-                    };
-                    let arc = Arc {
-                        from: at,
-                        to: 0,
-                        via: Via::Step {
-                            step: index,
-                            part: part_index,
-                        },
-                        taken: Some(taken.clone()),
-                        auxiliary_transform: auxiliary_transform.clone(),
-                    };
-                    created.extend(add_node(run, live, next, Some(arc))?);
+                    }
+                    let extra = self.abstract_view(run, live, q)?.atoms;
+                    for (cell, piece) in run.split(&mut live.cells, &post, &extra, &landed)? {
+                        let Some(entered) =
+                            run.close(&mut live.cells, &post, &extra, piece, &cell)?
+                        else {
+                            continue;
+                        };
+                        let next = Node {
+                            state: post.clone(),
+                            q,
+                            cell,
+                            zone: entered,
+                            positioned: true,
+                            divergent: !dense && tick,
+                            tail: false,
+                            initial: None,
+                            depth: node.depth + 1,
+                        };
+                        let arc = Arc {
+                            from: at,
+                            to: 0,
+                            via: Via::Step {
+                                step: index,
+                                part: part_index,
+                            },
+                            taken: Some(taken.clone()),
+                            auxiliary_transform: auxiliary_transform.clone(),
+                            cut: Vec::new(),
+                        };
+                        created.extend(add_node(run, live, next, Some(arc))?);
+                    }
                 }
             }
         }
         if dense && run.elapses(&node.state)? {
-            // A delay into each next cell.
+            // A delay into each next cell. The cell is uniform in the truth
+            // of the alive candidates' invariants (their constants are cell
+            // atoms), so a candidate whose invariant fails there is dead on
+            // arrival: the delay is then a silent death edge to the pruned
+            // position (FR-899 "Timed subjects"), and a cell where none
+            // holds is time-locked, no behaviour.
             let invariants = run.timed(run.timed.invariants(&node.state))?;
             let mut later = node.zone.clone();
             later.up();
             constrain_at(&mut later, &invariants, &scale)?;
-            self.auxiliary_invariants(run, node.q, &mut later)?;
             let extra = self.abstract_view(run, live, node.q)?.atoms;
             for (cell, piece) in run.split(&mut live.cells, &node.state, &extra, &later)? {
                 if !next_cell(&node.cell, &cell) {
                     continue;
                 }
-                let Some(entered) =
-                    run.close(&mut live.cells, &node.state, &extra, piece, &cell)?
-                else {
-                    continue;
-                };
-                let next = Node {
-                    cell,
-                    zone: entered,
-                    positioned: false,
-                    divergent: false,
-                    initial: None,
-                    ..node.clone()
-                };
-                let arc = Arc {
-                    from: at,
-                    to: 0,
-                    via: Via::Wait,
-                    taken: None,
-                    auxiliary_transform: None,
-                };
-                created.extend(add_node(run, live, next, Some(arc))?);
+                for (target_q, alive, cut) in self.delay_pieces(run, node.q, piece)? {
+                    let target_extra = self.abstract_view(run, live, target_q)?.atoms;
+                    for (target_cell, part) in
+                        run.split(&mut live.cells, &node.state, &target_extra, &alive)?
+                    {
+                        let Some(entered) = run.close(
+                            &mut live.cells,
+                            &node.state,
+                            &target_extra,
+                            part,
+                            &target_cell,
+                        )?
+                        else {
+                            continue;
+                        };
+                        let next = Node {
+                            q: target_q,
+                            cell: target_cell,
+                            zone: entered,
+                            positioned: false,
+                            divergent: false,
+                            initial: None,
+                            ..node.clone()
+                        };
+                        let arc = Arc {
+                            from: at,
+                            to: 0,
+                            via: if target_q == node.q {
+                                Via::Wait
+                            } else {
+                                Via::Dies
+                            },
+                            taken: None,
+                            auxiliary_transform: None,
+                            cut: if target_q == node.q {
+                                Vec::new()
+                            } else {
+                                cut.clone()
+                            },
+                        };
+                        created.extend(add_node(run, live, next, Some(arc))?);
+                    }
+                }
             }
         }
         if dense {
@@ -602,6 +651,7 @@ impl Product<'_, '_> {
                         via: Via::Diverge,
                         taken: None,
                         auxiliary_transform: None,
+                        cut: Vec::new(),
                     };
                     created.extend(add_node(run, live, next, Some(arc))?);
                 }
@@ -625,43 +675,96 @@ impl Product<'_, '_> {
             Moved::To(None) => return Ok(Ok(Vec::new())),
             Moved::Ends(ends) => return Ok(Err(ends)),
         };
-        let next = Node {
-            q,
-            positioned: true,
-            divergent: !dense,
-            tail: true,
-            initial: None,
-            depth: node.depth + 1,
-            ..node.clone()
-        };
-        let arc = Arc {
-            from: at,
-            to: 0,
-            via: Via::Stutter,
-            taken: Some(taken),
-            auxiliary_transform: None,
-        };
-        if run.auxiliary_timed.is_none() {
-            return Ok(Ok(add_node(run, live, next, Some(arc))?
-                .into_iter()
-                .collect()));
-        }
-        // The stutter's position reads other abstract guards: its zone is
-        // split again by them, each piece a vertex.
-        let extra = self.abstract_view(run, live, q)?.atoms;
+        // The stutter's position reads other abstract guards, and its alive
+        // candidates are those whose invariant holds: its zone is split by
+        // them, each piece a vertex.
+        let landings = self
+            .step_pieces(run, node.q, q, &taken, node.zone.clone())?
+            .0;
         let mut created = Vec::new();
-        for (cell, piece) in run.split(&mut live.cells, &node.state, &extra, &node.zone)? {
-            let Some(zone) = run.close(&mut live.cells, &node.state, &extra, piece, &cell)? else {
-                continue;
-            };
+        for landing in landings {
+            let (landed, q, taken) = (landing.zone, landing.target, landing.taken);
             let next = Node {
-                cell,
-                zone,
-                ..next.clone()
+                q,
+                positioned: true,
+                divergent: !dense,
+                tail: true,
+                initial: None,
+                depth: node.depth + 1,
+                ..node.clone()
             };
-            created.extend(add_node(run, live, next, Some(arc.clone()))?);
+            let arc = Arc {
+                from: at,
+                to: 0,
+                via: Via::Stutter,
+                taken: Some(taken),
+                auxiliary_transform: None,
+                cut: Vec::new(),
+            };
+            if run.auxiliary_timed.is_none() {
+                created.extend(add_node(run, live, next, Some(arc))?);
+                continue;
+            }
+            let extra = self.abstract_view(run, live, q)?.atoms;
+            for (cell, piece) in run.split(&mut live.cells, &node.state, &extra, &landed)? {
+                let Some(zone) = run.close(&mut live.cells, &node.state, &extra, piece, &cell)?
+                else {
+                    continue;
+                };
+                let next = Node {
+                    cell,
+                    zone,
+                    ..next.clone()
+                };
+                created.extend(add_node(run, live, next, Some(arc.clone()))?);
+            }
         }
         Ok(Ok(created))
+    }
+
+    /// The pieces of `zone`, a delay into one cell of position `q`, by the
+    /// truth pattern of its alive candidates' invariants: the position the
+    /// piece leads to (`q` itself where all hold, the survivors' position
+    /// where some die) and the zone. A piece where none holds is dropped: the
+    /// safety half holds, so it is time-locked and no behaviour goes through
+    /// it.
+    fn delay_pieces(
+        &mut self,
+        run: &Run<'_, '_, '_>,
+        q: usize,
+        zone: Dbm,
+    ) -> Result<Vec<(usize, Dbm, Vec<PlaceConstraint>)>, Halt> {
+        let Some(timed) = run.auxiliary_timed else {
+            return Ok(vec![(q, zone, Vec::new())]);
+        };
+        let candidates = &self
+            .positions
+            .get(q)
+            .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?
+            .abstract_states;
+        let count = candidates.len();
+        let mut invariants = Vec::with_capacity(count);
+        for candidate in candidates {
+            invariants.push(Self::candidate_invariants(run, timed, candidate)?);
+        }
+        let mut leads = Vec::new();
+        for piece in Self::pattern_pieces(run, zone, &invariants)? {
+            if piece.alive.is_empty() {
+                continue;
+            }
+            if piece.alive.len() == count {
+                leads.push((q, piece.zone, Vec::new()));
+                continue;
+            }
+            let mut survivors = self.positions[q].clone();
+            survivors.abstract_states = piece
+                .alive
+                .iter()
+                .map(|&at| self.positions[q].abstract_states[at].clone())
+                .collect();
+            leads.push((self.intern(survivors, run)?, piece.zone, piece.cut));
+        }
+        Ok(leads)
     }
 
     /// `check_step` on the step `transition` (by its index; `None` for a
@@ -826,6 +929,17 @@ impl Product<'_, '_> {
                 }
                 view.steps
                     .push((key.clone(), step.transition().clone(), parts));
+            }
+        }
+        // The constants of the alive candidates' invariants are cell atoms
+        // too, so the alive set is uniform on each cell, a death happens at a
+        // cell boundary and no cell runs past an alive invariant.
+        for candidate in &position.abstract_states {
+            for constraint in Self::candidate_invariants(run, timed, candidate)? {
+                atoms.insert((
+                    constraint.place() + 1,
+                    scaled(constraint.bound(), &run.scale),
+                ));
             }
         }
         view.atoms = atoms.into_iter().collect();
@@ -1019,6 +1133,7 @@ impl Product<'_, '_> {
             .map(|(index, &arc_index)| {
                 let arc = &live.arcs[arc_index];
                 let source = &positions[index];
+                let next = &positions[(index + 1) % positions.len()];
                 let rows = match arc.taken.as_ref() {
                     Some(Taken::CandidateSteps(rows)) => rows
                         .iter()
@@ -1043,6 +1158,7 @@ impl Product<'_, '_> {
                         .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
                     Some(Taken::Stutter) | None => source
                         .iter()
+                        .filter(|(key, _)| next.iter().any(|(held, _)| held == key))
                         .map(|(key, _)| CandidateFairStep {
                             pre_state: key.clone(),
                             transition: None,
@@ -1192,7 +1308,7 @@ impl Product<'_, '_> {
                             .ok_or(ZoneCheckRefusal::Fault("edge-step"))?;
                         EdgeLabel::Transition(number(step.transition()))
                     }
-                    Via::Wait | Via::Diverge | Via::Stutter => EdgeLabel::Stutter,
+                    Via::Wait | Via::Dies | Via::Diverge | Via::Stutter => EdgeLabel::Stutter,
                 };
                 graph
                     .add_edge(handles[from], handles[arc.to], label)
@@ -1553,23 +1669,43 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
                 fixed: None,
             }
         }
-        Via::Wait => Stage {
-            invariants: invariants.clone(),
-            elapses,
-            target: invariants,
-            before: None,
-            after: None,
-            auxiliary_carries: Vec::new(),
-            auxiliary_resets: Vec::new(),
-            piece: run.cell_zone(&mut live.cells, &target.state, &target_atoms, &target.cell)?,
-            step: None,
-            position: Vec::new(),
-            position_resets: Vec::new(),
-            silent: true,
-            fixed: None,
-        },
+        Via::Wait | Via::Dies => {
+            let cell =
+                run.cell_zone(&mut live.cells, &target.state, &target_atoms, &target.cell)?;
+            Stage {
+                invariants: invariants.clone(),
+                elapses,
+                target: invariants,
+                before: None,
+                after: None,
+                auxiliary_carries: Vec::new(),
+                auxiliary_resets: Vec::new(),
+                piece: dying_piece(run, cell, &arc.cut)?,
+                step: None,
+                position: Vec::new(),
+                position_resets: Vec::new(),
+                silent: true,
+                fixed: None,
+            }
+        }
         Via::Diverge | Via::Stutter => return Err(ZoneCheckRefusal::Fault("stage-edge").into()),
     })
+}
+
+/// `cell` held to the cut of a death edge: the alive candidates' invariants
+/// hold and each dying candidate's has failed, so the delay lands after the
+/// death instant and not before it (FR-900 "Delay").
+fn dying_piece(
+    run: &Run<'_, '_, '_>,
+    cell: Option<Dbm>,
+    cut: &[PlaceConstraint],
+) -> Result<Option<Dbm>, Halt> {
+    if cut.is_empty() {
+        return Ok(cell);
+    }
+    let mut zone = cell.map_or_else(|| Dbm::universe(run.dim()), |zone| zone.widened(run.dim()));
+    constrain_at(&mut zone, cut, &run.scale)?;
+    Ok(Some(zone))
 }
 
 fn fairness(run: &Run<'_, '_, '_>, error: FairnessError) -> Halt {
