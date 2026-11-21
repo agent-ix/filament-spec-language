@@ -100,3 +100,21 @@ if !seen.insert(index) || indices.last().is_some_and(|last| *last >= index) {
 ### Pass 1 validation and current status
 
 CONDITIONAL: original three medium defects fixed; new low FND-004 remains open for the second allowed coder fix round. No other new behavioral defect found in the fix delta. All seven named runtime logs under implementation/fix-1 record one selected test passing each, including the four new regressions; focused test compilation and package library clippy pass in producer logs. The exact-size regression checks both refusal paths leave the counters intact and the exact allowance succeeds; the atom-free regression has independent positive and work/storage-negative controls. The positive Equal comparison retains exact semantic-node/operator/operand checks and normalizes only diagnostic Holds spans, with source and rebuilt declaration spans already compared equal. No temporal production delta was added in fix 1. Reviewer diff --check passed; no build, benchmark or matrix retry was run. Rebase after PR3395/main, affected temporal parity and the lead's exact-final-head gate remain pending.
+
+### Disposition pass 2
+
+Frozen head: fea9089a83522c4af2ced2edc846ce817bdc25f2. Local and GitHub heads match and the worktree is clean. Against pass 1, the sole source change adds the declared trace attribute to the encoding-boundary regression; production behavior and test assertions are unchanged. The trace macro import already exists in this test module. The two committed review artifacts matched the previous canonical disposition files by SHA-256 before this append.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-004 | fixed | The exact encoding-boundary test now carries the module's existing trace macro with FR-940-AC-16, binding its budget-admission assertions to the package-form criterion. |
+
+FND-004 after_excerpt:
+
+```rust
+#[trace("FR-940-AC-16")]
+#[test]
+fn encoding_checks_the_complete_size_before_spending_or_allocating() {
+```
+
+Current code-review verdict: PASS for this frozen bounded slice, conditional on the separately pending PR3395 spec merge, fresh rebase after the reserved pin window, affected temporal parity and the lead's exact-final-head gate. FND-001/002/003 remain fixed from pass 1; FND-004 is now fixed; no findings remain open and no new findings were identified. Reviewer diff --check passed. No additional runtime/build/benchmark or matrix attempt was needed or performed for this attribute-only source change. The repository-wide audit remains incomplete as honestly recorded in SR-21282002; full AC-18 and the broader AC-16/AC-19 journeys remain outside this delivered slice.

@@ -44,3 +44,9 @@ Pass 1 examined frozen 6c702fe86e5e4c3f1ba86de57a8a158ffbd57f7a. The original Fi
 | FND-001 | deferred | The dispatch explicitly retains the known 25-second matrix timeout as an audit limitation outside this code fix and prohibits a repeat attempt. Repository-wide criterion reconciliation therefore remains uncompleted assurance work; no criterion totals, engine-backed repository PASS or code remediation are asserted. |
 
 Current status: incomplete repository audit, with its limitation retained and explicitly deferred by the lead's bounded-review instruction. Reverse-gap/stub inspection of the fix delta found no new unowned production behavior, stubs, ignored tests or false full-acceptance claim. One new untagged budget regression is reported as code-review SR-21282001 FND-004 rather than duplicated here. No additional gap method finding was added. Plan completion: not assessed.
+
+### Disposition pass 2
+
+Frozen head: fea9089a83522c4af2ced2edc846ce817bdc25f2. The only new source change is the FR-940-AC-16 trace attribute on the existing encoding-boundary regression. The code-review missing-tag finding is fixed; no new reverse gap, stub or unsupported acceptance-completion claim was introduced. No matrix retry was performed.
+
+FND-001's latest outcome remains deferred exactly as recorded in pass 1. It had no still-open or missing disposition at the start of pass 2, so no duplicate outcome row is appended. The marked round-2 comment records an empty dispositions list and preserves the existing audit limitation. Repository-wide criterion reconciliation remains incomplete: no coverage totals or engine-backed repository PASS is claimed. Plan completion: not assessed.
