@@ -673,7 +673,7 @@ impl<'p> PackageModelInput<'p> {
     }
 
     /// [`Self::temporal_clause`] for a run that reads the clause over a trace
-    /// or a model's behaviours rather than checking it: any untimed profile
+    /// or a model's behaviours rather than checking it: every profile
     /// and the clause's step intervals are read, since the evaluator reads
     /// each from the clause itself. A clause with captures is still refused,
     /// as the package-route letters do not read them yet.

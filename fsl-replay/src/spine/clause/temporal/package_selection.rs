@@ -18,10 +18,7 @@ use filament_exact::{Meter, NodeKey, ScalarLimits, ValueType};
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
 };
-use fsl_eval::temporal::{
-    evaluate_package_positions_decisive, DecisiveStop, HoldsStop, PackagePositions,
-    TemporalOutcome, TemporalRefusal,
-};
+use fsl_eval::temporal::{evaluate_package_positions_decisive, DecisiveStop, PackagePositions};
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNode};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
@@ -31,16 +28,9 @@ use fsl_semantics::model::observation::{
 
 use super::super::model_trace::{behaviour_payload, expansion_stop, replay_refusal, universes};
 use super::super::trace_refusal::{PackageClauseSite, TraceSite};
-use super::super::{
-    convert_call_failure, ClauseDisposition, ClauseRunReport, ClauseRunUsage,
-    ConsequentEventRefusal, ConsequentSourceEvents, TemporalVerdict,
-};
-use super::{
-    refusal_disposition, refused, resolve_over_in, trace_refusal as temporal_refusal, verdict,
-    with_counterexample, OverObject, TraceInput,
-};
+use super::super::{ClauseDisposition, ClauseRunReport, ClauseRunUsage, TemporalVerdict};
+use super::{refused, resolve_over_in, with_counterexample, OverObject, TraceInput};
 use crate::model_check::replay::{evaluate_model_trace, ModelTraceEnd, ModelTraceRun};
-use crate::proof_result::SettlementBasis;
 
 /// A run the package route reads no verdict for, and why.
 #[derive(Clone, Debug)]
@@ -85,28 +75,7 @@ pub struct PackageSnapshotRequest<'a, 'p> {
 }
 
 fn report(disposition: ClauseDisposition, usage: ClauseRunUsage) -> ClauseRunReport {
-    ClauseRunReport {
-        basis: match &disposition {
-            ClauseDisposition::Temporal(verdict) => verdict.basis(),
-            _ => SettlementBasis::Unavailable,
-        },
-        witness: None,
-        state_clause_counterexample: None,
-        frame_field_values: None,
-        consequent_source_events: if disposition.truth().is_some() {
-            ConsequentSourceEvents::Refused(ConsequentEventRefusal::Temporal)
-        } else {
-            ConsequentSourceEvents::Unavailable
-        },
-        disposition,
-        usage,
-        ledger: None,
-        finite_window: None,
-        counterexample: None,
-        decisive: None,
-        authenticated_temporal_selection: None,
-        refused_at: None,
-    }
+    *super::disposition_report(disposition, usage)
 }
 
 /// What the package route lacks to report the decisive atom of a violation:
@@ -118,36 +87,6 @@ fn decisive_not_read() -> PackageSelectionNotRead {
         reason: "the decisive atom of a violated clause is read from the checked condition, \
                  which a package does not carry; its verdict is not reported without it"
             .to_owned(),
-    }
-}
-
-/// The disposition of a package run that `stopped` at a condition or
-/// returned `result`, and the position of the refused condition it stopped at.
-/// A condition's refusal is reported as FR-109 reports a state clause's, with
-/// no source region: a package holds none.
-fn package_disposition(
-    stopped: Option<HoldsStop>,
-    result: Result<TemporalOutcome, TemporalRefusal>,
-) -> (ClauseDisposition, Option<u64>) {
-    match (stopped, result) {
-        (Some(HoldsStop::Refused { at, evaluation }), _) => (
-            match crate::spine::call::convert_outcome_resolving(evaluation, |_| None, &[]) {
-                Ok(outcome) => ClauseDisposition::Evaluate(outcome),
-                Err(refusal) => refusal_disposition(*refusal),
-            },
-            Some(at.index()),
-        ),
-        (Some(HoldsStop::Failed(failure)), _) => {
-            (refusal_disposition(*convert_call_failure(failure)), None)
-        }
-        (None, Ok(outcome)) => (ClauseDisposition::Temporal(verdict(outcome)), None),
-        (None, Err(TemporalRefusal::Fault(fault))) => {
-            (ClauseDisposition::EvaluateFault(fault), None)
-        }
-        (None, Err(refusal)) => (
-            ClauseDisposition::TemporalRefusal(temporal_refusal(refusal)),
-            None,
-        ),
     }
 }
 
@@ -370,12 +309,8 @@ pub fn run_package_snapshots(
     // search found; the package reads a search that found none, and a search
     // that stopped, as the source route does.
     let decisive = observed.decisive;
-    let (disposition, refused_at) = package_disposition(observed.stopped, observed.result);
-    let disposition = if inactive {
-        ClauseDisposition::Temporal(TemporalVerdict::Inactive)
-    } else {
-        disposition
-    };
+    let (disposition, refused_at) =
+        super::package_disposition(observed.stopped, observed.result, inactive);
     let violated = matches!(
         disposition,
         ClauseDisposition::Temporal(TemporalVerdict::Violated { .. })
@@ -561,7 +496,7 @@ fn run_model(
         meter,
         ..
     } = evaluated;
-    let (disposition, _) = package_disposition(None, outcome);
+    let (disposition, _) = super::package_disposition(None, outcome, false);
     let violated = matches!(
         disposition,
         ClauseDisposition::Temporal(TemporalVerdict::Violated { .. })

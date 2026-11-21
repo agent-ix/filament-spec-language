@@ -1154,7 +1154,7 @@ fn authenticate_bare_timed(
         .temporal_clause_names()
         .unwrap_or_default()
         .iter()
-        .find(|row| row.name == name)
+        .find(|row| row.name.as_ref() == name)
         .ok_or_else(|| {
             Box::new(ClauseDisposition::MissingName {
                 name: name.to_owned(),
@@ -1529,6 +1529,36 @@ pub fn run_package_valuation(
     })
 }
 
+fn package_disposition(
+    stopped: Option<HoldsStop>,
+    result: Result<TemporalOutcome, TemporalRefusal>,
+    inactive: bool,
+) -> (ClauseDisposition, Option<u64>) {
+    match (stopped, result) {
+        // A refused condition is the caller's: the source route's code and
+        // cause, located at the package node, which has no source span.
+        (Some(HoldsStop::Refused { at, evaluation }), _) => (
+            match super::super::call::convert_outcome_resolving(evaluation, |_| None, &[]) {
+                Ok(outcome) => ClauseDisposition::Evaluate(outcome),
+                Err(refusal) => refusal_disposition(*refusal),
+            },
+            Some(at.index()),
+        ),
+        (Some(HoldsStop::Failed(failure)), _) => {
+            (refusal_disposition(*convert_call_failure(failure)), None)
+        }
+        (None, Ok(_)) if inactive => (ClauseDisposition::Temporal(TemporalVerdict::Inactive), None),
+        (None, Ok(outcome)) => (ClauseDisposition::Temporal(verdict(outcome)), None),
+        (None, Err(TemporalRefusal::Fault(fault))) => {
+            (ClauseDisposition::EvaluateFault(fault), None)
+        }
+        (None, Err(refusal)) => (
+            ClauseDisposition::TemporalRefusal(trace_refusal(refusal)),
+            None,
+        ),
+    }
+}
+
 /// FR-330: [`run_temporal`] over the record samples of a checked package's
 /// clause, for the one route the package form reads: a clause under the
 /// infinite-trace profile over a finite trace or a lasso. A refused condition
@@ -1602,29 +1632,8 @@ fn run_sampled(
         )
     };
     let inactive = observed.inactive;
-    let (disposition, refused_at) = match (observed.stopped, observed.result) {
-        // A refused condition is the caller's: the source route's code and
-        // cause, located at the package node, which has no source span.
-        (Some(HoldsStop::Refused { at, evaluation }), _) => (
-            match super::super::call::convert_outcome_resolving(evaluation, |_| None, &[]) {
-                Ok(outcome) => ClauseDisposition::Evaluate(outcome),
-                Err(refusal) => refusal_disposition(*refusal),
-            },
-            Some(at.index()),
-        ),
-        (Some(HoldsStop::Failed(failure)), _) => {
-            (refusal_disposition(*convert_call_failure(failure)), None)
-        }
-        (None, Ok(_)) if inactive => (ClauseDisposition::Temporal(TemporalVerdict::Inactive), None),
-        (None, Ok(outcome)) => (ClauseDisposition::Temporal(verdict(outcome)), None),
-        (None, Err(TemporalRefusal::Fault(fault))) => {
-            (ClauseDisposition::EvaluateFault(fault), None)
-        }
-        (None, Err(refusal)) => (
-            ClauseDisposition::TemporalRefusal(trace_refusal(refusal)),
-            None,
-        ),
-    };
+    let (disposition, refused_at) =
+        package_disposition(observed.stopped, observed.result, inactive);
     let (disposition, counterexample) =
         with_counterexample(clause, request.trace, disposition, observed.undefined);
     let usage = ClauseRunUsage::from_meter(&meter, AdmissionUsage::default());

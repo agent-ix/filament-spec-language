@@ -420,7 +420,7 @@ fn execute_clause(
                 )
             {
                 return Err(not_read(
-                    "only a clause under the infinite-trace profile runs over record samples"
+                    "only an infinite-trace or timed clause runs over these record samples"
                         .to_owned(),
                 ));
             }

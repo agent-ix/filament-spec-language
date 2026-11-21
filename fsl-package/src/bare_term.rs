@@ -1057,9 +1057,8 @@ fn checked_interval(
             upper_end,
         } => {
             let rational = |value: &crate::CheckedOperationRational| {
-                filament_exact::NonZeroInteger::new(value.denominator.clone()).map(|denominator| {
-                    filament_exact::Rational::new(value.numerator.clone(), denominator)
-                })
+                filament_exact::Rational::new(value.numerator.clone(), value.denominator.clone())
+                    .ok()
             };
             let lower = rational(lower)?;
             let lower_closed = *lower_end == crate::CheckedIntervalEnd::Closed;
