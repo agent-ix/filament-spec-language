@@ -115,17 +115,16 @@ separately on skipped steps under a bad-prefix monitor (FR-178), so none of
 them is a state those two operations are defined on. A selection is still
 never ignored on them.
 
-**Current system behaviour (implementation gap).** EN-1 executes selected
-key symmetry and state constraints on infinite-trace HP-2 products. For an
-event-position HP-2 clause, a selected reduction whose preservation row
-reads "yes" currently settles V-8 `Unsupported`, naming the first selected
-reduction, before subject admission or expansion. A row that reads "no"
-still takes precedence and settles `ReductionNotPreserving`. With no
-selection, EN-1 decides the finite clause over closed executions as FR-173
-requires. Executing eligible finite HP-2 reductions remains unmet under
-this requirement and AC-7: the closed-tuple quotient, canonical ordering
-and counterexample replay still need to apply those reductions. The
-eligibility rule and acceptance criteria above remain the required behaviour.
+**Current system behaviour.** EN-1 executes selected key symmetry and state
+constraints on infinite-trace HP-2 products and event-position HP-2 closed
+execution tuples. The finite route retains one least concrete tuple per
+orbit under the diagonal action of the object parameters' stabiliser and
+the eligible copy group. Entering matches precede constraint checks; cut
+predecessor prefixes are recorded separately and cannot become terminal
+traces or proofs. Finite refutations carry actual selected closed paths
+and replay under FR-173. A row that reads "no" still takes precedence and
+settles `ReductionNotPreserving`. With no selection, the finite route
+continues to decide the closed scope with `HoldsClosed`.
 
 On an eligible item:
 

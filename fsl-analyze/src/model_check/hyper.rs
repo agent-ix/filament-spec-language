@@ -347,8 +347,8 @@ pub fn check_hyper(
     run.decide(&instances)
 }
 
-/// Whether the clause is decided by enumerating closed finite executions,
-/// rather than by the lockstep product that executes selected reductions.
+/// Whether the clause is decided over closed finite execution tuples rather
+/// than an infinite lockstep product. Both execute eligible HP-2 reductions.
 fn uses_closed_executions(clause: &CheckedHyperClause) -> bool {
     clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
 }
