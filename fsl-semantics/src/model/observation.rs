@@ -2733,12 +2733,24 @@ pub(crate) fn observe_protocol_state(
         }
         edges.insert(population.node.clone(), targets);
     }
-    let extents = relationships::admit_supplied_extents(
-        types,
-        facts.clone(),
-        state.extents.clone(),
-        &observation.populations,
-    )?;
+    // `observe_state` has already admitted these typed extents. Their
+    // reference endpoints resolve through the same current-state holders.
+    for extent in &state.extents {
+        for (source, target) in &extent.instances {
+            let source = holders
+                .get(source)
+                .ok_or_else(|| fault("closed-state-relationship-end-has-a-population"))?;
+            let target = holders
+                .get(target)
+                .ok_or_else(|| fault("closed-state-relationship-end-has-a-population"))?;
+            for (from, to) in [(source, target), (target, source)] {
+                let targets = edges.entry(from.clone()).or_default();
+                if !targets.contains(to) {
+                    targets.push(to.clone());
+                }
+            }
+        }
+    }
     let closures = facts
         .population_identities()
         .map(|seed| {
@@ -2746,12 +2758,7 @@ pub(crate) fn observe_protocol_state(
             let mut next = 0;
             while next < closure.len() {
                 let population = &closure[next];
-                let targets = edges
-                    .get(population)
-                    .into_iter()
-                    .flatten()
-                    .cloned()
-                    .chain(relationships::related_population_ids(&extents, population));
+                let targets = edges.get(population).into_iter().flatten().cloned();
                 for target in targets {
                     if !closure.contains(&target) {
                         closure.push(target);
