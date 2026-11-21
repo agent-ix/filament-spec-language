@@ -405,6 +405,7 @@ fn an_event_position_single_existential_run_that_a_limit_stops_is_not_trapped() 
 #[trace("TC-2243", "FR-173-AC-6")]
 #[test]
 fn a_universe_of_no_selected_model_is_refused_and_one_of_another_model_is_skipped() {
+    use fsl_analyze::model_check::{alias_provisions, alias_system};
     use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
 
     let world = two_models(FORALL_FORALL, "always [0, 3] holds(v.l @ a = w.l @ b)");
@@ -415,10 +416,23 @@ fn a_universe_of_no_selected_model_is_refused_and_one_of_another_model_is_skippe
         .model_package_identity("V")
         .expect("V names a model")
         .to_owned();
-    let refused = |simulation, alias: Option<&str>| {
+    // An alias system reads its own model's part of the snapshots.
+    let alias_of = |simulation: &fsl_eval::simulation::model::ModelSimulationRequest<'_>,
+                    alias: &str| {
+        let provisions = alias_provisions(simulation, &world.clause);
+        let slot = world
+            .clause
+            .aliases()
+            .iter()
+            .position(|candidate| candidate.as_str() == alias)
+            .expect("the alias is the clause's");
+        alias_system(simulation, provisions[slot].as_ref(), alias).map(|_| ())
+    };
+    let refused = |simulation: fsl_eval::simulation::model::ModelSimulationRequest<'_>,
+                   alias: Option<&str>| {
         let failure = match alias {
-            Some(alias) => ModelSystem::for_alias(simulation, alias),
-            None => ModelSystem::over_model(simulation, &own),
+            Some(alias) => alias_of(&simulation, alias),
+            None => ModelSystem::over_model(simulation, &own).map(|_| ()),
         }
         .err()
         .expect("the universe is refused");
@@ -426,8 +440,8 @@ fn a_universe_of_no_selected_model_is_refused_and_one_of_another_model_is_skippe
     };
 
     // The alias path skips the other model's universe: both aliases admit.
-    assert!(ModelSystem::for_alias(subject.simulation.clone(), "V").is_ok());
-    assert!(ModelSystem::for_alias(subject.simulation.clone(), "N").is_ok());
+    assert!(alias_of(&subject.simulation, "V").is_ok());
+    assert!(alias_of(&subject.simulation, "N").is_ok());
     // `over_model` keeps the refusal for it.
     let text = refused(subject.simulation.clone(), None);
     assert!(text.contains("wrong-role-mapping"), "{text}");
