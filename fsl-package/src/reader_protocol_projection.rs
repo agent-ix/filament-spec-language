@@ -4814,21 +4814,41 @@ mod order_tests {
     }
 
     /// Source-emitted population parameters retain their exact optional maximum.
-    #[trace("FR-945-AC-1", "FR-650-AC-1")]
+    #[trace("FR-945-AC-1", "FR-650-AC-1", "FR-1039-AC-11")]
     #[test]
     fn admitted_population_parameter_types_preserve_absence_zero_and_maximum() {
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-        let model = include_bytes!("../../tests/fixtures/spine-model.semantic-ir.json");
+        let mut model: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/spine-model.semantic-ir.json"
+        ))
+        .unwrap();
+        model["constructs"].as_array_mut().unwrap().push(serde_json::json!({
+            "kind": {"module": "acme/orders", "name": "population"},
+            "moduleVersion": "1.0.0",
+            "construct": {"identity": "none", "shape": "record", "members": {}, "meaning": "filament.meaning.model.population/v1"},
+        }));
+        model["populations"] = serde_json::json!([{
+            "identity": "ix://acme/orders/widgets",
+            "displayName": "ix://acme/orders/widgets",
+            "kind": {"module": "acme/orders", "name": "population"},
+            "members": ["ix://acme/orders/Widget"],
+            "extent": "closed",
+            "origin": {"generated": {"generatorIdentity": "ix://acme/orders/widgets", "generatorVersion": "1.0.0", "inputIdentities": ["ix://acme/orders/widgets"]}},
+        }]);
+        let model = crate::emit::tests::wire_bytes(&model).unwrap();
         let packages = fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap();
         let text = "language \"ix:native\" edition \"1-draft\";\n\
                     profile v = \"filament.model.complete/v1\";\n\
+                    profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
                     model M = \"acme/orders\";\n\
+                    record Counter { level: Int[0, 9]; }\n\
                     function unbounded using v(p: Population<M::Widget>): Boolean pure { true }\n\
                     function zero using v(p: Population<M::Widget>[0]): Boolean pure { true }\n\
                     function maximum using v(p: Population<M::Widget>[18446744073709551615]): Boolean pure { true }\n\
                     function reference using v(p: Reference<M::Widget>): Boolean pure { true }\n\
                     function population using v(p: Population<M::Widget>[0]): Population<M::Widget>[0] pure { p }\n\
-                    function tally using v(p: Population<M::Gadget>[1]): Integer pure { size(allInstances<M::Gadget>(p)) }\n";
+                    function tally using v(p: Population<M::Gadget>[1]): Integer pure { size(allInstances<M::Gadget>(p)) }\n\
+                    temporal C using t over (c: Counter) clock \"sensor\" on origin { always[0,5] holds(size(allInstances<M::Widget>(M::widgets)) >= 0) }\n";
         let parsed = fsl_cst::parse(
             fsl_foundation::SourceIdentity::new("agent-ix", "test:population-projection"),
             "population.native",
@@ -4860,8 +4880,26 @@ mod order_tests {
         )
         .unwrap();
         let checked = crate::CheckedPackage::link(graph);
-        let emission =
-            crate::emit::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20)).unwrap();
+        let clocks = checked
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .map(|temporal| {
+                crate::emit::TemporalClockSelection::new(
+                    checked.graph().source().clone(),
+                    temporal.clause().span(),
+                    filament_contract_model::ClockConfiguration::EventPosition {
+                        sequence_authority: "population-sequence".to_owned(),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let emission = crate::emit::emit_checked_with_temporal_selections(
+            &checked,
+            &clocks,
+            crate::checked::EmitLimits::new(1 << 20),
+        )
+        .unwrap();
         let mut evidence = emission.evidence().clone();
         evidence
             .insert_domain_package_document("acme/orders", model.as_slice())
@@ -4885,6 +4923,19 @@ mod order_tests {
                 &mut budget,
             )
             .unwrap();
+        let clause = &emission.temporal_rows().clauses()[0].declaration;
+        let subject = crate::checked_views::temporal_subject(&admitted, clause).unwrap();
+        let position = subject
+            .formula_graph()
+            .iter()
+            .position(|entry| entry.kind() == Some(crate::checked_views::FormulaOperation::Holds))
+            .unwrap();
+        let key = crate::checked_v2::wire_graph(&admitted)
+            .unwrap()
+            .key(clause)
+            .unwrap();
+        let condition = package.project_holds(&key, position).unwrap();
+        assert!(condition.projection().nodes.iter().any(|node| matches!(&node.kind, NodeKind::NamedPopulation { population, .. } if population.package == "acme/orders" && population.node == "ix://acme/orders/widgets")), "the condition reads the checked population declaration through its authoritative catalog");
         for (name, maximum) in [
             ("unbounded", None),
             ("zero", Some(0)),
@@ -4961,20 +5012,19 @@ mod order_tests {
             Vec::new(),
             Vec::new(),
         );
-        let no_identities = empty_rows.selected(&admitted, &mut budget).unwrap();
-        let index = WireIndex::new(
-            std::borrow::Cow::Owned(BTreeMap::new()),
-            std::borrow::Cow::Owned(no_identities),
-            &admitted,
-            std::borrow::Cow::Borrowed(package.exact_type_projections()),
-        )
-        .unwrap();
-        let projection = package.project_function("zero").unwrap().unwrap();
-        let parameter = &projection.selected_function().unwrap().parameters[0].node;
+        let without_identities = crate::BarePackage::new(&admitted)
+            .with_supply(
+                crate::BareSupply {
+                    identities: &empty_rows,
+                    equality: None,
+                },
+                &mut budget,
+            )
+            .unwrap();
         assert!(
             matches!(
-                node_value_type(&index.types(), index.ids[parameter]),
-                Err(TypeError::Unsupported)
+                without_identities.project_function("zero"),
+                Err(crate::BareSelectionFailure::FunctionParameterType { position: 0, .. })
             ),
             "population projection requires the selected object identity witness"
         );

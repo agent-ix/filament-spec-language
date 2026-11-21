@@ -267,7 +267,8 @@ impl<'p> BarePackage<'p> {
             self.exact_type_projections(),
             self.dependency_views(),
         )
-        .map_err(SlotSelectionFailure::Fault)?;
+        .map_err(SlotSelectionFailure::Fault)?
+        .with_populations(self);
         let walker = if print { walker.printing() } else { walker };
         let root_key = graph
             .key(root)
