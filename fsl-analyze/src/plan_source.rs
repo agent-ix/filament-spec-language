@@ -433,17 +433,20 @@ impl<'a> SourcePlan<'a> {
         policy: usize,
         mut prefix: Vec<ModelSimState>,
         state: &ModelSimState,
-    ) -> MonitorStep {
+    ) -> Result<MonitorStep, RuleStop> {
         prefix.push(state.clone());
         let Some(&node) = self.policies.get(policy) else {
-            return MonitorStep::Reject;
+            return Ok(MonitorStep::Reject);
         };
-        match read_clause(self.system, node, &prefix, false) {
-            Ok(ClauseReading::Violated) => return MonitorStep::Reject,
+        match read_clause(self.system, node, &prefix, false, &mut self.meter) {
+            Ok(ClauseReading::Violated) => return Ok(MonitorStep::Reject),
+            Ok(ClauseReading::Incomplete { counter, value }) => {
+                return Err(RuleStop::Accounting { counter, value });
+            }
             Ok(_) => {}
             Err(error) => {
                 self.fault.get_or_insert_with(|| error.to_string());
-                return MonitorStep::Reject;
+                return Ok(MonitorStep::Reject);
             }
         }
         let keys = prefix
@@ -453,14 +456,16 @@ impl<'a> SourcePlan<'a> {
         let Ok(keys) = keys else {
             self.fault
                 .get_or_insert_with(|| "a policy prefix has no state key".to_owned());
-            return MonitorStep::Reject;
+            return Ok(MonitorStep::Reject);
         };
         let next = self.traces.len();
         let id = *self.trace_ids.entry((policy, keys)).or_insert(next);
         if id == next {
             self.traces.push(prefix);
         }
-        MonitorStep::Continue(u64::try_from(id).unwrap_or(u64::MAX).to_le_bytes().to_vec())
+        Ok(MonitorStep::Continue(
+            u64::try_from(id).unwrap_or(u64::MAX).to_le_bytes().to_vec(),
+        ))
     }
 
     /// The exact value of an objective evaluation.
@@ -594,7 +599,7 @@ impl PlanRules for SourcePlan<'_> {
         policy: usize,
         state: &ModelSimState,
     ) -> Result<MonitorStep, RuleStop> {
-        Ok(self.advance(policy, Vec::new(), state))
+        self.advance(policy, Vec::new(), state)
     }
 
     fn policy_advance(
@@ -604,7 +609,7 @@ impl PlanRules for SourcePlan<'_> {
         state: &ModelSimState,
     ) -> Result<MonitorStep, RuleStop> {
         let prefix = self.prefix(monitor);
-        Ok(self.advance(policy, prefix, state))
+        self.advance(policy, prefix, state)
     }
 
     fn policy_accepts(
@@ -617,13 +622,19 @@ impl PlanRules for SourcePlan<'_> {
         let Some(&node) = self.policies.get(policy) else {
             return Ok(false);
         };
-        Ok(match read_clause(self.system, node, &states, true) {
-            Ok(reading) => reading != ClauseReading::Violated,
-            Err(error) => {
-                self.fault.get_or_insert_with(|| error.to_string());
-                false
-            }
-        })
+        Ok(
+            match read_clause(self.system, node, &states, true, &mut self.meter) {
+                Ok(ClauseReading::Holds) => true,
+                Ok(ClauseReading::Incomplete { counter, value }) => {
+                    return Err(RuleStop::Accounting { counter, value });
+                }
+                Ok(ClauseReading::Violated | ClauseReading::Undecided) => false,
+                Err(error) => {
+                    self.fault.get_or_insert_with(|| error.to_string());
+                    false
+                }
+            },
+        )
     }
 
     fn goal(&mut self, plan: &PlanView<'_>) -> Result<bool, RuleStop> {

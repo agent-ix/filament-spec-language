@@ -765,9 +765,8 @@ fn pick_finds_validates_exhausts_and_optimizes() {
 #[trace("TC-3017", "FR-1037-AC-1")]
 fn a_plan_synthesis_runs_the_plan_search_not_the_enumerator() {
     let unit = format!(
-        "{MODEL_HEADER}profile t = \"filament.temporal.infinite-trace/v1\";\n\
-         type Lengths = Int[0, 3];\n\
-         synthesis Reach using t grammar Config::ConfigVersion domain Lengths \
+        "{PLAN_HEADER}type Lengths = Int[0, 3];\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          satisfies {{ Reach.length >= 1 }};\n"
     );
     let (exit, value) = run(
@@ -804,13 +803,12 @@ fn a_work_limited_synthesis_is_incomplete() {
 
 fn reach(objective: &str, policy: Value) -> Value {
     let unit = format!(
-        "{MODEL_HEADER}profile t = \"filament.temporal.infinite-trace/v1\";\n\
-         type Lengths = Int[0, 3];\n\
-         temporal NotOne using t over (c: Config::ConfigVersion) clock \"model-steps\" \
+        "{PLAN_HEADER}type Lengths = Int[0, 3];\n\
+         temporal NotOne using v over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ always holds(c.versionNumber != 1) }}\n\
-         temporal SomeTime using t over (c: Config::ConfigVersion) clock \"model-steps\" \
+         temporal SomeTime using v over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ eventually holds(c.versionNumber = 3) }}\n\
-         synthesis Reach using t grammar Config::ConfigVersion domain Lengths \
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          {objective} satisfies {{ Reach.length >= 1 }};\n"
     );
     run(
@@ -914,7 +912,7 @@ fn the_planner_reports_infeasible_and_incomplete() {
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-7")]
 fn a_test_seam_named_on_the_wire_is_an_unknown_member() {
     let unit = format!(
-        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+        "{PLAN_HEADER}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          satisfies {{ Reach.length >= 1 }};\n"
     );

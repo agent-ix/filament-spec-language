@@ -15,6 +15,10 @@ const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.model.complete/v1\";\n\
      model Config = \"example/config-version\";\n";
 
+const PLAN_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.temporal.infinite-trace/v1\";\n\
+     model Config = \"example/config-version\";\n";
+
 /// FR-447's `Braking` without `t`, with `SlowEnough` over it.
 const BRAKING: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile p = \"filament.temporal.infinite-trace/v1\";\n\
@@ -76,11 +80,10 @@ fn names(value: &Value, member: &str) {
 /// optional objective, plus the two temporal clauses a policy may name.
 fn plan_unit(lengths: &str, objective: &str, goal: &str) -> String {
     format!(
-        "{MODEL_HEADER}profile t = \"filament.temporal.infinite-trace/v1\";\n\
-         type Lengths = {lengths};\n\
-         temporal SomeTime using t over (c: Config::ConfigVersion) clock \"model-steps\" \
+        "{PLAN_HEADER}type Lengths = {lengths};\n\
+         temporal SomeTime using v over (c: Config::ConfigVersion) clock \"model-steps\" \
          on origin {{ eventually holds(c.versionNumber = 3) }}\n\
-         synthesis Reach using t grammar Config::ConfigVersion domain Lengths \
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          {objective} satisfies {{ {goal} }};\n"
     )
 }
@@ -378,7 +381,9 @@ fn the_six_reference_planning_examples_plan_as_specified() {
 // ---- QSL-1979: TLA+ and Lean export -------------------------------------
 
 fn low_unit() -> String {
-    format!("{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n")
+    format!(
+        "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
+    )
 }
 
 fn export(unit: &str, with_model: bool, member: Value) -> (u8, Value) {
@@ -1378,8 +1383,11 @@ fn plan_requests_refuse_at_admission() {
         "{}type Digit = Int[0, 9];\n\
          synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 7 }};\n{}",
         plan_unit("Int[0, 3]", "", "Reach.length >= 1").replacen(
-            MODEL_HEADER,
-            &format!("{MODEL_HEADER}profile p = \"filament.temporal.infinite-trace/v1\";\n"),
+            PLAN_HEADER,
+            &PLAN_HEADER.replace(
+                "model Config",
+                "profile p = \"filament.temporal.infinite-trace/v1\";\nmodel Config"
+            ),
             1
         ),
         BRAKING
@@ -1835,4 +1843,28 @@ fn evidence_for_an_unrepresented_record_is_refused() {
     );
     assert_eq!(exit, 20, "{value}");
     names(&value, "/export_evidence/obligation");
+}
+
+/// Policy evaluation spends the request's accounting budget before a
+/// trivial empty-plan goal can give a planning verdict.
+#[test]
+#[trace("FR-1011-AC-2", "FSpec-FR-801-AC-2")]
+fn policy_accounting_exhaustion_is_an_incomplete_run() {
+    let unit = plan_unit("Int[0, 0]", "", "true");
+    let (unlimited_exit, unlimited) = plan(&unit, json!({"policy": ["SomeTime"]}));
+    assert_eq!(unlimited_exit, 10, "{unlimited}");
+    assert_eq!(
+        unlimited["synthesis"]["status"], "infeasible",
+        "{unlimited}"
+    );
+    let (exit, limited) = plan(
+        &unit,
+        json!({"policy": ["SomeTime"], "accounting": {"work_units": 1}}),
+    );
+    assert_eq!(exit, 22, "{limited}");
+    assert_eq!(limited["synthesis"]["status"], "incomplete", "{limited}");
+    assert_eq!(
+        limited["synthesis"]["cause"]["setting"], "accounting.work_units",
+        "{limited}"
+    );
 }

@@ -43,7 +43,7 @@ impl<'a> Lowering<'a> {
         };
         let domain = self.type_node(&checked.domain, &claim_at)?;
         if let Some(plan) = checked.plan() {
-            self.enum_nodes(&plan.shape().operation_enum)?;
+            self.enum_nodes_at(&plan.shape().operation_enum, claim_at.clone())?;
         }
         let candidate_type = checked.plan().map_or_else(
             || checked.domain.clone(),
@@ -93,7 +93,7 @@ impl<'a> Lowering<'a> {
                 return Err(super::temporal::stage_fault(
                     &claim_at,
                     "synthesis-objective-check",
-                ))
+                ));
             }
         };
         let declaration = super::qualified_name(&form.name.name, &claim_at)?;

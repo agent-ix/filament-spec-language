@@ -533,3 +533,50 @@ fn a_synthesis_beside_another_run_member_refuses() {
     names(&value, "mutually exclusive");
     assert!(value["synthesis"].get("status").is_none(), "{value}");
 }
+
+/// The plan candidate projects generated records rooted at the authored
+/// synthesis span, and the strict reader admits every declaration's region.
+#[test]
+#[trace("FR-1036-AC-2", "FSpec-FR-800-AC-1")]
+fn a_source_plan_candidate_emits_its_record_types_and_source_regions() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let document = std::fs::read(directory.path().join("spine-model.semantic-ir.json")).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the spine model admits");
+    let unit = format!(
+        "{}type Lengths = Int[0, 3];\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+         minimize Reach.length satisfies {{ Reach.length >= 1 and Reach.final.versionNumber >= 0 }};\n",
+        MODEL_HEADER.replace(
+            "filament.model.complete/v1",
+            "filament.temporal.infinite-trace/v1"
+        ),
+    );
+    let bytes = package_bytes(&unit, &packages);
+    let wire: Value = serde_json::from_slice(&bytes).expect("a JSON package");
+    let claim = synthesis_nodes(&wire)[0];
+    let nodes = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("graph nodes");
+    let candidate = nodes
+        .iter()
+        .find(|node| node["node_id"] == binding(claim, "candidate")["value"]["target"])
+        .expect("the plan candidate resolves to its parameter node");
+    assert_eq!(candidate["semantic_form"], "parameter", "{candidate}");
+    let plan_type = nodes
+        .iter()
+        .find(|node| node["node_id"] == candidate["semantic_type"])
+        .expect("the parameter is typed by the emitted plan record");
+    assert_eq!(plan_type["semantic_form"], "record", "{plan_type}");
+    assert_eq!(
+        binding_names(plan_type),
+        ["length", "final", "initial", "steps"]
+    );
+    fsl_package::admit_checked_package(
+        &bytes,
+        &packages,
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
+    )
+    .expect("all generated plan declarations and occurrences admit");
+}

@@ -3724,14 +3724,23 @@ pub enum ClauseReading {
     Holds,
     /// Some instance is violated.
     Violated,
-    /// The clause has no instance, or an instance settles neither way.
+    /// An instance settles neither way.
     Undecided,
+    /// The shared evaluation meter denied a charge.
+    Incomplete {
+        /// The exhausted accounting counter.
+        counter: &'static str,
+        /// The counter's configured limit.
+        value: u64,
+    },
 }
 
 /// Read `node` over `states`, which is a prefix of an unknown continuation
 /// when `closed` is false and a plan ending in its last state, read with that
 /// state repeated forever, when `closed` is true. An open reading is
-/// `Violated` only when every continuation violates the clause.
+/// `Violated` only when every continuation violates the clause. Every
+/// instance and read charges the caller's shared `meter`; an empty
+/// population holds vacuously.
 ///
 /// # Errors
 /// [`ModelBasedTestError`] when an instance cannot be listed or the clause
@@ -3741,6 +3750,7 @@ pub fn read_clause(
     node: &TemporalClauseNode,
     states: &[super::ModelSimState],
     closed: bool,
+    meter: &mut Meter,
 ) -> Result<ClauseReading, ModelBasedTestError> {
     let undetermined = |outcome: String| ModelBasedTestError::ClauseUndetermined {
         clause: node.clause().name().to_owned(),
@@ -3748,7 +3758,7 @@ pub fn read_clause(
     };
     let len = u64::try_from(states.len()).map_err(|_| undetermined("trace length".to_owned()))?;
     let instances = system.instances(&node.clause().over().1)?;
-    let mut reading = ClauseReading::Undecided;
+    let mut reading = ClauseReading::Holds;
     for instance in instances {
         let mut letters = system.clause_letters(node)?;
         let mut temporal_letters = ModelTemporalLetters {
@@ -3758,7 +3768,6 @@ pub fn read_clause(
             node,
             capture_values: BTreeMap::new(),
         };
-        let mut meter = Meter::new(system.meter_limits());
         let outcome = if closed
             && node.clause().profile() == fsl_semantics::check::TemporalProfile::InfiniteTrace
         {
@@ -3769,30 +3778,31 @@ pub fn read_clause(
                     loop_len: 1,
                 },
                 &mut temporal_letters,
-                &mut meter,
+                meter,
             )?
         } else if closed {
             crate::temporal::evaluate(
                 node.clause(),
                 crate::temporal::TemporalTrace::Finite { len },
                 &mut temporal_letters,
-                &mut meter,
+                meter,
             )?
         } else {
-            crate::temporal::evaluate_open_prefix(
-                node.clause(),
-                len,
-                &mut temporal_letters,
-                &mut meter,
-            )?
+            crate::temporal::evaluate_open_prefix(node.clause(), len, &mut temporal_letters, meter)?
         };
+        if let crate::temporal::TemporalOutcome::Incomplete(incomplete) = &outcome {
+            return Ok(ClauseReading::Incomplete {
+                counter: incomplete.limit_kind.as_str(),
+                value: incomplete.limit,
+            });
+        }
         match outcome.category() {
-            Category::Success => reading = ClauseReading::Holds,
+            Category::Success => {}
             Category::Violation => return Ok(ClauseReading::Violated),
             Category::Undefined
             | Category::Pending
             | Category::Indeterminate
-            | Category::Inconclusive => {}
+            | Category::Inconclusive => reading = ClauseReading::Undecided,
             _ => return Err(undetermined(format!("{outcome:?}"))),
         }
     }
