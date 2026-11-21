@@ -178,3 +178,91 @@ scope:
         `hyperproperty` node for the body case), `items` `[]`, `last_stage` `null`, exit 20, and no
         source compiled.
 ```
+
+## Disposition pass 2
+
+**Latest verdict: PASS.** Frozen head 4dddd9a97a5f0cbd6d2a0800139dd8cf1641e217 against base 514d2f5596859fbd449f27f77e08488c73072d30. Independently inspected the new span-policy delta against the prior custody tree 0b92916 (direct tree diff because the branch was rebased), the complete current FR-940 outputs/input restriction, AC-16 and TC-3126, with FR-488 declaration-region ownership as context. This is the final authorized author fix round. No new findings. The prior FND-001 remains fixed: AC-17, AC-18, AC-19 and TC-3127 were compared byte-for-byte with the prior reviewed tree and remain unchanged. All prior canonical SRs were also compared with their committed copies and match verbatim.
+
+The new rule derives every PackageHyperHolds and rebuilt Holds diagnostic span from only the selected claim row's declaration_region on BOTH AdmittedPackageRead and BarePackage. The source-checked S3 clause retains expression diagnostic spans; only the equality oracle canonicalizes S3 Holds spans after atom renumbering. The existing ban on expression source_map reads remains unchanged. Changing only an expression provenance region therefore cannot change the package hyper form under this contract. Changing a semantic node kind, operator, binder level, operand structure or conjunct partition still changes the comparison; the TC-3126 conjunct-partition negative control remains present. Copy-group classes, generators, aliases, parameters, prefix/fairness, normal-form rules and occurrence equality have no new exception. The claim-level span remains its existing declaration-region value. FR-488's whole-declaration region definition agrees. Source evaluator/checker behavior is not changed by this metadata policy.
+
+This resolves the SPEC incompatibility exposed by external code review SR-21282001/FND-001; it does not disposition that separate code finding or claim its implementation fixed. Implementation verification stays with the code reviewer/lead. No waiver or full AC-18 claim is made: the full source-deletion, settlement, replay and certificate journey remains required in the later slice after PR3351. No Cargo, benchmarks, source edits, push or merge were performed. Scoped Quire validation and diff whitespace checks passed; no Rust embedding was found for the changed documents. Existing method selection remains sufficient: code-review, base specification review and scope-boundary. No applicable AssuranceProfile or new production language/gap-analysis lane applies.
+
+### Prior finding outcome
+
+FND-001 remains **fixed**, as recorded in round 1. No unresolved finding requires a new disposition row, and no new finding was added. Original finding text and prior disposition history remain intact.
+
+### Scope examined in disposition pass 2
+
+```yaml
+scope:
+  - id: FR-940/hyper-form-span-policy
+    path: spec/functional/FR-940-analyze-through-one-sealed-package-read-view.md
+    role: examined
+    excerpt: >-
+      - Every `PackageHyperHolds.span`, and the corresponding rebuilt formula
+        `Holds` span, SHALL be the span of the selected `claim_names` row's
+        `declaration_region` over both package views, `AdmittedPackageRead` and
+        `BarePackage`. It is declaration-level diagnostic metadata, derived from
+        no expression `source_map` region. S3's source-checked clause retains its
+        expression diagnostic spans; only the comparison below canonicalizes them.
+  - id: FR-940/hyper-form-input-restriction
+    path: spec/functional/FR-940-analyze-through-one-sealed-package-read-view.md
+    role: examined
+    excerpt: >-
+      The record charges nothing. It reads no source text, no `source_map`
+      region
+
+      other than the `declaration_region` of its row, no occurrence site label
+      and
+
+      no `NodeRef` path.
+  - id: FR-940/hyper-form-comparison
+    path: spec/functional/FR-940-analyze-through-one-sealed-package-read-view.md
+    role: examined
+    excerpt: |-
+      atom index and S3's formula `Holds` spans are canonicalized to that row's
+        `declaration_region` span. This canonicalization changes only diagnostic
+        spans: every semantic node kind, operator, level and operand structure
+        remains in the equality comparison.
+  - id: FR-940-AC-16
+    path: spec/functional/FR-940-analyze-through-one-sealed-package-read-view.md
+    role: examined
+    excerpt: only S3's formula `Holds` spans are canonicalized to the selected
+      `claim_names` row's `declaration_region` span, preserving comparison of
+      every semantic node kind, operator, level and operand structure; every
+      `PackageHyperHolds.span` and rebuilt formula `Holds` span equals that
+      declaration span
+  - id: TC-3126/step-3
+    path: spec/test-cases/TC-3126-a-package-hyper-form-rebuilds-the-checked-hyper-clause.md
+    role: examined
+    excerpt: >-
+      3. Compare each rebuilt clause with S3's checked clause, renumbering S3's
+         atoms by FR-532's atom index and canonicalizing only S3's formula `Holds`
+         spans to the selected `claim_names` row's `declaration_region` span.
+  - id: TC-3126/expected-step-2
+    path: spec/test-cases/TC-3126-a-package-hyper-form-rebuilds-the-checked-hyper-clause.md
+    role: examined
+    excerpt: |-
+      - Step 2: the two forms of each clause are equal, and every
+        `PackageHyperHolds.span` and rebuilt formula `Holds` span equals the
+        selected `claim_names` row's `declaration_region` span.
+  - id: TC-3126/expected-step-3-equality
+    path: spec/test-cases/TC-3126-a-package-hyper-form-rebuilds-the-checked-hyper-clause.md
+    role: examined
+    excerpt: >-
+      - Step 3: name, span, profile, aliases, read object parameters, quantifier
+        prefix with fairness sets, atom slots, conjunct count per part,
+        `align skip`, form, copy-group classes, occurrence, formula arena, atom
+        indices and copy generators are equal after step 3's atom renumbering and
+        diagnostic-span canonicalization; every semantic node kind, operator,
+        level and operand structure remains compared; `condition` of every
+        rebuilt atom is `None`.
+  - id: TC-3126/semantic-negative-control
+    path: spec/test-cases/TC-3126-a-package-hyper-form-rebuilds-the-checked-hyper-clause.md
+    role: examined
+    excerpt: "- Step 4: the comparison reports the conjunct partition as different."
+  - id: FR-488/declaration-region
+    path: spec/functional/FR-488-emit-a-checked-hyper-clause-as-a-v2-hyperproperty-node.md
+    role: context_only
+    excerpt: "`declaration_region` is the whole hyper declaration's span."
+```
