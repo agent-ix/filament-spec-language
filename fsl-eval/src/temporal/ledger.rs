@@ -865,4 +865,141 @@ mod tests {
             .expect_err("a new position inside the retained extent");
         assert!(matches!(late, LedgerRefusal::Contradiction(_)));
     }
+
+    fn sample(index: &str, stamp: u64, fingerprint: Option<&str>) -> ObservedPosition {
+        ObservedPosition {
+            identity: index.to_owned(),
+            stamp,
+            fingerprint: fingerprint.map(str::to_owned),
+        }
+    }
+
+    fn covered_of(ledger: &ProgressLedger) -> Vec<(String, u64, Option<String>)> {
+        ledger
+            .entry(&binding())
+            .expect("retained entry")
+            .covered()
+            .map(|position| {
+                (
+                    position.identity.clone(),
+                    position.stamp,
+                    position.fingerprint.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// The position a contradiction on `Completeness` names, or a failure.
+    fn named_position(refusal: LedgerRefusal) -> ObservedPosition {
+        match contradiction(refusal).asserted {
+            ProgressValue::Position(position) => *position,
+            other => panic!("a position, not {other:?}"),
+        }
+    }
+
+    #[trace("FR-944-AC-4", "TC-2624")]
+    #[test]
+    fn a_covered_position_omitted_then_re_supplied_is_accepted_and_stays_covered() {
+        let held = [at("a", 0), at("b", 50), at("c", 100)];
+        let first = retaining(assertion(100, complete(100)), &held);
+        let second = admit(
+            &first,
+            &binding(),
+            assertion(100, complete(100)),
+            &[at("a", 0), at("c", 100)],
+        )
+        .expect("a request that omits a covered position");
+        assert_eq!(covered_of(&second).len(), 3, "the omitted position stays");
+        let third = admit(
+            &second,
+            &binding(),
+            assertion(100, complete(140)),
+            &[at("b", 50)],
+        )
+        .expect("the omitted position re-supplied at or before the retained through");
+        assert_eq!(
+            covered_of(&third)
+                .iter()
+                .map(|(identity, stamp, _)| (identity.as_str(), *stamp))
+                .collect::<Vec<_>>(),
+            [("a", 0), ("b", 50), ("c", 100)]
+        );
+    }
+
+    #[trace("FR-944-AC-16", "TC-2624")]
+    #[test]
+    fn a_new_position_at_stamp_zero_after_an_incomplete_assertion_is_accepted() {
+        let held = [at("p1", 1), at("p2", 2), at("p3", 3)];
+        let ledger = retaining(assertion(3, ProgressCompleteness::Incomplete), &held);
+        for asserted in [ProgressCompleteness::Incomplete, complete(5)] {
+            let admitted = admit(&ledger, &binding(), assertion(3, asserted), &[at("new", 0)])
+                .unwrap_or_else(|refusal| panic!("{asserted:?}: {refusal:?}"));
+            assert_eq!(covered_of(&admitted).len(), 4);
+        }
+    }
+
+    #[trace("FR-944-AC-16", "TC-2624")]
+    #[test]
+    fn a_changed_fingerprint_is_refused_after_an_incomplete_and_after_a_complete_assertion() {
+        let f = Some("sha256:f");
+        let g = Some("sha256:g");
+        for retained in [ProgressCompleteness::Incomplete, complete(5)] {
+            let ledger = retaining(assertion(5, retained), &[sample("1", 1, f)]);
+            let before = ledger.clone();
+            admit(
+                &ledger,
+                &binding(),
+                assertion(5, retained),
+                &[sample("1", 1, f)],
+            )
+            .unwrap_or_else(|refusal| panic!("{retained:?} same sample: {refusal:?}"));
+            let refusal = admit(
+                &ledger,
+                &binding(),
+                assertion(5, retained),
+                &[sample("1", 1, g)],
+            )
+            .expect_err("a changed sample at a covered index");
+            let report = contradiction(refusal);
+            assert_eq!(report.dimension, ContradictedDimension::Completeness);
+            assert_eq!(report.clock, "ms");
+            assert_eq!(report.retained, ProgressValue::Completeness(retained));
+            assert_eq!(
+                report.asserted,
+                ProgressValue::Position(Box::new(sample("1", 1, None))),
+                "the position without its fingerprint"
+            );
+            assert_eq!(ledger, before, "refusal leaves the input ledger unchanged");
+        }
+    }
+
+    #[trace("FR-944-AC-16", "TC-2624")]
+    #[test]
+    fn a_fingerprint_present_against_absent_is_a_changed_sample_in_both_directions() {
+        let with = retaining(
+            assertion(5, ProgressCompleteness::Incomplete),
+            &[sample("1", 1, Some("sha256:f"))],
+        );
+        let without = retaining(
+            assertion(5, ProgressCompleteness::Incomplete),
+            &[sample("1", 1, None)],
+        );
+        for (ledger, listed) in [(&with, None), (&without, Some("sha256:f"))] {
+            let refusal = admit(
+                ledger,
+                &binding(),
+                assertion(5, ProgressCompleteness::Incomplete),
+                &[sample("1", 1, listed)],
+            )
+            .expect_err("present against absent");
+            assert_eq!(named_position(refusal), sample("1", 1, None));
+        }
+        admit(
+            &without,
+            &binding(),
+            assertion(5, ProgressCompleteness::Incomplete),
+            &[sample("1", 1, None)],
+        )
+        .expect("none against none");
+    }
 }
