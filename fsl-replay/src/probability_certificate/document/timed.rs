@@ -110,6 +110,7 @@ pub(super) fn check(
         TimedProbabilityRoute::Digital => enumerate_digital_deadline(
             system,
             &timed,
+            claim,
             binding.as_ref(),
             &Watch::Deadline(predicate),
             time_bound(claim, objective.scale)?,
@@ -1090,6 +1091,7 @@ fn mean_region_key(
                 })
                 .collect(),
             deadline: None,
+            elapsed: None,
             tail: crate::DigitalTail::Running,
             monitor: None,
             accumulator: None,
@@ -1404,6 +1406,7 @@ struct RegionState {
 fn enumerate_digital_deadline(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
     binding: Option<&filament_exact::ObjectReference>,
     watch: &Watch<'_>,
     deadline: u64,
