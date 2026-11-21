@@ -19,7 +19,10 @@
 use filament_exact::{Cancel, CancelCause, ObjectReference, ScalarLimits};
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
-use fsl_eval::automaton::{SafetyState, SafetyTranslation, StateContext};
+use fsl_eval::automaton::{
+    translate, Letter, Monitor, SafetyState, SafetyStates, SafetyTranslation, StateContext,
+    SubjectKind, TranslationRefusal,
+};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_package::CheckedPackage;
@@ -30,7 +33,7 @@ use fsl_replay::{
     ClosureRefusal, Execution, IncompleteCause, InconclusiveCause, ItemRefusal, ModelCheckItem,
     ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ProductStateRef, ProofBasis,
     ProofCertificate, ReachedLimit, ResultLabel, SettlementBasis, TemporalCertificateCheck,
-    TerminalValue, UndecidedCause,
+    TerminalValue, Translation, UndecidedCause,
 };
 use fsl_semantics::check::CheckedTemporalClause;
 use fsl_semantics::model::observation::DocumentRef;
@@ -279,6 +282,57 @@ impl Invariant {
 
     fn run(&self, world: &World) -> ModelCheckOutcome {
         world.run_in(&self.package, self.item())
+    }
+
+    /// The TP-3 key context of the instance bound to `object`.
+    fn monitor_keys(&self, object: &ObjectReference) -> SafetyStates {
+        let binding = vec![fsl_eval::automaton::ContextBinding::instance(
+            self.identity.over().expect("an over node"),
+            object.object().as_str(),
+        )];
+        let context =
+            StateContext::clause(&self.clause, self.identity.occurrence().clone(), binding);
+        SafetyStates::clause(&self.clause, &context, SubjectKind::Ordinary).expect("translates")
+    }
+
+    /// The product states of the TP-3 behaviour `0, 1, ..` whose clause atoms
+    /// are read as `truths` (each atom of the letter true or false together),
+    /// keyed as its bad-prefix monitor reaches them: a legitimate candidate
+    /// certificate for the prefix, whatever the clause makes of its end.
+    fn candidate(
+        &self,
+        world: &World,
+        object: &ObjectReference,
+        truths: &[bool],
+    ) -> ClosureCertificate {
+        let keys = self.monitor_keys(object);
+        let mut monitor =
+            Monitor::bad_prefix(translate(&self.clause, 64).expect("translates"), 64)
+                .expect("a safety automaton");
+        let all = (1u64 << monitor.automaton().atoms().len()) - 1;
+        let mut state = monitor.initial().expect("initial state");
+        let mut states = Vec::new();
+        for (value, truth) in truths.iter().enumerate() {
+            let letter = Letter::from_bits(if *truth { all } else { 0 });
+            state = monitor.step(state, letter).expect("steps");
+            let configurations = monitor
+                .configurations(state, keys.max_key_bytes())
+                .expect("resolves");
+            states.push(ProductStateRef {
+                model_state: world.state_key(&[i64::try_from(value).expect("small")]),
+                automaton_state: keys.key(&configurations).expect("encodes"),
+            });
+        }
+        states.sort();
+        ClosureCertificate { states }
+    }
+
+    /// The rejecting product state of the model state with `value`.
+    fn rejecting(&self, world: &World, object: &ObjectReference, value: i64) -> ProductStateRef {
+        ProductStateRef {
+            model_state: world.state_key(&[value]),
+            automaton_state: self.monitor_keys(object).key(&[]).expect("encodes"),
+        }
     }
 
     /// The translation of the instance bound to `object`.
@@ -704,6 +758,7 @@ fn settled(
 /// state removed is rejected `SuccessorMissing` at it, and with the value-1
 /// state's past memory replaced by the origin's, `SuccessorMissing` at the
 /// value-1 state the monitor actually reaches.
+#[trace("TC-525", "FR-338-AC-29")]
 #[trace("TC-525", "FR-127-AC-1")]
 #[test]
 fn a_past_clause_proof_carries_monitor_keys_the_core_accepts() {
@@ -771,6 +826,7 @@ fn a_past_clause_proof_carries_monitor_keys_the_core_accepts() {
 /// the core checker accepts; the proof settles `Certified`. An empty
 /// certificate for it is rejected `InitialMissing` at the initial product
 /// state, so the proof never settles `proved`.
+#[trace("TC-525", "FR-338-AC-29")]
 #[trace("TC-525", "FR-127-AC-1")]
 #[test]
 fn an_interval_clause_proof_carries_monitor_keys_the_core_accepts() {
@@ -821,6 +877,115 @@ fn an_interval_clause_proof_carries_monitor_keys_the_core_accepts() {
             at: CertificateLocus::ProductState(at),
         })
     );
+}
+
+/// FR-338 "hold no bad state" for a TP-3 clause: a certificate offered for a
+/// violated clause is rejected `BadState` at the product state whose monitor
+/// state is the rejecting `["safety",[]]`. Over the Counter subject (values 0
+/// to 3, then the terminal stutter), with the clause's atoms read as
+/// `p(v) = v <= k`:
+/// - `always (p implies once[1,1] p)` with `k = 3` is violated at the origin,
+///   where the history before position 0 reads every atom false (FR-338
+///   "historical missing positions"), so the empty certificate is rejected
+///   `BadState` at value 0;
+/// - `always (p or once[1,1] p)` with `k = 1` reads true, true, false, false
+///   at values 0 to 3, and is violated at value 3, where the previous
+///   position's `p` was false too: the candidate holding the monitor's keys for
+///   values 0 to 2 is rejected `BadState` at value 3, not `SuccessorMissing`;
+/// - an atom undefined at the origin is an undefined letter, which rejects
+///   the empty certificate `BadState` at value 0 under the rejecting key.
+#[trace("TC-525", "FR-338-AC-29")]
+#[trace("TC-525")]
+#[test]
+fn a_certificate_for_a_violated_tp3_clause_is_rejected_bad_state() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let object = world.objects().remove(0);
+    let empty = ClosureCertificate { states: Vec::new() };
+
+    let origin = world.invariant(
+        "always (holds(c.value <= 3) implies once[1,1] holds(c.value <= 3))",
+        |v| Some(v <= 3),
+    );
+    assert!(matches!(
+        origin.run(&world),
+        ModelCheckOutcome::Violated { .. }
+    ));
+    assert_eq!(
+        check(&origin.request(&world, UNLIMITED), &empty),
+        rejected(
+            CertificateRule::BadState,
+            origin.rejecting(&world, &object, 0)
+        )
+    );
+
+    let later = world.invariant(
+        "always (holds(c.value <= 1) or once[1,1] holds(c.value <= 1))",
+        |v| Some(v <= 1),
+    );
+    assert!(matches!(
+        later.run(&world),
+        ModelCheckOutcome::Violated { .. }
+    ));
+    let prefix = later.candidate(&world, &object, &[true, true, false]);
+    assert_eq!(
+        check(&later.request(&world, UNLIMITED), &prefix),
+        rejected(
+            CertificateRule::BadState,
+            later.rejecting(&world, &object, 3)
+        )
+    );
+
+    let undefined = world.invariant(
+        "always (holds(c.value <= 1) or once[1,1] holds(c.value <= 1))",
+        |v| (v != 0).then_some(true),
+    );
+    assert_eq!(
+        check(&undefined.request(&world, UNLIMITED), &empty),
+        rejected(
+            CertificateRule::BadState,
+            undefined.rejecting(&world, &object, 0)
+        )
+    );
+}
+
+/// A TP-3 clause is keyed by its monitor only where the subject kind is
+/// stated as ordinary: `instances_for` with `Ordinary` builds the monitored
+/// translation, with `Protocol` the clause has no translation (a protocol
+/// subject's non-progress search is not part of it), and `instances`, which
+/// states no subject kind, builds none either, so no core acceptance rests on
+/// the engine's own gate.
+#[trace("TC-525", "FR-338-AC-29")]
+#[trace("TC-525")]
+#[test]
+fn a_tp3_clause_is_monitored_only_under_an_explicit_ordinary_subject() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    let claim = world.invariant(
+        "always (holds(c.value <= 1) or once[1,1] holds(c.value <= 1))",
+        |v| Some(v <= 1),
+    );
+    let request = claim.request(&world, UNLIMITED);
+    let system = world.system();
+    let item = claim.item();
+    let cancel = Cancel::new();
+    let ordinary = item
+        .instances_for(&request.subject, &system, &[], &cancel, SubjectKind::Ordinary, 64)
+        .expect("an ordinary subject translates");
+    assert!(matches!(
+        ordinary[0].translation,
+        Translation::Monitored(_)
+    ));
+    for refused in [
+        item.instances_for(&request.subject, &system, &[], &cancel, SubjectKind::Protocol, 64),
+        item.instances(&request.subject, &system, &[], &cancel),
+    ] {
+        assert!(
+            matches!(
+                refused,
+                Err(ItemRefusal::Translation(TranslationRefusal::NotTranslated(_)))
+            ),
+            "{refused:?}"
+        );
+    }
 }
 
 /// FR-127's certificate rows: the settlement map runs the core checker on

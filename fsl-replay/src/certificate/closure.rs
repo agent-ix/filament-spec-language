@@ -821,6 +821,15 @@ struct LivenessPending<S: SubjectSystem> {
     index: usize,
 }
 
+/// What a TP-3 instance's run keeps: the monitor rebuilt from the clause, its
+/// key context, the instance's binding and the product states reached.
+struct MonitoredRun<'k> {
+    monitor: Monitor<PropertyAutomaton>,
+    keys: &'k SafetyStates,
+    binding: &'k fsl_eval::model_subject::ModelInstance,
+    visited: BTreeSet<(StateKey, StateId)>,
+}
+
 /// A reached TP-3 product state waiting to expand its model component.
 struct MonitoredPending<S: SubjectSystem> {
     state: S::State,
@@ -1186,17 +1195,22 @@ impl<S: SubjectSystem> Check<'_, S> {
         let max_states = self.limits.max_automaton_states;
         let automaton =
             translate(clause, max_states).map_err(|error| self.automaton_error(error))?;
-        let mut monitor = Monitor::bad_prefix(automaton, max_states)
-            .map_err(|error| self.automaton_error(error))?;
-        let start = monitor
+        let mut run = MonitoredRun {
+            monitor: Monitor::bad_prefix(automaton, max_states)
+                .map_err(|error| self.automaton_error(error))?,
+            keys,
+            binding,
+            visited: BTreeSet::new(),
+        };
+        let start = run
+            .monitor
             .initial()
             .map_err(|error| self.automaton_error(error))?;
-        let mut visited = BTreeSet::new();
         let mut queue = VecDeque::new();
         for (_, _, state_key, state) in initial {
             self.poll()?;
             let letter = self.property_letter(
-                monitor.automaton(),
+                run.monitor.automaton(),
                 *letters,
                 clause,
                 binding,
@@ -1205,7 +1219,8 @@ impl<S: SubjectSystem> Check<'_, S> {
                 true,
             )?;
             let after = match letter {
-                Some(letter) => monitor
+                Some(letter) => run
+                    .monitor
                     .step(start, letter)
                     .map_err(|error| self.automaton_error(error))?,
                 None => {
@@ -1214,13 +1229,11 @@ impl<S: SubjectSystem> Check<'_, S> {
                 }
             };
             queue.extend(self.reach_monitored(
-                &mut monitor,
-                keys,
+                &mut run,
                 state.clone(),
                 state_key.clone(),
                 after,
                 CertificateRule::InitialMissing,
-                &mut visited,
             )?);
         }
         while let Some(pending) = queue.pop_front() {
@@ -1234,108 +1247,80 @@ impl<S: SubjectSystem> Check<'_, S> {
                 if cut.memory || cut.instances {
                     continue;
                 }
-                let next = self.monitored_step(
-                    &mut monitor,
-                    keys,
-                    binding,
-                    &pending,
-                    &pending.state,
-                    &pending.at.model_state,
-                    true,
-                    CertificateRule::SuccessorMissing,
-                    &mut visited,
-                )?;
-                queue.extend(next);
+                queue.extend(self.monitored_step(&mut run, &pending, None, true)?);
                 continue;
             }
             for (transition, state_key, state) in self.ordered(expansion.successors)? {
                 self.poll()?;
                 self.charge_edge()?;
                 let counted = self.system.counts_step(&transition);
-                let next = self.monitored_step(
-                    &mut monitor,
-                    keys,
-                    binding,
-                    &pending,
-                    &state,
-                    &state_key,
-                    counted,
-                    CertificateRule::SuccessorMissing,
-                    &mut visited,
-                )?;
-                queue.extend(next);
+                let edge = Some((&state, &state_key));
+                queue.extend(self.monitored_step(&mut run, &pending, edge, counted)?);
             }
         }
         Ok(())
     }
 
-    /// Read the letter of `state` from `pending`'s monitor state and reach
-    /// the monitor state that results.
-    #[allow(clippy::too_many_arguments)]
+    /// Read the letter of the model state `edge` reaches from `pending` (its
+    /// own model state when `edge` is `None`, the terminal stutter) and
+    /// reach the monitor state that results.
     fn monitored_step(
         &mut self,
-        monitor: &mut Monitor<PropertyAutomaton>,
-        keys: &SafetyStates,
-        binding: &fsl_eval::model_subject::ModelInstance,
+        run: &mut MonitoredRun<'_>,
         pending: &MonitoredPending<S>,
-        state: &S::State,
-        state_key: &StateKey,
+        edge: Option<(&S::State, &StateKey)>,
         counted: bool,
-        missing: CertificateRule,
-        visited: &mut BTreeSet<(StateKey, StateId)>,
     ) -> Step<Option<MonitoredPending<S>>> {
         let ModelCheckItem::Clause { letters, clause } = self.item else {
             return Err(fault("monitored-clause-item").into());
         };
+        let (state, state_key) = edge.unwrap_or((&pending.state, &pending.at.model_state));
         let letter = self.property_letter(
-            monitor.automaton(),
+            run.monitor.automaton(),
             *letters,
             clause,
-            binding,
+            run.binding,
             state,
             counted,
             false,
         )?;
         let Some(letter) = letter else {
-            let at = self.product_monitored(monitor, keys, state_key.clone(), pending.monitor)?;
+            let at = self.product_monitored(run, state_key.clone(), pending.monitor)?;
             return Err(Self::reject(CertificateRule::BadState, at));
         };
-        let after = monitor
+        let after = run
+            .monitor
             .step(pending.monitor, letter)
             .map_err(|error| self.automaton_error(error))?;
         self.reach_monitored(
-            monitor,
-            keys,
+            run,
             state.clone(),
             state_key.clone(),
             after,
-            missing,
-            visited,
+            CertificateRule::SuccessorMissing,
         )
     }
 
     /// Reach `state` in the monitor state `after`: reject a rejecting
     /// monitor state, then require the product state in the certificate
     /// under `missing`. `None` when this instance reached it before.
-    #[allow(clippy::too_many_arguments)]
     fn reach_monitored(
         &mut self,
-        monitor: &mut Monitor<PropertyAutomaton>,
-        keys: &SafetyStates,
+        run: &mut MonitoredRun<'_>,
         state: S::State,
         state_key: StateKey,
         after: StateId,
         missing: CertificateRule,
-        visited: &mut BTreeSet<(StateKey, StateId)>,
     ) -> Step<Option<MonitoredPending<S>>> {
-        let at = self.product_monitored(monitor, keys, state_key.clone(), after)?;
-        if monitor
+        let at = self.product_monitored(run, state_key.clone(), after)?;
+        if run
+            .monitor
             .is_rejecting(after)
             .map_err(|error| self.automaton_error(error))?
         {
             return Err(Self::reject(CertificateRule::BadState, at));
         }
-        if !visited.insert((state_key, after)) {
+        if !run.visited.insert((state_key, after)) {
             return Ok(None);
         }
         if self.reached >= self.limits.limits.max_states {
@@ -1355,19 +1340,20 @@ impl<S: SubjectSystem> Check<'_, S> {
         }))
     }
 
-    /// The product state of `state_key` and the monitor state `monitor`,
-    /// keyed by its viable elementary configurations.
+    /// The product state of `state_key` and the monitor state `state`, keyed
+    /// by its viable elementary configurations.
     fn product_monitored(
         &mut self,
-        monitor: &Monitor<PropertyAutomaton>,
-        keys: &SafetyStates,
+        run: &MonitoredRun<'_>,
         state_key: StateKey,
         state: StateId,
     ) -> Step<ProductStateRef> {
-        let configurations = monitor
-            .configurations(state, keys.max_key_bytes())
+        let configurations = run
+            .monitor
+            .configurations(state, run.keys.max_key_bytes())
             .map_err(|error| self.automaton_error(error))?;
-        let key = keys
+        let key = run
+            .keys
             .key(&configurations)
             .map_err(|_| ClosureRefusal::Encoding)?;
         self.product_of(state_key, key)
@@ -1514,7 +1500,7 @@ impl<S: SubjectSystem> Check<'_, S> {
                 return Ok(None);
             };
             if holds {
-                let atom = Atom::new(index).map_err(|_| fault("tp4-atom-in-range"))?;
+                let atom = Atom::new(index).map_err(|_| fault("letter-atom-in-range"))?;
                 letter = letter.with(atom);
             }
         }
@@ -1607,7 +1593,7 @@ impl<S: SubjectSystem> Check<'_, S> {
             fsl_eval::automaton::AutomatonError::KeyEncodingLimit { .. } => {
                 ClosureRefusal::Encoding.into()
             }
-            _ => fault("tp4-automaton-transition").into(),
+            _ => fault("automaton-transition").into(),
         }
     }
 

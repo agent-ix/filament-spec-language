@@ -1212,7 +1212,7 @@ impl Translator {
             let occurrences = self
                 .occurrences
                 .get(node)
-                .ok_or_else(|| invariant("buchi-obligation-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-obligation-has-source-occurrence"))?;
             branch
                 .obligations
                 .extend(occurrences.iter().cloned().map(Obligation::Current));
@@ -1222,7 +1222,7 @@ impl Translator {
             let occurrences = self
                 .occurrences
                 .get(node)
-                .ok_or_else(|| invariant("buchi-window-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-window-has-source-occurrence"))?;
             match counter {
                 Counter::Deadline(counter) if counter.is_pending() => {
                     branch
@@ -1254,7 +1254,7 @@ impl Translator {
             let occurrences = self
                 .occurrences
                 .get(node)
-                .ok_or_else(|| invariant("buchi-shift-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-shift-has-source-occurrence"))?;
             for offset in remaining {
                 branch
                     .windows
@@ -1268,9 +1268,9 @@ impl Translator {
             let occurrences = self
                 .past_occurrences
                 .get(node)
-                .ok_or_else(|| invariant("buchi-past-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-past-has-source-occurrence"))?;
             let Node::Past { kind, window, .. } = self.ir.node(*node)? else {
-                return Err(invariant("buchi-past-node"));
+                return Err(invariant("state-past-node"));
             };
             let past = Past::new(kind, window, self.subject);
             branch.past.extend(
@@ -1294,7 +1294,7 @@ impl Translator {
             let occurrences = self
                 .occurrences
                 .get(eventuality)
-                .ok_or_else(|| invariant("buchi-acceptance-has-source-occurrence"))?;
+                .ok_or_else(|| invariant("state-acceptance-has-source-occurrence"))?;
             branch.acceptance.extend(occurrences.iter().cloned());
         }
         Ok(branch)

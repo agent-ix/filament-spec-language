@@ -395,7 +395,7 @@ impl ModelCheckItem<'_> {
                             }
                         } else if invariant_atom(clause).is_none()
                             && clause.activation() == Activation::Origin
-                            && tp4.is_none_or(|tp4| tp4.subject_kind == SubjectKind::Ordinary)
+                            && tp4.is_some_and(|tp4| tp4.subject_kind == SubjectKind::Ordinary)
                             && is_safety_translated(clause)
                         {
                             Translation::Monitored(

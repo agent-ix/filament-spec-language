@@ -16,7 +16,7 @@
 
 use filament_exact::{Origin, Role};
 use fsl_eval::automaton::{
-    BuchiPhase, BuchiState, BuchiStates, Configuration, ContextActivation, DistanceBucket,
+    Atom, BuchiPhase, BuchiState, BuchiStates, Configuration, ContextActivation, DistanceBucket,
     HistoryOperand, KeyRefusal, Letter, Monitor, Obligation, Occurrence, PastMemory, PastOperator,
     Polarity, SafetyState, SafetyStates, SafetyTranslation, StateContext, SubjectKind,
     TranslationRefusal, Window,
@@ -1377,6 +1377,76 @@ fn reached_tp3_monitor_states_resolve_to_fr338_keys() {
         let rejecting = keys.key(&[]).expect("the rejecting state encodes");
         assert!(distinct.contains(rejecting.as_bytes()), "{body}");
     }
+}
+
+/// The key of the monitor state `body`'s bad-prefix monitor reaches by
+/// reading, from its initial state, one letter for each of `positions`: the
+/// atoms (by index) that hold at that position.
+fn monitor_key(body: &str, positions: &[&[usize]]) -> String {
+    let fixture = fixture(INFINITE, "c: Counter", "on origin", body);
+    let context = StateContext::clause(&fixture.clause, occurrence(0), Vec::new());
+    let keys = SafetyStates::clause(&fixture.clause, &context, SubjectKind::Ordinary)
+        .expect("the TP-3 key context translates");
+    let automaton =
+        fsl_eval::automaton::translate(&fixture.clause, 256).expect("the clause translates");
+    let mut monitor = Monitor::bad_prefix(automaton, 256).expect("a safety automaton");
+    let mut state = monitor.initial().expect("initial state fits");
+    for holding in positions {
+        let letter = holding.iter().fold(Letter::default(), |letter, atom| {
+            letter.with(Atom::new(*atom).expect("an atom of the letter"))
+        });
+        state = monitor.step(state, letter).expect("steps");
+    }
+    let configurations = monitor
+        .configurations(state, keys.max_key_bytes())
+        .expect("the monitor state resolves structurally");
+    let key = keys.key(&configurations).expect("encodes");
+    text_of(&key)
+}
+
+/// FR-338's `history` and `deadline` members, as the specification's tables
+/// spell them (the "past" memory table and the `windows` alternatives), are
+/// what a reached TP-3 monitor state carries: an `once[1,1] q` memory holds
+/// the offset of the position `q` was true at, one position after, and drops
+/// it a position later; the `eventually[0,2] q` debt of an activated
+/// implication is the deadline `"2"` after its position, `"1"` after the next
+/// and is gone once `q` is read; a violated debt is the rejecting state.
+#[trace("TC-525", "FR-338-AC-7", "FR-338-AC-29")]
+#[test]
+fn a_tp3_monitor_state_carries_the_specified_past_and_window_members() {
+    let past = "always (holds(p) implies once[1,1] holds(q))";
+    let history = |offsets: &str| {
+        states_key(&format!(
+            r#"["safety",[[[[[],"positive"]],[[["0","1"],"history",[[["0","1","0"],{offsets}]]]],[],[]]]]"#
+        ))
+    };
+    // Atom 0 is `p`, atom 1 is `q`.
+    assert_eq!(monitor_key(past, &[&[1]]), history(r#"["1"]"#));
+    assert_eq!(monitor_key(past, &[&[]]), history("[]"));
+    assert_eq!(monitor_key(past, &[&[1], &[0]]), history("[]"));
+    assert_eq!(
+        monitor_key(past, &[&[], &[0]]),
+        states_key(r#"["safety",[]]"#),
+        "p holds where the previous position's q was false"
+    );
+
+    let future = "always (holds(p) implies eventually[0,2] holds(q))";
+    let deadline = |remaining: &str| {
+        states_key(&format!(
+            r#"["safety",[[[[[],"positive"]],[],[[["0","1"],"positive","deadline","{remaining}"]],[]]]]"#
+        ))
+    };
+    assert_eq!(monitor_key(future, &[&[0]]), deadline("2"));
+    assert_eq!(monitor_key(future, &[&[0], &[]]), deadline("1"));
+    assert_eq!(
+        monitor_key(future, &[&[0], &[1]]),
+        states_key(r#"["safety",[[[[[],"positive"]],[],[],[]]]]"#)
+    );
+    assert_eq!(
+        monitor_key(future, &[&[0], &[], &[], &[]]),
+        states_key(r#"["safety",[]]"#),
+        "the deadline closes before the third position after its activation is read"
+    );
 }
 
 /// FR-338's TP-4 vector: for `eventually holds(p)` the elementary

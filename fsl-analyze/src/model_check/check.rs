@@ -596,11 +596,13 @@ pub(crate) fn check_model_with_stutter_closure(
         read_system(&request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
     let (instances, root_cancelled) = if certified {
-        match request.item.instances(
+        match request.item.instances_for(
             &request.subject,
             &system,
             request.temporal_clock_selections,
             cancel,
+            SubjectKind::Ordinary,
+            max_automaton_states,
         ) {
             Ok(instances) => (instances, None),
             Err(ItemRefusal::ClauseRoot(ClauseRootRefusal::Cancelled(cause))) => {
