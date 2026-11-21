@@ -595,6 +595,14 @@ pub(crate) fn check_model_with_stutter_closure(
     let system =
         read_system(&request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
+    // A loop-proof item is decided over a protocol subject only; a stated
+    // subject kind below must not instance it over a model.
+    if matches!(
+        request.item,
+        ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. }
+    ) {
+        return Err(ModelCheckRefusal::Item(ItemRefusal::LoopProofOverModel));
+    }
     let (instances, root_cancelled) = if certified {
         match request.item.instances_for(
             &request.subject,

@@ -1285,7 +1285,7 @@ impl<S: SubjectSystem> Check<'_, S> {
             false,
         )?;
         let Some(letter) = letter else {
-            let at = self.product_monitored(run, state_key.clone(), pending.monitor)?;
+            let at = self.product_rejecting(run.keys, state_key.clone())?;
             return Err(Self::reject(CertificateRule::BadState, at));
         };
         let after = run

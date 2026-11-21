@@ -47,3 +47,18 @@ Stub, coverage-inflation and reverse-gap checks over the 10 changed files:
 - Reverse gap: FND-001.
 - Semantic review (intent↔test↔code): not run as a separate opt-in pass. The code-review artifact SR-2026112115155546054652100 records the intent↔test checks relevant to this diff.
 - Plan completion: not assessed
+
+## New findings (disposition pass 1)
+
+Pass-1 source: PR #3330 head 943172bbeda2f23bd42754443278491dae142602 on base 01f289375f7a818f03919820396f333b1052bf89, fix commit only. No matrix rerun. The bindings below were read from the diff's `#[trace]` tags.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | FR-338-AC-29's final sentence promises that a TP-3 clause "over a protocol subject … proof carries an empty [certificate] and settles `failed`". None of its four tagged binders runs a protocol proof or settles one. `a_tp3_clause_is_monitored_only_under_an_explicit_ordinary_subject` shows only that `instances_for(.., Protocol, ..)` refuses `NotTranslated` at item level, and `an_on_each_past_or_interval_proof_never_settles_proved` covers `on each` only. The protocol half of the AC is therefore tagged but not demonstrated. Add a protocol-subject TP-3 `Holds` with an empty certificate that settles `Failed`, or narrow the sentence to what is tested. | spec/functional/FR-338-check-an-en-1-closure-certificate.md:1127; fsl-analyze/tests/it/closure_certificate.rs:960 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-338-AC-29 was added (TC-525) and restates the existing TP-3 behaviour. It is traced from the past, interval, BadState, explicit-kind, `on each` and key-body tests. A protocol over-promise in its last sentence is FND-003, and an undefined-origin wording conflict is in SR-2026112115155546054652102. |
+| FND-002 | fixed | The FR-1030 statement now says that TP-3 `on origin` over an ordinary model subject is certified and settles `proved`, and that `on each` and protocol settle `failed`. The `ClosureStutterLoop` wording is kept, the remaining QSL-2247 scope is narrowed accordingly, and no AC changed. This is consistent with FR-1030-AC-1 (proved) and AC-5 (PrevStutter refuted). It is a clarification, not a weakening. |

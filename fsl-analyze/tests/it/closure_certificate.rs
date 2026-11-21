@@ -893,7 +893,9 @@ fn an_interval_clause_proof_carries_monitor_keys_the_core_accepts() {
 ///   position's `p` was false too: the candidate holding the monitor's keys for
 ///   values 0 to 2 is rejected `BadState` at value 3, not `SuccessorMissing`;
 /// - an atom undefined at the origin is an undefined letter, which rejects
-///   the empty certificate `BadState` at value 0 under the rejecting key.
+///   the empty certificate `BadState` at value 0 under the rejecting key, and
+///   one undefined at value 2 rejects the prefix of values 0 and 1
+///   `BadState` at value 2 under the rejecting key.
 #[trace("TC-525", "FR-338-AC-29")]
 #[trace("TC-525")]
 #[test]
@@ -932,6 +934,22 @@ fn a_certificate_for_a_violated_tp3_clause_is_rejected_bad_state() {
         rejected(
             CertificateRule::BadState,
             later.rejecting(&world, &object, 3)
+        )
+    );
+
+    // An atom undefined at a later model state is read from the reached
+    // prefix and rejects at that successor under the rejecting key, as it
+    // does for TP-1 and TP-2.
+    let later_undefined = world.invariant(
+        "always (holds(c.value <= 1) or once[1,1] holds(c.value <= 1))",
+        |v| (v != 2).then_some(v <= 1),
+    );
+    let prefix = later_undefined.candidate(&world, &object, &[true, true]);
+    assert_eq!(
+        check(&later_undefined.request(&world, UNLIMITED), &prefix),
+        rejected(
+            CertificateRule::BadState,
+            later_undefined.rejecting(&world, &object, 2)
         )
     );
 
@@ -982,6 +1000,48 @@ fn a_tp3_clause_is_monitored_only_under_an_explicit_ordinary_subject() {
             matches!(
                 refused,
                 Err(ItemRefusal::Translation(TranslationRefusal::NotTranslated(_)))
+            ),
+            "{refused:?}"
+        );
+    }
+}
+
+/// A loop-proof item is decided over a protocol subject only: the public
+/// model entry refuses both kinds before it instances or explores anything,
+/// rather than running them as a deadlock-freedom item that can hold.
+#[trace("TC-525")]
+#[test]
+fn a_loop_proof_item_is_refused_over_a_model_subject() {
+    let world = world(CONTRACT, &[("c", 0)]);
+    for item in [
+        ModelCheckItem::LoopInvariant {
+            repeat: fsl_semantics::check::ProtocolNodeId(7),
+        },
+        ModelCheckItem::LoopTermination {
+            repeat: fsl_semantics::check::ProtocolNodeId(7),
+        },
+    ] {
+        let refused = check_model(
+            ModelCheckRequest {
+                temporal_clock_selections: &[],
+                subject: subject(
+                    &world.package,
+                    &world.documents,
+                    world.initial.clone(),
+                    &world.keys,
+                    UNLIMITED,
+                ),
+                item,
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
+                reductions: Default::default(),
+            },
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(
+                refused,
+                Err(ModelCheckRefusal::Item(ItemRefusal::LoopProofOverModel))
             ),
             "{refused:?}"
         );
