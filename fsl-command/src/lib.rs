@@ -54,6 +54,11 @@ pub fn diagnostic_pairs() -> Vec<fsl_foundation::diagnostic::CatalogCode> {
     pairs
 }
 
+/// Build the renderer's source provision from the admitted sources in an outcome.
+pub fn render_sources(sources: &Sources) -> fsl_inspect::RenderSources {
+    fsl_inspect::RenderSources::from_sources(sources.as_slice().iter().cloned())
+}
+
 #[cfg(test)]
 mod hint_catalog_tests {
     use fsl_foundation::diagnostic::Code;
@@ -115,7 +120,3 @@ mod hint_catalog_tests {
     }
 }
 
-/// Build the renderer's source provision from the admitted sources in an outcome.
-pub fn render_sources(sources: &Sources) -> fsl_inspect::RenderSources {
-    fsl_inspect::RenderSources::from_sources(sources.as_slice().iter().cloned())
-}
