@@ -31,8 +31,8 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{components, EdgeLabel, FairnessError, Graph, Identity};
 use fsl_eval::simulation::model::{
     AllowancePhase, CertificationRefusal, ClockAtom, ClockRole, EdgeKind, JobPhase, LocationInfo,
-    Successors, TaskAutomaton, TaskAutomatonRefusal, TaskEdge, TaskLocation, TaskProductSystem,
-    TaskTemplate, TimedSystem,
+    Successors, TaskAutomaton, TaskAutomatonRefusal, TaskEdge, TaskLocation, TaskProductPlan,
+    TaskProductSystem, TaskTemplate, TimedSystem,
 };
 use fsl_semantics::check::CheckedScheduleClaim;
 use fsl_eval::simulation::StateKey;
@@ -1318,4 +1318,62 @@ pub fn recomputed_member(
         diagonals,
         quotient.subtractions.clone(),
     )
+}
+
+/// Which check a schedulability certificate takes.
+pub(super) enum Route {
+    /// `closed-finite-product/v1`: [`schedulability`].
+    FiniteProduct,
+    /// `closed-no-release-product/v1`: the ordinary source check, with the
+    /// release bindings (source operation names) none of which may be
+    /// enabled at a reached node.
+    NoRelease(Vec<String>),
+    /// The member alone settles it.
+    Verdict(ZoneCertificateVerdict),
+}
+
+/// FR-418: reads the `task_product` member's method and, for the no-release
+/// closure, compares the member with its recomputation (ZC-27, ZC-29).
+pub(super) fn route<O>(
+    timed: &TimedSystem<'_, '_>,
+    claim: &CheckedScheduleClaim,
+    certificate: &ZoneCertificate<O>,
+) -> Result<Route, ZoneCertificateRefusal<O>> {
+    let broken = || {
+        Ok(Route::Verdict(ZoneCertificateVerdict::Rejected(
+            super::CertificateRejection {
+                rule: CertificateRule::Malformed,
+                at: CertificateLocus::CertificateMember(CertificateMember::TaskProduct),
+            },
+        )))
+    };
+    let Some(member) = &certificate.task_product else {
+        return broken();
+    };
+    match member.time_progress.method {
+        TaskClosureMethod::ClosedFiniteProduct => Ok(Route::FiniteProduct),
+        TaskClosureMethod::ClosedNoReleaseProduct => {
+            let plan = TaskProductPlan::new(timed, &claim.name)
+                .map_err(|refusal| ZoneCertificateRefusal::TaskProductPlan(Box::new(refusal)))?;
+            let rows = TaskQueueBound::from_checked_task_set(plan.task_set);
+            let matches = member.abstraction == TaskProductCertificate::ABSTRACTION
+                && rows.as_ref() == Some(&member.queue_bounds)
+                && !member.queue_bounds.is_empty()
+                && member.time_progress.live_job_cap == 0
+                && member.time_progress.closure
+                    == TaskClosureEvidence::RecomputeAllSourceSuccessorsNoTaskRelease
+                && member.clock_ceilings.is_empty()
+                && member.diagonal_constraints.is_empty()
+                && member.subtractions.is_empty();
+            if !matches {
+                return broken();
+            }
+            Ok(Route::NoRelease(
+                plan.releases
+                    .iter()
+                    .map(|release| release.operation.clone())
+                    .collect(),
+            ))
+        }
+    }
 }

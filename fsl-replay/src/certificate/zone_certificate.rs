@@ -1003,8 +1003,15 @@ pub fn check_zone_certificate<O: Clone + Eq>(
     };
     let timed = TimedSystem::with_max_clocks(concrete, request.model, request.max_clocks)
         .map_err(|refusal| ZoneCertificateRefusal::TimedSubject(Box::new(refusal)))?;
+    let mut release_ops = None;
     if let CertifiedItem::Schedulability { claim } = request.item {
-        return task_check::schedulability(timed, claim, certificate, limits, cancel);
+        match task_check::route(&timed, claim, certificate)? {
+            task_check::Route::FiniteProduct => {
+                return task_check::schedulability(timed, claim, certificate, limits, cancel);
+            }
+            task_check::Route::Verdict(verdict) => return Ok(verdict),
+            task_check::Route::NoRelease(operations) => release_ops = Some(operations),
+        }
     }
     let mut live = None;
     let (claim, window) = match request.item {
@@ -1110,6 +1117,7 @@ pub fn check_zone_certificate<O: Clone + Eq>(
         window,
         live,
         time_lock,
+        release_ops,
         state_graph: match request.item {
             CertifiedItem::StateGraph { claim, over } => Some(StateGraphClaim { claim, over }),
             _ => None,
@@ -1198,6 +1206,10 @@ struct Checker<'c, 'a, O> {
     live: Option<product::LiveClaim<'c>>,
     /// Whether the item is time-lock freedom, with its divergence part.
     time_lock: bool,
+    /// FR-418's no-release closure of a schedulability claim: the source
+    /// operations that bind a checked task release, none of which may be
+    /// enabled at a reached node.
+    release_ops: Option<Vec<String>>,
     /// FR-712's discrete state-graph proof, checked over these reachable
     /// timed zones without FR-244's divergence-admission premise.
     state_graph: Option<StateGraphClaim<'c>>,
@@ -1517,7 +1529,6 @@ impl<O> Checker<'_, '_, O> {
                 edge.silent,
             ) {
                 (Some(_), None, Some(_), None) => true,
-                (None, Some(_), Some(_), None) => certificate.task_product.is_some(),
                 (None, None, None, None) => windowed || live.is_some(),
                 (None, None, None, Some(_)) => live.is_some(),
                 _ => false,
@@ -2228,6 +2239,17 @@ impl<O> Checker<'_, '_, O> {
         let successors = self.successors[node]
             .as_ref()
             .expect("a reached node has recomputed successors");
+        if let Some(releases) = &self.release_ops {
+            let released = successors.iter().any(|successor| {
+                successor
+                    .step
+                    .as_ref()
+                    .is_some_and(|step| releases.iter().any(|release| release == step.operation()))
+            });
+            if released {
+                return reject(CertificateRule::SuccessorMissing, at_node(node));
+            }
+        }
         // A set or bag assignment can produce several semantically equal
         // guarded steps (for example, equal element matches). The certificate
         // edge schema names their transition, guard part and resulting
@@ -2273,7 +2295,10 @@ impl<O> Checker<'_, '_, O> {
     /// Whether `node` violates the item at some valuation of its zone.
     fn bad(&self, node: usize) -> Step<bool, O> {
         let state = self.state(node)?;
-        if self.time_lock || self.live.is_some() || self.refined.is_some() {
+        if self.time_lock
+            || self.release_ops.is_some()
+            || self.live.is_some()
+            || self.refined.is_some() {
             // A refinement form's badness is `check_step`'s, judged on
             // each edge in `reach`.
             // Time-lock freedom is read from the divergence part, and a

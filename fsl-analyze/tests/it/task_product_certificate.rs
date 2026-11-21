@@ -818,3 +818,102 @@ fn a_mixed_criticality_set_is_certificate_unchecked() {
         ))
     );
 }
+
+/// A source with no operations and one task set that declares no release.
+fn no_release() -> World {
+    world(
+        &document(&[], &[]),
+        TIMED,
+        &format!(
+            "{DENSE}taskset N {{\n\
+             task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo;\n\
+             }}\n\
+             schedulable NFp on N under fixed_priority;\n"
+        ),
+    )
+}
+
+/// The one-node, no-edge `closed-no-release-product/v1` certificate of
+/// `claim_name`, its node the claim's initial source state. With
+/// `releasable` the source has the release operation, so the closure is
+/// false (ZC-28's shape).
+fn no_release_certificate(world: &World, claim_name: &str) -> Certificate {
+    let model = world.system();
+    let timed = TimedSystem::new(&model, "M").expect("dense timed model");
+    let product = TaskProductSystem::new(timed, claim_name).expect("checked task product");
+    let automaton = TaskAutomaton::new(&product);
+    let (location, _) = automaton.initial().expect("initial").remove(0);
+    let rows = fsl_replay::TaskQueueBound::from_checked_task_set(product.plan().task_set)
+        .expect("queue bounds");
+    let source_clocks = automaton.source_clocks();
+    let dim = source_clocks + 1;
+    ZoneCertificate {
+        obligation: claim_of(world, claim_name).occurrence().expect("occurrence"),
+        scale: Integer::from(1_u64),
+        lu_bounds: fsl_replay::LuBounds {
+            lower: vec![None; source_clocks],
+            upper: vec![None; source_clocks],
+        },
+        nodes: vec![CertNode {
+            state_key: location.source_key().clone(),
+            automaton_state: 0,
+            zone: Zone::zero(dim),
+            locked: false,
+            product: None,
+        }],
+        edges: Vec::new(),
+        initials: vec![0],
+        components: None,
+        non_zeno: None,
+        divergence: None,
+        admitted: Some(DivergenceWitness {
+            start: 0,
+            path: Vec::new(),
+            target: DivergentTarget::Quiescent(0),
+        }),
+        state_graph: None,
+        refinement: None,
+        task_product: Some(
+            fsl_replay::TaskProductCertificate::closed_no_release_product(rows)
+                .expect("a no-release member"),
+        ),
+    }
+}
+
+/// ZC-26..ZC-29 and the ZC-28 shape: a closed source product with no
+/// reachable checked task release is accepted; a positive cap or empty
+/// `queue_bounds` is malformed at `task_product`; a reachable release is
+/// `successor-missing` at the node.
+#[trace("TC-371", "FR-418-AC-14")]
+#[test]
+fn a_no_release_closure_is_accepted_only_when_no_release_is_reachable() {
+    let world = no_release();
+    let certificate = no_release_certificate(&world, "NFp");
+    assert_eq!(
+        verdict(&world, "NFp", &certificate, CertificateCheckLimits::default()),
+        Ok(ZoneCertificateVerdict::Accepted),
+        "ZC-26"
+    );
+    let mut capped = certificate.clone();
+    capped.task_product.as_mut().unwrap().time_progress.live_job_cap = 1;
+    assert_eq!(
+        rejected(verdict(&world, "NFp", &capped, CertificateCheckLimits::default())),
+        malformed_member(),
+        "ZC-27"
+    );
+    let mut empty = certificate.clone();
+    empty.task_product.as_mut().unwrap().queue_bounds.clear();
+    assert_eq!(
+        rejected(verdict(&world, "NFp", &empty, CertificateCheckLimits::default())),
+        malformed_member(),
+        "ZC-29"
+    );
+    // The same closure over a source that binds a release (ZC-28).
+    let releasing = solo();
+    let wrong = no_release_certificate(&releasing, "SFp");
+    assert_eq!(
+        rejected(verdict(&releasing, "SFp", &wrong, CertificateCheckLimits::default())),
+        (CertificateRule::SuccessorMissing, node_at(0)),
+        "ZC-28"
+    );
+}
