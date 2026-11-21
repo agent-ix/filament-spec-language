@@ -10,6 +10,7 @@
 
 mod candidate;
 mod long_run;
+mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
 use fsl_eval::simulation::TransitionSystem;
@@ -975,10 +976,11 @@ fn run(
                 return document_failure(admission.refusal(error), subject);
             }
             Err(BudgetedProductError::Undefined(cause)) => {
-                return document_failure(
-                    ProbabilityDocumentError::UndefinedPredicate(cause),
-                    subject,
-                );
+                let _ = cause;
+                match build_retaining_monitor(request, cancel) {
+                    Ok(built) => built,
+                    Err(error) => return build_refusal(error, subject),
+                }
             }
         }
     } else {
@@ -989,7 +991,9 @@ fn run(
     };
     let (product, monitor) = match built {
         (ProbBuild::Built(product), monitor) => (product, monitor),
-        (ProbBuild::Undefined(_), _) => return not_yet(),
+        (ProbBuild::Undefined(path), monitor) => return undefined::run(
+            simulation, claim, path, monitor, &limits, cancel, subject,
+        ),
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();

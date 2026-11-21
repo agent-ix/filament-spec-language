@@ -41,7 +41,7 @@ impl QualifiedBoundedMonitor {
         profile == TemporalProfile::EventPositionFalseExtension
             && matches!(
                 super::bounded::bounded_formula_shape(formula),
-                Some((BoundedKind::Eventually, _, _))
+                Some((BoundedKind::Eventually | BoundedKind::Always, _, _))
             )
     }
 
@@ -85,9 +85,7 @@ impl QualifiedBoundedMonitor {
         max_states: u64,
     ) -> Result<Self, QualifiedBoundedError> {
         let translation = BoundedTranslation::formula(formula, context)?;
-        if context.profile != TemporalProfile::EventPositionFalseExtension
-            || translation.kind() != BoundedKind::Eventually
-        {
+        if context.profile != TemporalProfile::EventPositionFalseExtension {
             return Err(TranslationRefusal::NotTranslated(NotTranslated).into());
         }
         let automaton = translate_body(formula, context.profile, max_states)?;
@@ -100,6 +98,18 @@ impl QualifiedBoundedMonitor {
     /// The checked `holds` atom whose truth supplies each observation.
     pub fn atom(&self) -> FormulaNodeId {
         self.translation.atom()
+    }
+
+    /// The actual monitor state before position zero is read.
+    pub fn initial(&mut self) -> Result<StateId, QualifiedBoundedError> {
+        Ok(self.monitor.initial()?)
+    }
+
+    /// Canonical control before the first observation, for an undefined read.
+    pub fn unread_key(&self) -> Result<AutomatonStateKey, QualifiedBoundedError> {
+        Ok(self.translation.key(BoundedState::Open {
+            remaining: self.translation.horizon(),
+        })?)
     }
 
     /// Read position zero. The returned handle is local storage, never a
@@ -180,13 +190,6 @@ impl QualifiedBoundedMonitor {
     /// Close a terminal model position by the profile's false extension,
     /// without enumerating artificial stutter positions.
     pub fn terminal(&self, state: StateId) -> Result<BoundedState, QualifiedBoundedError> {
-        self.monitor
-            .bounded_eventually_terminal(state)?
-            .ok_or_else(|| {
-                AutomatonError::Invariant {
-                    invariant: "qualified-eventually-terminal-shape",
-                }
-                .into()
-            })
+        Ok(self.translation.terminal(self.state(state)?))
     }
 }

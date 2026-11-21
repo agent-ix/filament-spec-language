@@ -458,6 +458,7 @@ pub use probability_certificate::{
     ProbabilitySourceRequest,
     ProbabilityStateEvent, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
+    ProbabilityUndefinedWitness, replay_probabilistic_undefined,
     WeightedLongRunProbabilityDocument,
 };
 #[cfg(feature = "test-support")]

@@ -182,6 +182,7 @@ impl PropertyAutomaton {
         }
         match config.counters.values().next() {
             Some(Counter::Deadline(counter)) if counter.is_pending() => Ok(counter.remaining()),
+            Some(Counter::Extent(counter)) if counter.is_pending() => Ok(counter.remaining()),
             _ => Err(invariant("qualified-eventually-pending-deadline")),
         }
     }

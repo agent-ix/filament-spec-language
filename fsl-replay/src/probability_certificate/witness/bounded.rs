@@ -337,7 +337,7 @@ pub(super) fn replay(
     let evidence = witness.clone();
     poll_cancel(cancel)?;
     Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
-        ReproducedProbabilityWitness { evidence, mass },
+        ReproducedProbabilityWitness { evidence, mass, undefined: None },
     )))
 }
 
@@ -423,7 +423,7 @@ pub(super) fn document_error(error: ProbabilityDocumentError) -> ProbabilityWitn
     }
 }
 
-fn monitor_error(error: QualifiedBoundedError) -> ProbabilityWitnessError {
+pub(super) fn monitor_error(error: QualifiedBoundedError) -> ProbabilityWitnessError {
     match error {
         QualifiedBoundedError::Translation(_) => {
             ExactProbabilityGraphError::UnsupportedClaimForm.into()

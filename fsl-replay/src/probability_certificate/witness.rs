@@ -13,6 +13,8 @@ use fsl_eval::simulation::model::{
 use fsl_package::CheckedPackage;
 
 mod bounded;
+mod undefined;
+pub use undefined::{ProbabilityUndefinedWitness, replay_probabilistic_undefined};
 
 /// A semantic operation, draw and resulting state in a finite witness.
 #[derive(Clone, Debug)]
@@ -83,9 +85,14 @@ pub struct ProbabilisticCounterexample {
 pub struct ReproducedProbabilityWitness {
     evidence: ProbabilisticCounterexample,
     mass: Rational,
+    undefined: Option<Box<ProbabilityUndefinedWitness>>,
 }
 
 impl ReproducedProbabilityWitness {
+    /// The independently reproduced undefined evaluation, when this is an undefined path.
+    pub fn undefined(&self) -> Option<&ProbabilityUndefinedWitness> {
+        self.undefined.as_deref()
+    }
     /// The exact independently recomputed path-set mass.
     pub fn mass(&self) -> &Rational {
         &self.mass
@@ -590,7 +597,7 @@ fn replay_probabilistic_witness_impl(
     let evidence = witness.clone();
     poll_cancel(cancel)?;
     Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
-        ReproducedProbabilityWitness { evidence, mass },
+        ReproducedProbabilityWitness { evidence, mass, undefined: None },
     )))
 }
 
