@@ -688,6 +688,7 @@ dependencies = [
 name = "filament-spec-language"
 version = "0.3.0"
 dependencies = [
+ "base64 0.22.1",
  "filament-checked",
  "filament-contract-model",
  "filament-eval",

@@ -3138,9 +3138,13 @@ fn package_clause_selection_outcomes(
                     .get("model")
                     .is_some()
             {
-                assert!(actual.1["disposition"]["temporal"]
-                    .get("counterexample")
-                    .is_none());
+                let temporal = &actual.1["disposition"]["temporal"];
+                if temporal["kind"] == "violated" {
+                    assert_eq!(temporal["counterexample"]["trace"], "model", "{}", actual.1);
+                } else {
+                    assert_eq!(temporal["kind"], "undefined", "{}", actual.1);
+                    assert!(temporal.get("counterexample").is_none());
+                }
                 let mut malformed = actual.1.clone();
                 malformed["disposition"]["temporal"]["counterexample"] = Value::Null;
                 assert!(fsl_replay::spine::read_native_run_result(
@@ -3637,5 +3641,108 @@ fn package_clause_selections_timed_samples_match_source() {
             "models": [], "package": {"directory": "handoff"}, "clause": clause}}),
         );
         assert_eq!(actual, expected);
+    }
+}
+
+/// Actual shared atoms preserve support positions and caller whitespace; a
+/// differing spelling selects the checked canonical label on both routes.
+#[test]
+#[trace("TC-1295", "FR-501-AC-31", "FR-1039-AC-8")]
+fn package_remainder_window_shared_atoms_match_source_and_require_caller_bytes() {
+    let fixture = include_str!("../corpus/temporal/timestamped-window.native");
+    let clocks = json!({"sensor": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    let profile = "filament.temporal.timestamped-event.finite-window/v1";
+    for (body, label, candidates) in [
+        ("always[0,5] holds( p.ok )", "holds( p.ok )", 1),
+        (
+            "always[0,5] (holds( p.ok ) and holds( p.ok ))",
+            "holds( p.ok )",
+            2,
+        ),
+        (
+            "always[0,5] (holds( p.ok ) and holds(p.ok))",
+            "holds(p.ok)",
+            2,
+        ),
+    ] {
+        let unit = fixture.replace("eventually[0,7] holds(p.ok)", body);
+        let directory = tempfile::tempdir().unwrap();
+        spine::write(directory.path(), Case::Healthy).unwrap();
+        std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+        let observations: Vec<Value> = [(0, true), (2, false), (5, true)].into_iter().map(|(stamp, ok)| {
+            json!({"position": {"sample": {"ok": {"boolean": ok}}}, "stamp": stamp})
+        }).collect();
+        let clause = json!({"selection": {"temporal": {"name": "StampedPulse", "trace": {"timestamped": {
+            "observations": observations, "progress": {"watermark": 5, "completeness": {"complete": {"through": 5}}, "scope": "closed", "execution": "closed"},
+            "lower_boundary": "authoritative-origin", "binding": {"profile": profile, "clock": "sensor", "parameters": clocks["sensor"].clone()}
+        }}}}, "observations": {}});
+        let expected = write_request(
+            directory.path(),
+            &json!({"format":"native-run/1", "request": {
+                "models": [], "program": {"source": source("unit.native")}, "clocks": clocks, "clause": clause
+            }}),
+        );
+        assert_eq!(expected.0, 10, "source {body}: {}", expected.1);
+        assert_eq!(
+            expected.1["support"],
+            json!([{"position":1,"atom":label}]),
+            "{}",
+            expected.1
+        );
+        assert_eq!(expected.1["basis"], "closed-scope");
+        let models = compile_handoff_with_clocks(directory.path(), &unit, Some(clocks.clone()));
+        let package: Value =
+            serde_json::from_slice(&std::fs::read(directory.path().join("package.json")).unwrap())
+                .unwrap();
+        let atom_ids: Vec<&Value> = package["semantic_graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|node| node["body"]["operation"]["identity"] == "filament.op.temporal.holds")
+            .map(|node| &node["node_id"])
+            .collect();
+        assert_eq!(atom_ids.len(), 1, "one actual shared atom: {package}");
+        // The emitter's occurrence rows independently prove that the shared
+        // fixture reached the required source-provenance shape.
+        let expression_regions: usize = package["source_map"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["node_id"] == *atom_ids[0] && entry["role"] == "expression")
+            .map(|entry| entry["regions"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(expression_regions, candidates, "{body}: {package}");
+        std::fs::write(directory.path().join("caller.native"), &unit).unwrap();
+        let mut caller = source("unit.native");
+        caller["file"] = json!("caller.native");
+        caller["document"] = json!("DifferentDocument");
+        caller["formal_revision"] = json!(9);
+        let request = json!({"format":"native-run/1", "request": {"models":models,
+            "package":{"directory":"handoff"}, "sources":[caller], "clocks":clocks, "clause":clause}});
+        let actual = write_request(directory.path(), &request);
+        assert_eq!(actual, expected, "package {body}");
+        fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
+            .expect("strict native read");
+        for supplied in [
+            Value::Null,
+            json!([]),
+            json!([{ "file":"caller.native", "authority":"agent-ix", "identity":"wrong", "document":"Other", "formal_revision":1 }]),
+        ] {
+            let mut missing = request.clone();
+            if supplied.is_null() {
+                missing["request"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("sources");
+            } else {
+                missing["request"]["sources"] = supplied;
+            }
+            let refusal = write_request(directory.path(), &missing);
+            assert_eq!(refusal.0, 20, "{}", refusal.1);
+            assert_eq!(refusal.1["stage"], "call", "{}", refusal.1);
+            assert_eq!(refusal.1["code"], "invalid_runtime_input", "{}", refusal.1);
+            assert_eq!(refusal.1["cause"], "missing-member", "{}", refusal.1);
+            assert_eq!(refusal.1["details"]["field"], "sources", "{}", refusal.1);
+        }
     }
 }

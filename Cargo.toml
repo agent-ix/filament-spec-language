@@ -101,6 +101,8 @@ unicode-normalization = "0.1.25"
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 
 [dev-dependencies]
+# Independent decoding of native model state keys in acceptance tests.
+base64 = "0.22"
 # FR-660: acceptance reads the pinned standard only through its published
 # file API; production code has no need for this dependency.
 filament-specification = { workspace = true }

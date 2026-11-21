@@ -253,7 +253,10 @@ impl MonitorRecord {
     /// The counterexample of a `Violated` or `Undefined` record
     /// (FSpec FR-364), with `trace_position` equal to the record's position.
     pub fn counterexample(&self) -> Option<&fsl_replay::ObservedTemporalCounterexample> {
-        self.report.counterexample.as_ref()
+        match self.report.counterexample.as_ref()? {
+            fsl_replay::ClauseRunCounterexample::Observed(counterexample) => Some(counterexample),
+            fsl_replay::ClauseRunCounterexample::Model(_) => None,
+        }
     }
 
     /// The FR-286 `monitor` item this record renders to, through

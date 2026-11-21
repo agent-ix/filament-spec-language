@@ -3619,20 +3619,6 @@ fn atom_classes(
         .collect()
 }
 
-/// The supplied source the clause `node` is declared in: the element of
-/// `run.sources` whose reference equals its declaration's region (FR-283
-/// "Behavior"), when one is supplied.
-fn clause_source<'a>(
-    package: &fsl_package::CheckedPackage,
-    sources: &'a [Source],
-    node: &fsl_semantics::check::TemporalClauseNode,
-) -> Option<&'a Source> {
-    let reference = clause_source_ref(package, node)?;
-    sources
-        .iter()
-        .find(|source| source.reference() == &reference)
-}
-
 /// The source the clause `node` is declared in, as its declaration's region
 /// names it.
 pub(super) fn clause_source_ref(
