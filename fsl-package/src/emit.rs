@@ -8868,6 +8868,11 @@ fn claim_name_rows(
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         sites.push((occurrence.clone(), hyper.name(), hyper.span()));
     }
+    // A finite-trace hyper clause is likewise one `hyperproperty` claim node.
+    for hyper in graph.finite_hyper_clauses() {
+        let occurrence = hyper.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((occurrence.clone(), hyper.name(), hyper.span()));
+    }
     // The other occurrences one declaration introduces (a step relation's
     // `declaration` occurrence, a derived conjunction's `claim` occurrence
     // per contributing clause) are recorded at that declaration's own

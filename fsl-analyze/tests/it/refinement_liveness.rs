@@ -371,9 +371,11 @@ fn assert_reproduced(world: &AuxWorld<'_>, payload: &TemporalCounterexample) {
 fn stem_and_loop(payload: &TemporalCounterexample) -> (Vec<String>, Vec<String>) {
     let entry = payload.lasso.as_ref().expect("a lasso").entry;
     let name = |step: &fsl_replay::ModelStep| {
+        let is_separator = |c: char| !c.is_alphanumeric() && c != '_';
         step.transition
             .operation()
-            .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
+            .trim_end_matches(is_separator)
+            .rsplit(is_separator)
             .next()
             .unwrap_or_default()
             .to_owned()

@@ -647,18 +647,28 @@ fn timed_hidden_strong_send_without_invariant_is_violated() {
 }
 
 /// FR-899-AC-9: the invariant bounds the non-taking loop to zero delay, so
-/// strong fairness has no time-divergent hidden-unfair witness.
-#[trace("TC-2536", "FR-899-AC-9")]
+/// strong fairness has no time-divergent hidden-unfair witness. The exact
+/// per-component check that would settle `Holds` is not yet built (QSL-2243):
+/// the half is undecided and is never a violation. This test makes no claim
+/// that the AC is met.
+#[trace("TC-2536", "FR-899")]
 #[test]
-fn timed_hidden_strong_send_with_invariant_holds() {
+fn timed_hidden_strong_send_with_invariant_is_not_decided_to_hold() {
     let outcome = check(&hidden_timed_world(&[false], "strong", true));
     assert!(matches!(outcome.safety, TimedSafetyOutcome::Holds { .. }));
-    assert!(matches!(
-        outcome.liveness,
-        Some(TimedLivenessHalf::Checked(
-            TimedLivenessOutcome::Holds { .. }
-        ))
-    ));
+    assert!(
+        matches!(
+            outcome.liveness,
+            Some(TimedLivenessHalf::Checked(
+                TimedLivenessOutcome::Undecided {
+                    cause: TimedRefinementUndecided::Zone(ZoneUndecided::LassoNotConcretized),
+                    ..
+                }
+            ))
+        ),
+        "{:?}",
+        outcome.liveness
+    );
 }
 
 /// FR-900-AC-6: the timed abstract `send` guard holds at every instant of a
