@@ -2433,7 +2433,9 @@ impl ModelEvaluator for BarePackage<'_> {
         supply: &ProtocolSupply<'_>,
         meter: &mut Meter,
     ) -> Result<ProtocolSlotEvaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_protocol_slot(self, slot, supply, meter)
+        // This engine path supplies its own generated binder values; public
+        // CheckedPackageEvaluation ports retain mandatory FR-390 origins.
+        crate::value::evaluate_generated_package_protocol_slot(self, slot, supply, meter)
     }
 
     fn evaluate_join_predicate(

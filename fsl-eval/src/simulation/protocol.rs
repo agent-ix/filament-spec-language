@@ -3473,13 +3473,11 @@ mod tests {
         };
         assert_eq!(actual, reference);
 
-        let nested = Value::Option(
-            filament_exact::OptionValue::present(
-                ValueType::Reference(reference.object_type().clone()),
-                Value::Reference(reference.clone()),
-            )
-            .expect("typed option"),
-        );
+        let nested = filament_exact::OptionValue::present(
+            ValueType::Reference(reference.object_type().clone()),
+            Value::Reference(reference.clone()),
+        )
+        .expect("typed option");
         let packaged = package_binder_value(Some(nested), &over_binder, &over_binder, &over)
             .expect("nested reference remains packageable");
         assert!(packaged.references.is_empty());

@@ -95,6 +95,38 @@ pub(super) fn admit_slot_supply(
     frame_len: usize,
     supply: &ProtocolSupply<'_>,
 ) -> Result<AdmittedSupply, CallFailure> {
+    admit_slot_supply_with(host, sources, frame_len, supply, |path, binder| {
+        Err(CallFailure::Admission(Box::new(
+            CallAdmissionFailure::Refused(filament_eval::CallAdmissionRecord {
+                record: occurrence_record("invalid_runtime_input", "missing-member", path.to_vec()),
+                locus: CallAdmissionLocus::Binder(binder.clone()),
+            }),
+        )))
+    })
+}
+
+/// Model execution already owns these generated values. Absent population
+/// metadata remains absent, so it cannot authorize a Clock-place read. Every
+/// explicit origin still crosses the same membership and observation checks.
+pub(super) fn admit_generated_slot_supply(
+    host: &dyn SlotHost,
+    sources: &[SourceView<'_>],
+    frame_len: usize,
+    supply: &ProtocolSupply<'_>,
+) -> Result<AdmittedSupply, CallFailure> {
+    admit_slot_supply_with(host, sources, frame_len, supply, |_, _| Ok(()))
+}
+
+fn admit_slot_supply_with(
+    host: &dyn SlotHost,
+    sources: &[SourceView<'_>],
+    frame_len: usize,
+    supply: &ProtocolSupply<'_>,
+    missing_origin: impl Fn(
+        &[filament_semantic_value::admission::PathStep],
+        &NodeKey,
+    ) -> Result<(), CallFailure>,
+) -> Result<AdmittedSupply, CallFailure> {
     let sources = sources
         .iter()
         .map(|source| (source.index, source, source.binder.clone()))
@@ -246,16 +278,7 @@ pub(super) fn admit_slot_supply(
                         .iter()
                         .any(|metadata| metadata.path == *path)
                     {
-                        return Err(CallFailure::Admission(Box::new(
-                            CallAdmissionFailure::Refused(filament_eval::CallAdmissionRecord {
-                                record: occurrence_record(
-                                    "invalid_runtime_input",
-                                    "missing-member",
-                                    path.clone(),
-                                ),
-                                locus: CallAdmissionLocus::Binder(key),
-                            }),
-                        )));
+                        missing_origin(path, &key)?;
                     }
                 }
                 for (path, reference) in &occurrences {
@@ -264,10 +287,7 @@ pub(super) fn admit_slot_supply(
                         .iter()
                         .find(|metadata| metadata.path == *path)
                     else {
-                        return Err(CallFailure::Fault(InternalFault::new(
-                            "FR-390",
-                            "reference-occurrence-metadata-is-matched",
-                        )));
+                        continue;
                     };
                     let Some((declaration, members)) = host.population_types(&metadata.population)
                     else {
@@ -295,7 +315,7 @@ pub(super) fn admit_slot_supply(
                         ));
                     }
                 }
-                if !occurrences.is_empty() {
+                if !supplied.references.is_empty() {
                     let Some(observation_admission) = supply.observation else {
                         return Err(CallFailure::Admission(Box::new(
                             CallAdmissionFailure::Incomplete(filament_eval::CallAdmissionRecord {
@@ -354,16 +374,13 @@ pub(super) fn admit_slot_supply(
                     }
                     let mut seeds = Vec::with_capacity(occurrences.len());
                     for (path, reference) in occurrences {
-                        let metadata = supplied
+                        let Some(metadata) = supplied
                             .references
                             .iter()
                             .find(|metadata| metadata.path == path)
-                            .ok_or_else(|| {
-                                CallFailure::Fault(InternalFault::new(
-                                    "FR-390",
-                                    "reference-occurrence-metadata-is-matched",
-                                ))
-                            })?;
+                        else {
+                            continue;
+                        };
                         if protocol_slot::foreign_to_observation(&reference, observation)
                             || !observation
                                 .environment()

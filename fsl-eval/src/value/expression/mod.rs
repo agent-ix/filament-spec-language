@@ -27,7 +27,6 @@ mod evaluate;
 mod family;
 pub mod post_targets;
 mod protocol_slot;
-pub(crate) use protocol_slot::reference_occurrences;
 mod s6a;
 mod slot_admission;
 mod slot_supply;
@@ -36,6 +35,7 @@ use slot_supply::SourceView;
 mod value_invariants;
 
 pub use bare::evaluate_bare_expression;
+pub(crate) use bare::evaluate_generated_package_protocol_slot;
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward};

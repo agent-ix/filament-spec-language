@@ -99,6 +99,9 @@ fn iteration<'a>(node: CheckedNode<'a>) -> Box<Iteration<CheckedNode<'a>>> {
             accumulator: None,
             count: Integer::zero(),
         },
+        source_origins: ReferenceOrigins::default(),
+        population_origin: None,
+        stable_sequence: true,
         source_owner: Owner::None,
         owner: Owner::None,
     })
