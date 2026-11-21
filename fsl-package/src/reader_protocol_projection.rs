@@ -167,7 +167,11 @@ impl ReaderProtocolProjection {
             .collect();
         let mut rows: BTreeMap<CheckedNodeId, BTreeMap<CheckedNodeId, Vec<Location>>> =
             BTreeMap::new();
-        for function in &has_rows {
+        for projected in &self.functions {
+            let function = &projected.node;
+            if !has_rows.contains(function) {
+                continue;
+            }
             let work_limit = body_location_allowance(admitted, function)
                 .ok_or_else(|| fault("body-location-reconstruction-size-fits"))?;
             rows.insert(
