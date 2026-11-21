@@ -3721,6 +3721,11 @@ pub fn check_hyper_clauses(
     .with_complete_value(complete_value)
     .with_known_populations(super::refinement::population_names(&package.models))
     .with_clock_places(&package.models)
+    .with_clock_place_keys(
+        &package.models,
+        &package.time_sources,
+        &package.package_name,
+    )
     .with_complete_model(!package.models.is_empty())
     .with_model_spellings(package.model_spellings.clone())
     .with_source_owners(package.source_owners.clone())

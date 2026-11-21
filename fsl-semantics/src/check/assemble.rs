@@ -1857,10 +1857,7 @@ fn model_object_types(
                 // Clock is retained in the admitted domain package as a
                 // model place; it is not an FSL data field in the kernel's
                 // TypeEnvironment.
-                if matches!(
-                    sequence_items(&field.value_type, &records),
-                    ValueTypeRef::Clock
-                ) {
+                if clock_place_type(&field.value_type, &records) {
                     continue;
                 }
                 match model_field(
@@ -2121,12 +2118,7 @@ fn model_object_types(
         effective_fields.sort_by(|left, right| left.key.cmp(&right.key));
         // A record's clock fields are places, not data (FR-230 "Records,
         // tuples and unions"): its declaration lists the data fields only.
-        effective_fields.retain(|field| {
-            !matches!(
-                sequence_items(&field.value_type, &records),
-                ValueTypeRef::Clock
-            )
-        });
+        effective_fields.retain(|field| !clock_place_type(&field.value_type, &records));
         for field in effective_fields {
             match model_field(
                 field,
@@ -2843,25 +2835,22 @@ fn model_value_type(
     with_multiplicity(element, multiplicity)
 }
 
-/// The type `value_type` ends at through the package's sequence types and
-/// aliases: `value_type` itself when it names neither, or when the chain
-/// returns to a type it passed.
-fn sequence_items<'r>(
-    value_type: &'r ValueTypeRef,
-    records: &BTreeMap<&DeclarationKey, &'r DomainPackageRecord>,
-) -> &'r ValueTypeRef {
-    unaliased(value_type, |key| records.get(key).copied()).map_or(value_type, |(items, _)| items)
-}
-
 /// A single clock place, read through aliases without crossing a collection.
 fn clock_place_type(
     value_type: &ValueTypeRef,
     records: &BTreeMap<&DeclarationKey, &DomainPackageRecord>,
 ) -> bool {
-    matches!(
-        unaliased(value_type, |key| records.get(key).copied()),
-        Some((ValueTypeRef::Clock, 0))
-    )
+    match unaliased(value_type, |key| records.get(key).copied()) {
+        Some((ValueTypeRef::Clock, _)) => true,
+        Some((ValueTypeRef::Package(key), 0)) => match records.get(key) {
+            Some(DomainPackageRecord::SequenceType(sequence)) => {
+                clock_place_type(&sequence.items, records)
+            }
+            Some(DomainPackageRecord::MapType(map)) => clock_place_type(&map.values, records),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// `element` held by a member of `multiplicity`: itself for `[1, 1]`, else
@@ -3365,6 +3354,13 @@ fn check_names(
             }
             TypeFormHead::Builtin(BuiltinType::Reference) => {
                 for target in &form.arguments {
+                    // `Reference<Clock>` is the checked clock-place handle
+                    // type. Clock is a native temporal value, not an object
+                    // declaration that must resolve through the model's
+                    // package spellings.
+                    if super::type_form::is_clock_type_form(target) {
+                        continue;
+                    }
                     let name = match &target.head {
                         TypeFormHead::Name(name) => name,
                         TypeFormHead::Builtin(_)
@@ -3813,6 +3809,23 @@ fn admit_types(
             // declaration it is and the staged admission below keeps the
             // redefinition for the stage and for `complete`.
             let mut typed = object_types.to_vec();
+            // `Reference<Clock>` is the checker's synthetic clock-place
+            // handle. TypeEnvironment admits references only to an object
+            // declaration, so provide its canonical native target only to
+            // type admission and staging. Checked lowering collapses this
+            // exact target to the `clock_reference` scalar node, and the
+            // typer excludes it from model-object receiver routing.
+            let clock_reference_target = super::clock_reference_target();
+            if !typed
+                .iter()
+                .any(|object_type| object_type.key() == clock_reference_target.clone())
+            {
+                typed.push(ObjectTypeDeclaration::new(
+                    clock_reference_target.clone(),
+                    "ClockReference",
+                    Vec::new(),
+                ));
+            }
             declare_cardinality_narrowing(&mut typed);
             let mut rounds = typed.iter().map(|ty| ty.attributes().len()).sum::<usize>() + 1;
             let types = loop {
@@ -3836,6 +3849,16 @@ fn admit_types(
                 }
             };
             let mut staged = object_types.to_vec();
+            if !staged
+                .iter()
+                .any(|object_type| object_type.key() == clock_reference_target.clone())
+            {
+                staged.push(ObjectTypeDeclaration::new(
+                    clock_reference_target,
+                    "ClockReference",
+                    Vec::new(),
+                ));
+            }
             declare_cardinality_narrowing(&mut staged);
             let pending = if object_types.is_empty() {
                 None
@@ -4324,7 +4347,10 @@ impl PackageDeclarations {
                         | fsl_forms::DeclarationForm::Probabilistic(_)
                 ) {
                     // FR-096: a site of the declaration is located in its own unit.
-                    source_owners.insert(format!("probabilistic {probabilistic_index}"), source.clone());
+                    source_owners.insert(
+                        format!("probabilistic {probabilistic_index}"),
+                        source.clone(),
+                    );
                     probabilistic_index += 1;
                 }
                 if matches!(form.form(), fsl_forms::DeclarationForm::StateClause(_)) {
