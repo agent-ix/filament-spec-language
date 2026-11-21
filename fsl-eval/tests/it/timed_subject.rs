@@ -984,6 +984,117 @@ fn same_type_populations_retain_each_listed_owner_before_clock_evaluation() {
     );
 }
 
+/// A reference field's population is the explicit target population, while
+/// its lookup address retains the different population that holds the field.
+#[trace("TC-464")]
+#[test]
+fn raw_reference_field_origins_keep_the_target_population_beside_the_holder() {
+    use fsl_semantics::model::object_environment::{ReferenceOccurrence, ReferenceOriginLocus};
+    use fsl_semantics::model::observation::PathStep;
+
+    let mut document: Json = serde_json::from_slice(&clocked_document(false, &[])).expect("JSON");
+    let mut peer = wire_field("peer", &ident("Call"));
+    peer["presence"] = json!("optional");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .push(peer);
+    let mut archive = document["populations"][0].clone();
+    archive["identity"] = json!(ident("archive"));
+    archive["displayName"] = json!(ident("archive"));
+    archive["origin"] = origin(&ident("archive"));
+    document["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(archive);
+    // No owner expression or operation-root clause chooses between these
+    // populations. Both are admitted through the public snapshot boundary.
+    let mut world = world_holding(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        "",
+        json!({
+            "peer": {"present":{"reference":{"population":ident("archive"),"key":"d"}}}
+        }),
+    );
+    let mut snapshot: Json =
+        serde_json::from_slice(world.snapshots.get(&world.initial).expect("snapshot"))
+            .expect("JSON");
+    let mut archive = snapshot["populations"][0].clone();
+    archive["population"] = json!(ident("archive"));
+    archive["objects"][0]["key"] = json!("d");
+    archive["objects"][0]["fields"]["peer"] = json!({"absent":{}});
+    snapshot["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(archive);
+    world.snapshots.insert(
+        world.initial.clone(),
+        serde_json::to_vec(&snapshot).expect("JSON"),
+    );
+    let (environment, _) = fsl_semantics::model::observation::admit_current_snapshot(
+        world.package.graph().model_inputs(),
+        world.package.graph().scope().types(),
+        &world.packages,
+        ModelNormalizationLimits::default(),
+        &world.snapshots,
+        &world.initial,
+        ObservationLimits::default(),
+    )
+    .expect("legally admitted same-type populations with different owner keys");
+    let calls = environment
+        .population_members(&ident("calls"))
+        .expect("calls");
+    let archive = environment
+        .population_members(&ident("archive"))
+        .expect("archive");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(archive.len(), 1);
+    assert_eq!(calls[0].object_type(), archive[0].object_type());
+    assert_eq!(calls[0].universe(), archive[0].universe());
+    let holder = environment
+        .population_node(&ident("calls"))
+        .expect("declared holder");
+    let target = environment
+        .population_node(&ident("archive"))
+        .expect("declared target");
+    assert_ne!(holder, target);
+    let field = world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .attribute(calls[0].object_type().clone(), "peer")
+        .expect("actual admitted peer field")
+        .identity();
+    let origins = environment
+        .field_reference_origins(holder, "c", &field)
+        .expect("retained field origin");
+    assert_eq!(
+        origins.occurrences(),
+        &[ReferenceOccurrence {
+            path: vec![PathStep::OptionValue],
+            population: target.clone()
+        }]
+    );
+    assert!(origins.unavailable().is_empty());
+    assert!(
+        matches!(origins.locus(), Some(ReferenceOriginLocus::ObjectField { population, owner, field: original }) if population == holder && owner == "c" && original == &field)
+    );
+    assert!(
+        environment
+            .field_reference_origins(target, "d", &field)
+            .is_none(),
+        "absent peer has no invented origin"
+    );
+    assert!(
+        environment
+            .field_reference_origins(target, "c", &field)
+            .is_none(),
+        "a different population is not the field's holder"
+    );
+}
+
 fn clock_reference_world_with_profiles(
     mut document: Json,
     profiles: &str,
