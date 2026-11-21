@@ -1,0 +1,21 @@
+{
+  "format": "native-run/1",
+  "request": {
+    "models": [{"format": "native-model-unit/1", "source": {
+      "file": "model.fsl", "authority": "agent-ix", "identity": "test:model.fsl",
+      "document": "ModelUnit", "formal_revision": 1
+    }}],
+    "program": {"source": {
+      "file": "program.fsl", "authority": "agent-ix", "identity": "test:program.fsl",
+      "document": "ModelUnit", "formal_revision": 1
+    }},
+    "clause": {
+      "selection": {"clause": {
+        "name": "Correspondence", "observation": "current",
+        "self": {"population": "ix://example/identity/leaves", "key": "leaf-1"},
+        "anchor": {"kind": "handler", "name": "validate"}
+      }},
+      "observations": {"current": "current.json"}
+    }
+  }
+}

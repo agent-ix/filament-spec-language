@@ -29,6 +29,119 @@ domain \"example/shop\";
 object Order { relationship next: Ghost [0, 1]; }
 ";
 
+#[test]
+#[trace("FR-081-AC-1", "FR-081-AC-3", "FR-081-AC-6", "FR-710-AC-7")]
+fn original_effective_identity_reaches_native_requests() {
+    let directory = tempfile::tempdir().unwrap();
+    let model = include_str!("../../../examples/model-identity/model.fsl");
+    let program = include_str!("../../../examples/model-identity/program.fsl");
+    for (file, text) in [
+        ("model.fsl", model),
+        ("program.fsl", program),
+        (
+            "current.json",
+            include_str!("../../../examples/model-identity/current.json"),
+        ),
+        (
+            "run.json",
+            include_str!("../../../examples/model-identity/run.json"),
+        ),
+    ] {
+        std::fs::write(directory.path().join(file), text).unwrap();
+    }
+    let native_entry = json!([{"format": "native-model-unit/1", "source": source("model.fsl")}]);
+    let path = compile_request(directory.path(), &[], "program.fsl", native_entry, &[]);
+    let native =
+        command::compile_outcome(&path).expect("source inheritance and redefinition compile");
+    let model_source = fsl_cst::diagnostic::read_source(
+        SourceIdentity::new("agent-ix", "test:model.fsl"),
+        "model.fsl",
+        model.as_bytes(),
+        fsl_cst::Limits::default().source_bytes,
+    )
+    .unwrap();
+    let packages = package_input_from_sources([("example/identity", &model_source)]).unwrap();
+    std::fs::write(
+        directory.path().join("model.json"),
+        &packages["example/identity"],
+    )
+    .unwrap();
+    let document_entry = json!([{"format": "semantic-ir/2.0.0", "source": source("model.json")}]);
+    let path = compile_request(
+        directory.path(),
+        &[],
+        "program.fsl",
+        document_entry.clone(),
+        &[],
+    );
+    let document = command::compile_outcome(&path).expect("same-origin document compiles");
+    assert_eq!(native.package_bytes(), document.package_bytes());
+
+    let run_path = directory.path().join("run.json");
+    let native_run = command::run(&run_path, &crate::negotiation::Fr290)
+        .expect("the authored correspondence example executes");
+    assert_eq!(native_run.exit_code, 0, "{:?}", native_run.value);
+    let expected = json!({"kind": "boolean", "value": true});
+    assert_eq!(
+        native_run.value.as_value()["disposition"]["outcome"]["value"],
+        expected
+    );
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&run_path).unwrap()).unwrap();
+    request["request"]["models"] = document_entry;
+    std::fs::write(&run_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let document_run = command::run(&run_path, &crate::negotiation::Fr290).unwrap();
+    assert_eq!(document_run.exit_code, 0);
+    assert_eq!(
+        document_run.value.as_value()["disposition"]["outcome"]["value"],
+        expected
+    );
+
+    // Different data must change the actual source-request verdict.
+    let mut snapshot: Value = serde_json::from_str(include_str!(
+        "../../../examples/model-identity/current.json"
+    ))
+    .unwrap();
+    snapshot["populations"][0]["objects"][0]["fields"]["field"]["integer"] = json!("8");
+    std::fs::write(
+        directory.path().join("current.json"),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+    request["request"]["models"] =
+        json!([{"format": "native-model-unit/1", "source": source("model.fsl")}]);
+    std::fs::write(&run_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let violated = command::run(&run_path, &crate::negotiation::Fr290).unwrap();
+    assert_eq!(violated.exit_code, 10);
+    assert_eq!(
+        violated.value.as_value()["disposition"]["outcome"]["value"],
+        json!({"kind": "boolean", "value": false})
+    );
+
+    let conflict = model.replace("object Leaf extends Mid {", "object Other extends Base { field: Integer redefines Base::field; }\nobject Leaf extends Mid, Other {")
+        .replace("  field: Integer redefines Base::field;\n}\npopulation", "}\npopulation");
+    std::fs::write(directory.path().join("model.fsl"), conflict).unwrap();
+    let error = command::run(&run_path, &crate::negotiation::Fr290)
+        .err()
+        .expect("sibling redefiners expose no executable view");
+    let outcome: Value = serde_json::from_slice(
+        &error
+            .outcome_document(Operation::Execute)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(error.category().exit_code(), 20, "{outcome}");
+    assert_eq!(outcome["last_stage"], "I1", "{outcome}");
+    assert_eq!(
+        outcome["diagnostics"][0]["code"], "invalid_model_binding",
+        "{outcome}"
+    );
+    assert_eq!(
+        outcome["diagnostics"][0]["cause"], "derivation-conflict",
+        "{outcome}"
+    );
+}
+
 /// A program selecting `identity` as `M`, with one invariant over `M::Order`.
 fn program(identity: &str) -> String {
     format!(
