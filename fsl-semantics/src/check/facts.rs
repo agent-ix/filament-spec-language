@@ -302,6 +302,21 @@ impl Interval {
     }
 }
 
+/// FR-146 gives a rational literal the point intervals of its reduced value,
+/// independently of the expected type used to admit the literal.
+pub(super) fn rational_literal_domain(kind: &NodeKind<NodeId>) -> Option<RationalDomain> {
+    let NodeKind::Literal(CheckedLiteral(Value::Rational(value))) = kind else {
+        return None;
+    };
+    Some(
+        RationalDomain::new(
+            IntegerInterval::spanning(value.numerator().clone(), value.numerator().clone()),
+            IntegerInterval::spanning(value.denominator().clone(), value.denominator().clone()),
+        )
+        .expect("a reduced rational's denominator is positive"),
+    )
+}
+
 fn interval_text(interval: &Interval) -> String {
     let end_text = |end: &End| match end {
         End::Finite(value) => value.to_string(),
@@ -1665,11 +1680,15 @@ impl<'a> Definedness<'a> {
                 domain,
             } => {
                 let divisor = node.at(*right);
+                let left_literal = rational_literal_domain(node.at(*left).kind());
+                let right_literal = rational_literal_domain(divisor.kind());
                 let (ValueType::Rational(left), ValueType::Rational(right)) =
                     (node.at(*left).value_type(), divisor.value_type())
                 else {
                     return Err(Self::refuse(node, Obligation::RationalRange));
                 };
+                let left = left_literal.as_ref().unwrap_or(left);
+                let right = right_literal.as_ref().unwrap_or(right);
                 if *operator == ArithmeticOperator::Divide
                     && !right.excludes_zero()
                     && !self

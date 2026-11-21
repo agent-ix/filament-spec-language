@@ -4503,6 +4503,8 @@ impl<'a> Typer<'a> {
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
         let (left_type, right_type) = (left.value_type.clone(), right.value_type.clone());
+        let left_literal = super::facts::rational_literal_domain(left.kind());
+        let right_literal = super::facts::rational_literal_domain(right.kind());
         let (left_box, right_box) = (self.push(left), self.push(right));
         let (kind, value_type) = match (&left_type, &right_type, operator) {
             (ValueType::Quantity(unit), factor, ArithmeticOperator::Multiply)
@@ -4581,7 +4583,10 @@ impl<'a> Typer<'a> {
             (ValueType::Rational(l), ValueType::Rational(r), _) => {
                 let domain = match hint {
                     Some(ValueType::Rational(expected)) => expected.clone(),
-                    _ => l.result_of(operator, r),
+                    _ => left_literal
+                        .as_ref()
+                        .unwrap_or(l)
+                        .result_of(operator, right_literal.as_ref().unwrap_or(r)),
                 };
                 (
                     NodeKind::Rational {
