@@ -153,7 +153,8 @@ fn altered_semantics_prefixes_policy_and_duplicate_cylinders_have_no_token() {
         changed.paths[0].steps[0].post_key = witness.initial_key.clone();
         no_token(&world, &changed);
         let mut changed = witness.clone();
-        changed.paths[0].steps[0].draw = Some(vec![filament_exact::Value::Integer(Integer::from(7_i64))]);
+        changed.paths[0].steps[0].draw =
+            Some(vec![filament_exact::Value::Integer(Integer::from(7_i64))]);
         no_token(&world, &changed);
         let mut changed = witness.clone();
         changed.binding = None;
@@ -369,7 +370,13 @@ fn disjoint_actual_draws_to_one_post_state_count_once_each() {
         let key: serde_json::Value =
             serde_json::from_slice(witness.initial_key.as_bytes()).unwrap();
         assert!(!key[1].is_null());
-        assert!(key[2].is_null() && key[3].is_null() && key[5].is_null() && key[6].is_null() && key[7].is_null());
+        assert!(
+            key[2].is_null()
+                && key[3].is_null()
+                && key[5].is_null()
+                && key[6].is_null()
+                && key[7].is_null()
+        );
         let mut missing_binding = key.clone();
         missing_binding[1] = serde_json::Value::Null;
         changed.initial_key = fsl_replay::ProbabilityProductKey::from_canonical_bytes(
@@ -408,11 +415,9 @@ fn choices_at_one_complete_key_and_workload_policies_must_be_consistent() {
             .draws
             .into_iter()
             .find(|draw| {
-                step.draw
-                    .as_deref()
-                    .is_some_and(|expected| {
-                        fsl_eval::simulation::model::same_values(&draw.random, expected)
-                    })
+                step.draw.as_deref().is_some_and(|expected| {
+                    fsl_eval::simulation::model::same_values(&draw.random, expected)
+                })
             })
             .unwrap();
         let (transition, post) = draw.successors.into_iter().next().unwrap();
