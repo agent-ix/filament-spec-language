@@ -96,8 +96,7 @@ fn fixture(remove_x: bool) -> Checked {
     }
     let selected = if remove_x { "y" } else { "x" };
     let body = format!(
-        "profile p = \"filament.protocol.finite-global/v1\";\n\
-         {}\n\
+        "{}\n\
          protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{\n\
            capture chosen: Reference<Clock> = ref(call.{selected});\n\
            capture used: Integer = count(c in C::calls where ref(c.{selected}) = call.r);\n\
@@ -118,10 +117,11 @@ fn fixture(remove_x: bool) -> Checked {
              chosen = ref(self.{selected});"
         ))
     );
-    ring_queue::check_models(
+    ring_queue::check_models_with_profiles(
         &serde_json::to_vec(&queue).expect("queue"),
         ("C", CLOCKS, &serde_json::to_vec(&calls).expect("calls")),
         true,
+        "profile p = \"filament.protocol.finite-global/v1\";\n",
         &body,
     )
     .unwrap_or_else(|refusals| {
