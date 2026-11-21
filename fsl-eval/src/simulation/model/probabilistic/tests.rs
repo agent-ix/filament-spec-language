@@ -248,7 +248,7 @@ fn probability_candidate_then_claim_predicate_and_reward_use_the_same_allowance(
         let start = initial(&system);
         let scope = WorkScope::new(system.meter_limits());
         system.probability_work = Some(scope.clone());
-        let actions = system.actions(&start).unwrap().unwrap();
+        system.actions(&start).unwrap().unwrap();
         let expansion = scope.consumed_work();
         let walk = super::super::walk::walk_of(&system, &start, None).unwrap();
         let binding = walk.rows[0].reference.clone();

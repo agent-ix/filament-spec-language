@@ -1107,7 +1107,12 @@ fn native_probability_items_share_work_across_expansions_and_start_fresh_per_ite
     let first_work = scope.consumed_work();
     let failed = first
         .iter()
-        .find(|step| step.random == vec![filament_exact::Value::Boolean(true)])
+        .find(|step| {
+            matches!(
+                step.random.as_slice(),
+                [filament_exact::Value::Boolean(true)]
+            )
+        })
         .expect("an actual lost send");
     system
         .weighted_steps(&failed.post, workload)
