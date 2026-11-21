@@ -35,9 +35,8 @@ mod witness;
 pub use crate::simulation::model::CheckedHyperLetters;
 pub use checked::CheckedStepMatch;
 pub use closed::{
-    closed_executions, constrained_closed_executions, horizon, judge_closed_tuple, search_partner,
-    ClosedExecution, ClosedInputs, ClosedStep, ClosedStop, ClosedVerdict,
-    ConstrainedClosedExecutions, ConstrainedClosedStop, PartnerSearch, Tuples,
+    closed_executions, horizon, judge_closed_tuple, match_closed_step, search_partner,
+    ClosedExecution, ClosedInputs, ClosedStep, ClosedStop, ClosedVerdict, PartnerSearch, Tuples,
 };
 pub use copy_swap::{
     copy_population, copy_symmetry, fairness_preserving_copy_group, CopySwapInputs,

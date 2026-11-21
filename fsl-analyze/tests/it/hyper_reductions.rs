@@ -446,6 +446,150 @@ fn a_finite_reduced_refutation_is_deterministic_and_replays_concretely() {
     ));
 }
 
+/// A cut transition whose entering match fails is outside the product. Its
+/// predecessor cannot turn an otherwise complete proof into ConstraintReached.
+#[trace("TC-3011", "FR-174-AC-7", "FR-173-AC-6")]
+#[test]
+fn a_finite_unmatched_cut_is_not_a_constraint_boundary() {
+    let world = World::with_snapshots(
+        SECURE_CONSTRAINED,
+        uniform_snapshots(&["v"]),
+        &["v"],
+        "hyper Bounded using ep over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         match { \
+           (if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) = 0 else false) \
+           and (if present(b.step.Vault::step.i) then value(b.step.Vault::step.i) = 0 else false) \
+         } { always [0, 1] holds(v.l @ a <= 1 and v.l @ b <= 1) }",
+    );
+    let result = world
+        .run_selecting(with_constraint(Reductions::default(), "Zero"))
+        .expect("the matched zero-input paths are closed");
+    assert!(
+        matches!(
+            result,
+            HyperOutcome::HoldsReduced {
+                scope: fsl_replay::HyperReducedScope::ClosedExecutions,
+                ..
+            }
+        ),
+        "unmatched i=1 steps create no product boundary: {result:?}"
+    );
+}
+
+/// The state constraint is applied to the second subject as well as the
+/// first, including an initial state that violates it.
+#[trace("TC-3011", "FR-174-AC-7", "FR-173-AC-6")]
+#[test]
+fn a_finite_constraint_checks_every_subject_and_its_initial_state() {
+    let world = World::with_second_vaults(
+        SECURE_CONSTRAINED,
+        &[("v", (0, 0))],
+        &[("v", (1, 1))],
+        "hyper Bounded using ep over behaviours (d: V::Vault, e: N::Vault) \
+         forall trace a of V forall trace b of N \
+         { always [0, 1] holds(d.l @ a <= 1 and e.l @ b <= 1) }",
+    );
+    let low = world
+        .run_selecting(with_constraint(Reductions::default(), "Low"))
+        .expect("Low holds in both subjects");
+    assert!(matches!(low, HyperOutcome::HoldsReduced { .. }), "{low:?}");
+    let zero = world
+        .run_selecting(with_constraint(Reductions::default(), "Zero"))
+        .expect("Zero cuts the second subject's initial state");
+    assert!(
+        matches!(
+            zero,
+            HyperOutcome::Reduction {
+                cause: HyperReductionCause::ConstraintReached { boundary_states: 1 },
+                ..
+            }
+        ),
+        "the second subject cannot be skipped: {zero:?}"
+    );
+}
+
+/// Short terminal components keep their own closed scope under reduction;
+/// they are never lengthened to satisfy the remaining bounded positions.
+#[trace("TC-3011", "FR-174-AC-7", "FR-173-AC-6")]
+#[test]
+fn a_finite_constraint_preserves_false_extension_and_terminal_replay() {
+    let world = World::with_snapshots(
+        Vault::Custom(
+            "pre Fresh using v on V::Vault::step { self.l = 0 }\n\
+            post Step using v on V::Vault::step { self.l = i }\n\
+            invariant Low using v on V::Vault at current { self.l <= 1 }\n",
+        ),
+        uniform_snapshots(&["v"]),
+        &["v"],
+        "hyper Bounded using ep over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         { always [0, 2] holds(v.l @ a <= 1 and v.l @ b <= 1) }",
+    );
+    let result = world
+        .run_selecting(with_constraint(Reductions::default(), "Low"))
+        .expect("the terminal finite paths are decided");
+    let counterexample = refuted(result);
+    assert!(counterexample
+        .traces
+        .iter()
+        .any(|trace| trace.steps.len() < 2));
+    assert_eq!(
+        counterexample.kind,
+        fsl_replay::HyperCounterexampleKind::Closed
+    );
+    assert!(matches!(
+        world.replay(&counterexample),
+        Ok(ModelTraceSettlement::Reproduced { .. })
+    ));
+}
+
+/// Tuple orbit construction obeys the caller's transition ledger even when
+/// canonicalisation would eventually remove every duplicate candidate.
+#[trace("TC-3011", "FR-174-AC-7", "FR-184")]
+#[test]
+fn a_finite_orbit_walk_stops_at_the_actual_transition_allowance() {
+    let world = World::with_snapshots(
+        SECURE_CONSTRAINED,
+        uniform_snapshots(&["v"]),
+        &["v"],
+        "hyper Bounded using ep over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         { always [0, 1] holds(v.l @ a <= 1 and v.l @ b <= 1) }",
+    );
+    let seams = world.seams();
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_transitions = 0;
+    let result = fsl_analyze::model_check::check_hyper(
+        fsl_analyze::model_check::HyperCheckRequest {
+            clause: &world.clause,
+            subjects: vec![world.subject()],
+            letters: &seams,
+            matcher: &seams,
+            limits,
+            meter: crate::counter::UNLIMITED,
+            reductions: with_constraint(Reductions::default(), "Low"),
+            max_depth: None,
+        },
+        &Cancel::new(),
+    )
+    .expect("the caller's zero allowance is a typed stop");
+    assert!(
+        matches!(
+            result,
+            HyperOutcome::Stopped {
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
+                    value: 0
+                }),
+                ..
+            }
+        ),
+        "{result:?}"
+    );
+    assert_eq!(result.stats().product_edges, 0);
+}
+
 #[trace("TC-3011", "FR-174-AC-7")]
 #[test]
 fn a_key_symmetry_on_an_ineligible_form_settles_unsupported() {
