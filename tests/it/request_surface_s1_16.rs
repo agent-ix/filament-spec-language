@@ -3092,6 +3092,23 @@ fn package_clause_selection_outcomes(
             refusal_names(&actual.1, "clause.selection");
         } else {
             assert_eq!(actual, expected, "{clause}");
+            fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&actual.1).unwrap())
+                .expect("the result reads through the native result reader");
+            if expected.0 == 10
+                && clause["selection"]["temporal"]["trace"]
+                    .get("model")
+                    .is_some()
+            {
+                assert!(actual.1["disposition"]["temporal"]
+                    .get("counterexample")
+                    .is_none());
+                let mut malformed = actual.1.clone();
+                malformed["disposition"]["temporal"]["counterexample"] = Value::Null;
+                assert!(fsl_replay::spine::read_native_run_result(
+                    &serde_json::to_vec(&malformed).unwrap()
+                )
+                .is_err());
+            }
         }
     }
 }

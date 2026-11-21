@@ -4,10 +4,10 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use fsl_foundation::LocatedSpan;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::diagnostic::Locus;
 use fsl_foundation::wire_format::WireFormat;
+use fsl_foundation::LocatedSpan;
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
@@ -30,12 +30,12 @@ pub use protocol::{
     UnsupportedDiagnostic,
 };
 mod temporal;
+pub(crate) use temporal::{replay_locus_wire, replay_outcome_wire};
 pub use temporal::{
     ClosureRead, CounterexampleRead, DimensionRead, EffectiveIdRead, FairnessGranularityRead,
     FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead,
     ProgressValueRead, TemporalRecord, UndefinedLocusRead,
 };
-pub(crate) use temporal::{replay_locus_wire, replay_outcome_wire};
 
 /// Why a clause-run report could not be written as a canonical document.
 #[derive(Debug, thiserror::Error)]
@@ -1858,10 +1858,10 @@ fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadE
 
 #[cfg(test)]
 mod refusal_locus_tests {
-    use super::{NativeRunResult, RefusalLocusRead, read_native_run_result};
+    use super::{read_native_run_result, NativeRunResult, RefusalLocusRead};
     use crate::outcome::{DocumentObjectLocus, OutcomeLocus};
     use ix_trace_rs::trace;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     fn clause_document(locus: Value) -> Value {
         json!({
@@ -1967,8 +1967,8 @@ mod refusal_locus_tests {
             "operand": "handoff",
             "pointer": null
         });
-        let bytes = serde_json::to_vec(&clause_document(selection.clone()))
-            .expect("document serializes");
+        let bytes =
+            serde_json::to_vec(&clause_document(selection.clone())).expect("document serializes");
         let NativeRunResult::Clause(record) = read_native_run_result(&bytes).expect("reads") else {
             panic!("expected a clause-run record");
         };
@@ -3488,10 +3488,14 @@ pub fn temporal_disposition_json(
                         }),
                     )
                 }
-                TemporalVerdict::Undefined { at, cause }
+                TemporalVerdict::Undefined { cause, .. }
                     if !matches!(cause, TemporalUndefinedCause::InsufficientData { .. }) =>
                 {
-                    let found = counterexample.ok_or(NativeRunResultError::Counterexample)?;
+                    let (wire, _) = temporal::verdict_wire(&verdict, None)?;
+                    let mut temporal = serde_json::to_value(wire)?;
+                    if let Some(found) = counterexample {
+                        temporal["counterexample"] = found;
+                    }
                     (
                         category,
                         basis,
@@ -3499,9 +3503,7 @@ pub fn temporal_disposition_json(
                         Some(Outcome::Undefined {
                             reason: cause.reason(),
                         }),
-                        serde_json::json!({
-                            "kind": "undefined", "position": at, "counterexample": found,
-                        }),
+                        temporal,
                     )
                 }
                 _ => {

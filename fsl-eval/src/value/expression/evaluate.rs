@@ -4896,11 +4896,33 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 field: field.name.clone(),
             })))
         };
-        // An object the closure does not hold is not a layout defect: the
-        // read has nothing to project (a reference a current state tolerates
-        // dangling) and keeps its own fault.
+        // An admitted reference whose object is absent has no value to read;
+        // the population correspondence distinguishes absence from a bad layout.
         if !objects.objects().contains(reference) {
-            return Err(invariant("attribute-slot-unresolved"));
+            let binding = objects
+                .population_completeness()
+                .keys()
+                .find(|identity| {
+                    objects
+                        .population_node(identity)
+                        .and_then(|node| objects.population_provenance(node))
+                        .is_some_and(|population| {
+                            population.member_types().iter().any(|(member, universe)| {
+                                member == reference.object_type()
+                                    && universe == reference.universe()
+                            })
+                        })
+                        || objects
+                            .population_binding(identity)
+                            .is_some_and(|binding| binding.universe() == reference.universe())
+                })
+                .ok_or_else(|| invariant("missing-object-has-admitted-population"))?;
+            return Err(Halt::Family(FamilyResult::Undefined(Box::new(
+                StateModelUndefined::AbsentKey {
+                    binding: binding.clone(),
+                    key: render_identity(reference.object().as_str().as_bytes()),
+                },
+            ))));
         }
         let declared = types
             .attributes(reference.object_type().clone())
