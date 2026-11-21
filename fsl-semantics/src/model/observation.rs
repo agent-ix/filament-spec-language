@@ -1628,6 +1628,7 @@ pub(crate) struct ModelView {
     pub(crate) view: EffectiveView,
     provenance: Option<NormalizedModelProvenance>,
     pub(crate) clock_places: std::sync::Arc<super::clock_reference::DeclaredClockPlaces>,
+    pub(crate) clock_declarations: super::clock_reference::normalization::ClockDeclarationTable,
     by_effective_id: BTreeMap<EffectiveId, DeclarationKey>,
     /// Whether the view is the unit's own source package (FR-569), whose
     /// declarations a snapshot names without an `ix://` scheme.
@@ -1646,6 +1647,7 @@ impl ModelView {
             view,
             provenance: None,
             clock_places: std::sync::Arc::default(),
+            clock_declarations: Default::default(),
             by_effective_id,
             source: false,
         }
@@ -1696,6 +1698,7 @@ pub struct ModelSelections<'a> {
     selections: &'a [DomainPackageRef],
     sources: &'a [DomainPackage],
     clock_models: &'a [crate::check::TimedModel],
+    clock_declarations: Option<&'a super::clock_reference::normalization::ClockDeclarationTable>,
 }
 
 impl<'a> ModelSelections<'a> {
@@ -1707,6 +1710,7 @@ impl<'a> ModelSelections<'a> {
             selections,
             sources,
             clock_models: &[],
+            clock_declarations: None,
         }
     }
 
@@ -1721,6 +1725,16 @@ impl<'a> ModelSelections<'a> {
     #[must_use]
     pub fn with_clock_places(mut self, models: &'a [crate::check::TimedModel]) -> Self {
         self.clock_models = models;
+        self
+    }
+
+    /// Retain the checked graph's atomic original-declaration table.
+    #[must_use]
+    pub fn with_clock_declaration_table(
+        mut self,
+        table: &'a super::clock_reference::normalization::ClockDeclarationTable,
+    ) -> Self {
+        self.clock_declarations = Some(table);
         self
     }
 
@@ -1817,6 +1831,9 @@ fn model_views_retaining<'a>(
     ));
     for view in &mut views {
         view.clock_places = clock_places.clone();
+        if let Some(table) = model_selections.clock_declarations {
+            view.clock_declarations = table.clone();
+        }
     }
     Ok(views)
 }
