@@ -2862,9 +2862,8 @@ fn work_budget(limit: u64, actual: u128, region: Option<SourceRegion>) -> CheckC
 ///
 /// The call whose unfoldings the meter denies.
 pub(crate) fn settle_unfoldings(
-    unfoldings: &[(Span, u64)],
+    unfoldings: &[(Option<SourceRegion>, u64)],
     meter: &mut Meter,
-    locate: &dyn Fn(Span) -> Option<SourceRegion>,
 ) -> Result<(), CheckRefusal> {
     for (call, count) in unfoldings {
         meter
@@ -2873,7 +2872,7 @@ pub(crate) fn settle_unfoldings(
                 refusal(work_budget(
                     incomplete.limit,
                     u128::from(incomplete.consumed) + u128::from(*count),
-                    locate(*call),
+                    call.clone(),
                 ))
             })?;
     }

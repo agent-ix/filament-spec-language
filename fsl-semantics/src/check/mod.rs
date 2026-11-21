@@ -2680,7 +2680,16 @@ impl PackageDeclarations {
             )
             .map_err(|refusal| vec![refusal])?
         };
-        let unfoldings = timed_drafts.unfoldings.clone();
+        let unfoldings: Vec<_> = timed_drafts
+            .unfoldings
+            .iter()
+            .map(|(call, count)| {
+                (
+                    region::region(&self.source, self.embedding.as_deref(), *call),
+                    *count,
+                )
+            })
+            .collect();
         // FR-096: a family limit's locus resolves through the unit's spans.
         let regions = self.regions();
         let body_location = |index: usize, name: &str| {
@@ -8350,10 +8359,8 @@ impl PackageDeclarations {
         }
         // FR-230 "Recursive clock readings": the unfoldings count against the
         // work the whole check used.
-        timed_model::settle_unfoldings(&unfoldings, &mut contract_meter, &|span| {
-            region::region(&self.source, self.embedding.as_deref(), span)
-        })
-        .map_err(|refusal| vec![refusal])?;
+        timed_model::settle_unfoldings(&unfoldings, &mut contract_meter)
+            .map_err(|refusal| vec![refusal])?;
         Ok(graph)
     }
 }
