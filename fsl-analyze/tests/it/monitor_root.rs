@@ -1645,12 +1645,11 @@ fn reach_model_type(reached: ReachedModelType) {
             "the emission produced the union row this control withholds"
         );
         let refusal = closure.expect_err("a reached union with no row is refused");
-        assert!(
-            matches!(
-                refusal.code,
-                filament_contract_model::SelectedMonitorTypeClosureErrorCode::Exact(_)
-            ),
-            "{refusal:?}"
+        assert_eq!(
+            refusal.code,
+            filament_contract_model::SelectedMonitorTypeClosureErrorCode::Exact(
+                filament_contract_model::ExactTypeProjectionErrorCode::UnavailableIdentityWitness
+            )
         );
         return;
     }
