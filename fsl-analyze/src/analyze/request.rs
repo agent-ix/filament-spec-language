@@ -518,13 +518,10 @@ pub(crate) fn analyze_bound<'a>(
         };
         dependency_graphs.insert(name, graph);
     }
-    // The result's node ids are held against these graphs, so a package or
-    // component that has none ends the run before any engine runs.
-    if let Err(cause) = &own {
-        return Err(StageFailure::Refused(super::AnalyzeRefusal::Emission(
-            cause.clone(),
-        )));
-    }
+    // A package that does not emit has no graph and writes no held id, so its
+    // own graph is checked when an item needs it. A component an item is
+    // analyzed over always writes held ids, so one without a graph ends the
+    // run before any engine runs.
     for component in components.values() {
         if let Some(Err(cause)) = dependency_graphs.get(component.graph().package_name()) {
             return Err(StageFailure::Refused(super::AnalyzeRefusal::Emission(

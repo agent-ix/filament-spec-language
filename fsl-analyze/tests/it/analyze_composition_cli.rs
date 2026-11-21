@@ -140,6 +140,15 @@ fn roles(item: &Value) -> Vec<&str> {
         .collect()
 }
 
+/// A claim locus with the operand segments of its node id removed.
+fn claim_without_operands(claim: &Value) -> Value {
+    let mut claim = claim.clone();
+    if let Some(path) = claim["node"]["path"].as_array_mut() {
+        path.retain(Value::is_string);
+    }
+    claim
+}
+
 /// A routed composition item: the derived slot list, no candidates, and an
 /// `unsupported` disposition.
 fn assert_routed(item: &Value) {
@@ -175,7 +184,15 @@ fn a_routed_composition_is_unsupported_beside_its_proved_premises() {
         // the premise item checks.
         let key = &items[0]["request"]["premises"][slot]["key"];
         assert_eq!(key["kind"], "temporal-satisfaction", "{document}");
-        assert_eq!(key["claim"], item["request"]["claim"], "{document}");
+        // FR-621 "Node ids in an item": the composition keeps the dependency's
+        // node ids structural, and the premise item holds them against the
+        // dependency's graph, so the two name one claim in two spellings of its
+        // operands: the owner, ordinal, occurrence and text segments are equal.
+        assert_eq!(
+            claim_without_operands(&key["claim"]),
+            claim_without_operands(&item["request"]["claim"]),
+            "{document}"
+        );
     }
     assert_eq!(run.exit, 21, "{document}");
 }
