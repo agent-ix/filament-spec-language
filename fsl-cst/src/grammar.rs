@@ -3137,9 +3137,9 @@ fn analysis(g: &mut Grammar) {
             x("using"),
             ident(),
             x("grammar"),
-            r(P::QualifiedName),
+            c(vec![r(P::QualifiedName), x("Integer")]),
             x("domain"),
-            r(P::QualifiedName),
+            c(vec![r(P::QualifiedName), x("Integer")]),
             opt(c(vec![
                 s(vec![contextual("minimize"), r(P::Expression)]),
                 s(vec![contextual("maximize"), r(P::Expression)]),

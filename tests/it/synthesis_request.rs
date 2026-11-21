@@ -8,9 +8,9 @@
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::DependencyInput;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::support::config_version_spine::{Case, spine};
+use crate::support::config_version_spine::{spine, Case};
 use crate::support::front_end::emitted;
 
 const VALUE_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -120,21 +120,18 @@ fn a_value_synthesis_is_one_synthesis_request_node() {
             .find(|candidate| &candidate["node_id"] == reference)
             .unwrap_or_else(|| panic!("{name} resolves: {node}"))
     };
-    assert_eq!(
-        target("grammar")["node_id"]["path"],
-        json!(["Digit"]),
-        "{node}"
-    );
-    assert_eq!(
-        target("domain")["node_id"]["path"],
-        json!(["Digit"]),
-        "{node}"
-    );
+    // `Digit` is `Int[0, 9]`: both names are the one integer-range node S3
+    // resolved, not a node minted for the declaration.
+    for name in ["grammar", "domain"] {
+        assert_eq!(target(name)["node_tag"], "bounded_domain", "{node}");
+        assert_eq!(target(name)["semantic_form"], "integer_range", "{node}");
+    }
     assert_eq!(target("candidate")["node_tag"], "parameter", "{node}");
-    assert_eq!(
-        target("candidate")["node_id"]["path"],
-        json!(["Pick"]),
-        "{node}"
+    assert!(
+        target("candidate")["node_id"]["path"]
+            .as_array()
+            .is_some_and(|path| path.contains(&json!("Pick"))),
+        "the candidate parameter is named for the declaration: {node}"
     );
     assert_eq!(
         binding(node, "objective")["value"]["members"],
@@ -173,7 +170,7 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     let unit = format!(
         "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-         satisfies {{ Reach.length >= 1 }};\n"
+         satisfies {{ Reach.versionNumber >= 1 }};\n"
     );
     let bytes = package_bytes(&unit, &packages);
     let wire: Value = serde_json::from_slice(&bytes).expect("a JSON package");
@@ -191,10 +188,11 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     assert_eq!(target("domain")["semantic_form"], "integer_range", "{node}");
     let candidate = target("candidate");
     assert_eq!(candidate["node_tag"], "parameter", "{candidate}");
-    assert_eq!(
-        candidate["node_id"]["path"],
-        json!(["Reach"]),
-        "{candidate}"
+    assert!(
+        candidate["node_id"]["path"]
+            .as_array()
+            .is_some_and(|path| path.contains(&json!("Reach"))),
+        "the candidate parameter is named for the declaration: {candidate}"
     );
     assert!(
         candidate

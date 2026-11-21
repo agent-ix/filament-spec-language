@@ -749,13 +749,8 @@ pub(super) fn run_bytes(
         },
         other => refused("/request/synthesis", other.to_string()),
     })?;
-    let mut model_documents = std::collections::BTreeMap::new();
-    for (selection, model) in request.models.iter().zip(&model_sources) {
-        model_documents.insert(
-            selection.source.identity.identity.clone(),
-            model.source().text().as_bytes().to_vec(),
-        );
-    }
+    let model_documents =
+        super::package_input_from_selected_models(&request.models, &model_sources)?;
     let read_limits =
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
     let admitted = fsl_package::admit_checked_package(
@@ -806,19 +801,19 @@ pub(super) fn run_bytes(
             is_candidate: checked.objective_is_candidate(),
         }),
     };
-    let identities = fsl_package::ReadIdentityRows::of_rows(
-        &admitted,
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    );
     let mut budget = read_limits.native_join_limits().budget();
+    let emission = compiled.emitted.emission();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .map_err(|failure| refused("/request/synthesis", format!("identity rows: {failure:?}")))?;
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .map_err(|failure| refused("/request/synthesis", format!("equality rows: {failure:?}")))?;
     let bare = fsl_package::BarePackage::new(&admitted)
         .with_supply(
             fsl_package::BareSupply {
                 identities: &identities,
-                equality: None,
+                equality: Some(&equality),
             },
             &mut budget,
         )

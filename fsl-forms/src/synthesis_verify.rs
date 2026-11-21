@@ -4,12 +4,12 @@
 
 use crate::dispatch::{Construct, FormsRefusal};
 use crate::syntax::{
-    DeclarationForm, DeclaredName, ExpressionForm, SynthesisDirectionForm, SynthesisForm,
+    DeclarationForm, DeclaredName, ExpressionForm, NameForm, SynthesisDirectionForm, SynthesisForm,
     SynthesisObjectiveForm, UsingAlias, VerificationPlanForm, VerificationStepForm,
 };
 use crate::value::{
-    Item, expression, items, name_form, nodes_of, only, production_node, significant_tokens, text,
-    tokens_of, unexpected,
+    expression, items, name_form, nodes_of, only, production_node, significant_tokens, text,
+    tokens_of, unexpected, Item,
 };
 use fsl_cst::{CstNode, LosslessCst, Production, TokenKind};
 use fsl_foundation::Span;
@@ -20,10 +20,8 @@ pub(crate) fn synthesis(construct: Construct<'_>) -> Result<DeclarationForm, For
     let cst = construct.cst;
     let node = production_node(construct)?;
     let children = items(cst, node);
-    let names = nodes_of(&children, Production::QualifiedName);
-    let [grammar, domain] = names.as_slice() else {
-        return Err(unexpected(node));
-    };
+    let grammar = keyed_name(cst, &children, "grammar", node)?;
+    let domain = keyed_name(cst, &children, "domain", node)?;
     let blocks = nodes_of(&children, Production::Block);
     let [block] = blocks.as_slice() else {
         return Err(unexpected(node));
@@ -35,8 +33,8 @@ pub(crate) fn synthesis(construct: Construct<'_>) -> Result<DeclarationForm, For
     Ok(DeclarationForm::Synthesis(Box::new(SynthesisForm {
         name,
         profile,
-        grammar: name_form(cst, grammar)?,
-        domain: name_form(cst, domain)?,
+        grammar,
+        domain,
         objective,
         satisfies: ExpressionForm {
             expression: predicate,
@@ -47,6 +45,31 @@ pub(crate) fn synthesis(construct: Construct<'_>) -> Result<DeclarationForm, For
         span,
     })))
 }
+/// The name after the `keyword` token of a `synthesis` declaration: a
+/// qualified name, or the builtin `Integer`, which is a keyword token and
+/// not an identifier.
+fn keyed_name(
+    cst: &LosslessCst,
+    children: &[Item<'_>],
+    keyword: &str,
+    node: &CstNode,
+) -> Result<NameForm, FormsRefusal> {
+    let mut after_keyword = false;
+    for child in children {
+        match child {
+            Item::Token(token) if after_keyword => {
+                return Ok(NameForm::new(text(token, node)?, token.span()));
+            }
+            Item::Token(token) => after_keyword = token.spelling() == keyword.as_bytes(),
+            Item::Node(name) if after_keyword && name.production() == Production::QualifiedName => {
+                return name_form(cst, name);
+            }
+            Item::Node(_) => after_keyword = false,
+        }
+    }
+    Err(unexpected(node))
+}
+
 /// Build the source-bearing S2 form for `verify` (FR-753).
 pub(crate) fn verification_plan(construct: Construct<'_>) -> Result<DeclarationForm, FormsRefusal> {
     let (name, profile, source, span) = identity(construct)?;
