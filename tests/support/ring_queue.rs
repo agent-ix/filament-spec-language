@@ -524,7 +524,9 @@ pub fn clock_refinement(rows: &str) -> String {
          time C dense unit ms;\n\
          refinement CallsAreQueue using inf abstract Q concrete C {{\n\
          population Q::queues from C::calls;\n\
+         population Q::cells from C::calls;\n\
          object Q::Queue from C::Call {{ {rows} }}\n\
+         object Q::Cell from C::Call {{ value = self.n; }}\n\
          }}"
     )
 }

@@ -3854,12 +3854,12 @@ fn a_refinement_row_ref_lowers_with_the_binder_as_owner() {
 }
 
 /// FR-1040-AC-3 (refinement-row form), negative: a refinement row whose
-/// population form reads the clock outside a constraint refuses
-/// `invalid_timed_model`/`clock-read-outside-constraint`, as a state row does.
+/// population form reads the clock itself is outside FSpec FR-430's timed
+/// refinement and refuses with the refinement's existing `ClockRead` cause.
 #[trace("TC-3084", "FR-1040-AC-3", "FR-230-AC-11")]
 #[test]
-fn a_refinement_row_clock_read_outside_a_constraint_is_refused() {
-    use fsl_semantics::check::{CheckCause, TemporalCause};
+fn a_refinement_row_clock_read_is_refused() {
+    use fsl_semantics::check::{CheckCause, RefinementCause};
     use ring_queue::{check_clock_refinement, clock_refinement};
     let row = "busy = sum(c in C::calls: c.x) >= 0;";
     let refusals =
@@ -3867,8 +3867,8 @@ fn a_refinement_row_clock_read_outside_a_constraint_is_refused() {
     assert!(
         refusals.iter().any(|refusal| matches!(
             &refusal.cause,
-            CheckCause::Temporal(cause)
-                if matches!(**cause, TemporalCause::ClockReadOutsideConstraint { .. })
+            CheckCause::Refinement(refinement)
+                if matches!(refinement.cause, RefinementCause::ClockRead)
         )),
         "{refusals:?}"
     );
