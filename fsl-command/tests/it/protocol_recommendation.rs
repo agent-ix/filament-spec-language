@@ -55,12 +55,12 @@ fn a_recommendation_carries_its_precondition_enabled_arguments() {
     let prefix = &item["counterexample"]["prefix"];
     assert_eq!(
         prefix[0]["transition"]["recommendation"]["arguments"],
-        json!([true]),
+        json!([{"type": "boolean", "value": true}]),
         "{item}"
     );
     assert_eq!(
         prefix[1]["transition"]["arguments"],
-        json!([true]),
+        json!([{"type": "boolean", "value": true}]),
         "{item}"
     );
     assert_eq!(
