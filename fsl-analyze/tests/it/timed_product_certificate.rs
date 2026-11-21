@@ -643,17 +643,25 @@ fn a_forged_decided_target_is_neither_counted_nor_reported() {
     let paths = honest_witness.evidence().paths.len();
     assert!(paths >= 2, "the forgery needs a second honest path");
     let forged = settle_witness_tampered(&world, "Strict", |witness| {
-        let last = witness.paths.len() - 1;
-        let other = witness.paths[last]
+        // The longest path ends at a decided state its last source has no
+        // outcome to once that end is replaced by the shortest path's end.
+        let shortest = (0..witness.paths.len())
+            .min_by_key(|index| witness.paths[*index].steps.len())
+            .expect("a path");
+        let longest = (0..witness.paths.len())
+            .max_by_key(|index| witness.paths[*index].steps.len())
+            .expect("a path");
+        let other = witness.paths[shortest]
             .steps
             .last()
             .expect("a step")
             .post_key
             .clone();
-        let first = witness.paths[0].steps.last_mut().expect("a step");
-        if first.post_key != other {
-            first.post_key = other;
-        }
+        witness.paths[longest]
+            .steps
+            .last_mut()
+            .expect("a step")
+            .post_key = other;
     });
     let reproduced = forged
         .probabilistic_counterexample
