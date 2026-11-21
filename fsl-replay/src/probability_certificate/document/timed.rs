@@ -3564,16 +3564,20 @@ pub fn digital_key_clocks(
         )
         .ok()?;
         let declaring = fsl_foundation::node_wire::node_key_to_json(&declaring).ok()?;
-        let receiver = fsl_eval::simulation::model::reference_canonical_text(place.object()).ok()?;
+        let receiver =
+            fsl_eval::simulation::model::reference_canonical_text(place.object()).ok()?;
         let receiver: JsonValue = serde_json::from_str(&receiver).ok()?;
         let identity = json!([declaring, field.name(), receiver]);
-        let mut matching = listed.iter().filter(|clock| clock.get(0) == Some(&identity));
+        let mut matching = listed
+            .iter()
+            .filter(|clock| clock.get(0) == Some(&identity));
         let clock = matching.next()?;
         if matching.next().is_some() {
             return None;
         }
         let whole = number(clock.get(1)?)?;
-        values.push(Rational::from_integer(whole.into()).div(&Rational::from_integer(scale.into()))?);
+        values
+            .push(Rational::from_integer(whole.into()).div(&Rational::from_integer(scale.into()))?);
     }
     Some(fsl_eval::simulation::model::ClockValuation::new(values))
 }

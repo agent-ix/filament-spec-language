@@ -2751,65 +2751,69 @@ fn timed_key_discrete(key: &ProbabilityProductKey) -> Option<serde_json::Value> 
     root.get(4)?.get(1)?.get(1).cloned()
 }
 
-/// The model step and post state of the operation a timed digital witness
-/// step took, found from the timed state its previous key names: the clocks
-/// as keyed, or those delayed by the step's elapsed time first. `None` when
-/// the key is not a digital one or no enabled step reaches the wanted model
-/// state.
+/// The model step of the operation a timed digital witness step took, found
+/// from the timed state its previous key names: the clocks as keyed (placed
+/// by clock identity), or those delayed by the step's elapsed time first.
+///
+/// The product resolves every tied zero-time operation of an instant in one
+/// step, so the step's model state can lie several operations after the first.
+/// The search follows a chain whose FIRST operation is `identity`'s and
+/// returns that operation's transition, the model state right after it (what a
+/// single recorded transition produces) and the model state at the end of the
+/// chain (what the product key names, and where the next step starts).
+/// `None` when no such chain reaches the wanted model state, or the previous
+/// key is a region key: a region refutation through a clock-guarded step
+/// therefore settles not-yet.
 fn timed_step_for(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
     state: &fsl_eval::simulation::model::ModelSimState,
     previous: &ProbabilityProductKey,
+    identity: &fsl_eval::simulation::model::ScheduledIdentity,
     elapsed: &Rational,
     wanted: Option<&serde_json::Value>,
 ) -> Option<(
     filament_semantic_value::model_transition::ModelTransition,
     fsl_eval::simulation::model::ModelSimState,
+    fsl_eval::simulation::model::ModelSimState,
 )> {
-    use fsl_eval::simulation::model::{ClockValuation, TimedState, TimedSystem};
-    let root: serde_json::Value = serde_json::from_slice(previous.as_bytes()).ok()?;
-    let keyed = root.get(4)?.get(1)?;
-    if keyed.get(0)?.as_str()? != "digital" {
-        return None;
-    }
-    let number = |value: &serde_json::Value| -> Option<u64> {
-        value
-            .as_u64()
-            .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
-    };
-    let scale = number(keyed.get(3)?)?;
-    let values = keyed
-        .get(4)?
-        .as_array()?
-        .iter()
-        .map(|clock| {
-            let whole = number(clock.get(1)?)?;
-            Some(Rational::from_integer(whole.into()).div(&Rational::from_integer(scale.into()))?)
-        })
-        .collect::<Option<Vec<_>>>()?;
+    use fsl_eval::simulation::model::{TimedState, TimedSystem};
+    let valuation = fsl_replay::digital_key_clocks(system, claim, previous)?;
     let timed = TimedSystem::new(system, claim.subject.alias.as_str()).ok()?;
-    let valuation = ClockValuation::new(values);
-    // The product resolves every tied zero-time operation in one step, so the
-    // wanted model state may be several operations deep; search a bounded
-    // chain and report the first operation taken.
+    // A tie among the zero-time operations of one instant: the product never
+    // resolves more of them in one step than a small model has operations, and
+    // each level multiplies the frontier, so the search stays short.
     const CHAIN: usize = 4;
     let reaches = |from: TimedState| {
-        let mut frontier = vec![(from, None)];
-        for _ in 0..CHAIN {
+        type First = Option<(
+            filament_semantic_value::model_transition::ModelTransition,
+            fsl_eval::simulation::model::ModelSimState,
+        )>;
+        let mut frontier: Vec<(TimedState, First)> = vec![(from, None)];
+        for level in 0..CHAIN {
             let mut next = Vec::new();
             for (at, first) in frontier {
                 let Ok(steps) = timed.steps(&at) else {
                     continue;
                 };
                 for (step, post) in steps {
-                    let first = first.clone().unwrap_or_else(|| step.transition().clone());
+                    let first = if level == 0 {
+                        if step.operation() != identity.operation
+                            || step.receiver() != &identity.receiver
+                        {
+                            continue;
+                        }
+                        Some((step.transition().clone(), post.discrete().clone()))
+                    } else {
+                        first.clone()
+                    };
                     let key = system.state_key(post.discrete()).ok()?.0;
                     let discrete: serde_json::Value = serde_json::from_slice(&key).ok()?;
                     if Some(&discrete) == wanted {
-                        return Some((first, post.discrete().clone()));
+                        let (transition, after_first) = first?;
+                        return Some((transition, after_first, post.discrete().clone()));
                     }
-                    next.push((post, Some(first)));
+                    next.push((post, first));
                 }
             }
             frontier = next;
