@@ -5243,9 +5243,10 @@ fn the_bare_route_names_fixture_l_decision_slots_by_node_member_and_index() {
     assert_eq!(origin("Got", "related.to", 0), None);
 }
 
-/// FR-390-AC-28: an activation guard dividing two non-integer-valued
-/// `Rational` operands gives the same value, outcome and charge log through the
-/// reader view as through the checked package.
+/// FR-390-AC-28: an activation guard dividing two `Rational` operands whose
+/// quotient is not an integer gives the same value, outcome and charge log
+/// through the reader view as through the checked package. The operands come
+/// from `convert`, so no `Rational` literal is read.
 #[test]
 #[trace("TC-1070", "FR-390-AC-28")]
 fn reader_backed_activation_guard_keeps_rational_division_fractional() {
@@ -5258,15 +5259,13 @@ fn reader_backed_activation_guard_keeps_rational_division_fractional() {
         .replace(
             "model M = \"test/orders\";",
             "model M = \"test/orders\";\n\
-             function half using v(x: Rational[0, 20; 1, 2], d: Rational[2, 2; 1, 1]): Rational[-100, 100; 1, 4] pure { x / d }",
+             function restores using v(x: Rational[0, 9; 1, 1], d: Rational[1, 10; 1, 1]): Boolean pure { (x / d) * d = x }",
         )
         .replace(
             "when (opened.ready) {",
-            "when (opened.ready and half(rational(1, 1), rational(2, 1)) = rational(1, 2)) {",
+            "when (opened.ready and restores(convert<Rational[0, 9; 1, 1]>(opened.count), convert<Rational[1, 10; 1, 1]>(opened.count + 1))) {",
         );
     let (package, _) = fixture_from_source(&source);
-    let read = read_checked_package(&package);
-    let reader_view = read.evaluation_view().expect("the read retains its view");
     let tick = record(
         &package,
         "Tick",
@@ -5275,12 +5274,10 @@ fn reader_backed_activation_guard_keeps_rational_division_fractional() {
     let selected = slot(&package, "Refunds", "Refunds", "activation.guard", None);
     let supplies = supply(&package, "Refunds", vec![("opened", tick)], None);
 
+    // Source route: (2 / 3) * 3 = 2 holds only if the quotient stays 2/3.
     let mut checked_meter = Meter::new(UNLIMITED);
     let checked = package.evaluate_protocol_slot(&selected, &supplies, &mut checked_meter);
-    let mut reader_meter = Meter::new(UNLIMITED);
-    let reader = reader_view.evaluate_protocol_slot(&selected, &supplies, &mut reader_meter);
-    let (checked_text, reader_text) = (without_location(&checked), without_location(&reader));
-
+    let checked_text = without_location(&checked);
     let source_is_true = matches!(
         &checked,
         Ok(ProtocolSlotEvaluation::Evaluated(
@@ -5295,8 +5292,20 @@ fn reader_backed_activation_guard_keeps_rational_division_fractional() {
     );
     assert!(
         source_is_true,
-        "source route must complete true for 1/2 = rational(1, 2); source: {checked_text}; package: {reader_text}"
+        "source route must complete true for (2/3)*3 = 2; source: {checked_text}"
     );
+
+    // Package route.
+    let read = read_checked_package(&package);
+    let reader_view = match read.evaluation_view() {
+        Ok(view) => view,
+        Err(refusal) => {
+            panic!("package view not constructed; source: {checked_text}; refusal: {refusal:?}")
+        }
+    };
+    let mut reader_meter = Meter::new(UNLIMITED);
+    let reader = reader_view.evaluate_protocol_slot(&selected, &supplies, &mut reader_meter);
+    let reader_text = without_location(&reader);
     assert_eq!(
         reader_text, checked_text,
         "package route must match the source route for Rational division; source: {checked_text}; package: {reader_text}"
