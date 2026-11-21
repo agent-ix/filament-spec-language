@@ -685,6 +685,11 @@ fn product_stop(
                 }
                 None => ProductClosureRefusal::Recompute("expansion"),
             },
+            Halt::ConstraintUndefined(_) => {
+                // Core products apply no selected state constraint. A halt
+                // here refuses reconstruction; it can never accept a proof.
+                ProductClosureRefusal::Recompute("constraint-undefined")
+            }
             Halt::AutomatonKey(_) | Halt::Atom(_) | Halt::Encoding(_) | Halt::Fault(_) => {
                 ProductClosureRefusal::Recompute("product-halt")
             }

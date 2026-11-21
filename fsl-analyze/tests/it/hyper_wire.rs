@@ -382,7 +382,7 @@ fn analyze_event_position_single_existential_is_proved_or_trapped() {
 
 /// A finite-domain clause uses the admitted trace-population route, rather
 /// than the model-product adapter or its former finite-domain refusal.
-#[trace("TC-2535", "FR-898-AC-3")]
+#[trace("TC-2535")]
 #[test]
 fn analyze_hyper_over_an_explicit_finite_trace_set_uses_its_population() {
     use crate::analyze_cli_support::{counter_request_with, request_members};

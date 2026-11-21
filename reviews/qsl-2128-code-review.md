@@ -109,3 +109,23 @@ The two new hyper_settle tests name `HyperOutcome::HoldsUnchecked`, which does n
 | FND-004 | fixed | No relation proof is labelled `certified` any more: `ModelRelationOutcome::Holds` maps to the new `HyperOutcome::HoldsUnchecked`, which settles `Row::proof(Exhaustive, Uncertified, ClosedScope)` with `certificates` empty. The analyze test asserts `uncertified` and fails on the pre-fix code. Whether `proved`+`Uncertified` is allowed for EN-1 HP-1 at all is recorded as FND-007 |
 | FND-005 | fixed | `ModelRelationOutcome::Undecided` (an expansion stop or an undetermined body) now maps to `HyperOutcome::Undecided{UndecidedSuccessor}`, which settles `inconclusive` (FR-182 V-6). The `relation_item` arm itself has no analyze-level test, only the settle-level `an_undecided_relation_run_settles_inconclusive_not_failed`. The arm is a one-line constructor, so that gap is low risk |
 | FND-006 | fixed | `settle_closed` now maps an `Executions{limit}` stop to `incomplete` naming `MaxStates` with its value, `Cancelled` to `Cancelled{source}`, and an expansion stop to `inconclusive` `UndecidedSuccessor`. `settle_existential` sends only `ClosedWitnessed`/`Trapped` to `settle_closed`, so `NoInitialState` and `NoDecision` now take the shared arms: `inconclusive` `NoInitialState`, and `stopped_run` with `decide_closed`'s reached limit. The `HP-5-closed-outcome` refusal is now unreachable. `a_stopped_event_position_search_names_the_limit_it_reached` fails on the pre-fix code. The cancelled, expansion-stop and no-initial-state paths have no test (low residual) |
+
+## Dispositions (round 3)
+
+Recovery reviewer at `6b084105a37feb1d970a5c84c5d323d58527a009`, after rebase onto `cd7d1a7b6f`. The original reviewer session is unavailable. This pass retains the original findings and prior dispositions and examines the bounded fix delta from `925fadc330`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-007 | fixed | `HyperOutcome::HoldsUnchecked` now settles `Row::incomplete(IncompleteCause::CertificateUnchecked, None)`, never `Proved`. The API test asserts the exact incomplete value, category, no certificates and no counterexample. The analyze test asserts exit 22 and `bounded-search-incomplete` / `certificate-unchecked`, with no certification/certificate/counterexample. Arch authorized this existing cause and category; FSpec PR #788 and FSL spec PR #3298 supply the corresponding wording and FR-182 row before code merge. Accepted-certificate HP-1 remains explicitly open on QSL-2128, as does package FR-940-AC-18 pending the third pin window. |
+
+### Round 3 scope and validation
+
+- FR-182 HP-1 settlement and the existing FND-007: checked. FR-163/FR-127/ADR-018 accepted-core-certificate requirement remains in force; no new unchecked proof is introduced.
+- FR-174 "Outcomes": checked against the symmetry settlement guard. The requirement expressly allows `Proved{basis: Reduced, certification: Uncertified}` for key symmetry. The engine still admits and executes the key reduction, emits no incompatible copy-only certificates for it, and settlement takes that row before raw-binding certificate reconstruction. Copy-swap-only results still require the core checker; the constraint-with-no-cut test asserts `Certified` and a nonempty certificate list.
+- `Product::build` reconstructs the unreduced/copy-swap product with empty key generators and no constraint, consistent with the existing certificate domain. Key-symmetry results do not take this path.
+- Rust API, implementation, testing and wire rules were read. No CI workflow, schema or pin changes occur in the bounded fix. Static `git diff --check origin/main...HEAD` passes. No Cargo, Python, mutation build or gate was run in this reviewer session, per the lead's explicit host policy.
+- The remote 55-test validation is pending. This pass does not claim passing test counts. Code merge also waits for the two specification amendments. See the gap artifact's new FND-005 before treating the PR as mergeable.
+
+### Current verdict (round 3)
+
+The code defect FND-007 is fixed by static inspection. No new code finding was found in this bounded disposition. **Not mergeable yet:** the gap artifact's new trace finding, remote focused validation and the specification landings remain pending.

@@ -76,3 +76,19 @@ Checked at b11222a44b; see the code-review SR for the test runs.
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-004 | fixed | The `#[trace("TC-1591", "FR-631-AC-6")]` tag is removed from `analyze_hyper_over_an_explicit_finite_trace_set_is_a_typed_unsupported_result`. Its doc comment now says it pins today's S3 refusal (FR-898, `HyperCause::FiniteDomain`) and must flip when QSL-2239 lands |
+
+## New findings (disposition pass 3)
+
+Checked at `6b084105a37feb1d970a5c84c5d323d58527a009`. Plan completion: not assessed. This is a bounded disposition of the existing manual acceptance-criteria check, not a fresh repository-wide matrix audit. No new matrix computation or semantic-audit claim is made.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | The replacement finite-population smoke test claims `FR-898-AC-3` without asserting that criterion: AC-3 requires three traces, equality conditioned on equal `in` values, a differing third trace at joint position 1 and a counterexample naming both traces and position 1. The test uses one trace for the proof and two one-position traces for refutation, direct `res` equality, and asserts only the verdict and replay. Retain `TC-2535` alone or implement the full AC-3 fixture and counterexample assertions. | fsl-analyze/tests/it/hyper_wire.rs:383-447 |
+
+## Dispositions (round 3)
+
+No previously unresolved gap finding required a new disposition row: FND-001 is already deferred and FND-002 through FND-004 are fixed in the preserved prior rounds. The current arch ruling explicitly keeps package FR-940-AC-18 open on QSL-2128 until the third pin window; the criterion remains unchanged. The replacement finite-domain test now exercises the delivered population path instead of pinning the obsolete blanket S3 refusal. Its extra AC trace claim is recorded above.
+
+### Current verdict (round 3)
+
+**Not mergeable:** new low FND-005 must be resolved and remote focused validation is pending. No code or test changes were made by this reviewer. The declared no-Cargo/no-Python/no-gate policy was followed.
