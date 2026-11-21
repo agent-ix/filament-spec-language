@@ -3398,6 +3398,10 @@ fn admit_invocation_documents(
         result.as_ref(),
     )?;
 
+    let value_origins = AdmittedValueOrigins {
+        parameters: parameter_references.parameter_origins,
+        result: result_references.result_origins,
+    };
     Ok(InvocationAdmission {
         documents,
         pre: pre_admitted,
@@ -3409,10 +3413,7 @@ fn admit_invocation_documents(
         receiver_post,
         operation,
         parameters,
-        value_origins: AdmittedValueOrigins {
-            parameters: parameter_references.parameter_origins,
-            result: result_references.result_origins,
-        },
+        value_origins,
         result,
     })
 }
