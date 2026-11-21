@@ -3,7 +3,7 @@ id: SR-967175026302197768900474181941935084685
 title: "Timestamped provisional ledger regression code-review"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; monitor-ledger-regression; ClauseState provisional evaluation and named monitor_incremental tests"
+scope: "agent-ix/filament-spec-language; monitor-ledger-regression; ClauseState provisional evaluation, settled session ledger continuation/checkpoint, and named monitor_incremental tests"
 review_set: subset
 ---
 
@@ -94,6 +94,8 @@ findings:
 | --- | --- | --- |
 | FND-001 | fixed | Round1 at3f6c967f96100391b72da02c1eee74359cf1ac6e: At3f6c967f96 only a present preview input ledger replaces report.ledger; when no ledger was held, the fresh output computed by the unchanged batch run survives. The existing twelve-field QSL2750 oracle remains unchanged. |
 | FND-002 | fixed | Round1 at3f6c967f96100391b72da02c1eee74359cf1ac6e: Actual assert_progress calls evaluate with asserting_progress=true, retaining self.ledger for real watermark/fingerprint/completeness admission even when newest exceeds the assertion. advance and from_bytes explicitly pass false. Outer mark/restore still restores all state on refusal/cancellation. |
+| FND-003 | still-open | Checkpoint correction rejects direct malformed cases but still rejects a valid partial-watermark/out-of-order continuation because native ledger coverage includes an old uncovered canonical identity; add G5, observe7, G5, observe6, G7 and preserve its valid checkpoint. |
+| FND-003 | fixed | Final confined correction at7d808d2c7bc6674b2c86a79e59ec9be05ad9366b: Required/forbidden tracker placement, real ledger/deciding-state prefix validation and logical sample-index counting now reject fabricated metadata while accepting the legitimate partial-watermark reordered tail; historical ledger rows remain intact. |
 
 ## Fix round 1 verdict
 
@@ -123,4 +125,56 @@ dispositions:
     self.ledger for real watermark/fingerprint/completeness admission even when newest
     exceeds the assertion. advance and from_bytes explicitly pass false. Outer mark/restore
     still restores all state on refusal/cancellation.
+```
+
+## Architecture-directed ledger continuation
+
+The parent reports the corrected3f6 exact four-test run as1PASS/3FAIL and obtained an architecture ruling: preserve FR643's first decisive settlement and frozen full B(s), including its report ledger, while advancing the separate session ledger on real assertions after settlement. The frozen-record oracle is aligned to FR643 Batch equality lines195–212 and Finality/Settling lines301–329. No report field is removed from the twelve-field comparison, and delaying a genuinely decisive verdict is not the correction.
+
+The bounded new-seam delta147a118395d7..3aea770bd07616aeb0e46a21e85eaaaf6fc7ad3c adds ClauseProgress, holding Seen position identities/stamps/order keys/absent atom IDs independently of the dropped evaluator state. It uses the existing canonical_order, sample fingerprint/index and admit_progress, not a second atom/clause evaluator. A real assertion validates and updates the shared session ledger; a frozen record and its evaluation usage stay unchanged. The transaction clones the tracker with the prior slot, checks cancellation before committing a new ledger, and restores it on failure. Position count is bounded by native covered-position capacity. Covered metadata is dropped after admission, with first retaining its global index offset. This path introduces no source arena, new source lookup, semantic value evaluation or charge to a settled clause.
+
+The changed existing regression compares the decisive full report to B(s) under G2 and independently compares the session ledger to the later batch under G7. It checkpoints after settlement before real G5 and then feeds the future stamp7. The original QSL2750 twelve-field oracle remains. The provisional preview now preserves a present held report ledger only with no asserted progress; actual assertion contexts keep the computed batch report ledger. The first-pass explicit-call-origin guard and fresh-None output correction remain in place. These normal paths were inspected without a new full review.
+
+Runtime and compilation at3aea remain pending from the parent at this writing. The new checkpoint seam below blocks static clearance. No Cargo, runtime, matrix, measurement or Linear operation was performed by the reviewer.
+
+## New findings (architecture-directed fix2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | high | A malformed settled-clause checkpoint can disable or falsify future ledger tracking while resume accepts it. Null/omitted progress_state becomes None even for a settled Timestamped/Progressed slot; alternatively first=seen, positions=[], fixed=0 passes the tracker count check and discards an uncovered observation. Future real progress silently omits its fingerprint. A forged fixed=len can also bypass tail sorting. Require tracker presence/placement and retained-prefix consistency with the actual session ledger/deciding state, not only internal wire counts. | fsl-analyze/src/monitor_session.rs:1447; fsl-replay/src/spine/clause/clause_state/progress.rs:174; FR-643-AC-4 |
+
+### FND-003 reproduction and correction
+
+Use the new valid post-settlement checkpoint with ledger W2, total seen3 and an uncovered stamp5. Replacing only progress_state with null (or omitting it) resumes successfully: slot.state is None and slot.progress is None, so every later assertion skips that clause's progress admission. Separately retain the string field but set tracker first=3, positions=[], fixed=0; first+len==seen still holds, but real G5 updates the session watermark without the stamp5 content entry. The local Wire shape is closed, but those state-consistency failures are not rejected. Required settled progress metadata must be present or reconstructed from validated existing data; pending/nonprogress placements must also be rejected. Validate any dropped-prefix/canonical cursor against actual held progress, and add negative checkpoint controls to the same regression. This is an invariant failure in the newly introduced persistence seam, not an extra whole-repository audit.
+
+Current bounded verdict: FAIL until FND-003 is dispositioned, with exact-head runtime still conditional. Original FND-001/FND-002 remain statically fixed and their text/dispositions stay unchanged.
+
+## Confined checkpoint correction disposition
+
+Inspected c0bb7692188506438ce57694eef6e2655909236d, with the parent-reported runtime target0f4d8940e6997b64c2df9635b55bf68f6da25f09 differing only by an Option<MonitorState> test annotation fixing E0282. No additional full review was started. Required/forbidden tracker placement now rejects null/omitted tracker on a settled progress slot and rejects a tracker on a pending/nonprogress slot. The five direct mutation controls address the previously described malformed shapes. Deciding metadata and covered prefix are cross-checked with the real session ledger and opening history; the canonical prefix is retained instead of incorrectly re-sorting indexed10 lexically before2.
+
+The combined checkpoint finding remains still-open for a valid-state false rejection in the new prefix-count check. Native ProgressLedger::admit_continued extends its covered set with ALL supplied positions (ledger.rs310), even positions stamped after the asserted watermark. Concrete legal continuation: after settlement and real G5, tracker first=3; observe stamp7 and explicitly assert G5 again; tracker retains the uncovered position7, but ledger gains canonical index3@7. Observe stamp6 (legal because6>held watermark5), then assert G7. The pending tail sorts into index3@6 and4@7, while the native ledger still retains old3@7 as well. Tracker first and session seen are5, but count(ledger.covered with stamp<=7) is6. The checkpoint this valid session writes is therefore rejected by validate_checkpoint's new first/count equality. The accumulated ledger also retains the stale canonical identity relative to a fresh batch over the current prefix.
+
+The correction must preserve legitimate partial-watermark/out-of-order-tail continuation while rejecting fabricated dropped prefixes; add that concrete control to the same regression. Null/placement tests alone do not establish this. This is the original first/fixed/canonical consistency boundary, not a third full review or a new baseline audit. Original first-pass findings remain fixed. Corrected-head runtime/compile results are pending; no result is inferred from the unconfirmed c0 runtime request or the failed test annotation compile. Reviewer ran no Cargo/runtime/Linear/matrix/measurement and made no source edit.
+
+Current bounded verdict: FAIL / runtime conditional until the still-open checkpoint/canonical case is resolved.
+
+## Final confined logical-count disposition
+
+Inspected only the original checkpoint/canonical-count boundary at7d808d2c7bc6674b2c86a79e59ec9be05ad9366b, delta0f4d8940e6..7d808d2c7b. The c0 checkpoint consistency and placement checks remain, with the 0f4 change only annotating Option<MonitorState> in the test. The new correction counts logical covered positions by native identity: a record-sample row carrying its native fingerprint uses (identity,None), while a snapshot row keeps (identity,Some(stamp)). It does not parse arbitrary identity text, drop historical rows, change native admission, or replace identity/fingerprint/deciding-seed/capacity proofs. The original forged first=seen with an empty tracker still fails under W2's genuinely covered prefix, and forged fixed/placement controls remain.
+
+Normative correction to my earlier analysis, preserved above: FR502 explicitly retains omitted covered facts and requires equal ledgers for the SAME REQUEST SEQUENCE. Therefore historical index3@7 from the prior partial G5 is legitimate retained history; six rows for this sequence are not themselves a native-ledger defect. The earlier fresh final-prefix/None-ledger comparison was an incorrect SESSION-ledger oracle. This correction leaves that original review text unchanged but withdraws that inference. The actual defect was treating the number of historical rows as the number of logical positions for checkpoint validation. FR643's frozen full B(s) report remains independent and still compares all twelve nonusage fields against its deciding batch prefix.
+
+The existing regression now executes observations/assertions0/G0,2/G2,5/G5,7/G5,6/G7. It obtains the actual earlier partial G5 ledger through a typed checkpoint/resume/finish, supplies that ledger to the later batch request, and requires exact session/batch ledger equality for that history. It separately asserts all six historical rows remain across five observations, and successfully resumes the final valid checkpoint. The five negative checkpoint mutation controls, earlier post-settlement restore, strict watermark/completeness checks and frozen full-report oracle remain. This is meaningful positive and negative evidence for the same persistence finding, not a third full review.
+
+Current bounded static verdict: CLEAR; every code/gap finding's latest disposition is fixed. Parent/author reported focused compile PASS at0f4; compilation and exact-head runtime/gate checks at7d808d2c7b remain pending from the parent. Runtime acceptance remains CONDITIONAL until those results. No new runtime test, Cargo command, matrix, measurement, Linear operation, source edit or broad audit ran in this reviewer lane.
+
+```yaml
+dispositions:
+- fnd: FND-003
+  outcome: fixed
+  after_excerpt: "                .map(|position| {\n                    let stamp\
+    \ = position.fingerprint.is_none().then_some(position.stamp);\n              \
+    \      (position.identity, stamp)\n                })\n                .collect::<BTreeSet<_>>()\n\
+    \                .len()"
 ```
