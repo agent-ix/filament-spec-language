@@ -998,7 +998,6 @@ pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::pa
 /// under the two rows' configurations; it is never `not-yet-implemented`.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
-#[ignore = "QSL-2128: hyperproperty items are not reachable through fsl analyze: document.rs declarations() holds no hyper clause, so the name Saves settles invalid_capability/unknown-claim, and no AnalyzeItem adapter, hyper settlement record or counterexample wire writer exists"]
 fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
     let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
                        forall trace a of V forall trace b of N \

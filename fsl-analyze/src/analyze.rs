@@ -39,6 +39,7 @@ pub mod document;
 mod exact;
 mod hybrid_item;
 mod hybrid_process;
+mod hyper_route;
 mod invariant_item;
 mod items;
 mod protocol_item;
@@ -846,6 +847,8 @@ impl PartialEq for ItemCounterexample {
 /// the in-process engines produce.
 #[derive(Debug)]
 pub enum Counterexample {
+    /// A hyperproperty's reproduced tuple of model behaviours.
+    Hyper(Box<fsl_replay::HyperCounterexample>),
     /// EN-1 and EN-6's temporal counterexample over a model subject, with
     /// the object its `over` parameter is bound to when the run named one.
     Temporal {
@@ -1491,6 +1494,8 @@ pub struct Disposed {
 /// What an engine reports for one item. Only the crate's item adapters
 /// construct one, from the engine's own layer-6 settlement.
 pub(crate) enum EngineReport {
+    /// EN-1's replay-gated hyperproperty settlement.
+    Hyper(Box<fsl_replay::HyperRecord>),
     /// EN-1's record, settled by `settle_model_check`.
     Model(Box<ModelCheckRecord>),
     /// EN-1's record over an authored clause, with the object the clause's
@@ -1838,6 +1843,8 @@ fn unsupported_kind(kind: Capability) -> Diagnostic {
 /// One item's settlement.
 #[derive(Debug)]
 pub struct AnalyzeRecord {
+    /// EN-1's hyperproperty record, retaining a reproduced trace tuple.
+    pub hyper_check: Option<Box<fsl_replay::HyperRecord>>,
     /// The item's request index.
     pub request_index: RequestIndex,
     /// The item's claim, when the request named one.
@@ -1924,6 +1931,7 @@ impl AnalyzeRecord {
     fn of(request_index: RequestIndex, settlement: Settlement) -> Self {
         Self {
             request_index,
+            hyper_check: None,
             claim: None,
             settlement,
             non_zeno: None,
@@ -1960,6 +1968,13 @@ impl AnalyzeRecord {
         package: Option<&CheckedPackage>,
     ) -> Option<Result<serde_json::Value, CounterexampleWireError>> {
         let claim = self.claim.as_ref();
+        if let Some(found) = self
+            .hyper_check
+            .as_ref()
+            .and_then(|record| record.counterexample.as_ref())
+        {
+            return Some(fsl_replay::hyper_counterexample_wire(found, claim));
+        }
         if let Some(found) = self
             .model_check
             .as_ref()
@@ -2034,6 +2049,13 @@ impl AnalyzeRecord {
     /// Move out the counterexample the engine that settled this record
     /// holds.
     fn take_counterexample(&mut self) -> Option<Counterexample> {
+        if let Some(found) = self
+            .hyper_check
+            .as_mut()
+            .and_then(|record| record.counterexample.take())
+        {
+            return Some(Counterexample::Hyper(Box::new(found)));
+        }
         if let Some(found) = self
             .model_check
             .as_mut()
@@ -2191,6 +2213,7 @@ impl Counterexample {
             }
             Self::Assignments(found) => undefined_cause(None, Some(found)),
             Self::Probabilistic(_)
+            | Self::Hyper(_)
             | Self::Contract(_)
             | Self::StateGraph(_)
             | Self::GlobalConformance(_)
@@ -2616,6 +2639,14 @@ fn settle(
         )
     };
     match report {
+        EngineReport::Hyper(hyper) => {
+            let terminal_record = TerminalRecord::of_hyper(index, backend.clone(), &hyper)
+                .unwrap_or_else(|_| TerminalRecord::failed(index, backend));
+            AnalyzeRecord {
+                hyper_check: Some(hyper),
+                ..AnalyzeRecord::of(index, terminal(terminal_record))
+            }
+        }
         EngineReport::Model(model) => record(
             // A refuted value without its reproduced counterexample is an
             // engine fault, never a verdict.

@@ -1986,6 +1986,27 @@ impl TerminalRecord {
         Self::with_backend(request_index, backend, record.value.clone())
     }
 
+    /// The terminal value of a settled hyperproperty item. A refutation
+    /// requires the counterexample retained by the replay-gated settlement.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RefutedWithoutCounterexample` for an invalid refuted record.
+    pub fn of_hyper(
+        request_index: RequestIndex,
+        backend: BackendId,
+        record: &crate::HyperRecord,
+    ) -> Result<Self, TerminalRecordRefusal> {
+        if matches!(record.value, TerminalValue::Refuted) && record.counterexample.is_none() {
+            return Err(TerminalRecordRefusal::RefutedWithoutCounterexample);
+        }
+        Ok(Self::with_backend(
+            request_index,
+            backend,
+            record.value.clone(),
+        ))
+    }
+
     /// The record of `value`, a model-check settlement map's (FR-127's,
     /// FR-235's or FR-144's), produced by `backend`: a `refuted` value only
     /// with the counterexample `reproduced`, which its replay reproduced.
