@@ -76,7 +76,7 @@ pub struct BarePackage<'p> {
     equality: crate::reader_protocol_projection::EqualityDecisions,
     /// The source-owned units' definitions the supply's equality rows select
     /// (FR-533), empty when the rows select none.
-    pub(crate) units: crate::bare_units::UnitDefinitions,
+    pub(crate) units: filament_semantic_value::quantity::UnitTable,
     /// The identity an observation this package admits carries (FR-533
     /// "Observation admission"); one per value, never copied.
     owner: std::sync::Arc<()>,
@@ -113,7 +113,7 @@ impl<'p> BarePackage<'p> {
             joined: None,
             projections: BTreeMap::new(),
             equality: BTreeMap::new(),
-            units: crate::bare_units::UnitDefinitions::default(),
+            units: filament_semantic_value::quantity::UnitTable::default(),
             owner: std::sync::Arc::new(()),
             objects: Ok(Vec::new()),
             enum_members: filament_semantic_value::enumeration::EnumMemberIndex::default(),
@@ -235,11 +235,11 @@ impl<'p> BarePackage<'p> {
     ) -> Result<
         (
             Result<SelectedExactIdentities, IdentityWitnessRefusal>,
-            crate::bare_units::UnitDefinitions,
+            filament_semantic_value::quantity::UnitTable,
         ),
         crate::NativeJoinFailure,
     > {
-        let none = crate::bare_units::UnitDefinitions::default();
+        let none = filament_semantic_value::quantity::UnitTable::default();
         // Another package's rows are the equality stage's refusal to report.
         let Some(equality) = equality.filter(|equality| {
             equality.package_name() == self.package.name() && !equality.source_units().is_empty()
@@ -330,12 +330,6 @@ impl<'p> BarePackage<'p> {
             }
         }
         if self.identities().is_some() {
-            // The join above authenticated every shape against this package's
-            // selected model documents. Enum members remain available even
-            // when another selected declaration has no runtime projection.
-            self.enum_members =
-                model_enum::runtime_members(&supply.identities.model_enum_shapes, budget)
-                    .map_err(|failure| failure.with_budget(budget))?;
             self.equality = crate::reader_protocol_projection::admit_equality_decisions(
                 self.package,
                 crate::reader_protocol_projection::ProjectionSource::Bytes {
@@ -345,6 +339,14 @@ impl<'p> BarePackage<'p> {
             )
             .map_err(|failure| failure.with_budget(budget))?;
             self.read_selected_objects(budget)?;
+            if self.objects.is_err() {
+                // The same complete native join authenticated these original
+                // shapes. An unrelated unsupported object projection must not
+                // erase the package's admitted enum members.
+                self.enum_members =
+                    model_enum::runtime_members(&supply.identities.model_enum_shapes, budget)
+                        .map_err(|failure| failure.with_budget(budget))?;
+            }
             self.read_population_catalog(budget)?;
         }
         Ok(self)
@@ -371,6 +373,8 @@ impl<'p> BarePackage<'p> {
             .project_selected_type_declarations(identities, &[], source_units, budget)
         {
             Ok(declarations) => {
+                self.enum_members = model_enum::runtime_members(declarations.enums(), budget)
+                    .map_err(|failure| failure.with_budget(budget))?;
                 self.objects = Ok(declarations
                     .objects()
                     .iter()

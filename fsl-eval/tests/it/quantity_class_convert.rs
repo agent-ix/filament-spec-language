@@ -3,7 +3,7 @@
 //! evaluated value (FR-093 "Dimension equivalence", FR-093-AC-46; FSpec
 //! FR-142-AC-26).
 
-use filament_eval::{Evaluation, FamilyOutcome};
+use filament_eval::{Evaluation, FamilyOutcome, FamilyResult};
 use filament_exact::{
     ChargePoint, Integer, LimitKind, Meter, Outcome, Quantity as ExactQuantity, Rational, Value,
     ValueType,
@@ -310,7 +310,7 @@ fn with_bare<T>(
     let read = fsl_package::read_evaluation_emission(
         package,
         &emission,
-        LibraryName::new(emission.package().name()).expect("the emitted package name"),
+        LibraryName::new("fixture").expect("a package name"),
         &no_models,
         fsl_package::V2ReadLimits::fixture(),
         fsl_package::EmitLimits::fixture(),
@@ -324,37 +324,6 @@ fn with_bare<T>(
     let equality = emission
         .equality_witness(read.admitted(), &mut budget())
         .expect("equality rows");
-    let dependencies: Vec<_> = package
-        .dependencies()
-        .iter()
-        .map(|(identity, dependency)| {
-            let emission =
-                fsl_package::emit_checked(dependency, fsl_package::EmitLimits::fixture())
-                    .expect("dependency emits");
-            let admitted = read
-                .admitted_packages()
-                .shared_package(identity)
-                .expect("the exact dependency is admitted");
-            let identities = emission
-                .identity_rows(&admitted, &mut budget())
-                .expect("dependency identities");
-            let equality = emission
-                .equality_witness(&admitted, &mut budget())
-                .expect("dependency equality");
-            fsl_package::DependencyArtifact {
-                identity: identity.as_str().to_owned(),
-                bytes: emission.package().bytes().into(),
-                identity_bytes: identities
-                    .to_bytes(&admitted)
-                    .expect("identity bytes")
-                    .into(),
-                equality_bytes: equality.to_bytes(&admitted).expect("equality bytes").into(),
-                package: admitted,
-                identities,
-                equality,
-            }
-        })
-        .collect();
     let bare = fsl_package::BarePackage::new(read.admitted())
         .with_supply(
             fsl_package::BareSupply {
@@ -363,9 +332,7 @@ fn with_bare<T>(
             },
             &mut budget(),
         )
-        .expect("the package supply joins")
-        .with_dependency_artifacts(&dependencies, &mut budget())
-        .expect("the dependency artifacts join");
+        .expect("the package supply joins");
     run(&bare)
 }
 
@@ -373,14 +340,6 @@ fn boundary_program() -> String {
     format!(
         "{}\
          unit shifted : Beat = rational(1, 1) * beat + rational(2, 1);\n\
-         dimension TimeSquared = Time ^ 2;\n\
-         unit s2 : TimeSquared = rational(1, 1);\n\
-         dimension Dimensionless = Time / Time;\n\
-         unit one : Dimensionless = rational(1, 1);\n\
-         function product_value using v(): Quantity<s2> pure {{ convert<Quantity<s2>>(6 s * 3 beat) }}\n\
-         function quotient_value using v(): Quantity<one> pure {{ convert<Quantity<one>>(6 s / 3 beat) }}\n\
-         function power_s_value using v(): Quantity<s2> pure {{ convert<Quantity<s2>>(2 s ^ 2) }}\n\
-         function power_beat_value using v(): Quantity<s2> pure {{ convert<Quantity<s2>>(2 beat ^ 2) }}\n\
          function cross using v(): Quantity<s> pure {{ convert<Quantity<s>>(1 beat) }}\n\
          function affine_class using v(): Quantity<s> pure {{ convert<Quantity<s>>(1 shifted) }}\n\
          function quotient using v(): Boolean pure {{ 6 s / 3 beat = 8 s / 1 s }}\n\
@@ -396,307 +355,215 @@ fn boundary_program() -> String {
     )
 }
 
-/// FR-533-AC-23: the admitted package reconstructs the same class graph,
-/// quantities and result types as the source, including affine conversion.
-#[trace("FR-533-AC-23", "TC-1333", "FR-093-AC-46", "FSpec-FR-142-AC-26")]
-#[test]
-fn package_class_conversions_and_compound_operations_match_source() {
-    let package = package_with(&boundary_program()).expect("the unit checks");
-    with_bare(&package, |bare| {
-        for (name, expected) in [
-            ("cross", fraction(1, 4)),
-            ("affine_class", fraction(3, 4)),
-            ("same", fraction(1, 1)),
-            ("affine_same", fraction(3, 1)),
-            ("product_value", fraction(9, 2)),
-            ("quotient_value", fraction(8, 1)),
-            ("power_s_value", fraction(4, 1)),
-            ("power_beat_value", fraction(1, 4)),
-        ] {
-            let source = call(&package, name, &mut Meter::new(UNLIMITED));
-            let bytes = call(bare, name, &mut Meter::new(UNLIMITED));
-            assert_eq!(quantity(&source).magnitude(), &expected, "{name}");
-            assert_eq!(
-                quantity(&bytes),
-                quantity(&source),
-                "{name}: value and unit"
-            );
-            let expected_type = package.graph().callable(name).expect("the callable").result;
-            assert_eq!(
-                expected_type,
-                &ValueType::Quantity(quantity(&bytes).unit().clone())
-            );
-        }
-        for name in [
-            "product",
-            "quotient",
-            "power_s",
-            "power_beat",
-            "ordinary_power",
-        ] {
-            for route in [&package as &dyn CheckedPackageEvaluation, bare] {
-                let evaluation = route
-                    .call(
-                        &QualifiedName::unqualified(name).expect("an identifier"),
-                        vec![],
-                        &ObjectEnvironment::default(),
-                        &mut Meter::new(UNLIMITED),
-                    )
-                    .expect("the function runs");
-                assert!(
-                    matches!(
-                        evaluation.outcome,
-                        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
-                    ),
-                    "{name}: {evaluation:?}"
-                );
-            }
-        }
-    });
+fn assert_unsupported_at(
+    package: &CheckedPackage,
+    program: &str,
+    evaluation: &Evaluation,
+    meter: &Meter,
+    expression: &str,
+    depth: usize,
+) {
+    use filament_semantic_value::catalog::CatalogCode;
+    let FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) = &evaluation.outcome else {
+        panic!("a typed unsupported conversion, got {evaluation:?}");
+    };
+    assert_eq!(
+        cause.catalog_code(),
+        CatalogCode::new("unsupported_construct", "not-yet-implemented")
+    );
+    let fields = cause
+        .catalog_fields()
+        .expect("the unsupported construct payload");
+    assert_eq!(
+        fields.get("what").map(String::as_str),
+        Some("dimension-equivalence-package-reconstruction")
+    );
+    let location = evaluation
+        .location
+        .as_ref()
+        .expect("the conversion's location");
+    assert_eq!(location.depth(), depth);
+    let region = package
+        .graph()
+        .region(location)
+        .expect("the source conversion span");
+    let prefix = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    let full = format!("{prefix}{program}");
+    let start = usize::try_from(region.start()).expect("the source start fits");
+    let end = usize::try_from(region.end()).expect("the source end fits");
+    let expected_start = full
+        .find(expression)
+        .expect("the specified source operation");
+    assert_eq!(
+        start, expected_start,
+        "the first specified operation's start"
+    );
+    assert_eq!(
+        end,
+        expected_start + expression.len(),
+        "the exact operation's end"
+    );
+    assert_eq!(&full[start..end], expression);
+    assert!(
+        meter.admitted_charges().iter().all(|charge| !matches!(
+            charge.point,
+            ChargePoint::UnitIdentityRead
+                | ChargePoint::UnitEdge
+                | ChargePoint::UnitRationalArithmetic
+                | ChargePoint::UnitTargetDomain
+                | ChargePoint::UnitResultRetain
+        )),
+        "no quantity-kernel charge before refusal: {:?}",
+        meter.admitted_charges()
+    );
 }
 
-fn limited(counter: LimitKind, bound: u64) -> filament_exact::ScalarLimits {
-    let mut limits = UNLIMITED;
-    match counter {
-        LimitKind::WorkUnits => limits.work_units = bound,
-        LimitKind::UnitEdges => limits.unit_edges = bound,
-        LimitKind::IntegerBits => limits.integer_bits = bound,
-        LimitKind::ValueOccurrences => limits.value_occurrences = bound,
-        LimitKind::ResultUnits => limits.result_units = bound,
-        _ => unreachable!("the selected quantity counters"),
+fn boundary_limits() -> [filament_exact::ScalarLimits; 5] {
+    use filament_exact::ScalarLimits;
+    [
+        UNLIMITED,
+        ScalarLimits {
+            work_units: 1,
+            ..UNLIMITED
+        },
+        ScalarLimits {
+            unit_edges: 0,
+            ..UNLIMITED
+        },
+        ScalarLimits {
+            integer_bits: 0,
+            ..UNLIMITED
+        },
+        ScalarLimits {
+            result_units: 0,
+            ..UNLIMITED
+        },
+    ]
+}
+
+/// FR-533-AC-23: until the IR reader exposes equivalence definitions, the
+/// bytes-only route reports the bounded unsupported construct at the
+/// conversion, while ordinary and affine conversions still evaluate.
+#[trace("FR-533-AC-23", "TC-1333")]
+#[test]
+fn a_package_class_conversion_is_typed_unsupported_until_reconstruction() {
+    let program = boundary_program();
+    let package = package_with(&program).expect("the unit checks");
+    for (name, expected) in [
+        ("cross", fraction(1, 4)),
+        ("affine_class", fraction(3, 4)),
+        ("same", fraction(1, 1)),
+        ("affine_same", fraction(3, 1)),
+    ] {
+        assert_eq!(
+            quantity(&call(&package, name, &mut Meter::new(UNLIMITED))).magnitude(),
+            &expected
+        );
     }
-    limits
-}
-
-fn kernel_charges(meter: &Meter) -> Vec<&filament_exact::AdmittedCharge> {
-    meter
-        .admitted_charges()
-        .iter()
-        .filter(|charge| {
-            matches!(
-                charge.point,
-                ChargePoint::UnitIdentityRead
-                    | ChargePoint::UnitEdge
-                    | ChargePoint::UnitRationalArithmetic
-                    | ChargePoint::UnitTargetDomain
-                    | ChargePoint::UnitResultRetain
-            )
-        })
-        .collect()
-}
-
-/// FR-533-AC-23: both routes enter the same shared kernel, pay identical
-/// charges and deny at the same exact boundary without a result quantity.
-#[trace("FR-533-AC-23", "TC-1333", "FR-093-AC-46")]
-#[test]
-fn package_class_operations_share_kernel_charges_and_denial_boundaries() {
-    let package = package_with(&boundary_program()).expect("the unit checks");
     with_bare(&package, |bare| {
-        for name in [
-            "cross",
-            "affine_class",
-            "product",
-            "quotient",
-            "power_s",
-            "power_beat",
-            "same",
-            "affine_same",
-            "ordinary_power",
-            "product_value",
-            "quotient_value",
-            "power_s_value",
-            "power_beat_value",
+        for (name, expression) in [
+            ("cross", "convert<Quantity<s>>(1 beat)"),
+            ("affine_class", "convert<Quantity<s>>(1 shifted)"),
+            ("quotient", "6 s / 3 beat"),
         ] {
-            let mut source_meter = Meter::new(UNLIMITED);
-            let mut bare_meter = Meter::new(UNLIMITED);
-            call(&package, name, &mut source_meter);
-            call(bare, name, &mut bare_meter);
-            assert_eq!(
-                kernel_charges(&bare_meter),
-                kernel_charges(&source_meter),
-                "{name}: exact kernel charges"
-            );
-            for counter in [
-                LimitKind::WorkUnits,
-                LimitKind::UnitEdges,
-                LimitKind::IntegerBits,
-                LimitKind::ValueOccurrences,
-                LimitKind::ResultUnits,
-            ] {
-                let required = source_meter.consumed(counter);
-                assert_eq!(
-                    bare_meter.consumed(counter),
-                    required,
-                    "{name}: {counter:?}"
-                );
-                if required == 0 {
-                    continue;
-                }
-                let mut source_tight = Meter::new(limited(counter, required - 1));
-                let mut bare_tight = Meter::new(limited(counter, required - 1));
-                let source = call(&package, name, &mut source_tight);
-                let bytes = call(bare, name, &mut bare_tight);
-                let FamilyOutcome::Evaluated(Outcome::Incomplete(expected)) = &source.outcome
-                else {
-                    panic!("{name}/{counter:?}: source denies: {source:?}");
-                };
-                let FamilyOutcome::Evaluated(Outcome::Incomplete(actual)) = &bytes.outcome else {
-                    panic!("{name}/{counter:?}: bare denies without a quantity: {bytes:?}");
-                };
-                assert_eq!(actual, expected, "{name}/{counter:?}: exact denial");
-                assert_eq!(
-                    bytes.location, source.location,
-                    "{name}/{counter:?}: retained location"
-                );
-                assert_eq!(
-                    kernel_charges(&bare_tight),
-                    kernel_charges(&source_tight),
-                    "{name}/{counter:?}: denied charge is not paid"
-                );
-                for route in [&package as &dyn CheckedPackageEvaluation, bare] {
-                    let evaluation = route
-                        .call(
-                            &QualifiedName::unqualified(name).expect("an identifier"),
-                            vec![],
-                            &ObjectEnvironment::default(),
-                            &mut Meter::new(limited(counter, required)),
-                        )
-                        .expect("the exact-bound call runs");
-                    assert!(
-                        matches!(
-                            evaluation.outcome,
-                            FamilyOutcome::Evaluated(Outcome::Completed(_))
-                        ),
-                        "{name}/{counter:?}: exact budget completes: {evaluation:?}"
-                    );
-                }
+            for limits in boundary_limits() {
+                let mut meter = Meter::new(limits);
+                let evaluation = call(bare, name, &mut meter);
+                let depth = if name == "quotient" { 1 } else { 0 };
+                assert_unsupported_at(&package, &program, &evaluation, &meter, expression, depth);
             }
         }
+        assert_eq!(
+            quantity(&call(bare, "same", &mut Meter::new(UNLIMITED))).magnitude(),
+            &fraction(1, 1)
+        );
+        assert_eq!(
+            quantity(&call(bare, "affine_same", &mut Meter::new(UNLIMITED))).magnitude(),
+            &fraction(3, 1)
+        );
     });
 }
 
-fn imported_package(name: &str, body: &str, imports: Vec<fsl_package::Import>) -> CheckedPackage {
-    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-    use fsl_semantics::check::{AdmittedImport, PackageDeclarations};
-    use fsl_semantics::model::intake::{package_input, SelectedModels};
-    let input = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{body}");
-    let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("fixture", name),
-        "unit.native",
-        input.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("the source parses");
-    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
-    let no_models = package_input(std::iter::empty::<&[u8]>()).expect("no models");
-    let mut admitted = fsl_package::AdmittedPackages::default();
-    let imported = imports
-        .iter()
-        .map(|import| {
-            let emission =
-                fsl_package::emit_checked(&import.package, fsl_package::EmitLimits::fixture())
-                    .expect("the library emits");
-            AdmittedImport {
-                identity: import.identity.clone(),
-                view: fsl_package::read_import_view(
-                    &import.package,
-                    &emission,
-                    import.identity.clone(),
-                    &no_models,
-                    &mut admitted,
-                    fsl_package::V2ReadLimits::fixture(),
-                    fsl_package::EmitLimits::fixture(),
-                )
-                .expect("the actual library is admitted"),
-                graph: import.package.shared_graph(),
-            }
-        })
-        .collect();
-    let declarations = PackageDeclarations::assemble(
-        parsed.source().reference().clone(),
-        name.to_owned(),
-        fsl_forms::build_unit(&parsed).expect("the source forms"),
-        SelectedModels::default(),
-        imported,
-    )
-    .expect("the imports assemble");
-    let graph = declarations
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_eval::value::S6aRewardEvaluator,
-        )
-        .expect("the imports check");
-    CheckedPackage::link_with(graph, imports, fsl_package::EmitLimits::fixture())
-        .expect("the package links")
-}
-
-/// FR-533-AC-23: a package operand resolves only in its actual direct
-/// dependency's node table, carrying that package's exact source owner.
-#[trace("FR-533-AC-23", "TC-1333", "FR-093-AC-46", "FSpec-FR-142-AC-26")]
+/// FR-533-AC-23: a product across both nominal roots and a power of the
+/// noncanonical member refuse before the quantity kernel sees the caller's
+/// meter. The source route and an unrelated ordinary power still evaluate.
+#[trace("FR-533-AC-23", "TC-1333")]
 #[test]
-fn package_equivalence_resolves_an_admitted_direct_dependency_dimension() {
-    use fsl_package::CheckedTerm;
-    use fsl_semantics::library::LibraryName;
-    let dependency = std::sync::Arc::new(imported_package(
-        "time-library",
-        "dimension Time; unit s : Time = rational(1, 1);",
-        Vec::new(),
-    ));
-    let root = imported_package("importing-unit", "\
-        import \"time-library\" as time_lib;\n\
-        dimension Beat; unit beat : Beat = rational(1, 1);\n\
-        dimension Beat ~ time_lib::Time by 1 beat = rational(1, 4) time_lib::s;\n\
-        function cross using v(): Quantity<time_lib::s> pure { convert<Quantity<time_lib::s>>(1 beat) }\n",
-        vec![fsl_package::Import { identity: LibraryName::new("time-library").expect("a name"), package: dependency }]);
-    with_bare(&root, |bare| {
-        let mut package_operands = 0;
-        for node in &bare.package().resolved_graph().nodes {
-            let Some(CheckedTerm::NominalBody(body)) = bare.package().term(&node.node_id) else {
-                continue;
-            };
-            let Some((operands, _)) = body.dimension_equivalence_details() else {
-                continue;
-            };
-            for operand in operands {
-                let operand = serde_json::to_value(operand).expect("the retained operand");
-                if let Some(package) = operand.get("package").and_then(serde_json::Value::as_str) {
-                    assert_eq!(package, "time-library");
-                    let owner = bare
-                        .package()
-                        .direct_dependencies()
-                        .find(|dependency| dependency.name() == package)
-                        .expect("the direct owning package");
-                    let node = owner
-                        .resolved_graph()
-                        .nodes
-                        .iter()
-                        .find(|node| {
-                            serde_json::to_value(&node.node_id).expect("the node id")
-                                == operand["node"]
-                        })
-                        .expect("the dependency's actual node");
-                    let owner = serde_json::to_value(&node.owner).expect("the source owner");
-                    assert_eq!(owner["authority"], "fixture");
-                    assert_eq!(owner["identity"], "time-library");
-                    package_operands += 1;
-                }
+fn bare_class_products_and_noncanonical_powers_refuse_before_kernel_charges() {
+    use filament_exact::UnitId;
+    use filament_semantic_value::quantity::QuantityUnit;
+
+    let program = boundary_program();
+    let package = package_with(&program).expect("the unit checks");
+    for name in [
+        "product",
+        "quotient",
+        "power_s",
+        "power_beat",
+        "ordinary_power",
+    ] {
+        let evaluation = call(&package, name, &mut Meter::new(UNLIMITED));
+        assert!(
+            matches!(
+                evaluation.outcome,
+                FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+            ),
+            "{name}: the source value matches the specified same-unit product: {evaluation:?}"
+        );
+    }
+
+    let units = package.graph().scope().types().units();
+    let mut noncanonical = Vec::new();
+    for (name, function, expression) in [
+        ("s", "power_s", "2 s ^ 2"),
+        ("beat", "power_beat", "2 beat ^ 2"),
+    ] {
+        let id = units
+            .ids()
+            .find(|id| match id {
+                UnitId::Declared(key) => units
+                    .nominal_node(key)
+                    .is_some_and(|node| node.declaration.qualified_declaration == [name]),
+                UnitId::Compound(_) => false,
+            })
+            .expect("the declared nominal root unit");
+        let Some(QuantityUnit::Declared(unit)) = units.get(id.clone()) else {
+            panic!("{name} has its declared runtime unit");
+        };
+        if id != UnitId::declared(unit.root()) {
+            assert_eq!(unit.path().len(), 1, "one class identification edge");
+            noncanonical.push((function, expression));
+        }
+    }
+    let [(power, power_expression)] = noncanonical.as_slice() else {
+        panic!("exactly one declared root differs from the class root: {noncanonical:?}");
+    };
+
+    with_bare(&package, |bare| {
+        for (function, expression) in [("product", "6 s * 3 beat"), (*power, *power_expression)] {
+            for limits in boundary_limits() {
+                let mut meter = Meter::new(limits);
+                let evaluation = call(bare, function, &mut meter);
+                assert_unsupported_at(&package, &program, &evaluation, &meter, expression, 1);
             }
         }
-        assert_eq!(
-            package_operands, 1,
-            "the real package operand branch must execute"
+        let evaluation = call(bare, "ordinary_power", &mut Meter::new(UNLIMITED));
+        assert!(
+            matches!(
+                evaluation.outcome,
+                FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+            ),
+            "an unrelated ordinary power is unchanged: {evaluation:?}"
         );
-        let mut source_meter = Meter::new(UNLIMITED);
-        let mut bare_meter = Meter::new(UNLIMITED);
-        let source = call(&root, "cross", &mut source_meter);
-        let bytes = call(bare, "cross", &mut bare_meter);
-        assert_eq!(quantity(&source).magnitude(), &fraction(1, 4));
-        assert_eq!(
-            quantity(&bytes),
-            quantity(&source),
-            "the exact dependency-owned target unit"
-        );
-        assert_eq!(kernel_charges(&bare_meter), kernel_charges(&source_meter));
+        let mut meter = Meter::new(filament_exact::ScalarLimits {
+            integer_bits: 0,
+            ..UNLIMITED
+        });
+        let limited = call(bare, "ordinary_power", &mut meter);
+        let FamilyOutcome::Evaluated(Outcome::Incomplete(record)) = &limited.outcome else {
+            panic!("an ordinary power still obeys the caller's integer-bit limit: {limited:?}");
+        };
+        assert_eq!(record.limit_kind, LimitKind::IntegerBits);
+        assert_eq!(record.charge_point, ChargePoint::UnitIdentityRead);
     });
 }

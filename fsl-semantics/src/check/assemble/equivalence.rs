@@ -144,14 +144,8 @@ impl EquivalenceClasses {
                 (first, second, equivalence.root_scale.clone())
             })
             .collect();
-        Self::from_pairs(&pairs)
-    }
-
-    /// The classes of admitted dimension pairs and their ordered root ratios.
-    /// Package readers use the same class construction as source assembly.
-    pub fn from_pairs(pairs: &[(NodeKey, NodeKey, Rational)]) -> Self {
         Self {
-            members: sizes(pairs),
+            members: sizes(&pairs),
         }
     }
 
