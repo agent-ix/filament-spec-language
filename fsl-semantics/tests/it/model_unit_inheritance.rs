@@ -15,14 +15,14 @@ use ix_trace_rs::trace;
 const SHOP: &str = "language \"ix:native\" edition \"1-draft\";
 domain \"example/shop\";
 object Base identity (id) {
-  id: Int;
-  total: Int;
-  items: Int [0, 5];
+  id: Integer;
+  total: Integer;
+  items: Integer [0, 5];
   operation bump(): Boolean modifies self.total;
 }
 object Child extends Base {
-  total: Int redefines Base::total;
-  few: Int [0, 2] subsets items;
+  total: Integer redefines Base::total;
+  few: Integer [0, 2] subsets items;
   operation bump(): Boolean redefines Base::bump modifies self.total;
 }
 population children: Child;
@@ -301,8 +301,8 @@ fn inheritance_resolves_forward_declarations_and_transitive_members() {
 #[test]
 fn a_field_can_subset_a_field_on_its_own_type() {
     let model = SHOP.replace(
-        "  items: Int [0, 5];",
-        "  items: Int [0, 5];\n  some: Int [0, 2] subsets items;",
+        "  items: Integer [0, 5];",
+        "  items: Integer [0, 5];\n  some: Integer [0, 2] subsets items;",
     );
     let packages = compile(&model).expect("the local subset compiles");
     assert_eq!(check_causes(&packages), Vec::<&str>::new());
@@ -312,8 +312,8 @@ const MACHINES_AND_PROCESSES: &str = "language \"ix:native\" edition \"1-draft\"
 domain \"example/shop\";
 machine BaseMachine { active: Boolean; states (Ready); }
 machine ChildMachine extends BaseMachine { states (Done); }
-process BaseProcess { id: Integer; operation go(); }
-process ChildProcess extends BaseProcess { operation stop(); }
+process BaseProcess { id: Integer; operation go(); step start: begin; }
+process ChildProcess extends BaseProcess { operation stop(); step finish: begin; }
 object Child extends Base { }
 object Base { total: Integer; }
 population children: Child;
