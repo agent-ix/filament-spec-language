@@ -51,7 +51,9 @@ pub(super) struct ComponentView<'a> {
 pub(super) enum Refuted {
     /// A closed walk with no fair candidate run, concretised.
     By(TemporalCounterexample),
-    /// Such walks exist and none concretises.
+    /// Such walks exist and every one examined fails to concretise; walks
+    /// under a prefix whose summary a retained one subsumes are not tried,
+    /// so the half is undecided.
     NotConcretised,
     /// Every concrete fair loop has a fair candidate run.
     Not,
@@ -68,7 +70,7 @@ impl Product<'_, '_> {
     /// meets every acceptance set: a walk whose candidate relation has no
     /// fair cycle is refuting when its lasso concretises (FR-241), and the
     /// search goes on past one that does not. The search ends with the first
-    /// that does, or with every walk examined.
+    /// that does, or with every retained walk examined.
     ///
     /// # Errors
     ///

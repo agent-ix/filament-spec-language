@@ -52,3 +52,20 @@ Integration conditions with PR3362 (do not rebase until it merges):
 - Replace the q-keyed candidates_at prefill with PR3362's per-vertex, per-candidate clock-valuation and guard-split enabledness provider. The search reads candidates only through candidates_of.
 - The search's FairScope and naming must stay on first_unfair_constraint.
 - Re-run all seven focused tests on the merged parent.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | low | The docs overclaim completeness. Refuted::NotConcretised says "Such walks exist and none concretises", and refute_hidden_component says it ends "with every walk examined". The antichain drops a walk prefix whose summary a retained prefix subsumes, and concretisability depends on path history the summary does not keep, so an unfair loop under a dominated prefix is never tried. The result is a sound LassoNotConcretized (Undecided), not a proof that no unfair loop concretises | fsl-analyze/src/zone_check/refine/live/fair_loops.rs:54, fsl-analyze/src/zone_check/refine/live/fair_loops.rs:66-71, fsl-analyze/src/zone_check/refine/live/fair_loops.rs:218 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | still-open | Doc-only correction, which the root can check mechanically. In fair_loops.rs, reword line 54 to say that every examined walk fails to concretise and that walks under a subsumed prefix are not tried. Reword lines 66-71 to say the search ends with every retained walk examined. No code change is needed |

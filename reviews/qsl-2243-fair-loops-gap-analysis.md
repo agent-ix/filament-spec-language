@@ -32,3 +32,10 @@ CONDITIONAL. There are only low findings, but the tests are qualified at compile
 - Strength of the budget oracle: see SR-20261121181402001 FND-002.
 - Semantic review: not run as a separate fan-out. The single-reviewer brief forbids subagents, and its intent-to-test-to-code judgement is in SR-20261121181402001.
 - Runtime: none. All seven focused tests still need TEST-RUN qualification, ideally together with a run of the hiding test on base to show it fails there.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
