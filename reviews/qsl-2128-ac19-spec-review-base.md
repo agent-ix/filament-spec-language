@@ -113,3 +113,68 @@ scope:
         projection-aligned clause (an atom slot and a conjunct slot both at level
         0) settle as in step 2.
 ```
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1: TC-3127 procedure step 4 and Expected Results step 4 now require the duplicate-level whole-request reader refusal, with no cause, exact slot-level pointer, empty items, null last_stage, exit 20, no source compiled and no Partner settlement; the three admitted malformed variants remain in step 3. |
+
+## Disposition pass 1
+
+**Latest verdict: PASS.** Frozen fix head: 54b94d4003d19b04b9eccb1b4acdbb99041025ea; base ba280846beb6e8bf79c89b179c8841839c203090. Re-read the full original finding and inspected the fix diff independently. All three committed initial SRs match the original canonical files byte-for-byte. No new findings. FR-940 and AC-16 through AC-18 are unchanged by the fix. TC-3127 now separates the duplicate-level mutation into procedure step 4 with its exact whole-request refusal in Expected Results step 4; its admitted variants, Partner behavior, atom/conjunct positive control, and prior body/quantifier refusals remain intact (the latter are step 5). No reader, dependency, pin, API, algorithm, source code or executable test changed. This remains a spec-only review; no Cargo or aggregate gate applies. No full AC-18 implementation claim is made.
+
+### Scope examined in disposition pass 1
+
+```yaml
+scope:
+  - id: TC-3127/step-3
+    path: spec/test-cases/TC-3127-a-package-hyper-item-settles-as-its-source-item.md
+    role: examined
+    excerpt: >-
+      3. Analyze `Equal`, the projection-aligned clause and `Partner` over
+         test-only packages the strict reader admits: `Equal`'s `slot_sc_sb`
+         renamed `slot_sc_sz`, a read rooted in
+         `slot_sc_sa` and `slot_sc_sb`, and a projection-aligned conjunct slot
+         renamed `opx_sa`; also analyze the unmodified projection-aligned clause.
+  - id: TC-3127/step-4
+    path: spec/test-cases/TC-3127-a-package-hyper-item-settles-as-its-source-item.md
+    role: examined
+    excerpt: |-
+      4. Analyze a handoff directory whose package has `Equal`'s `slot_sc_sb`
+         written at level 0 in place of level 1, leaving two atom slot nodes at
+         level 0 and none at level 1; include `Partner` in the request.
+  - id: TC-3127/step-5
+    path: spec/test-cases/TC-3127-a-package-hyper-item-settles-as-its-source-item.md
+    role: examined
+    excerpt: |-
+      5. Analyze handoff directories whose package has `Equal`'s `body` binding
+         referencing the atom's `expression` node, or its `quantifiers` Tuple
+         removed.
+  - id: TC-3127/expected-step-3
+    path: spec/test-cases/TC-3127-a-package-hyper-item-settles-as-its-source-item.md
+    role: examined
+    excerpt: >-
+      - Step 3: the modified clause settles `failed` with `MalformedNode` naming
+        its `hyperproperty` node key and no verdict; `Partner` and the unmodified
+        projection-aligned clause (an atom slot and a conjunct slot both at level
+        0) settle as in step 2.
+  - id: TC-3127/expected-step-4
+    path: spec/test-cases/TC-3127-a-package-hyper-item-settles-as-its-source-item.md
+    role: examined
+    excerpt: |-
+      - Step 4: a whole-request refusal at the request stage, before
+        `hyper_clause_form` or any item runs, with the reader's
+        `invalid_semantic_graph`, no cause, at
+        `/semantic_graph/nodes/{s}/body/members/1`, where `s` is `slot_sc_sb`'s
+        graph index, `items` `[]`, `last_stage` `null`, exit 20, no source
+        compiled and no `Partner` item settled.
+  - id: TC-3127/expected-step-5
+    path: spec/test-cases/TC-3127-a-package-hyper-item-settles-as-its-source-item.md
+    role: examined
+    excerpt: >-
+      - Step 5: whole-request refusals at the request stage with the reader's
+        code, cause and pointer (`ill_typed`/`operator-ineligible` at the
+        `hyperproperty` node for the body case), `items` `[]`, `last_stage` `null`, exit 20, and no
+        source compiled.
+```
