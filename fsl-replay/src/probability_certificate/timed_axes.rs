@@ -201,6 +201,7 @@ mod tests {
                 })
                 .collect(),
             deadline: elapsed.map(|elapsed| DigitalDeadlineKey { limit: 4, elapsed }),
+            elapsed: None,
             tail: DigitalTail::Running,
             monitor: None,
             accumulator: None,
