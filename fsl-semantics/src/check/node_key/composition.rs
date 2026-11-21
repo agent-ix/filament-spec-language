@@ -153,7 +153,7 @@ impl ClauseEntry {
         &self.clause
     }
 
-    fn sort_key(&self) -> (&str, &NodeRef) {
+    pub(crate) fn sort_key(&self) -> (&str, &NodeRef) {
         (&self.component, &self.clause)
     }
 }
@@ -174,7 +174,7 @@ impl PremiseEntry {
         &self.on
     }
 
-    fn sort_key(&self) -> ((&str, &NodeRef), (&str, &NodeRef)) {
+    pub(crate) fn sort_key(&self) -> ((&str, &NodeRef), (&str, &NodeRef)) {
         (self.guarantee.sort_key(), self.on.sort_key())
     }
 }
@@ -210,7 +210,7 @@ impl SupplyEntry {
         &self.operation
     }
 
-    fn sort_key(&self) -> (&NodeRef, &str, &str, &str) {
+    pub(crate) fn sort_key(&self) -> (&NodeRef, &str, &str, &str) {
         (
             &self.context,
             &self.operation,

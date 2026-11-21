@@ -631,6 +631,26 @@ impl CheckedGraph {
         )
     }
 
+    /// Authored composition member regions in canonical body-array order,
+    /// under the declaration's actual source and embedding (FSpec FR-491).
+    /// Returns `None` for an unknown composition or an unmappable member.
+    pub fn composition_member_regions(
+        &self,
+        node: &filament_exact::NodeKey,
+    ) -> Option<Vec<SourceRegion>> {
+        let composition = self
+            .compositions()
+            .iter()
+            .find(|composition| composition.node() == node)?;
+        let owner = super::composition::declaration_origin(composition.name());
+        let source = self.source_owners.get(&owner).unwrap_or(&self.source);
+        composition
+            .canonical_member_spans()
+            .into_iter()
+            .map(|span| region(source, self.embedding.as_deref(), span))
+            .collect()
+    }
+
     /// [`Self::region`] as a function that remembers the span node each
     /// location reaches, so resolving every location of a deep body costs
     /// the body's size, not its size times its depth. The function keeps a

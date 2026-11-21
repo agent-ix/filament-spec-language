@@ -260,6 +260,7 @@ impl SemanticNode {
     /// admitted structural `key` (FSpec FR-491).
     pub(super) fn component_composition(
         key: NodeKey,
+        name: &str,
         term: super::node_key::CompositionTerm,
     ) -> Self {
         Self::declared(
@@ -269,7 +270,7 @@ impl SemanticNode {
                 node_tag: NodeTag::Correspondence,
                 semantic_form: "component_composition",
                 semantic_type: None,
-                declaration: None,
+                declaration: Identifier::new(name).ok().map(|name| vec![name]),
                 owner: None,
                 body: BodyTerm::Composition(term),
             },
