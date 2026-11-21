@@ -162,6 +162,37 @@ impl BarePackage<'_> {
         )
     }
 
+    /// Admit the snapshot and retain the genuine per-model normalization
+    /// owners for population binding and reference identity work. Each owner
+    /// keeps the exact identities and original meter used by this admission.
+    pub fn admit_call_snapshot_with_provenance(
+        &self,
+        packages: &PackageInput,
+        model_limits: ModelNormalizationLimits,
+        snapshots: &BTreeMap<DocumentRef, Vec<u8>>,
+        selected: &DocumentRef,
+        limits: ObservationLimits,
+    ) -> Result<
+        (
+            fsl_semantics::model::object_environment::ObjectEnvironment,
+            fsl_semantics::model::observation::AdmissionUsage,
+            Vec<fsl_semantics::model::intake::NormalizedModel>,
+        ),
+        AdmissionFailure,
+    > {
+        let world = self.call_snapshot_world()?;
+        let model_selections = self.model_selections();
+        fsl_semantics::model::observation::admit_current_snapshot_with_provenance(
+            model_selections.as_slice(),
+            world.types(),
+            packages,
+            model_limits,
+            snapshots,
+            selected,
+            limits,
+        )
+    }
+
     fn call_snapshot_world(&self) -> Result<crate::BareWorld, AdmissionFailure> {
         let unsupported = |reason: &str| {
             AdmissionFailure::Refused(Box::new(refused(
