@@ -25,6 +25,9 @@ use crate::spine::{
 use fsl_eval::temporal::ObservedLocus;
 use fsl_eval::temporal::TemporalOutcome;
 
+mod model_read;
+pub use model_read::{ModelBindingRead, ModelStepRead, ModelTransitionRead, StateRead};
+
 /// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
@@ -1267,7 +1270,7 @@ pub struct EffectiveIdRead {
     original: DeclarationKeyRead,
 }
 
-/// FSpec FR-364's observed-arm counterexample as read.
+/// FSpec FR-364's counterexample as read, with its trace arm checked before use.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(
@@ -1275,13 +1278,15 @@ pub struct EffectiveIdRead {
     reason = "the closed read shape validates every field during deserialization"
 )]
 pub struct CounterexampleRead {
-    trace: ObservedArm,
+    trace: TraceArm,
     kind: CounterexampleKindRead,
-    initial_state: (),
+    #[serde(deserialize_with = "nullable")]
+    initial_state: Option<u64>,
     prefix: Vec<StepRead>,
     #[serde(rename = "loop")]
     loop_steps: Vec<StepRead>,
-    over_binding: (),
+    #[serde(deserialize_with = "nullable")]
+    over_binding: Option<ModelBindingRead>,
     fairness: Vec<FairnessRead>,
     #[serde(deserialize_with = "nullable")]
     interval: Option<IntervalRead>,
@@ -1291,12 +1296,45 @@ pub struct CounterexampleRead {
 impl CounterexampleRead {
     /// The prefix's document identities, in order.
     pub fn prefix(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.prefix.iter().map(StepRead::parts)
+        self.prefix.iter().filter_map(StepRead::parts)
     }
 
     /// The loop's document identities, in order.
     pub fn loop_documents(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.loop_steps.iter().map(StepRead::parts)
+        self.loop_steps.iter().filter_map(StepRead::parts)
+    }
+
+    /// Whether this counterexample describes model transitions.
+    pub fn is_model(&self) -> bool {
+        matches!(self.trace, TraceArm::Model)
+    }
+
+    /// The model arm's initial-state index, absent for observed traces.
+    pub fn model_initial_state(&self) -> Option<u64> {
+        self.initial_state
+    }
+
+    /// The model arm's actual typed reference binding.
+    pub fn model_over_binding(&self) -> Option<&ModelBindingRead> {
+        self.over_binding.as_ref()
+    }
+
+    /// The model arm's prefix steps in their recorded order.
+    pub fn model_prefix(&self) -> impl Iterator<Item = &ModelStepRead> {
+        self.prefix.iter().filter_map(StepRead::model)
+    }
+
+    /// The model arm's loop steps in their recorded order.
+    pub fn model_loop(&self) -> impl Iterator<Item = &ModelStepRead> {
+        self.loop_steps.iter().filter_map(StepRead::model)
+    }
+
+    /// The carried model undefined evaluation's state, when present.
+    pub fn undefined_state(&self) -> Option<&StateRead> {
+        match &self.kind {
+            CounterexampleKindRead::Undefined(envelope) => envelope.point.state(),
+            CounterexampleKindRead::Formula(_) => None,
+        }
     }
 
     /// The failing operator interval's `lower` and `upper` spellings.
@@ -1315,7 +1353,7 @@ impl CounterexampleRead {
     /// `None` for a formula counterexample.
     pub fn undefined_locus(&self) -> Option<&UndefinedLocusRead> {
         match &self.kind {
-            CounterexampleKindRead::Undefined(envelope) => Some(&envelope.point.locus),
+            CounterexampleKindRead::Undefined(envelope) => Some(envelope.point.locus()),
             CounterexampleKindRead::Formula(_) => None,
         }
     }
@@ -1332,8 +1370,9 @@ impl CounterexampleRead {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-enum ObservedArm {
+enum TraceArm {
     Observed,
+    Model,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1366,11 +1405,39 @@ enum EnvelopeTag {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WhereRead {
-    position: u64,
-    document: DocumentRefRead,
-    locus: UndefinedLocusRead,
+#[serde(untagged, deny_unknown_fields)]
+enum WhereRead {
+    Observed {
+        position: u64,
+        document: DocumentRefRead,
+        locus: UndefinedLocusRead,
+    },
+    Model {
+        position: u64,
+        state_key: StateRead,
+        locus: UndefinedLocusRead,
+    },
+}
+
+impl WhereRead {
+    fn locus(&self) -> &UndefinedLocusRead {
+        match self {
+            Self::Observed { locus, .. } | Self::Model { locus, .. } => locus,
+        }
+    }
+
+    fn position(&self) -> u64 {
+        match self {
+            Self::Observed { position, .. } | Self::Model { position, .. } => *position,
+        }
+    }
+
+    fn state(&self) -> Option<&StateRead> {
+        match self {
+            Self::Model { state_key, .. } => Some(state_key),
+            Self::Observed { .. } => None,
+        }
+    }
 }
 
 /// The undefined-evaluation envelope's `locus` as read: exactly one member.
@@ -1395,29 +1462,72 @@ pub enum GuardRead {
 
 /// One counterexample step as read: a snapshot by its labels, or a record
 /// sample by its index (FR-330-AC-18).
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug)]
 enum StepRead {
     Document { document: DocumentRefRead },
     Sample { sample: String },
+    Model(ModelStepRead),
+}
+
+impl<'de> Deserialize<'de> for StepRead {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(decoder)?;
+        if value.get("document").is_some() {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct DocumentStep {
+                document: DocumentRefRead,
+            }
+            let step: DocumentStep =
+                serde_path_to_error::deserialize(value).map_err(serde::de::Error::custom)?;
+            Ok(Self::Document {
+                document: step.document,
+            })
+        } else if value.get("sample").is_some() {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct SampleStep {
+                sample: String,
+            }
+            let step: SampleStep =
+                serde_path_to_error::deserialize(value).map_err(serde::de::Error::custom)?;
+            Ok(Self::Sample {
+                sample: step.sample,
+            })
+        } else {
+            serde_path_to_error::deserialize(value)
+                .map(Self::Model)
+                .map_err(serde::de::Error::custom)
+        }
+    }
 }
 
 impl StepRead {
     /// The step's authority and identity: a sample's is its index.
-    fn parts(&self) -> (&str, &str) {
+    fn parts(&self) -> Option<(&str, &str)> {
         match self {
             Self::Document { document } => {
-                (document.authority.as_str(), document.identity.as_str())
+                Some((document.authority.as_str(), document.identity.as_str()))
             }
-            Self::Sample { sample } => (crate::spine::clause::SAMPLE_AUTHORITY, sample.as_str()),
+            Self::Sample { sample } => {
+                Some((crate::spine::clause::SAMPLE_AUTHORITY, sample.as_str()))
+            }
+            Self::Model(_) => None,
         }
     }
 
-    fn typed(&self) -> fsl_semantics::model::observation::DocumentRef {
-        let (authority, identity) = self.parts();
-        fsl_semantics::model::observation::DocumentRef {
+    fn typed(&self) -> Option<fsl_semantics::model::observation::DocumentRef> {
+        let (authority, identity) = self.parts()?;
+        Some(fsl_semantics::model::observation::DocumentRef {
             authority: authority.to_owned(),
             identity: identity.to_owned(),
+        })
+    }
+
+    fn model(&self) -> Option<&ModelStepRead> {
+        match self {
+            Self::Model(step) => Some(step),
+            Self::Document { .. } | Self::Sample { .. } => None,
         }
     }
 }
@@ -1499,6 +1609,43 @@ fn validate_counterexample(
     reason: Option<&str>,
 ) -> Result<(), NativeRunReadError> {
     const MEMBER: &str = "disposition.temporal.counterexample";
+    let model = counterexample.is_model();
+    if model {
+        if !counterexample
+            .initial_state
+            .is_some_and(|index| index <= MAX_COUNT)
+        {
+            return Err(invalid(
+                "disposition.temporal.counterexample.initial_state",
+                "a model counterexample needs an initial-state Count",
+            ));
+        }
+        if counterexample.over_binding.is_none() {
+            return Err(invalid(
+                "disposition.temporal.counterexample.over_binding",
+                "an authored model clause needs its typed reference binding",
+            ));
+        }
+    } else if counterexample.initial_state.is_some() || counterexample.over_binding.is_some() {
+        return Err(invalid(
+            MEMBER,
+            "an observed counterexample has no model binding or initial state",
+        ));
+    }
+    for (steps, member) in [
+        (
+            &counterexample.prefix,
+            "disposition.temporal.counterexample.prefix",
+        ),
+        (
+            &counterexample.loop_steps,
+            "disposition.temporal.counterexample.loop",
+        ),
+    ] {
+        if steps.iter().any(|step| step.model().is_some() != model) {
+            return Err(invalid(member, "step belongs to the other trace arm"));
+        }
+    }
     if counterexample.trace_position > MAX_COUNT {
         return Err(invalid(
             "disposition.temporal.counterexample.trace_position",
@@ -1511,7 +1658,7 @@ fn validate_counterexample(
             "trace position differs from position",
         ));
     }
-    if counterexample.prefix.is_empty() && counterexample.loop_steps.is_empty() {
+    if !model && counterexample.prefix.is_empty() && counterexample.loop_steps.is_empty() {
         return Err(invalid(
             "disposition.temporal.counterexample.prefix",
             "an observed counterexample holds at least one document",
@@ -1523,7 +1670,7 @@ fn validate_counterexample(
             let EnvelopeTag::UndefinedEvaluation = envelope.envelope;
             let last = u64::try_from(counterexample.prefix.len())
                 .ok()
-                .and_then(|len| len.checked_sub(1));
+                .and_then(|len| if model { Some(len) } else { len.checked_sub(1) });
             if !counterexample.loop_steps.is_empty() || last != Some(position) {
                 return Err(invalid(
                     "disposition.temporal.counterexample.loop",
@@ -1536,12 +1683,20 @@ fn validate_counterexample(
                     "an undefined evaluation carries no interval",
                 ));
             }
-            if envelope.point.position != position
-                || counterexample
+            let point_matches = match &envelope.point {
+                WhereRead::Observed { document, .. } if !model => counterexample
                     .prefix
                     .last()
-                    .is_none_or(|step| step.typed() != envelope.point.document.typed())
-            {
+                    .and_then(StepRead::typed)
+                    .is_some_and(|found| found == document.typed()),
+                WhereRead::Model { state_key, .. } if model => counterexample
+                    .prefix
+                    .last()
+                    .and_then(StepRead::model)
+                    .is_none_or(|step| &step.post_state == state_key),
+                WhereRead::Observed { .. } | WhereRead::Model { .. } => false,
+            };
+            if envelope.point.position() != position || !point_matches {
                 return Err(invalid(
                     "disposition.temporal.counterexample.kind.where",
                     "the evaluation point is not the prefix's last position",
