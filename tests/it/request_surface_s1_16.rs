@@ -87,6 +87,15 @@ fn run_with_model(
     for (name, member) in members {
         request[name] = member;
     }
+    if model.is_none()
+        && request["synthesis"]["initial"].as_str() == Some("spine-snapshot.json")
+    {
+        std::fs::write(
+            directory.path().join("spine-model.semantic-ir.json"),
+            crate::support::plan_model::document(),
+        )
+        .expect("the authored small planning model is written");
+    }
     if request["model_based_test"]["initial"].is_string()
         || request["synthesis"]["initial"].as_str() == Some("spine-snapshot.json")
     {

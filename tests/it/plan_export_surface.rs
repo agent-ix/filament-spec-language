@@ -65,6 +65,11 @@ fn run(unit: &str, with_model: bool, member: (&str, Value)) -> (u8, Value) {
 
 fn write_request(directory: &Path, request: &Value) -> (u8, Value) {
     if request["request"]["synthesis"]["initial"].as_str() == Some("spine-snapshot.json") {
+        std::fs::write(
+            directory.join("spine-model.semantic-ir.json"),
+            crate::support::plan_model::document(),
+        )
+        .expect("the authored small planning model is written");
         let snapshot_path = directory.join("spine-snapshot.json");
         let bytes = std::fs::read(&snapshot_path).expect("the plan's spine snapshot exists");
         let mut snapshot: Value = serde_json::from_slice(&bytes).expect("a JSON snapshot");
