@@ -79,7 +79,10 @@ reject any offered numeric quantile certificate, including an all-zero
 rejection SHALL settle `inconclusive`, `CertificateRejected{rule, at}`,
 without numeric acceptance or an `ExactValue`; a numeric certificate
 SHALL NOT substitute for the required `conditional` `vacuous` certificate.
-The numeric quantile rows below apply only when activation is reachable.
+The numeric quantile rows below apply only when activation is reachable;
+workload ratios with both activating and never-activating initial keys
+SHALL follow [FR-201](FR-201-check-a-probability-certificate.md)'s `Ratio`
+per-key vacuity rule.
 Mean refutation evidence SHALL follow the distinct role below.
 
 | Claim form | Evidence |

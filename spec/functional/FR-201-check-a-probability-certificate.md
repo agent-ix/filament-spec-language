@@ -640,9 +640,16 @@ process, by its own graph code, and read none of them from the certificate.
   path valued 0 and for the reachability of the first activating states.
   The checker SHALL check each by this requirement's conditions and compare,
   at each initial key, the numerator's value over the denominator's with
-  the threshold. At an initial key where the denominator is 0 it SHALL
-  confirm by its own reachability search that no first activating state is
-  reachable, and that instance holds vacuously. A `Ratio` certificate
+  the threshold. At an initial key where the denominator is 0, the checker
+  SHALL confirm by its own reachability search that no first activating
+  state is reachable and treat that instance as vacuous only when at least
+  one other initial key has reachable activation; when no initial key has
+  reachable activation, it SHALL reject the numeric `Ratio` certificate
+  `InequalityFails` at the first initial complete product key in canonical
+  order, settling `inconclusive`, `CertificateRejected{rule, at}`, and the
+  claim SHALL be certified only through an accepted `Vacuous` conditional
+  certificate with value-free `Exhaustive` basis under
+  [FR-203](FR-203-bound-an-exact-run-and-settle-its-verdict.md). A `Ratio` certificate
   offered under every scheduler or under `workload-minimum` or
   `workload-maximum` is rejected `Malformed` at `mode`, since the optimum of
   a ratio is not the ratio of two optima.
