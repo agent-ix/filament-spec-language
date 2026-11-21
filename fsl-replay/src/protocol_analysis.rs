@@ -870,11 +870,13 @@ pub struct ProtocolAnalysisResult<A, C> {
 
 pub mod arena;
 mod artifact;
+mod counterexample;
 mod realizability_replay;
 mod settle;
 mod strategy;
 mod structure;
 pub use artifact::*;
+pub use counterexample::ProtocolAnalysisCounterexample;
 pub use realizability_replay::*;
 pub use settle::*;
 pub use strategy::*;

@@ -7,7 +7,7 @@ use crate::analyze_cli_support::{analyze, label, Workspace};
 
 /// Holder knows the received decision; Observer cannot distinguish receiving
 /// the accepted branch's notice from ending in the empty denied branch.
-#[trace("TC-1411", "FR-571-AC-2", "FR-573-AC-2", "FR-574-AC-1")]
+#[trace("TC-1411", "FR-571-AC-2", "FR-573-AC-2", "FR-574-AC-1", "FR-286-AC-36")]
 #[test]
 fn hidden_choice_source_refutes_with_a_counterexample() {
     let ws = Workspace::new("hidden-choice-source");
@@ -54,4 +54,30 @@ fn hidden_choice_source_refutes_with_a_counterexample() {
         item["counterexample"].is_object(),
         "a refutation carries its counterexample: {document}"
     );
+    let entry = &item["counterexample"];
+    assert_eq!(entry["request_index"], 0);
+    assert_eq!(
+        entry["backend"],
+        fsl_analyze::protocol_analysis::manifest::BACKEND_ID
+    );
+    let body = &entry["counterexample"];
+    assert_eq!(
+        body["type"], "protocol-analysis-counterexample",
+        "{document}"
+    );
+    assert_eq!(body["kind"], "indistinguishable-histories", "{document}");
+    assert_eq!(body["key"]["kind"], "realizability", "{document}");
+    for member in [
+        "role",
+        "history_a",
+        "history_b",
+        "action_a",
+        "action_b",
+        "obligation",
+        "separating_witness",
+    ] {
+        assert!(body[member].is_object(), "missing {member}: {document}");
+    }
+    assert_ne!(body["history_a"], body["history_b"], "{document}");
+    assert_ne!(body["action_a"], body["action_b"], "{document}");
 }
