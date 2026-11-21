@@ -24,6 +24,8 @@
 //! `unsupported_construct`/`not-yet-implemented` naming it.
 
 mod access;
+mod borrowed_wire;
+pub use borrowed_wire::ProtocolWireSink;
 mod capacity;
 mod channel;
 mod compensation;

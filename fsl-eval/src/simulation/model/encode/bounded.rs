@@ -4,7 +4,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use filament_exact::Reservation as _;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{

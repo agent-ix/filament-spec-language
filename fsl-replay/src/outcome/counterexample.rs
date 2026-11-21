@@ -26,6 +26,7 @@ use crate::model_check::counterexample::{
 use crate::refinement::{RefinementFailure, StepRejection};
 
 mod scoped;
+mod scoped_probability;
 
 /// Why a counterexample has no wire spelling here.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]

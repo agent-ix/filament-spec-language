@@ -478,7 +478,7 @@ pub fn read_back_unchanged(
     identity: serde_json::Value,
     claim: &OccurrenceKey,
 ) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
-    read_back(built, identity, claim, None)
+    read_back(built, identity, claim, None, None)
 }
 
 /// Reads the emitted task certificate with genuine source clock identities.
@@ -490,7 +490,20 @@ pub fn read_back_unchanged_with_source(
     claim: &OccurrenceKey,
     source: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
 ) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
-    read_back(built, identity, claim, Some(source))
+    read_back(built, identity, claim, Some(source), None)
+}
+
+/// Transport a certificate using the original package's reference scope.
+/// Source clock identities are retained when `source` is supplied. The
+/// independent semantic checker must still accept the restored certificate.
+pub fn read_back_unchanged_with_references(
+    built: &ZoneCertificate<OccurrenceKey>,
+    identity: serde_json::Value,
+    claim: &OccurrenceKey,
+    source: Option<&fsl_eval::simulation::model::TimedSystem<'_, '_>>,
+    references: &mut fsl_replay::ReferenceScope<'_, '_, '_, '_>,
+) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
+    read_back(built, identity, claim, source, Some(references))
 }
 
 fn read_back(
@@ -498,22 +511,37 @@ fn read_back(
     identity: serde_json::Value,
     claim: &OccurrenceKey,
     source: Option<&fsl_eval::simulation::model::TimedSystem<'_, '_>>,
+    references: Option<&mut fsl_replay::ReferenceScope<'_, '_, '_, '_>>,
 ) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
-    let wire = match source {
-        Some(source) => built.to_wire_with_source(identity.clone(), source),
-        None => built.to_wire(identity.clone()),
-    }
-    .ok()?;
-    let (read, read_identity) = match source {
-        Some(source) => ZoneCertificate::from_wire_with_source(&wire, claim.clone(), source),
-        None => ZoneCertificate::from_wire(&wire, claim.clone()),
-    }
-    .ok()?;
-    let written = match source {
-        Some(source) => read.to_wire_with_source(read_identity.clone(), source),
-        None => read.to_wire(read_identity.clone()),
-    }
-    .ok()?;
+    let (wire, read, read_identity, written) = if let Some(references) = references {
+        let wire = built
+            .to_wire_with_references(identity.clone(), source, references)
+            .ok()?;
+        let (read, read_identity) =
+            ZoneCertificate::from_wire_with_references(&wire, claim.clone(), source, references)
+                .ok()?;
+        let written = read
+            .to_wire_with_references(read_identity.clone(), source, references)
+            .ok()?;
+        (wire, read, read_identity, written)
+    } else {
+        let wire = match source {
+            Some(source) => built.to_wire_with_source(identity.clone(), source),
+            None => built.to_wire(identity.clone()),
+        }
+        .ok()?;
+        let (read, read_identity) = match source {
+            Some(source) => ZoneCertificate::from_wire_with_source(&wire, claim.clone(), source),
+            None => ZoneCertificate::from_wire(&wire, claim.clone()),
+        }
+        .ok()?;
+        let written = match source {
+            Some(source) => read.to_wire_with_source(read_identity.clone(), source),
+            None => read.to_wire(read_identity.clone()),
+        }
+        .ok()?;
+        (wire, read, read_identity, written)
+    };
     (read_identity == identity
         && read.admitted == built.admitted
         && read.lu_bounds == built.lu_bounds

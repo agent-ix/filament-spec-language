@@ -16,6 +16,8 @@ use super::memory::{MemoryChoice, MemoryStepId};
 use super::race::{AccessRecord, DataRace};
 use crate::simulation::model::encode::{reference_enc, Enc};
 
+mod borrowed;
+
 /// One step of a thread's path (FSpec FR-425): for a branch thread, the
 /// `parallel` that forked it, its branch label and the parallel instance's
 /// ordinal; for a compensation thread, its template and its ordinal

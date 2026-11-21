@@ -17,6 +17,7 @@ pub(super) fn run(
     cancel: &Cancel,
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
 ) -> EngineReport {
     let system = match ModelSystem::new_with_cancel(simulation, cancel) {
         Ok(system) => system,
@@ -57,20 +58,27 @@ pub(super) fn run(
                 }
                 _ => return not_yet(),
             };
-            let scope = package.graph().scope();
             let Some(occurrence) = claim.occurrence() else {
                 return broken();
             };
-            let wire = fsl_replay::probabilistic_undefined_wire(
-                &witness,
-                occurrence,
-                bound,
-                scope.types(),
-                scope.variant_types(),
-                &|state| system.state_key(state).ok().map(|(_, key)| key),
-                &scheduler,
-            );
-            EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
+            let Some(owner) = owner else {
+                return not_yet();
+            };
+            match super::super::reference_output::with_source(
+                &system,
+                Some(owner),
+                cancel,
+                |scope| {
+                    scope.probabilistic_undefined_wire(
+                        &witness, occurrence, bound, &system, owner, &scheduler,
+                    )
+                },
+            ) {
+                Ok(wire) => {
+                    EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(Ok(wire)))))
+                }
+                Err(refusal) => EngineReport::Refused(refusal),
+            }
         }
         Ok(ProbabilityWitnessReplay::Parity) => {
             EngineReport::Exact(Box::new(ExactReport::ReplayParity))
