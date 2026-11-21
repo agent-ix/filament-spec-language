@@ -151,6 +151,27 @@ fn policy_action(
     cancel: &Cancel,
     storage: &mut u64,
 ) -> Result<Option<usize>, ProbabilityDocumentError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TransitionShape {
+        #[serde(rename = "type")]
+        kind: String,
+        operation: String,
+        receiver: Box<serde_json::value::RawValue>,
+        arguments: Vec<Box<serde_json::value::RawValue>>,
+    }
+    let shape: TransitionShape = serde_json::from_str(choice)
+        .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
+    if shape.kind != "transition"
+        || shape.operation.is_empty()
+        || !(shape.receiver.get() == "null" || shape.receiver.get().starts_with('{'))
+        || shape
+            .arguments
+            .iter()
+            .any(|value| !value.get().starts_with('{'))
+    {
+        return Err(ProbabilityDocumentError::MalformedMember("policy"));
+    }
     let admission = RefCell::new(writer::Admission::with_used(
         limits.storage_bytes,
         cancel,
@@ -248,7 +269,7 @@ pub(super) fn check(
         (selected.objective.optimization, lower),
         (ProbabilityObjective::Minimum, false) | (ProbabilityObjective::Maximum, true)
     );
-    if wire.ranking.is_some() != lower || wire.policy.is_some() != needs_policy {
+    if wire.ranking.is_some() != lower || (wire.policy.is_some() && !needs_policy) {
         return Err(ProbabilityDocumentError::MalformedMember(
             if wire.ranking.is_some() != lower {
                 "ranking"
@@ -341,7 +362,7 @@ pub(super) fn check(
         }
         let Some(index) = policy_action(row.choice.get(), state, limits, cancel, &mut storage)?
         else {
-            return Err(ProbabilityDocumentError::MalformedMember("policy"));
+            return Ok(rejection(ProbabilityCertificateRule::InequalityFails, key));
         };
         policy.insert(key, index);
     }

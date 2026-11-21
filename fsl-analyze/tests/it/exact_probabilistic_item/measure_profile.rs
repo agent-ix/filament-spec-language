@@ -1007,6 +1007,29 @@ fn replay_mean_document(
     )
 }
 
+fn settle_mean_document(
+    world: &World,
+    name: &str,
+    document: &Value,
+) -> fsl_analyze::analyze::AnalyzeRecord {
+    let bytes = serde_json::to_vec(document).unwrap();
+    let item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+        RequestIndex::new(0),
+        world.request(name, ModelCheckLimits::default()),
+        move |witness| {
+            witness.subsystem = Some(Box::new(
+                fsl_replay::ProbabilitySubsystemCertificate::from_bytes(
+                    &bytes,
+                    document_limits(),
+                    &Cancel::new(),
+                )
+                .unwrap(),
+            ));
+        },
+    );
+    analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0)
+}
+
 #[trace("FR-1043-AC-8", "FR-1043-AC-9", "FR-202-AC-28", "FR-202-AC-29")]
 #[test]
 fn bounded_mean_refutation_roles_accept_upper_minimum_and_partial_lower_maximum() {
@@ -1031,7 +1054,20 @@ fn bounded_mean_refutation_roles_accept_upper_minimum_and_partial_lower_maximum(
                 baseline.settlement
             );
             let token = baseline.probabilistic_counterexample.as_ref().unwrap();
-            let document = mean_bound(token.evidence(), lower, scheduler == "every scheduler");
+            let mut document = mean_bound(token.evidence(), lower, scheduler == "every scheduler");
+            if scheduler == "every scheduler" {
+                let root = URL_SAFE_NO_PAD.encode(token.evidence().initial_key.as_bytes());
+                document["values"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|row| row["state"] == root)
+                    .unwrap()["value"] = if lower {
+                    json!({"numerator":"2","denominator":"5"})
+                } else {
+                    json!({"numerator":"1","denominator":"4"})
+                };
+            }
             let replay = replay_mean_document(&world, token.evidence(), &document);
             assert!(
                 matches!(
@@ -1276,8 +1312,32 @@ fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_ch
         ),
         "a bad supplied hint must not fall back: {rejected:?}"
     );
+    let mut nonexistent = document.clone();
+    let hint = nonexistent["policy"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["state"] == root)
+        .unwrap();
+    let original = hint["choice"]["operation"].as_str().unwrap();
+    let missing = original.replace("slow", "missing");
+    assert_ne!(original, missing, "the hint must name an absent operation");
+    hint["choice"]["operation"] = json!(missing);
+    let rejected = replay_mean_document(&world, minimum, &nonexistent);
+    assert!(
+        matches!(
+            rejected,
+            Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    ..
+                }
+            ))
+        ),
+        "nonexistent hint: {rejected:?}"
+    );
     let mut no_hint = document;
-    no_hint["policy"] = json!([]);
+    no_hint.as_object_mut().unwrap().remove("policy");
     let mut offered = minimum.clone();
     offered.scheduler.clear();
     let accepted = replay_mean_document(&world, &offered, &no_hint);
@@ -1310,7 +1370,7 @@ fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_ch
         .evidence()
         .clone();
     let mut document = mean_bound(&offered, false, true);
-    document["policy"] = json!([]);
+    document.as_object_mut().unwrap().remove("policy");
     offered.scheduler.clear();
     let accepted = replay_mean_document(&world, &offered, &document);
     let Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(token)) = accepted else {
@@ -1383,4 +1443,134 @@ fn mean_bound_policy_hints_constrain_search_and_absence_reconstructs_internal_ch
         ),
         "{rejected:?}"
     );
+}
+
+#[trace("FR-1043-AC-9", "FR-202-AC-29")]
+#[test]
+fn valid_mean_bounds_on_the_threshold_and_wrong_bound_roles_are_rejected() {
+    let world = World::new(&retry(
+        &(claim(
+            "Ge",
+            "Steady",
+            "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+        ) + &claim(
+            "Le",
+            "Steady",
+            "mean of fraction holds(m.delivered) over [0,2] <= rational(2,5)",
+        )),
+    ));
+    for (name, lower, value) in [
+        ("Ge", false, json!({"numerator":"1","denominator":"2"})),
+        ("Le", true, json!({"numerator":"2","denominator":"5"})),
+    ] {
+        let record = settle(&world, name, ModelCheckLimits::default());
+        assert_eq!(
+            record.terminal().unwrap().value(),
+            &TerminalValue::Refuted,
+            "{:?}",
+            record.settlement
+        );
+        let witness = record
+            .probabilistic_counterexample
+            .as_ref()
+            .unwrap()
+            .evidence();
+        let mut document = mean_bound(witness, lower, false);
+        let root = URL_SAFE_NO_PAD.encode(witness.initial_key.as_bytes());
+        document["values"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["state"] == root)
+            .unwrap()["value"] = value;
+        let replay = replay_mean_document(&world, witness, &document);
+        assert!(
+            matches!(
+                replay,
+                Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                    ProbabilityCertificateRejection {
+                        rule: ProbabilityCertificateRule::ThresholdMissed,
+                        ..
+                    }
+                ))
+            ),
+            "a valid nonrefuting bound: {replay:?}"
+        );
+        let record = settle_mean_document(&world, name, &document);
+        assert!(
+            matches!(
+                record.terminal().unwrap().value(),
+                TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                    rule: CertificateRule::ThresholdMissed,
+                    ..
+                })
+            ),
+            "{:?}",
+            record.settlement
+        );
+        assert!(
+            record.probabilistic_counterexample.is_none() && record.exact_probabilistic.is_none()
+        );
+    }
+    let world = World::new(&retry(
+        &(claim(
+            "Min",
+            "every scheduler",
+            "mean of fraction holds(m.delivered) over [0,2] >= rational(1,2)",
+        ) + &claim(
+            "Max",
+            "every scheduler",
+            "mean of fraction holds(m.delivered) over [0,2] <= rational(1,3)",
+        )),
+    ));
+    for (name, correct_lower) in [("Min", false), ("Max", true)] {
+        let record = settle(&world, name, ModelCheckLimits::default());
+        let witness = record
+            .probabilistic_counterexample
+            .as_ref()
+            .unwrap()
+            .evidence();
+        let mut document = mean_bound(witness, correct_lower, true);
+        document["kind"] = json!(if correct_lower { "upper" } else { "lower" });
+        document.as_object_mut().unwrap().remove("policy");
+        let root = URL_SAFE_NO_PAD.encode(witness.initial_key.as_bytes());
+        document["values"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["state"] == root)
+            .unwrap()["value"] = if correct_lower {
+            json!({"numerator":"1","denominator":"2"})
+        } else {
+            json!({"numerator":"1","denominator":"5"})
+        };
+        let replay = replay_mean_document(&world, witness, &document);
+        assert!(
+            matches!(
+                replay,
+                Err(fsl_replay::ProbabilityWitnessError::CertificateRejected(
+                    ProbabilityCertificateRejection {
+                        rule: ProbabilityCertificateRule::Malformed,
+                        at: fsl_replay::ProbabilityCertificateLocus::Member("kind")
+                    }
+                ))
+            ),
+            "wrong deciding bound role: {replay:?}"
+        );
+        let record = settle_mean_document(&world, name, &document);
+        assert!(
+            matches!(
+                record.terminal().unwrap().value(),
+                TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                    rule: CertificateRule::Malformed,
+                    at: CertificateLocus::CertificateMember(fsl_replay::CertificateMember::Kind)
+                })
+            ),
+            "{:?}",
+            record.settlement
+        );
+        assert!(
+            record.probabilistic_counterexample.is_none() && record.exact_probabilistic.is_none()
+        );
+    }
 }

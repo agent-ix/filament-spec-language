@@ -12,7 +12,6 @@ use std::cell::RefCell;
 
 pub(super) const PROFILE: &str = "filament.probability-objective/finite-horizon-measure/v1";
 pub(in crate::probability_certificate) mod bounds;
-pub(in crate::probability_certificate) mod bounds;
 
 /// Terminal-payoff role of a finite-horizon measure proof.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
