@@ -2622,6 +2622,7 @@ fn replay_timed_refutation(
     };
     let mut paths = Vec::with_capacity(produced.paths.len());
     for path in produced.paths {
+        let mut previous_key = initial_key.clone();
         let mut state = first.clone();
         let mut steps = Vec::with_capacity(path.steps.len());
         for step in path.steps {
@@ -2666,13 +2667,31 @@ fn replay_timed_refutation(
                                 })
                             })
                         });
-                    let Some((transition, random, post)) = found else {
-                        return not_yet();
-                    };
-                    (Some(identity.clone()), Some(transition), Some(random), post)
+                    match found {
+                        Some((transition, random, post)) => {
+                            (Some(identity.clone()), Some(transition), Some(random), post)
+                        }
+                        None => {
+                            // A clock-guarded operation is not enabled at the bare
+                            // model state; take its step from the timed state the
+                            // previous key names.
+                            let Some((transition, post)) = timed_step_for(
+                                system,
+                                claim,
+                                &state,
+                                &previous_key,
+                                &step.elapsed,
+                                wanted.as_ref(),
+                            ) else {
+                                return not_yet();
+                            };
+                            (Some(identity.clone()), Some(transition), step.draw.clone(), post)
+                        }
+                    }
                 }
                 _ => (None, None, None, state.clone()),
             };
+            let next_key = post_key.clone();
             steps.push(ProbabilityWitnessStep {
                 choice,
                 action,
@@ -2683,6 +2702,7 @@ fn replay_timed_refutation(
                 elapsed: step.elapsed,
             });
             state = post;
+            previous_key = next_key;
         }
         paths.push(ProbabilityWitnessPath { steps });
     }
@@ -2716,4 +2736,59 @@ fn replay_timed_refutation(
 fn timed_key_discrete(key: &ProbabilityProductKey) -> Option<serde_json::Value> {
     let root: serde_json::Value = serde_json::from_slice(key.as_bytes()).ok()?;
     root.get(4)?.get(1)?.get(1).cloned()
+}
+
+/// The model step and post state of the operation a timed digital witness
+/// step took, found from the timed state its previous key names: the clocks
+/// as keyed, or those delayed by the step's elapsed time first. `None` when
+/// the key is not a digital one or no enabled step reaches the wanted model
+/// state.
+fn timed_step_for(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    state: &fsl_eval::simulation::model::ModelSimState,
+    previous: &ProbabilityProductKey,
+    elapsed: &Rational,
+    wanted: Option<&serde_json::Value>,
+) -> Option<(
+    fsl_eval::simulation::model::ModelTransition,
+    fsl_eval::simulation::model::ModelSimState,
+)> {
+    use fsl_eval::simulation::model::{ClockValuation, TimedState, TimedSystem};
+    let root: serde_json::Value = serde_json::from_slice(previous.as_bytes()).ok()?;
+    let keyed = root.get(4)?.get(1)?;
+    if keyed.get(0)?.as_str()? != "digital" {
+        return None;
+    }
+    let number = |value: &serde_json::Value| -> Option<u64> {
+        value
+            .as_u64()
+            .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+    };
+    let scale = number(keyed.get(3)?)?;
+    let values = keyed
+        .get(4)?
+        .as_array()?
+        .iter()
+        .map(|clock| {
+            let whole = number(clock.get(1)?)?;
+            Some(Rational::from_integer(whole.into()).div(&Rational::from_integer(scale.into()))?)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let timed = TimedSystem::new(system, claim.subject.alias.as_str()).ok()?;
+    let valuation = ClockValuation::new(values);
+    for clocks in [valuation.delayed(elapsed), valuation] {
+        let at = TimedState::new(state.clone(), clocks);
+        let Ok(steps) = timed.steps(&at) else {
+            continue;
+        };
+        for (step, post) in steps {
+            let key = system.state_key(post.discrete()).ok()?.0;
+            let discrete: serde_json::Value = serde_json::from_slice(&key).ok()?;
+            if Some(&discrete) == wanted {
+                return Some((step.transition().clone(), post.discrete().clone()));
+            }
+        }
+    }
+    None
 }
