@@ -23,6 +23,12 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-204
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1041
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1042
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1043
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-254
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-740
@@ -97,11 +103,20 @@ contract, this requirement is.
   `document`, the certificate in FSpec FR-331's `ProbabilityCertificate`
   spelling (FR-201's closed profile where one applies), so that
   `fsl-probability-check` accepts the same document in a later process from
-  it, the emitted package's byte provision and the subject binding.
+  it, the emitted package's byte provision and the subject binding. For a
+  `ValueBounds` proof, `kind` and `document` are the claim side's (`lower`
+  for `AtLeast`, `upper` for `AtMost`), and `counterpart` is the other
+  side's `{kind, document, accepted}`, both in FR-1042's `value-bounds/v1`
+  profile; a `lower` proof found on a partial product has no `counterpart`
+  and its record says `exploration: Partial`. A quantile under a workload has kind `conditional`, mode
+  `ratio`, with FR-1043 parts.
 - `counterexample`, for an exact `refuted` record: FR-202's probabilistic
   witness in FSpec FR-413's spelling, with the item's `replay` member
   (FR-621) present beside it only after FR-202 replay reproduced it; under
-  every scheduler it carries the witness scheduler. A refuted `on each`
+  every scheduler it carries the witness scheduler. An undefined evaluation
+  refutes with FR-202's `Undefined` evidence in FSpec FR-413's
+  `undefined-path` spelling, and the record's cause
+  equals its `undefined`. A refuted `on each`
   claim's counterexample names the failing instance in its binding's
   `instance` member: the first failing instance in key order (FR-875).
 - `entries`, for exact evidence: FR-203's `ExactEntry` per initial state and
@@ -150,8 +165,8 @@ bindings, each with its own test row or entry.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-741-AC-1 | Over FR-185-AC-1's `Service` compiled from source, the items `{"claim": "P95", "probabilistic": {"evidence": "statistical", "method": {"type": T}, "seed": "7"}}` for `T` each of `okamoto`, `sprt` and `clopper-pearson`, and `{"claim": "LongRun", "probabilistic": {"evidence": "statistical", "method": {"type": "regenerative", "min_cycles": 100}, "seed": "7"}}`, each settle `measured` with a `verdict` naming the method and seed, and the same request gives equal item results with `workers` 1 and 4; each witness it reports replays. | Test (TC-2066) |
-| FR-741-AC-2 | Over the same `Service`, an exact item for `P95` with no confidence parameters settles `proved` `ExactValue{24233/25000}` with a `certificate` of kind `exact` whose `document` `fsl-probability-check` accepts in a separate process; over ADR-028 §15.4's `Link`, exact unbounded reachability, until, always and expected-reward items, an every-scheduler item, a fair every-scheduler item and §15.3's long-run item each settle with an accepted certificate, the long-run one of kind `long-run`; §15.1's claim with `max_rational_bits` 1,024 settles with `lower` and `upper` certificates. | Test (TC-2066) |
-| FR-741-AC-3 | An exact item for a claim whose exact value is below its threshold settles `refuted` with a `counterexample` and an item-level `replay` that is present and reproduced; FSpec FR-421-AC-1's timed claim settles through digital clocks with an accepted certificate. | Test (TC-2066) |
+| FR-741-AC-2 | Over the same `Service`, an exact item for `P95` with no confidence parameters settles `proved` `ExactValue{24233/25000}` with a `certificate` of kind `conditional`, mode `ratio`, whose parts are FR-1043 `finite-horizon-measure/v1` documents (numerator `24233/25000`, denominator 1 at the initial key) and whose `document` `fsl-probability-check` accepts in a separate process; over ADR-028 §15.4's `Link`, exact unbounded reachability, until, always and expected-reward items, an every-scheduler item and §15.3's long-run item each settle with an accepted certificate, the long-run one of kind `long-run`; a fair every-scheduler unbounded eventual item settles with an accepted FR-1041 `cyclic-mdp-fair-eventual/v1` certificate; §15.1's claim with `max_rational_bits` 1,024 settles `ValueBounds` with a `lower` `certificate` and an `upper` `counterpart`, both FR-1042 `value-bounds/v1` documents accepted by `fsl-probability-check`. | Test (TC-2066) |
+| FR-741-AC-3 | An exact item for a claim whose exact value is below its threshold settles `refuted` with a `counterexample` and an item-level `replay` that is present and reproduced; FSpec FR-421-AC-1's timed claim settles through digital clocks with an accepted certificate; FR-203-AC-5's undefined claim settles `refuted` with an FSpec FR-413 `undefined-path` `counterexample` whose `replay` is present and reproduced, at either threshold. | Test (TC-2066) |
 | FR-741-AC-4 | `probability >= 0.99 [eventually holds(p.done)]` under the infinite-trace profile with `statistical` evidence settles `unsupported` `exact-only-form` with no sample drawn; a `mean of` claim requested with the method `sprt` settles `invalid-request` `not-statistical`; `statistical.max_samples` 10 settles `incomplete` `LimitReached` naming `statistical.max_samples`. | Test (TC-2066) |
 | FR-741-AC-5 | Through `fsl analyze` over the `Link` model under `Even`, with a start snapshot holding `m` undelivered and `n` delivered, FR-875's claim `E` at `rational(9, 10)` settles `proved` with a `certificate` of kind `conditional`, mode `ratio`, whose numerator is `391/400` and denominator 1 at `m`'s initial key, `n`'s confirmed vacuous, and whose `document` `fsl-probability-check` accepts in a separate process; at `rational(99, 100)` it settles `refuted` with a `counterexample` whose `instance` is `m`'s reference and whose `binding` is null. | Test (TC-3062) |
 
