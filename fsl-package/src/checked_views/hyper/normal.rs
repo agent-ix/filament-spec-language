@@ -349,7 +349,11 @@ fn expression(
                         Some(filament_contract_model::CheckedOperationMember::TypeArgument {
                             declaration,
                             alias,
-                        }) if identity == "filament.op.numeric.convert" => {
+                        }) if matches!(
+                            identity,
+                            "filament.op.numeric.convert" | "filament.op.numeric.narrow"
+                        ) =>
+                        {
                             let alias = match alias {
                                 Some(alias) => encode(
                                     b"alias",
