@@ -19,6 +19,18 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-287
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-181
+    type: references
+  - target: ix://agent-ix/filament-specification/FR-480
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-944
+    type: references
+  - target: ix://agent-ix/filament-observation/FR-001
+    type: depends_on
+  - target: ix://agent-ix/filament-observation/FR-014
+    type: references
 ---
 # FR-1045: Admit native-run relationship selections through the observation resolver
 
@@ -65,8 +77,11 @@ native-run result and exit category.
   unchanged: unlisted means not supplied, `complete: false` is incomplete, and
   `complete: true` with no instances is known empty. FSL SHALL NOT collapse or
   reinterpret these states.
-- `scope`, `records` and `limits` use the observation resolver's own types and
-  exact resource-limit names; FSL SHALL NOT invent defaults.
+- `binding`, `expected_subject`, `required_relationships`, `scope`, `records`
+  and `limits` use the closed forms of "Member forms" below. Each form
+  decodes into exactly one field of the resolver's typed `AdmissionRequest`;
+  FSL SHALL NOT invent defaults, derive values or add members the resolver
+  cannot take.
 
 The `producer` member is the complete existing Producer interface 1.2 static-
 bundle JSON document, embedded with its own camelCase member names and its
@@ -76,39 +91,154 @@ encoded bytes count against the native-run request's input bounds. A malformed
 or invalid bundle retains the Producer reader's exact refusal cause at
 `/call/relationships/producer` and does not call the observation resolver.
 
-The remaining member values use these FSL-owned forms. `binding` has exactly
-`identity`, `source_identity`, `schema_identity`,
-`signal_identity`, `trigger_identity`, `unit`, `subject_kind` and `required`;
-the first six are non-empty strings, `subject_kind` is the FR-181 subject-kind
-string, and `required` is Boolean. `expected_subject` and each required-slot
-endpoint have exactly `authority`, `subject_kind` and
-`authority_local_object_identity`; `authority` has exactly `bundle_identity`,
-`bundle_revision` and `digest`, using the full authority values of the
-selected Producer interface bundle. `authority_local_object_identity` is
-non-empty lowercase-hex bytes. Each required slot has exactly
-`declaration_identity`, `source` and `target`, and the declaration identity
-names the selected package's exact relationship declaration. The slot's
-`authority` is the selected Producer bundle key and `interface_version` is its
-version; neither is duplicated in the wire entry. `scope` is a closed object
-with exactly `population_identity`, `membership_rule_identity`,
-`membership_digest`, `membership_document`, `required_member_identities`,
-`observation_sources`, `completeness_dependencies`, `progress_dependencies`,
-`clock_identity`, `clock_revision`, `membership_complete`,
-`closure_identity`, `closure_digest`, `kind`, `range` and `members`. Its
-`membership_document` is the closed `quire.observation.explicit-members/v1`
-object `{contract, identity, digest, members}`; `identity` and `digest` equal
-`membership_rule_identity` and `membership_digest`, and `members` equals the
-sorted distinct `required_member_identities`. The source and dependency arrays
-are sorted distinct non-empty identity strings. `kind` is exactly
-`{"snapshot":{"snapshot_identity":S}}` or
-`{"window":{"window_identity":S}}`; `range` is one of FR-294's closed
-`event_position`, `fixed_sample` or `timestamp` forms; each member has exactly
-`object_identity`, `record_identity` and `anchor`, with `anchor` one of FR-294's
-clock-position forms. Identity bytes use FR-181 lowercase hexadecimal and
-digests use FR-295's lowercase-hex form. `records` is an array of complete
-`quire.observation.record/v2` documents under FR-288. `limits` has exactly the
-four named members; each value is an unsigned JSON integer in `0..=u64::MAX`.
-No member accepts an omitted default or an additional field.
+### Member forms
+
+The resolver's admission request is a typed Rust value, `AdmissionRequest`,
+with the fields `package`, `producer`, `binding`, `expected_subject`,
+`relationships`, `relationship_extents`, `required_relationships`, `scope`,
+`records` and `limits` (filament-observation FR-001). The library's own
+request reader (filament-observation FR-014) is private to its progress
+admission entry, so FSL reads the members below itself and builds the typed
+value. Member names, tag members and closed value sets follow FR-014's request
+and record forms, so a record or scope written for the library reads the same
+way here. FSL keeps two encodings of its own native-run request: opaque bytes
+are lowercase hexadecimal (FSpec FR-181 and FR-480), not JSON byte arrays, and
+the four limits are JSON integers, as FR-100's `accounting` counters are.
+
+Value notation used by the tables:
+
+- *text*: a JSON string, passed to `Identity::new` exactly as written. FSL
+  does not trim, normalize or reject an empty text value; the resolver's
+  typed `InvalidSelection` check decides emptiness.
+- *hex*: a non-empty JSON string of lowercase hexadecimal digit pairs (FSpec
+  FR-480); the resolver receives the exact decoded bytes.
+- *digest*: a JSON string of exactly 64 lowercase hexadecimal digits, decoded
+  to the 32 bytes of `Digest::new` (FR-014 "Digests are 64 lowercase
+  hexadecimal digits").
+- *u64* and *i128*: a JSON string in FR-038's integer spelling (optional
+  leading `-` only for *i128*, no `+`, no leading zero, never `-0`), whose
+  value lies in the Rust type's range. FR-106 snapshots and FR-014 use the same
+  decimal strings because a JSON number above 2^53 does not survive RFC 8785
+  readers.
+- *null-or-X*: the member is present with JSON `null` or an X value; `null`
+  is `None`. The member itself is never omitted.
+
+The authority form `A` is a closed object:
+
+| Member | JSON form | Library field |
+|---|---|---|
+| `bundle_identity` | non-empty JSON string | `AdmittedBundleKey.bundle_identity` |
+| `bundle_revision` | closed `{"namespace": S, "value": S}`, both non-empty JSON strings | `AdmittedBundleKey.bundle_revision: Revision { namespace, value }` |
+| `digest` | closed `{"label": S, "value": D}`, `S` a non-empty JSON string and `D` `sha256:` followed by 64 lowercase hexadecimal digits | `AdmittedBundleKey.digest: ProducerDigest { label, value }` |
+
+These are the same members and order that FR-100's canonical slot JSON writes
+for a refused or missing slot, so a slot read from a result can be resubmitted
+unchanged. An authority that differs from the selected Producer bundle's key
+is well-formed. The resolver refuses it as
+`InvalidReference(ForeignAuthority)`.
+
+The subject form `S` is a closed object, the FSpec FR-287 subject key:
+
+| Member | JSON form | Library field |
+|---|---|---|
+| `authority` | `A` | the authority argument of `QualifiedSubject::from_authority` |
+| `subject_kind` | non-empty JSON string, FR-287's String kind | `SubjectKind::new` over its exact UTF-8 bytes |
+| `authority_local_object_identity` | *hex* | `SubjectIdentity::new` over the decoded bytes |
+
+FSL builds every subject with `QualifiedSubject::from_authority`, which keeps
+the written authority verbatim, so the resolver and not FSL decides whether
+it is the selected authority.
+
+The anchor form `N` is a closed object tagged by `kind`:
+
+| `kind` | Other members | Library value |
+|---|---|---|
+| `"event-position"` | `position`: *u64* | `Anchor::EventPosition(position)` |
+| `"fixed-sample"` | `index`: *u64*, `epoch_nanos`: *i128*, `period_nanos`: *u64* | `Anchor::FixedSample { index, epoch_nanos, period_nanos }` |
+| `"timestamp"` | `instant_nanos`: *i128* | `Anchor::TimestampNanos(instant_nanos)` |
+
+The range form `R` is a closed object tagged by `clock_family`:
+
+| `clock_family` | Other members | Library value |
+|---|---|---|
+| `"event-position"` | `start`: *u64*, `end_exclusive`: *u64* | `ClockRange::EventPosition { start, end_exclusive }` |
+| `"fixed-sample"` | `start`: *u64*, `end_exclusive`: *u64*, `epoch_nanos`: *i128*, `period_nanos`: *u64* | `ClockRange::FixedSample { start, end_exclusive, epoch_nanos, period_nanos }` |
+| `"timestamped-event"` | `start_nanos`: *i128*, `end_nanos`: *i128* | `ClockRange::Timestamp { start_nanos, end_nanos }` |
+
+An empty or reversed range, a non-positive period and an anchor of another
+clock family are well-formed. The resolver decides them as `InvalidWindow`,
+`ClockMismatch` or `MemberRecordMismatch`.
+
+The members of `call.relationships` map onto `AdmissionRequest` as follows.
+Pointers are relative to `/call/relationships`.
+
+| Wire member | JSON form | Library type and field | Malformed |
+|---|---|---|---|
+| (none) | the selected checked package | `package: PackageSelection`, built as FR-944 builds it: format `native-linked-package/1`, the package name, revision `filament.checked-package/v2` and the SHA-256 of its canonical bytes | not a wire member |
+| `/producer` | the Producer interface 1.2 static-bundle object | `producer: AdmittedStaticBundle`, from `StaticProducerBundle::admit_json` over the member's exact JSON value bytes | Producer reader cause at `/producer` |
+| `/binding/identity`, `/source_identity`, `/schema_identity`, `/signal_identity`, `/trigger_identity`, `/unit` | *text* | `binding: ObservationBinding`, the field of the same name | `invalid-request` at the member |
+| `/binding/subject_kind` | non-empty JSON string | `ObservationBinding.subject_kind: SubjectKind` over its UTF-8 bytes | `invalid-request` at the member |
+| `/binding/required` | JSON Boolean | `ObservationBinding.required` | `invalid-request` at the member |
+| `/expected_subject` | `S` | `expected_subject: QualifiedSubject` | `invalid-request` at the failing nested member |
+| `/required_relationships/<i>` | closed `{"declaration_identity": text, "source": S, "target": S}` | one `required_relationships: Vec<RequiredRelationship>` entry, in array order, from `RequiredRelationship::new(producer, declaration_identity, source, target)` | `invalid-request` at the failing nested member |
+| `/scope/population_identity`, `/membership_rule_identity`, `/clock_identity`, `/clock_revision` | *text* | `scope: ScopeSelection`, the field of the same name | `invalid-request` at the member |
+| `/scope/membership_digest` | *digest* | `ScopeSelection.membership_digest: Digest` | `invalid-request` at the member |
+| `/scope/membership_document` | JSON string | `ScopeSelection.membership_document: Vec<u8>`, the string's exact UTF-8 bytes, which hold one `filament.observation.explicit-members/v1` document | `invalid-request` at the member |
+| `/scope/required_member_identities`, `/observation_sources`, `/completeness_dependencies`, `/progress_dependencies` | JSON array of *text* | the `Vec<Identity>` field of the same name, in array order | `invalid-request` at the array or element |
+| `/scope/membership_complete` | JSON Boolean | `ScopeSelection.membership_complete` | `invalid-request` at the member |
+| `/scope/closure_identity` | *null-or-text* | `ScopeSelection.closure_identity: Option<Identity>` | `invalid-request` at the member |
+| `/scope/closure_digest` | *null-or-digest* | `ScopeSelection.closure_digest: Option<Digest>` | `invalid-request` at the member |
+| `/scope/kind` | closed `{"kind": "snapshot", "snapshot_identity": text}` or `{"kind": "window", "window_identity": text}` | `ScopeSelection.kind: ScopeKind::Snapshot { snapshot_identity }` or `ScopeKind::Window { window_identity }` | `invalid-request` at the member |
+| `/scope/range` | `R` | `ScopeSelection.range: ClockRange` | `invalid-request` at the failing nested member |
+| `/scope/members/<i>` | closed `{"object_identity": text, "record_identity": text, "anchor": N}` | one `ScopeSelection.members: Vec<Member>` entry, in array order | `invalid-request` at the failing nested member |
+| `/records/<i>` | closed record object below | one `records: Vec<AdmittedRecord>` entry, in array order | `invalid-request` at the failing nested member |
+| `/limits/max_records`, `/max_members`, `/max_relationships`, `/max_required_relationships` | JSON integer in `0..=u64::MAX` | `limits: ResourceLimits`, the `usize` field of the same name | `invalid-request` at the member |
+| (none) | each instance of the snapshot's FR-106 `relationships` extents | `relationships: Vec<Relationship>`, from `Relationship::new(producer, declaration identity, RelationshipIdentity::new(decoded identity), source, target)` | `invalid-request` at the snapshot path, after read |
+| (none) | each FR-106 extent of the snapshot | `relationship_extents: Vec<RelationshipExtent>`, from `RelationshipExtent::new(producer, declaration identity, state)`, `complete: true` as `Complete` and `complete: false` as `Incomplete`; an unlisted declaration has no entry | not a wire member |
+
+Each `records` entry is a closed object with exactly the members of the FR-014
+record form, which are the fields of `AdmittedRecord`:
+
+| Member | JSON form | `AdmittedRecord` field |
+|---|---|---|
+| `identity`, `binding_identity`, `source_identity`, `schema_identity`, `signal_identity`, `trigger_identity`, `unit`, `clock_identity`, `clock_revision` | *text* | the `Identity` field of the same name |
+| `subject` | `S` | `subject: QualifiedSubject` |
+| `value` | closed `{"state": "present", "value_type": text, "canonical_value": JSON string}` or `{"state": "missing"}` | `value: ValueState::Present { value_type, canonical_value }` or `ValueState::Missing` |
+| `visibility` | `"internal"` or `"external"` | `visibility: Visibility::Internal` or `Visibility::External` |
+| `anchor` | `N` | `anchor: Anchor` |
+| `event_time_nanos` | *i128* | `event_time_nanos` |
+| `ingestion_time_nanos` | *null-or-i128* | `ingestion_time_nanos: Option<i128>` |
+| `causal_relationship_identity` | *null-or-hex* | `causal_relationship_identity: Option<RelationshipIdentity>` |
+| `clock_uncertainty_nanos` | *u64* | `clock_uncertainty_nanos` |
+
+A record is a candidate input, not an owner artifact. The resolver verifies its
+`identity` against the owner's record-identity derivation. A mismatch returns
+`DerivedIdentityMismatch { artifact: Observation }`, and FSL computes no record
+identity of its own. In the same way, the resolver's owner derivations decide
+the order and distinctness of the identity arrays, the agreement of
+`membership_document` with `membership_rule_identity`, `membership_digest` and
+`required_member_identities`, and the canonical bytes of that document. Those
+defects return `DerivedIdentityMismatch` with `artifact` `membership`,
+`membership-document`, `population`, `membership-population` or
+`observation-sources`, and are not request-shape refusals. A closure pair with
+exactly one `null` returns `InvalidSelection(Closure)`. Both `null` returns
+the `MissingClosure` incomplete reason.
+
+Every object in these forms is closed. An unknown member, a member name that
+appears twice in one object, a missing member, a wrong JSON type, an unknown
+tag or enum value, malformed *hex*, *digest* or decimal text, and a decimal
+outside its type's range each refuse `invalid-request` at stage `request`,
+exit 20, before any selected file is opened. The command-error details are
+`{"path":P}`, where `P` is the full JSON Pointer of the offending member from
+the request root (for example `/call/relationships/records/0/anchor/kind`).
+No member takes a default.
+
+A `ReferenceRefusal` returned by `RequiredRelationship::new`,
+`Relationship::new` or `RelationshipExtent::new` while FSL builds the typed
+request is the resolver's own reference validation. FSL reports it as
+`AdmissionOutcome::Refused { cause: InvalidReference(refusal) }` under the
+refusal table below, after snapshot read. It is not a request-shape
+refusal.
 
 ## Outputs
 
@@ -245,10 +375,11 @@ slot order.
 
 ### Request refusals
 
-- `call.relationships` without `call.snapshot`, a missing or malformed member,
-  an unknown member, or a malformed required-slot list SHALL refuse
-  `invalid-request` at stage `request`, exit 20, before selected-file I/O; the
-  command-error envelope details name the exact request member path.
+- `call.relationships` without `call.snapshot`, or any member at any depth
+  that is missing, unknown, duplicated or outside its form in "Member forms",
+  SHALL refuse `invalid-request` at stage `request`, exit 20, before
+  selected-file I/O. The command-error details are `{"path":P}`, `P` the exact
+  JSON Pointer of the offending member.
 - A malformed or invalid Producer interface 1.2 static bundle SHALL refuse
   with the Producer reader's exact cause at `/call/relationships/producer`,
   stage `request`, exit 20, before resolver evaluation, with command-error
@@ -288,6 +419,9 @@ slot order.
 | FR-1045-AC-5 | `Available` proceeds to the ordinary call; typed incompletes return a `spine-run-result/1` incomplete outcome with reasons and payloads, exit 22; `ResourceLimit` returns incomplete exit 22 with the corresponding limit; all other refusals return a `spine-run-result/1` refused outcome with the exact code, cause and text fields, exit 20. Resolver outcomes have no stage member. | Test (`tests/it/native_run_relationships.rs::resolver_outcomes_keep_native_run_stage_and_category`, `tests/it/native_run_relationships.rs::resolver_incomplete_reasons_preserve_typed_payloads`, `tests/it/native_run_relationships.rs::resolver_refusals_keep_cause_codes_and_fields`) |
 | FR-1045-AC-6 | FR-100/FR-106 snapshot read failures occur before correlation and keep their existing outcome. A snapshot relationship type lacking a package declaration is `invalid-request` at the relationship reference path, after read and before resolver evaluation, only when correlation is selected; without correlation, FR-106's existing `wrong-role-mapping` remains. Correlation selected without `call.snapshot` refuses `invalid-request` at `call.relationships`, stage `request`, exit 20, before file I/O. | Test (`tests/it/native_run_relationships.rs::snapshot_read_failure_precedes_relationship_admission`, `tests/it/native_run_relationships.rs::unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read`, `tests/it/native_run_relationships.rs::unknown_relationship_type_without_correlation_keeps_wrong_role_mapping`) |
 | FR-1045-AC-7 | When `call.relationships` is absent, the native-run result and exit category equal existing call behavior, and snapshot relationship identity remains optional for ordinary admission. | Test (`tests/it/native_run_relationships.rs::relationship_identity_is_optional_without_correlation`) |
+| FR-1045-AC-8 | A `records` entry with every record member in its form reaches the resolver as an `AdmittedRecord` whose fields equal the decoded values. The entry covers a `present` and a `missing` value, an `event-position`, a `fixed-sample` and a `timestamp` anchor, `ingestion_time_nanos` `null` and `"-5"`, `causal_relationship_identity` `null` and `"00ff"`, and `clock_uncertainty_nanos` `"18446744073709551615"`. Hex decodes to the exact bytes and decimals to the exact `i128`/`u64`. A well-formed record whose `identity` is not the owner derivation returns refused `derived-identity-mismatch` with `artifact` `observation`, exit 20. Each of these refuses `invalid-request` at stage `request`, exit 20, before any selected file is opened, with details `{"path":P}` naming its exact pointer: an unknown record member, a repeated member name, an omitted `ingestion_time_nanos`, `value` `{"state":"absent"}`, `visibility` `"Internal"`, `event_time_nanos` as a JSON number or as `"+1"` or `"01"`, `clock_uncertainty_nanos` `"18446744073709551616"`, and `causal_relationship_identity` `"0A"`, `"0"` or `""`. | Test (`tests/it/native_run_relationships.rs::record_members_decode_into_admitted_records`, `tests/it/native_run_relationships.rs::malformed_record_members_refuse_at_their_pointer_before_io`) |
+| FR-1045-AC-9 | A `scope` reaches the resolver as a `ScopeSelection` with every field decoded. Each of the three `range` forms with members anchored in the same family gives the matching `ClockRange` and `Anchor` variants. `kind` snapshot and window give the matching `ScopeKind`. The `membership_document` string's UTF-8 bytes pass unchanged, and `membership_digest` decodes to its 32 bytes. Both closure members `null` returns incomplete with reason `missing-closure`, exit 22. Exactly one `null` returns refused `invalid-selection` with `selection` `closure`. An event-position range with `start` equal to `end_exclusive` returns refused `invalid-window`. The owner's membership document with its four JSON members written in another order returns refused `derived-identity-mismatch` with `artifact` `membership-document`. Each of these refuses `invalid-request` at its exact pointer, stage `request`, exit 20, before any file is opened: `range.clock_family` `"timestamp"`, anchor `kind` `"timestamped-event"`, `kind` written as `{"snapshot":{"snapshot_identity":"s"}}`, `membership_digest` with an uppercase digit or 63 digits, `membership_document` as a JSON object, an omitted `closure_identity`, and a member with an extra `position` member. | Test (`tests/it/native_run_relationships.rs::scope_members_decode_into_scope_selection`, `tests/it/native_run_relationships.rs::malformed_scope_members_refuse_at_their_pointer_before_io`) |
+| FR-1045-AC-10 | `expected_subject`, each required-slot endpoint and each record `subject` reach the resolver as `QualifiedSubject::from_authority` values with the written authority, the UTF-8 bytes of `subject_kind` and the decoded identity bytes. `binding` maps field-for-field onto `ObservationBinding`. The limits become `ResourceLimits`, and the package selection equals FR-944's. An authority whose `digest.label` differs from the selected bundle's returns refused `invalid-reference-foreign-authority`. A slot naming no Producer declaration returns refused `invalid-reference-unknown-relationship-declaration` with that `identity`. A binding `identity` of `""` returns refused `invalid-selection` with `selection` `binding-identity`, not a request refusal. Each of these refuses `invalid-request` at its exact pointer, stage `request`, exit 20, before any file is opened: a `digest.value` without the `sha256:` prefix, `bundle_revision` as a JSON string, `authority_local_object_identity` `""` or `"AB"`, a non-string `subject_kind`, binding `required` `"true"`, and a limit of `-1`, `"5"` or 18446744073709551616. | Test (`tests/it/native_run_relationships.rs::subject_binding_and_limit_members_decode_exactly`, `tests/it/native_run_relationships.rs::malformed_subject_binding_and_limit_members_refuse_before_io`) |
 
 ## Dependencies
 
@@ -301,7 +435,18 @@ slot order.
   [FR-262](ix://agent-ix/filament-specification/FR-262) own explicit typed
   relationship correlation, set/canonical-slot semantics, and conflict
   precedence. FSpec [FR-287](ix://agent-ix/filament-specification/FR-287)
-  owns authority-qualified runtime subjects. FR-181 and FR-480 own lowercase
+  owns authority-qualified runtime subjects and their String subject kind.
+  FSpec [FR-181](ix://agent-ix/filament-specification/FR-181) and
+  [FR-480](ix://agent-ix/filament-specification/FR-480) own lowercase
   hexadecimal transport for opaque identity bytes.
+- filament-observation
+  [FR-001](ix://agent-ix/filament-observation/FR-001) owns the typed
+  `AdmissionRequest`, `admit` and its outcomes, and
+  [FR-014](ix://agent-ix/filament-observation/FR-014) owns the request and
+  record member names, tags and digest spelling that "Member forms" follows.
+- [FR-038](FR-038-encode-exact-protocol-numbers.md) owns the decimal integer
+  spelling of the *u64* and *i128* members.
+- [FR-944](FR-944-map-evaluator-trace-facts-onto-filament-observation-contexts-and-views.md)
+  owns the `PackageSelection` FSL builds from a checked package.
 - [FR-285](FR-285-map-every-outcome-category-to-one-exit-code.md) owns the
   outcome-category exit mapping.
