@@ -992,7 +992,7 @@ impl TemporalLetters for ObservedLetters<'_> {
                     ))
                 });
         }
-        if self.clause.aggregate_conditions(atom).is_some() {
+        if self.windows.is_some() && self.clause.aggregate_conditions(atom).is_some() {
             let mut visit = |meter: &mut Meter| {
                 meter
                     .charge(Charge::new(ChargePoint::TemporalVisit))
@@ -1033,7 +1033,10 @@ impl TemporalLetters for ObservedLetters<'_> {
         meter: &mut Meter,
         visit: &mut dyn FnMut(&mut Meter) -> Result<(), LetterStop>,
     ) -> Result<Valuation, LetterStop> {
-        if self.clause.aggregate_conditions(atom).is_some() && !self.is_silent(position) {
+        if self.windows.is_some()
+            && self.clause.aggregate_conditions(atom).is_some()
+            && !self.is_silent(position)
+        {
             return self.read_aggregate(atom, position, meter, visit);
         }
         self.valuation(atom, position, meter)

@@ -1938,7 +1938,10 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         && !(matches!(trace, TraceInput::Finite(_))
             && clause.profile() == TemporalProfile::EventPositionFalseExtension)
         && !(matches!(trace, TraceInput::Timestamped { .. })
-            && clause.profile() == TemporalProfile::TimestampedEventFiniteWindow)
+            && clause.profile() == TemporalProfile::TimestampedEventFiniteWindow
+            // The FR-820 carried clause state holds its samples by value and
+            // reads no window of stamps, so it keeps the typed refusal.
+            && tape.is_none())
         && clause
             .formula()
             .nodes()
