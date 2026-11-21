@@ -1,0 +1,28 @@
+language "ix:native" edition "1-draft";
+profile pp = "filament.protocol.finite-global/v1";
+model L = "example/lock";
+
+record Request { granted: Boolean; }
+record Grant { granted: Boolean; }
+
+protocol Handover using pp over (lock: L::Lock) on origin {
+  role Asker on L::Lock;
+  role Holder on L::Lock;
+  role Observer on L::Lock;
+  channel Ask from Asker to Holder carries Request
+    ordering unordered delivery exactly-once-premise capacity 4 overflow reject;
+  channel Granted from Holder to Observer carries Grant
+    ordering unordered delivery exactly-once-premise capacity 4 overflow reject;
+  run sequence Main {
+    send Asked via Ask as (asked: Request) { true };
+    receive Heard via Ask of Asked as (heard: Request) { true };
+    choice Decide by Holder visible (heard.granted) {
+      case no when { not heard.granted } sequence Denied {}
+      case yes when { heard.granted } sequence Accepted {
+        send GrantedNotice via Granted as (grant: Grant) { true };
+        receive ObservedGrant via Granted of GrantedNotice as (seen: Grant) { true };
+      }
+    }
+  }
+  finish Done as (done: Boolean) { true };
+}
