@@ -286,6 +286,10 @@ impl LimitKind {
 /// `work_units` unit each.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ChargePoint {
+    /// Reference catalog row inspection and identity joins.
+    ReferenceCatalog,
+    /// Canonical reference result construction and encoding.
+    ReferenceResult,
     /// `normalize.record`.
     NormalizeRecord,
     /// `normalize.fact`.
@@ -324,7 +328,9 @@ pub enum ChargePoint {
 
 impl ChargePoint {
     /// Every named point this rung charges, in first-use order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 19] = [
+        Self::ReferenceCatalog,
+        Self::ReferenceResult,
         Self::NormalizeRecord,
         Self::NormalizeFact,
         Self::NormalizeCycleCheck,
@@ -347,6 +353,8 @@ impl ChargePoint {
     /// Normative identifier.
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ReferenceCatalog => "reference.catalog",
+            Self::ReferenceResult => "reference.result",
             Self::NormalizeRecord => "normalize.record",
             Self::NormalizeFact => "normalize.fact",
             Self::NormalizeCycleCheck => "normalize.cycle-check",

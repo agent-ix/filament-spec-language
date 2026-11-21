@@ -1984,6 +1984,14 @@ fn caller_budget_record(denial: &BudgetDenial, cause: &'static str) -> Admission
     record
 }
 
+/// Project the normalization owner's original denial into the shared
+/// admission record without assigning an argument or another budget.
+pub fn normalization_limit_record(
+    incomplete: &super::accounting::NormalizationIncomplete,
+) -> AdmissionRecord {
+    caller_budget_record(&incomplete.denial(), INSUFFICIENT_NEXT_CHARGE)
+}
+
 /// `limit` as an admission refusal: `stage_limit_exceeded` with the limit's
 /// cause and its `kind`, `bound`, `actual` and `setting` fields (FR-255
 /// Behavior 1).

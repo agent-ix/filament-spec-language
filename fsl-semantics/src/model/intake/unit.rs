@@ -61,7 +61,7 @@ pub struct SelectedModel {
 pub struct SelectedModels {
     entries: Vec<SelectedModel>,
     versions: BTreeMap<String, String>,
-    meter: Meter,
+    meter: NormalizationOwner,
     exact_declarations: Vec<SelectedExactDeclarationRow>,
     exact_fields: Vec<SelectedExactFieldRow>,
     tuple_declarations: Vec<filament_contract_model::SelectedTupleDeclarationRow>,
@@ -72,11 +72,48 @@ impl Default for SelectedModels {
         Self {
             entries: Vec::new(),
             versions: BTreeMap::new(),
-            meter: Meter::new(ModelNormalizationLimits::default()),
+            meter: NormalizationOwner::new(Meter::new(ModelNormalizationLimits::default())),
             exact_declarations: Vec::new(),
             exact_fields: Vec::new(),
             tuple_declarations: Vec::new(),
         }
+    }
+}
+
+/// Catalogs borrow the entire immutable admission owner while charging its
+/// retained meter. A mutable owner borrow cannot coexist with that catalog.
+/// The lock guards only fixed owner operations, never a caller callback.
+#[derive(Debug)]
+struct NormalizationOwner(std::sync::Mutex<Meter>);
+
+impl NormalizationOwner {
+    fn new(meter: Meter) -> Self {
+        Self(std::sync::Mutex::new(meter))
+    }
+
+    fn consumed(&self, kind: crate::model::accounting::LimitKind) -> u64 {
+        self.0
+            .lock()
+            .expect("normalization owner operations do not unwind")
+            .consumed(kind)
+    }
+
+    fn into_meter(self) -> Meter {
+        self.0
+            .into_inner()
+            .expect("normalization owner operations do not unwind")
+    }
+}
+
+impl Clone for NormalizationOwner {
+    fn clone(&self) -> Self {
+        // Preserve SelectedModels' existing deep-copy counter semantics.
+        Self::new(
+            self.0
+                .lock()
+                .expect("normalization owner operations do not unwind")
+                .clone(),
+        )
     }
 }
 
@@ -108,7 +145,7 @@ impl SelectedModels {
     ) {
         (
             self.entries,
-            self.meter,
+            self.meter.into_meter(),
             self.exact_declarations,
             self.exact_fields,
             self.tuple_declarations,
@@ -211,6 +248,20 @@ impl SelectedModels {
         self.meter.consumed(kind)
     }
 
+    /// Charge catalog or result identity work to this admission's original
+    /// normalization meter, retaining its ceiling, counter and cancellation.
+    pub fn charge_reference_work(
+        &self,
+        point: ChargePoint,
+        units: u64,
+    ) -> Result<(), NormalizationIncomplete> {
+        self.meter
+            .0
+            .lock()
+            .expect("normalization owner operations do not unwind")
+            .charge(Charge::new(point).work(units))
+    }
+
     /// The source package version of a selected package identity, when it
     /// was admitted from a package document. Synthetic fixture models have
     /// none. Identity is the lookup key because unit-local aliases can repeat
@@ -225,7 +276,7 @@ impl SelectedModels {
         Self {
             entries,
             versions: BTreeMap::new(),
-            meter: Meter::new(ModelNormalizationLimits::UNLIMITED),
+            meter: NormalizationOwner::new(Meter::new(ModelNormalizationLimits::UNLIMITED)),
             exact_declarations: Vec::new(),
             exact_fields: Vec::new(),
             tuple_declarations: Vec::new(),
@@ -270,7 +321,7 @@ impl SelectedModels {
                 operation_clauses: Vec::new(),
                 type_invariants: Vec::new(),
             }],
-            meter,
+            meter: NormalizationOwner::new(meter),
             exact_declarations: Vec::new(),
             exact_fields: Vec::new(),
             tuple_declarations: Vec::new(),
@@ -783,7 +834,7 @@ pub fn admit_unit_with_cancel(
     Ok(SelectedModels {
         entries,
         versions,
-        meter,
+        meter: NormalizationOwner::new(meter),
         exact_declarations,
         exact_fields,
         tuple_declarations,
