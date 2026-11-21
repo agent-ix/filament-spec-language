@@ -1035,11 +1035,18 @@ fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
         crate::SourceWitnessSupplier::new(&emitted.emission),
     )
     .expect_err("source-backed admission uses the same reader");
-    let source =
-        crate::PackageAdmissionRefusal::of_import_view(&source, None).expect("native refusal");
-    assert_eq!(source.code, Code::InvalidPackage);
-    assert_eq!(source.cause.as_deref(), Some("malformed-declaration"));
-    assert_eq!(source.pointer.as_deref(), Some(pointer.as_str()));
+    let crate::ImportViewRefusal::Read { refusal, .. } = source else {
+        panic!("the native reader must own source-backed refusal");
+    };
+    let V2ReadRefusal::Envelope {
+        refusal: source, ..
+    } = refusal.into_refused().expect("native refusal")
+    else {
+        panic!("the native reader must retain its envelope");
+    };
+    assert_eq!(source.code, bare.code);
+    assert_eq!(source.cause, bare.cause);
+    assert_eq!(source.loci, bare.loci);
 }
 
 /// One emitted package of a fixture and what FSL's I2 read made of it.

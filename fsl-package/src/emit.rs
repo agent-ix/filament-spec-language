@@ -8370,7 +8370,7 @@ fn model_enum_shape_rows(
     let mut rows = Vec::new();
     for (key, declaration) in semantic.selected_model_enum_declarations() {
         let Some(structural_node) = emitted.get(key) else {
-            continue;
+            return Err(EmitRefusal::SourceMapInvariant);
         };
         let variants: Vec<filament_exact::VariantId> =
             declaration.shape.variants().cloned().collect();

@@ -491,8 +491,8 @@ fn an_identifier_cased_variant_type_emits_and_reports_enum_member_witness() {
     let emitted = emit_unit(TIER_UNIT);
     assert_eq!(
         node_where(&emitted.wire, "model", "variant_type").len(),
-        1,
-        "Tier is the one variant type the unit names"
+        2,
+        "both selected payload-free enums are retained, including unused Odd"
     );
     assert!(emitted.wire["operation_effects"].is_array());
     assert_enum_equality_reader_outcomes(&emitted);
@@ -624,11 +624,10 @@ fn a_model_enum_shape_row_pairs_the_checked_shape_with_the_final_node_ids() {
 }
 
 /// FR-092-AC-26 (TC-1021): a model enum shape row is a writer fault when a
-/// case's member node is not emitted, and a declaration that is not emitted
-/// has no row.
+/// case's member node or selected declaration node is not emitted.
 #[trace("FR-092-AC-26", "TC-1021")]
 #[test]
-fn a_model_enum_shape_row_refuses_an_unemitted_case_and_skips_an_unemitted_declaration() {
+fn a_model_enum_shape_row_refuses_an_unemitted_case_or_declaration() {
     let unit = "function oddPick using v(t: M::Odd): M::Odd pure { t }";
     let (graph, _) = checked_unit(unit);
     let emission = emit_unit(unit).emission;
@@ -640,10 +639,14 @@ fn a_model_enum_shape_row_refuses_an_unemitted_case_and_skips_an_unemitted_decla
         ids.insert(row.member_key.clone(), row.structural_node.clone());
     }
     let rows = super::super::model_enum_shape_rows(&graph, &ids).expect("complete ids give rows");
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].cases.len(), ODD_CASES.len());
+    assert_eq!(rows.len(), 2);
+    let odd = rows
+        .iter()
+        .find(|row| row.original_identity.as_ref() == fixture::id("Odd"))
+        .expect("Odd retained");
+    assert_eq!(odd.cases.len(), ODD_CASES.len());
 
-    let dropped = rows[0].cases[1].member_key.clone();
+    let dropped = odd.cases[1].member_key.clone();
     let mut missing = ids.clone();
     missing.remove(&dropped);
     assert!(
@@ -653,8 +656,8 @@ fn a_model_enum_shape_row_refuses_an_unemitted_case_and_skips_an_unemitted_decla
 
     let mut undeclared = ids;
     undeclared.remove(&rows[0].node_key);
-    assert_eq!(
-        super::super::model_enum_shape_rows(&graph, &undeclared).expect("no declaration, no row"),
-        []
+    assert!(
+        super::super::model_enum_shape_rows(&graph, &undeclared).is_err(),
+        "a selected declaration cannot disappear"
     );
 }

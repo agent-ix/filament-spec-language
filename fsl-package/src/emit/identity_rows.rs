@@ -237,6 +237,31 @@ impl Emission {
             package_locus("identity_package_output"),
             package.name(),
         )?;
+        let locus = package_locus("identity_model_enum_output");
+        charge::items(
+            budget,
+            locus,
+            self.selected_model_enum_declaration_rows.len(),
+        )?;
+        for (index, row) in self.selected_model_enum_declaration_rows.iter().enumerate() {
+            let locus = adapter_locus(index, "identity_model_enum_declaration_output");
+            charge::work(budget, locus, 1)?;
+            charge::node(budget, locus, &row.structural_node)?;
+            charge::text(budget, locus, &row.selected_document)?;
+            charge::text(budget, locus, &row.original_identity)?;
+        }
+        charge::items(budget, locus, self.selected_model_enum_member_rows.len())?;
+        for (index, row) in self.selected_model_enum_member_rows.iter().enumerate() {
+            let locus = adapter_locus(index, "identity_model_enum_member_output");
+            charge::work(budget, locus, 1)?;
+            charge::node(budget, locus, &row.structural_node)?;
+            charge::node(budget, locus, &row.declaration_node)?;
+            charge::text(budget, locus, &row.selected_document)?;
+            charge::text(budget, locus, &row.enum_original_identity)?;
+            charge::text(budget, locus, &row.member_original_identity)?;
+            charge::text(budget, locus, &row.case)?;
+        }
+        let model_enum_shapes = self.selected_ir_model_enum_shape_rows(budget)?;
         Ok(ReadIdentityRows::of_rows_with_source_rows(
             package,
             declarations,
@@ -248,7 +273,12 @@ impl Emission {
             source_object_member_facts,
             source_object_operations,
         )
-        .with_source_tuples(tuples))
+        .with_source_tuples(tuples)
+        .with_model_enums(
+            self.selected_model_enum_declaration_rows.clone(),
+            self.selected_model_enum_member_rows.clone(),
+            model_enum_shapes,
+        ))
     }
 }
 

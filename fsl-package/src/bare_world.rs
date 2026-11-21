@@ -331,7 +331,7 @@ impl BarePackage<'_> {
         let ieee = fsl_semantics::value::DefinitionRole::IeeeProfile.identity();
         Ok(BareWorld {
             types,
-            enum_members: EnumMemberIndex::default(),
+            enum_members: self.enum_members.clone(),
             ieee_profile: package
                 .lock()
                 .definition_selections

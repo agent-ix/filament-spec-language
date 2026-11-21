@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::checked_v2::wire_graph;
 
 mod carried;
+mod model_enum;
 mod observation;
 use crate::equality_file::OriginalValueType;
 use carried::{SourceRecordJson, SourceTupleJson, SourceUnionJson};
@@ -82,6 +83,7 @@ pub struct BarePackage<'p> {
     /// The selected object declarations the bare environment declares, or
     /// the refusal of their projection, retained for admission (FR-533).
     objects: Result<Vec<filament_semantic_value::declaration::ObjectTypeDeclaration>, ()>,
+    pub(crate) enum_members: filament_semantic_value::enumeration::EnumMemberIndex,
     /// The population catalog: the declaration and member types of each
     /// selected population node, or the refusal of the read.
     populations: Result<BTreeMap<NodeKey, PopulationTypes>, ()>,
@@ -114,6 +116,7 @@ impl<'p> BarePackage<'p> {
             units: crate::bare_units::UnitDefinitions::default(),
             owner: std::sync::Arc::new(()),
             objects: Ok(Vec::new()),
+            enum_members: filament_semantic_value::enumeration::EnumMemberIndex::default(),
             populations: Ok(BTreeMap::new()),
         }
     }
@@ -362,6 +365,7 @@ impl<'p> BarePackage<'p> {
             .project_selected_type_declarations(identities, &[], source_units, budget)
         {
             Ok(declarations) => {
+                self.enum_members = model_enum::runtime_members(declarations.enums(), budget)?;
                 self.objects = Ok(declarations
                     .objects()
                     .iter()
@@ -559,6 +563,9 @@ pub struct ReadIdentityRows {
     source_object_member_facts: Vec<Vec<crate::emit::SourceObjectMemberFacts>>,
     source_object_operations: Vec<Vec<crate::emit::SourceObjectOperationFacts>>,
     source_operations: Vec<SelectedSourceOperationRow>,
+    model_enum_declarations: Vec<filament_contract_model::SelectedModelEnumDeclarationRow>,
+    model_enum_members: Vec<filament_contract_model::SelectedModelEnumMemberRow>,
+    model_enum_shapes: Vec<filament_contract_model::SelectedModelEnumShapeRow>,
 }
 
 /// Why an identity file was not read: a closed set, naming what it found.
@@ -628,6 +635,9 @@ pub enum IdentityMember {
     /// The required final-emission source-operation rows.
     #[error("`source_operations`")]
     SourceOperations,
+    /// The selected model enum declaration, member and shape channels.
+    #[error("model enum rows")]
+    ModelEnums,
     /// A declaration row's `form`.
     #[error("`form`")]
     Form,
@@ -655,6 +665,9 @@ struct File {
     source_unions: Vec<SourceUnionJson>,
     source_objects: Vec<SourceObjectJson>,
     source_operations: Vec<SourceOperationJson>,
+    model_enum_declarations: Vec<model_enum::DeclarationJson>,
+    model_enum_members: Vec<model_enum::MemberJson>,
+    model_enum_shapes: Vec<model_enum::ShapeJson>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1070,6 +1083,9 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
         let mut source_unions: Option<Vec<SourceUnionJson>> = None;
         let mut source_objects: Option<Vec<SourceObjectJson>> = None;
         let mut source_operations: Option<Vec<SourceOperationJson>> = None;
+        let mut model_enum_declarations: Option<Vec<model_enum::DeclarationJson>> = None;
+        let mut model_enum_members: Option<Vec<model_enum::MemberJson>> = None;
+        let mut model_enum_shapes: Option<Vec<model_enum::ShapeJson>> = None;
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
                 "format" => {
@@ -1140,10 +1156,41 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                         self.problem.set(Some(IdentityMember::SourceOperations));
                     })?);
                 }
+                "model_enum_declarations" => {
+                    if model_enum_declarations.is_some() {
+                        return Err(self.fail(IdentityMember::Repeated("model_enum_declarations")));
+                    }
+                    model_enum_declarations =
+                        Some(map.next_value().inspect_err(|_: &A::Error| {
+                            self.problem.set(Some(IdentityMember::ModelEnums));
+                        })?);
+                }
+                "model_enum_members" => {
+                    if model_enum_members.is_some() {
+                        return Err(self.fail(IdentityMember::Repeated("model_enum_members")));
+                    }
+                    model_enum_members = Some(map.next_value().inspect_err(|_: &A::Error| {
+                        self.problem.set(Some(IdentityMember::ModelEnums));
+                    })?);
+                }
+                "model_enum_shapes" => {
+                    if model_enum_shapes.is_some() {
+                        return Err(self.fail(IdentityMember::Repeated("model_enum_shapes")));
+                    }
+                    model_enum_shapes = Some(map.next_value().inspect_err(|_: &A::Error| {
+                        self.problem.set(Some(IdentityMember::ModelEnums));
+                    })?);
+                }
                 other => return Err(self.fail(IdentityMember::Unknown(other.to_owned()))),
             }
         }
         let source_tuples = source_tuples.ok_or_else(|| self.fail(IdentityMember::SourceTuples))?;
+        let model_enum_declarations =
+            model_enum_declarations.ok_or_else(|| self.fail(IdentityMember::ModelEnums))?;
+        let model_enum_members =
+            model_enum_members.ok_or_else(|| self.fail(IdentityMember::ModelEnums))?;
+        let model_enum_shapes =
+            model_enum_shapes.ok_or_else(|| self.fail(IdentityMember::ModelEnums))?;
         match (
             format,
             declarations,
@@ -1170,6 +1217,9 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                 source_unions,
                 source_objects,
                 source_operations,
+                model_enum_declarations,
+                model_enum_members,
+                model_enum_shapes,
             }),
             (None, _, _, _, _, _, _) => Err(self.fail(IdentityMember::Format)),
             (_, None, _, _, _, _, _) => Err(self.fail(IdentityMember::Declarations)),
@@ -1300,7 +1350,16 @@ impl ReadIdentityRows {
         )?
         .with_source_record_rows(package, self.source_records.iter().cloned(), budget)?
         .with_source_tuple_rows(package, self.source_tuples.iter().cloned(), budget)?
-        .with_source_union_rows(package, self.source_unions.iter().cloned(), budget)
+        .with_source_union_rows(package, self.source_unions.iter().cloned(), budget)?
+        .with_admitted_model_enum_rows(
+            package,
+            filament_contract_model::SelectedModelEnumRows {
+                declarations: &self.model_enum_declarations,
+                members: &self.model_enum_members,
+                shapes: &self.model_enum_shapes,
+            },
+            budget,
+        )
     }
 
     /// The package the rows were produced for.
@@ -1549,6 +1608,21 @@ impl ReadIdentityRows {
                 .into_iter()
                 .map(SourceOperationJson::row)
                 .collect(),
+            model_enum_declarations: file
+                .model_enum_declarations
+                .into_iter()
+                .map(model_enum::DeclarationJson::row)
+                .collect::<Result<_, _>>()?,
+            model_enum_members: file
+                .model_enum_members
+                .into_iter()
+                .map(model_enum::MemberJson::row)
+                .collect::<Result<_, _>>()?,
+            model_enum_shapes: file
+                .model_enum_shapes
+                .into_iter()
+                .map(model_enum::ShapeJson::row)
+                .collect::<Result<_, _>>()?,
         };
         rows.join(package, budget)
             .map_err(|error| IdentityFileRefusal::Native(Box::new(error)))?;
@@ -1611,6 +1685,9 @@ impl ReadIdentityRows {
             source_object_member_facts,
             source_object_operations,
             source_operations,
+            model_enum_declarations: Vec::new(),
+            model_enum_members: Vec::new(),
+            model_enum_shapes: Vec::new(),
         }
     }
 
@@ -1619,6 +1696,18 @@ impl ReadIdentityRows {
         tuples: Vec<filament_contract_model::SelectedSourceTupleRow>,
     ) -> Self {
         self.source_tuples = tuples;
+        self
+    }
+
+    pub(crate) fn with_model_enums(
+        mut self,
+        declarations: Vec<filament_contract_model::SelectedModelEnumDeclarationRow>,
+        members: Vec<filament_contract_model::SelectedModelEnumMemberRow>,
+        shapes: Vec<filament_contract_model::SelectedModelEnumShapeRow>,
+    ) -> Self {
+        self.model_enum_declarations = declarations;
+        self.model_enum_members = members;
+        self.model_enum_shapes = shapes;
         self
     }
 
@@ -1757,6 +1846,21 @@ impl ReadIdentityRows {
                 .iter()
                 .map(SourceOperationJson::of)
                 .collect(),
+            model_enum_declarations: self
+                .model_enum_declarations
+                .iter()
+                .map(model_enum::DeclarationJson::of)
+                .collect::<Result<_, _>>()?,
+            model_enum_members: self
+                .model_enum_members
+                .iter()
+                .map(model_enum::MemberJson::of)
+                .collect::<Result<_, _>>()?,
+            model_enum_shapes: self
+                .model_enum_shapes
+                .iter()
+                .map(model_enum::ShapeJson::of)
+                .collect::<Result<_, _>>()?,
         };
         let mut bytes =
             serde_json::to_vec_pretty(&file).map_err(|_| malformed(IdentityMember::File))?;
