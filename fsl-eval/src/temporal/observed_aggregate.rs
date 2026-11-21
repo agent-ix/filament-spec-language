@@ -107,11 +107,33 @@ pub(super) fn magnitude(value: Value) -> Result<Rational, LetterStop> {
     }
 }
 
+/// The record samples a window reads: listed, or held by value on a carried
+/// clause state's tape (FR-820).
+#[derive(Clone, Copy)]
+pub(super) enum Held<'a> {
+    Listed(&'a [Value]),
+    Tape(&'a super::tape::LetterTape),
+}
+
+impl<'a> Held<'a> {
+    /// The sample at `slot`; a position the tape read into a letter holds none.
+    pub(super) fn get(self, slot: usize) -> Option<&'a Value> {
+        match self {
+            Self::Listed(samples) => samples.get(slot),
+            Self::Tape(tape) => match tape.entries().get(slot)? {
+                super::tape::TapeEntry::Held(sample)
+                | super::tape::TapeEntry::Anchored(sample, _) => Some(sample),
+                super::tape::TapeEntry::Read(_) | super::tape::TapeEntry::Object(_) => None,
+            },
+        }
+    }
+}
+
 /// A [`WindowSource`] over the record samples of a trace.
 pub(super) struct SampleWindowSource<'a> {
     pub(super) package: &'a CheckedPackage,
     pub(super) expressions: CheckedAggregateConditionsRef<'a>,
-    pub(super) samples: &'a [Value],
+    pub(super) samples: Held<'a>,
     /// Whether the clause has a trigger binder, bound to the sample too.
     pub(super) trigger: bool,
     /// The captures the activation fixed.

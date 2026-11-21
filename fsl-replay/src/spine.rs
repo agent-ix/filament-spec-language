@@ -239,12 +239,12 @@ pub(crate) mod clause;
 pub use clause::{
     admit_progress, assertion_json, assertion_of, authenticate_emission,
     authenticate_package_trace, clause_trace_binding, incomplete_json, incomplete_of,
-    name_clause_atom, pending_report, read_evidence_ledger, read_ledger, run_clause,
-    run_clause_batch, run_clause_with_temporal_selections, run_package_temporal,
-    run_package_temporal_bounded, run_package_trace_subject, run_program_batch,
-    run_temporal_behaviours, run_temporal_valuation, run_trace_subject_clause, sample_position,
-    settle_correction, settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome,
-    write_ledger, AdmittedLate, AdmittedPosition, AdmittedValue, Advance,
+    name_clause_atom, pending_report, profile_reads, read_evidence_ledger, read_ledger, run_clause,
+    run_clause_batch, run_clause_with_temporal_selections, disposition_report, run_package_behaviours, run_package_sampled, run_package_valuation,
+    run_package_temporal, run_package_temporal_bounded, run_package_trace_subject,
+    run_program_batch, run_temporal_behaviours, run_temporal_valuation, run_trace_subject_clause,
+    sample_position, settle_correction, settle_run_correction, temporal_batch_exit_code,
+    temporal_batch_outcome, write_ledger, AdmittedLate, AdmittedPosition, AdmittedValue, Advance,
     AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument, ClauseArgumentValue,
     ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseRunBatchOutcome,
     ClauseRunBatchRefusal, ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection,
@@ -253,7 +253,7 @@ pub use clause::{
     ContradictedDimension, CorrectionRecord, CorrectionRefusal, EvidenceLedgerFile,
     EvidenceLedgerReadError, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
     FiniteWindowSupport, LateEntry, LateInputs, LedgerBinding, LedgerReadError, ObservedPosition,
-    OperationName, OverObject, PackageAuthentication, PackageTemporalRequest,
+    OperationName, OverObject, PackageAuthentication, PackageBehaviours, PackageSampledRequest, PackageTemporalRequest,
     PackageTraceSubjectRequest, PackagesStage, ProgramBatchCallOutcome, ProgramBatchItemResult,
     ProgramBatchOutcome, ProgramBatchRefusal, ProgramBatchSelection, ProgramCompilationRequest,
     ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
@@ -262,10 +262,10 @@ pub use clause::{
     TemporalIndeterminateReason, TemporalPositionRefusal, TemporalTraceRefusal,
     TemporalUndefinedCause, TemporalValuation, TemporalVerdict, TemporalWindowRefusal,
     TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, SAMPLE_AUTHORITY,
-    TimestampedWindow, TraceBinding, TraceInput, TraceRefusal, TraceSubjectClauseRequest,
-    ValueInvariantsBatchFailure, ValueInvariantsBatchOutcome, ValueInvariantsBatchRequest,
-    CLAUSE_STATE_FORMAT, DEFAULT_MODEL_MAX_CANDIDATES, EVIDENCE_LEDGER_FORMAT,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, TraceRefusal,
+    TraceSubjectClauseRequest, ValueInvariantsBatchFailure, ValueInvariantsBatchOutcome,
+    ValueInvariantsBatchRequest, CLAUSE_STATE_FORMAT, DEFAULT_MODEL_MAX_CANDIDATES,
+    EVIDENCE_LEDGER_FORMAT, SAMPLE_AUTHORITY,
 };
 mod refinement;
 pub use refinement::{
@@ -298,13 +298,13 @@ pub use protocol_proof::{
 pub mod query_proof;
 mod request;
 pub use request::{
-    read_clause_run_request, read_cover, read_lower_boundary, read_progress_assertion,
-    read_sample_text, read_trace_binding, AnchorWire, BindingWire, ClauseArgumentWire,
-    ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire, ClauseSelectionParts,
-    ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire, FrameSelectionWire,
-    FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire, ObservationLimitsWire,
-    OrderKeyWire, ProgressWire, RelationWire, SuppliedObservation, TemporalTraceParts,
-    TimestampedParts,
+    read_clause_run_request, read_clause_selection, read_cover, read_lower_boundary,
+    read_progress_assertion, read_sample_text, read_trace_binding, AnchorWire, BindingWire,
+    ClauseArgumentWire, ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire,
+    ClauseSelectionParts, ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire,
+    FrameSelectionWire, FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire,
+    ObservationLimitsWire, OrderKeyWire, ProgressWire, RelationWire, SuppliedObservation,
+    TemporalTraceParts, TimestampedParts,
 };
 // FR-116: FR-115's frame run, shared with the frame replay (`crate::execute`).
 pub(crate) use clause::{check_clause_admitted, check_frame, ClauseCheck, CompiledRun, FrameCheck};
@@ -1283,9 +1283,6 @@ fn assembly_error_message(cause: &AssemblyCause) -> String {
         ),
         AssemblyCause::TimedNotChecked(construct) => {
             format!("{} builds but is not checked yet", construct.description())
-        }
-        AssemblyCause::SynthesisNotChecked { name } => {
-            format!("synthesis `{name}` builds but is not checked yet")
         }
     }
 }

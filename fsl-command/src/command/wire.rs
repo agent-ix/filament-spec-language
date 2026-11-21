@@ -298,8 +298,8 @@ pub(super) struct Request {
     /// each refusal names its member path; none when absent.
     #[serde(default, deserialize_with = "present_json_value")]
     pub tl_lowering: Option<serde_json::Value>,
-    /// FR-1036: a synthesis request. The checked-package route is held at
-    /// QSL-2235 until synthesis lowering can admit its S1-S3 records.
+    /// FR-1037/FR-1039: a synthesis run request, decoded by the synthesis
+    /// handler for either a source program or a selected checked package.
     #[serde(default, deserialize_with = "present_json_value")]
     pub synthesis: Option<serde_json::Value>,
     /// FR-1038: the verification plan request, read by its own strict

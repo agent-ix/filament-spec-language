@@ -77,12 +77,13 @@ pub use ledger::{
 pub use letters::{AtomReading, CaptureReading, LetterStop, TemporalLetters, UndefinedCause};
 pub use observed::{
     descend_positions, evaluate_observed, evaluate_observed_at, evaluate_observed_decisive,
-    evaluate_observed_timed,
-    evaluate_observed_finite_window, evaluate_positions, evaluate_positions_finite_window,
-    evaluate_sampled, evaluate_sampled_finite_window, letters_valuation, observed_valuation,
-    push_object, push_sample, read_object_stop, read_sample_stop, CarriedWindow, DescentSlice,
-    FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun, ObservedValuation,
-    ObservedWindowRun, SampleStop, ValuationStop, WindowValuations,
+    evaluate_observed_finite_window, evaluate_observed_timed, evaluate_package_positions,
+    evaluate_positions, evaluate_positions_finite_window, evaluate_sampled,
+    evaluate_sampled_finite_window, letters_valuation, observed_valuation,
+    package_observed_valuation, push_object, push_sample, read_anchor_letter, read_object_stop,
+    read_sample_stop, CarriedWindow, DescentSlice, FirstUndefined, HoldsStop, ObservedLocus,
+    ObservedPositions, ObservedRun, ObservedValuation, ObservedWindowRun, SampleStop,
+    ValuationStop, WindowValuations,
 };
 pub use observed_window::{ObservedWindowExpressions, ObservedWindowSource};
 pub use outcome::{
@@ -167,7 +168,7 @@ pub fn evaluate_with_enabledness_decisive<L: TemporalLetters>(
     Result<TemporalOutcome, TemporalRefusal>,
     Option<DecisiveSearch>,
 ) {
-    engine::run_seeking(
+    let (result, decisive, _) = engine::run_seeking(
         engine::Subject {
             fairness: &[],
             ..engine::Subject::of_clause(clause)
@@ -177,7 +178,28 @@ pub fn evaluate_with_enabledness_decisive<L: TemporalLetters>(
         true,
         letters,
         meter,
-    )
+    );
+    (result, decisive)
+}
+
+/// [`evaluate`] that also reports whether the clause is inactive: a guarded
+/// `on each` clause over a closed trace or a lasso that holds with no guard
+/// true at any position, so no instance of it exists.
+pub fn evaluate_reporting_inactive<L: TemporalLetters>(
+    clause: &CheckedTemporalClause,
+    trace: TemporalTrace,
+    letters: &mut L,
+    meter: &mut Meter,
+) -> (Result<TemporalOutcome, TemporalRefusal>, bool) {
+    let (result, _, inactive) = engine::run_seeking(
+        engine::Subject::of_clause(clause),
+        trace,
+        engine::Goal::Clause,
+        false,
+        letters,
+        meter,
+    );
+    (result, inactive)
 }
 
 /// Evaluate `clause` on a finite prefix of `len` positions whose continuation

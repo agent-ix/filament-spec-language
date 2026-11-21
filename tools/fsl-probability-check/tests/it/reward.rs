@@ -140,7 +140,7 @@ fn two_step_named_reward_checks_minimum_maximum_and_both_workload_bounds() {
             let full = key(&row["state"]);
             assert!(!full[1].is_null());
             assert_eq!(
-                &full.as_array().unwrap()[3..],
+                &full.as_array().unwrap()[5..],
                 &[Value::Null, Value::Null, Value::Null]
             );
         }

@@ -1107,6 +1107,7 @@ dependencies = [
  "ix-trace-rs",
  "num-bigint",
  "num-integer",
+ "num-traits",
  "quire-canonical",
  "serde",
  "serde_json",

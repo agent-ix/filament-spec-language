@@ -153,7 +153,8 @@ fn altered_semantics_prefixes_policy_and_duplicate_cylinders_have_no_token() {
         changed.paths[0].steps[0].post_key = witness.initial_key.clone();
         no_token(&world, &changed);
         let mut changed = witness.clone();
-        changed.paths[0].steps[0].draw = vec![filament_exact::Value::Integer(Integer::from(7_i64))];
+        changed.paths[0].steps[0].draw =
+            Some(vec![filament_exact::Value::Integer(Integer::from(7_i64))]);
         no_token(&world, &changed);
         let mut changed = witness.clone();
         changed.binding = None;
@@ -161,6 +162,8 @@ fn altered_semantics_prefixes_policy_and_duplicate_cylinders_have_no_token() {
         let mut changed = witness.clone();
         changed.paths[0].steps[0]
             .action
+            .as_mut()
+            .unwrap()
             .operation
             .push_str("-invalid");
         no_token(&world, &changed);
@@ -354,10 +357,11 @@ fn disjoint_actual_draws_to_one_post_state_count_once_each() {
             witness.paths[0].steps[0].post_key,
             witness.paths[1].steps[0].post_key
         );
-        assert!(!fsl_eval::simulation::model::same_values(
-            &witness.paths[0].steps[0].draw,
-            &witness.paths[1].steps[0].draw
-        ));
+        assert!(witness.paths[0].steps[0]
+            .draw
+            .as_deref()
+            .zip(witness.paths[1].steps[0].draw.as_deref())
+            .is_some_and(|(left, right)| !fsl_eval::simulation::model::same_values(left, right)));
         assert_eq!(mass(&world, &witness), ratio(1, 1));
         let mut repeated = witness.clone();
         repeated.paths.push(repeated.paths[0].clone());
@@ -366,7 +370,13 @@ fn disjoint_actual_draws_to_one_post_state_count_once_each() {
         let key: serde_json::Value =
             serde_json::from_slice(witness.initial_key.as_bytes()).unwrap();
         assert!(!key[1].is_null());
-        assert!(key[3].is_null() && key[4].is_null() && key[5].is_null());
+        assert!(
+            key[2].is_null()
+                && key[3].is_null()
+                && key[5].is_null()
+                && key[6].is_null()
+                && key[7].is_null()
+        );
         let mut missing_binding = key.clone();
         missing_binding[1] = serde_json::Value::Null;
         changed.initial_key = fsl_replay::ProbabilityProductKey::from_canonical_bytes(
@@ -374,7 +384,7 @@ fn disjoint_actual_draws_to_one_post_state_count_once_each() {
         );
         no_token(&world, &changed);
         let mut fake_monitor = key;
-        fake_monitor[3] = serde_json::json!(["formula", 0]);
+        fake_monitor[5] = serde_json::json!(["formula", 0]);
         changed.initial_key = fsl_replay::ProbabilityProductKey::from_canonical_bytes(
             serde_json::to_vec(&fake_monitor).unwrap(),
         );
@@ -395,17 +405,28 @@ fn choices_at_one_complete_key_and_workload_policies_must_be_consistent() {
             .unwrap()
             .unwrap()
             .into_iter()
-            .find(|action| action.identity != step.action)
+            .find(|action| {
+                step.action
+                    .as_ref()
+                    .is_some_and(|identity| action.identity != *identity)
+            })
             .unwrap();
         let draw = other
             .draws
             .into_iter()
-            .find(|draw| fsl_eval::simulation::model::same_values(&draw.random, &step.draw))
+            .find(|draw| {
+                step.draw.as_deref().is_some_and(|expected| {
+                    fsl_eval::simulation::model::same_values(&draw.random, expected)
+                })
+            })
             .unwrap();
         let (transition, post) = draw.successors.into_iter().next().unwrap();
         let mut alternative = step.clone();
-        alternative.action = other.identity;
-        alternative.transition = transition;
+        alternative.choice = fsl_replay::ProductAction::Identity(
+            fsl_replay::Schedule::of(&system, &other.identity).unwrap(),
+        );
+        alternative.action = Some(other.identity);
+        alternative.transition = Some(transition);
         alternative.post = post;
         witness.paths.push(ProbabilityWitnessPath {
             steps: vec![alternative],

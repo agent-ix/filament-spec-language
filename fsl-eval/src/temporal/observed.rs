@@ -53,6 +53,11 @@ pub enum HoldsStop {
 /// condition stopped the run, why (the result is then the stop's fault).
 #[derive(Debug)]
 pub struct ObservedRun {
+    /// A completed guarded clause over a closed trace or a lasso whose every
+    /// guard was false. No instance exists, even though the formula scan
+    /// holds. Open prefixes, unresolved guards and formula-at-position calls
+    /// never establish this fact.
+    pub inactive: bool,
     /// The evaluator's result.
     pub result: Result<TemporalOutcome, TemporalRefusal>,
     /// The condition stop that ended the run, if one did.
@@ -184,13 +189,9 @@ pub fn evaluate_observed_timed(
             len: u64::try_from(stamps.len()).unwrap_or(u64::MAX),
         },
     };
-    let mut letters = ObservedLetters::over(
-        package,
-        clause,
-        positions,
-        shape,
-    );
+    let mut letters = ObservedLetters::over(package, clause, positions, shape);
     let represented = stamps.len();
+    let closed = loop_start.is_some() || through.is_some();
     let trace = match (loop_start.clone(), through) {
         (Some((start, delay)), None) => super::TimedTrace::lasso(stamps, start, delay),
         (Some(_), Some(_)) => Err(TemporalRefusal::Fault(InternalFault::new(
@@ -201,21 +202,18 @@ pub fn evaluate_observed_timed(
         (None, None) => super::TimedTrace::new(stamps),
     };
     let result = trace.and_then(|trace| {
-        let activation_positions: Vec<usize> = match (
-            clause.clause().activation(),
-            loop_start.as_ref(),
-        ) {
-            (fsl_semantics::check::Activation::Origin, _) => vec![0],
-            (fsl_semantics::check::Activation::Each { .. }, Some((start, _))) => {
-                (0..usize::try_from(*start).unwrap_or(usize::MAX))
+        let activation_positions: Vec<usize> =
+            match (clause.clause().activation(), loop_start.as_ref()) {
+                (fsl_semantics::check::Activation::Origin, _) => vec![0],
+                (fsl_semantics::check::Activation::Each { .. }, Some((start, _))) => (0
+                    ..usize::try_from(*start).unwrap_or(usize::MAX))
                     .chain(
                         (0..represented.saturating_sub(usize::try_from(*start).unwrap_or(0)))
                             .map(|offset| represented.saturating_add(offset)),
                     )
-                    .collect()
-            }
-            (fsl_semantics::check::Activation::Each { .. }, None) => (0..represented).collect(),
-        };
+                    .collect(),
+                (fsl_semantics::check::Activation::Each { .. }, None) => (0..represented).collect(),
+            };
         let guarded = matches!(
             clause.clause().activation(),
             fsl_semantics::check::Activation::Each { guarded: true }
@@ -305,7 +303,15 @@ pub fn evaluate_observed_timed(
         (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
         (stopped, _) => stopped,
     };
+    let inactive = closed
+        && matches!(
+            clause.clause().activation(),
+            fsl_semantics::check::Activation::Each { guarded: true }
+        )
+        && matches!(result, Ok(TemporalOutcome::Holds))
+        && !letters.activated;
     ObservedRun {
+        inactive,
         result,
         stopped,
         undefined: letters.undefined,
@@ -424,8 +430,9 @@ fn evaluate_observed_goal(
         fixed: BTreeMap::new(),
         active: None,
         windows: None,
+        activated: false,
     };
-    let (result, decisive) = super::engine::run_seeking(
+    let (result, decisive, inactive) = super::engine::run_seeking(
         super::engine::Subject::of_clause(clause.clause()),
         trace,
         goal,
@@ -447,6 +454,7 @@ fn evaluate_observed_goal(
         _ => Vec::new(),
     };
     ObservedRun {
+        inactive,
         result,
         stopped,
         undefined: letters.undefined,
@@ -554,6 +562,7 @@ fn evaluate_window_over(
         fixed: BTreeMap::new(),
         active: None,
         windows: None,
+        activated: false,
     };
     // A window aggregate is read as an atom of its own (FR-194 "Evaluation"):
     // a clause that holds one reads its duration window against the stamps of
@@ -580,8 +589,7 @@ fn evaluate_window_over(
         ObservedPositions::Tape(_) => {
             crate::temporal::facts::ClauseFacts::of_checked_letters(clause.clause())
         }
-        ObservedPositions::Objects { .. }
-        | ObservedPositions::ObjectTape { .. } => {
+        ObservedPositions::Objects { .. } | ObservedPositions::ObjectTape { .. } => {
             crate::temporal::facts::ClauseFacts::of_checked(clause.clause())
         }
         ObservedPositions::Samples(_) => {
@@ -687,7 +695,31 @@ impl CarriedWindow {
             fixed: BTreeMap::new(),
             active: None,
             windows: None,
+            activated: false,
         };
+        // FR-194 "Evaluation": a window aggregate reads the stamps of the
+        // admitted trace, so a carried run reads the contents the one-shot
+        // run reads.
+        if clause.clause().profile()
+            == fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+            && clause
+                .clause()
+                .formula()
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, FormulaNode::Aggregate { .. }))
+        {
+            match trace.timed_window_trace() {
+                Ok(windows) => letters.windows = Some(windows),
+                Err(refusal) => {
+                    return ObservedWindowRun {
+                        result: Err(TemporalRefusal::Window(refusal)),
+                        stopped: None,
+                        undefined: None,
+                    };
+                }
+            }
+        }
         let result = state.evaluate(
             &facts,
             silent,
@@ -751,7 +783,48 @@ const ACTIVATION_CODES: [&str; 2] = [
     "activation-condition-boolean",
 ];
 
+/// Keep the first undefined reading at the earliest position read, the
+/// position the evaluator reports (ADR-018 UE-1).
+fn keep_first_undefined(
+    undefined: &mut Option<FirstUndefined>,
+    locus: impl FnOnce() -> ObservedLocus,
+    position: TemporalPosition,
+    cause: &UndefinedCause,
+) {
+    if undefined
+        .as_ref()
+        .is_none_or(|first| position.index() < first.position.index())
+    {
+        *undefined = Some(FirstUndefined {
+            locus: locus(),
+            position,
+            cause: cause.clone(),
+        });
+    }
+}
+
+/// The represented slot position `index` of `trace` reads: a lasso wraps past
+/// its last represented position into the loop. `None` for an empty loop,
+/// which the evaluator refuses before it reads a letter.
+fn represented_slot(trace: TemporalTrace, index: u64) -> Option<usize> {
+    let slot = match trace {
+        TemporalTrace::Finite { .. } => Some(index),
+        TemporalTrace::Lasso { prefix, loop_len } => {
+            if index < prefix {
+                Some(index)
+            } else {
+                (index - prefix)
+                    .checked_rem(loop_len)
+                    .and_then(|offset| prefix.checked_add(offset))
+            }
+        }
+    };
+    slot.and_then(|slot| usize::try_from(slot).ok())
+}
+
 pub(super) struct ObservedLetters<'a> {
+    /// Whether a guard admitted any represented activation.
+    activated: bool,
     package: &'a CheckedPackage,
     clause: &'a TemporalClauseNode,
     positions: ObservedPositions<'a>,
@@ -802,6 +875,7 @@ impl<'a> ObservedLetters<'a> {
             fixed: BTreeMap::new(),
             active: None,
             windows: None,
+            activated: false,
         }
     }
 
@@ -813,45 +887,23 @@ impl<'a> ObservedLetters<'a> {
             ObservedPositions::ObjectTape { tape, from, .. } => (tape, from),
             ObservedPositions::Objects { .. } | ObservedPositions::Samples(_) => return None,
         };
-        let index = match self.trace {
-            TemporalTrace::Finite { .. } => position.index(),
-            TemporalTrace::Lasso { prefix, loop_len } => {
-                if position.index() < prefix {
-                    position.index()
-                } else {
-                    (position.index() - prefix)
-                        .checked_rem(loop_len)
-                        .and_then(|offset| prefix.checked_add(offset))?
-                }
-            }
-        };
+        let index = u64::try_from(represented_slot(self.trace, position.index())?).ok()?;
         match tape.entry(index.checked_add(from)?)? {
-            TapeEntry::Read(letter) => Some(letter),
+            TapeEntry::Read(letter) | TapeEntry::Anchored(_, letter) => Some(letter),
             TapeEntry::Held(_) | TapeEntry::Object(_) => None,
         }
     }
 }
 
 impl ObservedLetters<'_> {
-    /// Keep the first undefined reading at the earliest position read, the
-    /// position the evaluator reports (ADR-018 UE-1).
+    /// Keep the first undefined reading at the earliest position read.
     fn note(
         &mut self,
         locus: impl FnOnce() -> ObservedLocus,
         position: TemporalPosition,
         cause: &UndefinedCause,
     ) {
-        if self
-            .undefined
-            .as_ref()
-            .is_none_or(|first| position.index() < first.position.index())
-        {
-            self.undefined = Some(FirstUndefined {
-                locus: locus(),
-                position,
-                cause: cause.clone(),
-            });
-        }
+        keep_first_undefined(&mut self.undefined, locus, position, cause);
     }
 
     /// Whether `position` is a silent sample (FR-504).
@@ -867,22 +919,7 @@ impl ObservedLetters<'_> {
         &self,
         position: TemporalPosition,
     ) -> Result<(&ObjectEnvironment, Value), LetterStop> {
-        let index = position.index();
-        let slot = match self.trace {
-            TemporalTrace::Finite { .. } => Some(index),
-            TemporalTrace::Lasso { prefix, loop_len } => {
-                if index < prefix {
-                    Some(index)
-                } else {
-                    // `loop_len` is at least 1: the evaluator refuses an empty
-                    // loop before it reads a letter.
-                    (index - prefix)
-                        .checked_rem(loop_len)
-                        .and_then(|offset| prefix.checked_add(offset))
-                }
-            }
-        };
-        let slot = slot.and_then(|slot| usize::try_from(slot).ok());
+        let slot = represented_slot(self.trace, position.index());
         let found = match self.positions {
             ObservedPositions::Objects { environments, over } => slot
                 .and_then(|slot| environments.get(slot))
@@ -893,7 +930,9 @@ impl ObservedLetters<'_> {
             ObservedPositions::Tape(tape) => slot
                 .and_then(|slot| tape.entries().get(slot))
                 .and_then(|entry| match entry {
-                    TapeEntry::Held(sample) => Some((&self.empty, sample.clone())),
+                    TapeEntry::Held(sample) | TapeEntry::Anchored(sample, _) => {
+                        Some((&self.empty, sample.clone()))
+                    }
                     TapeEntry::Read(_) | TapeEntry::Object(_) => None,
                 }),
             ObservedPositions::ObjectTape { tape, over, from } => slot
@@ -903,7 +942,7 @@ impl ObservedLetters<'_> {
                     TapeEntry::Object(environment) => {
                         Some((&**environment, Value::Reference(over.clone())))
                     }
-                    TapeEntry::Read(_) | TapeEntry::Held(_) => None,
+                    TapeEntry::Read(_) | TapeEntry::Held(_) | TapeEntry::Anchored(..) => None,
                 }),
         };
         found.ok_or_else(|| {
@@ -1036,7 +1075,15 @@ impl TemporalLetters for ObservedLetters<'_> {
         if self.windows.is_some()
             && self.clause.aggregate_conditions(atom).is_some()
             && !self.is_silent(position)
+            && self.taped(position).is_none()
         {
+            // FR-501 "Verdicts": an aggregate is an atom, so a valuation
+            // absent from the admitted observation is `MissingValuation`.
+            let absent = u64::try_from(atom.index())
+                .is_ok_and(|atom| self.absent.contains(&(position.index(), atom)));
+            if absent {
+                return Ok(Valuation::Missing);
+            }
             return self.read_aggregate(atom, position, meter, visit);
         }
         self.valuation(atom, position, meter)
@@ -1071,21 +1118,23 @@ impl TemporalLetters for ObservedLetters<'_> {
         position: TemporalPosition,
         meter: &mut Meter,
     ) -> Result<AtomReading, LetterStop> {
-        if let Some(letter) = self.taped(position) {
-            return match letter.activation() {
+        let reading = if let Some(letter) = self.taped(position) {
+            match letter.activation() {
                 Some(true) => Ok(AtomReading::True),
                 Some(false) => Ok(AtomReading::False),
                 None => Err(LetterStop::Fault(InternalFault::new(
                     "temporal.observed",
                     "tape-letter-reads-the-guard",
                 ))),
-            };
-        }
-        let (objects, over) = self.subject(position)?;
-        let evaluation = self
-            .package
-            .evaluate_guard(&self.clause.identity(), over, objects, meter);
-        let reading = Self::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?;
+            }?
+        } else {
+            let (objects, over) = self.subject(position)?;
+            let evaluation =
+                self.package
+                    .evaluate_guard(&self.clause.identity(), over, objects, meter);
+            Self::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?
+        };
+        self.activated |= matches!(reading, AtomReading::True);
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Activation, position, cause);
         }
@@ -1137,12 +1186,18 @@ impl ObservedLetters<'_> {
         meter: &mut Meter,
         visit: &mut dyn FnMut(&mut Meter) -> Result<(), LetterStop>,
     ) -> Result<Valuation, LetterStop> {
-        let stop = |code: &'static str| {
-            LetterStop::Fault(InternalFault::new("temporal.observed", code))
-        };
-        let (ObservedPositions::Samples(samples), Some(windows)) =
-            (self.positions, self.windows.as_ref())
-        else {
+        let stop =
+            |code: &'static str| LetterStop::Fault(InternalFault::new("temporal.observed", code));
+        let (Some(windows), Some(samples)) = (
+            self.windows.as_ref(),
+            match self.positions {
+                ObservedPositions::Samples(samples) => {
+                    Some(observed_aggregate::Held::Listed(samples))
+                }
+                ObservedPositions::Tape(tape) => Some(observed_aggregate::Held::Tape(tape)),
+                ObservedPositions::Objects { .. } | ObservedPositions::ObjectTape { .. } => None,
+            },
+        ) else {
             return Err(stop("aggregate-reads-samples-with-a-stamped-trace"));
         };
         let expressions = self
@@ -1705,8 +1760,186 @@ pub fn observed_valuation(
         fixed: BTreeMap::new(),
         active: None,
         windows: None,
+        activated: false,
     };
     letters_valuation(clause.clause(), &mut letters, trace, meter)
+}
+
+/// The `holds` atoms and `on each` guard of a clause a checked package
+/// carries, read at the positions of an observed trace through the package's
+/// own evaluator.
+struct PackageLetters<'a> {
+    evaluator: &'a dyn crate::simulation::model::ModelEvaluator,
+    clause: &'a fsl_semantics::check::CheckedTemporalClause,
+    key: &'a filament_exact::NodeKey,
+    /// The record sample at each represented position.
+    samples: &'a [Value],
+    trace: TemporalTrace,
+    /// The environment a sample position reads: it holds no object.
+    empty: ObjectEnvironment,
+    stopped: Option<HoldsStop>,
+    /// The first undefined reading, at the earliest position read.
+    undefined: Option<FirstUndefined>,
+}
+
+impl PackageLetters<'_> {
+    /// The environment position `position` observes and the value its `over`
+    /// parameter takes there: the record sample at its represented slot.
+    fn subject(
+        &self,
+        position: TemporalPosition,
+    ) -> Result<(&ObjectEnvironment, Value), LetterStop> {
+        represented_slot(self.trace, position.index())
+            .and_then(|slot| self.samples.get(slot))
+            .map(|sample| (&self.empty, sample.clone()))
+            .ok_or_else(|| {
+                LetterStop::Fault(InternalFault::new(
+                    "temporal.observed",
+                    "position-has-an-environment",
+                ))
+            })
+    }
+}
+
+impl TemporalLetters for PackageLetters<'_> {
+    fn atom(
+        &mut self,
+        atom: FormulaNodeId,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        let (objects, over) = self.subject(position)?;
+        let named = crate::value::HoldsAtom {
+            clause: self.key.clone(),
+            position: atom.index(),
+        };
+        let evaluation = self
+            .evaluator
+            .evaluate_holds(&named, over, &[], objects, meter);
+        let reading =
+            ObservedLetters::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)?;
+        if let AtomReading::Undefined(cause) = &reading {
+            keep_first_undefined(
+                &mut self.undefined,
+                || ObservedLocus::Atom(atom),
+                position,
+                cause,
+            );
+        }
+        Ok(reading)
+    }
+
+    fn activation(
+        &mut self,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        let (objects, over) = self.subject(position)?;
+        let evaluation = self
+            .evaluator
+            .evaluate_guard(self.key, over, objects, meter);
+        let reading =
+            ObservedLetters::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?;
+        if let AtomReading::Undefined(cause) = &reading {
+            keep_first_undefined(
+                &mut self.undefined,
+                || ObservedLocus::Activation,
+                position,
+                cause,
+            );
+        }
+        Ok(reading)
+    }
+
+    fn captures(
+        &mut self,
+        _position: TemporalPosition,
+        _meter: &mut Meter,
+    ) -> Result<CaptureReading, LetterStop> {
+        if self.clause.captures().len() == 0 {
+            return Ok(CaptureReading::Fixed);
+        }
+        Err(LetterStop::Fault(InternalFault::new(
+            "temporal.observed",
+            "package-form-reads-no-capture-yet",
+        )))
+    }
+}
+
+/// [`observed_valuation`] for a clause a checked package carries: its `holds`
+/// atoms and guard read through the package's own evaluator `evaluator`,
+/// the clause's formula and activation from its package form `clause`, whose
+/// node is `key`. A clause with captures is not read.
+///
+/// # Errors
+///
+/// [`ValuationStop`], as for [`observed_valuation`].
+pub fn package_observed_valuation(
+    evaluator: &dyn crate::simulation::model::ModelEvaluator,
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    key: &filament_exact::NodeKey,
+    samples: &[Value],
+    trace: TemporalTrace,
+    meter: &mut Meter,
+) -> Result<ObservedValuation, ValuationStop> {
+    let mut letters = PackageLetters {
+        evaluator,
+        clause,
+        key,
+        samples,
+        trace,
+        empty: ObjectEnvironment::default(),
+        stopped: None,
+        undefined: None,
+    };
+    letters_valuation(clause, &mut letters, trace, meter)
+}
+
+/// [`evaluate_positions`] for a clause a checked package carries: the clause's
+/// formula evaluated over `positions` of `trace`, its atoms and guard read
+/// through the package's own evaluator `evaluator` (FR-330). A clause with
+/// captures is not read.
+pub fn evaluate_package_positions(
+    evaluator: &dyn crate::simulation::model::ModelEvaluator,
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    key: &filament_exact::NodeKey,
+    samples: &[Value],
+    trace: TemporalTrace,
+    meter: &mut Meter,
+) -> ObservedRun {
+    let mut letters = PackageLetters {
+        evaluator,
+        clause,
+        key,
+        samples,
+        trace,
+        empty: ObjectEnvironment::default(),
+        stopped: None,
+        undefined: None,
+    };
+    let (result, decisive, inactive) = super::engine::run_seeking(
+        super::engine::Subject::of_clause(clause),
+        trace,
+        super::engine::Goal::Clause,
+        false,
+        &mut letters,
+        meter,
+    );
+    // A refusal the result does not stop at was passed over: an activation
+    // before it evaluated false, or an atom before it was undefined, and
+    // that result is the run's (FR-327 "Refused condition").
+    let stopped = match (letters.stopped, &result) {
+        (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
+        (stopped, _) => stopped,
+    };
+    ObservedRun {
+        inactive,
+        result,
+        stopped,
+        undefined: letters.undefined,
+        decisive,
+        captures: Vec::new(),
+    }
 }
 
 /// [`observed_valuation`] over any letter source: each `holds` atom of
@@ -1793,7 +2026,7 @@ pub fn letters_valuation<L: TemporalLetters>(
             }
         };
         if active {
-            let (result, _) = super::engine::run_seeking(
+            let (result, _, _) = super::engine::run_seeking(
                 super::engine::Subject::of_clause(clause),
                 trace,
                 super::engine::Goal::At(position),
@@ -1810,4 +2043,51 @@ pub fn letters_valuation<L: TemporalLetters>(
         activations,
         trace,
     })
+}
+
+/// FR-820 "Summarized positions": the letter of the position `at` of a carried
+/// timestamped clause state, read while the samples of the position's window
+/// are still held: each `holds` atom and each window aggregate atom, the
+/// aggregate read against the stamps of `trace`. `None` for a clause with a
+/// guard or captures, and for a reading that does not reduce to a letter (an
+/// undefined atom or a refused condition), which keep the sample.
+pub fn read_anchor_letter(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    tape: &super::tape::LetterTape,
+    trace: &TimestampedTrace,
+    at: u64,
+    meter: &mut Meter,
+) -> Option<TapeLetter> {
+    let checked = clause.clause();
+    if checked.captures().len() != 0
+        || matches!(
+            checked.activation(),
+            fsl_semantics::check::Activation::Each { guarded: true }
+        )
+    {
+        return None;
+    }
+    let mut letters = ObservedLetters::over(
+        package,
+        clause,
+        ObservedPositions::Tape(tape),
+        TemporalTrace::Finite {
+            len: u64::try_from(trace.len()).ok()?,
+        },
+    );
+    letters.windows = Some(trace.timed_window_trace().ok()?);
+    let formula = checked.formula();
+    let mut atoms = Vec::new();
+    for (index, node) in formula.nodes().iter().enumerate() {
+        if matches!(
+            node,
+            FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. }
+        ) {
+            let id = formula.node_id(index)?;
+            let reading = letters.atom(id, TemporalPosition::new(at), meter).ok()?;
+            atoms.push((index, super::tape::TapeReading::of(&reading)?));
+        }
+    }
+    Some(TapeLetter::new(atoms, None, false))
 }

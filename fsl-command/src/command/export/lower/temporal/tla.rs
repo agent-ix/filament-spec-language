@@ -42,6 +42,8 @@ pub(in crate::command::export::lower) struct Extra {
     /// Each obligation whose TLA+ encoding is a nondeterministic monitor,
     /// with its clause's node.
     pub(in crate::command::export::lower) conditional: Vec<Cond>,
+    pub(in crate::command::export::lower) dense: bool,
+    pub(in crate::command::export::lower) dense_names: Vec<(String, usize)>,
 }
 
 // ---- Normal form -----------------------------------------------------------
@@ -52,7 +54,7 @@ fn normalize(tf: &Tf) -> Tf {
     let go = |inner: &Tf| Box::new(normalize(inner));
     let not = |inner: Tf| Tf::Not(Box::new(inner));
     match tf {
-        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) => tf.clone(),
+        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) | Tf::Timed(_) => tf.clone(),
         Tf::Not(inner) => Tf::Not(go(inner)),
         Tf::And(left, right) => Tf::And(go(left), go(right)),
         Tf::Or(left, right) => Tf::Or(go(left), go(right)),
@@ -155,7 +157,7 @@ fn extract(tf: &Tf, histories: &mut Vec<History>, ordinal: &mut u64) -> Lower<Tf
         extract(inner, histories, ordinal).map(Box::new)
     }
     Ok(match tf {
-        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) => tf.clone(),
+        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) | Tf::Timed(_) => tf.clone(),
         Tf::Not(inner) => Tf::Not(go(inner, histories, ordinal)?),
         Tf::And(left, right) => Tf::And(
             go(left, histories, ordinal)?,
@@ -839,6 +841,14 @@ pub(in crate::command::export::lower) fn tla(
         if universes.insert(clause.object) {
             universe(input, clause, object, &names, out, &mut extra).map_err(attribute)?;
         }
+        if let Some(model) = input.dense {
+            extra.conditional.push(Cond {
+                obligation: clause.name.clone(),
+                kind: "real-valued-time",
+                node: model.node,
+                type_name: None,
+            });
+        }
         if input.snapshot.is_none() {
             extra.conditional.push(Cond {
                 obligation: clause.name.clone(),
@@ -854,7 +864,37 @@ pub(in crate::command::export::lower) fn tla(
             names,
             histories: Vec::new(),
         };
-        tla_clause(ctx, out, &mut extra).map_err(attribute)?;
+        if input.dense.is_some() {
+            let mut presence = vec![format!("{} \\in DOMAIN {}", ctx.key(), object.variable())];
+            for def in &clause.defs {
+                presence.push(input.show.expr(def).map_err(attribute)?);
+            }
+            out.push(define(
+                clause.position,
+                Some(ctx.names.ok.clone()),
+                format!(
+                    "{}({}) == {}",
+                    ctx.names.ok,
+                    ctx.key(),
+                    presence.join(" /\\ "),
+                ),
+                Some(clause.name.as_str()),
+            ));
+            let variables = super::super::dense::tla_clause(
+                clause,
+                &ctx.names.ids,
+                &ctx.names.ok,
+                |tf, primed| ctx.state(tf, primed),
+                out,
+            )
+            .map_err(attribute)?;
+            extra
+                .variables
+                .extend(variables.iter().map(|(name, _)| name.clone()));
+            extra.dense_names.extend(variables);
+        } else {
+            tla_clause(ctx, out, &mut extra).map_err(attribute)?;
+        }
     }
     Ok(extra)
 }

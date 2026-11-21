@@ -28,7 +28,7 @@ const BRAKING: &str = "language \"ix:native\" edition \"1-draft\";\n\
      temporal SlowEnough using p over (h: Braking) clock \"model-time\" \
      on origin { always holds(h.v < 30) }\n";
 
-fn source(file: &str) -> Value {
+pub(crate) fn source(file: &str) -> Value {
     json!({"file": file, "authority": "agent-ix", "identity": format!("test:w21:{file}"),
         "document": "W21", "formal_revision": 1})
 }

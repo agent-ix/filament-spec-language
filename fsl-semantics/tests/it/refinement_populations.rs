@@ -18,10 +18,7 @@ use fsl_semantics::check::{
 };
 use ix_trace_rs::trace;
 
-#[path = "../../../tests/support/ring_queue.rs"]
-mod ring_queue;
-
-use ring_queue::{all_rows, checked, key, refused, ring_is_queue, ITEMS, RING};
+use crate::ring_queue::{all_rows, checked, key, refused, ring_is_queue, ITEMS, RING};
 
 /// `Int[lower, upper]`.
 fn interval(lower: i64, upper: i64) -> ValueType {

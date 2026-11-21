@@ -129,6 +129,7 @@ fn a_checked_invariant_refused_condition_reports_the_internal_failure() {
     };
     let at = fsl_eval::temporal::TemporalPosition::new(1);
     let observed = fsl_eval::temporal::ObservedRun {
+        inactive: false,
         result: Err(fsl_eval::temporal::TemporalRefusal::ConditionRefused { at }),
         stopped: Some(fsl_eval::temporal::HoldsStop::Refused { at, evaluation }),
         undefined: None,

@@ -20,7 +20,7 @@ FR-031-AC-4, FR-031-AC-6 to FR-031-AC-10 and FR-267-AC-17.
 
 ## Test Procedure
 
-1. Embed FR-108's unit in one `ix:native` fence of an LF document and of a
+1. Embed FR-108's healthy-parent clause as a one-clause unit in one `ix:native` fence of an LF document and of a
    CRLF document; extract each and run healthy-parent, violating-parent and
    missing-model.
 2. Extract with a clause id the document does not hold; with an extraction
@@ -80,7 +80,7 @@ AC-4 and steps 5 to 9 for AC-6 to AC-10 (AC-5 is TC-430 step 5); step 9 also
   offset and indentation; every original region of the CRLF-ending span; no
   original region for the package-encoding refusal; FR-030's correspondence
   error before compile for the malformed map.
-- Step 8: `extraction-clause-count` at compile with `{"actual": 2}` and no
+- Step 8: `extraction-clause-count` at compile with `fields` `{"actual": "2"}` and no
   `package_id`; FR-109's `source` refusal; `missing_declaration` at `select`.
 - Step 9: one `/2` document whose `extraction` equals the in-process record
   and reads back equal; no `extraction` for the bytes unit; each malformed

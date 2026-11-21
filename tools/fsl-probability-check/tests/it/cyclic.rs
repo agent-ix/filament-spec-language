@@ -116,7 +116,7 @@ fn self_loop_and_transient_scc_accept_exact_values_and_shortest_distances() {
                 let full = key(&row["state"]);
                 assert!(!full[1].is_null());
                 assert_eq!(
-                    &full.as_array().unwrap()[3..],
+                    &full.as_array().unwrap()[5..],
                     &[Value::Null, Value::Null, Value::Null]
                 );
             }
@@ -341,7 +341,7 @@ fn cyclic_evidence_mutations_and_caller_controls_prevent_acceptance() {
             alter_keys(doc, |key| key[1] = Value::Null);
         }),
         mutate(&request, |doc| {
-            alter_keys(doc, |key| *key = key[2].clone());
+            alter_keys(doc, |key| *key = key[4].clone());
         }),
         mutate(&request, |doc| {
             doc["objective"]["targets"] = json!([]);

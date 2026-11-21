@@ -2897,6 +2897,55 @@ pub struct AmbiguousQualified {
     pub candidates: Vec<QualifiedCandidate>,
 }
 
+/// The tag of FSpec FR-402's reserved slot-parameter form.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SlotTag {
+    /// `slot`, with two fields.
+    Slot,
+    /// `op`, with one field.
+    Op,
+    /// `rcv`, with one field.
+    Rcv,
+    /// `arg`, with four fields.
+    Arg,
+}
+
+impl SlotTag {
+    /// The tag a name begins with, before its first `_`.
+    pub(crate) fn of(name: &str) -> Option<Self> {
+        match name.split_once('_')?.0 {
+            "slot" => Some(Self::Slot),
+            "op" => Some(Self::Op),
+            "rcv" => Some(Self::Rcv),
+            "arg" => Some(Self::Arg),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for SlotTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Slot => "slot",
+            Self::Op => "op",
+            Self::Rcv => "rcv",
+            Self::Arg => "arg",
+        })
+    }
+}
+
+/// [`CheckCause::ReservedSlotName`]'s payload.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ReservedSlotName {
+    /// The reserved identifier, as written.
+    pub name: String,
+    /// The slot tag it decodes as.
+    pub tag: SlotTag,
+    /// The identifier's own span, when the declaring form records one;
+    /// otherwise the refusal's location names the declaring node.
+    pub span: Option<Span>,
+}
+
 /// [`CheckCause::AmbiguousMember`]'s payload.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AmbiguousMember {
@@ -2985,6 +3034,13 @@ pub enum CheckCause {
         /// Which construct.
         construct: TimedConstruct,
         /// The construct's span.
+        span: Span,
+    },
+    /// FR-754: the synthesis candidate domain has an unbounded component.
+    SynthesisUnboundedDomain {
+        /// The first unbounded component in declaration order.
+        component: String,
+        /// The authored `domain` name.
         span: Span,
     },
     /// A completed model conformance stage retains every axis failure.
@@ -3098,6 +3154,12 @@ pub enum CheckCause {
     /// `ambiguous-name`, naming every candidate. Boxed like the other
     /// payload-bearing causes, to keep `CheckCause` small.
     AmbiguousMember(Box<AmbiguousMember>),
+    /// FR-488 "Reserved slot names": a source identifier in FSpec FR-402's
+    /// reserved slot-parameter form where it would name a `value`/`parameter`
+    /// node: `ambiguous_declaration` / `ambiguous-name`, naming the
+    /// identifier and its slot tag. Boxed like the other payload-bearing
+    /// causes, to keep `CheckCause` small.
+    ReservedSlotName(Box<ReservedSlotName>),
     /// FR-317: `q::m` names more than one candidate, a union, an enum or an
     /// import alias: `ambiguous_declaration` / `ambiguous-name`, naming every
     /// candidate.
@@ -3767,6 +3829,7 @@ impl CheckCause {
             Self::TerminalWithoutObjectType { .. }
             | Self::RefinementNotEmitted { .. }
             | Self::TimedNotChecked { .. } => Code::UnsupportedConstruct,
+            Self::SynthesisUnboundedDomain { .. } => Code::UnsupportedProjection,
             Self::Refinement(cause) => cause.cause.code(),
             Self::Abstraction(cause) => cause.code(),
             Self::Extension(cause) => cause.code(),
@@ -3797,9 +3860,10 @@ impl CheckCause {
             | Self::MissingSelf => Code::MissingDeclaration,
             Self::ExecutionPointBinding(_) => Code::InvalidModelBinding,
             Self::ClockReadingCall(_) => Code::InvalidTimedModel,
-            Self::AmbiguousName { .. } | Self::AmbiguousMember(_) | Self::AmbiguousQualified(_) => {
-                Code::AmbiguousDeclaration
-            }
+            Self::AmbiguousName { .. }
+            | Self::AmbiguousMember(_)
+            | Self::AmbiguousQualified(_)
+            | Self::ReservedSlotName(_) => Code::AmbiguousDeclaration,
             Self::UnsupportedNavigation(_)
             | Self::ObjectReadInValueInvariant
             | Self::PopulationFormOutsideRefinement
@@ -3857,6 +3921,7 @@ impl CheckCause {
             Self::RefinementNotEmitted { .. } | Self::TimedNotChecked { .. } => {
                 Some("not-yet-implemented")
             }
+            Self::SynthesisUnboundedDomain { .. } => Some("unbounded-extent"),
             Self::Refinement(cause) => cause.cause.cause(),
             Self::Abstraction(cause) => Some(cause.cause()),
             Self::Extension(cause) => Some(cause.cause()),
@@ -3891,9 +3956,10 @@ impl CheckCause {
             | Self::MissingSelf => Some("missing-name"),
             Self::ExecutionPointBinding(_) => Some("malformed-declaration"),
             Self::ClockReadingCall(_) => Some("clock-read-outside-constraint"),
-            Self::AmbiguousName { .. } | Self::AmbiguousMember(_) | Self::AmbiguousQualified(_) => {
-                Some("ambiguous-name")
-            }
+            Self::AmbiguousName { .. }
+            | Self::AmbiguousMember(_)
+            | Self::AmbiguousQualified(_)
+            | Self::ReservedSlotName(_) => Some("ambiguous-name"),
             Self::UnsupportedNavigation(_)
             | Self::ObjectReadInValueInvariant
             | Self::PopulationFormOutsideRefinement => Some("expression-form"),

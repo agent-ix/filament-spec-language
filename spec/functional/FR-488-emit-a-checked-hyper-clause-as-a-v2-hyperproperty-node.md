@@ -333,6 +333,9 @@ reads it would lose its `model_root` `over`. A name outside the form, such as
 `slotted`, is an ordinary identifier, and a created timed binder such as
 `ts#0` is never in the form.
 
+When the forms carry no separate binder-name region, the checker SHALL locate
+the refusal at the declaring binding form's source region, if available.
+
 ### The body
 
 - The emitter SHALL write the body of the clause as one

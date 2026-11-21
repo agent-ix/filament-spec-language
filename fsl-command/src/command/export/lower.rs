@@ -10,6 +10,7 @@
 //! other construct is a refusal that names it, so the export never writes a
 //! text that states less than the clause says.
 
+mod dense;
 mod temporal;
 
 use self::temporal::{ClauseLow, ClauseRead, Extra, FairLow, FairRead};
@@ -91,6 +92,7 @@ struct Object {
     name: String,
     population: String,
     fields: Vec<Field>,
+    clocks: Vec<String>,
     operations: Vec<Operation>,
     /// The node of the object type in the package graph.
     node: usize,
@@ -134,9 +136,15 @@ fn items<'a>(value: &'a Value, key: &str) -> &'a [Value] {
 struct RawObject {
     id: String,
     name: String,
-    body: Lower<(Vec<Field>, Vec<Operation>)>,
+    body: Lower<ObjectParts>,
     populations: Vec<String>,
     population_note: Option<String>,
+}
+
+struct ObjectParts {
+    fields: Vec<Field>,
+    clocks: Vec<String>,
+    operations: Vec<Operation>,
 }
 
 fn short_name(id: &str) -> &str {
@@ -167,11 +175,7 @@ fn kind_of(type_ref: &str, values: &BTreeMap<String, Kind>) -> Lower<Kind> {
     }
 }
 
-fn read_object(
-    node: &Value,
-    id: &str,
-    values: &BTreeMap<String, Kind>,
-) -> Lower<(Vec<Field>, Vec<Operation>)> {
+fn read_object(node: &Value, id: &str, values: &BTreeMap<String, Kind>) -> Lower<ObjectParts> {
     if !items(node, "supertypes").is_empty() {
         return refuse(
             "model/object_type",
@@ -179,6 +183,7 @@ fn read_object(
         );
     }
     let mut fields = Vec::new();
+    let mut clocks = Vec::new();
     for field in items(node, "fields") {
         let name = str_of(field, "name").unwrap_or_default();
         if str_of(field, "presence") != Some("required")
@@ -189,10 +194,15 @@ fn read_object(
                 format!("`{id}` field `{name}` is not a required, non-null field"),
             );
         }
+        let type_ref = str_of(field, "typeRef").unwrap_or_default();
+        if type_ref == "ix://filament/native/Clock" {
+            clocks.push(name.to_owned());
+            continue;
+        }
         fields.push(Field {
             id: str_of(field, "identity").unwrap_or_default().to_owned(),
             name: name.to_owned(),
-            kind: kind_of(str_of(field, "typeRef").unwrap_or_default(), values)?,
+            kind: kind_of(type_ref, values)?,
         });
     }
     let mut operations = Vec::new();
@@ -236,7 +246,11 @@ fn read_object(
             receiver: set("modifies_receiver"),
         });
     }
-    Ok((fields, operations))
+    Ok(ObjectParts {
+        fields,
+        clocks,
+        operations,
+    })
 }
 
 fn read_models(models: &[Vec<u8>]) -> Lower<BTreeMap<String, RawObject>> {
@@ -770,6 +784,7 @@ struct Input<'a> {
     first: usize,
     clauses: &'a [(String, usize, usize, E)],
     temporals: &'a [ClauseLow],
+    dense: Option<&'a dense::Model>,
 }
 
 struct Show<'a> {
@@ -1106,13 +1121,17 @@ pub(super) fn lower(
     let mut raw = read_models(models)?;
     let mut contexts: BTreeMap<String, (usize, String)> = BTreeMap::new();
     let mut reads: Vec<ClauseRead> = Vec::new();
+    let timed_models = fsl_package::CheckedTimedModel::from_admitted(graph.package)
+        .map_err(|message| refusal("checked package", message))?;
     for (name, position) in wanted {
         if &*graph.node(*position).node_tag == "temporal" {
-            let read = temporal::read(graph, name, *position).map_err(|mut refusal| {
-                refusal.obligation = Some(name.clone());
-                refusal.node.get_or_insert(*position);
-                refusal
-            })?;
+            let read = temporal::read(graph, name, *position, &timed_models, target).map_err(
+                |mut refusal| {
+                    refusal.obligation = Some(name.clone());
+                    refusal.node.get_or_insert(*position);
+                    refusal
+                },
+            )?;
             contexts
                 .entry(read.context.clone())
                 .or_insert_with(|| (read.context_node, name.clone()));
@@ -1142,7 +1161,11 @@ pub(super) fn lower(
                 &format!("`{id}` is in no selected model"),
             ))
         })?;
-        let (fields, operations) = object.body.map_err(attribute)?;
+        let ObjectParts {
+            fields,
+            clocks,
+            operations,
+        } = object.body.map_err(attribute)?;
         if let Some(note) = object.population_note {
             return Err(attribute(refusal("model/population", &note)));
         }
@@ -1157,6 +1180,7 @@ pub(super) fn lower(
             name: object.name,
             population,
             fields,
+            clocks,
             operations,
             node: *node,
         });
@@ -1169,6 +1193,7 @@ pub(super) fn lower(
         graph,
         objects: &objects,
     };
+    let dense = dense::Model::read(&mut lowerer, &reads, &timed_models, wanted)?;
     // Each operation's clauses, lowered once: preconditions in the pre-state,
     // postconditions with bare reads in the post-state.
     let mut operations: Vec<Vec<OpLow>> = Vec::new();
@@ -1327,12 +1352,17 @@ pub(super) fn lower(
         first,
         clauses: &lowered_clauses,
         temporals: &temporals,
+        dense: dense.as_ref(),
     };
     let extra = match target {
         Target::Tla => tla(&input, &mut definitions)?,
         Target::Lean => {
             lean(&input, &mut definitions)?;
-            Extra::default()
+            let mut extra = Extra::default();
+            if let Some(model) = &dense {
+                extra.dense_names.extend(model.clock_names());
+            }
+            extra
         }
     };
     assemble(graph, target, module, &objects, &extra, definitions)
@@ -1468,7 +1498,11 @@ fn frame_fields<'a>(object: &'a Object, operation: &Operation) -> Vec<(&'a Field
 fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
     let target = Target::Tla;
     let objects = input.objects;
-    let variables: Vec<String> = objects.iter().map(Object::variable).collect();
+    let variables: Vec<String> = objects
+        .iter()
+        .map(Object::variable)
+        .chain(input.dense.into_iter().flat_map(dense::Model::variables))
+        .collect();
     out.push(define(
         input.first,
         None,
@@ -1505,14 +1539,29 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
             type_ok.push(format!("\\A k \\in DOMAIN {v} : {}", fields.join(" /\\ ")));
         }
     }
+    if let Some(model) = input.dense {
+        type_ok.extend(model.tla_types(&objects[0].variable()));
+    }
     out.push(define(
         input.first,
         None,
         format!("TypeOK ==\n{}", bullets(&type_ok)),
         None,
     ));
+    if let Some(model) = input.dense {
+        model.tla_delay_bounds(input, out)?;
+    }
     let init = match input.snapshot {
-        None => "Init == TypeOK".to_owned(),
+        None if input.dense.is_none() => "Init == TypeOK".to_owned(),
+        None => {
+            let mut parts = input
+                .dense
+                .map(|model| model.tla_init(&objects[0].variable()))
+                .unwrap_or_default();
+            parts.push("TypeOK".to_owned());
+            parts.push("TimeInv(0)".to_owned());
+            format!("Init ==\n{}", bullets(&parts))
+        }
         Some(snapshot) => {
             let mut parts = Vec::new();
             for object in objects {
@@ -1537,6 +1586,10 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
                 };
                 parts.push(function);
             }
+            if let Some(model) = input.dense {
+                parts.extend(model.tla_init(&objects[0].variable()));
+                parts.push("TimeInv(0)".to_owned());
+            }
             format!("Init ==\n{}", bullets(&parts))
         }
     };
@@ -1544,7 +1597,12 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
     let mut disjuncts = Vec::new();
     for (index, object) in objects.iter().enumerate() {
         let v = object.variable();
-        for (operation, lowered) in object.operations.iter().zip(&input.operations[index]) {
+        for (at, (operation, lowered)) in object
+            .operations
+            .iter()
+            .zip(&input.operations[index])
+            .enumerate()
+        {
             let name = object.operation(operation);
             let params = parameters(operation);
             let names: Vec<&str> = params.iter().map(|(name, _)| name.as_str()).collect();
@@ -1555,6 +1613,9 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
                 }
             }
             lines.extend(input.show.exprs(&lowered.pre)?);
+            if let Some(model) = input.dense {
+                lines.extend(model.tla_action(input, at)?);
+            }
             lines.extend(input.show.exprs(&lowered.post)?);
             lines.push(format!("DOMAIN {v}' = DOMAIN {v}"));
             for (field, receiver) in frame_fields(object, operation) {
@@ -1594,10 +1655,16 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
         format!("Next ==\n{}", disjuncts.join("\n"))
     };
     out.push(define(input.first, None, next, None));
+    let next_name = if let Some(model) = input.dense {
+        model.tla_steps(input, out)?;
+        "TNext"
+    } else {
+        "Next"
+    };
     out.push(define(
         input.first,
         None,
-        "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)".to_owned(),
+        format!("Spec == Init /\\ [][{next_name}]_vars /\\ WF_vars({next_name})"),
         None,
     ));
     for (name, position, object, formula) in input.clauses {
@@ -1623,7 +1690,13 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
             Some(name),
         ));
     }
-    temporal::tla(input, out)
+    let mut extra = temporal::tla(input, out)?;
+    if let Some(model) = input.dense {
+        extra.dense = true;
+        extra.variables.splice(0..0, model.variables());
+        extra.dense_names.extend(model.clock_names());
+    }
+    Ok(extra)
 }
 
 // ---- Lean 4 --------------------------------------------------------------
@@ -1833,12 +1906,23 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
         }
     };
     out.push(define(input.first, None, init, None));
+    let (clock_types, clock_args) = if let Some(model) = input.dense {
+        model.lean_clock_types(input, out);
+        (" (c c' : Clocks)", " c c'")
+    } else {
+        ("", "")
+    };
     let mut steps = Vec::new();
     for (index, object) in objects.iter().enumerate() {
         let v = object.variable();
         let has = mangle("F_has_", &object.name);
         let get = mangle("F_get_", &object.name);
-        for (operation, lowered) in object.operations.iter().zip(&input.operations[index]) {
+        for (at, (operation, lowered)) in object
+            .operations
+            .iter()
+            .zip(&input.operations[index])
+            .enumerate()
+        {
             let name = object.operation(operation);
             let params = parameters(operation);
             let typed: Vec<String> = params
@@ -1860,6 +1944,9 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 }
             }
             lines.extend(input.show.exprs(&lowered.pre)?);
+            if let Some(model) = input.dense {
+                lines.extend(model.lean_action(input, at)?);
+            }
             lines.extend(input.show.exprs(&lowered.post)?);
             lines.push(format!(
                 "List.map (fun e => e.1) s'.{v} = List.map (fun e => e.1) s.{v}"
@@ -1880,7 +1967,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 lowered.node,
                 Some(name.clone()),
                 format!(
-                    "def {name} (s : State) (s' : State) {} : Prop :=\n  {}",
+                    "def {name} (s : State) (s' : State){clock_types} {} : Prop :=\n  {}",
                     typed.join(" "),
                     lines
                         .iter()
@@ -1896,7 +1983,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 .collect();
             let names: Vec<&str> = params.iter().map(|(param, _)| param.as_str()).collect();
             steps.push(format!(
-                "({} {name} s s' {})",
+                "({} {name} s s'{clock_args} {})",
                 binders.join(" "),
                 names.join(" ")
             ));
@@ -1910,16 +1997,20 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
     out.push(define(
         input.first,
         None,
-        format!("def Step (s : State) (s' : State) : Prop :=\n  {step}"),
+        format!("def Step (s : State) (s' : State){clock_types} : Prop :=\n  {step}"),
         None,
     ));
-    out.push(define(
+    if let Some(model) = input.dense {
+        model.lean_steps(input, out)?;
+    } else {
+        out.push(define(
         input.first,
         None,
         "structure Behaviour where\n  st : Nat -> State\n  init : Init (st 0)\n  next : forall n, Step (st n) (st (n + 1)) \\/ (Not (exists t, Step (st n) t) /\\ st (n + 1) = st n)"
             .to_owned(),
         None,
-    ));
+        ));
+    }
     for (name, position, object, formula) in input.clauses {
         let Some(object) = objects.get(*object) else {
             continue;
@@ -1976,7 +2067,8 @@ fn assemble(
                 .chain(extra.variables.iter().cloned())
                 .collect();
             format!(
-                "---- MODULE {module} ----\nEXTENDS Naturals, Integers, Sequences, FiniteSets, TLC\n\n{}\n{}VARIABLES {}\n",
+                "---- MODULE {module} ----\nEXTENDS Naturals, Integers, Sequences, FiniteSets, TLC{}\n\n{}\n{}VARIABLES {}\n",
+                if extra.dense { ", Reals" } else { "" },
                 comment(graph, first, target)?,
                 if extra.constants.is_empty() {
                     String::new()
@@ -2000,6 +2092,11 @@ fn assemble(
         Target::Lean => format!("namespace {module}\n"),
     };
     let mut name_records = Vec::new();
+    name_records.extend(extra.dense_names.iter().map(|(name, node)| NameRecord {
+        name: name.clone(),
+        node: *node,
+        binding: None,
+    }));
     for object in objects {
         name_records.push(NameRecord {
             name: object.variable(),

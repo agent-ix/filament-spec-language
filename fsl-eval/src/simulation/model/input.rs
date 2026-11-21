@@ -162,6 +162,9 @@ pub struct ModelCheckInput<'a> {
     /// The `terminal` declarations (FR-411), or the refusal of their
     /// resolution, which the model system reports when it is built.
     pub terminals: Result<Vec<ModelTerminal<'a>>, TerminalResolveRefusal>,
+    /// The rewards of the package route's `reward` nodes, projected once;
+    /// `None` on the source route, which evaluates its checked rewards.
+    pub read_rewards: Option<&'a PackageRewards>,
     /// The evaluator of the package's checked forms.
     pub evaluator: &'a dyn ModelEvaluator,
     /// The source package the tables were read from; `None` on the package
@@ -222,6 +225,7 @@ impl<'a> ModelCheckInput<'a> {
                     })
                     .collect()
             }),
+            read_rewards: None,
             evaluator: package,
             source: Some(package),
             admitted: None,
@@ -335,6 +339,11 @@ pub enum PendingPackageForm {
     /// The package's `probabilistic` nodes do not read (FSL FR-740).
     #[error("the package's probabilistic nodes are not readable: {0}")]
     ProbabilisticNodes(fsl_package::ProbabilisticReadFault),
+    /// The clause function of a `reward` node does not project: its types or
+    /// equality are not readable from the package, or no function is at the
+    /// node.
+    #[error("the package's reward does not project: {0:?}")]
+    Reward(fsl_package::BareSelectionFailure),
     /// The package's random parameters and workloads do not rebuild against
     /// the selected domain packages (FSL FR-740).
     #[error("the package's probabilistic model does not rebuild: {0}")]
@@ -447,6 +456,46 @@ impl ProbabilisticParts {
     }
 }
 
+/// The rewards of a package's `reward` nodes, each projected once, in the
+/// order of [`CheckedProbabilisticModel::read_rewards`] (FR-187).
+pub struct PackageRewards {
+    world: fsl_package::BareWorld,
+    projected: Vec<crate::value::ProjectedReward>,
+}
+
+impl PackageRewards {
+    fn of(
+        package: &BarePackage<'_>,
+        world: fsl_package::BareWorld,
+        model: &CheckedProbabilisticModel,
+    ) -> Result<Self, PendingPackageForm> {
+        let projected = model
+            .read_rewards()
+            .iter()
+            .map(|reward| {
+                crate::value::ProjectedReward::of(package, reward)
+                    .map_err(PendingPackageForm::Reward)
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self { world, projected })
+    }
+
+    /// How many rewards are projected.
+    pub(crate) fn len(&self) -> usize {
+        self.projected.len()
+    }
+
+    /// The projection of the reward at `index` of the model's read rewards.
+    pub(crate) fn reward(&self, index: usize) -> Option<&crate::value::ProjectedReward> {
+        self.projected.get(index)
+    }
+
+    /// The package's declarations the rewards evaluate against.
+    pub(crate) fn world(&self) -> &fsl_package::BareWorld {
+        &self.world
+    }
+}
+
 /// The package route's model-check input, built once from a
 /// [`BarePackage`]'s admitted nodes (FR-940): it owns the tables it read and
 /// lends them as a [`ModelCheckInput`].
@@ -457,6 +506,7 @@ pub struct PackageModelInput<'p> {
     model_selections: Vec<DomainPackageRef>,
     operations: OperationTable,
     probabilistic: CheckedProbabilisticModel,
+    rewards: PackageRewards,
     terminals: Vec<fsl_package::BareTerminal>,
     state_clauses: Vec<StateClauseEntry>,
 }
@@ -471,9 +521,9 @@ impl<'p> PackageModelInput<'p> {
     ///
     /// Its random parameters and workloads are the ones the package's
     /// `probabilistic` nodes carry, rebuilt as S3 records them against the
-    /// selected domain packages (FSL FR-740). A package route reads no
-    /// reward (a `reward` node refuses as an unread form, below) and carries
-    /// no claim of the model, and its delay tables are empty.
+    /// selected domain packages (FSL FR-740), and its rewards are the ones
+    /// its `reward` nodes carry, evaluated through their clause functions. It
+    /// carries no claim of the model, and its delay tables are empty.
     ///
     /// # Errors
     ///
@@ -504,6 +554,7 @@ impl<'p> PackageModelInput<'p> {
             operations,
             probabilistic,
         } = ProbabilisticParts::read(package, packages, normalization, false)?;
+        let rewards = PackageRewards::of(package, world.clone(), &probabilistic)?;
         // FR-940: the state clauses by their `claim_names` rows (FSpec
         // FR-322), in source order, as the source route lists them.
         let state_clauses = package
@@ -533,6 +584,7 @@ impl<'p> PackageModelInput<'p> {
             model_selections,
             operations,
             probabilistic,
+            rewards,
             state_clauses,
             terminals,
         })
@@ -612,6 +664,45 @@ impl<'p> PackageModelInput<'p> {
         }
         if !form.captures.is_empty() {
             return pending("capture");
+        }
+        if let ValueType::Reference(object) = &form.over.1 {
+            form.populations = self.model.overlapping_populations(object.clone());
+        }
+        CheckedTemporalClause::of_package_form(form, self.world.types(), position_limit)
+            .map_err(PendingClauseForm::Build)
+    }
+
+    /// [`Self::temporal_clause`] for a run that reads the clause over a trace
+    /// or a model's behaviours rather than checking it: any untimed profile
+    /// and the clause's step intervals are read, since the evaluator reads
+    /// each from the clause itself. A clause with captures is still refused,
+    /// as the package-route letters do not read them yet.
+    ///
+    /// # Errors
+    ///
+    /// [`PendingClauseForm`] as [`Self::temporal_clause`], less the profile and
+    /// interval facts.
+    pub fn temporal_run_clause(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        position_limit: u64,
+    ) -> Result<CheckedTemporalClause, PendingClauseForm> {
+        let clause = claim.node();
+        let mut form = self
+            .package
+            .temporal_clause_run_form(claim)
+            .map_err(PendingClauseForm::Read)?;
+        if !form.captures.is_empty() {
+            let node = self
+                .package
+                .temporal_clause_node(clause)
+                .map_err(PendingClauseForm::Read)?;
+            return Err(PendingClauseForm::Read(
+                fsl_package::BareClauseRefusal::Pending {
+                    fact: "capture",
+                    node: node.clone(),
+                },
+            ));
         }
         if let ValueType::Reference(object) = &form.over.1 {
             form.populations = self.model.overlapping_populations(object.clone());
@@ -743,6 +834,7 @@ impl<'p> PackageModelInput<'p> {
                     },
                 })
                 .collect()),
+            read_rewards: Some(&self.rewards),
             evaluator: self.package,
             source: None,
             admitted: Some(self.package.package()),

@@ -27,7 +27,8 @@ mod frames;
 mod input;
 pub use input::{
     BodyReads, ModelCheckInput, ModelEvaluator, ModelTerminal, ModelTerminalDeclaration,
-    PackageModelInput, PendingClauseForm, PendingPackageForm, StateClauseEntry, TerminalWhen,
+    PackageModelInput, PackageRewards, PendingClauseForm, PendingPackageForm, StateClauseEntry,
+    TerminalWhen,
 };
 mod operation_coverage;
 pub use operation_coverage::{
@@ -1240,7 +1241,7 @@ impl<'a> ModelSystem<'a> {
             .as_ref()
             .map_err(|_| fault("terminal-nodes-resolve"))?;
         let clauses = Self::clauses_of(&input.state_clauses)?;
-        let probabilistic = probabilistic::Tables::of(input.probabilistic)?;
+        let probabilistic = probabilistic::Tables::of(input.probabilistic, input.read_rewards)?;
         let system = Self {
             over: match only {
                 [only] => Some(only.identity.clone()),

@@ -11,10 +11,10 @@ use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_package::ObligationIdentity;
 use fsl_replay::spine::SourceComponent;
 use fsl_replay::{
-    check_probability_certificate_source, ByteProvision, DefinitionSourceRef,
-    ExactProbabilityCertificateCheck, ProbabilityDocumentError,
-    ProbabilityDocumentLimits, ProbabilitySourceError, ProbabilitySourceLimits,
-    ProbabilitySourceRequest,
+    check_probability_certificate_package, check_probability_certificate_source, ByteProvision,
+    DefinitionSourceRef, ExactProbabilityCertificateCheck, ProbabilityDocumentError,
+    ProbabilityDocumentLimits, ProbabilityPackageRequest, ProbabilitySourceError,
+    ProbabilitySourceLimits, ProbabilitySourceRequest,
 };
 use fsl_semantics::model::observation::DocumentRef;
 use serde::{Deserialize, Serialize};
@@ -66,8 +66,13 @@ struct Limits {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
-    source: Source,
-    package_name: String,
+    /// The authored source to recompile. Exactly one of `source` and
+    /// `package` is named.
+    source: Option<Source>,
+    /// The emitted checked package whose lock names the source in the byte
+    /// provision; its own name is the package name.
+    package: Option<Vec<u8>>,
+    package_name: Option<String>,
     item: Identity,
     byte_provision: Vec<(String, String, Vec<u8>)>,
     documents: Vec<Vec<u8>>,
@@ -78,14 +83,13 @@ struct Request {
 }
 
 fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
-    let source = DefinitionSourceRef::from_wire((
-        request.source.authority.clone(),
-        request.source.identity.clone(),
-    ));
+    let named = request.source.as_ref().map(|source| {
+        DefinitionSourceRef::from_wire((source.authority.clone(), source.identity.clone()))
+    });
     let provision = ByteProvision::admit(
         request.byte_provision,
         request.documents,
-        [("source".to_owned(), &source)],
+        named.iter().map(|source| ("source".to_owned(), source)),
     )
     .map_err(|error| error.to_string())?;
     let node = fsl_foundation::node_wire::node_key_from_text(request.item.node_id.get())
@@ -103,57 +107,81 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
         .collect::<Vec<_>>();
     let caller = fsl_replay::CallerLimits::from_operands(operands.iter().map(String::as_str))
         .map_err(|error| error.to_string())?;
-    let expected = SourceComponent {
-        authority: request.source.authority,
-        identity: request.source.identity,
-        content: request.source.content,
+    let initial = request
+        .initial
+        .into_iter()
+        .map(|document| DocumentRef {
+            authority: document.authority,
+            identity: document.identity,
+        })
+        .collect();
+    let universes = request
+        .universes
+        .into_iter()
+        .map(|universe| PopulationUniverse {
+            population: DeclarationKey {
+                package: universe.population.package,
+                node: universe.population.node,
+            },
+            keys: universe.keys,
+        })
+        .collect();
+    let limits = ProbabilitySourceLimits {
+        spine: caller.spine,
+        observation: caller.observation,
+        expansion: ExpansionLimits {
+            max_candidates: request.limits.expansion,
+        },
+        scalar: caller.accounting.0,
+        document: ProbabilityDocumentLimits {
+            bytes: request.limits.bytes,
+            storage_bytes: request.limits.storage_bytes,
+            states: request.limits.states,
+            edges: request.limits.edges,
+            scalar_bits: request.limits.scalar_bits,
+            accounting: caller.accounting.0,
+        },
     };
-    let result = check_probability_certificate_source(
-        ProbabilitySourceRequest {
-            source: &source,
-            expected_source: &expected,
-            package_name: &request.package_name,
-            provision: &provision,
-            item: &item,
-            initial: request
-                .initial
-                .into_iter()
-                .map(|document| DocumentRef {
-                    authority: document.authority,
-                    identity: document.identity,
-                })
-                .collect(),
-            universes: request
-                .universes
-                .into_iter()
-                .map(|universe| PopulationUniverse {
-                    population: DeclarationKey {
-                        package: universe.population.package,
-                        node: universe.population.node,
-                    },
-                    keys: universe.keys,
-                })
-                .collect(),
-            certificate: request.certificate.as_bytes(),
-        },
-        ProbabilitySourceLimits {
-            spine: caller.spine,
-            observation: caller.observation,
-            expansion: ExpansionLimits {
-                max_candidates: request.limits.expansion,
+    let result = match (request.source, request.package, named.as_ref()) {
+        (Some(source), None, Some(reference)) => {
+            let package_name = request
+                .package_name
+                .ok_or("a source request names its package_name")?;
+            let expected = SourceComponent {
+                authority: source.authority,
+                identity: source.identity,
+                content: source.content,
+            };
+            check_probability_certificate_source(
+                ProbabilitySourceRequest {
+                    source: reference,
+                    expected_source: &expected,
+                    package_name: &package_name,
+                    provision: &provision,
+                    item: &item,
+                    initial,
+                    universes,
+                    certificate: request.certificate.as_bytes(),
+                },
+                limits,
+                cancel,
+            )
+        }
+        (None, Some(package), None) => check_probability_certificate_package(
+            ProbabilityPackageRequest {
+                package: &package,
+                package_name: request.package_name.as_deref(),
+                provision: &provision,
+                item: &item,
+                initial,
+                universes,
+                certificate: request.certificate.as_bytes(),
             },
-            scalar: caller.accounting.0,
-            document: ProbabilityDocumentLimits {
-                bytes: request.limits.bytes,
-                storage_bytes: request.limits.storage_bytes,
-                states: request.limits.states,
-                edges: request.limits.edges,
-                scalar_bits: request.limits.scalar_bits,
-                accounting: caller.accounting.0,
-            },
-        },
-        cancel,
-    );
+            limits,
+            cancel,
+        ),
+        _ => return Err("a request names exactly one of source and package".to_owned()),
+    };
     let result = match result {
         Ok(result) => result,
         Err(error) => return source_failure(error),
@@ -241,6 +269,11 @@ fn source_failure(error: ProbabilitySourceError) -> Result<Value, String> {
         )
         | ProbabilitySourceError::SourceMismatch
         | ProbabilitySourceError::Source { .. }
+        | ProbabilitySourceError::PackageRead(_)
+        | ProbabilitySourceError::Package(_)
+        | ProbabilitySourceError::PackageSources(_)
+        | ProbabilitySourceError::PackageName { .. }
+        | ProbabilitySourceError::PackageMismatch
         | ProbabilitySourceError::Packages(_) => "refused",
         ProbabilitySourceError::Document(
             Document::KeyEncoding(

@@ -1054,7 +1054,7 @@ fn synthesis_declarations_keep_grammar_domain_and_predicate_order() {
 
 #[test]
 #[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
-#[ignore = "QSL-2235: admitted synthesis objectives are not parsed yet"]
+#[trace("TC-2104", "FR-754-AC-1")]
 fn synthesis_objectives_preserve_direction_objective_and_predicate_roles() {
     for (direction, objective) in [
         ("minimize", "candidate.cost"),
@@ -1094,6 +1094,25 @@ fn synthesis_objectives_preserve_direction_objective_and_predicate_roles() {
         );
         assert!(objective_node.span().end < body.span().start);
     }
+}
+
+/// FR-754-AC-1: `minimize` and `maximize` are keywords only where an
+/// objective may stand, so each stays usable as a name everywhere else.
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+#[trace("TC-2104", "FR-754-AC-1")]
+fn minimize_and_maximize_are_names_outside_the_objective_position() {
+    let declaration = "type minimize = Int[0, 9];\n\
+         synthesis maximize using s grammar minimize domain minimize \
+         maximize minimize satisfies { maximize >= 3 };";
+    let source = unit(declaration);
+    let parsed = admitted(&source);
+    node(
+        &parsed,
+        &source,
+        Production::SynthesisDeclaration,
+        declaration.split_once('\n').unwrap().1,
+    );
 }
 
 #[test]

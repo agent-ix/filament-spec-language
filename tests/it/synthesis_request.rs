@@ -40,6 +40,21 @@ fn package(unit: &str, packages: &fsl_semantics::model::intake::PackageInput) ->
     serde_json::from_slice(emission.package().bytes()).expect("a JSON package")
 }
 
+/// The emitted package bytes of `unit`.
+fn package_bytes(unit: &str, packages: &fsl_semantics::model::intake::PackageInput) -> Vec<u8> {
+    emitted(
+        SourceIdentity::new("test", "synthesis-request"),
+        "unit.native",
+        unit.as_bytes(),
+        packages,
+        &DependencyInput::default(),
+    )
+    .unwrap_or_else(|refusal| panic!("the unit compiles and emits: {refusal:?}"))
+    .package()
+    .bytes()
+    .to_vec()
+}
+
 /// The package's `claim`/`synthesis_request` nodes.
 fn synthesis_nodes(wire: &Value) -> Vec<&Value> {
     wire["semantic_graph"]["nodes"]
@@ -74,7 +89,6 @@ fn binding<'a>(node: &'a Value, name: &str) -> &'a Value {
 #[test]
 #[trace("TC-3016", "FR-1036-AC-1")]
 #[trace("FSpec-TC-2037", "FSpec-FR-322-AC-467")]
-#[ignore = "QSL-2235: the synthesis_request node writer is not implemented yet"]
 fn a_value_synthesis_is_one_synthesis_request_node() {
     let wire = package(&pick("Pick * Pick = 49", ""), &Default::default());
     let nodes = synthesis_nodes(&wire);
@@ -97,6 +111,29 @@ fn a_value_synthesis_is_one_synthesis_request_node() {
         binding(node, "grammar")["value"],
         binding(node, "domain")["value"],
         "{node}"
+    );
+    let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+    let target = |name: &str| {
+        let reference = &binding(node, name)["value"]["target"];
+        nodes
+            .iter()
+            .find(|candidate| &candidate["node_id"] == reference)
+            .unwrap_or_else(|| panic!("{name} resolves: {node}"))
+    };
+    // `Digit` is `Int[0, 9]`: both names are the one integer-range node S3
+    // resolved, not a node minted for the declaration.
+    for name in ["grammar", "domain"] {
+        assert_eq!(target(name)["node_tag"], "bounded_domain", "{node}");
+        assert_eq!(target(name)["semantic_form"], "integer_range", "{node}");
+    }
+    // The candidate is the `value`/`parameter` node of the declaration's own
+    // name; a binder is referenced by its id and is not a graph node.
+    assert!(
+        binding(node, "candidate")["value"]["target"]["path"]
+            .as_array()
+            .is_some_and(|path| path.contains(&json!("parameter"))
+                && path.contains(&json!("Pick"))),
+        "the candidate parameter is named for the declaration: {node}"
     );
     assert_eq!(
         binding(node, "objective")["value"]["members"],
@@ -122,24 +159,23 @@ fn a_value_synthesis_is_one_synthesis_request_node() {
 }
 
 /// FR-1036-AC-2: a plan synthesis's node names the object type as `grammar`
-/// and the length range as `domain`.
+/// and the length range as `domain`, types its candidate by the object type (a block comparing it to itself),
+/// and the strict reader reads the declaration back as a plan synthesis.
 #[test]
 #[trace("TC-3016", "FR-1036-AC-2")]
-#[ignore = "QSL-2235: the synthesis_request node writer is not implemented yet"]
 fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     let document = std::fs::read(directory.path().join("spine-model.semantic-ir.json")).unwrap();
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
         .expect("the spine model admits");
-    let wire = package(
-        &format!(
-            "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
-             synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-             satisfies {{ Reach.length >= 1 }};\n"
-        ),
-        &packages,
+    let unit = format!(
+        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+         satisfies {{ Reach = Reach }};\n"
     );
+    let bytes = package_bytes(&unit, &packages);
+    let wire: Value = serde_json::from_slice(&bytes).expect("a JSON package");
     let node = synthesis_nodes(&wire)[0];
     let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
     let target = |name: &str| {
@@ -152,6 +188,78 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     assert_eq!(target("grammar")["node_tag"], "model", "{node}");
     assert_eq!(target("grammar")["semantic_form"], "object_type", "{node}");
     assert_eq!(target("domain")["semantic_form"], "integer_range", "{node}");
+    // The binder is referenced by id, not a graph node: it is a
+    // `value`/`parameter` named for the declaration.
+    let candidate = &binding(node, "candidate")["value"]["target"];
+    let path = candidate["path"].as_array().expect("a path");
+    assert!(
+        path.contains(&json!("parameter")) && path.contains(&json!("Reach")),
+        "the candidate is the declaration's own parameter: {candidate}"
+    );
+    assert!(
+        !binding(node, "satisfies")["value"].is_null(),
+        "the block is a node: {node}"
+    );
+    assert_eq!(
+        binding(node, "objective")["value"]["members"],
+        json!([]),
+        "{node}"
+    );
+
+    let admitted = fsl_package::admit_checked_package(
+        &bytes,
+        &packages,
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
+    )
+    .expect("the reader admits the package");
+    let row = admitted
+        .claim_names()
+        .unwrap_or_default()
+        .iter()
+        .find(|row| row.name.as_ref() == "Reach")
+        .expect("Reach has a claim-name row");
+    assert!(
+        fsl_package::is_plan_synthesis(&admitted, &row.declaration),
+        "the reader reads the object type as the grammar"
+    );
+}
+
+/// FR-1036-AC-2: the candidate reference resolves to the `value`/`parameter`
+/// node of the declaration's own name, typed by the domain for a value
+/// synthesis and by the `ConfigVersion` node for a plan synthesis.
+#[test]
+#[trace("TC-3016", "FR-1036-AC-2")]
+#[ignore = "QSL-2235: candidate reference does not resolve to the typed parameter node; needs FR-1036-AC-2 ruling"]
+fn the_candidate_reference_resolves_to_its_typed_parameter_node() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let document = std::fs::read(directory.path().join("spine-model.semantic-ir.json")).unwrap();
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the spine model admits");
+    let plan = format!(
+        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+         satisfies {{ Reach = Reach }};\n"
+    );
+    for (unit, packages, typed_by) in [
+        (pick("Pick * Pick = 49", ""), Default::default(), "domain"),
+        (plan, packages, "grammar"),
+    ] {
+        let wire = package(&unit, &packages);
+        let node = synthesis_nodes(&wire)[0];
+        let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+        let candidate = nodes
+            .iter()
+            .find(|candidate| candidate["node_id"] == binding(node, "candidate")["value"]["target"])
+            .unwrap_or_else(|| panic!("the candidate resolves: {node}"));
+        assert_eq!(candidate["node_tag"], "value", "{candidate}");
+        assert_eq!(candidate["semantic_form"], "parameter", "{candidate}");
+        assert_eq!(
+            candidate["semantic_type"],
+            binding(node, typed_by)["value"]["target"],
+            "the candidate is typed by the {typed_by} node: {candidate}"
+        );
+    }
 }
 
 // ---- FR-1037: the run request's `synthesis` member ----------------------
@@ -164,10 +272,18 @@ fn source(file: &str) -> Value {
 /// Runs `unit` through the command adapter with `synthesis` as the
 /// request's `synthesis` member, returning its exit code and document.
 fn run(unit: &str, synthesis: Value) -> (u8, Value) {
+    run_with(unit, json!({"synthesis": synthesis}))
+}
+
+/// Runs `unit` with `members` added to the request beside its program.
+fn run_with(unit: &str, members: Value) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("unit.native"), unit).unwrap();
-    let request = json!({"format": "native-run/1", "request": {
-        "models": [], "program": {"source": source("unit.native")}, "synthesis": synthesis}});
+    let mut request = json!({"format": "native-run/1", "request": {
+        "models": [], "program": {"source": source("unit.native")}}});
+    for (name, member) in members.as_object().unwrap() {
+        request["request"][name] = member.clone();
+    }
     let path = directory.path().join("request.json");
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
@@ -203,9 +319,9 @@ const OUTCOME_MEMBERS: [&str; 13] = [
 /// validated, an exhausted, an optimal and a limited run.
 #[test]
 #[trace("TC-3017", "FR-1037-AC-1")]
+#[trace("TC-2104", "FR-754-AC-3")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-2")]
-#[ignore = "QSL-2235: the value synthesis request member and outcome are not implemented yet"]
 fn the_synthesis_member_writes_the_synthesis_outcome() {
     let (exit, found) = run(
         &pick("Pick * Pick = 49", ""),
@@ -228,6 +344,7 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         "{found}"
     );
     assert_eq!(outcome["explored"]["visited"], 8, "{found}");
+    assert_eq!(outcome["explored"]["work"], 8, "{found}");
     assert_eq!(outcome["lineage"]["index"], 7, "{found}");
     let (exit, none) = run(
         &pick("Pick * Pick = 50", ""),
@@ -247,10 +364,52 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         "{optimal}"
     );
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
+    assert_eq!(optimal["synthesis"]["explored"]["work"], 4, "{optimal}");
+    assert_eq!(
+        optimal["synthesis"]["objective"]["direction"], "minimize",
+        "{optimal}"
+    );
     assert_eq!(optimal["synthesis"]["explored"]["visited"], 4, "{optimal}");
     assert_eq!(
         optimal["synthesis"]["objective"]["expression"], "Pick",
         "{optimal}"
+    );
+    assert_eq!(
+        optimal["synthesis"]["objective"]["value"],
+        json!({"type": "integer", "value": "3"}),
+        "{optimal}"
+    );
+    let (exit, maximum) = run(
+        &pick("Pick >= 3", "maximize Pick"),
+        json!({"declaration": "Pick"}),
+    );
+    assert_eq!(exit, 0, "{maximum}");
+    assert_eq!(
+        maximum["synthesis"]["candidate"],
+        json!({"type": "integer", "value": "9"}),
+        "{maximum}"
+    );
+    assert_eq!(maximum["synthesis"]["optimal"], true, "{maximum}");
+    assert_eq!(maximum["synthesis"]["explored"]["visited"], 1, "{maximum}");
+    assert_eq!(maximum["synthesis"]["lineage"]["index"], 0, "{maximum}");
+    let (exit, last_unit) = run(
+        &pick("Pick >= 3", "minimize Pick"),
+        json!({"declaration": "Pick", "limits": {"max_work": 4}}),
+    );
+    assert_eq!(exit, 0, "the check is not charged to max_work: {last_unit}");
+    assert_eq!(last_unit["synthesis"]["check"], "validated", "{last_unit}");
+    assert_eq!(last_unit["synthesis"]["explored"]["work"], 4, "{last_unit}");
+    let (exit, limited_objective) = run(
+        &pick("Pick >= 3", "minimize Pick"),
+        json!({"declaration": "Pick", "limits": {"max_work": 3}}),
+    );
+    assert_eq!(exit, 22, "{limited_objective}");
+    assert_eq!(limited_objective["synthesis"]["status"], "incomplete");
+    assert_eq!(limited_objective["synthesis"]["candidate"], Value::Null);
+    assert_eq!(limited_objective["synthesis"]["explored"]["work"], 3);
+    names(
+        &limited_objective["synthesis"]["cause"],
+        "synthesis.max_work",
     );
     let (exit, limited) = run(
         &pick("Pick * Pick = 50", ""),
@@ -259,6 +418,21 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
     assert_eq!(exit, 22, "{limited}");
     assert_eq!(limited["synthesis"]["status"], "incomplete", "{limited}");
     names(&limited["synthesis"]["cause"], "synthesis.max_candidates");
+    let (exit, deadline) = run(
+        &pick("Pick = 7", ""),
+        json!({"declaration": "Pick", "accounting": {}, "deadline_ms": 0}),
+    );
+    assert_eq!(exit, 22, "{deadline}");
+    assert_eq!(deadline["synthesis"]["status"], "incomplete", "{deadline}");
+    assert_eq!(
+        deadline["synthesis"]["explored"]["visited"], 0,
+        "{deadline}"
+    );
+    assert_eq!(deadline["synthesis"]["explored"]["work"], 0, "{deadline}");
+    assert_eq!(
+        deadline["synthesis"]["cause"]["kind"], "deadline",
+        "{deadline}"
+    );
 }
 
 /// FR-1037-AC-2, FSpec FR-823-AC-3/AC-4: selection by declared name, an
@@ -267,7 +441,6 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
 #[trace("TC-3017", "FR-1037-AC-2")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-3")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-4")]
-#[ignore = "QSL-2235: synthesis declaration selection is not implemented yet"]
 fn the_synthesis_member_selects_one_declaration_or_refuses() {
     let only = pick("Pick * Pick = 49", "");
     let (exit, value) = run(&only, json!({}));
@@ -278,72 +451,85 @@ fn the_synthesis_member_selects_one_declaration_or_refuses() {
     );
     let with_predicate =
         format!("{only}predicate Positive using v (x: Digit): Boolean {{ x >= 0 }}\n");
-    for (unit, synthesis, cause, pointer) in [
+    for (unit, synthesis, code, cause, pointer) in [
         (
             two.clone(),
             json!({}),
+            "invalid_runtime_input",
             "missing-member",
-            "/synthesis/declaration",
+            "/request/synthesis/declaration",
         ),
         (
             only.clone(),
             json!({"declaration": "Nope"}),
+            "missing_declaration",
             "missing-name",
-            "/synthesis/declaration",
+            "/request/synthesis/declaration",
         ),
         (
             with_predicate,
             json!({"declaration": "Positive"}),
+            "missing_declaration",
             "missing-name",
-            "/synthesis/declaration",
+            "/request/synthesis/declaration",
         ),
         (
             only.clone(),
             json!({"declaration": "Pick", "initial": "snapshot.json"}),
+            "invalid_runtime_input",
             "unknown-member",
-            "/synthesis/initial",
+            "/request/synthesis/initial",
         ),
         (
             only.clone(),
             json!({"declaration": "Pick", "limits": {"work": 1}}),
+            "invalid_runtime_input",
             "unknown-member",
-            "/synthesis/limits/work",
+            "/request/synthesis/limits/work",
+        ),
+        (
+            only.clone(),
+            json!({"declaration": "Pick", "limits": {"max_work": 0}}),
+            "invalid_runtime_input",
+            "invalid-value",
+            "/request/synthesis/limits/max_work",
         ),
         (
             only.clone(),
             json!({"declaration": "Pick", "engines": []}),
+            "invalid_runtime_input",
             "unknown-member",
-            "/synthesis/engines",
+            "/request/synthesis/engines",
         ),
     ] {
         let (exit, value) = run(&unit, synthesis);
         assert_eq!(exit, 20, "{value}");
-        names(&value, cause);
-        names(&value, pointer);
+        assert_eq!(value["code"], code, "{value}");
+        assert_eq!(value["cause"], cause, "{value}");
+        assert_eq!(value["details"]["path"], pointer, "{value}");
         assert!(value["synthesis"].get("status").is_none(), "{value}");
     }
 }
 
-/// FSpec FR-823-AC-3: a bare name two scopes declare is ambiguous, and the
-/// qualified name selects one.
+/// FR-1037: the `synthesis` member is the request's only run member, so a
+/// `tl_lowering` beside it refuses instead of being ignored.
 #[test]
-#[trace("FSpec-TC-2038", "FSpec-FR-823-AC-3")]
-#[ignore = "QSL-2235: synthesis declaration selection is not implemented yet"]
-fn a_bare_name_two_scopes_declare_is_ambiguous() {
-    let unit = format!(
-        "{VALUE_HEADER}type Digit = Int[0, 9];\n\
-         namespace A {{ synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 1 }}; }}\n\
-         namespace B {{ synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 2 }}; }}\n"
+#[trace("TC-3017", "FR-1037-AC-2")]
+fn a_synthesis_beside_another_run_member_refuses() {
+    let (exit, value) = run_with(
+        &pick("Pick * Pick = 49", ""),
+        json!({"synthesis": {"declaration": "Pick"}, "tl_lowering": {}}),
     );
-    let (exit, value) = run(&unit, json!({"declaration": "Pick"}));
     assert_eq!(exit, 20, "{value}");
-    names(&value, "ambiguous-name");
-    names(&value, "/synthesis/declaration");
-    let (exit, value) = run(&unit, json!({"declaration": "A::Pick"}));
-    assert_eq!(exit, 0, "{value}");
-    assert_eq!(
-        value["synthesis"]["candidate"],
-        json!({"type": "integer", "value": "1"}),
-        "{value}"
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    names(&value, "mutually exclusive");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
+    let (exit, value) = run_with(
+        &pick("Pick * Pick = 49", ""),
+        json!({"synthesis": {"declaration": "Pick"}, "verification_plan": {"plan": "Release"}}),
     );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    names(&value, "mutually exclusive");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
 }

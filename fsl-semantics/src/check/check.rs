@@ -69,7 +69,7 @@ use super::model_spelling::{ModelSpellings, Spelled};
 use super::navigation::Relationships;
 use super::refusal::{
     CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
-    IdentityObserving, KeyFault, Obligation, StageLimitCause,
+    IdentityObserving, KeyFault, Obligation, ReservedSlotName, SlotTag, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
 use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
@@ -577,6 +577,9 @@ pub struct PackageDeclarations {
     /// its profile and `over` type resolved, for the `StateGraph` family's
     /// `check`.
     pub state_graph_claims: Vec<super::state_graph_claim::StateGraphDeclaration>,
+    /// FR-754: each bounded synthesis form in declaration order, resolved
+    /// against this package's admitted type environment by `check`.
+    pub synthesis_forms: Vec<fsl_forms::SynthesisForm>,
     /// FR-110, FR-326: the unit's header profile selections the
     /// `TemporalTrace` family's catalog holds, in source order. A clause is
     /// checked under the one of them, or refuses when there is none or
@@ -867,6 +870,7 @@ impl PackageDeclarations {
             composition_lattice: None,
             probabilistic: Vec::new(),
             state_graph_claims: Vec::new(),
+            synthesis_forms: Vec::new(),
             temporal_selections: Vec::new(),
             timed_forms: Vec::new(),
             clock_reading: Vec::new(),
@@ -3422,7 +3426,8 @@ impl<'a> Typer<'a> {
         self.signatures
     }
 
-    /// Bind a parameter or local name, refusing a name already in scope.
+    /// Bind a parameter or local name, refusing a name in FR-488's reserved
+    /// slot form or already in scope.
     pub(crate) fn bind(
         &mut self,
         name: &str,
@@ -3430,6 +3435,9 @@ impl<'a> Typer<'a> {
         location: &Location,
         kind: LocalKind,
     ) -> Result<Slot, CheckRefusal> {
+        if let Some(refusal) = reserved_slot_refusal(name, None, location) {
+            return Err(refusal);
+        }
         if kind == LocalKind::Bound
             && self
                 .hyper
@@ -6533,6 +6541,30 @@ fn catalogued_step(
         other,
     )
     .is_continue()
+}
+
+/// FR-488 "Reserved slot names": the refusal of `name` when FSpec FR-402's
+/// slot decoder accepts it, at its own `span` when the declaring form records
+/// one and otherwise at `location`. The decoder is contract-ir's, so the
+/// reserved set is exactly the set a reader classifies as a slot parameter.
+pub(crate) fn reserved_slot_refusal(
+    name: &str,
+    span: Option<Span>,
+    location: &Location,
+) -> Option<CheckRefusal> {
+    reserved_slot_cause(name, span).map(|cause| refuse(location, cause))
+}
+
+/// [`reserved_slot_refusal`]'s cause, for a site that reports a bare cause.
+pub(crate) fn reserved_slot_cause(name: &str, span: Option<Span>) -> Option<CheckCause> {
+    if !filament_contract_model::is_slot_parameter_name(name) {
+        return None;
+    }
+    Some(CheckCause::ReservedSlotName(Box::new(ReservedSlotName {
+        name: name.to_owned(),
+        tag: SlotTag::of(name)?,
+        span,
+    })))
 }
 
 /// Check a function signature's declared types and bind its parameters.

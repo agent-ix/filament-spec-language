@@ -67,7 +67,7 @@ fn reads_false(entry: Option<&TapeEntry>) -> bool {
             .atoms()
             .iter()
             .any(|(_, reading)| *reading == TapeReading::False),
-        Some(TapeEntry::Held(_) | TapeEntry::Object(_)) | None => false,
+        Some(TapeEntry::Held(_) | TapeEntry::Anchored(..) | TapeEntry::Object(_)) | None => false,
     }
 }
 
@@ -270,6 +270,7 @@ impl<'a> ClauseState<'a> {
         if let Some((found_at, atom)) = self.snapshot_cache.borrow().as_ref() {
             if *found_at == at && for_good {
                 return Some(ObservedRun {
+                    inactive: false,
                     result: Ok(fsl_eval::temporal::TemporalOutcome::Violated {
                         at: fsl_eval::temporal::TemporalPosition::new(at),
                     }),
@@ -435,7 +436,10 @@ impl<'a> ClauseState<'a> {
             }
             _ => fsl_eval::temporal::SampleStop::default(),
         };
+        let inactive = self.stream.as_ref().is_some_and(ClauseStream::inactive)
+            && matches!(result, Ok(fsl_eval::temporal::TemporalOutcome::Holds));
         let observed = ObservedRun {
+            inactive,
             result,
             stopped: read.stopped,
             undefined: read.undefined,

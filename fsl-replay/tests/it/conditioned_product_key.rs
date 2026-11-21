@@ -16,7 +16,6 @@ fn post_state(instance: &str, phase: &str) -> String {
 
 #[trace("TC-3060", "FR-196-AC-15")]
 #[test]
-#[ignore = "QSL-2151: the product key does not carry the on each instance and activation phase yet"]
 fn an_on_each_key_carries_its_instance_and_phase() {
     let waiting = post_state(INSTANCE_M, r#""waiting""#);
     let active = post_state(INSTANCE_M, r#""active""#);
@@ -38,11 +37,22 @@ fn an_on_each_key_carries_its_instance_and_phase() {
 
 #[trace("TC-3060", "FR-196-AC-15")]
 #[test]
-#[ignore = "QSL-2151: the product key does not carry the on each instance and activation phase yet"]
 fn a_six_member_key_is_refused() {
     let six = format!(r#"["post-state",["{TAG}",null,["m"],null,null,null]]"#);
     assert!(matches!(
         ProductAction::parse(six.as_bytes()),
         Err(ProductActionRefusal::Shape)
     ));
+}
+
+#[trace("TC-3060", "FR-196-AC-15")]
+#[test]
+fn an_instance_without_its_phase_or_a_phase_without_its_instance_is_refused() {
+    for (instance, phase) in [(INSTANCE_M, "null"), ("null", r#""active""#)] {
+        let half = post_state(instance, phase);
+        assert!(matches!(
+            ProductAction::parse(half.as_bytes()),
+            Err(ProductActionRefusal::Shape)
+        ));
+    }
 }

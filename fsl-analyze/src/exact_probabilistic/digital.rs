@@ -24,12 +24,16 @@ use filament_exact::{
 };
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{
-    same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
-    PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
-};
 use fsl_eval::simulation::StateKey;
-use fsl_replay::ModelCheckLimit;
+use fsl_eval::simulation::model::{
+    Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
+    PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, same_rewards,
+};
+use fsl_replay::{
+    DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
+    ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
+    digital_probability_product_key, region_probability_product_key,
+};
 use fsl_semantics::check::{
     BinaryTemporal, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim, ClockOp,
     ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler, UnaryTemporal,
@@ -38,12 +42,16 @@ use fsl_semantics::check::{
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
+use serde_json::{Value as JsonValue, json};
 
+use super::unbounded::{Choice, Graph, maximal_end_components_from, same_action};
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MonitorState, MonitorVerdict,
     PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction,
     ProductKind, ProductRefusal, ProductStop, UndefinedPath, UndefinedRead,
 };
+
+pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
 
 /// Build the digital product of a claim over a timed subject (FR-204).
 ///
@@ -73,8 +81,11 @@ pub(super) fn build<'s, 'a>(
         ProbScheduler::Every => None,
     };
     let form = Form::of(claim)?;
-    admit(system, &timed, claim, workload, &form)?;
-    let scale = scale_of(system, &timed, &form)?;
+    admit(system, package, claim)?;
+    let (base_scale, subdivisions) = scale_of(system, &timed, claim, &form)?;
+    let scale = base_scale
+        .checked_mul(subdivisions)
+        .ok_or_else(|| fault("region-scale-fits-u64"))?;
     let caps = caps_of(&timed, &scale)?;
     let bindings = match &claim.over {
         None => vec![(None, None)],
@@ -101,6 +112,8 @@ pub(super) fn build<'s, 'a>(
         workload,
         form,
         scale,
+        base_scale,
+        subdivisions,
         caps,
         bindings,
         max_states: limits.model.limits.max_states,
@@ -154,6 +167,13 @@ enum Form<'c> {
         bound: Rational,
         reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
     },
+    /// Expected elapsed time until a checked state predicate holds.
+    MeanTime {
+        /// The expected-time comparison threshold in the model's time unit.
+        bound: Rational,
+        /// The target predicate used to label product states.
+        reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
+    },
     /// An unbounded reachability form: its predicates label the states.
     Labels(Vec<(UndefinedRead, &'c CheckedPredicate)>),
 }
@@ -171,6 +191,13 @@ impl<'c> Form<'c> {
             member: claim.formula_member_path(chain),
         };
         match &claim.form {
+            ProbForm::MeanTime { bound, until } => Ok(Self::MeanTime {
+                bound: match bound {
+                    fsl_semantics::check::Bound::AtLeast(value)
+                    | fsl_semantics::check::Bound::AtMost(value) => value.clone(),
+                },
+                reads: vec![(UndefinedRead::Predicate(super::PredicateRole::Until), until)],
+            }),
             ProbForm::Probability {
                 event: Event::Formula { formula, .. },
                 ..
@@ -245,7 +272,9 @@ impl<'c> Form<'c> {
 
     fn reads(&self) -> &[(UndefinedRead, &'c CheckedPredicate)] {
         match self {
-            Self::Deadline { reads, .. } | Self::Labels(reads) => reads,
+            Self::Deadline { reads, .. } | Self::MeanTime { reads, .. } | Self::Labels(reads) => {
+                reads
+            }
         }
     }
 }
@@ -279,50 +308,18 @@ pub(crate) fn model_constraints<'m>(
     found
 }
 
-/// FR-204 "Admission": the closed condition, the delay distributions and the
-/// form shape.
+/// FR-204 "Admission": the delay distributions and the form shape.
 fn admit(
     system: &ModelSystem<'_>,
-    timed: &TimedSystem<'_, '_>,
+    package: &fsl_package::CheckedPackage,
     claim: &CheckedProbabilisticClaim,
-    workload: Option<&Workload>,
-    form: &Form<'_>,
 ) -> Result<(), ProductRefusal> {
-    let strict = model_constraints(timed)
-        .into_iter()
-        .filter(|constraint| matches!(constraint.op(), ClockOp::Less | ClockOp::Greater))
-        .map(|constraint| constraint.span())
-        .min_by_key(|span| span.start);
-    if let Some(span) = strict {
-        return Err(ProductRefusal::StrictClockConstraint { span });
-    }
-    if let ProbForm::Probability {
-        event: Event::Formula { formula, .. },
-        ..
-    } = &claim.form
-    {
-        let open = formula.formula().nodes().iter().any(|node| match node {
-            FormulaNode::Unary {
-                interval: Some(CheckedInterval::Timed(interval)),
-                ..
-            }
-            | FormulaNode::Binary {
-                interval: Some(CheckedInterval::Timed(interval)),
-                ..
-            } => !interval.upper_closed() || !interval.lower_closed(),
-            _ => false,
-        });
-        if open && matches!(form, Form::Deadline { .. }) {
-            return Err(ProductRefusal::StrictClockConstraint { span: claim.span });
-        }
-    }
-    let delays = system.input().probabilistic.delays();
+    let delays = package.graph().probabilistic_model().delays();
     for delay in delays
         .iter()
         .filter(|delay| delay.operation().model() == claim.subject.alias.as_str())
     {
-        let admitted =
-            workload.is_some() && matches!(delay.distribution(), DelayDistribution::Discrete(_));
+        let admitted = matches!(delay.distribution(), DelayDistribution::Discrete(_));
         if !admitted {
             let operation = delay.operation();
             return Err(ProductRefusal::DelayDistribution {
@@ -380,8 +377,9 @@ fn add_rewards(
 fn scale_of(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
     form: &Form<'_>,
-) -> Result<u64, ProductRefusal> {
+) -> Result<(u64, u64), ProductRefusal> {
     let mut denominators: Vec<BigInt> = Vec::new();
     let mut note = |value: &Rational| denominators.push(value.denominator().as_big().clone());
     for constraint in model_constraints(timed) {
@@ -394,6 +392,8 @@ fn scale_of(
     }
     if let Form::Deadline { bound, .. } = form {
         note(bound);
+    } else if let Form::MeanTime { bound, .. } = form {
+        note(bound);
     }
     for delay in system.input().probabilistic.delays() {
         if let DelayDistribution::Discrete(values) = delay.distribution() {
@@ -405,10 +405,61 @@ fn scale_of(
     let scale = denominators
         .iter()
         .fold(BigInt::one(), |factor, denominator| factor.lcm(denominator));
-    scale
+    let scale = scale
         .to_u64()
         .filter(|scale| *scale > 0)
-        .ok_or_else(|| fault("digital-scale-fits-u64"))
+        .ok_or_else(|| fault("digital-scale-fits-u64"))?;
+    if region_route(timed, claim) {
+        // For n model clocks plus the optional deadline clock, the standard
+        // region partition has at most n+1 distinct fractional ranks. This
+        // refinement gives each rank a representative on the integer grid,
+        // while preserving every integral boundary exactly.
+        let clocks = timed
+            .places()
+            .len()
+            .checked_add(usize::from(matches!(form, Form::Deadline { .. })))
+            .and_then(|count| count.checked_add(1))
+            .and_then(|count| u64::try_from(count).ok())
+            .ok_or_else(|| fault("region-clock-rank-count-fits-u64"))?;
+        return Ok((scale, clocks));
+    }
+    Ok((scale, 1))
+}
+
+/// Whether FR-922 requires a region graph for this subject and claim.
+pub(super) fn region_route(timed: &TimedSystem<'_, '_>, claim: &CheckedProbabilisticClaim) -> bool {
+    model_constraints(timed)
+        .into_iter()
+        .any(|constraint| matches!(constraint.op(), ClockOp::Less | ClockOp::Greater))
+        || matches!(
+            &claim.form,
+            ProbForm::Probability {
+                event: Event::Formula { formula, .. },
+                ..
+            } if formula.formula().nodes().iter().any(|node| match node {
+                FormulaNode::Unary {
+                    interval: Some(CheckedInterval::Timed(interval)),
+                    ..
+                }
+                | FormulaNode::Binary {
+                    interval: Some(CheckedInterval::Timed(interval)),
+                    ..
+                } => !interval.upper_closed() || !interval.lower_closed(),
+                _ => false,
+            })
+        )
+}
+
+/// The lattice denominator written in an FR-920 product certificate.
+pub(super) fn certificate_scale(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
+) -> Result<u64, ProductRefusal> {
+    let form = Form::of(claim)?;
+    let (base, subdivisions) = scale_of(system, timed, claim, &form)?;
+    base.checked_mul(subdivisions)
+        .ok_or_else(|| fault("region-scale-fits-u64"))
 }
 
 /// A rational time constant as a count of digital units.
@@ -447,16 +498,6 @@ enum Tail {
     Running,
     IdleReady,
     IdleDelayed,
-}
-
-impl Tail {
-    fn tag(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::IdleReady => "idle-ready",
-            Self::IdleDelayed => "idle-delayed",
-        }
-    }
 }
 
 /// A digital timed state.
@@ -525,8 +566,19 @@ struct Planned {
     target: Target,
     probability: Rational,
     rewards: Vec<(Identifier, Value)>,
+    elapsed_ticks: u64,
     step: Option<TraceStep>,
     zero_delay: bool,
+}
+
+enum ClockKey {
+    Digital(DigitalClockKey),
+    Region(RegionClockKey),
+}
+
+enum DeadlineKey {
+    Digital(DigitalDeadlineKey),
+    Region(RegionDeadlineKey),
 }
 
 enum Halt {
@@ -669,6 +721,8 @@ struct Builder<'r, 'a, 'c> {
     workload: Option<&'r Workload>,
     form: Form<'c>,
     scale: u64,
+    base_scale: u64,
+    subdivisions: u64,
     caps: Vec<u64>,
     bindings: Vec<(Option<ModelInstance>, Option<ObjectReference>)>,
     max_states: usize,
@@ -750,7 +804,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn deadline_bound(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { bound, .. } => self.bound_units(bound).map(Some),
-            Form::Labels(_) => Ok(None),
+            Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
     }
 
@@ -875,31 +929,6 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- keys and truths ---------------------------------------------------
 
-    fn encode(&self, state: &DState) -> Step<Vec<u8>> {
-        let (model, _) = self
-            .system
-            .state_key(&state.model)
-            .map_err(|_| fault("state-key-encodes"))?;
-        let mut bytes = b"filament.simulation.state-key/v1/digital\n".to_vec();
-        bytes.extend((model.len() as u64).to_be_bytes());
-        bytes.extend(model);
-        bytes.extend(self.scale.to_be_bytes());
-        bytes.extend((state.clocks.len() as u64).to_be_bytes());
-        for (value, cap) in state.clocks.iter().zip(&self.caps) {
-            bytes.extend(value.to_be_bytes());
-            bytes.extend(cap.to_be_bytes());
-        }
-        match state.deadline {
-            Some(deadline) => {
-                bytes.push(1);
-                bytes.extend(deadline.to_be_bytes());
-            }
-            None => bytes.push(0),
-        }
-        bytes.extend(state.tail.tag().as_bytes());
-        Ok(bytes)
-    }
-
     fn key_of(
         &self,
         state: &DState,
@@ -907,13 +936,212 @@ impl<'c> Builder<'_, '_, 'c> {
         monitor: Option<MonitorState>,
         pending: Option<Pending>,
     ) -> Step<ProbKey> {
+        let certificate_state = self.certificate_key(state, binding, monitor, pending.as_ref())?;
         Ok(ProbKey {
             binding: self.bindings[binding].0.clone(),
-            model: self.encode(state)?,
+            model: certificate_state.as_bytes().to_vec(),
             monitor,
             accumulator: None,
             pending,
+            certificate_state: Some(certificate_state),
         })
+    }
+
+    fn certificate_key(
+        &self,
+        state: &DState,
+        binding: usize,
+        monitor: Option<MonitorState>,
+        pending: Option<&Pending>,
+    ) -> Step<ProbabilityProductKey> {
+        if pending.is_some() {
+            return Err(fault("pending-draw-certificate-key-is-not-admitted").into());
+        }
+        let (discrete, _) = self
+            .system
+            .state_key(&state.model)
+            .map_err(|_| fault("certificate-discrete-state-key-encodes"))?;
+        let discrete: JsonValue = serde_json::from_slice(&discrete)
+            .map_err(|_| fault("certificate-discrete-state-key-is-json"))?;
+        let binding = self.bindings[binding]
+            .1
+            .as_ref()
+            .map(|reference| {
+                let text = fsl_eval::simulation::model::reference_canonical_text(reference)
+                    .map_err(|_| fault("certificate-binding-encodes"))?;
+                serde_json::from_str(&text).map_err(|_| fault("certificate-binding-is-json"))
+            })
+            .transpose()?;
+        let unit = json!([
+            "declared",
+            fsl_foundation::node_wire::node_key_to_json(&self.timed.source().unit_node)
+                .map_err(|_| fault("certificate-time-unit-encodes"))?
+        ]);
+        let clocks = self
+            .timed
+            .places()
+            .iter()
+            .zip(&state.clocks)
+            .zip(&self.caps)
+            .map(|((place, value), cap)| {
+                let field = self
+                    .timed
+                    .model()
+                    .clock(place.clock())
+                    .ok_or_else(|| fault("certificate-clock-field-exists"))?;
+                let owner = field.owner();
+                let owner = owner.original();
+                let declaring = fsl_semantics::model::key::model_node_key(
+                    owner.package(),
+                    "model",
+                    "object_type",
+                    owner.node(),
+                )
+                .map_err(|_| fault("certificate-clock-type-encodes"))?;
+                let declaring = fsl_foundation::node_wire::node_key_to_json(&declaring)
+                    .map_err(|_| fault("certificate-clock-type-encodes"))?;
+                let receiver =
+                    fsl_eval::simulation::model::reference_canonical_text(place.object())
+                        .map_err(|_| fault("certificate-clock-receiver-encodes"))?;
+                let receiver: JsonValue = serde_json::from_str(&receiver)
+                    .map_err(|_| fault("certificate-clock-receiver-is-json"))?;
+                let identity = json!([declaring, field.name(), receiver]);
+                Ok(if self.subdivisions == 1 {
+                    ClockKey::Digital(DigitalClockKey {
+                        identity,
+                        value: *value,
+                        cap: *cap,
+                    })
+                } else {
+                    ClockKey::Region(RegionClockKey {
+                        identity,
+                        value: *value,
+                        cap: *cap,
+                    })
+                })
+            })
+            .collect::<Result<Vec<_>, ProductRefusal>>()?;
+        let deadline = match state.deadline {
+            Some(elapsed) => {
+                let limit = self
+                    .deadline_bound()?
+                    .ok_or_else(|| fault("certificate-deadline-bound-exists"))?;
+                Some(if self.subdivisions == 1 {
+                    DeadlineKey::Digital(DigitalDeadlineKey { limit, elapsed })
+                } else {
+                    DeadlineKey::Region(RegionDeadlineKey { limit, elapsed })
+                })
+            }
+            None => None,
+        };
+        let monitor = monitor.map(|monitor| match monitor {
+            MonitorState::Deadline { kind, phase } => json!([
+                "deadline",
+                match kind {
+                    DeadlineKind::Eventually => "eventually",
+                    DeadlineKind::Always => "always",
+                    DeadlineKind::Until => "until",
+                },
+                match phase {
+                    DeadlinePhase::Pending => "pending",
+                    DeadlinePhase::Accept => "accept",
+                    DeadlinePhase::Reject => "reject",
+                }
+            ]),
+            _ => JsonValue::Null,
+        });
+        let tail = match state.tail {
+            Tail::Running => DigitalTail::Running,
+            Tail::IdleReady => DigitalTail::IdleReady,
+            Tail::IdleDelayed => DigitalTail::IdleDelayed,
+        };
+        let key = if self.subdivisions == 1 {
+            digital_probability_product_key(DigitalProductKeyInput {
+                binding,
+                discrete,
+                unit,
+                scale: self.base_scale,
+                clocks: clocks
+                    .into_iter()
+                    .map(|clock| match clock {
+                        ClockKey::Digital(clock) => Ok(clock),
+                        ClockKey::Region(_) => Err(fault("digital-route-clock-key-is-digital")),
+                    })
+                    .collect::<Result<Vec<_>, ProductRefusal>>()?,
+                deadline: deadline
+                    .map(|deadline| match deadline {
+                        DeadlineKey::Digital(deadline) => Ok(deadline),
+                        DeadlineKey::Region(_) => {
+                            Err(fault("digital-route-deadline-key-is-digital"))
+                        }
+                    })
+                    .transpose()?,
+                tail,
+                monitor,
+                accumulator: None,
+                pending: None,
+            })
+        } else {
+            let region_clocks = clocks
+                .into_iter()
+                .map(|clock| match clock {
+                    ClockKey::Region(clock) => Some(clock),
+                    ClockKey::Digital(_) => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| fault("region-clock-key-is-present"))?;
+            let boundary_region = matches!(&self.form, Form::MeanTime { .. });
+            let corner = if boundary_region {
+                let mut coordinates = region_clocks
+                    .iter()
+                    .map(|clock| {
+                        quire_canonical::to_vec(
+                            &clock.identity,
+                            quire_canonical::Limits::new(u64::MAX),
+                        )
+                        .map(|identity| (identity, clock.value.to_string()))
+                        .map_err(|_| fault("boundary-region-corner-identity-encodes"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                coordinates.sort_by(|left, right| left.0.cmp(&right.0));
+                Some(
+                    coordinates
+                        .into_iter()
+                        .map(|(_, coordinate)| coordinate)
+                        .collect(),
+                )
+            } else {
+                None
+            };
+            region_probability_product_key(RegionProductKeyInput {
+                binding,
+                discrete,
+                unit,
+                scale: self.base_scale,
+                subdivisions: self.subdivisions,
+                clocks: region_clocks,
+                deadline: deadline
+                    .map(|deadline| match deadline {
+                        DeadlineKey::Region(deadline) => Ok(deadline),
+                        DeadlineKey::Digital(_) => {
+                            Err(fault("region-route-deadline-key-is-region"))
+                        }
+                    })
+                    .transpose()?,
+                tail,
+                monitor,
+                accumulator: None,
+                pending: None,
+                kind: if boundary_region {
+                    RegionKeyKind::BoundaryRegion
+                } else {
+                    RegionKeyKind::Region
+                },
+                corner,
+            })
+        }
+        .map_err(|_| fault("certificate-timed-product-key-encodes"))?;
+        Ok(key)
     }
 
     fn truths(&mut self, state: &ModelSimState, binding: usize) -> Step<Result<Vec<bool>, Hit>> {
@@ -992,7 +1220,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 kind: *kind,
                 phase: Self::read_letter(*kind, DeadlinePhase::Pending, truths),
             }),
-            Form::Labels(_) => None,
+            Form::MeanTime { .. } | Form::Labels(_) => None,
         }
     }
 
@@ -1048,7 +1276,7 @@ impl<'c> Builder<'_, '_, 'c> {
                                 kind: *kind,
                                 phase: DeadlinePhase::Pending,
                             }),
-                            Form::Labels(_) => None,
+                            Form::MeanTime { .. } | Form::Labels(_) => None,
                         };
                         let key = self.key_of(&state, binding, monitor, None)?;
                         return Err(self.undefined(None, None, None, at, key, hit));
@@ -1233,6 +1461,16 @@ impl<'c> Builder<'_, '_, 'c> {
             }
             let zero_delay = edge.zero_delay;
             let to = self.intern(edge.target, Some(at), edge.step, self.nodes[at].initial)?;
+            let mut rewards = edge.rewards;
+            if matches!(self.form, Form::MeanTime { .. }) {
+                let name = Identifier::new(ELAPSED_REWARD)
+                    .map_err(|_| fault("elapsed-reward-identifier-is-valid"))?;
+                let magnitude =
+                    Rational::new(Integer::from(edge.elapsed_ticks), Integer::from(self.scale))
+                        .map_err(|_| fault("elapsed-reward-scale-is-positive"))?;
+                let unit = filament_exact::UnitId::declared(self.timed.source().unit_node.clone());
+                rewards.push((name, Value::Quantity(Quantity::new(magnitude, unit))));
+            }
             self.edges.push(ProbEdge {
                 from: ProbStateId(at),
                 choice: edge.choice,
@@ -1240,7 +1478,12 @@ impl<'c> Builder<'_, '_, 'c> {
                 draw: edge.draw,
                 to: ProbStateId(to),
                 probability: edge.probability,
-                rewards: edge.rewards,
+                elapsed: Rational::new(
+                    Integer::from(edge.elapsed_ticks),
+                    Integer::from(self.scale),
+                )
+                .map_err(|_| fault("elapsed-reward-scale-is-positive"))?,
+                rewards,
             });
             self.zero_delay.push(zero_delay);
         }
@@ -1259,6 +1502,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 target,
                 probability: one(),
                 rewards: self.system.zero_rewards(),
+                elapsed_ticks: 0,
                 step: None,
                 zero_delay: true,
             });
@@ -1286,6 +1530,7 @@ impl<'c> Builder<'_, '_, 'c> {
         choice: ProductAction,
         delayed: (Vec<u64>, Option<u64>),
         tail: Tail,
+        elapsed_ticks: u64,
     ) -> Step<Planned> {
         let reached = DState {
             model: state.model.clone(),
@@ -1306,6 +1551,7 @@ impl<'c> Builder<'_, '_, 'c> {
             target,
             probability: one(),
             rewards: self.system.zero_rewards(),
+            elapsed_ticks,
             step: Some(taken),
             zero_delay: false,
         })
@@ -1319,21 +1565,54 @@ impl<'c> Builder<'_, '_, 'c> {
         local: &Local,
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
-        if let Some(delayed) = self.unit_delay(local, state)? {
-            planned.push(self.delay_move(
-                at,
-                state,
-                ProductAction::UnitDelay,
-                delayed.clone(),
-                Tail::Running,
-            )?);
+        if let Some(first_delay) = self.unit_delay(local, state)? {
+            if self.subdivisions == 1 {
+                let unit = self.delay_move(
+                    at,
+                    state,
+                    ProductAction::UnitDelay,
+                    first_delay.clone(),
+                    Tail::Running,
+                    1,
+                )?;
+                if unit.target.key != self.nodes[at].key {
+                    planned.push(unit);
+                }
+            } else {
+                let current_key = self.nodes[at].key.clone();
+                let mut cursor = state.clone();
+                for elapsed_ticks in 1..=self.subdivisions {
+                    self.poll()?;
+                    let Some(delayed) = self.unit_delay(local, &cursor)? else {
+                        break;
+                    };
+                    let unit = self.delay_move(
+                        at,
+                        &cursor,
+                        ProductAction::UnitDelay,
+                        delayed.clone(),
+                        Tail::Running,
+                        elapsed_ticks,
+                    )?;
+                    if unit.target.key != current_key {
+                        planned.push(unit);
+                        break;
+                    }
+                    if delayed.0 == cursor.clocks && delayed.1 == cursor.deadline {
+                        break;
+                    }
+                    cursor.clocks = delayed.0;
+                    cursor.deadline = delayed.1;
+                }
+            }
             if local.quiescent {
                 planned.push(self.delay_move(
                     at,
                     state,
                     ProductAction::EnterIdleDelay,
-                    delayed,
+                    first_delay,
                     Tail::IdleDelayed,
+                    1,
                 )?);
             }
         }
@@ -1344,13 +1623,17 @@ impl<'c> Builder<'_, '_, 'c> {
         let local = self.local(&state.model)?;
         let mut planned = Vec::new();
         if let Some(delayed) = self.unit_delay(&local, state)? {
-            planned.push(self.delay_move(
+            let delay = self.delay_move(
                 at,
                 state,
                 ProductAction::IdleDelay,
                 delayed,
                 Tail::IdleDelayed,
-            )?);
+                1,
+            )?;
+            if self.subdivisions == 1 || delay.target.key != self.nodes[at].key {
+                planned.push(delay);
+            }
         }
         if state.tail == Tail::IdleDelayed {
             let reached = DState {
@@ -1371,6 +1654,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 target,
                 probability: one(),
                 rewards: self.system.zero_rewards(),
+                elapsed_ticks: 0,
                 step: Some(taken),
                 zero_delay: false,
             });
@@ -1387,16 +1671,161 @@ impl<'c> Builder<'_, '_, 'c> {
         local: &Rc<Local>,
     ) -> Step<Vec<Planned>> {
         let mut planned = Vec::new();
-        self.running_delays(at, state, local, &mut planned)?;
         let enabled = self.enabled(local, &state.model, &state.clocks)?;
-        for action in enabled {
-            self.identity_edges(at, state, &action, one(), &mut planned)?;
-        }
+        self.every_discrete_moves(at, state, local, &enabled, &mut planned)?;
         if planned.is_empty() {
             self.time_locked.push(at);
         }
         self.decisions = true;
         Ok(planned)
+    }
+
+    /// Under every scheduler, given delays are drawn independently and the
+    /// scheduler chooses among identities tied at the least sampled delay.
+    /// Free-delay identities remain ordinary scheduler choices and are
+    /// handled by the running clock moves until a discrete race is admitted.
+    fn every_discrete_moves(
+        &mut self,
+        at: usize,
+        state: &DState,
+        local: &Rc<Local>,
+        enabled: &[Enabled],
+        planned: &mut Vec<Planned>,
+    ) -> Step<()> {
+        let trajectory = self.trajectory(state)?;
+        let windows = self.windows(&trajectory)?;
+        let mut racers = Vec::new();
+        for window in &windows {
+            let Some(support) = self.given(&window.identity.operation) else {
+                continue;
+            };
+            let support = support
+                .into_iter()
+                .map(|(delay, weight)| Ok((self.bound_units(&delay)?, weight)))
+                .collect::<Step<Vec<_>>>()?;
+            let inside = support
+                .into_iter()
+                .filter(|(delay, _)| window.contains(*delay, trajectory.states.len() as u64 - 1))
+                .collect::<Vec<_>>();
+            let total = inside
+                .iter()
+                .fold(zero(), |sum, (_, weight)| sum.add(weight));
+            if total.is_zero() {
+                continue;
+            }
+            let conditioned = inside
+                .into_iter()
+                .map(|(delay, weight)| {
+                    let probability = weight
+                        .div(&total)
+                        .ok_or_else(|| fault("conditioned-weights-sum"))?;
+                    Ok((delay, probability))
+                })
+                .collect::<Step<Vec<_>>>()?;
+            racers.push((window.identity.clone(), conditioned));
+        }
+        if racers.is_empty() {
+            self.running_delays(at, state, local, planned)?;
+            for action in enabled {
+                if self.given(&action.identity.operation).is_none() {
+                    self.identity_edges(at, state, action, one(), planned)?;
+                }
+            }
+            return Ok(());
+        }
+        let representative = racers
+            .first()
+            .map(|(identity, _)| identity.clone())
+            .ok_or_else(|| fault("a-race-has-a-racer"))?;
+        for draw in Odometer::new(racers.iter().map(|(_, support)| support.len())) {
+            self.poll()?;
+            let mut probability = one();
+            let mut delays = Vec::with_capacity(racers.len());
+            for ((identity, support), index) in racers.iter().zip(&draw) {
+                let (delay, weight) = support
+                    .get(*index)
+                    .ok_or_else(|| fault("odometer-index-in-support"))?;
+                probability = probability.mul(weight);
+                delays.push((identity.clone(), *delay));
+            }
+            let least = delays
+                .iter()
+                .map(|(_, delay)| *delay)
+                .min()
+                .ok_or_else(|| fault("a-race-has-a-racer"))?;
+            let mut tied = delays
+                .iter()
+                .filter(|(_, delay)| *delay == least)
+                .map(|(identity, _)| identity.clone())
+                .collect::<Vec<_>>();
+            let reached = u64::try_from(trajectory.states.len().saturating_sub(1))
+                .map_err(|_| fault("delay-count"))?;
+            for window in windows
+                .iter()
+                .filter(|window| window.given.is_none() && window.contains(least, reached))
+            {
+                if !tied.contains(&window.identity) {
+                    tied.push(window.identity.clone());
+                }
+            }
+            let index = usize::try_from(least).map_err(|_| fault("delay-count"))?;
+            let last = trajectory.states.len().saturating_sub(1);
+            let start = trajectory
+                .states
+                .get(index.min(last))
+                .cloned()
+                .ok_or_else(|| fault("race-delay-is-reachable"))?;
+            let delayed = TraceStep {
+                action: None,
+                draw: None,
+                probability: probability.clone(),
+            };
+            let terminal = self.arrive(at, start.clone(), &[], Some(&delayed))?;
+            if matches!(
+                &terminal.key.monitor,
+                Some(MonitorState::Deadline {
+                    phase: DeadlinePhase::Accept | DeadlinePhase::Reject,
+                    ..
+                })
+            ) {
+                planned.push(Planned {
+                    choice: ProductAction::Identity(representative.clone()),
+                    action: None,
+                    draw: None,
+                    target: terminal,
+                    probability,
+                    rewards: self.system.zero_rewards(),
+                    elapsed_ticks: least,
+                    step: Some(delayed),
+                    zero_delay: least == 0,
+                });
+                continue;
+            }
+            for first in 0..tied.len() {
+                let chosen = tied[first].clone();
+                let mut order = Vec::with_capacity(tied.len());
+                order.push(chosen.clone());
+                order.extend(
+                    tied.iter()
+                        .enumerate()
+                        .filter(|(position, _)| *position != first)
+                        .map(|(_, identity)| identity.clone()),
+                );
+                self.chain_edges(
+                    at,
+                    &start,
+                    &order,
+                    (probability.clone(), least == 0, least, &chosen),
+                    Edges { planned, scope: 0 },
+                )?;
+            }
+        }
+        for action in enabled {
+            if self.given(&action.identity.operation).is_none() {
+                self.identity_edges(at, state, action, one(), planned)?;
+            }
+        }
+        Ok(())
     }
 
     /// The edges of one enabled identity at `state`, scaled by `share`.
@@ -1444,6 +1873,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     target,
                     probability,
                     rewards: draw.rewards.clone(),
+                    elapsed_ticks: 0,
                     step: Some(taken),
                     zero_delay: true,
                 });
@@ -1496,6 +1926,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 target,
                 probability,
                 rewards: draw.rewards.clone(),
+                elapsed_ticks: 0,
                 step: Some(taken),
                 zero_delay: true,
             });
@@ -1654,11 +2085,6 @@ impl<'c> Builder<'_, '_, 'c> {
             self.running_delays(at, state, local, &mut planned)?;
             if planned.is_empty() {
                 self.time_locked.push(at);
-            } else if !local.quiescent {
-                return Err(ProductRefusal::NotStochastic {
-                    state: Box::new(self.nodes[at].key.clone()),
-                }
-                .into());
             }
             self.decisions = true;
             return Ok(planned);
@@ -1883,7 +2309,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     at,
                     &start,
                     ordered,
-                    (order, delay == 0, representative),
+                    (order, delay == 0, delay, representative),
                     Edges {
                         planned: &mut *planned,
                         scope,
@@ -1907,11 +2333,11 @@ impl<'c> Builder<'_, '_, 'c> {
         at: usize,
         start: &DState,
         ordered: &[ScheduledIdentity],
-        outcome: (Rational, bool, &ScheduledIdentity),
+        outcome: (Rational, bool, u64, &ScheduledIdentity),
         out: Edges<'_>,
     ) -> Step<()> {
         let Edges { planned, scope } = out;
-        let (probability, zero_delay, representative) = outcome;
+        let (probability, zero_delay, elapsed_ticks, representative) = outcome;
         // (probability, states reached after each step, first draw, rewards
         // summed over the steps taken)
         type Chain = (
@@ -2014,6 +2440,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 target,
                 probability: chain_probability,
                 rewards,
+                elapsed_ticks,
                 step: Some(taken),
                 zero_delay,
             });
@@ -2078,80 +2505,100 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- the finished product --------------------------------------------------
 
-    /// FR-204 TA-5: a reachable cycle of discrete moves is Zeno.
-    fn zero_delay_cycle(&self) -> Option<Vec<usize>> {
+    /// FR-924: find a maximal end component whose *whole scheduler action*
+    /// takes zero time and whose positive-probability support remains inside
+    /// the candidate. A raw edge SCC is insufficient: it mistakes a leaky
+    /// cycle for a closed zero-time component.
+    fn zero_delay_components(&self) -> Vec<Vec<usize>> {
         let count = self.nodes.len();
-        let mut successors: Vec<Vec<usize>> = vec![Vec::new(); count];
-        for (edge, zero) in self.edges.iter().zip(&self.zero_delay) {
-            if *zero {
-                successors[edge.from.index()].push(edge.to.index());
-            }
-        }
-        // Iterative Tarjan.
-        let mut index_of = vec![usize::MAX; count];
-        let mut low = vec![0_usize; count];
-        let mut on_stack = vec![false; count];
-        let mut stack: Vec<usize> = Vec::new();
-        let mut next = 0_usize;
-        for root in 0..count {
-            if index_of[root] != usize::MAX {
-                continue;
-            }
-            let mut work: Vec<(usize, usize)> = vec![(root, 0)];
-            while let Some((node, cursor)) = work.pop() {
-                if cursor == 0 {
-                    index_of[node] = next;
-                    low[node] = next;
-                    next += 1;
-                    stack.push(node);
-                    on_stack[node] = true;
-                }
-                if let Some(&to) = successors[node].get(cursor) {
-                    work.push((node, cursor + 1));
-                    if index_of[to] == usize::MAX {
-                        work.push((to, 0));
-                    } else if on_stack[to] {
-                        low[node] = low[node].min(index_of[to]);
-                    }
+        let product = ProbProduct {
+            states: self.nodes.iter().map(|node| node.key.clone()).collect(),
+            kind: ProductKind::Mdp,
+            edges: self.edges.clone(),
+            initial: Vec::new(),
+            decided: Vec::new(),
+            labels: Vec::new(),
+            fairness_operations: Vec::new(),
+            fairness: Vec::new(),
+        };
+        let mut choices = Vec::with_capacity(count);
+        for state in product.ids() {
+            let mut groups: Vec<(ProductAction, Vec<&ProbEdge>, bool)> = Vec::new();
+            for (edge_index, edge) in self.edges.iter().enumerate() {
+                if edge.from != state || edge.probability.is_zero() {
                     continue;
                 }
-                if low[node] == index_of[node] {
-                    let mut component = Vec::new();
-                    while let Some(member) = stack.pop() {
-                        on_stack[member] = false;
-                        component.push(member);
-                        if member == node {
-                            break;
-                        }
-                    }
-                    let cyclic = component.len() > 1
-                        || component
-                            .first()
-                            .is_some_and(|member| successors[*member].contains(member));
-                    if cyclic {
-                        component.sort_unstable();
-                        return Some(component);
-                    }
-                }
-                if let Some((parent, _)) = work.last() {
-                    low[*parent] = low[*parent].min(low[node]);
+                let zero = self.zero_delay.get(edge_index).copied().unwrap_or(false);
+                if let Some((_, edges, all_zero)) = groups
+                    .iter_mut()
+                    .find(|(action, _, _)| same_action(action, &edge.choice))
+                {
+                    edges.push(edge);
+                    *all_zero &= zero;
+                } else {
+                    groups.push((edge.choice.clone(), vec![edge], zero));
                 }
             }
+            choices.push(
+                groups
+                    .into_iter()
+                    .filter(|(_, _, all_zero)| *all_zero)
+                    .map(|(_, edges, _)| Choice { edges })
+                    .collect(),
+            );
         }
-        None
+        let graph = Graph {
+            product: &product,
+            choices,
+        };
+        maximal_end_components_from(&graph, (0..count).collect()).unwrap_or_default()
     }
 
     fn finish(
-        self,
+        mut self,
         initial: Vec<(u32, Option<ModelInstance>, ProbStateId)>,
     ) -> Result<ProbProduct, ProductRefusal> {
-        if let Some(cycle) = self.zero_delay_cycle() {
-            return Err(ProductRefusal::ZeroDelayCycle {
-                states: cycle
-                    .into_iter()
-                    .map(|member| self.nodes[member].key.clone())
-                    .collect(),
+        for component in self.zero_delay_components() {
+            let members: BTreeSet<_> = component.iter().copied().collect();
+            let has_exit = component.iter().any(|state| {
+                let mut groups: Vec<(&ProductAction, Vec<usize>)> = Vec::new();
+                for (edge_index, edge) in self.edges.iter().enumerate() {
+                    if edge.from.index() != *state || edge.probability.is_zero() {
+                        continue;
+                    }
+                    if let Some((_, indices)) = groups
+                        .iter_mut()
+                        .find(|(action, _)| same_action(action, &edge.choice))
+                    {
+                        indices.push(edge_index);
+                    } else {
+                        groups.push((&edge.choice, vec![edge_index]));
+                    }
+                }
+                groups.iter().any(|(_, indices)| {
+                    !indices.iter().all(|index| {
+                        self.zero_delay.get(*index).copied().unwrap_or(false)
+                            && members.contains(&self.edges[*index].to.index())
+                    })
+                })
             });
+            if has_exit {
+                continue;
+            }
+            self.time_locked.extend(component);
+        }
+        if !self.time_locked.is_empty() {
+            let locked: BTreeSet<_> = self.time_locked.iter().copied().collect();
+            let mut edges = Vec::with_capacity(self.edges.len());
+            let mut zero_delay = Vec::with_capacity(self.zero_delay.len());
+            for (edge, zero) in self.edges.drain(..).zip(self.zero_delay.drain(..)) {
+                if !locked.contains(&edge.from.index()) {
+                    edges.push(edge);
+                    zero_delay.push(zero);
+                }
+            }
+            self.edges = edges;
+            self.zero_delay = zero_delay;
         }
         let mut decided: Vec<(ProbStateId, MonitorVerdict)> = self
             .nodes
@@ -2170,13 +2617,11 @@ impl<'c> Builder<'_, '_, 'c> {
         // never be met: ADR-026 TD-2 reports the lock, and the event closes
         // as a rejection (FR-196 "Canonical probability product key").
         for state in &self.time_locked {
-            if matches!(self.form, Form::Deadline { .. }) {
-                decided.push((ProbStateId(*state), MonitorVerdict::Reject));
-            }
+            decided.push((ProbStateId(*state), MonitorVerdict::Reject));
         }
         decided.sort_by_key(|(state, _)| state.index());
         decided.dedup_by_key(|(state, _)| state.index());
-        let labels = if matches!(self.form, Form::Labels(_)) {
+        let labels = if matches!(self.form, Form::Labels(_) | Form::MeanTime { .. }) {
             self.nodes.iter().map(|node| node.truths.clone()).collect()
         } else {
             Vec::new()

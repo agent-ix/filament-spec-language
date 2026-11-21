@@ -17,6 +17,7 @@ pub mod plan_request;
 mod replay;
 mod requirements;
 mod settle;
+mod synthesis;
 mod tl;
 mod wire;
 
@@ -227,7 +228,8 @@ pub struct CheckInputs {
     pub integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// Check-stage limits.
     pub limits: fsl_replay::spine::SpineLimits,
-    /// Aggregate ceiling for the selected model and library files.
+    /// Aggregate ceiling for the selected model, library and extension definition
+    /// files; the checked source is bounded by `s1.input_bytes`, not this.
     pub dependent_bytes: usize,
 }
 
@@ -279,7 +281,9 @@ impl CheckOutcome {
 }
 
 /// Check one source against the model and library files it selects (FR-866).
-/// All selected files pass through the same bounded admission used by compile.
+/// Dependent documents (models, libraries, extensions) are charged to
+/// `dependent_bytes`; the checked source is read under the fixed intake ceiling
+/// and bounded by `s1.input_bytes` at parse, as in compile.
 pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
     let result = check_outcome_inner(source_path, inputs);
     match result {
@@ -338,9 +342,10 @@ fn check_outcome_inner(
         validate_extension_entries(&extensions)?;
 
         let source_identity = source_path.to_string_lossy();
-        let source = intake.source(
+        let source = intake.source_outside_budget(
             &check_source_file(source_path, "filament", &source_identity, "CheckSource"),
             "source",
+            check_source_read_ceiling(inputs.limits.source.source_bytes),
         )?;
         if fsl_semantics::model::intake::is_model_unit_source(source.source().text().as_bytes()) {
             compile_formal_model_unit(&source)?;
@@ -793,6 +798,19 @@ pub enum RunCause {
         /// Why the member is refused.
         reason: String,
     },
+    /// FR-1037: a `synthesis` member the request reader refuses, with the
+    /// FSpec FR-823 catalog code and FR-805 cause apart from the message.
+    #[error("invalid synthesis request member {path}: {cause}: {reason}")]
+    SynthesisRequest {
+        /// The JSON pointer of the member at fault.
+        path: String,
+        /// The catalog code of the refusal.
+        code: Code,
+        /// The FR-805 cause.
+        cause: &'static str,
+        /// Why the member is refused.
+        reason: String,
+    },
     /// FR-752: a typed model-based-test request refusal with its catalog code
     /// and cause.
     #[error("invalid model_based_test request member {path}: {cause}")]
@@ -929,6 +947,11 @@ pub enum RunCause {
     /// The request's extension definition catalog is invalid.
     #[error("the request's extension definitions are refused: {0}")]
     ExtensionCatalog(String),
+    /// An extension names a capability outside the closed complete-V1
+    /// inventory; it cannot be dropped, so the request is unsupported rather
+    /// than malformed.
+    #[error("the request's extension names an unknown required capability: {0}")]
+    UnknownExtensionCapability(String),
     /// Spine compile of a `1-draft` program refused at one stage.
     #[error("{}", .0.refusal)]
     Spine(Box<SpineFailure>),
@@ -1135,7 +1158,9 @@ impl RunCause {
             | Self::ExportProtocolRequest { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
             Self::ExportRequest { .. } => Code::InvalidRuntimeInput,
-            Self::PlanRequest { code, .. } | Self::ModelBasedTestRequest { code, .. } => *code,
+            Self::PlanRequest { code, .. }
+            | Self::SynthesisRequest { code, .. }
+            | Self::ModelBasedTestRequest { code, .. } => *code,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
@@ -1161,6 +1186,7 @@ impl RunCause {
             Self::ExtractionFailure { code, .. } => *code,
             Self::Spine(failure) => failure.refusal.code(),
             Self::ExtensionCatalog(_) => Code::InvalidPackage,
+            Self::UnknownExtensionCapability(_) => Code::UnknownRequiredFeature,
             Self::SpineRun(refusal) => refusal.code(),
             Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
             Self::TemporalCorrection(_) => Code::InvalidRuntimeInput,
@@ -1346,6 +1372,7 @@ impl RunError {
             )]),
             RunCause::ExportRequest { path, cause, .. }
             | RunCause::PlanRequest { path, cause, .. }
+            | RunCause::SynthesisRequest { path, cause, .. }
             | RunCause::ModelBasedTestRequest { path, cause, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
@@ -1412,6 +1439,7 @@ impl RunError {
             | RunCause::EmptyCompileProgram
             | RunCause::Libraries(_)
             | RunCause::ExtensionCatalog(_)
+            | RunCause::UnknownExtensionCapability(_)
             | RunCause::CompleteRunSelection(_)
             | RunCause::AnalyzeRequest { .. }
             | RunCause::AnalyzeUniverse(_)
@@ -1426,6 +1454,7 @@ impl RunError {
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     match &self.cause {
                         RunCause::IntegerDivisionLaw { .. } => Some("unsupported-selection"),
+                        RunCause::UnknownExtensionCapability(_) => Some("unknown-feature"),
                         _ => None,
                     },
                     self.cause.code().as_str(),
@@ -1550,6 +1579,12 @@ impl RunError {
     }
 }
 
+/// Read ceiling for check's source: the fixed intake ceiling, raised to the
+/// S1 limit so `s1.input_bytes` is always the bound that refuses.
+fn check_source_read_ceiling(s1_source_bytes: usize) -> usize {
+    TOTAL_BYTES.max(s1_source_bytes)
+}
+
 fn read_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let read = || -> io::Result<Vec<u8>> {
         let file = File::open(path)?;
@@ -1623,15 +1658,37 @@ impl Intake<'_> {
     ) -> Result<FormalSource> {
         let identity = selected.identity.bind(request_member)?;
         let bytes = self.file(&selected.file, self.remaining)?;
-        let source = Source::read_typed(identity.native, &selected.file, &bytes, self.maximum)
+        self.admit_source(selected, identity, bytes, self.maximum)
+    }
+
+    /// Reads a source under `ceiling` (see `check_source_read_ceiling`) without
+    /// charging the intake's budget (check's `dependent_bytes`, FR-866); the stage-1
+    /// `s1.input_bytes` ceiling is then enforced by the parse, as in compile.
+    fn source_outside_budget(
+        &mut self,
+        selected: &wire::SourceFile,
+        request_member: &str,
+        ceiling: usize,
+    ) -> Result<FormalSource> {
+        let identity = selected.identity.bind(request_member)?;
+        let bytes = read_file(&self.directory.join(&selected.file), ceiling)?;
+        self.admit_source(selected, identity, bytes, ceiling)
+    }
+
+    fn admit_source(
+        &mut self,
+        selected: &wire::SourceFile,
+        identity: crate::formal_source::SourceIdentities,
+        bytes: Vec<u8>,
+        byte_limit: usize,
+    ) -> Result<FormalSource> {
+        let source = Source::read_typed(identity.native, &selected.file, &bytes, byte_limit)
             .map_err(|refusal| {
                 RunCause::Source(Box::new(SourceFailure {
                     native: fsl_foundation::diagnostic::source_refusal(
-                        &refusal,
-                        &bytes,
-                        self.maximum,
+                        &refusal, &bytes, byte_limit,
                     ),
-                    diagnostic: fsl_cst::diagnostic::source_refusal(*refusal, self.maximum),
+                    diagnostic: fsl_cst::diagnostic::source_refusal(*refusal, byte_limit),
                 }))
             })?;
         self.sources.push(source.clone());
@@ -1839,6 +1896,9 @@ fn run_configured(
             if let Some(result) = version_argv(bytes)? {
                 Ok(Some(result))
             } else if let Some(result) = check_argv(directory, bytes)? {
+                Ok(Some(result))
+            } else if let Some(result) = synthesis::run_bytes(directory, bytes, limits, overrides)?
+            {
                 Ok(Some(result))
             } else {
                 if let Some(result) =
@@ -3527,10 +3587,7 @@ fn extension_catalog(
         let capabilities = extension
             .capabilities
             .iter()
-            .map(|capability| {
-                CapabilityId::complete(capability)
-                    .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
-            })
+            .map(|capability| CapabilityId::complete(capability).map_err(extension_catalog_cause))
             .collect::<Result<std::collections::BTreeSet<_>>>()?;
         definitions.push(ExtensionDefinitionSource {
             authority: extension.authority.clone(),
@@ -3541,7 +3598,19 @@ fn extension_catalog(
         });
     }
     fsl_semantics::library::bundle::DefinitionCatalog::read_extensions(definitions)
-        .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
+        .map_err(extension_catalog_cause)
+}
+
+/// The refusal of an extension catalogue failure: a capability outside the
+/// closed inventory is an unknown required feature, every other failure a
+/// malformed catalogue.
+fn extension_catalog_cause(error: fsl_semantics::library::bundle::PackageError) -> RunCause {
+    match error {
+        fsl_semantics::library::bundle::PackageError::UnknownCapability(_) => {
+            RunCause::UnknownExtensionCapability(error.to_string())
+        }
+        other => RunCause::ExtensionCatalog(other.to_string()),
+    }
 }
 
 /// Validate extension labels and logical identity uniqueness before intake
@@ -3910,7 +3979,7 @@ fn prepare_lowering(
     let run = clause::read(intake, request, &clause, source, observation_override)?;
     let behaviours = match &lowering.cross {
         Some(tl::CrossEvaluate::Initial { max_steps, .. }) => {
-            Some(initial_subject(&run, *max_steps)?)
+            Some(initial_subject(&run.snapshots, *max_steps)?)
         }
         Some(tl::CrossEvaluate::Trace { .. }) | None => None,
     };
@@ -3930,10 +3999,10 @@ fn prepare_lowering(
 /// refuses `incomplete_population` naming it, as FR-620 refuses a universe
 /// snapshot's.
 fn initial_subject(
-    run: &fsl_replay::spine::ClauseRunRequest,
+    provision: &fsl_semantics::model::observation::DocumentProvision,
     max_steps: u64,
 ) -> Result<(fsl_semantics::model::observation::DocumentRef, usize)> {
-    let mut snapshots = run.snapshots.keys();
+    let mut snapshots = provision.keys();
     let (Some(initial), None) = (snapshots.next(), snapshots.next()) else {
         return Err(RunCause::ClauseRequest {
             member: "tl_lowering.cross_evaluate.initial".to_owned(),
@@ -3949,7 +4018,7 @@ fn initial_subject(
             "proof_bounds": [],
         }))?;
     subject
-        .check_universes(&run.snapshots)
+        .check_universes(provision)
         .map_err(RunCause::AnalyzeUniverse)?;
     let max_steps = usize::try_from(max_steps).map_err(|_| RunCause::ClauseRequest {
         member: "tl_lowering.cross_evaluate.max_steps".to_owned(),
@@ -4487,6 +4556,16 @@ mod tests {
     use super::*;
     use filament_semantic_value::catalog::InternalFault;
     use ix_trace_rs::trace;
+
+    /// FR-866 / FR-869: a raised `s1.input_bytes` raises check's source read
+    /// ceiling, so the S1 limit is the bound that refuses.
+    #[test]
+    #[trace("FR-866", "TC-2457")]
+    fn check_source_read_ceiling_never_undercuts_the_s1_limit() {
+        assert_eq!(check_source_read_ceiling(0), TOTAL_BYTES);
+        assert_eq!(check_source_read_ceiling(TOTAL_BYTES), TOTAL_BYTES);
+        assert_eq!(check_source_read_ceiling(TOTAL_BYTES + 1), TOTAL_BYTES + 1);
+    }
 
     fn fault_error(stage: &'static str, invariant: &'static str) -> RunError {
         RunError {
