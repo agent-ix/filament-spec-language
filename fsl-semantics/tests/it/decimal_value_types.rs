@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{DecimalType, IllTypedCause, Integer, RoundingMode, ValueType};
+use filament_exact::{DecimalType, Integer, RoundingMode, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
@@ -387,9 +387,27 @@ fn target_bound_cash_without_policy_is_operator_ineligible() {
         )
         .expect_err("Cash has no Decimal policy and no checked value type");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
+    let CheckCause::StateModel(state) = &refusals[0].cause else {
+        panic!("a state-model refusal: {refusals:?}");
+    };
+    let CheckCause::UntypedMember(member) = &state.cause else {
+        panic!("an untyped-member refusal: {refusals:?}");
+    };
     assert_eq!(
-        refusals[0].cause,
-        CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
+        (
+            refusals[0].cause.code().as_str(),
+            refusals[0].cause.cause(),
+            member.owner.as_str(),
+            member.member.as_str(),
+            member.locus.as_str(),
+        ),
+        (
+            "ill_typed",
+            Some("operator-ineligible"),
+            "Meter",
+            "cash",
+            "Field.typeRef"
+        ),
         "{refusals:?}"
     );
 }
