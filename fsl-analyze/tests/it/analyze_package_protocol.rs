@@ -2251,20 +2251,12 @@ fn package_send_preserves_bounded_tally_projection() {
         )
         .as_bytes(),
     );
-    let source = analyze(&path);
-    assert!(
-        source.item(0).get("record").is_some(),
-        "source analysis admits the bounded Tally projection: {}",
-        source.document()
-    );
-    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
-    let (package_path, _) = package_request(&ws, &path);
-    fsl_command::checked_handoff::verify(&ws.path(crate::analyze_cli_support::HANDOFF))
-        .expect("the strict reader admits the original Attempt.n: Tally (0..0) projection");
-    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package analysis");
-    let package = analyze(&package_path);
-    assert_eq!(package.item(0), source.item(0), "{}", package.document());
-    assert_eq!(package.exit, source.exit);
+    channel_send_parity_using(&ws, &path, "proved", || {
+        let (package_path, _) = package_request(&ws, &path);
+        fsl_command::checked_handoff::verify(&ws.path(crate::analyze_cli_support::HANDOFF))
+            .expect("the strict reader admits the original Attempt.n: Tally (0..0) projection");
+        package_path
+    });
 }
 
 /// A compact package frame treats only the real over binder as receiver;
