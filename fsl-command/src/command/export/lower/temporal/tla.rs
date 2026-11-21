@@ -7,8 +7,8 @@
 //! counter or a delay register for a lower-bounded one, a shift register for
 //! a closed interval. `until`, `release` and an interval operator at the
 //! root of a clause become a deterministic monitor. A clause with no
-//! deterministic monitor needs the nondeterministic Buchi monitor, which
-//! this build does not lower: it is the typed refusal naming the operator.
+//! deterministic monitor can use the bounded future tableau in
+//! [`tableau`].
 //!
 //! Every temporal-level range is the model's constant identity universe
 //! `Ids_<T>`, never `DOMAIN v`, which varies with the state; `ok_<clause>`
@@ -18,10 +18,12 @@
 
 use super::{ClauseLow, Iv, Tf, CONSTRUCT};
 use crate::command::export::lower::{
-    bullets, defer_at, define, mangle, parameters, refusal, scalars, snapshot_rows, tla_domain,
-    Definition, Input, Lower, Object, Operation, Target,
+    bullets, define, mangle, parameters, refusal, scalars, snapshot_rows, tla_domain, Definition,
+    Input, Lower, Object, Operation, Target,
 };
 use std::collections::BTreeSet;
+
+mod tableau;
 
 /// A condition of a `conditional` record (FSpec FR-298).
 pub(in crate::command::export::lower) struct Cond {
@@ -43,7 +45,7 @@ pub(in crate::command::export::lower) struct Extra {
     /// with its clause's node.
     pub(in crate::command::export::lower) conditional: Vec<Cond>,
     pub(in crate::command::export::lower) dense: bool,
-    pub(in crate::command::export::lower) dense_names: Vec<(String, usize)>,
+    pub(in crate::command::export::lower) aux_names: Vec<(String, usize)>,
 }
 
 // ---- Normal form -----------------------------------------------------------
@@ -849,14 +851,6 @@ pub(in crate::command::export::lower) fn tla(
                 type_name: None,
             });
         }
-        if input.snapshot.is_none() {
-            extra.conditional.push(Cond {
-                obligation: clause.name.clone(),
-                kind: "bounded-identity-universe",
-                node: object.node,
-                type_name: Some(object.name.clone()),
-            });
-        }
         let ctx = Ctx {
             input,
             clause,
@@ -865,21 +859,7 @@ pub(in crate::command::export::lower) fn tla(
             histories: Vec::new(),
         };
         if input.dense.is_some() {
-            let mut presence = vec![format!("{} \\in DOMAIN {}", ctx.key(), object.variable())];
-            for def in &clause.defs {
-                presence.push(input.show.expr(def).map_err(attribute)?);
-            }
-            out.push(define(
-                clause.position,
-                Some(ctx.names.ok.clone()),
-                format!(
-                    "{}({}) == {}",
-                    ctx.names.ok,
-                    ctx.key(),
-                    presence.join(" /\\ "),
-                ),
-                Some(clause.name.as_str()),
-            ));
+            emit_ok(&ctx, out).map_err(attribute)?;
             let variables = super::super::dense::tla_clause(
                 clause,
                 &ctx.names.ids,
@@ -891,9 +871,17 @@ pub(in crate::command::export::lower) fn tla(
             extra
                 .variables
                 .extend(variables.iter().map(|(name, _)| name.clone()));
-            extra.dense_names.extend(variables);
+            extra.aux_names.extend(variables);
         } else {
             tla_clause(ctx, out, &mut extra).map_err(attribute)?;
+        }
+        if input.snapshot.is_none() {
+            extra.conditional.push(Cond {
+                obligation: clause.name.clone(),
+                kind: "bounded-identity-universe",
+                node: object.node,
+                type_name: Some(object.name.clone()),
+            });
         }
     }
     Ok(extra)
@@ -981,34 +969,14 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
                 }
             }
         }
-        Shape::Tableau => {
-            return defer_at(
-                clause.refuse_at.ok_or_else(|| {
-                    refusal(
-                        CONSTRUCT,
-                        "a clause with no monitor and no operator to name",
-                    )
-                })?,
-                "temporal/nondeterministic-monitor",
-                "a future operator that needs the nondeterministic Buchi monitor",
-            );
-        }
+        Shape::Tableau => return tableau::emit(&ctx, &root, out, extra),
     }
     let names = &ctx.names;
     let composed = !vars.is_empty();
     let fair = fairness(&ctx)?;
     let spec_t = composed || !fair.is_empty();
 
-    let mut presence = vec![format!("{key} \\in DOMAIN {}", ctx.object.variable())];
-    for def in &clause.defs {
-        presence.push(ctx.input.show.expr(def)?);
-    }
-    out.push(define(
-        clause.position,
-        Some(names.ok.clone()),
-        format!("{}({key}) == {}", names.ok, presence.join(" /\\ ")),
-        obligation,
-    ));
+    emit_ok(&ctx, out)?;
     if composed {
         let list: Vec<&str> = std::iter::once("vars")
             .chain(vars.iter().map(|var| var.name.as_str()))
@@ -1104,6 +1072,20 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
     extra
         .variables
         .extend(vars.iter().map(|var| var.name.clone()));
+    Ok(())
+}
+
+fn emit_ok(ctx: &Ctx<'_>, out: &mut Vec<Definition>) -> Lower<()> {
+    let key = ctx.key();
+    let mut presence = vec![format!("{key} \\in DOMAIN {}", ctx.object.variable())];
+    presence.extend(ctx.input.show.exprs(&ctx.clause.defs)?);
+    let name = &ctx.names.ok;
+    out.push(define(
+        ctx.clause.position,
+        Some(name.clone()),
+        format!("{name}({key}) == {}", presence.join(" /\\ ")),
+        Some(ctx.clause.name.as_str()),
+    ));
     Ok(())
 }
 

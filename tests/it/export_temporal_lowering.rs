@@ -2909,9 +2909,8 @@ fn clause_tail(body: &str) -> String {
     format!("{HEAD} {body} }}\n")
 }
 
-/// FSpec FR-813-AC-24 (FND-011): a future operator inside a future operator
-/// has no deterministic monitor, so TLA+ refuses it at the inner operator's
-/// node; Lean states the clause directly.
+/// Future clauses that have a deterministic monitor can still be refused
+/// while that lowering is missing.
 #[test]
 #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
 fn a_nested_future_operator_is_refused_in_tla_and_defined_in_lean() {
@@ -2926,6 +2925,114 @@ fn a_nested_future_operator_is_refused_in_tla_and_defined_in_lean() {
         let text = value["export"]["target_text"].as_str().unwrap();
         assert!(text.contains("def holds_T"), "{text}");
     }
+}
+
+fn tableau_export(limit: u64, target: Target) -> (u8, Value) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = counter_request(
+        dir.path(),
+        json!({"profile": target.profile(), "obligations": ["T"]}),
+    );
+    let model_path = dir.path().join("counter.json");
+    let mut model: Value = serde_json::from_slice(&std::fs::read(&model_path).unwrap()).unwrap();
+    let fields = model["types"][1]["fields"].as_array_mut().unwrap();
+    let template = fields[0].clone();
+    let snapshot_path = dir.path().join("counter-0.json");
+    let mut snapshot: Value =
+        serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+    let values = &mut snapshot["populations"][0]["objects"][0]["fields"];
+    for name in ["safe", "seen", "pending", "ready"] {
+        let mut field = template.clone();
+        field["identity"] = json!(format!("ix://example/counter-third/Counter/{name}"));
+        field["name"] = json!(name);
+        field["typeRef"] = json!("ix://filament/native/Boolean");
+        fields.push(field);
+        values[name] = json!({"boolean": false});
+    }
+    std::fs::write(model_path, model.to_string()).unwrap();
+    std::fs::write(snapshot_path, snapshot.to_string()).unwrap();
+    let unit = COUNTER_UNIT.replace(
+        "model Counter",
+        "profile t = \"filament.temporal.infinite-trace/v1\";\nmodel Counter",
+    );
+    let tail = clause_tail(&format!(
+        "(eventually always holds(c.safe)) and (always eventually holds(c.seen)) and \
+         (always (holds(c.pending) implies eventually[{limit}, {limit}] holds(c.ready)))"
+    ));
+    std::fs::write(dir.path().join("unit.native"), format!("{unit}{tail}")).unwrap();
+    match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).unwrap(),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
+}
+
+/// FR-813-AC-6: the mixed acceptance clause checks for an accepting run
+/// of its negation without letting a bad guess block the model steps.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
+fn tableau_checks_mixed_acceptance_over_the_total_product() {
+    let (exit, tla) = tableau_export(1, Target::Tla);
+    assert_eq!(exit, 0, "{tla}");
+    let text = tla["export"]["target_text"].as_str().unwrap();
+    for fragment in [
+        "m_T \\in [Ids_Counter -> Bits_Th_T]",
+        "m_T' \\in [Ids_Counter -> Bits_Th_T]",
+        "m_T_live' = [o_c \\in Ids_Counter |->",
+        "m_T_live[o_c] /\\ Check_Th_T(o_c, m_T[o_c], m_T'[o_c])",
+        "m_T_phase' = ~m_T_phase",
+        "Progress_Th_T",
+        "Next_T == (Next \\/ (~ENABLED Next /\\ UNCHANGED vars)) /\\ Mon_T",
+        "WF_vars_T(Next_T)",
+        "~([]<>accept_T(o_c))",
+    ] {
+        assert!(text.contains(fragment), "missing {fragment}: {text}");
+    }
+    let record = &tla["export"]["records"][0];
+    assert_eq!(record["disposition"], "conditional", "{record}");
+    let [condition] = record["conditions"].as_array().unwrap().as_slice() else {
+        panic!("one condition: {record}");
+    };
+    assert_eq!(condition["type"], "nondeterministic-monitor", "{condition}");
+    assert_eq!(condition["clause"], "T", "{condition}");
+    let phase = tla["export"]["name_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "m_T_phase")
+        .unwrap();
+    assert_eq!(condition["node"], phase["node"], "{condition}");
+    let (exit, lean) = tableau_export(1, Target::Lean);
+    assert_eq!(exit, 0, "{lean}");
+    let text = lean["export"]["target_text"].as_str().unwrap();
+    assert!(text.contains("def holds_T"), "{text}");
+    assert_eq!(
+        lean["export"]["records"][0]["disposition"], "preserved",
+        "{lean}"
+    );
+}
+
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn tableau_above_its_finite_closure_limit_has_a_typed_refusal() {
+    let (exit, tla) = tableau_export(18, Target::Tla);
+    assert_eq!(exit, 21, "{tla}");
+    let refusal = &tla["export"]["refusal"];
+    assert_eq!(refusal["code"], "unimplemented_capability", "{refusal}");
+    assert_eq!(refusal["cause"], "unimplemented-meaning", "{refusal}");
+    assert_eq!(refusal["construct"], "temporal/formula", "{refusal}");
+    assert!(
+        refusal["node"].is_string() && refusal["locus"].is_object(),
+        "{refusal}"
+    );
+    let (exit, lean) = tableau_export(18, Target::Lean);
+    assert_eq!(exit, 0, "{lean}");
+    assert_eq!(
+        lean["export"]["records"][0]["disposition"], "preserved",
+        "{lean}"
+    );
 }
 
 /// FSpec FR-813-AC-24: a future operator inside a past operator is refused in

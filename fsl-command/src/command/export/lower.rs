@@ -1360,7 +1360,7 @@ pub(super) fn lower(
             lean(&input, &mut definitions)?;
             let mut extra = Extra::default();
             if let Some(model) = &dense {
-                extra.dense_names.extend(model.clock_names());
+                extra.aux_names.extend(model.clock_names());
             }
             extra
         }
@@ -1694,7 +1694,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
     if let Some(model) = input.dense {
         extra.dense = true;
         extra.variables.splice(0..0, model.variables());
-        extra.dense_names.extend(model.clock_names());
+        extra.aux_names.extend(model.clock_names());
     }
     Ok(extra)
 }
@@ -2092,7 +2092,7 @@ fn assemble(
         Target::Lean => format!("namespace {module}\n"),
     };
     let mut name_records = Vec::new();
-    name_records.extend(extra.dense_names.iter().map(|(name, node)| NameRecord {
+    name_records.extend(extra.aux_names.iter().map(|(name, node)| NameRecord {
         name: name.clone(),
         node: *node,
         binding: None,
