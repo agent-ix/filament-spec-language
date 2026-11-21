@@ -1314,6 +1314,7 @@ impl ModelRefusalCause {
             | Self::DeclaredCreateDeleteOverlap { .. }
             | Self::DeclaredDeltaMismatch { .. }
             | Self::UnresolvedName { .. }
+            | Self::AmbiguousName { .. }
             | Self::ForeignAlias { .. } => None,
         }
     }
