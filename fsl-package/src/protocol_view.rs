@@ -444,7 +444,9 @@ pub(crate) fn argument<'n>(node: &'n Node, name: &str) -> Option<&'n CheckedTerm
         return None;
     };
     arguments.iter().find_map(|argument| match argument {
-        CheckedTerm::Binding { name: bound, value } if &**bound == name => Some(&**value),
+        CheckedTerm::Binding {
+            name: bound, value, ..
+        } if &**bound == name => Some(&**value),
         _ => None,
     })
 }
@@ -459,7 +461,9 @@ pub(crate) fn group_member<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t 
         return None;
     };
     members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name: bound, value } if &**bound == name => Some(&**value),
+        CheckedTerm::Binding {
+            name: bound, value, ..
+        } if &**bound == name => Some(&**value),
         _ => None,
     })
 }

@@ -1200,6 +1200,9 @@ fn assembly_error_message(cause: &AssemblyCause) -> String {
         AssemblyCause::NominalAdmission(_) => {
             "an enum declaration could not be admitted".to_owned()
         }
+        AssemblyCause::DimensionClassProjection(refusal) => {
+            format!("admitted dimension classes could not be projected: {refusal}")
+        }
         AssemblyCause::UnsuppliedImport { identity } => {
             format!("`import \"{identity}\"` names a library no dependency input supplies")
         }

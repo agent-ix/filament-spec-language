@@ -26,6 +26,14 @@ use fsl_semantics::check::{
 use super::{Capacities, ProtocolRefusal, Unsupported};
 use crate::simulation::model::ModelSystem;
 
+/// The source or package predicate that classifies a stopped live instance.
+pub(super) enum Terminal<'a> {
+    None,
+    Any,
+    SourceWhen(&'a CheckedBody),
+    PackageWhen(crate::value::ProtocolSlot),
+}
+
 /// One control of the `run` tree.
 pub(super) struct Control {
     pub(super) step: ControlStep,
@@ -310,7 +318,7 @@ pub(super) struct Program<'a> {
     /// Each binder slot's declared type.
     binder_types: Vec<ValueType>,
     /// The protocol's `terminal` member.
-    pub(super) terminal: Option<&'a CheckedTerminalMember>,
+    pub(super) terminal: Terminal<'a>,
     /// The `compensate` templates, in source order.
     pub(super) templates: Vec<Template<'a>>,
     /// Each `effect` node's attempt, from the `Effect` edges (ST-2).
@@ -344,7 +352,12 @@ pub(super) struct Program<'a> {
 /// ST-13).
 pub(super) struct Capture<'a> {
     pub(super) name: String,
-    pub(super) initializer: &'a CheckedBody,
+    pub(super) initializer: CaptureInitializer<'a>,
+}
+
+pub(super) enum CaptureInitializer<'a> {
+    Source(&'a CheckedBody),
+    Package(crate::value::ProtocolSlot),
 }
 
 /// A control's place in the `run` tree: its preorder position, the last
@@ -580,7 +593,7 @@ impl<'a> Program<'a> {
             .filter(|capture| capture.owner == CaptureOwner::Protocol)
             .map(|capture| Capture {
                 name: capture.name.clone(),
-                initializer: &capture.initializer,
+                initializer: CaptureInitializer::Source(&capture.initializer),
             })
             .collect();
         let capture_slots = captures
@@ -928,7 +941,11 @@ impl<'a> Program<'a> {
                 .iter()
                 .map(|binder| binder.value_type.clone())
                 .collect(),
-            terminal: Some(&protocol.slots.terminal),
+            terminal: match &protocol.slots.terminal {
+                CheckedTerminalMember::None => Terminal::None,
+                CheckedTerminalMember::Any => Terminal::Any,
+                CheckedTerminalMember::When { predicate, .. } => Terminal::SourceWhen(predicate),
+            },
             templates,
             effects: protocol
                 .edges
@@ -1069,6 +1086,21 @@ impl<'a> Program<'a> {
         let mut slots = vec![None];
         let mut package_binders = vec![Some(package.over.clone())];
         let mut binder_types = vec![package.over_type.clone()];
+        let mut capture_slots = Vec::new();
+        let captures = package
+            .captures
+            .iter()
+            .map(|capture| {
+                capture_slots.push(slots.len());
+                slots.push(None);
+                package_binders.push(Some(capture.binder.clone()));
+                binder_types.push(capture.value_type.clone());
+                Capture {
+                    name: capture.name.clone(),
+                    initializer: CaptureInitializer::Package(capture.initializer.clone()),
+                }
+            })
+            .collect();
         let mut binder_of = BTreeMap::new();
         for control in package.controls.values().filter(|control| {
             control.operation == fsl_package::protocol_view::ControlOperation::Attempt
@@ -1105,16 +1137,16 @@ impl<'a> Program<'a> {
         for control in package.controls.values().filter(|control| {
             control.operation == fsl_package::protocol_view::ControlOperation::Parallel
         }) {
+            let join = control
+                .join
+                .as_ref()
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-parallel-has-its-join"))?;
             joins.insert(
                 control.id,
                 Join {
-                    policy: CheckedJoinPolicy::All,
-                    joined: control
-                        .branches
-                        .iter()
-                        .map(|(label, _)| label.clone())
-                        .collect(),
-                    outstanding: None,
+                    policy: join.policy.clone(),
+                    joined: join.joined.clone(),
+                    outstanding: join.outstanding,
                     branches: control.branches.clone(),
                 },
             );
@@ -1125,9 +1157,17 @@ impl<'a> Program<'a> {
         slots.push(None);
         package_binders.push(Some(package.finish_binder.clone()));
         binder_types.push(package.finish_binder_type.clone());
+        let finish_name = package
+            .form
+            .finish
+            .node
+            .declaration
+            .as_ref()
+            .and_then(|declaration| declaration.qualified_name.get(2))
+            .ok_or_else(|| ProtocolRefusal::fault("a-package-finish-is-named"))?;
         let finish = Finish {
             node: finish_node,
-            text: format!("{}::finish", package.name),
+            text: finish_name.to_string(),
             constraint: None,
             binder: (finish_slot, package.finish_binder_type.clone()),
         };
@@ -1180,7 +1220,13 @@ impl<'a> Program<'a> {
             readers,
             binder_of,
             binder_types,
-            terminal: None,
+            terminal: match &package.terminal {
+                super::package_program::PackageTerminal::None => Terminal::None,
+                super::package_program::PackageTerminal::Any => Terminal::Any,
+                super::package_program::PackageTerminal::When(slot) => {
+                    Terminal::PackageWhen(slot.clone())
+                }
+            },
             templates: Vec::new(),
             effects: BTreeMap::new(),
             spans: BTreeMap::new(),
@@ -1191,8 +1237,8 @@ impl<'a> Program<'a> {
             activation: None,
             activation_slot: None,
             trigger_read: false,
-            captures: Vec::new(),
-            capture_slots: Vec::new(),
+            captures,
+            capture_slots,
         };
         program.spans = program.spans()?;
         program.loop_of = program.enclosing_loops()?;

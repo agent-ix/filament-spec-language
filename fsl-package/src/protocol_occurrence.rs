@@ -629,7 +629,9 @@ fn read_term(
                     .collect(),
             ),
         ),
-        CheckedTerm::Binding { name, value } => (Some(name.to_string()), read_term(value, keys).1),
+        CheckedTerm::Binding { name, value, .. } => {
+            (Some(name.to_string()), read_term(value, keys).1)
+        }
         _ => (None, Term::Other),
     }
 }

@@ -23,7 +23,7 @@ fn resolved_parameter_name(node: &CheckedSemanticNodeV2) -> &str {
     members
         .iter()
         .find_map(|member| match member {
-            CheckedTerm::Binding { name, value } if name.as_ref() == "name" => match &**value {
+            CheckedTerm::Binding { name, value, .. } if name.as_ref() == "name" => match &**value {
                 CheckedTerm::Literal { value, .. } => value.as_str(),
                 _ => None,
             },

@@ -764,7 +764,7 @@ fn literal_text(term: &CheckedTerm) -> Option<&str> {
 /// The members of the aggregate bound to `name` among `arguments`.
 fn binding_members<'a>(arguments: &'a [CheckedTerm], name: &str) -> Option<&'a [CheckedTerm]> {
     arguments.iter().find_map(|argument| match argument {
-        CheckedTerm::Binding { name: bound, value }
+        CheckedTerm::Binding { name: bound, value, .. }
             if matches!(bound.kind(), filament_contract_model::CheckedBindingNameKind::Other(other) if other == name) =>
         {
             match value.as_ref() {
@@ -778,7 +778,7 @@ fn binding_members<'a>(arguments: &'a [CheckedTerm], name: &str) -> Option<&'a [
 
 fn named_literal<'a>(members: &'a [CheckedTerm], name: &str) -> Option<&'a str> {
     members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name: bound, value }
+        CheckedTerm::Binding { name: bound, value, .. }
             if matches!(bound.kind(), filament_contract_model::CheckedBindingNameKind::Other(other) if other == name) =>
         {
             literal_text(value)

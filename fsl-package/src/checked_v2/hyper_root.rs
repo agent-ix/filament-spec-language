@@ -82,7 +82,7 @@ fn body_id(node: &CheckedSemanticNodeV2) -> Option<&CheckedNodeId> {
         return None;
     };
     members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name, value } if &**name == "body" => match &**value {
+        CheckedTerm::Binding { name, value, .. } if &**name == "body" => match &**value {
             CheckedTerm::Reference { target } => Some(target),
             _ => None,
         },

@@ -731,6 +731,17 @@ fn resolve_names<'s>(
                 return Err(pending(PendingFamily::Simulation));
             };
             let derived = item_kind.is_some_and(|kind| kind != ItemKind::Formula);
+            if item_kind == Some(ItemKind::DeadlockFreedom)
+                && selection.kind.as_deref() == Some(Capability::TemporalSatisfaction.to_wire())
+                && view.protocol_execution_named(name).ok().flatten().is_some()
+            {
+                return Ok(Named::ProtocolFreedom {
+                    index,
+                    name,
+                    protocol: name.to_owned(),
+                    selection,
+                });
+            }
             if item_kind == Some(ItemKind::RaceFreedom) {
                 if let Some(protocol) = protocol_parallel_name(view, name) {
                     return Ok(Named::ProtocolFreedom {
@@ -861,8 +872,7 @@ fn protocol_binding(
         .ok()
         .flatten()
         .and_then(|form| {
-            fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(&form, &memory)
-                .ok()
+            fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(&form, &memory).ok()
         })
         .map(|resolved| {
             resolved
@@ -1113,7 +1123,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// The derived race-freedom item of one package protocol `parallel`,
+    /// A protocol's deadlock-freedom item or a parallel's race-freedom item,
     /// anchored at that protocol's declaration occurrence.
     fn protocol_freedom(
         &self,
@@ -1126,6 +1136,22 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .input
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
         let own_subject = self.own_subject(index, selection)?;
+        if selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.item_kind)
+            == Some(super::ItemKindSelection::DeadlockFreedom)
+            && !own_subject
+                .protocol
+                .as_ref()
+                .is_some_and(|selected| selected.protocol == protocol_name)
+        {
+            return Ok(Resolution::Settled(super::invalid_value(
+                index,
+                name,
+                "temporal.subject.protocol",
+            )));
+        }
         let Some(selected) = own_subject.protocol.as_ref() else {
             let mut detail = Map::new();
             detail.insert("member".to_owned(), json!("temporal.subject.protocol"));
@@ -1187,13 +1213,18 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         );
         let mut temporal_form = form;
         temporal_form.protocol = Some(protocol.clone());
+        let extent = if temporal_form.item_kind == ItemKind::DeadlockFreedom {
+            ExtentClassification::Bounded
+        } else {
+            ExtentClassification::Unbounded {
+                finite_bound_available: false,
+            }
+        };
         let item = ClaimItem {
             request_index: index,
             claim: claim.clone(),
             kind: Capability::TemporalSatisfaction,
-            extent: ExtentClassification::Unbounded {
-                finite_bound_available: false,
-            },
+            extent,
             backend: named,
             candidates: candidate_list(&candidates),
             options: options(selection, backend_options),

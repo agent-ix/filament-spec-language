@@ -736,11 +736,9 @@ fn members(term: &CheckedTerm) -> Result<&[CheckedTerm], ViewRefusal> {
 /// The value of the binding named `name` among `members`.
 fn binding<'t>(members: &'t [CheckedTerm], name: &str) -> Option<&'t CheckedTerm> {
     members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name: bound, value }
-            if bound.kind() == CheckedBindingNameKind::Other(name) =>
-        {
-            Some(&**value)
-        }
+        CheckedTerm::Binding {
+            name: bound, value, ..
+        } if bound.kind() == CheckedBindingNameKind::Other(name) => Some(&**value),
         _ => None,
     })
 }

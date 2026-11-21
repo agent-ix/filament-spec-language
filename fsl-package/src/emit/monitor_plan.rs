@@ -128,7 +128,7 @@ fn renamed_id(id: &CheckedNodeId, renames: &[(&str, &str)]) -> CheckedNodeId {
 fn rename_bindings(body: &mut CheckedTerm, renames: &[(&str, &str)]) {
     if let CheckedTerm::Aggregate { members } = body {
         for member in members.iter_mut() {
-            if let CheckedTerm::Binding { name, value } = member {
+            if let CheckedTerm::Binding { name, value, .. } = member {
                 if let Some((_, to)) = renames.iter().find(|(from, _)| *from == name.as_ref()) {
                     *member = CheckedTerm::binding(*to, (**value).clone());
                 }
@@ -226,7 +226,7 @@ fn param_targets(
     let mut parameters = Vec::new();
     let mut root = None;
     for member in members {
-        if let CheckedTerm::Binding { name, value } = member {
+        if let CheckedTerm::Binding { name, value, .. } = member {
             match (name.as_ref(), &**value) {
                 ("parameters", CheckedTerm::Aggregate { members }) => {
                     for parameter in members {
@@ -1440,7 +1440,10 @@ pub(super) fn refresh_equality_membership(
 /// The node a `binding` term named `name` references, or `None` for any other
 /// term.
 fn binding_reference<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t CheckedNodeId> {
-    let CheckedTerm::Binding { name: found, value } = term else {
+    let CheckedTerm::Binding {
+        name: found, value, ..
+    } = term
+    else {
         return None;
     };
     match (found.as_ref() == name, value.as_ref()) {

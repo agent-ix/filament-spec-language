@@ -360,7 +360,7 @@ impl SemanticNode {
         members
             .iter()
             .map(|member| {
-                let MemberTerm::Binding(Binding { name, value }) = member else {
+                let MemberTerm::Binding(Binding { name, value, .. }) = member else {
                     return None;
                 };
                 let leaf = match value {
@@ -390,13 +390,13 @@ impl SemanticNode {
         members
             .iter()
             .map(|member| {
-                let MemberTerm::Binding(Binding { name, value }) = member else {
+                let MemberTerm::Binding(Binding { name, value, .. }) = member else {
                     return None;
                 };
                 let (leaf, optional) = match value {
                     BindingValue::Leaf(leaf) => (leaf, false),
                     BindingValue::Aggregate(aggregate) => {
-                        let [MemberTerm::Binding(Binding { name, value })] =
+                        let [MemberTerm::Binding(Binding { name, value, .. })] =
                             aggregate.members.as_slice()
                         else {
                             return None;
@@ -495,6 +495,7 @@ impl SemanticNode {
                 let MemberTerm::Binding(Binding {
                     name,
                     value: BindingValue::Group(payload),
+                    ..
                 }) = member
                 else {
                     return None;
@@ -1536,7 +1537,7 @@ struct LetFrame<'n> {
     value: CheckedNode<'n>,
     body: CheckedNode<'n>,
     /// The value's term and the binder's name, once the value is lowered.
-    bound: Option<(LeafTerm, String)>,
+    bound: Option<(LeafTerm, String, NodeRef)>,
 }
 
 /// A one-binder operation's operands `[ref(source), binding{name,
@@ -6670,18 +6671,26 @@ impl<'a> Lowering<'a> {
                         _ => self.value_type_node(frame.value, binders)?,
                     };
                     let name = self.bind(binders, frame.slot, value_type, frame.node.location())?;
-                    frame.bound = Some((term, name));
+                    let binder = binders
+                        .scope
+                        .last()
+                        .map(|binder| binder.parameter.clone())
+                        .ok_or_else(|| fault(frame.node.location(), KeyFault::UnresolvedDraft))?;
+                    frame.bound = Some((term, name, binder));
                     let body = frame.body;
                     frames.push(LowerFrame::Let(frame));
                     Ok(LowerStep::Descend(body))
                 }
-                Some((value, name)) => {
+                Some((value, name, binder)) => {
                     binders.pop();
                     self.application(
                         frame.node,
                         Operator::Let,
                         plain("filament.op.control.let"),
-                        vec![MemberTerm::bound(name, value), MemberTerm::Leaf(term)],
+                        vec![
+                            MemberTerm::let_binding(name, value, binder),
+                            MemberTerm::Leaf(term),
+                        ],
                     )
                     .map(LowerStep::Lowered)
                 }
@@ -8099,6 +8108,10 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                 MemberTerm::Group(group) => self.group(group),
                 MemberTerm::Binding(binding) => {
                     self.text(&binding.name);
+                    // A `let`'s binder is part of its identity, read or not.
+                    if let Some(binder) = &binding.binder {
+                        self.node(binder);
+                    }
                     match &binding.value {
                         BindingValue::Leaf(leaf) => self.leaf(leaf),
                         BindingValue::Group(group) => self.group(group),
