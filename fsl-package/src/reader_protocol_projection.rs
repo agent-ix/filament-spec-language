@@ -707,6 +707,8 @@ fn is_equality_identity(identity: &str) -> bool {
             | "filament.op.decimal.ne"
             | "filament.op.quantity.eq"
             | "filament.op.quantity.ne"
+            | "filament.op.reference.eq"
+            | "filament.op.reference.ne"
             | "filament.op.structural.eq"
             | "filament.op.structural.ne"
     )
