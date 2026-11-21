@@ -465,7 +465,9 @@ fn output_limit(bound: u64, actual: u128) -> fsl_foundation::diagnostic::LimitEx
     fsl_foundation::diagnostic::LimitExceeded::new(
         fsl_foundation::Setting::EmitOutputBytes,
         bound,
-        actual,
+        // A row or writer fragment can straddle the ceiling. Report the
+        // first unpaid byte, rather than that fragment's complete length.
+        actual.min(u128::from(bound) + 1),
     )
 }
 
