@@ -396,7 +396,7 @@ fn probability_reward_admission_preserves_owner_incomplete_and_cancellation() {
             assert_eq!(denied.limit, bound);
             assert_eq!(denied.consumed, bound);
             assert_eq!(scope.consumed_work(), bound);
-            assert!(denied.next_charge > Integer::from(0));
+            assert!(denied.next_charge > Integer::from(0_u64));
             if let Some((point, amount)) = &first_denial {
                 assert_eq!(
                     denied.charge_point, *point,
