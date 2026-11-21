@@ -92,6 +92,9 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
             )
         })
         .collect();
+    let source_template = normalization
+        .clock_template(source_clock)
+        .expect("actual source path retains original declaration scopes");
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
     let wire = wire(&emission);
     let order = nodes(&wire)
@@ -181,13 +184,31 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
     );
     assert!(!target_identity.contains("resolved:"));
     assert!(!target_identity.contains("Composite("));
-    let Read::Verified { admitted, .. } = read_back(&emission) else {
+    let Read::Verified {
+        admitted,
+        timed_models,
+        ..
+    } = read_back(&emission)
+    else {
         panic!("the actual emitted source declarations admit");
     };
     let bare = crate::BarePackage::new(&admitted);
     let declarations = bare
         .clock_declarations()
         .expect("sealed declaration context");
+    let [timed] = timed_models.as_slice() else {
+        panic!("one admitted timed model");
+    };
+    let [place] = timed.clock_places.as_slice() else {
+        panic!("one admitted nested clock path");
+    };
+    assert_eq!(
+        declarations
+            .clock_template(place)
+            .expect("admitted path normalizes"),
+        source_template,
+        "source and bare typed paths retain exactly the same declaration scopes",
+    );
     let original = admitted
         .resolved_graph()
         .nodes

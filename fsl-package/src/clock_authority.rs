@@ -8,12 +8,12 @@ use filament_contract_model::CheckedNodeOwner;
 use filament_exact::{Identifier, NodeKey};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::SourceOwner;
-use fsl_semantics::model::clock_reference::identity::DeclarationScope;
+use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceTemplate};
 use fsl_semantics::model::clock_reference::normalization::{
     SourceDeclarationFact, SourceDeclarations,
 };
 
-use crate::{BarePackage, BareSelectionFailure};
+use crate::{BarePackage, BareSelectionFailure, CheckedClockPlace, ClockPathStep};
 
 /// Original source and model declaration scopes retained by admitted nodes.
 #[derive(Clone, Debug)]
@@ -34,6 +34,96 @@ impl ClockDeclarations {
         self.source
             .node_scope(node)
             .or_else(|| self.models.get(node))
+    }
+
+    /// Normalize an admitted clock place through the same typed path
+    /// normalizer as the checked-source route.
+    pub fn clock_template(
+        &self,
+        clock: &CheckedClockPlace,
+    ) -> Result<PlaceTemplate, BareSelectionFailure> {
+        use fsl_semantics::check::{CollectionShape, PlaceRow, PlaceStep};
+
+        let steps = clock
+            .path
+            .iter()
+            .map(|step| {
+                Ok(match step {
+                    ClockPathStep::Field(name) => PlaceStep::Field(name.clone()),
+                    ClockPathStep::Tuple(position) => PlaceStep::Field(position.to_string()),
+                    ClockPathStep::Union(case) => PlaceStep::Union(case.clone()),
+                    ClockPathStep::Slot {
+                        collection,
+                        minimum,
+                        maximum,
+                        ..
+                    } => {
+                        let (ordered, unique, map) = match collection.as_str() {
+                            "sequence" => (true, false, false),
+                            "set" => (false, true, false),
+                            "bag" => (false, false, false),
+                            "ordered_set" => (true, true, false),
+                            "map" => (false, true, true),
+                            _ => return Err(fault("admitted-clock-slot-has-checked-kind")),
+                        };
+                        PlaceStep::Slot(CollectionShape {
+                            ordered,
+                            unique,
+                            min: *minimum,
+                            max: *maximum,
+                            map,
+                        })
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, BareSelectionFailure>>()?;
+        let rows = clock
+            .resolved_path
+            .iter()
+            .map(|row| PlaceRow {
+                declaring_type: row.declaring_type.clone(),
+                member_identity: row.member_identity.clone(),
+                member_type: row.member_type.clone(),
+                collection_kind: row.collection_kind.clone(),
+                minimum: row.minimum.clone(),
+                maximum: row.maximum.clone(),
+            })
+            .collect::<Vec<_>>();
+        let first = rows
+            .first()
+            .ok_or_else(|| fault("admitted-clock-has-resolution-rows"))?;
+        let scope = self
+            .row_scope(&first.declaring_type)
+            .map_err(|_| fault("admitted-clock-scope-is-unambiguous"))?
+            .ok_or_else(|| fault("admitted-clock-has-original-declaring-scope"))?;
+        fsl_semantics::model::clock_reference::path::normalize(
+            scope,
+            &steps,
+            &rows,
+            |text| self.source.text(text),
+            |declaring, member| self.source.member(declaring, member),
+            |text| self.row_scope(text),
+        )
+        .map_err(|_| fault("admitted-clock-path-normalizes"))
+    }
+
+    fn row_scope(&self, text: &str) -> Result<Option<DeclarationScope>, InternalFault> {
+        let mut found = self.source.row_scope(text)?;
+        for scope in self.models.values() {
+            let DeclarationScope::Model { declaration, .. } = scope else {
+                continue;
+            };
+            if declaration == text {
+                if found.as_ref().is_some_and(|previous| previous != scope) {
+                    return Err(InternalFault::new(
+                        "clock-declaration-projection",
+                        "clock-type-rendering-has-one-original-scope",
+                    ));
+                }
+                found = Some(scope.clone());
+            }
+        }
+        Ok(found)
     }
 }
 
