@@ -253,6 +253,13 @@ pub enum OutcomeItemError {
     /// A `refuted` record arrived without its one `ItemCounterexample`.
     #[error("a refuted record needs its one counterexample")]
     MissingCounterexample,
+    /// A protocol counterexample's request, backend or analysis key differs
+    /// from the original terminal record.
+    #[error("protocol counterexample does not belong to the original item")]
+    CounterexampleAssociation,
+    /// A protocol counterexample's supplied body differs from its native evidence.
+    #[error("protocol counterexample body differs from its native evidence")]
+    CounterexampleBodyMismatch,
     /// The record's counterexample has no wire spelling.
     #[error(transparent)]
     Unspelled(#[from] CounterexampleWireError),

@@ -203,6 +203,7 @@ fn recording_result(
                 execution: fsl_replay::Execution::Completed,
                 truth: fsl_replay::Truth::Satisfied,
             },
+            None,
         ),
         "refuted" => TerminalRecord::of_protocol_analysis(
             index,
@@ -214,6 +215,7 @@ fn recording_result(
                 execution: fsl_replay::Execution::Completed,
                 truth: fsl_replay::Truth::Violated,
             },
+            None,
         ),
         _ => TerminalRecord::inconclusive(
             index,
