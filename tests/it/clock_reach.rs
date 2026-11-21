@@ -396,8 +396,10 @@ fn a_window_member_without_a_valuation_is_a_missing_valuation() {
     // window that reads position 18 is a missing valuation.
     trace["timestamped"]["missing"] = json!([{"position": 18, "atom": 1}]);
     // FR-641: the entry marks an admitted observation's valuation absent; the
-    // observation itself still admits, so its sample keeps a `latency`, here one
-    // that would decide the quantile if it were read.
+    // observation itself still admits, so its sample keeps a `latency`, here
+    // 100 ms: read, the `quantile 0.95` atom at 19 would be false and the run
+    // `violated`, so only the member rule makes it `indeterminate`; the 0.9 case
+    // is `indeterminate` at 18 from the atom-level absence alone.
     trace["timestamped"]["observations"][18]["position"]["sample"]["latency"]["magnitude"]
         ["numerator"] = json!("100");
     for quantile in ["0.95", "0.9"] {

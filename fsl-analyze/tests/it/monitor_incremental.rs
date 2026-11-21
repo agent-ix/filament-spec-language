@@ -3815,7 +3815,8 @@ fn a_window_becomes_a_final_verdict_once_completeness_covers_it() {
 /// windows at stamps 4 and 5 hold one value, short of 2. With completeness
 /// through 5 that is `InsufficientData`; with completeness through 2 those
 /// windows are not asserted complete, so the atoms are two-valued, never
-/// `InsufficientData`, and the result is pending, not undefined.
+/// `InsufficientData`, and the result is indeterminate with reason
+/// `IncompleteInput`, not undefined.
 #[test]
 #[trace("TC-629", "FR-194-AC-16")]
 fn an_incomplete_window_short_of_min_count_is_two_valued() {

@@ -24,9 +24,19 @@ Ticket: QSL-2138. The two-valued incomplete-window rule is sound. A covered wind
 
 Fix round needed, small. FND-002 to FND-004 are in-PR edits. FND-001 needs a spec ruling, given in the ticket comment, then a test edit. Checked clean: exact ceiling lag, monotone `established`, covered atoms never two-valued, carried equals batch at each progress step, evidence route reads only established activations, failing tests not touched.
 
-## Disposition (fix round 1)
+## Dispositions
 
-- FND-001 fixed: spec wording and test follow FR-641 (a `missing` entry marks an admitted observation's valuation absent; reason position 18).
-- FND-002 fixed.
-- FND-003: min_count arm covered (`an_incomplete_window_short_of_min_count_is_two_valued`, `a_covered_window_short_of_min_count_is_undefined_through_run`). Undefined-stays arm: no source form under the timestamped-event profile produces an undefined read (Divide is profile-prohibited, check.rs:4542-4548, and `mod` is refused likewise as `ProfileProhibitedOperator(IntegerMod)`); no unit test exists for it at the finite-window run level.
-- FND-004 fixed: `aggregate_lag` falls back to 0.
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-194 now defines the `missing`-entry wire form per atom; AC-17 names reason position 18; test asserts position 18 for 0.95 and 0.9 |
+| FND-002 | fixed | comment reads "stamps 3, 4 and 5" |
+| FND-003 | accepted-no-change | min_count arm now covered (TwosMin, run test); the undefined arm is unreachable from source on this route (Divide/mod refused outside value.complete, check.rs:4542-4548) and ClauseFacts::of_checked refuses aggregate facts on the plain finite-window route, so no cheap test exists |
+| FND-004 | fixed | aggregate_lag falls back to Some(0) |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | AC-16's through-9 insufficient-data reading can still become violated after a later assertion; neither AC-16 nor FR-327 says this result is not settled | spec/functional/FR-194-evaluate-window-aggregates-in-monitors.md:291 |
+| FND-006 | low | TwosMin doc says "the result is pending", but W 5 >= t0 + Hf 5 makes it indeterminate (IncompleteInput) | fsl-analyze/tests/it/monitor_incremental.rs:3813-3818 |
+| FND-007 | low | The clock_reach comment says latency 100 "would decide the quantile if read"; 100 gives the same atom values as the original 6, and the 0.9 case is decided by the atom-level absence at 18 alone | tests/it/clock_reach.rs:398-402 |
