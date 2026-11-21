@@ -444,22 +444,14 @@ fn a_clause_without_a_complete_program_derives_no_plan() {
         "once holds(c.versionNumber = 3)",
         "historically holds(c.versionNumber = 3)",
         "holds(c.versionNumber = 2) since holds(c.versionNumber = 3)",
-        ]
-    } else {
-        Vec::new()
-    };
-    for (name, kind, member) in carriers {
+    ] {
         let planned = root_of(&authored(shape), "C", &target());
         assert!(planned.is_ok(), "{shape}: {:?}", planned.err());
     }
     for shape in [
         "always eventually holds(c.versionNumber = 3)",
         "eventually always holds(c.versionNumber = 3)",
-        ]
-    } else {
-        Vec::new()
-    };
-    for (name, kind, member) in carriers {
+    ] {
         let refusal = root_of(&authored(shape), "C", &target()).unwrap_err();
         assert!(
             matches!(
@@ -1147,11 +1139,7 @@ fn the_actual_combined_checked_unit_retains_its_source_and_time_facts() {
         "monitorOnEvent",
         "monitorOnWatermark",
         "monitorOnGap",
-        ]
-    } else {
-        Vec::new()
-    };
-    for (name, kind, member) in carriers {
+    ] {
         assert!(
             checked.source().text()[unit.len()..].contains(entry),
             "{entry}"
@@ -1362,7 +1350,7 @@ fn a_clock_alias_union_payload_is_joined_as_a_clock_case() {
     reach_model_type(ReachedModelType::UnionClockAlias);
 }
 
-/// A sequence of `Clock` has no zero-position-free Clock identity: the writer
+/// A sequence of `Clock` has no model-union payload form: the writer
 /// refuses it with a typed fault rather than emit a Clock row for it.
 #[trace("TC-1331", "FR-531-AC-30")]
 #[test]
@@ -1419,8 +1407,16 @@ fn reach_model_type(reached: ReachedModelType) {
     // An alias of, and a sequence over, `Clock`: each a type the union payload can name.
     let carriers: Vec<(&str, &str, serde_json::Value)> = if union {
         vec![
-            ("Stopwatch", "alias", json!({"target": "ix://filament/native/Clock"})),
-            ("Ticks", "sequence", json!({"items": "ix://filament/native/Clock"})),
+            (
+                "Stopwatch",
+                "alias",
+                json!({"target": "ix://filament/native/Clock"}),
+            ),
+            (
+                "Ticks",
+                "sequence",
+                json!({"items": "ix://filament/native/Clock"}),
+            ),
         ]
     } else {
         Vec::new()
@@ -1432,7 +1428,10 @@ fn reach_model_type(reached: ReachedModelType) {
         carrier["kind"] = json!(kind);
         carrier.as_object_mut().unwrap().remove("scalar");
         carrier["constraints"] = json!([]);
-        carrier.as_object_mut().unwrap().extend(member.as_object().unwrap().clone());
+        carrier
+            .as_object_mut()
+            .unwrap()
+            .extend(member.as_object().unwrap().clone());
         document["types"].as_array_mut().unwrap().push(carrier);
     }
     let tier = format!("ix://{}/{type_name}", domain.package);
