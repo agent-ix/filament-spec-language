@@ -808,7 +808,7 @@ fn read_document_profile(
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
         || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
-        || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload"))
+        || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload" | "workload-minimum" | "workload-maximum"))
         || match objective
             .and_then(|node| node.get("fairness"))
             .map(|node| node.node())
@@ -979,6 +979,8 @@ fn read_document_profile(
         "minimum" => ProbabilityObjective::Minimum,
         "maximum" => ProbabilityObjective::Maximum,
         "workload" => ProbabilityObjective::Workload,
+        "workload-minimum" => ProbabilityObjective::WorkloadMinimum,
+        "workload-maximum" => ProbabilityObjective::WorkloadMaximum,
         _ => return Err(ProbabilityDocumentError::Unsupported),
     };
     let node = fsl_foundation::node_wire::node_key_from_text(wire.identity.node_id.get())
@@ -2046,7 +2048,9 @@ fn check_document_equalities(
                         Some(previous) => match objective {
                             ProbabilityObjective::Minimum => previous.min(sum),
                             ProbabilityObjective::Maximum => previous.max(sum),
-                            ProbabilityObjective::Workload => {
+                            ProbabilityObjective::Workload
+                            | ProbabilityObjective::WorkloadMinimum
+                            | ProbabilityObjective::WorkloadMaximum => {
                                 return Err(ProbabilityDocumentError::Unsupported);
                             }
                         },

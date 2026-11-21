@@ -764,7 +764,6 @@ fn every_scheduler_tie_is_the_schedulers_choice() {
 /// FR-923-AC-3: the same tie under the workload `Both` is resolved by its
 /// weights and gives `21/40`.
 #[trace("TC-2492", "FR-923-AC-3")]
-#[ignore = "QSL-2156: the workload-scheduler timed deadline check (weights resolving a timed tie) is not implemented yet"]
 #[test]
 fn a_workload_resolves_a_timed_tie_by_its_weights() {
     let claim = |name: &str, scheduler: &str| {
@@ -787,7 +786,85 @@ fn a_workload_resolves_a_timed_tie_by_its_weights() {
             claim("Weighted", "under Both")
         ),
     );
-    assert_eq!(proved_value(&settle(&world, "Weighted")), ratio(21, 40));
+    let record = settle(&world, "Weighted");
+    assert_eq!(proved_value(&record), ratio(21, 40));
+    // The independent checker accepts the document under the workload's own
+    // spelling of the objective.
+    let doc = document(&record);
+    let optimization = doc["objective"]["optimization"].as_str().expect("text");
+    assert!(optimization.starts_with("workload"), "{optimization}");
+    assert!(accepted(&world, "Weighted", &doc));
+}
+
+/// The FR-923-AC-3 world with a workload claim of bound `bound`.
+fn weighted_tie(bound: &str) -> World {
+    retx_with(
+        &[("send", &["late", "x"]), ("tick", &["retried"])],
+        GUARD,
+        true,
+        "delay M::Call::send ~ discrete { 2 ms: 1 };\n\
+         pre Tick using v on M::Call::tick { not self.late and not self.retried and self.x >= 2 ms }\n\
+         post Ticked using v on M::Call::tick { self.retried = true }\n\
+         workload Both on M { weight Call::send = 1; weight Call::tick = 1; }\n",
+        &format!(
+            "probabilistic Weighted using ev on M over (c: M::Call) under Both on origin \
+             {{ probability {bound} [ eventually[0 ms, 5 ms] holds(c.retried) ] }}\n"
+        ),
+    )
+}
+
+/// FR-923-AC-3: a workload bound its value `21/40` misses is refuted with the
+/// checker's own exact mass of the forbidden outcome.
+#[trace("TC-2492", "FR-923-AC-3")]
+#[test]
+fn a_workload_refutes_a_timed_deadline_with_its_exact_mass() {
+    let world = weighted_tie("<= 0.5");
+    let record = settle(&world, "Weighted");
+    assert!(is_refuted(&record), "{record:#?}");
+    let mass = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .mass()
+        .clone();
+    assert_eq!(mass, ratio(21, 40));
+}
+
+/// FR-923-AC-3: a workload value altered in the certificate is rejected.
+#[trace("TC-2492", "FR-923-AC-3")]
+#[test]
+fn a_tampered_workload_certificate_is_rejected() {
+    let world = weighted_tie("<= 0.6");
+    let record = settle_tampered(&world, "Weighted", |certificate| {
+        for entry in &mut certificate.values {
+            if entry.value == ratio(21, 40) {
+                entry.value = ratio(1, 2);
+            }
+        }
+    });
+    assert_eq!(
+        rejected_item_rule(&record),
+        CertificateRule::InequalityFails
+    );
+    let doc = document(&settle(&world, "Weighted"));
+    assert!(!accepted(&world, "Weighted", &first_value_altered(&doc)));
+}
+
+/// FR-923-AC-3: a witness altered after production cannot change a workload
+/// refutation: the mass is the checker graph's own, so a path that no longer
+/// ends in the forbidden state is not reported.
+#[trace("TC-2492", "FR-923-AC-3")]
+#[test]
+fn an_altered_workload_witness_is_not_refuted() {
+    let world = weighted_tie("<= 0.5");
+    let record = settle_witness_tampered(&world, "Weighted", |witness| {
+        let initial = witness.initial_key.clone();
+        for path in &mut witness.paths {
+            path.steps.last_mut().expect("a step").post_key = initial.clone();
+        }
+    });
+    assert!(!is_refuted(&record), "{record:#?}");
+    assert!(record.probabilistic_counterexample.is_none());
 }
 
 // --- FR-924 (TC-2493) -------------------------------------------------------
