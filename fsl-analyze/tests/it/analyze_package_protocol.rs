@@ -395,10 +395,26 @@ fn await_request(
     then: &str,
     timeout: &str,
 ) -> std::path::PathBuf {
+    await_event_request(
+        ws,
+        delivery,
+        &receive_fifo_receive("Inspected", "Handed", "seen", matched),
+        then,
+        timeout,
+    )
+}
+
+fn await_event_request(
+    ws: &Workspace,
+    delivery: &str,
+    event: &str,
+    then: &str,
+    timeout: &str,
+) -> std::path::PathBuf {
     let controls = channel_send("Handed", "handed", "handed.n = k.v")
         + &format!(
             "await Wait after Handed using t0 clock \"line-clock\" within [0, 120]
-                match receive Inspected via Release of Handed as (seen: M::Attempt) {{ {matched} }};
+                match {event}
                 then {then}
                 timeout {timeout}"
         );
@@ -533,6 +549,110 @@ fn package_await_false_match_keeps_timeout_enabled() {
     let item = channel_send_parity(&ws, &path, "proved");
     assert_eq!(item["exploration"]["states"], "4", "{item}");
     assert_eq!(item["exploration"]["transitions"], "3", "{item}");
+}
+
+/// A supported event kind keeps its own step when it is an await's match.
+#[trace("TC-2958", "FR-940-AC-6", "FR-206-AC-5", "FR-383-AC-7")]
+#[test]
+fn package_await_matched_send_and_attempt_preserve_their_steps() {
+    let attempt = crate::fill::attempt("Matched", "touch", "", "attempted", "attempted")
+        .replace(" by w ", " by Machining ");
+    for (kind, event) in [
+        (
+            "send",
+            channel_send("Matched", "matched", "matched.n = handed.n"),
+        ),
+        ("attempt", attempt),
+    ] {
+        let ws = Workspace::new(&format!("package-await-matched-{kind}"));
+        let then = format!(
+            "sequence InTime {{ {} }}",
+            receive_fifo_receive("Never", "Handed", "late", "false")
+        );
+        let path = await_event_request(
+            &ws,
+            "exactly-once-premise",
+            &event,
+            &then,
+            "sequence TooSlow {}",
+        );
+        let item = channel_send_parity(&ws, &path, "refuted");
+        let prefix = item["counterexample"]["prefix"]
+            .as_array()
+            .expect("the matched event's deadlock prefix");
+        let matched = prefix
+            .iter()
+            .find(|step| step["transition"]["node"] == "Main/Wait/Matched")
+            .expect("the matched event leads to the blocked success arm");
+        assert_eq!(matched["transition"]["step"], kind, "{item}");
+        assert!(
+            prefix
+                .iter()
+                .all(|step| step["transition"]["step"] != "timeout"),
+            "timeout takes the healthy continuation: {item}"
+        );
+        let blocked = item["counterexample"]["blocked"]
+            .as_array()
+            .expect("the blocked success continuation");
+        assert_eq!(blocked.len(), 1, "{item}");
+        assert_eq!(
+            blocked[0]["rest"]["node"], "Main/Wait/InTime/Never",
+            "{item}"
+        );
+        assert_eq!(blocked[0]["cause"]["type"], "constraint", "{item}");
+    }
+}
+
+/// A matched attempt's unported correlation is named before package execution.
+#[trace("TC-2958", "FR-940", "FR-731-AC-1")]
+#[test]
+fn package_await_correlated_matched_attempt_refuses_before_execution() {
+    let event = crate::fill::attempt("Correlated", "touch", "", "attempted", "attempted")
+        .replace(" by w ", " by Machining ")
+        .replace("{ attempted }", "related by Owns (k, k) { attempted }");
+    for (related, expected) in [(false, "proved"), (true, "refuted")] {
+        let ws = Workspace::new(&format!("package-await-attempt-related-{related}"));
+        let then = format!(
+            "sequence InTime {{ {} }}",
+            receive_fifo_receive("Never", "Handed", "late", "false")
+        );
+        let path = await_event_request(
+            &ws,
+            "exactly-once-premise",
+            &event,
+            &then,
+            "sequence TooSlow {}",
+        );
+        channel_related_premise(&ws, related);
+        let source = analyze(&path);
+        assert!(
+            source.item(0).get("record").is_some(),
+            "{}",
+            source.document()
+        );
+        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
+        let (package_path, _) = package_request(&ws, &path);
+        std::fs::remove_file(ws.path("program.fsl"))
+            .expect("remove source before package correlation refusal");
+        let package = analyze(&package_path);
+        let item = package.item(0);
+        assert_eq!(package.exit, 21, "{}", package.document());
+        assert_eq!(item["category"], "unsupported", "{}", package.document());
+        let diagnostic = &item["record"]["diagnostic"];
+        assert_eq!(diagnostic["code"], "unsupported_construct", "{item}");
+        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{item}");
+        assert_eq!(diagnostic["detail"]["fact"], "correlation", "{item}");
+        assert_eq!(
+            diagnostic["detail"]["node"]["path"]
+                .as_array()
+                .expect("the refused admitted node's path")
+                .last(),
+            Some(&json!("Correlated")),
+            "{item}"
+        );
+        assert!(item.get("exploration").is_none(), "{item}");
+        assert!(item.get("counterexample").is_none(), "{item}");
+    }
 }
 
 fn receive_fifo_request(
