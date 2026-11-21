@@ -32,8 +32,8 @@ use std::collections::BTreeSet;
 use filament_exact::LimitKind;
 use fsl_eval::hyper::{
     closed_executions, horizon, judge_closed_tuple, match_closed_step, search_partner,
-    ClosedExecution, ClosedInputs, ClosedStop, ClosedVerdict, MatchReading, ParameterBinding,
-    PartnerSearch, Tuples,
+    ClosedExecution, ClosedInputs, ClosedStop, ClosedVerdict, MatchPart, MatchReading,
+    ParameterBinding, PartnerSearch, Tuples,
 };
 use fsl_eval::simulation::ConstraintValue;
 use fsl_replay::{
@@ -356,7 +356,7 @@ impl Run<'_, '_> {
             .unwrap_or(0);
         for position in 0..positions {
             if position > 0 && !inputs.clause.mu_universal().is_empty() {
-                match match_closed_step(inputs, tuple, tuple.len(), position, false) {
+                match match_closed_step(inputs, tuple, position, MatchPart::Universal) {
                     Ok(MatchReading::Holds) => {}
                     Ok(MatchReading::Fails) => return Ok(ConstraintReading::Unmatched),
                     Ok(_) => {
