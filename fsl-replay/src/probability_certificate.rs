@@ -3059,6 +3059,52 @@ mod tests {
         );
     }
 
+    #[trace("FR-920-AC-1")]
+    #[test]
+    fn region_elapsed_key_encodes_the_measure_clock_with_its_fraction() {
+        let key = |elapsed, kind| {
+            region_probability_product_key(RegionProductKeyInput {
+                binding: None,
+                discrete: json!([]),
+                unit: json!(["unit", "second"]),
+                scale: 1,
+                subdivisions: 3,
+                clocks: Vec::new(),
+                deadline: None,
+                tail: DigitalTail::Running,
+                monitor: Some(json!(["measure", null, "active"])),
+                accumulator: None,
+                pending: None,
+                elapsed,
+                kind,
+                corner: None,
+            })
+        };
+        let text = |key: Result<ProbabilityProductKey, _>| {
+            String::from_utf8_lossy(key.expect("encodes").as_bytes()).into_owned()
+        };
+        // W = 2 units of 3 subdivisions; a clock at 4/3 has unit part 1 and a
+        // first fraction rank, the inactive clock is null with rank 0.
+        assert!(text(key(Some((6, Some(4))), RegionKeyKind::Region))
+            .contains(r#"["elapsed","2","1","1"]"#));
+        assert!(text(key(Some((6, None)), RegionKeyKind::Region))
+            .contains(r#"["elapsed","2",null,"0"]"#));
+        assert_ne!(
+            text(key(Some((6, Some(3))), RegionKeyKind::Region)),
+            text(key(Some((6, Some(4))), RegionKeyKind::Region)),
+            "a whole clock differs from a fractional one"
+        );
+        assert_eq!(
+            key(Some((6, Some(10))), RegionKeyKind::Region),
+            Err(ExactProbabilityGraphError::InvalidDigitalKey),
+            "the clock is capped at W + 1"
+        );
+        assert_eq!(
+            key(Some((6, Some(0))), RegionKeyKind::BoundaryRegion),
+            Err(ExactProbabilityGraphError::InvalidDigitalKey)
+        );
+    }
+
     #[trace("FR-196-AC-6")]
     #[test]
     fn digital_product_key_rejects_invalid_scale_clock_and_deadline_values() {

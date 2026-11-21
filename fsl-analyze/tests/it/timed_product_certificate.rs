@@ -732,7 +732,39 @@ fn elapsed_quantile_at_least_is_certified_over_regions() {
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["route"], "region");
     assert_eq!(doc["kind"], "upper");
+    assert_eq!(proved_value(&record), ratio(-1, 2));
     assert!(accepted(&world, "AtLeastOne", &doc));
+}
+
+/// FR-877-AC-3 (certificate half): an `upper` document whose values are
+/// lowered below the checker's own enumeration is rejected `InequalityFails`,
+/// and one raised to a non-negative initial value misses the strict threshold.
+#[trace("TC-2494", "FR-877-AC-3")]
+#[test]
+fn elapsed_quantile_altered_upper_value_is_rejected() {
+    let world = quantiles();
+    let lowered = settle_tampered(&world, "AtLeastOne", |certificate| {
+        for entry in &mut certificate.values {
+            if entry.value == ratio(-1, 2) {
+                entry.value = ratio(-1, 1);
+            }
+        }
+    });
+    assert_eq!(
+        rejected_item_rule(&lowered),
+        CertificateRule::InequalityFails
+    );
+    let raised = settle_tampered(&world, "AtLeastOne", |certificate| {
+        for entry in &mut certificate.values {
+            if entry.value == ratio(-1, 2) {
+                entry.value = ratio(1, 2);
+            }
+        }
+    });
+    assert_eq!(
+        rejected_item_rule(&raised),
+        CertificateRule::ThresholdMissed
+    );
 }
 
 /// FR-877-AC-4: at a transform maximum of exactly 0 the tight search reaches
