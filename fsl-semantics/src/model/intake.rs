@@ -213,9 +213,11 @@ pub use model_unit::{
     package_input_from_sources, CompiledModelUnit,
 };
 pub use unit::{
-    admit_unit, admit_unit_with_cancel, admit_units_with_cancel, OperationClauseFailure,
-    SelectedModel, SelectedModels, TypeInvariantFailure, UnitIntakeCause, UnitIntakeRefusal,
+    admit_unit, admit_unit_with_cancel, admit_units_with_cancel, NormalizedModel,
+    OperationClauseFailure, SelectedModel, SelectedModels, TypeInvariantFailure, UnitIntakeCause,
+    UnitIntakeRefusal,
 };
+pub(crate) use unit::{normalize_model_with_provenance, NormalizedModelProvenance};
 
 /// A Quire meaning id (FR-208): the sole legitimate way to determine what a
 /// construct or type definition IS. Kind names and modules are never

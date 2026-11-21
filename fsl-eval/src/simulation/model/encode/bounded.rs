@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    Cancel, Integer, IntegerDecimalBudget, IntegerDecimalBudgetError, NodeKey, ReservationDenied,
-    Value, VariantId,
+    Cancel, Integer, IntegerDecimalBudget, IntegerDecimalBudgetError, NodeKey, Reservation,
+    ReservationDenied, Value, VariantId,
 };
 use filament_semantic_value::declaration::{CompositeDeclaration, TypeEnvironment};
 use fsl_foundation::{IdentityLimits, Setting};
@@ -20,10 +20,40 @@ use super::Typing;
 use crate::simulation::EncodingRefusal;
 
 struct Scope<'a> {
-    budget: RefCell<&'a mut dyn ModelKeyBudget>,
+    budget: RefCell<AdmittedBudget<'a>>,
     cancel: &'a Cancel,
     identity: IdentityLimits,
     refused: RefCell<Option<ModelKeyError>>,
+}
+
+enum AdmittedBudget<'a> {
+    Existing(&'a mut dyn ModelKeyBudget),
+    Run(&'a mut dyn super::RunValueBudget),
+}
+
+impl filament_exact::Reservation for AdmittedBudget<'_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), ReservationDenied> {
+        match self {
+            Self::Existing(budget) => budget.reserve(bytes),
+            Self::Run(budget) => budget.reserve(bytes),
+        }
+    }
+}
+impl IntegerDecimalBudget for AdmittedBudget<'_> {
+    fn work(&mut self, units: u64) -> Result<(), ReservationDenied> {
+        match self {
+            Self::Existing(budget) => budget.work(units),
+            Self::Run(budget) => budget.work(units),
+        }
+    }
+}
+impl ModelKeyBudget for AdmittedBudget<'_> {
+    fn integer(&mut self, value: &Integer) -> Result<(), ReservationDenied> {
+        match self {
+            Self::Existing(budget) => budget.integer(value),
+            Self::Run(budget) => budget.integer(value),
+        }
+    }
 }
 
 impl Scope<'_> {
@@ -780,6 +810,26 @@ impl fsl_foundation::node_wire::NodeIdentitySink for Bounded<'_, '_> {
 }
 
 impl ValueSink for Bounded<'_, '_> {
+    fn reference(&mut self, value: &filament_exact::ObjectReference) -> Result<(), Self::Error> {
+        let entered = match &mut *self.scope.budget.borrow_mut() {
+            AdmittedBudget::Run(budget) => budget.begin_reference(value),
+            AdmittedBudget::Existing(_) => Ok(()),
+        };
+        if let Err(error) = entered {
+            if let AdmittedBudget::Run(budget) = &mut *self.scope.budget.borrow_mut() {
+                budget.end_reference();
+            }
+            return Err(error);
+        }
+        let result = self
+            .scope
+            .work(1)
+            .and_then(|()| projection::project_reference(self, value));
+        if let AdmittedBudget::Run(budget) = &mut *self.scope.budget.borrow_mut() {
+            budget.end_reference();
+        }
+        result
+    }
     fn pending<T>(&mut self, stack: &mut Vec<T>, task: T) -> Result<(), Self::Error> {
         self.scope.work(1)?;
         self.scope.reserve(stack, 1)?;
@@ -994,7 +1044,7 @@ pub(crate) fn with_reservation<T>(
     action: impl FnOnce(&mut dyn quire_canonical::Reservation) -> T,
 ) -> Result<T, ModelKeyError> {
     let scope = Scope {
-        budget: RefCell::new(budget),
+        budget: RefCell::new(AdmittedBudget::Existing(budget)),
         cancel,
         identity,
         refused: RefCell::new(None),
@@ -1015,12 +1065,31 @@ pub(crate) fn node_bytes(
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ModelKeyError> {
     let scope = Scope {
-        budget: RefCell::new(budget),
+        budget: RefCell::new(AdmittedBudget::Existing(budget)),
         cancel,
         identity,
         refused: RefCell::new(None),
     };
     scope.canonical(|writer| node.encode_into(writer))
+}
+
+pub(crate) fn value_bytes(
+    value: &Value,
+    typing: Typing<'_>,
+    identity: IdentityLimits,
+    budget: &mut dyn super::RunValueBudget,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ModelKeyError> {
+    let scope = Scope {
+        budget: RefCell::new(AdmittedBudget::Run(budget)),
+        cancel,
+        identity,
+        refused: RefCell::new(None),
+    };
+    let mut sink = Bounded::new(&scope);
+    projection::project_value(&mut sink, value, typing, None, false)?;
+    scope.poll()?;
+    sink.finish_bytes()
 }
 
 pub(crate) fn model_bytes(
@@ -1032,7 +1101,7 @@ pub(crate) fn model_bytes(
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ModelKeyError> {
     let scope = Scope {
-        budget: RefCell::new(budget),
+        budget: RefCell::new(AdmittedBudget::Existing(budget)),
         cancel,
         identity,
         refused: RefCell::new(None),
@@ -1053,7 +1122,7 @@ pub(crate) fn pending_bytes(
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ModelKeyError> {
     let scope = Scope {
-        budget: RefCell::new(budget),
+        budget: RefCell::new(AdmittedBudget::Existing(budget)),
         cancel,
         identity,
         refused: RefCell::new(None),
@@ -1143,7 +1212,7 @@ pub(super) fn value_for_test(value: &Value, typing: Typing<'_>) -> Result<Vec<u8
     let cancel = Cancel::new();
     let mut budget = Admit;
     let scope = Scope {
-        budget: RefCell::new(&mut budget),
+        budget: RefCell::new(AdmittedBudget::Existing(&mut budget)),
         cancel: &cancel,
         identity: IdentityLimits::default(),
         refused: RefCell::new(None),
@@ -1217,7 +1286,7 @@ mod tests {
             ..Admission::default()
         };
         let scope = Scope {
-            budget: RefCell::new(&mut budget),
+            budget: RefCell::new(AdmittedBudget::Existing(&mut budget)),
             cancel: &cancel,
             identity: IdentityLimits::default(),
             refused: RefCell::new(None),
@@ -1238,7 +1307,7 @@ mod tests {
             ..Admission::default()
         };
         let scope = Scope {
-            budget: RefCell::new(&mut budget),
+            budget: RefCell::new(AdmittedBudget::Existing(&mut budget)),
             cancel: &cancel,
             identity: IdentityLimits { input_bytes: 0 },
             refused: RefCell::new(None),
@@ -1268,7 +1337,7 @@ mod tests {
             ..Admission::default()
         };
         let scope = Scope {
-            budget: RefCell::new(&mut budget),
+            budget: RefCell::new(AdmittedBudget::Existing(&mut budget)),
             cancel: &cancel,
             identity: IdentityLimits::default(),
             refused: RefCell::new(None),
@@ -1305,7 +1374,7 @@ mod tests {
             ..Admission::default()
         };
         let scope = Scope {
-            budget: RefCell::new(&mut budget),
+            budget: RefCell::new(AdmittedBudget::Existing(&mut budget)),
             cancel: &cancel,
             identity: IdentityLimits::default(),
             refused: RefCell::new(None),
@@ -1321,7 +1390,7 @@ mod tests {
             ..Admission::default()
         };
         let scope = Scope {
-            budget: RefCell::new(&mut budget),
+            budget: RefCell::new(AdmittedBudget::Existing(&mut budget)),
             cancel: &cancel,
             identity: IdentityLimits::default(),
             refused: RefCell::new(None),
@@ -1386,7 +1455,7 @@ mod tests {
                         ..Admission::default()
                     };
                     let scope = Scope {
-                        budget: RefCell::new(&mut budget),
+                        budget: RefCell::new(AdmittedBudget::Existing(&mut budget)),
                         cancel: &cancel,
                         identity: IdentityLimits::default(),
                         refused: RefCell::new(None),
@@ -1444,7 +1513,7 @@ mod tests {
             ..Admission::default()
         };
         let scope = Scope {
-            budget: RefCell::new(&mut denied),
+            budget: RefCell::new(AdmittedBudget::Existing(&mut denied)),
             cancel: &cancel,
             identity: IdentityLimits::default(),
             refused: RefCell::new(None),
@@ -1466,7 +1535,7 @@ mod tests {
             ..Admission::default()
         };
         let scope = Scope {
-            budget: RefCell::new(&mut admitted),
+            budget: RefCell::new(AdmittedBudget::Existing(&mut admitted)),
             cancel: &cancel,
             identity: IdentityLimits::default(),
             refused: RefCell::new(None),

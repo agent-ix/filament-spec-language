@@ -87,6 +87,7 @@ pub(super) trait StructuralSink {
 pub(super) trait ValueSink: StructuralSink {
     fn pending<T>(&mut self, stack: &mut Vec<T>, task: T) -> Result<(), Self::Error>;
     fn visit(&mut self) -> Result<(), Self::Error>;
+    fn reference(&mut self, value: &ObjectReference) -> Result<(), Self::Error>;
     fn scalar(&mut self, source: Scalar<'_>) -> Result<(), Self::Error>;
     fn begin_array(&mut self, order: ArrayOrder) -> Result<(), Self::Error>;
     fn end_array(&mut self) -> Result<(), Self::Error>;
@@ -211,6 +212,9 @@ fn map_key_bytes(value: &Enc) -> Vec<u8> {
 }
 
 impl ValueSink for Retained {
+    fn reference(&mut self, value: &ObjectReference) -> Result<(), Self::Error> {
+        project_reference(self, value)
+    }
     fn pending<T>(&mut self, stack: &mut Vec<T>, task: T) -> Result<(), Self::Error> {
         stack.push(task);
         Ok(())
@@ -982,6 +986,16 @@ pub(super) fn project_value<'a, S: ValueSink>(
     let mut pending = Vec::new();
     sink.pending(&mut pending, ValueTask::Value(value, normalize_decimal))?;
     while let Some(task) = pending.pop() {
+        if let ValueTask::Value(Value::Reference(reference), _) = &task {
+            match placeholder.and_then(|replace| replace(reference)) {
+                Some(value) => {
+                    sink.visit()?;
+                    sink.scalar(Scalar::Replacement(value))?;
+                }
+                None => sink.reference(reference)?,
+            }
+            continue;
+        }
         sink.visit()?;
         let (value, normalize_decimal) = match task {
             ValueTask::Value(value, normalize) => (value, normalize),
