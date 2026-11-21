@@ -121,11 +121,13 @@ population holds, so there is no absent owner to test.
   refuses `undefined_expression`/`unproved-presence` at the selector.
 - **Refusals that remain.** These forms are wrong, and each SHALL refuse with
   the typed cause shown:
-  - a population form whose condition or body reads a clock value (`x.c` in
-    a value position, `value(x.v)` outside a clock constraint, a
-    clock-bearing value read whole) refuses
+  - a population form outside a refinement row whose condition or body reads
+    a clock value (`x.c` in a value position, `value(x.v)` outside a clock
+    constraint, a clock-bearing value read whole) refuses
     `invalid_timed_model`/`clock-read-outside-constraint` at the read
-    (FSpec FR-415);
+    (FSpec FR-415); inside a refinement row, a clock read refuses
+    `unsupported_construct`/`expression-form` at the read (FSpec FR-430,
+    "Timed refinement");
   - `ref` of a place under a `Map` value refuses `ill_typed`/`type-mismatch`
     at the `ref` (FR-230 "Place identity");
   - `ref` of a path that names no clock place of the owner's type refuses
