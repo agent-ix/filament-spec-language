@@ -768,10 +768,11 @@ pub struct AnalyzeOutcome {
 pub struct DocumentGraphs {
     /// The graph of the request's own admitted package.
     pub own: Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable>,
-    /// The graph of the admitted dependency package an item is analyzed
-    /// over, by request index.
-    pub components: std::collections::BTreeMap<
-        RequestIndex,
+    /// The graph of each admitted dependency package of the request, by its
+    /// package identity text: the graph an item over that dependency, and
+    /// every id that names one of its nodes, indexes (FSpec FR-322).
+    pub dependencies: std::collections::BTreeMap<
+        String,
         Result<fsl_semantics::check::wire_id::WireGraph, GraphUnavailable>,
     >,
 }
@@ -790,7 +791,7 @@ impl Default for DocumentGraphs {
     fn default() -> Self {
         Self {
             own: Err(GraphUnavailable::NotEmitted),
-            components: std::collections::BTreeMap::new(),
+            dependencies: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -810,7 +811,7 @@ impl std::fmt::Debug for DocumentGraphs {
         formatter
             .debug_struct("DocumentGraphs")
             .field("own", &self.own.as_ref().map(|_| ()))
-            .field("components", &self.components.keys().collect::<Vec<_>>())
+            .field("dependencies", &self.dependencies.keys().collect::<Vec<_>>())
             .finish()
     }
 }

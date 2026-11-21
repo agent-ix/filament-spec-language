@@ -148,7 +148,10 @@ the owning model's identity text and is never null, in the item's
 id back to its structural key with the same graph; a document with a node
 id that is not held, an index its package does not have, a `package` member
 that names no dependency of the request, or a `package` member on an item
-over the request's own package is refused.
+An id whose `package` is a dependency of the request is held in that
+dependency's graph wherever it appears, a composition's `request.premises`
+among them; the premises sent to a provider are written the same way, and a
+restated `premises` list is read in either form.
 
 ### Item notes
 

@@ -501,9 +501,13 @@ pub(crate) fn analyze_bound<'a>(
         Some(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
         None => Err(super::GraphUnavailable::NotEmitted),
     };
-    let mut component_graphs = BTreeMap::new();
-    for (index, component) in components {
-        let graph = match crate::provider::read_package(component, binding.packages, limits.emit) {
+    let mut dependency_graphs = BTreeMap::new();
+    for dependency in package.dependencies().values().chain(components.values()) {
+        let name = dependency.graph().package_name().to_owned();
+        if dependency_graphs.contains_key(&name) {
+            continue;
+        }
+        let graph = match crate::provider::read_package(dependency, binding.packages, limits.emit) {
             Ok(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
@@ -512,7 +516,7 @@ pub(crate) fn analyze_bound<'a>(
             }
             Err(crate::provider::NotAdmitted::Other) => Err(super::GraphUnavailable::NotEmitted),
         };
-        component_graphs.insert(*index, graph);
+        dependency_graphs.insert(name, graph);
     }
     let component_runs: BTreeMap<RequestIndex, super::RunInput<'_>> = components
         .iter()
@@ -560,7 +564,7 @@ pub(crate) fn analyze_bound<'a>(
         closed_form,
         graphs: super::DocumentGraphs {
             own,
-            components: component_graphs,
+            dependencies: dependency_graphs,
         },
     }))
 }

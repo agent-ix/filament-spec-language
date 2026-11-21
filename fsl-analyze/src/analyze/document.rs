@@ -1682,6 +1682,7 @@ mod package_run;
 
 pub use composition_item::CompositionClaim;
 pub use held_identity::HeldIdentityError;
+pub(crate) use held_identity::{hold_in_dependencies, structural_in_dependencies};
 
 pub use package_run::{
     settle_package_run, PackageRun, PackageRunError, PendingFamily, PendingPackageFamily,
@@ -4272,7 +4273,7 @@ fn write_run(
                 disposed,
             },
         );
-        hold_item(&mut item, &outcome.graphs, index, echo)?;
+        hold_item(&mut item, &outcome.graphs, echo)?;
         items.push(item);
     }
     items.extend(simulated.iter().map(|(written, _)| written.clone()));
@@ -4363,7 +4364,6 @@ fn spell_states(value: &mut Value) {
 fn hold_item(
     item: &mut Value,
     graphs: &super::DocumentGraphs,
-    index: RequestIndex,
     echo: Option<&Echo>,
 ) -> Result<(), AnalyzeDocumentError> {
     let dependency = echo.and_then(|echo| echo.dependency.as_deref());
@@ -4374,7 +4374,7 @@ fn hold_item(
         return Ok(());
     }
     let graph = match dependency {
-        Some(_) => graphs.components.get(&index).unwrap_or(&graphs.own),
+        Some(identity) => graphs.dependencies.get(identity).unwrap_or(&graphs.own),
         None => &graphs.own,
     }
     .as_ref()
@@ -4383,7 +4383,7 @@ fn hold_item(
         .and_then(|echo| echo.identity.as_ref())
         .and_then(|identity| identity["model"].as_str())
         .map(str::to_owned);
-    *item = held_identity::hold(item, graph, model.as_deref())?;
+    *item = held_identity::hold(item, graph, &graphs.dependencies, model.as_deref())?;
     Ok(())
 }
 
