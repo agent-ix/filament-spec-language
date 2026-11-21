@@ -958,15 +958,14 @@ fn a_closure_lasso_replays_alike_on_the_source_and_the_package_routes() {
     }
 }
 
-/// FR-128-AC-14, AC-15 with FR-1030-AC-6's mechanism: over the Counter world
-/// no model step repeats, so the only loops that violate `always eventually
-/// holds(c.value = 3)` are closure stutters. For an item that selects
-/// `stutter_closure` both routes settle it `refuted`, the engine's lasso is the
-/// closure-only form, it is written with the closure tag, read back by the
-/// auditor's reader, and replays to a reproduction before the item settles.
-#[trace("TC-523", "FR-128-AC-14", "FR-128-AC-15")]
-#[test]
-fn a_closure_violation_settles_refuted_through_its_written_and_replayed_lasso() {
+/// The doc of both closure round trips below, over the Counter world, where
+/// no model step repeats, so the only loops that violate `formula` are closure
+/// stutters. For an item that selects `stutter_closure` both routes settle it
+/// `refuted`; the engine's lasso is the closure-only form after at least
+/// `stem` model steps, it is written with the closure tag and the item's
+/// `over` reference, read back by the auditor's reader, and the read-back
+/// object, not the engine's, replays to a reproduction over each route.
+fn closure_round_trip(formula: &str, stem: usize) {
     use fsl_analyze::analyze::{PackageClauseSubject, TemporalItem};
 
     let world = World::new(
@@ -975,7 +974,7 @@ fn a_closure_violation_settles_refuted_through_its_written_and_replayed_lasso() 
         INFINITE,
         &[Clause {
             activation: "on origin",
-            formula: "always eventually holds(c.value = 3)",
+            formula,
         }],
         &[("c", json!({"value": {"integer": "0"}}))],
     );
@@ -1008,28 +1007,35 @@ fn a_closure_violation_settles_refuted_through_its_written_and_replayed_lasso() 
         .expect("the record carries the counterexample");
     assert!(found.closure_loop().is_some(), "{found:?}");
 
-    let mut unbound = found.clone();
-    unbound.over_binding = None;
-    let wire = fsl_replay::temporal_wire(&unbound, None, None).expect("the lasso is spelled");
+    assert!(found.prefix.len() >= stem, "{found:?}");
+
+    let wire =
+        fsl_replay::temporal_wire(found, source.over_reference.as_ref(), source.claim.as_ref())
+            .expect("the lasso is spelled with its over reference");
     assert_eq!(wire["loop"][0]["transition"]["type"], "closure-stutter");
     assert_eq!(wire["loop"].as_array().map(Vec::len), Some(1));
     let read = fsl_replay::read_temporal_counterexample::<
         filament_semantic_value::model_transition::ModelTransition,
     >(&wire)
     .expect("the auditor's reader reads the written lasso");
-    assert_eq!(read.prefix, found.prefix);
-    assert_eq!(read.lasso, found.lasso);
-    assert_eq!(read.closure_stutters, found.closure_stutters);
-    let replayed = source_subject
-        .replay_counterexample(found)
-        .expect("the written lasso replays");
-    assert!(matches!(
-        replayed.settlement,
-        ModelTraceSettlement::Reproduced {
-            value: ModelTraceValue::Truth(false),
-            ..
-        }
-    ));
+    assert_eq!(
+        &read, found,
+        "the reader returns the lasso the engine wrote"
+    );
+    let reproduces =
+        |replayed: Result<fsl_replay::ModelTraceReplayResult, fsl_replay::ReplayRefusal>| {
+            assert!(
+                matches!(
+                    replayed.expect("the read-back lasso replays").settlement,
+                    ModelTraceSettlement::Reproduced {
+                        value: ModelTraceValue::Truth(false),
+                        ..
+                    }
+                ),
+                "the read-back lasso reproduces"
+            );
+        };
+    reproduces(source_subject.replay_counterexample(&read));
 
     over_package_route(&world, |input, bytes, supply| {
         let package = PackageClauseSubject::new(
@@ -1043,18 +1049,9 @@ fn a_closure_violation_settles_refuted_through_its_written_and_replayed_lasso() 
         )
         .expect("the package holds the clause")
         .configured(temporal());
-        // The source engine's lasso replays over the package bytes before the
-        // package item settles, so a mismatch names its stage.
-        let replayed = package
-            .replay_counterexample(found)
-            .expect("the engine's lasso replays over the package route");
-        assert!(matches!(
-            replayed.settlement,
-            ModelTraceSettlement::Reproduced {
-                value: ModelTraceValue::Truth(false),
-                ..
-            }
-        ));
+        // The read-back lasso replays over the package bytes before the package
+        // item settles, so a mismatch names its stage.
+        reproduces(package.replay_counterexample(&read));
         let record = settle(package.item(RequestIndex::new(0)));
         // A package item that fails after its engine refuted names where: the
         // engine's value and the `over` reference its wire is spelled with.
@@ -1067,4 +1064,26 @@ fn a_closure_violation_settles_refuted_through_its_written_and_replayed_lasso() 
         );
         assert_eq!(format!("{record:?}"), format!("{source:?}"));
     });
+}
+
+/// FR-128-AC-14, AC-15 with FR-1030-AC-6's mechanism (`StuckTwo`'s shape): the
+/// violation is the closure stutter at the initial state.
+#[trace("TC-523", "FR-128-AC-14", "FR-128-AC-15")]
+#[trace("TC-2920", "FR-1030-AC-6")]
+#[test]
+fn a_closure_violation_settles_refuted_through_its_written_and_replayed_lasso() {
+    closure_round_trip("always eventually holds(c.value = 3)", 0);
+}
+
+/// FR-1030-AC-7's mechanism (`PendingTwo`'s shape): the violation is the
+/// closure stutter after one real step to value 1, so the written lasso keeps
+/// that step before its closure-only loop.
+#[trace("TC-523", "FR-128-AC-14")]
+#[trace("TC-2920", "FR-1030-AC-7")]
+#[test]
+fn a_closure_violation_after_a_real_step_settles_refuted_through_its_replayed_lasso() {
+    closure_round_trip(
+        "always (holds(c.value = 1) implies eventually holds(c.value = 3))",
+        1,
+    );
 }
