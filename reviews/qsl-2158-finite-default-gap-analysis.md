@@ -138,3 +138,31 @@ scope:
 ## Publication
 
 Linear reads and writes were prohibited by the user hold; no comments posted, dedup/readback not performed, has-review known present from dispatch only. The marked method comment is a local draft pending lead publication once the hold and coordination permit. Review artifacts remain in scratch; the lead owns final repository custody and merge.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1: the new admitted-Link unit test observes both real production request payloads and asserts the finite 1000000 local candidate ceiling; production directly consumes that same builder's variants. |
+
+## Disposition pass 1
+
+**Current source verdict: PASS. Runtime gate for the rebased head: pending.** All original findings have latest outcome fixed; no new grounded defect found. This supersedes the historical review verdict for source assessment only. The initial Findings section remains unchanged.
+
+Reviewed frozen HEAD `93ce07b20d9f65e06dd93975a33e4929e854371b`, base `8ba8b1bdd5fc4df61caf7ddd9ac1422203c30278`. Before appending this disposition, both scratch SRs were byte-identical to the copies on the frozen branch. The source fix is within the approved finite-local-default scope.
+
+`ProbabilityWork` and `probability_work` at request.rs:694-751 are private, with inline owned request variants, no added Box or public/wire/test-only inspection surface. The builder is the sole probability-request construction policy: one simulation request receives the 1000000 override and is moved into exactly the selected evidence branch. Every previous payload member, claim lookup, sampler clone, method/seed selection, optional witness default, symmetry and timed sampling is preserved. The real work arm at request.rs:1244-1258 calls this builder and directly passes each resulting payload into the existing engine item constructor; it does not reconstruct or override it afterward. No unused helper or mocked engine provides the evidence.
+
+The new test at request.rs:1606-1723 uses the real spine parse/select/check path and existing Link model/snapshot fixtures, checks actual ModelSystem admission, and tests both evidence kinds through the same production builder. A removed override or a value other than 1000000 fails the explicit payload bound assertion. A missing branch fails expect; a swapped request kind fails the evidence/variant match. Claim occurrence and retained meter equality are also asserted. The unchanged common simulation helper remains unlimited for preflight, which the test explicitly checks before admission. The original B=0/1 integration test is preserved. No test was executed locally and no mutation run is claimed: this falsification assessment follows the mandatory assertions and direct source wiring.
+
+New unit trace tags are relevant partial bindings for FR-741-AC-6 and FR-255-AC-23. They now establish the local configured default, alongside the integration test's caller-B preservation. They still do not establish cumulative charging, first unpaid cumulative admission, omitted/explicit-default equivalence, complete AC satisfaction, or direct million-candidate exhaustion. Those broader claims remain outside this precursor's acceptance. No claim of statistical parallel execution is added; requested workers remain untouched.
+
+Runtime provenance: the lead supplied a seven-package check rc0, the new unit 1 PASS and seven focused integration tests 7 PASS for the pre-rebase final fix head identified as `1ed3` in the dispatch. The original two library settlement-map passes remain attributed to 81604cfb7237a6cce626bd62d699a376878932be. These are 10 distinct tests across those heads; none is relabeled as execution of 93ce07b20d9f65e06dd93975a33e4929e854371b. The required same commands for the rebased head are pending with the lead. No manifest or lock diff exists versus the stated new base. Static disposition can pass independently; merge runtime readiness requires the actual new-head result.
+
+Publication remains local-only under the user Linear hold and root coordination. No tracker reads, dedup, posting, labels or readback were performed. A round-1 marked disposition draft accompanies each SR; the lead must publish original findings and dispositions once each with dedup and readback when permitted.
+
+## Publication read-back
+
+The user hold was released by root coordination for this publication batch. Initial review comment `73dd267d-d36d-4fcc-958e-a07ee36973bc` and round-1 disposition comment `57dfbb1b-edc7-4ef2-886c-34bdf064ea95` were each posted once to QSL-2158 after one latest-100 comment dedup read. One final batch readback found both comments; exact body, YAML parsing, finding-ID parity, initial scope equality, and fixed after_excerpt checks passed. No labels, issue state or GitHub findings were changed. Known has-review was not queried.
+
+Current runtime status supplied by the lead: the actual 93ce07b20d9f65e06dd93975a33e4929e854371b new unit passed (1 PASS); compile and focused integration execution are blocked by outside-PR main initializer fields pending an architecture repair. Source verdict remains PASS; final-head gates and merge are owned by the lead and are not reported complete here.
