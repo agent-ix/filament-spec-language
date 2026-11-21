@@ -672,7 +672,7 @@ fn correlation_document() -> Vec<u8> {
             .into_iter()
             .map(|name| {
                 json!({
-                    "identity": format!("ix://example/config-version/{name}"),
+                    "identity": format!("ix://example/config-version/relationship/{name}"),
                     "category": "structural", "composite": false,
                     "direction": "source-to-target",
                     "origin": {"source": {
