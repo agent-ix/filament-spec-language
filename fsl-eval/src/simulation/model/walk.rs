@@ -38,6 +38,7 @@ pub(crate) struct Budget {
     max: Option<u64>,
     cancel: Option<filament_exact::Cancel>,
     request_meter: Option<std::sync::Arc<std::sync::Mutex<filament_exact::Meter>>>,
+    work_meter: Option<filament_exact::Meter>,
 }
 
 impl Budget {
@@ -48,6 +49,7 @@ impl Budget {
             max: Some(max),
             cancel: None,
             request_meter: None,
+            work_meter: None,
         }
     }
 
@@ -63,16 +65,27 @@ impl Budget {
             max: None,
             cancel: cancel.cloned(),
             request_meter: Some(system.shared_meter.clone()),
+            work_meter: None,
         }
     }
 
-    fn account_trials(&self, count: u64) -> Result<(), ExpansionStop> {
+    fn account_trials(&mut self, count: u64) -> Result<(), ExpansionStop> {
         if let Some(meter) = &self.request_meter {
             meter
                 .lock()
                 .expect("evaluation meter lock")
                 .charge(
                     filament_exact::Charge::new(filament_exact::ChargePoint::CollectionVisit)
+                        .work(filament_exact::Integer::from(count)),
+                )
+                .map_err(|incomplete| {
+                    exhausted(ExpansionLimit::EvaluationMeter(incomplete.limit_kind))
+                })?;
+        }
+        if let Some(meter) = &mut self.work_meter {
+            meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::ModelCandidate)
                         .work(filament_exact::Integer::from(count)),
                 )
                 .map_err(|incomplete| {
@@ -89,14 +102,7 @@ impl Budget {
     /// `resource_exhausted`/`insufficient-next-charge` when the count would
     /// exceed the bound.
     pub(crate) fn charge(&mut self) -> Result<(), ExpansionStop> {
-        self.poll_cancel()?;
-        self.account_trials(1)?;
-        self.used = self.used.saturating_add(1);
-        if self.max.is_some_and(|max| self.used > max) {
-            Err(exhausted(ExpansionLimit::MaxCandidates))
-        } else {
-            Ok(())
-        }
+        self.charge_count(1)
     }
     /// The candidates counted so far.
     pub(super) const fn used(&self) -> u64 {
@@ -109,16 +115,26 @@ impl Budget {
     ///
     /// As [`Self::charge`].
     pub(super) fn charge_many(&mut self, count: usize) -> Result<(), ExpansionStop> {
+        self.charge_count(u64::try_from(count).unwrap_or(u64::MAX))
+    }
+
+    fn charge_count(&mut self, count: u64) -> Result<(), ExpansionStop> {
         self.poll_cancel()?;
-        self.account_trials(u64::try_from(count).unwrap_or(u64::MAX))?;
-        self.used = self
-            .used
-            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
-        if self.max.is_some_and(|max| self.used > max) {
-            Err(exhausted(ExpansionLimit::MaxCandidates))
-        } else {
-            Ok(())
+        if self
+            .max
+            .is_some_and(|max| count > max.saturating_sub(self.used))
+        {
+            return Err(exhausted(ExpansionLimit::MaxCandidates));
         }
+        self.account_trials(count)?;
+        self.used = self.used.saturating_add(count);
+        Ok(())
+    }
+
+    pub(super) fn scoped(max: u64, system: &ModelSystem<'_>) -> Self {
+        let mut budget = Self::new(max);
+        budget.work_meter = system.probability_work.as_ref().map(|scope| scope.meter());
+        budget
     }
 
     fn poll_cancel(&self) -> Result<(), ExpansionStop> {
@@ -627,6 +643,9 @@ fn expand<'s>(
     walk.clock_selectors = selection.clock_selectors;
     let mut budget = system.budget();
     budget.cancel = cancel.cloned();
+    if let (Some(meter), Some(cancel)) = (&mut budget.work_meter, cancel) {
+        *meter = meter.clone().with_cancel(cancel.clone());
+    }
 
     let mut findings = contracts::invariants(&walk)?;
     let mut contract = Vec::new();

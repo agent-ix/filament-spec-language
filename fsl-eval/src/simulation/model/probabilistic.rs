@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 
 use filament_exact::{
-    EffectiveId, Identifier, Integer, Meter, ObjectReference, Outcome, Quantity, Rational, Value,
+    EffectiveId, Identifier, Integer, ObjectReference, Outcome, Quantity, Rational, Value,
     ValueType,
 };
 use filament_semantic_value::catalog::InternalFault;
@@ -556,7 +556,7 @@ impl ModelSystem<'_> {
         arguments: Vec<Value>,
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<Value, ExpansionStop> {
-        let mut meter = Meter::new(self.meter);
+        let mut meter = self.evaluation_meter();
         if let Some(cancel) = cancel {
             meter = meter.with_cancel(cancel.clone());
         }

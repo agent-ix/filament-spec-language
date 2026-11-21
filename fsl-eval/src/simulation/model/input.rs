@@ -15,9 +15,7 @@
 use std::collections::BTreeSet;
 
 use filament_eval::{CallFailure, Evaluation};
-use filament_exact::{
-    EffectiveId, Meter, NodeKey, ObjectReference, Value, ValueType,
-};
+use filament_exact::{EffectiveId, Meter, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_package::{

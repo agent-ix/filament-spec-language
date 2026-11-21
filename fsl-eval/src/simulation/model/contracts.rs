@@ -289,7 +289,7 @@ pub(super) fn conjunction(
         .system
         .evaluator()
         .evaluate_clause_set(&set, &mut || {
-            let meter = filament_exact::Meter::new(walk.system.meter);
+            let meter = walk.system.fresh_meter();
             match &walk.cancel {
                 Some(cancel) => meter.with_cancel(cancel.clone()),
                 None => meter,
