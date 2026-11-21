@@ -1116,7 +1116,8 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
                         letters.atom(atom, instance, start, &mut meter)
                     }
                     .expect("the production letters evaluate");
-                    assert!(meter.consumed(filament_exact::LimitKind::WorkUnits) > 0);
+                    // Literals and immediate absent-key stops can consume no work.
+                    // The complete counter trajectory must still equal the source's.
                     let charges = filament_exact::LimitKind::ALL.map(|kind| meter.consumed(kind));
                     (reading, charges)
                 })
