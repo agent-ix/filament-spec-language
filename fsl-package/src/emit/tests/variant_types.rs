@@ -709,7 +709,7 @@ fn a_model_enum_shape_row_refuses_an_unemitted_case_or_declaration() {
 /// Complete original model enums cross the strict identities carrier even
 /// when no function reads their types. Authored case positions do not replace
 /// canonical ranks authenticated by IR against the model document.
-#[trace("FR-531-AC-8", "FR-092-AC-26")]
+#[trace("FR-531-AC-8", "FR-531-AC-42", "FR-092-AC-26")]
 #[test]
 fn model_enums_round_trip_unused_declarations_and_canonical_runtime_members() {
     use crate::{BarePackage, BareSupply, ReadIdentityRows};
@@ -768,7 +768,7 @@ fn model_enums_round_trip_unused_declarations_and_canonical_runtime_members() {
 
 /// Required enum channels are closed and versioned; native witness defects
 /// cannot become a partial successful selection.
-#[trace("FR-531-AC-12", "FR-531-AC-8")]
+#[trace("FR-531-AC-12", "FR-531-AC-43", "FR-531-AC-8")]
 #[test]
 fn model_enum_carrier_refuses_missing_repeated_foreign_and_conflicting_evidence() {
     use crate::{IdentityFileRefusal, ReadIdentityRows};
@@ -867,7 +867,7 @@ fn model_enum_carrier_refuses_missing_repeated_foreign_and_conflicting_evidence(
 /// Producer and native enum copies consume one cumulative allowance. Exact
 /// boundaries succeed; one-short and zero ceilings preserve the first unpaid
 /// resource rather than returning incomplete evidence.
-#[trace("FR-531-AC-31", "FR-092-AC-26")]
+#[trace("FR-531-AC-31", "FR-531-AC-44", "FR-092-AC-26")]
 #[test]
 fn model_enum_identity_and_full_projection_budgets_are_cumulative() {
     use filament_contract_model::{NativeJoinBudget, NativeJoinChargeKind};

@@ -105,7 +105,7 @@ fn package() -> CheckedPackage {
 
 /// Selected model enums evaluate actual values from source and the bytes-only
 /// carrier, preserving aliases, canonical ranks and equality charge sequences.
-#[trace("FR-531-AC-8", "FR-360-AC-8")]
+#[trace("FR-531-AC-8", "FR-531-AC-42", "FR-360-AC-8")]
 #[test]
 fn selected_model_enum_values_match_source_and_bare_evaluation() {
     use fsl_eval::value::QualifiedName;
