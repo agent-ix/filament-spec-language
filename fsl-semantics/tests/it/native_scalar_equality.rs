@@ -558,10 +558,15 @@ fn integer_division_equality_ignores_the_checked_interval_of_either_operand() {
         "n mod 3 != n mod 2",
         "n div 2 = n mod 3",
         "(if c then n mod 3 else n mod 2) = n mod 2",
+        "(if c then n mod 3 else 0) = n mod 2",
+        "let r = n mod 3 in r = n mod 2",
+        "(let r = n mod 3 in r) = n mod 2",
+        "(case u { Circle(r): n mod 3; Blank: 0; }) = n mod 2",
     ] {
         let declarations = format!(
             "profile d = \"filament.value.integer-division.euclidean/v1\";\n\
-             function f using v(n: Int[0, 100], c: Boolean): Boolean pure {{ {body} }}"
+             union Mark {{ Circle(Integer), Blank }}\n\
+             function f using v(n: Int[0, 100], c: Boolean, u: Mark): Boolean pure {{ {body} }}"
         );
         if let Err(refusals) = check(&declarations) {
             panic!("{body} checks, got {refusals:?}");
