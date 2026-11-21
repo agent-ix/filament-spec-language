@@ -343,136 +343,6 @@ pub fn emit_monitor_plan_over(
     limits: crate::checked_v2::V2ReadLimits,
     emit: crate::checked::EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
-    // Temporary bounded diagnostic for the base reader's body-location refusal.
-    let diagnose = || -> Result<(), String> {
-        let document: serde_json::Value = serde_json::from_slice(retained.package().bytes())
-            .map_err(|error| error.to_string())?;
-        let row = &document["checked_term_data"]["body_locations"][2];
-        let bounded = |text: String| text.chars().take(2048).collect::<String>();
-        eprintln!(
-            "monitor-base-probe wire.name={}",
-            bounded(document["name"].to_string())
-        );
-        eprintln!(
-            "monitor-base-probe row2.application={}",
-            bounded(row["application"].to_string())
-        );
-        eprintln!(
-            "monitor-base-probe row2.origin={}",
-            bounded(row["location"]["origin"].to_string())
-        );
-        fn resolve(
-            value: &mut serde_json::Value,
-            operands: &[serde_json::Value],
-        ) -> Result<(), String> {
-            if let Some(slot) = value
-                .as_object()
-                .filter(|map| map.len() == 1)
-                .and_then(|map| map.get("operand"))
-                .and_then(serde_json::Value::as_u64)
-            {
-                let entry = usize::try_from(slot)
-                    .ok()
-                    .and_then(|slot| operands.get(slot))
-                    .ok_or_else(|| "operand slot absent".to_owned())?;
-                *value = if entry.is_number() {
-                    serde_json::json!({"node": entry})
-                } else {
-                    entry.clone()
-                };
-                return Ok(());
-            }
-            match value {
-                serde_json::Value::Object(map) => {
-                    for child in map.values_mut() {
-                        resolve(child, operands)?;
-                    }
-                }
-                serde_json::Value::Array(items) => {
-                    for child in items {
-                        resolve(child, operands)?;
-                    }
-                }
-                _ => {}
-            }
-            Ok(())
-        }
-        fn references(value: &serde_json::Value, application: &serde_json::Value) -> bool {
-            if value["term"] == "reference" && value["target"] == *application {
-                return true;
-            }
-            match value {
-                serde_json::Value::Object(map) => {
-                    map.values().any(|child| references(child, application))
-                }
-                serde_json::Value::Array(items) => {
-                    items.iter().any(|child| references(child, application))
-                }
-                _ => false,
-            }
-        }
-        let graph = &document["semantic_graph"];
-        let mut nodes = graph["nodes"].as_array().ok_or("nodes absent")?.clone();
-        let operand_rows = graph["operand_rows"]
-            .as_array()
-            .ok_or("operand rows absent")?;
-        if nodes.len() != operand_rows.len() {
-            return Err("operand row count differs".to_owned());
-        }
-        for (node, operands) in nodes.iter_mut().zip(operand_rows) {
-            resolve(
-                node,
-                operands.as_array().ok_or("operand row is not an array")?,
-            )?;
-        }
-        let matched: Vec<_> = nodes
-            .iter()
-            .filter(|node| node["node_id"] == row["application"])
-            .collect();
-        eprintln!("monitor-base-probe exact_node_count={}", matched.len());
-        if let Some(node) = matched.first() {
-            eprintln!(
-                "monitor-base-probe node.kind={}/{} body={}",
-                node["node_tag"],
-                node["semantic_form"],
-                bounded(node["body"].to_string())
-            );
-        }
-        let parents: Vec<_> = nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, node)| references(&node["body"], &row["application"]))
-            .collect();
-        eprintln!("monitor-base-probe parent_count={}", parents.len());
-        for (position, parent) in parents.iter().take(8) {
-            eprintln!(
-                "monitor-base-probe parent.position={position} kind={}/{}",
-                parent["node_tag"], parent["semantic_form"]
-            );
-        }
-        let sources = document["source_map"]
-            .as_array()
-            .ok_or("source map absent")?;
-        let matched_sources = sources
-            .iter()
-            .filter(|entry| {
-                entry["node_id"] == row["application"]
-                    && entry["role"] == row["occurrence"]["role"]
-                    && entry["ordinal"] == row["occurrence"]["ordinal"]
-            })
-            .count();
-        eprintln!(
-            "monitor-base-probe source_occurrence={} matches={matched_sources}",
-            bounded(row["occurrence"].to_string())
-        );
-        Ok(())
-    };
-    if let Err(error) = diagnose() {
-        eprintln!(
-            "monitor-base-probe diagnostic_error={}",
-            error.chars().take(2048).collect::<String>()
-        );
-    }
     let read = crate::checked_v2::read_checked_package_v2_at(
         retained.package().bytes(),
         identity,
@@ -1582,7 +1452,148 @@ fn binding_reference<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t Checke
 #[cfg(test)]
 mod tests {
     use super::*;
-    use filament_contract_model::CheckedDeclaration;
+    use filament_contract_model::{
+        read_checked_package, CheckedBodyLocationOrigin, CheckedDeclaration,
+        CheckedPackageDispatchResult, CheckedPackageRefusalCause, CheckedPackageRefusalCode,
+    };
+
+    /// The production final writer rekeys body origins with all four entries,
+    /// keeping helper rows and checker coordinates intact. Scalar bodies let
+    /// the strict reader check this independently of record-value traversal.
+    #[ix_trace_rs::trace("FR-251-AC-9", "FSpec-FR-322-AC-309")]
+    #[test]
+    fn final_writer_rekeys_four_entry_body_origins_and_refuses_a_stale_origin() {
+        let (_, checked) = super::super::tests::package_from_text(
+            "function init using v(x: Integer): Integer pure { x + 1 }\n\
+             function on_event using v(x: Integer): Integer pure { x + 2 }\n\
+             function on_watermark using v(x: Integer): Integer pure { x + 3 }\n\
+             function on_gap using v(x: Integer): Integer pure { x + 4 }\n\
+             function helper using v(x: Integer): Integer pure { x + 5 }\n",
+        );
+        let limits = crate::checked::EmitLimits::new(1 << 20);
+        let retained = super::super::emit_checked(&checked, limits).expect("scalar functions emit");
+        let read_limits = crate::checked_v2::V2ReadLimits::fixture().for_ir();
+        let base = match read_checked_package(
+            retained.package().bytes(),
+            read_limits,
+            retained.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the authentic scalar base must read: {other:?}"),
+        };
+        let mut nodes = base.resolved_graph().nodes.clone();
+        let mut source_map = base.source_map().to_vec();
+        let mut changes = Vec::new();
+        for name in ["init", "on_event", "on_watermark", "on_gap"] {
+            let at = declared(&nodes, name, "a scalar entry is declared").unwrap();
+            let (parameters, body) = param_targets(&nodes[at]).unwrap();
+            let position = |id: &CheckedNodeId| -> u64 {
+                u64::try_from(nodes.iter().position(|node| node.node_id == *id).unwrap()).unwrap()
+            };
+            let parameters: Vec<_> = parameters.iter().map(position).collect();
+            let new = declaration_less_function_id(
+                base.name(),
+                &nodes[at].semantic_form,
+                &parameters,
+                position(&body),
+            );
+            let old = nodes[at].node_id.clone();
+            assert_ne!(old, new);
+            nodes[at].declaration = None;
+            nodes[at].owner = None;
+            nodes[at].occurrences = vec![CheckedOccurrence {
+                role: CheckedOccurrenceRole::Generated,
+                ordinal: 0,
+            }];
+            for entry in source_map.iter_mut().filter(|entry| entry.node_id == old) {
+                entry.role = CheckedOccurrenceRole::Generated;
+                entry.ordinal = 0;
+            }
+            changes.push((old, new));
+        }
+        rekey(&mut nodes, &mut source_map, &changes);
+        let final_emission = finish(
+            &base,
+            &retained,
+            &changes,
+            nodes,
+            source_map,
+            retained.source_map.clone(),
+            limits,
+        )
+        .expect("the actual final writer emits rekeyed scalar functions");
+        let final_package = match read_checked_package(
+            final_emission.package().bytes(),
+            read_limits,
+            final_emission.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the final writer's body origins must read: {other:?}"),
+        };
+        let before = base.checked_term_data().expect("authentic body locations");
+        let after = final_package
+            .checked_term_data()
+            .expect("retained body locations");
+        assert_eq!(before.body_locations.len(), after.body_locations.len());
+        let mut seen = [false; 4];
+        let mut helper_seen = false;
+        let mut stale_origin = None;
+        for (row_index, (before, after)) in before
+            .body_locations
+            .iter()
+            .zip(&after.body_locations)
+            .enumerate()
+        {
+            let mut expected = before.clone();
+            let CheckedBodyLocationOrigin::FunctionBody { function, name, .. } =
+                &mut expected.location.origin;
+            if let Some(at) = changes.iter().position(|(old, _)| old == function) {
+                if stale_origin.is_none() {
+                    stale_origin = Some((row_index, function.clone()));
+                }
+                *function = changes[at].1.clone();
+                seen[at] = true;
+            } else if name.as_ref() == "helper" {
+                helper_seen = true;
+            }
+            assert_eq!(*after, expected, "only entry origin identities change");
+            assert_eq!(after.application, before.application);
+        }
+        assert_eq!(seen, [true; 4]);
+        assert!(helper_seen, "the declared helper retains genuine body rows");
+        let (row_index, old_function) = stale_origin.expect("a rekeyed origin to corrupt");
+        let mut stale: serde_json::Value =
+            serde_json::from_slice(final_emission.package().bytes()).unwrap();
+        stale["checked_term_data"]["body_locations"][row_index]["location"]["origin"]["function"] =
+            serde_json::to_value(old_function).unwrap();
+        let stale_bytes = serde_json::to_vec(&stale).unwrap();
+        let refusal =
+            match read_checked_package(&stale_bytes, read_limits, final_emission.evidence()) {
+                CheckedPackageDispatchResult::Refused(refusal) => refusal,
+                other => panic!("the stale function origin must be refused: {other:?}"),
+            };
+        assert_eq!(
+            refusal.code,
+            CheckedPackageRefusalCode::InvalidPackage,
+            "{refusal:?}"
+        );
+        assert_eq!(
+            refusal.cause,
+            Some(CheckedPackageRefusalCause::InvalidValue),
+            "{refusal:?}"
+        );
+        let expected_path =
+            format!("/checked_term_data/body_locations/{row_index}/location/origin/function");
+        assert_eq!(
+            refusal
+                .loci
+                .first()
+                .and_then(|locus| locus.path.as_ref())
+                .map(|path| path.as_str()),
+            Some(expected_path.as_str()),
+            "{refusal:?}"
+        );
+    }
 
     fn node(name: &str, form: &str) -> CheckedSemanticNodeV2 {
         let id = CheckedNodeId {
